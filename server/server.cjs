@@ -153,5 +153,33 @@ app.get('/api/accounts/:id', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/accounts/:id/market_value_history
+ * Returns market value history rows ordered by tax_year desc
+ */
+app.get('/api/accounts/:id/market_value_history', async (req, res) => {
+  const id = String(req.params.id || '').trim();
+  if (!isAccountId(id)) return res.status(400).json({ error: 'Invalid account_id' });
+
+  const sql = `
+    SELECT tax_year,
+           total_value,
+           imp_value,
+           land_value,
+           homestead_cap_value
+    FROM core.market_value_history
+    WHERE account_id = $1
+    ORDER BY tax_year DESC;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [id]);
+    res.json(rows);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 const port = Number(process.env.PORT || 4000);
 app.listen(port, () => console.log(`Server listening on http://localhost:${port}`));

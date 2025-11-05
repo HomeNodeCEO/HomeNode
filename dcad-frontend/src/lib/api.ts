@@ -95,6 +95,12 @@ export interface AccountDetail {
   } | null;
 }
 
+export interface MarketValueHistoryRow {
+  tax_year: number;
+  market_value?: number | string | null;
+  total_value?: number | string | null;
+}
+
 /** ---------------- API calls (DB only; no scraper) ---------------- */
 
 /**
@@ -112,6 +118,13 @@ export async function getAccount(accountId: string): Promise<AccountDetail> {
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}`);
   return fetchJSON<AccountDetail>(url);
+}
+
+/** Market value history for an account */
+export async function getMarketValueHistory(accountId: string): Promise<MarketValueHistoryRow[]> {
+  const id = (accountId || '').trim();
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/market_value_history`);
+  return fetchJSON<MarketValueHistoryRow[]>(url);
 }
 
 /**

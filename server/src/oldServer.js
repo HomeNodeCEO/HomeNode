@@ -210,6 +210,65 @@ app.get("/api/accounts/:id", async (req, res) => {
 });
 
 /**
+ * GET /api/accounts/:id/market_value_history
+ * Returns market value history rows ordered by tax_year desc
+ */
+app.get("/api/accounts/:id/market_value_history", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!id) return res.status(400).json({ error: "missing_id" });
+  try {
+    // Helper: pick a likely market value column from a row object
+    const pickMarketValueKey = (row) => {
+      const keys = Object.keys(row || {});
+      const lc = (s) => String(s || '').toLowerCase();
+      const score = (k) => {
+        const s = lc(k);
+        let sc = 0;
+        if (s.includes('market') || s.includes('mkt')) sc += 3;
+        if (s.includes('total') || s.includes('tot')) sc += 2;
+        if (s.includes('value') || s.includes('val')) sc += 2;
+        if (s === 'market_value' || s === 'total_market' || s === 'total_value') sc += 5;
+        return sc;
+      };
+      const candidates = keys
+        .filter(k => k !== 'tax_year' && k !== 'account_id')
+        .sort((a, b) => score(b) - score(a));
+      return candidates[0];
+    };
+
+    // Attempt 1: use core.market_value_history and infer the market value column name
+    try {
+      const { rows } = await pool.query(
+        `SELECT * FROM core.market_value_history WHERE account_id = $1 ORDER BY tax_year DESC`,
+        [id]
+      );
+      if (rows && rows.length) {
+        const key = pickMarketValueKey(rows[0]);
+        if (!key) return res.json(rows.map(r => ({ tax_year: r.tax_year, market_value: null })));
+        return res.json(rows.map(r => ({ tax_year: r.tax_year, market_value: r[key] })));
+      }
+      return res.json([]);
+    } catch (err) {
+      // 42P01 = undefined_table; fall back to core.market_values
+      if (err && err.code !== '42P01') throw err;
+      const { rows } = await pool.query(
+        `SELECT * FROM core.market_values WHERE account_id = $1 ORDER BY tax_year DESC`,
+        [id]
+      );
+      if (rows && rows.length) {
+        const key = pickMarketValueKey(rows[0]);
+        if (!key) return res.json(rows.map(r => ({ tax_year: r.tax_year, market_value: null })));
+        return res.json(rows.map(r => ({ tax_year: r.tax_year, market_value: r[key] })));
+      }
+      return res.json([]);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err?.message || "history_failed" });
+  }
+});
+
+/**
  * GET /api/search?q=&limit=&offset=
  * Simple search by address (ILIKE) or exact 17-char account_id.
  * Returns an array of AccountRow objects for the frontend.

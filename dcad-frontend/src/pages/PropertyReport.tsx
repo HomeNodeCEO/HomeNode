@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
+import * as api from "@/lib/api";
 
 /* =========================
    Types (relaxed for speed)
@@ -399,17 +400,39 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
     </svg>
   );
 
-  // Tile with #f4f7fa bg, subtle border, shadow, icon on left, CTA on right
+  // Modal state for Market Value History (simple inline modal)
+  const [mvOpen, setMvOpen] = useState(false);
+  const [mvLoading, setMvLoading] = useState(false);
+  const [mvErr, setMvErr] = useState<string | null>(null);
+  const [mvRows, setMvRows] = useState<api.MarketValueHistoryRow[] | null>(null);
+
+  const openMvHistory = async () => {
+    if (!accountId) return;
+    setMvOpen(true);
+    if (mvRows && mvRows.length) return;
+    setMvLoading(true);
+    setMvErr(null);
+    try {
+      const data = await api.getMarketValueHistory(accountId);
+      setMvRows(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setMvErr(e?.message || 'Failed to load history');
+    } finally {
+      setMvLoading(false);
+    }
+  };
   const StatBox = ({
     label,
     value,
     cta,
     icon,
+    onClick,
   }: {
     label: string;
     value: string;
     cta: string;
     icon: ReactNode;
+    onClick?: () => void;
   }) => (
     <div
       className="rounded-lg border shadow p-3"
@@ -427,6 +450,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
         </div>
         <button
           type="button"
+          onClick={onClick}
           className="btn btn-sm normal-case rounded-md px-4 py-2 bg-green-600 border-green-600 text-white hover:bg-green-700 hover:border-green-700"
         >
           {cta}
@@ -540,7 +564,8 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           <StatBox
             label="Market Value"
             value={showMoney(v?.market_value)}
-            cta="Sales"
+            cta="History"
+            onClick={openMvHistory}
             icon={
               <IconBox colorClass="text-green-700">
                 <DollarIcon />
@@ -603,6 +628,44 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             }
           />
         </div>
+        {/* Market Value History Modal */}
+        {mvOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <div className="absolute inset-0 bg-black/30" onClick={() => setMvOpen(false)}></div>
+            <div className="relative z-10 bg-white rounded-xl shadow-xl border border-slate-200 w-[min(92vw,520px)] max-h-[80vh] overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+                <div className="font-semibold">Market Value History</div>
+                <button className="text-slate-600 hover:text-slate-800" onClick={() => setMvOpen(false)} aria-label="Close">✕</button>
+              </div>
+              <div className="p-4 overflow-auto">
+                {mvLoading && <div className="text-sm text-slate-600">Loading…</div>}
+                {mvErr && <div className="text-sm text-red-600">{mvErr}</div>}
+                {!mvLoading && !mvErr && (
+                  mvRows && mvRows.length ? (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-slate-600">
+                          <th className="text-left py-2">Year</th>
+                          <th className="text-right py-2">Market Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                      {mvRows.map((r, i) => (
+                        <tr key={i} className="border-t border-slate-200">
+                          <td className="py-2">{r.tax_year}</td>
+                          <td className="py-2 text-right">{showMoney((r as any).market_value ?? (r as any).total_value)}</td>
+                        </tr>
+                      ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="text-sm text-slate-600">No market value history.</div>
+                  )
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -15,7 +15,8 @@ pnpm-debug.log*
 .env
 .env.*.local
 pycache/
-.pyc
+__pycache__/
+*.pyc
 .pytest_cache/
 .mypy_cache/
 .vscode/

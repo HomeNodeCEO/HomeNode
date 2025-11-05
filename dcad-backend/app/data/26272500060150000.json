@@ -1,0 +1,651 @@
+{
+  "query": "1909 snowmass",
+  "results": [
+    {
+      "summary": {
+        "account_id": "26272500060150000",
+        "address": "1909 SNOWMASS LN",
+        "city": "GARLAND",
+        "owner": "PATTERSON GREGORY SCOTT &",
+        "total_value": "Value in Dispute",
+        "type": "RESIDENTIAL",
+        "detail_url": "https://www.dallascad.org/AcctDetailRes.aspx?ID=26272500060150000"
+      },
+      "detail": {
+        "tax_year": 2025,
+        "property_location": {
+          "address": "1909 SNOWMASS LN",
+          "neighborhood": "3GSJ17",
+          "mapsco": "19-F (DALLAS)"
+        },
+        "owner": {
+          "owner_name": "PATTERSON GREGORY SCOTT &, GINA R, 1909 SNOWMASS LN, GARLAND, TEXAS 750446751",
+          "multi_owner": [
+            {
+              "owner_name": "PATTERSON GREGORY SCOTT &",
+              "ownership_pct": "100%"
+            }
+          ]
+        },
+        "legal_description": {
+          "lines": [
+            "HOLIDAY PARK NORTH 6",
+            "BLK F LOT 15",
+            "VOL88131/4749 EX070188 CO-DALLAS",
+            "2725000601500 32627250006"
+          ],
+          "deed_transfer_date": "7/7/1988"
+        },
+        "value_summary": {
+          "certified_year": 2025,
+          "improvement_value": "Value in Dispute",
+          "land_value": "N/A",
+          "market_value": "N/A",
+          "capped_value": "N/A",
+          "tax_agent": "TEXAS TAX PROTEST",
+          "revaluation_year": "2024",
+          "previous_revaluation_year": "2023"
+        },
+        "arb_hearing": {
+          "hearing_info": "Hearing Info: R 06/27/2025 8:00 AM"
+        },
+        "main_improvement": {
+          "building_class": "14",
+          "year_built": "1973",
+          "effective_year_built": "1973",
+          "actual_age": "53",
+          "desirability": "AVERAGE",
+          "living_area_sqft": "1470",
+          "total_area_sqft": "1470",
+          "percent_complete": "100",
+          "stories": 1,
+          "stories_text": "ONE STORY",
+          "depreciation_pct": "50",
+          "construction_type": "FRAME",
+          "foundation": "SLAB",
+          "roof_type": "GABLE",
+          "roof_material": "COMP SHINGLES",
+          "fence_type": "WOOD",
+          "exterior_material": "BRICK VENEER",
+          "basement": "NONE",
+          "heating": "CENTRAL FULL",
+          "air_conditioning": "CENTRAL FULL",
+          "baths_full": "2",
+          "baths_half": "0",
+          "kitchens": "1",
+          "wet_bars": "0",
+          "fireplaces": "1",
+          "sprinkler": "NONE",
+          "deck": "NONE",
+          "spa": "NONE",
+          "pool": "NONE",
+          "sauna": "NONE"
+        },
+        "additional_improvements": [
+          {
+            "number": "1",
+            "improvement_type": "ATTACHED GARAGE",
+            "construction": "BK-BRICK",
+            "floor": "CONCRETE",
+            "exterior_wall": "UNASSIGNED",
+            "area_sqft": "462"
+          }
+        ],
+        "land_detail": [
+          {
+            "number": "1",
+            "state_code": "SINGLE FAMILY RESIDENCES",
+            "zoning": "SINGLE-FAMILY DISTRICT 7K SF",
+            "frontage_ft": "62",
+            "depth_ft": "122",
+            "area_sqft": "7578.0000",
+            "pricing_method": "FLAT PRICE",
+            "unit_price": "$50,000.00",
+            "market_adjustment_pct": "0%",
+            "adjusted_price": "$50,000",
+            "ag_land": "NONE"
+          }
+        ],
+        "exemptions": {
+          "city": {
+            "taxing_jurisdiction": "GARLAND",
+            "homestead_exemption": "$27,060",
+            "taxable_value": "$218,940"
+          },
+          "school": {
+            "taxing_jurisdiction": "GARLAND ISD",
+            "homestead_exemption": "$140,000",
+            "taxable_value": "$106,000"
+          },
+          "county": {
+            "taxing_jurisdiction": "DALLAS COUNTY",
+            "homestead_exemption": "$49,200",
+            "taxable_value": "$196,800"
+          },
+          "college": {
+            "taxing_jurisdiction": "DALLAS COLLEGE",
+            "homestead_exemption": "$49,200",
+            "taxable_value": "$196,800"
+          },
+          "hospital": {
+            "taxing_jurisdiction": "PARKLAND HOSPITAL",
+            "homestead_exemption": "$49,200",
+            "taxable_value": "$196,800"
+          },
+          "special_district": {
+            "taxing_jurisdiction": "UNASSIGNED",
+            "homestead_exemption": "$0",
+            "taxable_value": "$0"
+          }
+        },
+        "exemption_summary": [],
+        "estimated_taxes": {},
+        "estimated_taxes_total": "N/A",
+        "estimated_taxes_status": "OK",
+        "history": {
+          "history_url": "./AcctHistory.aspx?ID=26272500060150000",
+          "owner_history": [
+            {
+              "year": 2025,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 1909 SNOWMASS LN GARLAND, TEXAS 750446751",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2024,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 1909 SNOWMASS LN GARLAND, TEXAS 750446751",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2023,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2022,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2021,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2020,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2019,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2018,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2017,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2016,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2015,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2014,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2013,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2012,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2011,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2010,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2009,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2008,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2007,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2006,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2005,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2004,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2003,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 2917 SOUTHERN CROSS DR GARLAND, TEXAS 750446243",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 7/7/1988"
+              ],
+              "deed_transfer_date": "7/7/1988"
+            },
+            {
+              "year": 2002,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 1909 SNOWMASS LN GARLAND, TEXAS 750446243 UNASSIGNED",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 1/1/1900"
+              ],
+              "deed_transfer_date": "1/1/1900"
+            },
+            {
+              "year": 2001,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 1909 SNOWMASS LN GARLAND, TEXAS 750446751 UNASSIGNED",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 1/1/1900"
+              ],
+              "deed_transfer_date": "1/1/1900"
+            },
+            {
+              "year": 2000,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 1909 SNOWMASS LN GARLAND, TEXAS 750446751 UNASSIGNED",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 1/1/1900"
+              ],
+              "deed_transfer_date": "1/1/1900"
+            },
+            {
+              "year": 1999,
+              "owner": "PATTERSON GREGORY SCOTT & GINA R 1909 SNOWMASS LN GARLAND, TEXAS 750446751 UNASSIGNED",
+              "legal_description": [
+                "HOLIDAY PARK NORTH 6",
+                "BLK F LOT 15",
+                "VOL88131/4749 EX070188 CO-DALLAS",
+                "2725000601500 32627250006",
+                "Deed Transfer Date: 1/1/1900"
+              ],
+              "deed_transfer_date": "1/1/1900"
+            }
+          ],
+          "market_value": [
+            { "year": 2025, "improvement": "$196,000", "land": "$50,000", "total_market": "$246,000", "homestead_capped": "N/A" },
+            { "year": 2024, "improvement": "$196,000", "land": "$50,000", "total_market": "$246,000", "homestead_capped": "N/A" },
+            { "year": 2023, "improvement": "$193,530", "land": "$50,000", "total_market": "$243,530", "homestead_capped": "N/A" },
+            { "year": 2022, "improvement": "$193,530", "land": "$50,000", "total_market": "$243,530", "homestead_capped": "N/A" },
+            { "year": 2021, "improvement": "$128,000", "land": "$40,000", "total_market": "$168,000", "homestead_capped": "N/A" },
+            { "year": 2020, "improvement": "$128,000", "land": "$40,000", "total_market": "$168,000", "homestead_capped": "N/A" },
+            { "year": 2019, "improvement": "$123,420", "land": "$40,000", "total_market": "$163,420", "homestead_capped": "N/A" },
+            { "year": 2018, "improvement": "$123,420", "land": "$40,000", "total_market": "$163,420", "homestead_capped": "N/A" },
+            { "year": 2017, "improvement": "$110,780", "land": "$25,000", "total_market": "$135,780", "homestead_capped": "N/A" },
+            { "year": 2016, "improvement": "$95,120", "land": "$25,000", "total_market": "$120,120", "homestead_capped": "N/A" },
+            { "year": 2015, "improvement": "$71,040", "land": "$25,000", "total_market": "$96,040", "homestead_capped": "N/A" },
+            { "year": 2014, "improvement": "$55,390", "land": "$25,000", "total_market": "$80,390", "homestead_capped": "N/A" },
+            { "year": 2013, "improvement": "$55,390", "land": "$25,000", "total_market": "$80,390", "homestead_capped": "N/A" },
+            { "year": 2012, "improvement": "$55,390", "land": "$25,000", "total_market": "$80,390", "homestead_capped": "N/A" },
+            { "year": 2011, "improvement": "$59,770", "land": "$25,000", "total_market": "$84,770", "homestead_capped": "N/A" },
+            { "year": 2010, "improvement": "$59,770", "land": "$25,000", "total_market": "$84,770", "homestead_capped": "N/A" },
+            { "year": 2009, "improvement": "$59,770", "land": "$25,000", "total_market": "$84,770", "homestead_capped": "N/A" },
+            { "year": 2008, "improvement": "$82,750", "land": "$25,000", "total_market": "$107,750", "homestead_capped": "N/A" },
+            { "year": 2007, "improvement": "$82,750", "land": "$25,000", "total_market": "$107,750", "homestead_capped": "N/A" },
+            { "year": 2006, "improvement": "$82,750", "land": "$25,000", "total_market": "$107,750", "homestead_capped": "N/A" },
+            { "year": 2005, "improvement": "$88,680", "land": "$15,000", "total_market": "$103,680", "homestead_capped": "N/A" },
+            { "year": 2004, "improvement": "$88,680", "land": "$15,000", "total_market": "$103,680", "homestead_capped": "N/A" },
+            { "year": 2003, "improvement": "$88,680", "land": "$15,000", "total_market": "$103,680", "homestead_capped": "$96,614" },
+            { "year": 2002, "improvement": "$76,200", "land": "$15,000", "total_market": "$91,200", "homestead_capped": "$87,831" },
+            { "year": 2001, "improvement": "$66,870", "land": "$15,000", "total_market": "$81,870", "homestead_capped": "$79,847" },
+            { "year": 2000, "improvement": "$66,870", "land": "$15,000", "total_market": "$81,870", "homestead_capped": "$72,589" },
+            { "year": 1999, "improvement": "$53,990", "land": "$12,000", "total_market": "$65,990", "homestead_capped": "N/A" }
+          ],
+          "taxable_value": [
+            { "year": 2025, "city": "$218,940", "isd": "$106,000", "county": "$196,800", "college": "$196,800", "hospital": "$196,800", "special_district": "$0" },
+            { "year": 2024, "city": "$221,400", "isd": "$146,000", "county": "$196,800", "college": "$196,800", "hospital": "$196,800", "special_district": "$0" },
+            { "year": 2023, "city": "$243,530", "isd": "$243,530", "county": "$243,530", "college": "$243,530", "hospital": "$243,530", "special_district": "$0" },
+            { "year": 2022, "city": "$243,530", "isd": "$243,530", "county": "$243,530", "college": "$243,530", "hospital": "$243,530", "special_district": "$0" },
+            { "year": 2021, "city": "$168,000", "isd": "$168,000", "county": "$168,000", "college": "$168,000", "hospital": "$168,000", "special_district": "$0" },
+            { "year": 2020, "city": "$168,000", "isd": "$168,000", "county": "$168,000", "college": "$168,000", "hospital": "$168,000", "special_district": "$0" },
+            { "year": 2019, "city": "$163,420", "isd": "$163,420", "county": "$163,420", "college": "$163,420", "hospital": "$163,420", "special_district": "$0" },
+            { "year": 2018, "city": "$163,420", "isd": "$163,420", "county": "$163,420", "college": "$163,420", "hospital": "$163,420", "special_district": "$0" },
+            { "year": 2017, "city": "$135,780", "isd": "$135,780", "county": "$135,780", "college": "$135,780", "hospital": "$135,780", "special_district": "$0" },
+            { "year": 2016, "city": "$120,120", "isd": "$120,120", "county": "$120,120", "college": "$120,120", "hospital": "$120,120", "special_district": "$0" },
+            { "year": 2015, "city": "$96,040", "isd": "$96,040", "county": "$96,040", "college": "$96,040", "hospital": "$96,040", "special_district": "$0" },
+            { "year": 2014, "city": "$80,390", "isd": "$80,390", "county": "$80,390", "college": "$80,390", "hospital": "$80,390", "special_district": "$0" },
+            { "year": 2013, "city": "$80,390", "isd": "$80,390", "county": "$80,390", "college": "$80,390", "hospital": "$80,390", "special_district": "$0" },
+            { "year": 2012, "city": "$80,390", "isd": "$80,390", "county": "$80,390", "college": "$80,390", "hospital": "$80,390", "special_district": "$0" },
+            { "year": 2011, "city": "$84,770", "isd": "$84,770", "county": "$84,770", "college": "$84,770", "hospital": "$84,770", "special_district": "$0" },
+            { "year": 2010, "city": "$84,770", "isd": "$84,770", "county": "$84,770", "college": "$84,770", "hospital": "$84,770", "special_district": "$0" },
+            { "year": 2009, "city": "$84,770", "isd": "$84,770", "county": "$84,770", "college": "$84,770", "hospital": "$84,770", "special_district": "$0" },
+            { "year": 2008, "city": "$107,750", "isd": "$107,750", "county": "$107,750", "college": "$107,750", "hospital": "$107,750", "special_district": "$0" },
+            { "year": 2007, "city": "$107,750", "isd": "$107,750", "county": "$107,750", "college": "$107,750", "hospital": "$107,750", "special_district": "$0" },
+            { "year": 2006, "city": "$107,750", "isd": "$107,750", "county": "$107,750", "college": "$107,750", "hospital": "$107,750", "special_district": "$0" },
+            { "year": 2005, "city": "$103,680", "isd": "$103,680", "county": "$103,680", "college": "$103,680", "hospital": "$103,680", "special_district": "$0" },
+            { "year": 2004, "city": "$103,680", "isd": "$103,680", "county": "$103,680", "college": "$103,680", "hospital": "$103,680", "special_district": "$0" },
+            { "year": 2003, "city": "$91,614", "isd": "$81,614", "county": "$77,292", "college": "$77,292", "hospital": "$77,292", "special_district": "$0" },
+            { "year": 2002, "city": "$87,831", "isd": "$72,831", "county": "$70,265", "college": "$70,265", "hospital": "$70,265", "special_district": "$0" },
+            { "year": 2001, "city": "$79,847", "isd": "$64,847", "county": "$63,878", "college": "$63,878", "hospital": "$63,878", "special_district": "$0" },
+            { "year": 2000, "city": "$72,589", "isd": "$57,589", "county": "$58,072", "college": "$58,072", "hospital": "$58,072", "special_district": "$0" },
+            { "year": 1999, "city": "$65,990", "isd": "$50,990", "county": "$52,792", "college": "$52,792", "hospital": "$52,792", "special_district": "$0" }
+          ],
+          "exemptions": [
+            {
+              "year": 2025,
+              "exemptions": {
+                "city": { "taxing_jurisdiction": "GARLAND", "homestead_exemption": "$27,060", "taxable_value": "$218,940" },
+                "school": { "taxing_jurisdiction": "GARLAND ISD", "homestead_exemption": "$140,000", "taxable_value": "$106,000" },
+                "county": { "taxing_jurisdiction": "DALLAS COUNTY", "homestead_exemption": "$49,200", "taxable_value": "$196,800" },
+                "college": { "taxing_jurisdiction": "DALLAS COLLEGE", "homestead_exemption": "$49,200", "taxable_value": "$196,800" },
+                "hospital": { "taxing_jurisdiction": "PARKLAND HOSPITAL", "homestead_exemption": "$49,200", "taxable_value": "$196,800" },
+                "special_district": { "taxing_jurisdiction": "UNASSIGNED", "homestead_exemption": "$0", "taxable_value": "$0" }
+              }
+            },
+            {
+              "year": 2024,
+              "exemptions": {
+                "city": { "taxing_jurisdiction": "GARLAND", "homestead_exemption": "$24,600", "taxable_value": "$221,400" },
+                "school": { "taxing_jurisdiction": "GARLAND ISD", "homestead_exemption": "$100,000", "taxable_value": "$146,000" },
+                "county": { "taxing_jurisdiction": "DALLAS COUNTY", "homestead_exemption": "$49,200", "taxable_value": "$196,800" },
+                "college": { "taxing_jurisdiction": "DALLAS COLLEGE", "homestead_exemption": "$49,200", "taxable_value": "$196,800" },
+                "hospital": { "taxing_jurisdiction": "PARKLAND HOSPITAL", "homestead_exemption": "$49,200", "taxable_value": "$196,800" },
+                "special_district": { "taxing_jurisdiction": "UNASSIGNED", "homestead_exemption": "$0", "taxable_value": "$0" }
+              }
+            },
+            { "year": 2023, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2022, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2021, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2020, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2019, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2018, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2017, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2016, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2015, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2014, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2013, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2012, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2011, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2010, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2009, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2008, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2007, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2006, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2005, "note": "No Exemptions", "exemptions": {} },
+            { "year": 2004, "note": "No Exemptions", "exemptions": {} },
+            {
+              "year": 2003,
+              "exemptions": {
+                "city": { "taxing_jurisdiction": "GARLAND", "homestead_exemption": "$5,000", "taxable_value": "$91,614" },
+                "school": { "taxing_jurisdiction": "GARLAND ISD", "homestead_exemption": "$15,000", "taxable_value": "$81,614" },
+                "county": { "taxing_jurisdiction": "DALLAS COUNTY", "homestead_exemption": "$19,322", "taxable_value": "$77,292" },
+                "college": { "taxing_jurisdiction": "DALLAS COLLEGE", "homestead_exemption": "$19,322", "taxable_value": "$77,292" },
+                "hospital": { "taxing_jurisdiction": "PARKLAND HOSPITAL", "homestead_exemption": "$19,322", "taxable_value": "$77,292" },
+                "special_district": { "taxing_jurisdiction": "UNASSIGNED", "homestead_exemption": "$0", "taxable_value": "$0" }
+              }
+            },
+            {
+              "year": 2002,
+              "exemptions": {
+                "city": { "taxing_jurisdiction": "GARLAND", "homestead_exemption": "$0", "taxable_value": "$87,831" },
+                "school": { "taxing_jurisdiction": "GARLAND ISD", "homestead_exemption": "$15,000", "taxable_value": "$72,831" },
+                "county": { "taxing_jurisdiction": "DALLAS COUNTY", "homestead_exemption": "$17,566", "taxable_value": "$70,265" },
+                "college": { "taxing_jurisdiction": "DALLAS COLLEGE", "homestead_exemption": "$17,566", "taxable_value": "$70,265" },
+                "hospital": { "taxing_jurisdiction": "PARKLAND HOSPITAL", "homestead_exemption": "$17,566", "taxable_value": "$70,265" },
+                "special_district": { "taxing_jurisdiction": "UNASSIGNED", "homestead_exemption": "$0", "taxable_value": "$0" }
+              }
+            },
+            {
+              "year": 2001,
+              "exemptions": {
+                "city": { "taxing_jurisdiction": "GARLAND", "homestead_exemption": "$0", "taxable_value": "$79,847" },
+                "school": { "taxing_jurisdiction": "GARLAND ISD", "homestead_exemption": "$15,000", "taxable_value": "$64,847" },
+                "county": { "taxing_jurisdiction": "DALLAS COUNTY", "homestead_exemption": "$15,969", "taxable_value": "$63,878" },
+                "college": { "taxing_jurisdiction": "DALLAS COLLEGE", "homestead_exemption": "$15,969", "taxable_value": "$63,878" },
+                "hospital": { "taxing_jurisdiction": "PARKLAND HOSPITAL", "homestead_exemption": "$15,969", "taxable_value": "$63,878" },
+                "special_district": { "taxing_jurisdiction": "UNASSIGNED", "homestead_exemption": "$0", "taxable_value": "$0" }
+              }
+            },
+            {
+              "year": 2000,
+              "exemptions": {
+                "city": { "taxing_jurisdiction": "GARLAND", "homestead_exemption": "$0", "taxable_value": "$72,589" },
+                "school": { "taxing_jurisdiction": "GARLAND ISD", "homestead_exemption": "$15,000", "taxable_value": "$57,589" },
+                "county": { "taxing_jurisdiction": "DALLAS COUNTY", "homestead_exemption": "$14,517", "taxable_value": "$58,072" },
+                "college": { "taxing_jurisdiction": "DALLAS COLLEGE", "homestead_exemption": "$14,517", "taxable_value": "$58,072" },
+                "hospital": { "taxing_jurisdiction": "PARKLAND HOSPITAL", "homestead_exemption": "$14,517", "taxable_value": "$58,072" },
+                "special_district": { "taxing_jurisdiction": "UNASSIGNED", "homestead_exemption": "$0", "taxable_value": "$0" }
+              }
+            },
+            {
+              "year": 1999,
+              "exemptions": {
+                "city": { "taxing_jurisdiction": "GARLAND", "homestead_exemption": "$0", "taxable_value": "$65,990" },
+                "school": { "taxing_jurisdiction": "GARLAND ISD", "homestead_exemption": "$15,000", "taxable_value": "$50,990" },
+                "county": { "taxing_jurisdiction": "DALLAS COUNTY", "homestead_exemption": "$13,198", "taxable_value": "$52,792" },
+                "college": { "taxing_jurisdiction": "DALLAS COLLEGE", "homestead_exemption": "$13,198", "taxable_value": "$52,792" },
+                "hospital": { "taxing_jurisdiction": "PARKLAND HOSPITAL", "homestead_exemption": "$13,198", "taxable_value": "$52,792" },
+                "special_district": { "taxing_jurisdiction": "UNASSIGNED", "homestead_exemption": "$0", "taxable_value": "$0" }
+              }
+            }
+          ]
+        },
+        "exemption_details": {
+          "details_url": "./ExemptDetails.aspx?ID=26272500060150000",
+          "applicant_name": "PATTERSON GREGORY SCOTT &",
+          "ownership_pct": "100%",
+          "homestead_date": "1/1/2024",
+          "homestead_pct": "100%",
+          "other": "UNASSIGNED",
+          "other_pct": "0%",
+          "other_disabled_date": "N/A",
+          "disabled_person": "UNASSIGNED",
+          "disabled_pct": "0%",
+          "tax_deferred": "UNASSIGNED",
+          "transferred": "N/A",
+          "defer": "$0",
+          "capped_homestead": "$0",
+          "market_value": "$246,000"
+        }
+      }
+    }
+  ]
+}

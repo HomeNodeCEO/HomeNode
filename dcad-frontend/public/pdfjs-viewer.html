@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Viewer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/web/pdf_viewer.css" />
+    <style>
+      html, body { height: 100%; margin: 0; }
+      #viewerContainer { position: absolute; inset: 0; overflow: auto; background: #f8fafc; }
+      .pdfViewer .page { margin: 12px auto; box-shadow: 0 1px 2px rgba(0,0,0,.08); background: white; }
+      /* Minimal, no toolbar: keep focus on form filling */
+    </style>
+  </head>
+  <body>
+    <div id="viewerContainer" class="viewerContainer">
+      <div id="viewer" class="pdfViewer"></div>
+    </div>
+
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const file = params.get('file') || '';
+      const container = document.getElementById('viewerContainer');
+
+      async function tryImportPdfjs() {
+        const sources = [
+          {
+            core: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.mjs',
+            worker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.mjs',
+            viewer: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/web/pdf_viewer.mjs',
+          },
+          {
+            core: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.mjs',
+            worker: 'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.mjs',
+            viewer: 'https://unpkg.com/pdfjs-dist@3.11.174/web/pdf_viewer.mjs',
+          },
+        ];
+        for (const s of sources) {
+          try {
+            const pdfjs = await import(s.core);
+            const viewerMod = await import(s.viewer);
+            pdfjs.GlobalWorkerOptions.workerSrc = s.worker;
+            return { pdfjs, viewerMod };
+          } catch (e) {
+            // try next source
+          }
+        }
+        return null;
+      }
+
+      async function init() {
+        const libs = await tryImportPdfjs();
+        if (!libs) {
+          // Fallback: native viewer
+          document.body.innerHTML = '';
+          const iframe = document.createElement('iframe');
+          iframe.title = 'PDF';
+          iframe.src = file;
+          iframe.style.cssText = 'position:absolute;inset:0;border:0;width:100%;height:100%';
+          document.body.appendChild(iframe);
+          window.addEventListener('message', (e) => {
+            if ((e.data||{}).type === 'SAVE_PDF') {
+              window.parent.postMessage({ type:'PDF_DATA_ERROR', error:'PDF.js not available; cannot export filled PDF.'}, '*');
+            }
+          });
+          return;
+        }
+
+        const { pdfjs, viewerMod } = libs;
+        const { EventBus, PDFLinkService, PDFViewer } = viewerMod;
+        const eventBus = new EventBus();
+        const linkService = new PDFLinkService({ eventBus });
+        const viewer = new PDFViewer({
+          container,
+          eventBus,
+          linkService,
+          textLayerMode: 2,
+          annotationMode: 2,
+          renderInteractiveForms: true,
+          enableScripting: true,
+        });
+        linkService.setViewer(viewer);
+
+        let pdfDoc = null;
+        try {
+          const task = pdfjs.getDocument({ url: file });
+          const pdf = await task.promise;
+          pdfDoc = pdf;
+          viewer.setDocument(pdf);
+          linkService.setDocument(pdf, null);
+        } catch (e) {
+          const div = document.createElement('div');
+          div.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#ef4444;font:14px sans-serif;';
+          div.textContent = 'Failed to load PDF.';
+          document.body.appendChild(div);
+          console.error('PDF load failed:', e);
+        }
+
+        // Allow parent window to request the filled/signed PDF bytes
+        window.addEventListener('message', async (ev) => {
+          const data = ev.data || {};
+          if (data && data.type === 'SAVE_PDF') {
+            try {
+              if (!pdfDoc) throw new Error('PDF not loaded');
+              const bytes = await pdfDoc.saveDocument();
+              const blob = new Blob([bytes], { type: 'application/pdf' });
+              const reader = new FileReader();
+              reader.onload = () => {
+                window.parent.postMessage({ type: 'PDF_DATA', dataURL: reader.result }, '*');
+              };
+              reader.readAsDataURL(blob);
+            } catch (err) {
+              window.parent.postMessage({ type: 'PDF_DATA_ERROR', error: String(err) }, '*');
+            }
+          }
+        });
+      }
+
+      init();
+    </script>
+  </body>
+  </html>

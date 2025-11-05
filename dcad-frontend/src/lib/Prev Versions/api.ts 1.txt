@@ -1,0 +1,125 @@
+// src/lib/api.ts
+// Compatibility-first helper for the frontend.
+// - Low-level: apiSearch/apiSearchAddress return arrays
+// - High-level (compat): searchByAddress/searchByQuery return {results: [...]}
+// - toSearchItems accepts array OR {results}/{rows}
+// - Default export includes both array and object variants
+
+export type ApiSearchRow = {
+  account_id: string;
+  owner: string | null;
+  situs_address: string | null;
+};
+
+export type SearchItem = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  raw?: ApiSearchRow;
+};
+
+function okOrThrow(res: Response): Response {
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  return res;
+}
+
+function looksLikeAccountId(q: string): boolean {
+  const s = (q || '').trim();
+  return /^[A-Za-z0-9]{8,}$/.test(s);
+}
+
+// ---- Low-level: arrays ----
+export async function apiSearch(q: string, limit = 25): Promise<ApiSearchRow[]> {
+  const url = `/api/search?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const data = await fetch(url).then(okOrThrow).then(r => r.json());
+  return (data?.results ?? []) as ApiSearchRow[];
+}
+
+export async function apiSearchAddress(q: string, limit = 25): Promise<ApiSearchRow[]> {
+  const url = `/search/address?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const data = await fetch(url).then(okOrThrow).then(r => r.json());
+  return (data?.results ?? []) as ApiSearchRow[];
+}
+
+// ---- Normalizers ----
+function normalizeRows(input: unknown): ApiSearchRow[] {
+  if (Array.isArray(input)) return input as ApiSearchRow[];
+  if (input && typeof input === 'object') {
+    const obj = input as any;
+    if (Array.isArray(obj.results)) return obj.results as ApiSearchRow[];
+    if (Array.isArray(obj.rows)) return obj.rows as ApiSearchRow[];
+  }
+  return [];
+}
+
+// ---- Mapping ----
+export function toSearchItems(input: unknown): SearchItem[] {
+  const rows = normalizeRows(input);
+  return rows.map((r) => {
+    const title = r.situs_address || r.owner || r.account_id;
+    const subtitle = r.owner ? `${r.owner} · ${r.account_id}` : r.account_id;
+    return { id: r.account_id, title, subtitle, raw: r };
+  });
+}
+
+export async function searchAndFormat(q: string, limit = 25): Promise<SearchItem[]> {
+  const rows = await apiSearch(q, limit);
+  return toSearchItems(rows);
+}
+
+// ---- Property details ----
+export type PropertyDetails = {
+  account_id: string;
+  meta: { owner?: string | null; situs_address?: string | null } | null;
+  primary: Record<string, unknown> | null;
+  secondary: Array<Record<string, unknown>>;
+};
+
+export async function fetchProperty(accountId: string): Promise<PropertyDetails> {
+  const url = `/api/accounts/${encodeURIComponent(accountId)}`;
+  const data = await fetch(url).then(okOrThrow).then(r => r.json());
+  return data as PropertyDetails;
+}
+
+// ---- High-level compatibility (object shape with {results}) ----
+export async function searchByAddress(q: string, limit = 25): Promise<{results: ApiSearchRow[]}> {
+  if (looksLikeAccountId(q)) {
+    const rows = await apiSearch(q, limit);
+    return { results: rows };
+  }
+  const addrRows = await apiSearchAddress(q, limit);
+  if (addrRows.length > 0) return { results: addrRows };
+  const rows = await apiSearch(q, limit);
+  return { results: rows };
+}
+
+export async function searchByQuery(q: string, limit = 25): Promise<{results: ApiSearchRow[]}> {
+  const rows = await apiSearch(q, limit);
+  return { results: rows };
+}
+
+// ---- Aliases ----
+export const searchProperties = apiSearch;
+export const searchByAccountOrAddress = apiSearch;
+export const searchOwnerOrAddress = apiSearch;
+export const search = apiSearch;
+
+// ---- Default export ----
+const api = {
+  // arrays
+  apiSearch,
+  apiSearchAddress,
+  // object-compat
+  searchByAddress,
+  searchByQuery,
+  // helpers
+  toSearchItems,
+  searchAndFormat,
+  fetchProperty,
+  // aliases
+  searchProperties,
+  searchByAccountOrAddress,
+  searchOwnerOrAddress,
+  search,
+};
+export default api;

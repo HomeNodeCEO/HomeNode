@@ -1,0 +1,572 @@
+mooolah_inc=#   - Set schema for convenience: SET search_path TO core, public;
+ERROR:  syntax error at or near "-"
+LINE 1: - Set schema for convenience: SET search_path TO core, publi...
+        ^
+mooolah_inc=#   - List tables: \dt core.*
+--------+-----------------------------+-------+----------
+ core   | accounts                    | table | postgres
+ core   | arb_hearing                 | table | postgres
+ core   | dcad_json_raw               | table | postgres
+ core   | estimated_taxes             | table | postgres
+ core   | estimated_taxes_total       | table | postgres
+ core   | exemption_breakdown_current | table | postgres
+ core   | exemptions_history          | table | postgres
+ core   | exemptions_summary          | table | postgres
+ core   | land_detail                 | table | postgres
+ core   | legal_description_history   | table | postgres
+ core   | market_values               | table | postgres
+ core   | owner_parties               | table | postgres
+ core   | owner_summary               | table | postgres
+ core   | ownership_history           | table | postgres
+ core   | primary_improvements        | table | postgres
+ core   | schema_contract             | table | postgres
+ core   | secondary_improvements      | table | postgres
+ core   | taxable_value_history       | table | postgres
+ core   | value_summary_current       | table | postgres
+ core   | value_summary_history       | table | postgres
+(22 rows)
+
+mooolah_inc-#   - Exit: \q
+PS C:\Users\jorda>
+PS C:\Users\jorda>   Quick selects (replace the account ID if needed)
+Invalid switch - ID
+Quick : The term 'Quick' is not recognized as the name of a cmdlet, function, script file, or operable
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and
+try again.
+At line:1 char:3
++   Quick selects (replace the account ID if needed)
++   ~~~~~
+    + CategoryInfo          : ObjectNotFound: (Quick:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+PS C:\Users\jorda>
+PS C:\Users\jorda>   - Primary improvements: SELECT * FROM core.primary_improvements WHERE account_id='26272500060150000';
+At line:1 char:4
++   - Primary improvements: SELECT * FROM core.primary_improvements WHE ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Primary improvements: SELECT * FROM core.primary_improvements WHE ...
++     ~~~~~~~
+Unexpected token 'Primary' in expression or statement.
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   - Secondary improvements: SELECT sec_imp_number, sec_imp_type, sec_imp_desc, sec_imp_sqft, sec_imp_value FROM
+At line:1 char:4
++   - Secondary improvements: SELECT sec_imp_number, sec_imp_type, sec_ ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Secondary improvements: SELECT sec_imp_number, sec_imp_type, sec_ ...
++     ~~~~~~~~~
+Unexpected token 'Secondary' in expression or statement.
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   core.secondary_improvements WHERE account_id='26272500060150000' ORDER BY sec_imp_number;
+core.secondary_improvements : The term 'core.secondary_improvements' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   core.secondary_improvements WHERE account_id='26272500060150000' OR ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (core.secondary_improvements:String) [], CommandNotFoundExc
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Owner summary: SELECT * FROM core.owner_summary WHERE account_id='26272500060150000' ORDER BY tax_year DESC LIMIT 1;
+At line:1 char:4
++   - Owner summary: SELECT * FROM core.owner_summary WHERE account_id= ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Owner summary: SELECT * FROM core.owner_summary WHERE account_id= ...
++     ~~~~~
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   - Owner parties: SELECT owner_name, ownership_pct, tax_year FROM core.owner_parties WHERE
+At line:1 char:4
++   - Owner parties: SELECT owner_name, ownership_pct, tax_year FROM co ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Owner parties: SELECT owner_name, ownership_pct, tax_year FROM co ...
+Unexpected token 'Owner' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000' ORDER BY tax_year DESC, owner_name;
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000' ORDER BY tax_year DESC, owner_name;
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Value summary (current): SELECT certified_year, improvement_value, land_value, market_value, capped_value FROM
+At line:1 char:4
++   - Value summary (current): SELECT certified_year, improvement_value ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Value summary (current): SELECT certified_year, improvement_value ...
+Unexpected token 'Value' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   core.value_summary_current WHERE account_id='26272500060150000';
+core.value_summary_current : The term 'core.value_summary_current' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (core.value_summary_current:String) [], CommandNotFoundExce
+   ption
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Market value history: SELECT tax_year, imp_value, land_value, total_market_value FROM core.market_value_history
+At line:1 char:4
++   - Market value history: SELECT tax_year, imp_value, land_value, tot ...
++    ~
+Missing expression after unary operator '-'.
++   - Market value history: SELECT tax_year, imp_value, land_value, tot ...
++     ~~~~~~
+Unexpected token 'Market' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   WHERE account_id='26272500060150000' ORDER BY tax_year DESC LIMIT 5;
+Where-Object : A positional parameter cannot be found that accepts argument 'BY'.
+At line:1 char:3
++   WHERE account_id='26272500060150000' ORDER BY tax_year DESC LIMIT 5 ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + FullyQualifiedErrorId : PositionalParameterNotFound,Microsoft.PowerShell.Commands.WhereObjectComman
+   d
+
+PS C:\Users\jorda>   - Taxable value history: SELECT tax_year, jurisdiction_key, taxable_value FROM core.taxable_value_history WHERE
+At line:1 char:4
++   - Taxable value history: SELECT tax_year, jurisdiction_key, taxable ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Taxable value history: SELECT tax_year, jurisdiction_key, taxable ...
++     ~~~~~~~
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000' ORDER BY tax_year DESC, jurisdiction_key;
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000' ORDER BY tax_year DESC, jurisdiction ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (account_id=26272500060150000:String) [], CommandNotFoundEx
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Exemptions (current): SELECT jurisdiction_key, taxing_jurisdiction, homestead_exemption, taxable_value FROM
+At line:1 char:4
++   - Exemptions (current): SELECT jurisdiction_key, taxing_jurisdictio ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Exemptions (current): SELECT jurisdiction_key, taxing_jurisdictio ...
++     ~~~~~~~~~~
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   core.exemptions_summary WHERE account_id='26272500060150000' ORDER BY jurisdiction_key;
+core.exemptions_summary : The term 'core.exemptions_summary' is not recognized as the name of a cmdlet,
+function, script file, or operable program. Check the spelling of the name, or if a path was included,
+verify that the path is correct and try again.
+At line:1 char:3
++   core.exemptions_summary WHERE account_id='26272500060150000' ORDER  ...
++   ~~~~~~~~~~~~~~~~~~~~~~~
+   on
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Land detail: SELECT tax_year, line_number, zoning, area_sqft, unit_price, adjusted_price FROM core.land_detail WHERE
+At line:1 char:4
++   - Land detail: SELECT tax_year, line_number, zoning, area_sqft, uni ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Land detail: SELECT tax_year, line_number, zoning, area_sqft, uni ...
+Unexpected token 'Land' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000' ORDER BY line_number;
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000' ORDER BY line_number;
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Legal description (JSON): SELECT tax_year, legal_lines FROM core.legal_description_current WHERE
+At line:1 char:4
++   - Legal description (JSON): SELECT tax_year, legal_lines FROM core. ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Legal description (JSON): SELECT tax_year, legal_lines FROM core. ...
+Unexpected token 'Legal' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000';
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (account_id=26272500060150000:String) [], CommandNotFoundEx
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Ownership history: SELECT observed_year, deed_transfer_date_raw, deed_transfer_date FROM core.ownership_history
+At line:1 char:4
++   - Ownership history: SELECT observed_year, deed_transfer_date_raw,  ...
++    ~
+Missing expression after unary operator '-'.
++   - Ownership history: SELECT observed_year, deed_transfer_date_raw,  ...
++     ~~~~~~~~~
+Unexpected token 'Ownership' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   WHERE account_id='26272500060150000' ORDER BY observed_year DESC;
+Where-Object : A positional parameter cannot be found that accepts argument 'BY'.
+At line:1 char:3
++   WHERE account_id='26272500060150000' ORDER BY observed_year DESC;
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + FullyQualifiedErrorId : PositionalParameterNotFound,Microsoft.PowerShell.Commands.WhereObjectComman
+   d
+
+PS C:\Users\jorda>   - Estimated taxes total: SELECT tax_year, total_estimated FROM core.estimated_taxes_total WHERE
+At line:1 char:4
++   - Estimated taxes total: SELECT tax_year, total_estimated FROM core ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Estimated taxes total: SELECT tax_year, total_estimated FROM core ...
+Unexpected token 'Estimated' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000';
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000';
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Command: "C:\Program Files\PostgreSQL\16\bin\psql.exe" -h 127.0.0.1 -U postgres -d mooolah_inc
+At line:1 char:4
++   - Command: "C:\Program Files\PostgreSQL\16\bin\psql.exe" -h 127.0.0 ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Command: "C:\Program Files\PostgreSQL\16\bin\psql.exe" -h 127.0.0 ...
+Unexpected token 'Command:' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   - Set schema for convenience: SET search_path TO core, public;
+At line:1 char:4
++   - Set schema for convenience: SET search_path TO core, public;
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Set schema for convenience: SET search_path TO core, public;
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   - List tables: \dt core.*
+At line:1 char:4
++   - List tables: \dt core.*
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - List tables: \dt core.*
+Unexpected token 'List' in expression or statement.
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   - Exit: \q
+At line:1 char:4
++   - Exit: \q
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Exit: \q
++     ~~~~~
+Unexpected token 'Exit:' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+
+PS C:\Users\jorda>
+PS C:\Users\jorda>   Quick selects (replace the account ID if needed)
+Invalid switch - ID
+Quick : The term 'Quick' is not recognized as the name of a cmdlet, function, script file, or operable
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and
+try again.
+At line:1 char:3
++   Quick selects (replace the account ID if needed)
++   ~~~~~
+    + CategoryInfo          : ObjectNotFound: (Quick:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+PS C:\Users\jorda>
+PS C:\Users\jorda>   - Primary improvements: SELECT * FROM core.primary_improvements WHERE account_id='26272500060150000';
+At line:1 char:4
++   - Primary improvements: SELECT * FROM core.primary_improvements WHE ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Primary improvements: SELECT * FROM core.primary_improvements WHE ...
++     ~~~~~~~
+Unexpected token 'Primary' in expression or statement.
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   - Secondary improvements: SELECT sec_imp_number, sec_imp_type, sec_imp_desc, sec_imp_sqft, sec_imp_value FROM
+At line:1 char:4
++   - Secondary improvements: SELECT sec_imp_number, sec_imp_type, sec_ ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Secondary improvements: SELECT sec_imp_number, sec_imp_type, sec_ ...
++     ~~~~~~~~~
+Unexpected token 'Secondary' in expression or statement.
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   core.secondary_improvements WHERE account_id='26272500060150000' ORDER BY sec_imp_number;
+core.secondary_improvements : The term 'core.secondary_improvements' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   core.secondary_improvements WHERE account_id='26272500060150000' OR ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (core.secondary_improvements:String) [], CommandNotFoundExc
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Owner summary: SELECT * FROM core.owner_summary WHERE account_id='26272500060150000' ORDER BY tax_year DESC LIMIT 1;
+At line:1 char:4
++   - Owner summary: SELECT * FROM core.owner_summary WHERE account_id= ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Owner summary: SELECT * FROM core.owner_summary WHERE account_id= ...
++     ~~~~~
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   - Owner parties: SELECT owner_name, ownership_pct, tax_year FROM core.owner_parties WHERE
+At line:1 char:4
++   - Owner parties: SELECT owner_name, ownership_pct, tax_year FROM co ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Owner parties: SELECT owner_name, ownership_pct, tax_year FROM co ...
+Unexpected token 'Owner' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000' ORDER BY tax_year DESC, owner_name;
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000' ORDER BY tax_year DESC, owner_name;
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Value summary (current): SELECT certified_year, improvement_value, land_value, market_value, capped_value FROM
+At line:1 char:4
++   - Value summary (current): SELECT certified_year, improvement_value ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Value summary (current): SELECT certified_year, improvement_value ...
+Unexpected token 'Value' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   core.value_summary_current WHERE account_id='26272500060150000';
+core.value_summary_current : The term 'core.value_summary_current' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (core.value_summary_current:String) [], CommandNotFoundExce
+   ption
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Market value history: SELECT tax_year, imp_value, land_value, total_market_value FROM core.market_value_history
+At line:1 char:4
++   - Market value history: SELECT tax_year, imp_value, land_value, tot ...
++    ~
+Missing expression after unary operator '-'.
++   - Market value history: SELECT tax_year, imp_value, land_value, tot ...
++     ~~~~~~
+Unexpected token 'Market' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   WHERE account_id='26272500060150000' ORDER BY tax_year DESC LIMIT 5;
+Where-Object : A positional parameter cannot be found that accepts argument 'BY'.
+At line:1 char:3
++   WHERE account_id='26272500060150000' ORDER BY tax_year DESC LIMIT 5 ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + FullyQualifiedErrorId : PositionalParameterNotFound,Microsoft.PowerShell.Commands.WhereObjectComman
+   d
+
+PS C:\Users\jorda>   - Taxable value history: SELECT tax_year, jurisdiction_key, taxable_value FROM core.taxable_value_history WHERE
+At line:1 char:4
++   - Taxable value history: SELECT tax_year, jurisdiction_key, taxable ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Taxable value history: SELECT tax_year, jurisdiction_key, taxable ...
++     ~~~~~~~
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000' ORDER BY tax_year DESC, jurisdiction_key;
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000' ORDER BY tax_year DESC, jurisdiction ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (account_id=26272500060150000:String) [], CommandNotFoundEx
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Exemptions (current): SELECT jurisdiction_key, taxing_jurisdiction, homestead_exemption, taxable_value FROM
+At line:1 char:4
++   - Exemptions (current): SELECT jurisdiction_key, taxing_jurisdictio ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Exemptions (current): SELECT jurisdiction_key, taxing_jurisdictio ...
++     ~~~~~~~~~~
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   core.exemptions_summary WHERE account_id='26272500060150000' ORDER BY jurisdiction_key;
+core.exemptions_summary : The term 'core.exemptions_summary' is not recognized as the name of a cmdlet,
+function, script file, or operable program. Check the spelling of the name, or if a path was included,
+verify that the path is correct and try again.
+At line:1 char:3
++   core.exemptions_summary WHERE account_id='26272500060150000' ORDER  ...
++   ~~~~~~~~~~~~~~~~~~~~~~~
+   on
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Land detail: SELECT tax_year, line_number, zoning, area_sqft, unit_price, adjusted_price FROM core.land_detail WHERE
+At line:1 char:4
++   - Land detail: SELECT tax_year, line_number, zoning, area_sqft, uni ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Land detail: SELECT tax_year, line_number, zoning, area_sqft, uni ...
+Unexpected token 'Land' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000' ORDER BY line_number;
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000' ORDER BY line_number;
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Legal description (JSON): SELECT tax_year, legal_lines FROM core.legal_description_current WHERE
+At line:1 char:4
++   - Legal description (JSON): SELECT tax_year, legal_lines FROM core. ...
++    ~
+Missing expression after unary operator '-'.
+At line:1 char:5
++   - Legal description (JSON): SELECT tax_year, legal_lines FROM core. ...
+Unexpected token 'Legal' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000';
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (account_id=26272500060150000:String) [], CommandNotFoundEx
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>   - Ownership history: SELECT observed_year, deed_transfer_date_raw, deed_transfer_date FROM core.ownership_history
+At line:1 char:4
++   - Ownership history: SELECT observed_year, deed_transfer_date_raw,  ...
++    ~
+Missing expression after unary operator '-'.
++   - Ownership history: SELECT observed_year, deed_transfer_date_raw,  ...
++     ~~~~~~~~~
+Unexpected token 'Ownership' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   WHERE account_id='26272500060150000' ORDER BY observed_year DESC;
+Where-Object : A positional parameter cannot be found that accepts argument 'BY'.
+At line:1 char:3
++   WHERE account_id='26272500060150000' ORDER BY observed_year DESC;
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + FullyQualifiedErrorId : PositionalParameterNotFound,Microsoft.PowerShell.Commands.WhereObjectComman
+   d
+
+PS C:\Users\jorda>   - Estimated taxes total: SELECT tax_year, total_estimated FROM core.estimated_taxes_total WHERE
+At line:1 char:4
++   - Estimated taxes total: SELECT tax_year, total_estimated FROM core ...
++    ~
+At line:1 char:5
++   - Estimated taxes total: SELECT tax_year, total_estimated FROM core ...
++     ~~~~~~~~~
+Unexpected token 'Estimated' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingExpressionAfterOperator
+
+PS C:\Users\jorda>   account_id='26272500060150000';
+account_id=26272500060150000 : The term 'account_id=26272500060150000' is not recognized as the name of a
+cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was
+included, verify that the path is correct and try again.
+At line:1 char:3
++   account_id='26272500060150000';
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (account_id=26272500060150000:String) [], CommandNotFoundEx
+   ception
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda> PS C:\Users\jorda> & "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U postgres -d mooolah_inc
+At line:1 char:20
++ PS C:\Users\jorda> & "C:\Program Files\PostgreSQL\16\bin\psql.exe" -U ...
++                    ~
+The ampersand (&) character is not allowed. The & operator is reserved for future use; wrap an ampersand
+in double quotation marks ("&") to pass it as part of a string.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : AmpersandNotAllowed
+
+PS C:\Users\jorda> psql (16.10)
+psql : The term 'psql' is not recognized as the name of a cmdlet, function, script file, or operable
+program. Check the spelling of the name, or if a path was included, verify that the path is correct and
+try again.
+At line:1 char:1
++ psql (16.10)
++ ~~~~
+    + CategoryInfo          : ObjectNotFound: (psql:String) [], CommandNotFoundException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+PS C:\Users\jorda>

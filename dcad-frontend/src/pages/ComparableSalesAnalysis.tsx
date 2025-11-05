@@ -764,10 +764,10 @@ export default function ComparableSalesAnalysis() {
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Above Grade</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
-                      <div className="grid grid-cols-3 divide-x divide-slate-300 text-sm">
-                        <div className="text-center">Total</div>
-                        <div className="text-center">Beds</div>
-                        <div className="text-center">Baths</div>
+                      <div className="grid grid-cols-3 text-sm h-5">
+                        <div className="text-center h-full flex items-center justify-center">Total</div>
+                        <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>Beds</div>
+                        <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>Baths</div>
                       </div>
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
@@ -793,10 +793,10 @@ export default function ComparableSalesAnalysis() {
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Room Count</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
-                      <div className="grid grid-cols-3 divide-x divide-slate-300 text-sm">
-                        <div className="text-center">{subjectTotalRooms ?? ''}</div>
-                        <div className="text-center">{subjectBedrooms ?? ''}</div>
-                        <div className="text-center">{subjectBathsDisplay}</div>
+                      <div className="grid grid-cols-3 text-sm h-5">
+                        <div className="text-center h-full flex items-center justify-center">{subjectTotalRooms ?? ''}</div>
+                        <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{subjectBedrooms ?? ''}</div>
+                        <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{subjectBathsDisplay}</div>
                       </div>
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [

@@ -1128,7 +1128,13 @@ export default function ComparableSalesAnalysis() {
                   </tr>
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Room Count</td>
-                    <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}></td>
+                    <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
+                      <div className="grid grid-cols-3 text-sm h-5">
+                        <div className="text-center h-full flex items-center justify-center">{subjectTotalRooms ?? '-'}</div>
+                        <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{subjectBedrooms ?? '-'}</div>
+                        <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{subjectBathsDisplay || '-'}</div>
+                      </div>
+                    </td>
                     {Array.from({ length: 4 }).map((_, i) => [
                       <td
                         key={`eq-rooms-desc-${i}`}

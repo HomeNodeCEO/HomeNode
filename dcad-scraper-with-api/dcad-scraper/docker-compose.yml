@@ -1,0 +1,40 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16
+    container_name: dcad_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+
+  scraper:
+    build: { context: ./scraper }
+    container_name: dcad_scraper
+    depends_on: [db]
+    env_file: [./scraper/.env]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}
+    command: ["python", "run_once.py"]
+
+  api:
+    build:
+      context: ./scraper
+      dockerfile: ./api/Dockerfile
+    container_name: dcad_api
+    depends_on:
+      - db
+    env_file:
+      - ./scraper/.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@db:5432/postgres}
+    ports:
+      - "8000:8000"
+
+
+
+volumes: { pgdata: {} }

@@ -1,0 +1,22 @@
+Batch scrape and upsert from CSV
+
+1) Activate venv
+   . .\venv\Scripts\Activate.ps1
+
+2) Set database env vars (PowerShell)
+   # Encode your password if it has special characters
+   $pwdEnc = [uri]::EscapeDataString('YOUR_PASSWORD_HERE')
+   $env:DATABASE_URL = "postgresql+psycopg2://postgres:$pwdEnc@127.0.0.1:5432/mooolah_inc"
+   $env:DB_SCHEMA = 'core'
+
+3) Ensure DB driver is installed (only once)
+   .\venv\Scripts\pip.exe install SQLAlchemy psycopg2-binary python-dotenv
+
+4) Run the batch with your CSV
+   python -m dcad.run_batch "C:\Users\jorda\OneDrive\Documents\Moolah Business\Data\Dallas County\Edited Data\SCRAPE LIST.csv"
+
+Notes
+- Upserts prevent duplicates (ON CONFLICT/replace semantics).
+- Bedroom count and Tax Agent are included in upserts.
+- Adjust delay between accounts with env var: $env:BATCH_DELAY_SEC = '1.5'
+

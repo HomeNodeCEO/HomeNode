@@ -1,0 +1,14 @@
+Stop the running API
+
+Option A (graceful):
+ - Focus the API window and press Ctrl+C
+
+Option B (from any PowerShell):
+ - Stop all uvicorn processes:
+     Get-Process uvicorn -ErrorAction SilentlyContinue | Stop-Process
+
+ - Or stop by port 8000:
+     (Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue \
+        | ForEach-Object { Get-Process -Id $_.OwningProcess } \
+        | Select-Object -Unique) | Stop-Process
+

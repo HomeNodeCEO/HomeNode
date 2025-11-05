@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import asyncio
+import inspect
+from typing import Any, Dict, Optional
+
+import httpx
+from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi.middleware.cors import CORSMiddleware
+
+# Try both import paths to match your repo
+try:
+    from dcad.parse_detail import parse_detail_html  # when running from scraper/
+except Exception:
+    try:
+        from scraper.dcad.parse_detail import parse_detail_html  # when running from repo root
+    except Exception as e:
+        parse_detail_html = None  # we'll raise later
+
+app = FastAPI(title="DCAD scraper API (compat)")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten in prod
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+BASE_URL = "https://www.dallascad.org"
+DETAIL_PATH = "/AcctDetail.aspx?ID={account_id}"
+HISTORY_PATH = "/AcctHistory.aspx?ID={account_id}"
+EXEMPT_PATH = "/ExemptDetails.aspx?ID={account_id}"
+
+UA_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127 Safari/537.36",
+}
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+async def fetch_text(client: httpx.AsyncClient, url: str) -> str:
+    r = await client.get(url, timeout=30.0)
+    r.raise_for_status()
+    return r.text
+
+def _call_parser_compat(
+    html_detail: Optional[str],
+    html_history: Optional[str],
+    html_exempt: Optional[str],
+) -> Dict[str, Any]:
+    if parse_detail_html is None:
+        raise HTTPException(status_code=500, detail="Parser not importable")
+
+    sig = inspect.signature(parse_detail_html)
+    params = sig.parameters
+
+    # Build a superset kwargs dict. We'll filter to the parser's accepted names.
+    superset = {
+        # common names
+        "account_html": html_detail,
+        "detail_html": html_detail,
+        "html": html_detail,
+        # history as a single page
+        "history_html": html_history,
+        # split history (older versions)
+        "history_owner_html": html_history,
+        "history_market_html": html_history,
+        "history_taxable_html": html_history,
+        # exemption details
+        "exemption_details_html": html_exempt,
+        "exempt_details_html": html_exempt,
+    }
+
+    kwargs = {k: v for k, v in superset.items() if k in params}
+
+    # Ensure at least something is being passed
+    if not kwargs:
+        # last resort: try a single positional call
+        try:
+            return parse_detail_html(html_detail)  # type: ignore[misc]
+        except TypeError as te:
+            raise HTTPException(status_code=500, detail=f"failed_to_parse_detail: {te}")
+
+    try:
+        return parse_detail_html(**kwargs)  # type: ignore[arg-type]
+    except TypeError as te:
+        # One more attempt: if parser exposes 'html' only
+        if "html" in params and "html" not in kwargs and html_detail is not None:
+            try:
+                return parse_detail_html(html=html_detail)  # type: ignore[misc]
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"failed_to_parse_detail: {te}")
+
+@app.get("/detail/{account_id}")
+async def detail(
+    account_id: str = Path(..., min_length=17, max_length=17, description="17-char DCAD account id"),
+    include_exemption_details: bool = Query(default=True, description="scrape the ExemptDetails page too"),
+):
+    async with httpx.AsyncClient(base_url=BASE_URL, headers=UA_HEADERS) as client:
+        detail_url = DETAIL_PATH.format(account_id=account_id)
+        history_url = HISTORY_PATH.format(account_id=account_id)
+        exempt_url = EXEMPT_PATH.format(account_id=account_id)
+
+        tasks = [
+            fetch_text(client, detail_url),
+            fetch_text(client, history_url),
+        ]
+        if include_exemption_details:
+            tasks.append(fetch_text(client, exempt_url))
+
+        try:
+            results = await asyncio.gather(*tasks)
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(status_code=502, detail=f"upstream_error: {e.response.status_code} at {e.request.url}")
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"fetch_failed: {e}")
+
+        html_detail = results[0] if len(results) >= 1 else None
+        html_history = results[1] if len(results) >= 2 else None
+        html_exempt  = results[2] if len(results) >= 3 else None
+
+    parsed = _call_parser_compat(html_detail, html_history, html_exempt)
+
+    # Attach a stable envelope like your earlier JSON
+    return {
+        "account_id": account_id,
+        "detail": parsed,
+    }

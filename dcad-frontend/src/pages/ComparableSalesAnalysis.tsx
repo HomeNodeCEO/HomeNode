@@ -1018,7 +1018,9 @@ export default function ComparableSalesAnalysis() {
                   </tr>
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Value vs Sales</td>
-                    <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}></td>
+                    <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
+                      {fmtCurrency(subject?.market_value ?? '')}
+                    </td>
                     {Array.from({ length: 4 }).map((_, i) => [
                       <td key={`eq-v-desc-${i}`} className="px-4 py-2 border-b border-slate-200"></td>,
                       <td
@@ -1054,20 +1056,53 @@ export default function ComparableSalesAnalysis() {
                     'Class',
                     'Actual Age',
                     'Condition/Updating',
-                  ].map((label) => (
-                    <tr key={`eq-${label}`}>
-                      <td className="px-4 py-2 border-b border-slate-200 bg-white">{label}</td>
-                      <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}></td>
-                      {Array.from({ length: 4 }).map((_, i) => [
-                        <td key={`eq-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
-                        <td
-                          key={`eq-${label}-adj-${i}`}
-                          className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                        ></td>,
-                      ])}
-                    </tr>
-                  ))}
+                  ].map((label) => {
+                    let subjectValue: any = '';
+                    switch (label) {
+                      case 'Concessions':
+                        subjectValue = 0;
+                        break;
+                      case 'NBHD Code':
+                        subjectValue = subject?.nbhd_code || '';
+                        break;
+                      case 'Date of Sale/Time':
+                        subjectValue = '';
+                        break;
+                      case 'Land Size':
+                        subjectValue = fmtSqftSafe(subject?.land_size_sqft ?? null);
+                        break;
+                      case 'View':
+                        subjectValue = subject?.view || 'Neutral';
+                        break;
+                      case 'Const Type':
+                        subjectValue = subject?.construction_type || '';
+                        break;
+                      case 'Class':
+                        subjectValue = subject?.building_class || '';
+                        break;
+                      case 'Actual Age':
+                        subjectValue = subject?.actual_age ?? '';
+                        break;
+                      default:
+                        subjectValue = '';
+                    }
+                    return (
+                      <tr key={`eq-${label}`}>
+                        <td className="px-4 py-2 border-b border-slate-200 bg-white">{label}</td>
+                        <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
+                          {subjectValue}
+                        </td>
+                        {Array.from({ length: 4 }).map((_, i) => [
+                          <td key={`eq-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
+                          <td
+                            key={`eq-${label}-adj-${i}`}
+                            className="px-4 py-2 border-b border-slate-200 border-r"
+                            style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                          ></td>,
+                        ])}
+                      </tr>
+                    );
+                  })}
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Above Grade</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>

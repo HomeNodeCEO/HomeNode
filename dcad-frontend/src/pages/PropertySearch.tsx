@@ -122,17 +122,18 @@ export default function PropertySearchPage() {
       .trim();
   }
 
-  async function runSearch() {
+  // Fetch results only (no navigation); returns fetched items
+  async function runSearch(): Promise<SearchItem[]> {
     const query = q.trim();
     if (!query) {
       setResults([]);
-      return;
+      return [];
     }
-    const isExactId = /^\d{17}$/.test(query);
     setLoading(true);
     setErr(null);
+    let items: SearchItem[] = [];
     try {
-      const items = await requestItems(query, 25);
+      items = await requestItems(query, 25);
       setResults(items);
       if (!items || items.length === 0) {
         setErr('No results found');
@@ -141,6 +142,15 @@ export default function PropertySearchPage() {
       setErr(String(e?.message || e));
     } finally {
       setLoading(false);
+    }
+    return items;
+  }
+
+  // Explicit navigation: on Search button click, go to first result (same as top tile)
+  async function goToTopResult() {
+    const items = results.length > 0 ? results : await runSearch();
+    if (items && items.length > 0) {
+      navigate(`/report/${encodeURIComponent(items[0].id)}`);
     }
   }
 
@@ -189,7 +199,7 @@ export default function PropertySearchPage() {
           />
         </Labeled>
 
-        <button onClick={runSearch} className="btn">
+        <button type="button" onClick={goToTopResult} className="btn">
           Search
         </button>
       </div>
@@ -283,3 +293,5 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
     </label>
   );
 }
+
+

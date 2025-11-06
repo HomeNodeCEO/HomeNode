@@ -14,6 +14,7 @@ type SubjectData = {
   construction_type?: string | null;
   building_class?: string | null;
   actual_age?: number | string | null;
+  stories?: number | string | null;
   bedroom_count?: number | string | null;
   baths_full?: number | string | null;
   baths_half?: number | string | null;
@@ -332,6 +333,7 @@ export default function ComparableSalesAnalysis() {
             construction_type: imp?.construction_type ?? null,
             building_class: (imp as any)?.building_class ?? null,
             actual_age: imp?.actual_age ?? null,
+            stories: (imp as any)?.stories ?? null,
             land_size_sqft: null,
             bedroom_count: (imp as any)?.bedroom_count ?? null,
             bath_count: (imp as any)?.bath_count ?? null,
@@ -397,6 +399,7 @@ export default function ComparableSalesAnalysis() {
               construction_type: prev?.construction_type ?? (mi?.construction_type ?? null),
               building_class: prev?.building_class ?? (mi?.building_class ?? null),
               actual_age: prev?.actual_age ?? (mi?.actual_age ?? null),
+              stories: prev?.stories ?? ((mi as any)?.stories ?? (mi as any)?.stories_text ?? null),
               bedroom_count: prev?.bedroom_count ?? ((mi as any)?.bedroom_count ?? (detail as any)?.bedroom_count ?? null),
               baths_full: prev?.baths_full ?? ((mi as any)?.baths_full ?? null),
               baths_half: prev?.baths_half ?? ((mi as any)?.baths_half ?? null),
@@ -864,7 +867,7 @@ export default function ComparableSalesAnalysis() {
                         subjectValue = subject?.view || 'Neutral';
                         break;
                       case 'Const Type':
-                        subjectValue = subject?.construction_type || '';
+                        subjectValue = (subject?.stories ?? '') || '';
                         break;
                       case 'Class':
                         subjectValue = subject?.building_class || '';
@@ -889,9 +892,11 @@ export default function ComparableSalesAnalysis() {
                                 ? (subject?.nbhd_code || '')
                                 : label === 'Date of Sale/Time'
                                   ? (compSaleDates[i] || '')
-                                  : label === 'Land Size'
-                                    ? fmtSqftSafe((compLandSize || [])[i] ?? '')
-                                    : ''}
+                              : label === 'Land Size'
+                                ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'View'
+                                ? ((subject?.view || 'Neutral') as any)
+                                : ''}
                           </td>,
                           <td
                             key={`${label}-adj-${i}`}
@@ -1241,7 +1246,7 @@ export default function ComparableSalesAnalysis() {
                         subjectValue = subject?.view || 'Neutral';
                         break;
                       case 'Const Type':
-                        subjectValue = subject?.construction_type || '';
+                        subjectValue = (subject?.stories ?? '') || '';
                         break;
                       case 'Class':
                         subjectValue = subject?.building_class || '';
@@ -1266,9 +1271,11 @@ export default function ComparableSalesAnalysis() {
                                 ? (subject?.nbhd_code || '')
                                 : label === 'Date of Sale/Time'
                                   ? (compSaleDates[i] || '')
-                                  : label === 'Land Size'
-                                    ? fmtSqftSafe((compLandSize || [])[i] ?? '')
-                                    : ''}
+                              : label === 'Land Size'
+                                ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'View'
+                                ? ((subject?.view || 'Neutral') as any)
+                                : ''}
                           </td>,
                           <td
                             key={`eq-${label}-adj-${i}`}

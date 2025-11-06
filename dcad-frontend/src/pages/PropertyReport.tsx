@@ -935,6 +935,26 @@ function OwnerAndLegal({ detail }: { detail: DcadDetail | null }) {
   );
 }
 
+// Simple collapsible wrapper used for sections
+function Collapsible({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div>
+      <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpen(v => !v)}>
+        <div className="text-base font-semibold">{title}</div>
+        <svg className={`w-4 h-4 text-slate-600 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.17l3.71-2.94a.75.75 0 11.92 1.18l-4.25 3.37a.75.75 0 01-.92 0L5.21 8.41a.75.75 0 01.02-1.2z" clipRule="evenodd" />
+        </svg>
+      </button>
+      {open && (
+        <div className="mt-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* (Value Summary card removed; information shown in Address Hero) */
 
 function PropertySpecs({ detail }: { detail: DcadDetail | null }) {
@@ -944,7 +964,7 @@ function PropertySpecs({ detail }: { detail: DcadDetail | null }) {
   const bedsNum = typeof bedsRaw === 'string' ? Number(String(bedsRaw).replace(/[^0-9.-]/g, '')) : Number(bedsRaw);
   const totalRoomCount = Number.isFinite(bedsNum) ? bedsNum + 3 : undefined;
   return (
-    <SectionCard title="Property Specifications">
+    <div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <LabelValue label="Year Built" value={m?.year_built} />
         <LabelValue label="Effective Year" value={m?.effective_year_built} />
@@ -974,7 +994,7 @@ function PropertySpecs({ detail }: { detail: DcadDetail | null }) {
         <LabelValue label="Sauna" value={m?.sauna} />
         <LabelValue label="Total Room Count" value={totalRoomCount} />
       </div>
-    </SectionCard>
+    </div>
   );
 }
 
@@ -1542,28 +1562,53 @@ export default function PropertyReport() {
 
         {/* Value Summary removed (duplicated by Address Hero) */}
 
-        {/* Specs (full width) */}
-        <PropertySpecs detail={detail} />
-
-        {/* Land + Additional Improvements */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <LandDetails rows={detail?.land_detail} />
-          {(() => {
-            const src = (detail?.additional_improvements || []) as any[];
-            const normalized = src.map((r, i) => ({
-              number: r.number ?? r.imp_num ?? i + 1,
-              improvement_type: r.improvement_type ?? r.imp_type ?? '',
-              construction: r.construction ?? '',
-              floor: r.floor ?? r.floor_type ?? '',
-              exterior_wall: r.exterior_wall ?? r.ext_wall ?? '',
-              area_sqft: r.area_sqft ?? r.area_size ?? '',
-            }));
-            return <AdditionalImprovements rows={normalized as any} />;
-          })()}
+        {/* Collapsible: Property Specifications (default collapsed) */}
+        <div className="card bg-white shadow-sm rounded-2xl">
+          <div className="card-body p-4">
+            <Collapsible title="Property Specifications" defaultOpen={false}>
+              <PropertySpecs detail={detail} />
+            </Collapsible>
+          </div>
         </div>
 
-        {/* Exemptions map */}
-        <ExemptionsCard ex={detail?.exemptions} />
+        {/* Land + Additional Improvements */}
+        {/* Collapsible: Land Details */}
+        <div className="card bg-white shadow-sm rounded-2xl">
+          <div className="card-body p-4">
+            <Collapsible title="Land Details" defaultOpen={false}>
+              <LandDetails rows={detail?.land_detail} />
+            </Collapsible>
+          </div>
+        </div>
+
+        {/* Collapsible: Additional Improvements */}
+        <div className="card bg-white shadow-sm rounded-2xl">
+          <div className="card-body p-4">
+            <Collapsible title="Additional Improvements" defaultOpen={false}>
+              {(() => {
+                const src = (detail?.additional_improvements || []) as any[];
+                const normalized = src.map((r, i) => ({
+                  number: r.number ?? r.imp_num ?? i + 1,
+                  improvement_type: r.improvement_type ?? r.imp_type ?? '',
+                  construction: r.construction ?? '',
+                  floor: r.floor ?? r.floor_type ?? '',
+                  exterior_wall: r.exterior_wall ?? r.ext_wall ?? '',
+                  area_sqft: r.area_sqft ?? r.area_size ?? '',
+                }));
+                return <AdditionalImprovements rows={normalized as any} />;
+              })()}
+            </Collapsible>
+          </div>
+        </div>
+
+        {/* Collapsible: Exemptions */}
+        <div className="card bg-white shadow-sm rounded-2xl">
+          <div className="card-body p-4">
+            <Collapsible title="Exemptions" defaultOpen={false}>
+              <ExemptionsCard ex={detail?.exemptions} />
+            </Collapsible>
+          </div>
+        </div>
 
         {/* Exemption details */}
         <ExemptionDetailsCard d={detail?.exemption_details} />

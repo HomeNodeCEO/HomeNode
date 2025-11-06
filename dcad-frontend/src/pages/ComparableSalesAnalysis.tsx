@@ -1113,7 +1113,7 @@ export default function ComparableSalesAnalysis() {
                                       if (!s) return '-';
                                       return /^n(?:o)?$/i.test(s) ? '-' : s;
                                     })()
-                                  : label === 'Fencing'
+                              : label === 'Fencing'
                                     ? (() => {
                                         const s = (subject?.fence_type ?? '').toString().trim();
                                         return s || '-';
@@ -1131,6 +1131,11 @@ export default function ComparableSalesAnalysis() {
                                           const b = toBool(v);
                                           return b === null ? '-' : (b ? 'Yes' : 'No');
                                         })()
+                                    : label === 'Easements'
+                                      ? 'None Known'
+                                    // Secondary Improvements: show joined list from subject
+                                    : label === 'Secondary Improvements'
+                                      ? ((subject?.secondary_improvements_text ?? '') as any)
                                       : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
@@ -1529,7 +1534,12 @@ export default function ComparableSalesAnalysis() {
                                         const s = (subject?.fence_type ?? '').toString().trim();
                                         return s || '-';
                                       })()
-                                    : ''}
+                                    : label === 'Easements'
+                                      ? 'None Known'
+                                    // Secondary Improvements: show joined list from subject
+                                    : label === 'Secondary Improvements'
+                                      ? ((subject?.secondary_improvements_text ?? '') as any)
+                                      : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
                         <td key={`eq2-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">

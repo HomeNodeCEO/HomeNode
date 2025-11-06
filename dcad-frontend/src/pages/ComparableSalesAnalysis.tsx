@@ -83,6 +83,7 @@ export default function ComparableSalesAnalysis() {
   const [compConcessions, setCompConcessions] = useState<Array<number | null>>([null, null, null, null]);
   const [compSaleDates, setCompSaleDates] = useState<string[]>(['', '', '', '']);
   const [compLandSize, setCompLandSize] = useState<Array<number | null>>([null, null, null, null]);
+  const [compClasses, setCompClasses] = useState<Array<number | string | null>>([null, null, null, null]);
   const [compRooms, setCompRooms] = useState<Array<{ tot: number | null; bd: number | null; full: number | null; half: number | null }>>([
     { tot: null, bd: null, full: null, half: null },
     { tot: null, bd: null, full: null, half: null },
@@ -140,6 +141,25 @@ export default function ComparableSalesAnalysis() {
       setCompLandSize([l1, l2, l3, l4]);
     } else {
       setCompLandSize([null, null, null, null]);
+    }
+
+    // Class adjustments relative to subject building class
+    const parseIntLike = (v: unknown): number | null => {
+      if (v === null || v === undefined) return null;
+      const n = Number(String(v).replace(/[^0-9.-]/g, ''));
+      return Number.isFinite(n) ? Math.round(n) : null;
+    };
+    const subjClassNum = parseIntLike(subject?.building_class);
+    if (subjClassNum !== null) {
+      const c1 = Math.max(0, subjClassNum - 1);
+      const c2 = subjClassNum + 1;
+      const c3 = subjClassNum;
+      const c4 = Math.max(0, subjClassNum - 1);
+      setCompClasses([c1, c2, c3, c4]);
+    } else {
+      // If not numeric, mirror the subject's class label for all comps
+      const s = (subject?.building_class ?? '') as any;
+      setCompClasses([s, s, s, s]);
     }
 
     // Compute comparable 1 room counts based on subject
@@ -917,10 +937,12 @@ export default function ComparableSalesAnalysis() {
                               ? fmtCurrency((compConcessions || [])[i] ?? '')
                               : label === 'NBHD Code'
                                 ? (subject?.nbhd_code || '')
-                                : label === 'Date of Sale/Time'
-                                  ? (compSaleDates[i] || '')
+                              : label === 'Date of Sale/Time'
+                                ? (compSaleDates[i] || '')
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'Class'
+                                ? String((compClasses || [])[i] ?? '')
                               : label === 'View'
                                 ? ((subject?.view || 'Neutral') as any)
                                 : ''}
@@ -1296,10 +1318,12 @@ export default function ComparableSalesAnalysis() {
                               ? fmtCurrency((compConcessions || [])[i] ?? '')
                               : label === 'NBHD Code'
                                 ? (subject?.nbhd_code || '')
-                                : label === 'Date of Sale/Time'
-                                  ? (compSaleDates[i] || '')
+                              : label === 'Date of Sale/Time'
+                                ? (compSaleDates[i] || '')
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'Class'
+                                ? String((compClasses || [])[i] ?? '')
                               : label === 'View'
                                 ? ((subject?.view || 'Neutral') as any)
                                 : ''}

@@ -135,18 +135,9 @@ export default function PropertySearchPage() {
       const items = await requestItems(query, 25);
       setResults(items);
 
-      // Try to navigate only on a confident match:
-      // 1) If exactly one result, go directly
-      // 2) Else, if any item's title/address exactly matches normalized query, go to that one
-      // Otherwise, show tiles and let the user pick
-      if (!isExactId && items && items.length === 1) {
+      // When pressing Search, take the user to the same place as clicking the top tile
+      if (items && items.length > 0) {
         navigate(`/report/${encodeURIComponent(items[0].id)}`);
-        return;
-      }
-      const nq = normalizeAddress(query);
-      const exact = !isExactId && items.find((it) => normalizeAddress(it.title) === nq);
-      if (exact && !isExactId) {
-        navigate(`/report/${encodeURIComponent(exact.id)}`);
         return;
       }
       if (!items || items.length === 0) {

@@ -134,12 +134,6 @@ export default function PropertySearchPage() {
     try {
       const items = await requestItems(query, 25);
       setResults(items);
-
-      // When pressing Search, take the user to the same place as clicking the top tile
-      if (items && items.length > 0) {
-        navigate(`/report/${encodeURIComponent(items[0].id)}`);
-        return;
-      }
       if (!items || items.length === 0) {
         setErr('No results found');
       }

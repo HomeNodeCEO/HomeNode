@@ -711,6 +711,8 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
    Ownership Card
    ================== */
 function OwnerAndLegal({ detail }: { detail: DcadDetail | null }) {
+  // Collapsible Ownership Information (default collapsed)
+  const [ownOpen, setOwnOpen] = useState(false);
   const owner = (detail?.owner || {}) as DcadOwner;
   const legal = detail?.legal_description;
 
@@ -777,8 +779,19 @@ function OwnerAndLegal({ detail }: { detail: DcadDetail | null }) {
   const others: Array<any> = Array.isArray(owner?.multi_owner) ? owner.multi_owner! : [];
 
   return (
-    <SectionCard title="Ownership Information">
-      {/* Two-column layout */}
+    <div className="card bg-white shadow-sm rounded-2xl">
+      <div className="card-body p-4">
+        {/* Ownership Information header (click to expand/collapse) */}
+        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOwnOpen(v => !v)}>
+          <div className="text-base font-semibold">Ownership Information</div>
+          <svg className={`w-4 h-4 text-slate-600 transition-transform ${ownOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.17l3.71-2.94a.75.75 0 11.92 1.18l-4.25 3.37a.75.75 0 01-.92 0L5.21 8.41a.75.75 0 01.02-1.2z" clipRule="evenodd" />
+          </svg>
+        </button>
+        {ownOpen && (
+          <div className="mt-3">
+    
+    {/* Two-column layout */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Current Owner */}
         <div>
@@ -915,7 +928,10 @@ function OwnerAndLegal({ detail }: { detail: DcadDetail | null }) {
       </div>
 
       <div className="border-t mt-4" />
-    </SectionCard>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

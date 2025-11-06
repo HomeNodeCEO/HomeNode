@@ -1,6 +1,6 @@
 // src/pages/PropertySearch.tsx (resilient to different api.ts versions)
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import * as api from "@/lib/api"; // we'll safely probe for functions at runtime
 
 // MOOLAH_ADD_MV_TYPE_AND_FMT
@@ -107,11 +107,20 @@ async function requestItems(query: string, limit = 25): Promise<SearchItem[]> {
 }
 
 export default function PropertySearchPage() {
+  const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [results, setResults] = useState<SearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+
+  function normalizeAddress(s: string): string {
+    return String(s || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, '') // strip punctuation
+      .replace(/\s+/g, ' ') // collapse spaces
+      .trim();
+  }
 
   async function runSearch() {
     const query = q.trim();
@@ -119,11 +128,30 @@ export default function PropertySearchPage() {
       setResults([]);
       return;
     }
+    const isExactId = /^\d{17}$/.test(query);
     setLoading(true);
     setErr(null);
     try {
       const items = await requestItems(query, 25);
       setResults(items);
+
+      // Try to navigate only on a confident match:
+      // 1) If exactly one result, go directly
+      // 2) Else, if any item's title/address exactly matches normalized query, go to that one
+      // Otherwise, show tiles and let the user pick
+      if (!isExactId && items && items.length === 1) {
+        navigate(`/report/${encodeURIComponent(items[0].id)}`);
+        return;
+      }
+      const nq = normalizeAddress(query);
+      const exact = !isExactId && items.find((it) => normalizeAddress(it.title) === nq);
+      if (exact && !isExactId) {
+        navigate(`/report/${encodeURIComponent(exact.id)}`);
+        return;
+      }
+      if (!items || items.length === 0) {
+        setErr('No results found');
+      }
     } catch (e: any) {
       setErr(String(e?.message || e));
     } finally {
@@ -177,7 +205,7 @@ export default function PropertySearchPage() {
         </Labeled>
 
         <button onClick={runSearch} className="btn">
-          Apply
+          Search
         </button>
       </div>
 

@@ -1155,6 +1155,7 @@ export default function ComparableSalesAnalysis() {
                               // Fencing mirroring: comparables show same fence type as subject
                               : label === 'Fencing'
                                 ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                              // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe((compGarage || [])[i] ?? '')
                                 : ''}
@@ -1540,6 +1541,7 @@ export default function ComparableSalesAnalysis() {
                               // Fencing mirroring: comparables show same fence type as subject
                               : label === 'Fencing'
                                 ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                              // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe((compGarage || [])[i] ?? '')
                                 : ''}

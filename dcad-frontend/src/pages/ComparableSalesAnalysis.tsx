@@ -48,6 +48,121 @@ export default function ComparableSalesAnalysis() {
   const [salesNotes, setSalesNotes] = useState('');
   const [adjustmentNotes, setAdjustmentNotes] = useState('');
   const [ctcNotes, setCtcNotes] = useState('');
+  // Test/Run controls and sample comparables
+  const [compAddresses, setCompAddresses] = useState<string[]>(['', '', '', '']);
+  const [compGla, setCompGla] = useState<Array<number | null>>([null, null, null, null]);
+  const [compPrices, setCompPrices] = useState<Array<number | null>>([null, null, null, null]);
+  const [compConcessions, setCompConcessions] = useState<Array<number | null>>([null, null, null, null]);
+  const [compSaleDates, setCompSaleDates] = useState<string[]>(['', '', '', '']);
+  const [compLandSize, setCompLandSize] = useState<Array<number | null>>([null, null, null, null]);
+  const [compRooms, setCompRooms] = useState<Array<{ tot: number | null; bd: number | null; full: number | null; half: number | null }>>([
+    { tot: null, bd: null, full: null, half: null },
+    { tot: null, bd: null, full: null, half: null },
+    { tot: null, bd: null, full: null, half: null },
+    { tot: null, bd: null, full: null, half: null },
+  ]);
+  const parseSqftNum = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  };
+  const onClickTest = () => {
+    setCompAddresses(['123 Main St', '456 Edge Dr', '789 Third St', '1012 Oak Rd']);
+    const subj = parseSqftNum(subject?.total_living_area);
+    if (subj && subj > 0) {
+      const v1 = Math.round(subj * 0.95);
+      const v2 = Math.round(subj * 1.05);
+      const v3 = Math.round(subj * 1.0);
+      const v4 = Math.round(subj * 1.02);
+      setCompGla([v1, v2, v3, v4]);
+    } else {
+      setCompGla([null, null, null, null]);
+    }
+
+    // Compute comparable sale prices from subject market value
+    const parseMoneyNum = (v: unknown): number | null => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+    };
+    const subjVal = parseMoneyNum(subject?.market_value);
+    if (subjVal && subjVal > 0) {
+      const p1 = Math.round(subjVal * 0.98); // comp 1: -2%
+      const p2 = Math.round(subjVal * 1.02); // comp 2: +2%
+      const p3 = Math.round(subjVal * 1.03); // comp 3: +3%
+      const p4 = Math.round(subjVal * 0.99); // comp 4: -1%
+      setCompPrices([p1, p2, p3, p4]);
+    } else {
+      setCompPrices([null, null, null, null]);
+    }
+
+    // Fixed concessions by comparable
+    setCompConcessions([5000, 5000, 0, 3000]);
+
+    // Fixed sale dates by comparable
+    setCompSaleDates(['11/05/2025', '07/16/2025', '11/25/2025', '09/10/2025']);
+
+    // Land size from subject +/- 2%
+    const subjLand = parseSqftNum(subject?.land_size_sqft);
+    if (subjLand && subjLand > 0) {
+      const l1 = Math.round(subjLand * 1.02); // +2%
+      const l2 = Math.round(subjLand * 0.98); // -2%
+      const l3 = Math.round(subjLand * 0.98); // -2%
+      const l4 = Math.round(subjLand * 1.02); // +2%
+      setCompLandSize([l1, l2, l3, l4]);
+    } else {
+      setCompLandSize([null, null, null, null]);
+    }
+
+    // Compute comparable 1 room counts based on subject
+    const tot = subjectTotalRooms as number | undefined;
+    const bd = subjectBedrooms as number | undefined;
+    // Prefer explicit full/half; otherwise attempt to parse from bath_count like "2.1"
+    const inferFullHalf = (): { full: number; half: number } | null => {
+      if (subjectBathsFull !== undefined || subjectBathsHalf !== undefined) {
+        return { full: subjectBathsFull ?? 0, half: subjectBathsHalf ?? 0 };
+      }
+      if (subjectBathCount !== undefined) {
+        const s = String(subjectBathCount);
+        if (/^\d+(?:\.\d+)?$/.test(s)) {
+          const parts = s.split('.');
+          const f = Number(parts[0] || '0');
+          const h = Number(parts[1] || '0');
+          if (Number.isFinite(f) && Number.isFinite(h)) return { full: f, half: h };
+        }
+      }
+      return null;
+    };
+    const fh = inferFullHalf();
+    const comp1 = {
+      tot: typeof tot === 'number' ? tot + 1 : null,
+      bd: typeof bd === 'number' ? bd + 1 : null,
+      full: fh ? Math.max(0, fh.full - 1) : null,
+      half: fh ? fh.half : null,
+    };
+    const comp2 = {
+      tot: typeof tot === 'number' ? tot : null,
+      bd: typeof bd === 'number' ? bd : null,
+      full: fh ? fh.full + 1 : null,
+      half: fh ? fh.half : null,
+    };
+    const comp3 = {
+      tot: typeof tot === 'number' ? Math.max(0, tot - 1) : null,
+      bd: typeof bd === 'number' ? Math.max(0, bd - 1) : null,
+      full: fh ? fh.full : null,
+      half: fh ? Math.max(0, fh.half - 1) : null,
+    };
+    const comp4 = {
+      tot: typeof tot === 'number' ? tot : null,
+      bd: typeof bd === 'number' ? bd : null,
+      full: fh ? fh.full : null,
+      half: fh ? fh.half : null,
+    };
+    setCompRooms([comp1, comp2, comp3, comp4]);
+  };
+  const onClickRun = () => {
+    // Placeholder for future automation; keep state intact for now.
+  };
 
   // Cost to Cure data (also used for rendering)
   const costToCure = useMemo(() => ({
@@ -618,9 +733,27 @@ export default function ComparableSalesAnalysis() {
 
         <div className="card bg-white shadow-sm rounded-2xl">
           <div className="card-body p-0 overflow-x-auto">
-            <div className="px-6 pt-4 pb-3">
-              <div className="text-base font-semibold">Sales Comparison Grid</div>
-              <div className="text-sm opacity-70">Grid layout to match the reference.</div>
+            <div className="px-6 pt-4 pb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold">Sales Comparison Grid</div>
+                <div className="text-sm opacity-70">Grid layout to match the reference.</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onClickTest}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-red-600 bg-red-600 text-white hover:bg-red-700"
+                >
+                  Test
+                </button>
+                <button
+                  type="button"
+                  onClick={onClickRun}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  Run
+                </button>
+              </div>
             </div>
 
             {error && <div className="px-6 pb-4 text-red-600 text-sm">{error}</div>}
@@ -659,7 +792,7 @@ export default function ComparableSalesAnalysis() {
                       {subject?.address || ''}
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`addr-desc-${i}`} className="px-4 py-2 border-b border-slate-200"></td>,
+                      <td key={`addr-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{compAddresses[i] || ''}</td>,
                       <td
                         key={`addr-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
@@ -675,7 +808,7 @@ export default function ComparableSalesAnalysis() {
                       {fmtCurrency(subject?.market_value ?? '')}
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`v-desc-${i}`} className="px-4 py-2 border-b border-slate-200"></td>,
+                      <td key={`v-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtCurrency(compPrices[i] ?? '')}</td>,
                       <td
                         key={`v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
@@ -749,7 +882,17 @@ export default function ComparableSalesAnalysis() {
                           {subjectValue}
                         </td>
                         {Array.from({ length: 4 }).map((_, i) => [
-                          <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
+                          <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
+                            {label === 'Concessions'
+                              ? fmtCurrency((compConcessions || [])[i] ?? '')
+                              : label === 'NBHD Code'
+                                ? (subject?.nbhd_code || '')
+                                : label === 'Date of Sale/Time'
+                                  ? (compSaleDates[i] || '')
+                                  : label === 'Land Size'
+                                    ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                                    : ''}
+                          </td>,
                           <td
                             key={`${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
@@ -805,9 +948,16 @@ export default function ComparableSalesAnalysis() {
                         className="px-4 py-2 bg-white border-b border-slate-200 border-r-2 border-slate-300"
                       >
                         <div className="grid grid-cols-3 text-sm h-5">
-                          <div className="text-center h-full flex items-center justify-center">&nbsp;</div>
-                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>&nbsp;</div>
-                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>&nbsp;</div>
+                          <div className="text-center h-full flex items-center justify-center">{compRooms[i]?.tot ?? ''}</div>
+                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{compRooms[i]?.bd ?? ''}</div>
+                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>
+                            {(() => {
+                              const r = compRooms[i];
+                              if (!r || r.full == null) return '';
+                              const half = r.half == null ? 0 : r.half;
+                              return `${r.full}.${half}`;
+                            })()}
+                          </div>
                         </div>
                       </td>,
                       <td
@@ -825,7 +975,7 @@ export default function ComparableSalesAnalysis() {
                       {loading ? 'Loading...' : fmtSqftSafe(subject?.total_living_area)}
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
+                      <td key={`gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">{fmtSqftSafe(compGla[i] ?? '')}</td>,
                       <td
                         key={`gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
@@ -971,9 +1121,27 @@ export default function ComparableSalesAnalysis() {
         {/* Equity Analysis Grid (same layout as sales comparison) */}
         <div className="card bg-white shadow-sm rounded-2xl mt-6">
           <div className="card-body p-0 overflow-x-auto">
-            <div className="px-6 pt-4 pb-3">
-              <div className="text-base font-semibold">Equity Analysis Grid</div>
-              <div className="text-sm opacity-70">Grid layout to match the reference.</div>
+            <div className="px-6 pt-4 pb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold">Equity Analysis Grid</div>
+                <div className="text-sm opacity-70">Grid layout to match the reference.</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={onClickTest}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-red-600 bg-red-600 text-white hover:bg-red-700"
+                >
+                  Test
+                </button>
+                <button
+                  type="button"
+                  onClick={onClickRun}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  Run
+                </button>
+              </div>
             </div>
 
             {error && <div className="px-6 pb-4 text-red-600 text-sm">{error}</div>}
@@ -1008,7 +1176,7 @@ export default function ComparableSalesAnalysis() {
                       {subject?.address || ''}
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-addr-desc-${i}`} className="px-4 py-2 border-b border-slate-200"></td>,
+                      <td key={`eq-addr-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{compAddresses[i] || ''}</td>,
                       <td
                         key={`eq-addr-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
@@ -1018,11 +1186,9 @@ export default function ComparableSalesAnalysis() {
                   </tr>
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Value vs Sales</td>
-                    <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
-                      {fmtCurrency(subject?.market_value ?? '')}
-                    </td>
+                    <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>{fmtCurrency(subject?.market_value ?? '')}</td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-v-desc-${i}`} className="px-4 py-2 border-b border-slate-200"></td>,
+                      <td key={`eq-v-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtCurrency(compPrices[i] ?? '')}</td>,
                       <td
                         key={`eq-v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
@@ -1093,7 +1259,17 @@ export default function ComparableSalesAnalysis() {
                           {subjectValue}
                         </td>
                         {Array.from({ length: 4 }).map((_, i) => [
-                          <td key={`eq-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
+                          <td key={`eq-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
+                            {label === 'Concessions'
+                              ? fmtCurrency((compConcessions || [])[i] ?? '')
+                              : label === 'NBHD Code'
+                                ? (subject?.nbhd_code || '')
+                                : label === 'Date of Sale/Time'
+                                  ? (compSaleDates[i] || '')
+                                  : label === 'Land Size'
+                                    ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                                    : ''}
+                          </td>,
                           <td
                             key={`eq-${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
@@ -1141,9 +1317,16 @@ export default function ComparableSalesAnalysis() {
                         className="px-4 py-2 bg-white border-b border-slate-200 border-r-2 border-slate-300"
                       >
                         <div className="grid grid-cols-3 text-sm h-5">
-                          <div className="text-center h-full flex items-center justify-center">&nbsp;</div>
-                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>&nbsp;</div>
-                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>&nbsp;</div>
+                          <div className="text-center h-full flex items-center justify-center">{compRooms[i]?.tot ?? ''}</div>
+                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{compRooms[i]?.bd ?? ''}</div>
+                          <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>
+                            {(() => {
+                              const r = compRooms[i];
+                              if (!r || r.full == null) return '';
+                              const half = r.half == null ? 0 : r.half;
+                              return `${r.full}.${half}`;
+                            })()}
+                          </div>
                         </div>
                       </td>,
                       <td
@@ -1159,7 +1342,7 @@ export default function ComparableSalesAnalysis() {
                       {loading ? 'Loading...' : fmtSqftSafe(subject?.total_living_area)}
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
+                      <td key={`eq-gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">{fmtSqftSafe(compGla[i] ?? '')}</td>,
                       <td
                         key={`eq-gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"

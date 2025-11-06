@@ -201,7 +201,7 @@ export default function SignUpForm() {
             <label className="text-sm">Appraisal District Name
               <input className="border rounded px-2 py-1 w-full" value={fields.appraisalDistrictName} onChange={e=>setFields(f=>({...f, appraisalDistrictName:e.target.value}))} />
             </label>
-            <div className="text-sm">Date Received (district use only)</div>
+            {/* Removed per request: Date Received (district use only) */}
             <label className="text-sm md:col-span-2">Owner Name
               <input className="border rounded px-2 py-1 w-full" value={fields.ownerName} onChange={e=>setFields(f=>({...f, ownerName:e.target.value}))} />
             </label>
@@ -234,6 +234,56 @@ export default function SignUpForm() {
             <input type="radio" checked={!fields.allPropertyAtAddress} onChange={() => setFields(f=>({...f, allPropertyAtAddress:false}))} />
             The property(ies) listed below:
           </label>
+
+          {/* Step 2 primary fields (always visible beneath the checkboxes) */}
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-sm">Appraisal District Account Number
+              <input
+                className="border rounded px-2 py-1 w-full"
+                value={fields.listedProperties[0]?.accountNumber || ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setFields(f => {
+                    const lp = [...f.listedProperties];
+                    if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
+                    lp[0] = { ...lp[0], accountNumber: val };
+                    return { ...f, listedProperties: lp };
+                  });
+                }}
+              />
+            </label>
+            <label className="text-sm">Physical or Situs Address of Property
+              <input
+                className="border rounded px-2 py-1 w-full"
+                value={fields.listedProperties[0]?.situsAddress || ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setFields(f => {
+                    const lp = [...f.listedProperties];
+                    if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
+                    lp[0] = { ...lp[0], situsAddress: val };
+                    return { ...f, listedProperties: lp };
+                  });
+                }}
+              />
+            </label>
+            <label className="text-sm md:col-span-2">Legal Description
+              <textarea
+                className="border rounded px-2 py-1 w-full"
+                rows={2}
+                value={fields.listedProperties[0]?.legalDescription || ''}
+                onChange={e => {
+                  const val = e.target.value;
+                  setFields(f => {
+                    const lp = [...f.listedProperties];
+                    if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
+                    lp[0] = { ...lp[0], legalDescription: val };
+                    return { ...f, listedProperties: lp };
+                  });
+                }}
+              />
+            </label>
+          </div>
 
           {!fields.allPropertyAtAddress && (
             <div className="mt-3 grid grid-cols-1 gap-3">

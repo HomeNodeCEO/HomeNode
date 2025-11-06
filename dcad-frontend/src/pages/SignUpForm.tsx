@@ -350,10 +350,27 @@ export default function SignUpForm() {
             <label className="text-sm inline-flex items-center gap-2">
               <input type="radio" checked={!fields.representAll} onChange={()=>setFields(f=>({...f, representAll:false}))} /> The following specific property tax matters:
             </label>
-            {!fields.representAll && (
-              <textarea className="border rounded px-2 py-1 w-full" rows={3} value={fields.representSpecificText} onChange={e=>setFields(f=>({...f, representSpecificText:e.target.value}))} />
-            )}
-            <label className="text-sm inline-flex items-center gap-2 mt-2"><input type="checkbox" checked={fields.consentConfidentialInfo} onChange={e=>setFields(f=>({...f, consentConfidentialInfo:e.target.checked}))} /> Agent is authorized to receive confidential information</label>
+            {/* Full-width field for specific matters (always visible) */}
+            <textarea
+              className="border rounded px-2 py-1 w-full"
+              rows={3}
+              placeholder="Describe specific property tax matters (if applicable)"
+              value={fields.representSpecificText}
+              onChange={e=>setFields(f=>({...f, representSpecificText:e.target.value}))}
+            />
+
+            {/* Confidential information authorization text with Yes/No radios */}
+            <div className="text-sm mt-2">
+              The agent identified above is authorized to receive confidential information pursuant to Tax Code sections 11.48(b)(2), 22.27(b)(2), 23.123(c)(2), 23.126(c)(2) and 23.45(b)(2)
+            </div>
+            <div className="flex items-center gap-4 text-sm">
+              <label className="inline-flex items-center gap-2">
+                <input type="radio" name="confInfo" checked={fields.consentConfidentialInfo === true} onChange={()=>setFields(f=>({...f, consentConfidentialInfo:true}))} /> Yes
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input type="radio" name="confInfo" checked={fields.consentConfidentialInfo === false} onChange={()=>setFields(f=>({...f, consentConfidentialInfo:false}))} /> No
+              </label>
+            </div>
             <label className="text-sm inline-flex items-center gap-2"><input type="checkbox" checked={fields.communicationsChiefAppraiser} onChange={e=>setFields(f=>({...f, communicationsChiefAppraiser:e.target.checked}))} /> All communications from the chief appraiser</label>
             <label className="text-sm inline-flex items-center gap-2"><input type="checkbox" checked={fields.communicationsReviewBoard} onChange={e=>setFields(f=>({...f, communicationsReviewBoard:e.target.checked}))} /> All communications from the appraisal review board</label>
             <label className="text-sm inline-flex items-center gap-2"><input type="checkbox" checked={fields.communicationsAllTaxingUnits} onChange={e=>setFields(f=>({...f, communicationsAllTaxingUnits:e.target.checked}))} /> All communications from all taxing units participating in the appraisal district</label>

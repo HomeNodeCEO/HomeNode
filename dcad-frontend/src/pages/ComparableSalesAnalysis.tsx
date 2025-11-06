@@ -86,6 +86,8 @@ export default function ComparableSalesAnalysis() {
   const [compClasses, setCompClasses] = useState<Array<number | string | null>>([null, null, null, null]);
   // Test-mode comparable ages for the "Actual Age" row
   const [compAges, setCompAges] = useState<Array<number | null>>([null, null, null, null]);
+  // Test-mode comparable garage areas
+  const [compGarage, setCompGarage] = useState<Array<number | null>>([null, null, null, null]);
   const [compRooms, setCompRooms] = useState<Array<{ tot: number | null; bd: number | null; full: number | null; half: number | null }>>([
     { tot: null, bd: null, full: null, half: null },
     { tot: null, bd: null, full: null, half: null },
@@ -143,6 +145,18 @@ export default function ComparableSalesAnalysis() {
       setCompLandSize([l1, l2, l3, l4]);
     } else {
       setCompLandSize([null, null, null, null]);
+    }
+
+    // Garage/Parking sqft adjustments per comparable (rounded up)
+    const subjGarage = parseSqftNum(subject?.garage_area_sqft);
+    if (subjGarage && subjGarage > 0) {
+      const g1 = Math.ceil(subjGarage * 1.02); // +2%
+      const g2 = Math.ceil(subjGarage * 0.98); // -2%
+      const g3 = Math.ceil(subjGarage * 1.0);  // same
+      const g4 = Math.ceil(subjGarage * 1.02); // +2%
+      setCompGarage([g1, g2, g3, g4]);
+    } else {
+      setCompGarage([null, null, null, null]);
     }
 
     // Class adjustments relative to subject building class
@@ -1141,6 +1155,8 @@ export default function ComparableSalesAnalysis() {
                               // Fencing mirroring: comparables show same fence type as subject
                               : label === 'Fencing'
                                 ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                              : label === 'Garage/Parking'
+                                ? fmtSqftSafe((compGarage || [])[i] ?? '')
                                 : ''}
                         </td>,
                         <td
@@ -1524,6 +1540,8 @@ export default function ComparableSalesAnalysis() {
                               // Fencing mirroring: comparables show same fence type as subject
                               : label === 'Fencing'
                                 ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                              : label === 'Garage/Parking'
+                                ? fmtSqftSafe((compGarage || [])[i] ?? '')
                                 : ''}
                         </td>,
                         <td

@@ -463,7 +463,14 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
     <div className="card bg-white shadow-lg overflow-hidden rounded-2xl" style={{ backgroundColor: "#ffffff" }}>
       {/* Slider */}
       <figure className="relative">
-        <img src={photos[idx]} alt="Property" className="w-full h-60 object-cover select-none" draggable={false} />
+        {/* Reduce hero image height to ~half while keeping full width */}
+        <img
+          src={photos[idx]}
+          alt="Property"
+          className="w-full object-cover select-none"
+          style={{ height: 250 }}
+          draggable={false}
+        />
         {canSlide && (
           <>
             <button

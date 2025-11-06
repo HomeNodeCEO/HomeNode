@@ -49,6 +49,33 @@ export default function ComparableSalesAnalysis() {
   const [salesNotes, setSalesNotes] = useState('');
   const [adjustmentNotes, setAdjustmentNotes] = useState('');
   const [ctcNotes, setCtcNotes] = useState('');
+  // Normalizes the subject's construction/stories into a label for the grid.
+  // NOTE: Per request, if Const Type contains "ONE AND ONE HALF STORIES",
+  //       we display it as "2 Story".
+  const normalizeConstType = (stories: unknown, construction: unknown): string => {
+    const toStr = (v: any) => (v === null || v === undefined ? '' : String(v)).trim();
+    const sStr = toStr(stories).toLowerCase();
+    const cStr = toStr(construction).toLowerCase();
+
+    // Try stories first (number or text)
+    if (sStr) {
+      const n = Number(sStr.replace(/[^0-9.]/g, ''));
+      if (Number.isFinite(n) && n > 0) {
+        return n >= 2 ? '2 Story' : '1 Story';
+      }
+      if (sStr.includes('two') || sStr.includes('2')) return '2 Story';
+      if (sStr.includes('one and one half')) return '2 Story';
+      if (sStr.includes('one') || sStr.includes('1')) return '1 Story';
+    }
+
+    // Fall back to construction type text
+    if (cStr) {
+      if (cStr.includes('one and one half')) return '2 Story';
+      if (cStr.includes('two') || cStr.includes('2')) return '2 Story';
+      if (cStr.includes('one') || cStr.includes('1')) return '1 Story';
+    }
+    return '';
+  };
   // Test/Run controls and sample comparables
   const [compAddresses, setCompAddresses] = useState<string[]>(['', '', '', '']);
   const [compGla, setCompGla] = useState<Array<number | null>>([null, null, null, null]);
@@ -867,7 +894,7 @@ export default function ComparableSalesAnalysis() {
                         subjectValue = subject?.view || 'Neutral';
                         break;
                       case 'Const Type':
-                        subjectValue = (subject?.stories ?? '') || '';
+                        subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
                         break;
                       case 'Class':
                         subjectValue = subject?.building_class || '';
@@ -1246,7 +1273,7 @@ export default function ComparableSalesAnalysis() {
                         subjectValue = subject?.view || 'Neutral';
                         break;
                       case 'Const Type':
-                        subjectValue = (subject?.stories ?? '') || '';
+                        subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
                         break;
                       case 'Class':
                         subjectValue = subject?.building_class || '';

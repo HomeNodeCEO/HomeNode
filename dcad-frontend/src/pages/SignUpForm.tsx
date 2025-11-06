@@ -164,6 +164,35 @@ export default function SignUpForm() {
     return () => { cancelled = true; };
   }, [accountId]);
 
+  // Force legal description from Property Report detail (Ownership section) to ensure all lines are captured
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const det: any = await fetchDetail(accountId);
+        const legalObj = det?.detail?.legal_description || det?.legal_description || null;
+        let text = '';
+        if (legalObj && Array.isArray(legalObj.lines)) {
+          text = legalObj.lines.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
+        } else if (Array.isArray(legalObj)) {
+          text = legalObj.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
+        } else if (typeof legalObj === 'string') {
+          text = String(legalObj).trim();
+        }
+        if (!cancelled && text) {
+          setFields(f => {
+            const lp = [...f.listedProperties];
+            if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
+            lp[0] = { ...lp[0], legalDescription: text } as any;
+            return { ...f, listedProperties: lp };
+          });
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [accountId]);
+
   // --- Step 1 auto-fill: Address/City/State/Zip from mailing address when it matches subject address ---
   function extractStreetNumber(addr: string): string | null {
     const m = String(addr || '').trim().match(/^(\d{1,10})\b/);
@@ -204,14 +233,33 @@ export default function SignUpForm() {
       try {
         // Subject (situs) address from DB or scraper
         let subjectAddress = '';
+        let legalFromDetail: string = '';
         try {
           const d = await api.getAccount(accountId);
           subjectAddress = (d as any)?.account?.address || '';
+          // Prefer legal description from DB current if available
+          const legalDB: any = (d as any)?.legal_current || null;
+          if (legalDB && !legalFromDetail) {
+            if (Array.isArray(legalDB.legal_lines)) {
+              legalFromDetail = legalDB.legal_lines.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
+            } else if (typeof legalDB.legal_text === 'string') {
+              legalFromDetail = legalDB.legal_text.trim();
+            }
+          }
         } catch {}
         if (!subjectAddress) {
           try {
             const det: any = await fetchDetail(accountId);
             subjectAddress = det?.detail?.property_location?.address || det?.property_location?.address || '';
+            // Try to extract legal description lines
+            const ld: any = det?.detail?.legal_description || det?.legal_description || null;
+            if (Array.isArray(ld)) {
+              legalFromDetail = ld.map((x: any) => (x && typeof x === 'string' ? x.trim() : String(x || '').trim())).filter(Boolean).join('\n');
+            } else if (ld && typeof ld === 'object' && Array.isArray(ld?.lines)) {
+              legalFromDetail = ld.lines.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
+            } else if (typeof ld === 'string') {
+              legalFromDetail = ld.trim();
+            }
           } catch {}
         }
         // Mailing address
@@ -220,20 +268,36 @@ export default function SignUpForm() {
           const det: any = await fetchDetail(accountId);
           mailingAddress = det?.detail?.owner?.mailing_address || det?.owner?.mailing_address || '';
         } catch {}
-        if (!subjectAddress || !mailingAddress) return;
-        const subjectNum = extractStreetNumber(subjectAddress);
-        const mailingNum = extractStreetNumber(mailingAddress);
-        if (subjectNum && mailingNum && subjectNum === mailingNum) {
-          const parts = parseMailingParts(mailingAddress);
-          if (!cancelled) {
-            setFields(f => ({
-              ...f,
-              ownerAddress: f.ownerAddress || parts.line || mailingAddress,
-              ownerCity: f.ownerCity || parts.city || '',
-              ownerState: 'Texas',
-              ownerZip: f.ownerZip || parts.zip || '',
-            }));
+        if (subjectAddress && mailingAddress) {
+          const subjectNum = extractStreetNumber(subjectAddress);
+          const mailingNum = extractStreetNumber(mailingAddress);
+          if (subjectNum && mailingNum && subjectNum === mailingNum) {
+            const parts = parseMailingParts(mailingAddress);
+            if (!cancelled) {
+              setFields(f => ({
+                ...f,
+                ownerAddress: f.ownerAddress || parts.line || mailingAddress,
+                ownerCity: f.ownerCity || parts.city || '',
+                ownerState: 'Texas',
+                ownerZip: f.ownerZip || parts.zip || '',
+              }));
+            }
           }
+        }
+
+        // Auto-fill Step 2 primary fields from subject
+        if (!cancelled && subjectAddress) {
+          setFields(f => {
+            const lp = [...f.listedProperties];
+            if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
+            const updated0 = {
+              accountNumber: lp[0].accountNumber || accountId,
+              situsAddress: lp[0].situsAddress || subjectAddress,
+              legalDescription: lp[0].legalDescription || legalFromDetail || '',
+            };
+            lp[0] = updated0 as any;
+            return { ...f, listedProperties: lp };
+          });
         }
       } catch {}
     })();

@@ -519,18 +519,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
               {mapsco && <span>MAPSCO: {mapsco}</span>}
             </div>
 
-            {/* Jurisdiction chips */}
-            <div className="mt-3 flex flex-wrap gap-2">
-              {jurisdictions.map((label) => (
-                <button
-                  key={label}
-                  type="button"
-                  className="inline-flex items-center rounded-full px-3 py-1.5 text-sm font-medium bg-blue-100 text-blue-800 border border-blue-200 hover:bg-blue-200 transition"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {/* Removed jurisdiction chips (County, School, City, Hospital, Other) as requested */}
           </div>
 
           {/* RIGHT */}

@@ -199,8 +199,10 @@ export default function SignUpForm() {
     return m ? m[1] : null;
   }
   function parseMailingParts(addr: string): { line: string; city: string; state: string; zip: string } {
-    // Very simple parser for formats like: "123 Main St, Dallas, TX 75201" or "123 Main St Dallas TX 75201"
-    const s = String(addr || '').replace(/\s+,/g, ',').trim();
+    // Simple parser for formats like:
+    //   "123 Main St, Apt 5, Dallas, TX 75201" or "123 Main St Dallas TX 75201"
+    // Normalize newlines to commas to capture multi-line mailing addresses
+    const s = String(addr || '').replace(/[\r\n]+/g, ', ').replace(/\s+,/g, ',').trim();
     let line = '', city = '', state = '', zip = '';
     const parts = s.split(',').map(p => p.trim()).filter(Boolean);
     if (parts.length >= 3) {
@@ -262,26 +264,22 @@ export default function SignUpForm() {
             }
           } catch {}
         }
-        // Mailing address
+        // Mailing address from Property Report
         let mailingAddress = '';
         try {
           const det: any = await fetchDetail(accountId);
           mailingAddress = det?.detail?.owner?.mailing_address || det?.owner?.mailing_address || '';
         } catch {}
-        if (subjectAddress && mailingAddress) {
-          const subjectNum = extractStreetNumber(subjectAddress);
-          const mailingNum = extractStreetNumber(mailingAddress);
-          if (subjectNum && mailingNum && subjectNum === mailingNum) {
-            const parts = parseMailingParts(mailingAddress);
-            if (!cancelled) {
-              setFields(f => ({
-                ...f,
-                ownerAddress: f.ownerAddress || parts.line || mailingAddress,
-                ownerCity: f.ownerCity || parts.city || '',
-                ownerState: 'Texas',
-                ownerZip: f.ownerZip || parts.zip || '',
-              }));
-            }
+        if (mailingAddress) {
+          const parts = parseMailingParts(mailingAddress);
+          if (!cancelled) {
+            setFields(f => ({
+              ...f,
+              ownerAddress: parts.line || mailingAddress,
+              ownerCity: parts.city || '',
+              ownerState: 'Texas',
+              ownerZip: parts.zip || '',
+            }));
           }
         }
 
@@ -291,9 +289,9 @@ export default function SignUpForm() {
             const lp = [...f.listedProperties];
             if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
             const updated0 = {
-              accountNumber: lp[0].accountNumber || accountId,
-              situsAddress: lp[0].situsAddress || subjectAddress,
-              legalDescription: lp[0].legalDescription || legalFromDetail || '',
+              accountNumber: accountId,
+              situsAddress: subjectAddress,
+              legalDescription: f.listedProperties[0]?.legalDescription || legalFromDetail || '',
             };
             lp[0] = updated0 as any;
             return { ...f, listedProperties: lp };

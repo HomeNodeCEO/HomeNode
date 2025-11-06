@@ -215,6 +215,8 @@ function SectionCard({
    ========================================================================= */
 function AddressHero({ detail, accountId }: { detail: DcadDetail | null; accountId?: string }) {
   const [idx, setIdx] = useState(0);
+  // AddressHero: state for Overall Property Condition selection
+  const [propertyCondition, setPropertyCondition] = useState<string>('');
 
   const photos = useMemo<string[]>(() => {
     const fromApi = (detail as any)?.photos as string[] | undefined;
@@ -524,20 +526,8 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
 
           {/* RIGHT */}
           <div className="flex items-center gap-2 self-start md:self-auto">
-            <Link
-              to={accountId ? `/signup?accountId=${encodeURIComponent(accountId)}${ownerNameForCta ? `&ownerName=${encodeURIComponent(ownerNameForCta)}` : ''}` : '/signup'}
-              aria-label="Sign up (No upfront cost)"
-              className="btn normal-case px-4 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
-            >
-              Sign Up Here (No Upfront Cost)
-            </Link>
-            <Link
-              to={accountId ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}` : "#"}
-              aria-label="Generate Protest Packet"
-              className="btn normal-case px-5 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
-            >
-              Generate Protest Packet
-            </Link>
+            {/* (moved) Sign Up CTA */}
+            {/* Removed Generate Protest Packet button (relocated as Submit below condition) */}
             <button
               type="button"
               aria-label="Open change log"
@@ -623,6 +613,56 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
               </IconBox>
             }
           />
+        </div>
+        {/* Overall Property Condition (AddressHero extras) */}
+        {/* NOTE: Lives in AddressHero under the stat tiles */}
+        <div className="mt-4 rounded-2xl border p-4" style={{ backgroundColor: '#f4f7fa', borderColor: '#d7e1ea' }}>
+          <div className="text-base font-semibold text-slate-900">Overall Property Condition</div>
+          <div className="text-xs text-slate-600 mt-1">
+            Select the option that best describes your property's current overall condition
+          </div>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+            {[
+              'My home has significant damage',
+              'My home has some repair needs',
+              'My home is adequately maintained',
+              'My home has some upgrades',
+              'My home has been remodeled',
+            ].map((label, i) => (
+              <label key={i} className="inline-flex items-center gap-2 text-sm text-slate-800">
+                <input
+                  type="radio"
+                  name="overall-condition"
+                  value={label}
+                  checked={propertyCondition === label}
+                  onChange={() => setPropertyCondition(label)}
+                  className="h-4 w-4 border-slate-300 text-slate-700 focus:ring-slate-500"
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+        {/* Submit action for AddressHero (moved from top-right controls) */}
+        <div className="mt-3 flex justify-end">
+          {/* Move Sign Up CTA next to sample evidence button */}
+          <div className="flex items-center gap-2">
+            <Link
+              to={accountId ? `/signup?accountId=${encodeURIComponent(accountId)}${ownerNameForCta ? `&ownerName=${encodeURIComponent(ownerNameForCta)}` : ''}` : '/signup'}
+              aria-label="Sign up (No upfront cost)"
+              className="btn normal-case px-4 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
+            >
+              Sign Up Here (No Upfront Cost)
+            </Link>
+            {/* Moved Sign Up CTA next to Sample Evidence Packet at bottom */}
+            <Link
+              to={accountId ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}` : "#"}
+              aria-label="Sample Evidence Packet"
+              className="btn normal-case px-5 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
+            >
+              Sample Evidence Packet
+            </Link>
+          </div>
         </div>
         {/* Market Value History Modal */}
         {mvOpen && (

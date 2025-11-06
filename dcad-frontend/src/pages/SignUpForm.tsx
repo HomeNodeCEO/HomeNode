@@ -120,6 +120,50 @@ export default function SignUpForm() {
     setFields(f => ({ ...f, ownerName: ownerNameFromQuery }));
   }, [ownerNameFromQuery]);
 
+  // Helper to title-case county words (handles inputs like "Dallas", "Dallas County", "COLLIN county")
+  function titleCaseCounty(base: string): string {
+    return base
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  // Auto-fill Appraisal District Name using DB county (preferred) or mapsco (fallback)
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        let name = '';
+        // Prefer county from DB
+        try {
+          const d = await api.getAccount(accountId);
+          const rawCounty = (d as any)?.account?.county || '';
+          const trimmed = String(rawCounty || '').trim();
+          if (trimmed) {
+            const base = titleCaseCounty(trimmed.replace(/\s*county$/i, '').trim());
+            if (base) name = `${base} Central Appraisal District`;
+          }
+        } catch {}
+        // Fallback to mapsco via scraper detail => Dallas CAD
+        if (!name) {
+          try {
+            const det: any = await fetchDetail(accountId);
+            const mapsco = det?.detail?.property_location?.mapsco || det?.property_location?.mapsco || '';
+            if (mapsco) name = 'Dallas Central Appraisal District';
+          } catch {}
+        }
+        // Final fallback: default to Dallas CAD if neither county nor mapsco yielded a value
+        if (!name) name = 'Dallas Central Appraisal District';
+        if (!cancelled && name) {
+          setFields(f => (f.appraisalDistrictName ? f : { ...f, appraisalDistrictName: name }));
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [accountId]);
+
   function openFilePicker() {
     inputRef.current?.click();
   }

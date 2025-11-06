@@ -93,8 +93,8 @@ async function requestItems(query: string, limit = 25): Promise<SearchItem[]> {
   if (/^\d{17}$/.test(query)) {
     return [{ id: query, title: query, subtitle: query }];
   }
-  // 5) Final fallback: DB address search via configured API base
-  const url = api.makeUrl('/api/search/address', { q: query, max_results: limit });
+  // 5) Final fallback: DB search route that supports address or exact account_id
+  const url = api.makeUrl('/api/search', { q: query, limit });
   let res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Search HTTP ${res.status}`);

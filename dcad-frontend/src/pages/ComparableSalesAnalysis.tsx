@@ -1136,38 +1136,41 @@ export default function ComparableSalesAnalysis() {
                       {Array.from({ length: 4 }).map((_, i) => [
                         <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
-                          {label === 'Basement SF'
-                            ? fmtSqftSafe(subject?.basement_sqft)
-                            // Heating/Cooling mirroring: comparables show same derived display as subject
-                            : label === 'Heating/Cooling'
-                              ? (() => {
-                                  const h = (subject?.heating || '').toString().trim();
-                                  const a = (subject?.air_conditioning || '').toString().trim();
-                                  if (!h && !a) return '';
-                                  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
-                                  if (h && a && norm(h) === 'central full' && norm(a) === 'central full') return 'Central';
-                                  if (h && a) return `${h} / ${a}`;
-                                  return h || a;
-                                })()
-                              // Solar Panels mirroring: comparables show same presence/area as subject
-                              : label === 'Solar Panels'
-                                ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
-                              // Fencing mirroring: comparables show same fence type as subject
-                              : label === 'Fencing'
-                                ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
-                              // Porches/Decks mirroring: comparables match subject's porch/deck value
-                              : label === 'Porches/Decks'
-                                ? (() => {
-                                    const v: any = subject?.deck;
-                                    if (typeof v === 'boolean') return v ? 'Yes' : '-';
-                                    const s = (v ?? '').toString().trim();
-                                    if (!s) return '-';
-                                    return /^n(?:o)?$/i.test(s) ? '-' : s;
-                                  })()
-                              // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
-                              : label === 'Garage/Parking'
-                                ? fmtSqftSafe((compGarage || [])[i] ?? '')
-                                : ''}
+                        {label === 'Basement SF'
+                          ? fmtSqftSafe(subject?.basement_sqft)
+                          // Heating/Cooling mirroring: comparables show same derived display as subject
+                          : label === 'Heating/Cooling'
+                            ? (() => {
+                                const h = (subject?.heating || '').toString().trim();
+                                const a = (subject?.air_conditioning || '').toString().trim();
+                                if (!h && !a) return '';
+                                const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+                                if (h && a && norm(h) === 'central full' && norm(a) === 'central full') return 'Central';
+                                if (h && a) return `${h} / ${a}`;
+                                return h || a;
+                              })()
+                          // Solar Panels mirroring: comparables show same presence/area as subject
+                          : label === 'Solar Panels'
+                            ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
+                          // Fencing mirroring: comparables show same fence type as subject
+                          : label === 'Fencing'
+                            ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                          // Porches/Decks mirroring: comparables match subject's porch/deck value
+                          : label === 'Porches/Decks'
+                            ? (() => {
+                                const v: any = subject?.deck;
+                                if (typeof v === 'boolean') return v ? 'Yes' : '-';
+                                const s = (v ?? '').toString().trim();
+                                if (!s) return '-';
+                                return /^n(?:o)?$/i.test(s) ? '-' : s;
+                              })()
+                          // Easements: subject always displays "None Known"
+                          : label === 'Easements'
+                            ? 'None Known'
+                          // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
+                          : label === 'Garage/Parking'
+                            ? fmtSqftSafe((compGarage || [])[i] ?? '')
+                            : ''}
                         </td>,
                         <td
                           key={`${label}-adj-${i}`}
@@ -1531,38 +1534,41 @@ export default function ComparableSalesAnalysis() {
                       {Array.from({ length: 4 }).map((_, i) => [
                         <td key={`eq2-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
-                          {label === 'Basement SF'
-                            ? fmtSqftSafe(subject?.basement_sqft)
-                            // Heating/Cooling mirroring: comparables show same derived display as subject
-                            : label === 'Heating/Cooling'
-                              ? (() => {
-                                  const h = (subject?.heating || '').toString().trim();
-                                  const a = (subject?.air_conditioning || '').toString().trim();
-                                  if (!h && !a) return '';
-                                  const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
-                                  if (h && a && norm(h) === 'central full' && norm(a) === 'central full') return 'Central';
-                                  if (h && a) return `${h} / ${a}`;
-                                  return h || a;
-                                })()
-                              // Solar Panels mirroring: comparables show same presence/area as subject
-                              : label === 'Solar Panels'
-                                ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
-                              // Fencing mirroring: comparables show same fence type as subject
-                              : label === 'Fencing'
-                                ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
-                              // Porches/Decks mirroring: comparables match subject's porch/deck value
-                              : label === 'Porches/Decks'
-                                ? (() => {
-                                    const v: any = subject?.deck;
-                                    if (typeof v === 'boolean') return v ? 'Yes' : '-';
-                                    const s = (v ?? '').toString().trim();
-                                    if (!s) return '-';
-                                    return /^n(?:o)?$/i.test(s) ? '-' : s;
-                                  })()
-                              // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
-                              : label === 'Garage/Parking'
-                                ? fmtSqftSafe((compGarage || [])[i] ?? '')
-                                : ''}
+                        {label === 'Basement SF'
+                          ? fmtSqftSafe(subject?.basement_sqft)
+                          // Heating/Cooling mirroring: comparables show same derived display as subject
+                          : label === 'Heating/Cooling'
+                            ? (() => {
+                                const h = (subject?.heating || '').toString().trim();
+                                const a = (subject?.air_conditioning || '').toString().trim();
+                                if (!h && !a) return '';
+                                const norm = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+                                if (h && a && norm(h) === 'central full' && norm(a) === 'central full') return 'Central';
+                                if (h && a) return `${h} / ${a}`;
+                                return h || a;
+                              })()
+                          // Solar Panels mirroring: comparables show same presence/area as subject
+                          : label === 'Solar Panels'
+                            ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
+                          // Fencing mirroring: comparables show same fence type as subject
+                          : label === 'Fencing'
+                            ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                          // Porches/Decks mirroring: comparables match subject's porch/deck value
+                          : label === 'Porches/Decks'
+                            ? (() => {
+                                const v: any = subject?.deck;
+                                if (typeof v === 'boolean') return v ? 'Yes' : '-';
+                                const s = (v ?? '').toString().trim();
+                                if (!s) return '-';
+                                return /^n(?:o)?$/i.test(s) ? '-' : s;
+                              })()
+                          // Easements: subject always displays "None Known"
+                          : label === 'Easements'
+                            ? 'None Known'
+                          // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
+                          : label === 'Garage/Parking'
+                            ? fmtSqftSafe((compGarage || [])[i] ?? '')
+                            : ''}
                         </td>,
                         <td
                           key={`eq2-${label}-adj-${i}`}

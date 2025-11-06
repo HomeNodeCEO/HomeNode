@@ -1155,6 +1155,15 @@ export default function ComparableSalesAnalysis() {
                               // Fencing mirroring: comparables show same fence type as subject
                               : label === 'Fencing'
                                 ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                              // Porches/Decks mirroring: comparables match subject's porch/deck value
+                              : label === 'Porches/Decks'
+                                ? (() => {
+                                    const v: any = subject?.deck;
+                                    if (typeof v === 'boolean') return v ? 'Yes' : '-';
+                                    const s = (v ?? '').toString().trim();
+                                    if (!s) return '-';
+                                    return /^n(?:o)?$/i.test(s) ? '-' : s;
+                                  })()
                               // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe((compGarage || [])[i] ?? '')
@@ -1541,6 +1550,15 @@ export default function ComparableSalesAnalysis() {
                               // Fencing mirroring: comparables show same fence type as subject
                               : label === 'Fencing'
                                 ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
+                              // Porches/Decks mirroring: comparables match subject's porch/deck value
+                              : label === 'Porches/Decks'
+                                ? (() => {
+                                    const v: any = subject?.deck;
+                                    if (typeof v === 'boolean') return v ? 'Yes' : '-';
+                                    const s = (v ?? '').toString().trim();
+                                    if (!s) return '-';
+                                    return /^n(?:o)?$/i.test(s) ? '-' : s;
+                                  })()
                               // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe((compGarage || [])[i] ?? '')

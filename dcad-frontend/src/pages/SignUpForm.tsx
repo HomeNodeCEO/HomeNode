@@ -164,6 +164,82 @@ export default function SignUpForm() {
     return () => { cancelled = true; };
   }, [accountId]);
 
+  // --- Step 1 auto-fill: Address/City/State/Zip from mailing address when it matches subject address ---
+  function extractStreetNumber(addr: string): string | null {
+    const m = String(addr || '').trim().match(/^(\d{1,10})\b/);
+    return m ? m[1] : null;
+  }
+  function parseMailingParts(addr: string): { line: string; city: string; state: string; zip: string } {
+    // Very simple parser for formats like: "123 Main St, Dallas, TX 75201" or "123 Main St Dallas TX 75201"
+    const s = String(addr || '').replace(/\s+,/g, ',').trim();
+    let line = '', city = '', state = '', zip = '';
+    const parts = s.split(',').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      line = parts[0];
+      city = parts[1];
+      // Third part may be "TX 75201" or "Texas 75201"
+      const rest = parts.slice(2).join(' ');
+      const m = rest.match(/([A-Za-z]{2,})\s*(\d{5})(?:-\d{4})?/);
+      if (m) { state = m[1]; zip = m[2]; }
+    } else {
+      // Fallback: attempt space-delimited
+      const segs = s.split(/\s+/);
+      const zipIdx = segs.findIndex(t => /^\d{5}(?:-\d{4})?$/.test(t));
+      if (zipIdx > 1) {
+        zip = segs[zipIdx];
+        state = segs[zipIdx - 1] || '';
+        line = segs.slice(0, zipIdx - 2).join(' ');
+        city = segs.slice(zipIdx - 2, zipIdx - 1).join(' ');
+      } else {
+        line = s;
+      }
+    }
+    return { line, city, state, zip };
+  }
+
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Subject (situs) address from DB or scraper
+        let subjectAddress = '';
+        try {
+          const d = await api.getAccount(accountId);
+          subjectAddress = (d as any)?.account?.address || '';
+        } catch {}
+        if (!subjectAddress) {
+          try {
+            const det: any = await fetchDetail(accountId);
+            subjectAddress = det?.detail?.property_location?.address || det?.property_location?.address || '';
+          } catch {}
+        }
+        // Mailing address
+        let mailingAddress = '';
+        try {
+          const det: any = await fetchDetail(accountId);
+          mailingAddress = det?.detail?.owner?.mailing_address || det?.owner?.mailing_address || '';
+        } catch {}
+        if (!subjectAddress || !mailingAddress) return;
+        const subjectNum = extractStreetNumber(subjectAddress);
+        const mailingNum = extractStreetNumber(mailingAddress);
+        if (subjectNum && mailingNum && subjectNum === mailingNum) {
+          const parts = parseMailingParts(mailingAddress);
+          if (!cancelled) {
+            setFields(f => ({
+              ...f,
+              ownerAddress: f.ownerAddress || parts.line || mailingAddress,
+              ownerCity: f.ownerCity || parts.city || '',
+              ownerState: 'Texas',
+              ownerZip: f.ownerZip || parts.zip || '',
+            }));
+          }
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [accountId]);
+
   function openFilePicker() {
     inputRef.current?.click();
   }

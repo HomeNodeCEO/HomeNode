@@ -217,6 +217,9 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
   const [idx, setIdx] = useState(0);
   // AddressHero: state for Overall Property Condition selection
   const [propertyCondition, setPropertyCondition] = useState<string>('');
+  // Upload Photos UI and handlers — lives in AddressHero in src/pages/PropertyReport.tsx
+  const [userPhotos, setUserPhotos] = useState<string[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const photos = useMemo<string[]>(() => {
     const fromApi = (detail as any)?.photos as string[] | undefined;
@@ -227,10 +230,24 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
       "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?q=80&w=2100&auto=format&fit=crop",
     ];
   }, [detail]);
+  const displayPhotos = useMemo<string[]>(() => [...userPhotos, ...photos], [userPhotos, photos]);
 
-  const canSlide = photos.length > 1;
-  const goPrev = () => setIdx((p) => (p - 1 + photos.length) % photos.length);
-  const goNext = () => setIdx((p) => (p + 1) % photos.length);
+  const canSlide = displayPhotos.length > 1;
+  const goPrev = () => setIdx((p) => (p - 1 + displayPhotos.length) % displayPhotos.length);
+  const goNext = () => setIdx((p) => (p + 1) % displayPhotos.length);
+  useEffect(() => {
+    if (displayPhotos.length && idx >= displayPhotos.length) setIdx(0);
+  }, [displayPhotos.length]);
+
+  const handleUploadClick = () => fileInputRef.current?.click();
+  const onSelectFiles = (e: any) => {
+    const files: File[] = Array.from(e?.target?.files || []);
+    if (!files.length) return;
+    const urls = files.map((f) => URL.createObjectURL(f));
+    setUserPhotos((prev) => [...prev, ...urls]);
+    // reset input so selecting same files again re-triggers change
+    if (e?.target) e.target.value = '';
+  };
 
   // Prefer nested property_location.address, but gracefully fallback to common backend fields
   const resolveAddress = (d: any): string => {
@@ -467,12 +484,28 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
       <figure className="relative">
         {/* Reduce hero image height to ~half while keeping full width */}
         <img
-          src={photos[idx]}
+          src={displayPhotos[idx]}
           alt="Property"
           className="w-full object-cover select-none"
           style={{ height: 250 }}
           draggable={false}
         />
+        {/* Upload Photos button (top-right of photo) */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={onSelectFiles}
+        />
+        <button
+          type="button"
+          onClick={handleUploadClick}
+          className="absolute top-3 right-3 z-20 btn btn-sm normal-case bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
+        >
+          Upload Photos
+        </button>
         {canSlide && (
           <>
             <button
@@ -492,7 +525,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
             </button>
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 rounded-full bg-black/30 px-3 py-1.5 flex gap-1.5 backdrop-blur-[1px]">
-              {photos.map((_, i) => (
+              {displayPhotos.map((_, i) => (
                 <button
                   key={i}
                   onClick={() => setIdx(i)}

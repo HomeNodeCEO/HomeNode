@@ -194,8 +194,11 @@ export default function SignUpForm() {
 
         {/* Embedded PDF viewer removed per requirement; the HTML form remains below */}
 
-        {/* HTML Overlay Form - Page 1 */}
+        {/* Combined outline wrapper for Steps 1–4 (and subsequent steps) */}
         <div className="mt-4 bg-white border rounded-xl p-4">
+
+        {/* HTML Overlay Form - Page 1 (now inside combined wrapper) */}
+        <div className="">
           <div className="font-semibold mb-2">STEP 1: Owner’s Name and Address</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="text-sm">Appraisal District Name
@@ -313,8 +316,8 @@ export default function SignUpForm() {
           )}
         </div>
 
-        {/* HTML Overlay Form - Page 2 */}
-        <div className="mt-4 bg-white border rounded-xl p-4">
+        {/* HTML Overlay Form - Page 2 (now inside combined wrapper) */}
+        <div className="mt-4">
           <div className="font-semibold mb-2">STEP 3: Identify the Agent</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <label className="text-sm">Name
@@ -380,6 +383,9 @@ export default function SignUpForm() {
             <label className="text-sm inline-flex items-center gap-2"><input type="radio" checked={fields.signerRole==='authorized-agent'} onChange={()=>setFields(f=>({...f, signerRole:'authorized-agent'}))} /> a property manager authorized to designate agents for the owner</label>
             <label className="text-sm inline-flex items-center gap-2"><input type="radio" checked={fields.signerRole==='other'} onChange={()=>setFields(f=>({...f, signerRole:'other'}))} /> other person authorized to act on behalf of the owner</label>
           </div>
+        </div>
+
+        {/* End combined outline wrapper */}
         </div>
 
         {/* Signature preview / upload */}

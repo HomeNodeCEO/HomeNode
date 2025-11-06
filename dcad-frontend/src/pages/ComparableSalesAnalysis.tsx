@@ -84,6 +84,8 @@ export default function ComparableSalesAnalysis() {
   const [compSaleDates, setCompSaleDates] = useState<string[]>(['', '', '', '']);
   const [compLandSize, setCompLandSize] = useState<Array<number | null>>([null, null, null, null]);
   const [compClasses, setCompClasses] = useState<Array<number | string | null>>([null, null, null, null]);
+  // Test-mode comparable ages for the "Actual Age" row
+  const [compAges, setCompAges] = useState<Array<number | null>>([null, null, null, null]);
   const [compRooms, setCompRooms] = useState<Array<{ tot: number | null; bd: number | null; full: number | null; half: number | null }>>([
     { tot: null, bd: null, full: null, half: null },
     { tot: null, bd: null, full: null, half: null },
@@ -160,6 +162,22 @@ export default function ComparableSalesAnalysis() {
       // If not numeric, mirror the subject's class label for all comps
       const s = (subject?.building_class ?? '') as any;
       setCompClasses([s, s, s, s]);
+    }
+
+    // Actual Age adjustments per comparable
+    // NOTE: If subject's age is 0, comps 1 and 4 should not go negative; they remain equal to subject.
+    const subjAge = parseIntLike(subject?.actual_age);
+    if (subjAge !== null) {
+      let a1 = subjAge - 2; // comp 1: -2 years
+      const a2 = subjAge + 3; // comp 2: +3 years
+      const a3 = subjAge;     // comp 3: same
+      let a4 = subjAge - 4; // comp 4: -4 years
+      if (subjAge === 0) { a1 = 0; a4 = 0; }
+      a1 = Math.max(0, a1);
+      a4 = Math.max(0, a4);
+      setCompAges([a1, a2, a3, a4]);
+    } else {
+      setCompAges([null, null, null, null]);
     }
 
     // Compute comparable 1 room counts based on subject
@@ -945,6 +963,8 @@ export default function ComparableSalesAnalysis() {
                                 ? normalizeConstType(subject?.stories, subject?.construction_type)
                               : label === 'Class'
                                 ? String((compClasses || [])[i] ?? '')
+                              : label === 'Actual Age'
+                                ? (compAges[i] ?? '')
                               : label === 'View'
                                 ? ((subject?.view || 'Neutral') as any)
                                 : ''}
@@ -1328,6 +1348,8 @@ export default function ComparableSalesAnalysis() {
                                 ? normalizeConstType(subject?.stories, subject?.construction_type)
                               : label === 'Class'
                                 ? String((compClasses || [])[i] ?? '')
+                              : label === 'Actual Age'
+                                ? (compAges[i] ?? '')
                               : label === 'View'
                                 ? ((subject?.view || 'Neutral') as any)
                                 : ''}

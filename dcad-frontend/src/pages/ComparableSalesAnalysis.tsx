@@ -1120,7 +1120,10 @@ export default function ComparableSalesAnalysis() {
                                       : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
-                        <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
+                        <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
+                          {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
+                          {label === 'Basement SF' ? fmtSqftSafe(subject?.basement_sqft) : ''}
+                        </td>,
                         <td
                           key={`${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
@@ -1481,7 +1484,10 @@ export default function ComparableSalesAnalysis() {
                                     : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
-                        <td key={`eq2-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"></td>,
+                        <td key={`eq2-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
+                          {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
+                          {label === 'Basement SF' ? fmtSqftSafe(subject?.basement_sqft) : ''}
+                        </td>,
                         <td
                           key={`eq2-${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"

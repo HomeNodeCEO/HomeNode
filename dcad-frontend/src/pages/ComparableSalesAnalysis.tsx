@@ -941,6 +941,8 @@ export default function ComparableSalesAnalysis() {
                                 ? (compSaleDates[i] || '')
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'Const Type'
+                                ? normalizeConstType(subject?.stories, subject?.construction_type)
                               : label === 'Class'
                                 ? String((compClasses || [])[i] ?? '')
                               : label === 'View'
@@ -1322,6 +1324,8 @@ export default function ComparableSalesAnalysis() {
                                 ? (compSaleDates[i] || '')
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'Const Type'
+                                ? normalizeConstType(subject?.stories, subject?.construction_type)
                               : label === 'Class'
                                 ? String((compClasses || [])[i] ?? '')
                               : label === 'View'

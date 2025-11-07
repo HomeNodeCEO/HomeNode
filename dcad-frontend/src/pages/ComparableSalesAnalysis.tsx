@@ -744,6 +744,17 @@ export default function ComparableSalesAnalysis() {
       return adj;
     });
   }, [compPrices]);
+
+  // SALES/EQUITY: Room Count adjustments logic (Beds + Baths)
+  // - Bedroom count adjustment: set to $0 for all comparables (for now)
+  // - Bathroom count adjustment: Comp1 +$3,000; Comp2 -$3,000; Comp3 +$1,500; Comp4 $0
+  // The Room Count adjustment per comparable is the sum of BedAdj + BathAdj
+  const roomCountBedAdjustments = useMemo<number[]>(() => [0, 0, 0, 0], []);
+  const roomCountBathAdjustments = useMemo<number[]>(() => [3000, -3000, 1500, 0], []);
+  const roomCountTotalAdjustments = useMemo<number[]>(
+    () => roomCountBedAdjustments.map((b, i) => b + (roomCountBathAdjustments[i] ?? 0)),
+    [roomCountBedAdjustments, roomCountBathAdjustments]
+  );
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     const v = subject?.bedroom_count as any;
@@ -1101,7 +1112,10 @@ export default function ComparableSalesAnalysis() {
                         key={`rooms-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 bg-white border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >
+                        {/* SALES: Room Count adjustments = BedAdj + BathAdj */}
+                        {fmtCurrency((roomCountTotalAdjustments || [])[i] ?? 0)}
+                      </td>,
                     ])}
                   </tr>
 
@@ -1564,7 +1578,10 @@ export default function ComparableSalesAnalysis() {
                         key={`eq-rooms-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 bg-white border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >
+                        {/* EQUITY: Room Count adjustments = BedAdj + BathAdj */}
+                        {fmtCurrency((roomCountTotalAdjustments || [])[i] ?? 0)}
+                      </td>,
                     ])}
                   </tr>
                   {/* SALES GRID: Gross Living Area — desc uses compGla; adjustment cell intentionally blank */}

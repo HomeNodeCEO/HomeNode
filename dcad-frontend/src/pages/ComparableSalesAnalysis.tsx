@@ -1030,6 +1030,9 @@ export default function ComparableSalesAnalysis() {
                                     if (v === null || v === undefined || v === 0) return '';
                                     return fmtCurrency(v);
                                   })()
+                              // SALES: Actual Age — adjustments fixed at $0 for all comparables
+                              : label === 'Actual Age'
+                                ? fmtCurrency(0)
                               : ''}
                           </td>,
                         ])}
@@ -1497,6 +1500,9 @@ export default function ComparableSalesAnalysis() {
                                     if (v === null || v === undefined || v === 0) return '';
                                     return fmtCurrency(v);
                                   })()
+                              // EQUITY: Actual Age — adjustments fixed at $0 for all comparables
+                              : label === 'Actual Age'
+                                ? fmtCurrency(0)
                               : ''}
                           </td>,
                         ])}

@@ -729,6 +729,21 @@ export default function ComparableSalesAnalysis() {
     if (!isFinite(n)) return String(v);
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
   };
+
+  // SALES/EQUITY: Class row adjustments logic
+  // Comp 1: +3% of sale price; Comp 2: -3% of sale price (superior class);
+  // Comp 3: 0 (same class as subject); Comp 4: +3% of sale price
+  const classAdjustments = useMemo(() => {
+    const prices = compPrices || [];
+    return [0, 1, 2, 3].map((i) => {
+      const v: any = prices[i];
+      const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+      if (!Number.isFinite(n) || n <= 0) return null;
+      const pct = i === 1 ? -0.03 : (i === 2 ? 0 : 0.03);
+      const adj = Math.round(n * pct);
+      return adj;
+    });
+  }, [compPrices]);
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     const v = subject?.bedroom_count as any;
@@ -1009,6 +1024,12 @@ export default function ComparableSalesAnalysis() {
                                   })()
                               : label === 'Land Size'
                                 ? fmtCurrency(0)
+                              : label === 'Class'
+                                ? (() => {
+                                    const v = (classAdjustments || [])[i] ?? null;
+                                    if (v === null || v === undefined || v === 0) return '';
+                                    return fmtCurrency(v);
+                                  })()
                               : ''}
                           </td>,
                         ])}
@@ -1470,6 +1491,12 @@ export default function ComparableSalesAnalysis() {
                                   })()
                               : label === 'Land Size'
                                 ? fmtCurrency(0)
+                              : label === 'Class'
+                                ? (() => {
+                                    const v = (classAdjustments || [])[i] ?? null;
+                                    if (v === null || v === undefined || v === 0) return '';
+                                    return fmtCurrency(v);
+                                  })()
                               : ''}
                           </td>,
                         ])}

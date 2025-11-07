@@ -755,6 +755,9 @@ export default function ComparableSalesAnalysis() {
     () => roomCountBedAdjustments.map((b, i) => b + (roomCountBathAdjustments[i] ?? 0)),
     [roomCountBedAdjustments, roomCountBathAdjustments]
   );
+  // SALES/EQUITY: Gross Living Area (GLA) adjustments logic
+  // Comp1: +$3,000; Comp2: -$3,000; Comp3: $0; Comp4: -$2,000
+  const glaAdjustments = useMemo<number[]>(() => [3000, -3000, 0, -2000], []);
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     const v = subject?.bedroom_count as any;
@@ -1119,7 +1122,7 @@ export default function ComparableSalesAnalysis() {
                     ])}
                   </tr>
 
-                  {/* Gross Living Area */}
+                  {/* SALES: Gross Living Area — desc uses compGla; adjustment uses glaAdjustments[i] */}
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Gross Living Area</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
@@ -1131,7 +1134,7 @@ export default function ComparableSalesAnalysis() {
                         key={`gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((glaAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
 
@@ -1584,7 +1587,7 @@ export default function ComparableSalesAnalysis() {
                       </td>,
                     ])}
                   </tr>
-                  {/* SALES GRID: Gross Living Area — desc uses compGla; adjustment cell intentionally blank */}
+                  {/* EQUITY: Gross Living Area — desc uses compGla; adjustment uses glaAdjustments[i] */}
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Gross Living Area</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
@@ -1596,7 +1599,7 @@ export default function ComparableSalesAnalysis() {
                         key={`eq-gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((glaAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
                   {[

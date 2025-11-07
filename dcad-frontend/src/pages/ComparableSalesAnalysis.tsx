@@ -1005,7 +1005,9 @@ export default function ComparableSalesAnalysis() {
                                     if (v === null || v === undefined || v === 0) return '';
                                     return fmtCurrency(v);
                                   })()
-                                : ''}
+                              : label === 'Land Size'
+                                ? fmtCurrency(0)
+                              : ''}
                           </td>,
                         ])}
                       </tr>
@@ -1446,7 +1448,9 @@ export default function ComparableSalesAnalysis() {
                                     if (v === null || v === undefined || v === 0) return '';
                                     return fmtCurrency(v);
                                   })()
-                                : ''}
+                              : label === 'Land Size'
+                                ? fmtCurrency(0)
+                              : ''}
                           </td>,
                         ])}
                       </tr>

@@ -758,6 +758,29 @@ export default function ComparableSalesAnalysis() {
   // SALES/EQUITY: Gross Living Area (GLA) adjustments logic
   // Comp1: +$3,000; Comp2: -$3,000; Comp3: $0; Comp4: -$2,000
   const glaAdjustments = useMemo<number[]>(() => [3000, -3000, 0, -2000], []);
+
+  // SALES/EQUITY: Net Adjustments — sum all signed adjustments per comparable
+  const netAdjustments = useMemo<number[]>(() => {
+    const arr: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const toNum = (v: any): number => {
+        if (v === null || v === undefined || v === '') return 0;
+        const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const concession = toNum((compConcessions || [])[i]);
+      const timeAdj = toNum((compTimeAdjustments || [])[i]);
+      const classAdj = toNum((classAdjustments || [])[i]);
+      const roomAdj = toNum((roomCountTotalAdjustments || [])[i]);
+      const glaAdj = toNum((glaAdjustments || [])[i]);
+      // Land Size, Actual Age currently $0
+      const landAdj = 0;
+      const ageAdj = 0;
+      const total = (concession > 0 ? -concession : 0) + timeAdj + classAdj + roomAdj + glaAdj + landAdj + ageAdj;
+      arr.push(total);
+    }
+    return arr;
+  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments]);
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     const v = subject?.bedroom_count as any;
@@ -1266,7 +1289,7 @@ export default function ComparableSalesAnalysis() {
                         key={`net-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((netAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
 
@@ -2517,6 +2540,7 @@ function DistrictEvidenceAccordion() {
     </div>
   );
 }
+
 
 
 

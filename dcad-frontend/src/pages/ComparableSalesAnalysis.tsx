@@ -81,6 +81,8 @@ export default function ComparableSalesAnalysis() {
   const [compGla, setCompGla] = useState<Array<number | null>>([null, null, null, null]);
   const [compPrices, setCompPrices] = useState<Array<number | null>>([null, null, null, null]);
   const [compConcessions, setCompConcessions] = useState<Array<number | null>>([null, null, null, null]);
+  // Date of Sale/Time adjustments per comparable (can be positive or negative)
+  const [compTimeAdjustments, setCompTimeAdjustments] = useState<Array<number | null>>([null, null, null, null]);
   const [compSaleDates, setCompSaleDates] = useState<string[]>(['', '', '', '']);
   const [compLandSize, setCompLandSize] = useState<Array<number | null>>([null, null, null, null]);
   const [compClasses, setCompClasses] = useState<Array<number | string | null>>([null, null, null, null]);
@@ -131,6 +133,9 @@ export default function ComparableSalesAnalysis() {
 
     // Fixed concessions by comparable
     setCompConcessions([5000, 5000, 0, 3000]);
+
+    // Fixed Date of Sale/Time adjustments by comparable
+    setCompTimeAdjustments([-2000, 4000, -2000, -3000]);
 
     // Fixed sale dates by comparable
     setCompSaleDates(['11/05/2025', '07/16/2025', '11/25/2025', '09/10/2025']);
@@ -994,7 +999,13 @@ export default function ComparableSalesAnalysis() {
                                   const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
                                   return Number.isFinite(n) && n > 0 ? fmtCurrency(-n) : '';
                                 })()
-                              : ''}
+                              : label === 'Date of Sale/Time'
+                                ? (() => {
+                                    const v = (compTimeAdjustments || [])[i] ?? null;
+                                    if (v === null || v === undefined || v === 0) return '';
+                                    return fmtCurrency(v);
+                                  })()
+                                : ''}
                           </td>,
                         ])}
                       </tr>
@@ -1429,7 +1440,13 @@ export default function ComparableSalesAnalysis() {
                                   const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
                                   return Number.isFinite(n) && n > 0 ? fmtCurrency(-n) : '';
                                 })()
-                              : ''}
+                              : label === 'Date of Sale/Time'
+                                ? (() => {
+                                    const v = (compTimeAdjustments || [])[i] ?? null;
+                                    if (v === null || v === undefined || v === 0) return '';
+                                    return fmtCurrency(v);
+                                  })()
+                                : ''}
                           </td>,
                         ])}
                       </tr>

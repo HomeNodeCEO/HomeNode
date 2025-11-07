@@ -987,7 +987,15 @@ export default function ComparableSalesAnalysis() {
                             key={`${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
                             style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                          ></td>,
+                          >
+                            {label === 'Concessions'
+                              ? (() => {
+                                  const v = (compConcessions || [])[i] ?? 0;
+                                  const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+                                  return Number.isFinite(n) && n > 0 ? fmtCurrency(-n) : '';
+                                })()
+                              : ''}
+                          </td>,
                         ])}
                       </tr>
                     );
@@ -1414,7 +1422,15 @@ export default function ComparableSalesAnalysis() {
                             key={`eq-${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
                             style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                          ></td>,
+                          >
+                            {label === 'Concessions'
+                              ? (() => {
+                                  const v = (compConcessions || [])[i] ?? 0;
+                                  const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+                                  return Number.isFinite(n) && n > 0 ? fmtCurrency(-n) : '';
+                                })()
+                              : ''}
+                          </td>,
                         ])}
                       </tr>
                     );

@@ -781,6 +781,28 @@ export default function ComparableSalesAnalysis() {
     }
     return arr;
   }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments]);
+
+  // SALES/EQUITY: Gross Adjustments — sum of absolute values of all adjustments per comparable
+  const grossAdjustments = useMemo<number[]>(() => {
+    const arr: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const toNum = (v: any): number => {
+        if (v === null || v === undefined || v === '') return 0;
+        const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const concession = Math.abs(toNum((compConcessions || [])[i]));
+      const timeAdj = Math.abs(toNum((compTimeAdjustments || [])[i]));
+      const classAdj = Math.abs(toNum((classAdjustments || [])[i]));
+      const roomAdj = Math.abs(toNum((roomCountTotalAdjustments || [])[i]));
+      const glaAdj = Math.abs(toNum((glaAdjustments || [])[i]));
+      const landAdj = 0;
+      const ageAdj = 0;
+      const total = concession + timeAdj + classAdj + roomAdj + glaAdj + landAdj + ageAdj;
+      arr.push(total);
+    }
+    return arr;
+  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments]);
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     const v = subject?.bedroom_count as any;
@@ -1304,7 +1326,7 @@ export default function ComparableSalesAnalysis() {
                         key={`gross-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((grossAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
 
@@ -2540,6 +2562,7 @@ function DistrictEvidenceAccordion() {
     </div>
   );
 }
+
 
 
 

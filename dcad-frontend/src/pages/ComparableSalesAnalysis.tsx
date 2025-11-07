@@ -889,6 +889,8 @@ export default function ComparableSalesAnalysis() {
                   </tr>
 
                   {/* Row: Value vs Sales */}
+                  {/* SALES GRID: Indicated Value — placeholder; applied after adjustments to derive indicated value from each comparable */}
+                  {/* EQUITY GRID: Indicated Value — placeholder; applied after adjustments to derive indicated value from each comparable */}
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Value vs Sales</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
@@ -1095,6 +1097,9 @@ export default function ComparableSalesAnalysis() {
                     ])}
                   </tr>
 
+                  {/* SALES GRID: Indicated Value placeholder — apply Net/Gross adjustments against comparables to derive indicated value */}
+                  {/* SALES GRID: Additional features section — Basement SF, Functional Utility, Heating/Cooling, Solar Panels, Porches/Decks, Fencing, Pool, Easements, Secondary Improvements */}
+                  {/* EQUITY GRID: Row logic mapping for adjustments (mirrors Sales grid labels) */}
                   {[
                     'Basement SF',
                     'Functional Utility',
@@ -1107,6 +1112,7 @@ export default function ComparableSalesAnalysis() {
                     'Easements',
                     'Secondary Improvements',
                   ].map((label) => (
+                    // SALES GRID FEATURE ROW: Functional Utility — placeholder; add logic if/when defined
                     <tr key={label}>
                       <td className="px-4 py-2 border-b border-slate-200 bg-white">{label}</td>
                       <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
@@ -1208,6 +1214,8 @@ export default function ComparableSalesAnalysis() {
                   ))}
 
                   {/* Totals rows */}
+                  {/* SALES GRID TOTALS: Net Adjustments — compute sum of signed adjustments per comparable */}
+                  {/* EQUITY GRID TOTALS: Net Adjustments — compute sum of signed adjustments per comparable */}
                   <tr className="font-medium">
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Net Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
@@ -1221,6 +1229,8 @@ export default function ComparableSalesAnalysis() {
                     ])}
                   </tr>
 
+                  {/* SALES GRID TOTALS: Gross Adjustments — compute sum of absolute adjustments per comparable */}
+                  {/* EQUITY GRID TOTALS: Gross Adjustments — compute sum of absolute adjustments per comparable */}
                   <tr className="font-medium">
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Gross Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
@@ -1376,6 +1386,16 @@ export default function ComparableSalesAnalysis() {
                     'Actual Age',
                     'Condition/Updating',
                   ].map((label) => {
+                    // SALES GRID ROW GUIDES (logic references for new developers):
+                    // - Concessions: desc shows compConcessions[i]; adjustment shows negative concession
+                    // - NBHD Code: desc shows subject.nbhd_code; no adjustment currently
+                    // - Date of Sale/Time: adjustment uses compTimeAdjustments[i]
+                    // - Land Size: adjustment fixed at $0 for all comps
+                    // - View: desc mirrors subject.view; no adjustment currently
+                    // - Const Type: desc via normalizeConstType; no adjustment currently
+                    // - Class: desc shows compClasses[i]; no adjustment currently
+                    // - Actual Age: desc shows compAges[i]; no adjustment currently
+                    // - Condition/Updating: placeholder; no adjustment currently
                     let subjectValue: any = '';
                     switch (label) {
                       case 'Concessions':
@@ -1479,6 +1499,7 @@ export default function ComparableSalesAnalysis() {
                       ></td>,
                     ])}
                   </tr>
+                  {/* SALES GRID: Room Count — desc uses compRooms; adjustment cell intentionally blank */}
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Room Count</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
@@ -1513,6 +1534,7 @@ export default function ComparableSalesAnalysis() {
                       ></td>,
                     ])}
                   </tr>
+                  {/* SALES GRID: Gross Living Area — desc uses compGla; adjustment cell intentionally blank */}
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Gross Living Area</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
@@ -1539,6 +1561,7 @@ export default function ComparableSalesAnalysis() {
                     'Easements',
                     'Secondary Improvements',
                   ].map((label) => (
+                    // EQUITY GRID FEATURE ROW: Functional Utility — placeholder; add logic if/when defined
                     <tr key={`eq2-${label}`}>
                       <td className="px-4 py-2 border-b border-slate-200 bg-white">{label}</td>
                       <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>

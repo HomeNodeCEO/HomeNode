@@ -1718,6 +1718,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? fmtSqftSafe(subject?.garage_area_sqft)
                                 : label === 'Porches/Decks'
                                   ? 'N/A'
+                                  : label === 'Pool'
+                                    ? poolDisplay(subject?.pool)
                                   : label === 'Fencing'
                                     ? (() => {
                                         const s = (subject?.fence_type ?? '').toString().trim();
@@ -1757,20 +1759,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Porches/Decks: fixed display of 'N/A' for all comparables
                           : label === 'Porches/Decks'
                             ? 'N/A'
-                          // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
+                          // Pool (comparables): use same display helper as Sales grid
                           : label === 'Pool'
-                            ? (() => {
-                                const raw: any = subject?.pool;
-                                const str = String(raw ?? '').trim();
-                                if (!str) return '-';
-                                const up = str.toUpperCase();
-                                if (up === 'N') return 'No';
-                                if (up === 'T') return 'Yes';
-                                const low = up.toLowerCase();
-                                if (['no','n','none','0','false'].includes(low)) return 'No';
-                                if (['yes','y','1','true'].includes(low)) return 'Yes';
-                                return str;
-                              })()
+                            ? poolDisplay(subject?.pool)
                           // Easements: subject always displays "None Known"
                           : label === 'Easements'
                             ? 'None Known'

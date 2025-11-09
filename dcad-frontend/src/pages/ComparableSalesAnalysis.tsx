@@ -1086,7 +1086,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         subjectValue = subject?.nbhd_code || '';
                         break;
                       case 'Date of Sale/Time':
-                        subjectValue = '';
+                        subjectValue = '-';
                         break;
                       case 'Land Size':
                         subjectValue = fmtSqftSafe(subject?.land_size_sqft ?? null);
@@ -1150,11 +1150,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                   return Number.isFinite(n) && n > 0 ? fmtCurrency(-n) : '';
                                 })()
                               : label === 'Date of Sale/Time'
-                                ? (() => {
-                                    const v = (compTimeAdjustments || [])[i] ?? null;
-                                    if (v === null || v === undefined || v === 0) return '';
-                                    return fmtCurrency(v);
-                                  })()
+                                ? ''
                               : label === 'Land Size'
                                 ? fmtCurrency(0)
                               : label === 'Class'
@@ -1593,8 +1589,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               ? fmtCurrency((compConcessions || [])[i] ?? '')
                               : label === 'NBHD Code'
                                 ? (subject?.nbhd_code || '')
-                              : label === 'Date of Sale/Time'
-                                ? (compSaleDates[i] || '')
+                              : label === 'Date of Sale/Time' ? '-'
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
                               : label === 'Const Type'
@@ -1621,11 +1616,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                   return Number.isFinite(n) && n > 0 ? fmtCurrency(-n) : '';
                                 })()
                               : label === 'Date of Sale/Time'
-                                ? (() => {
-                                    const v = (compTimeAdjustments || [])[i] ?? null;
-                                    if (v === null || v === undefined || v === 0) return '';
-                                    return fmtCurrency(v);
-                                  })()
+                                ? ''
                               : label === 'Land Size'
                                 ? fmtCurrency(0)
                               : label === 'Class'
@@ -2634,6 +2625,9 @@ function DistrictEvidenceAccordion() {
     </div>
   );
 }
+
+
+
 
 
 

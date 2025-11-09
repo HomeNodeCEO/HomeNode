@@ -599,6 +599,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       }, 0);
                       return (total || 0) > 0 ? total : null;
                     })(),
+                    // Derive pool from improvements if not present on primary_improvements
+                    pool: (() => {
+                      if (prev?.pool != null && String(prev.pool).trim() !== '') return prev.pool as any;
+                      const sec: any[] = (detail as any)?.secondary_improvements || [];
+                      const addl: any[] = (detail as any)?.additional_improvements || [];
+                      const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
+                      const hasPool = arr.some((r: any) => {
+                        const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
+                        const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
+                        return t.includes('pool') || d.includes('pool');
+                      });
+                      if (hasPool) return 'T';
+                      return 'N';
+                    })(),
                   }));
                 }
               }
@@ -1296,9 +1310,37 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 if (!s) return '-';
                                 return /^n(?:o)?$/i.test(s) ? '-' : s;
                               })()
+                          // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
+                          : label === 'Pool'
+                            ? (() => {
+                                const raw: any = subject?.pool;
+                                const str = String(raw ?? '').trim();
+                                if (!str) return '-';
+                                const up = str.toUpperCase();
+                                if (up === 'N') return 'No';
+                                if (up === 'T') return 'Yes';
+                                const low = up.toLowerCase();
+                                if (['no','n','none','0','false'].includes(low)) return 'No';
+                                if (['yes','y','1','true'].includes(low)) return 'Yes';
+                                return str;
+                              })()
                           // Easements: subject always displays "None Known"
                           : label === 'Easements'
                             ? 'None Known'
+                          // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
+                          : label === 'Pool'
+                            ? (() => {
+                                const raw: any = subject?.pool;
+                                const str = String(raw ?? '').trim();
+                                if (!str) return '-';
+                                const up = str.toUpperCase();
+                                if (up === 'N') return 'No';
+                                if (up === 'T') return 'Yes';
+                                const low = up.toLowerCase();
+                                if (['no','n','none','0','false'].includes(low)) return 'No';
+                                if (['yes','y','1','true'].includes(low)) return 'Yes';
+                                return str;
+                              })()
                           // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                           : label === 'Garage/Parking'
                             ? fmtSqftSafe((compGarage || [])[i] ?? '')
@@ -1753,6 +1795,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 const s = (v ?? '').toString().trim();
                                 if (!s) return '-';
                                 return /^n(?:o)?$/i.test(s) ? '-' : s;
+                              })()
+                          // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
+                          : label === 'Pool'
+                            ? (() => {
+                                const raw: any = subject?.pool;
+                                const str = String(raw ?? '').trim();
+                                if (!str) return '-';
+                                const up = str.toUpperCase();
+                                if (up === 'N') return 'No';
+                                if (up === 'T') return 'Yes';
+                                const low = up.toLowerCase();
+                                if (['no','n','none','0','false'].includes(low)) return 'No';
+                                if (['yes','y','1','true'].includes(low)) return 'Yes';
+                                return str;
                               })()
                           // Easements: subject always displays "None Known"
                           : label === 'Easements'

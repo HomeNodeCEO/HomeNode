@@ -329,10 +329,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   useEffect(() => {
     if (!salesNotes) {
       const addr = subject?.address || 'the subject property';
-      setSalesNotes(
-        `Selected comparable sales within the same neighborhood code and approximately a 0.5ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¹Ã…â€œmile radius of ${addr}, ` +
-          `matching for age, size and quality to reflect current market activity.`
-      );
+      setSalesNotes('Comparable sales are analyzed based on the subjects condition to provide the best comparisons possible');
     }
     if (!adjustmentNotes) {
       const used = [
@@ -2519,15 +2516,27 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="flex flex-col">
             <label className="text-xs mb-1 text-slate-600">Sales Comparison Approach</label>
-            <textarea value={salesNotes} onChange={(e) => setSalesNotes(e.target.value)} className="border rounded-md p-2 text-sm h-24"></textarea>
+            <textarea
+              value={salesNotes}
+              onChange={(e) => setSalesNotes(e.target.value)}
+              className="border rounded-md p-2 text-sm h-24"
+            ></textarea>
           </div>
           <div className="flex flex-col">
             <label className="text-xs mb-1 text-slate-600">Adjustment Analysis</label>
-            <textarea value={adjustmentNotes} onChange={(e) => setAdjustmentNotes(e.target.value)} className="border rounded-md p-2 text-sm h-24"></textarea>
+            <textarea
+              value={adjustmentNotes}
+              onChange={(e) => setAdjustmentNotes(e.target.value)}
+              className="border rounded-md p-2 text-sm h-24"
+            ></textarea>
           </div>
           <div className="flex flex-col">
             <label className="text-xs mb-1 text-slate-600">Cost to Cure</label>
-            <textarea value={ctcNotes} onChange={(e) => setCtcNotes(e.target.value)} className="border rounded-md p-2 text-sm h-24"></textarea>
+            <textarea
+              value={ctcNotes}
+              onChange={(e) => setCtcNotes(e.target.value)}
+              className="border rounded-md p-2 text-sm h-24"
+            ></textarea>
           </div>
         </div>
 
@@ -2572,27 +2581,39 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   );
 }
 
-function Category({ title, items }: { title: string; items: { label: string; cost: number }[] }) {
+function Category(props: { title: string; items: { label: string; cost: number }[] }) {
+  const { title, items } = props;
   const total = items.reduce((s, i) => s + i.cost, 0);
-  const fmt = (n: number) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+  const fmt = (n) =>
+    n.toLocaleString('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0,
+    });
+
   return (
     <div className="mb-6">
       <div className="font-semibold mb-2">{title}</div>
       <div className="space-y-2">
         {items.map((it, idx) => (
-          <div key={idx} className="flex items-center justify-between rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
+          <div
+            key={idx}
+            className="flex items-center justify-between rounded-md bg-slate-50 border border-slate-200 px-3 py-2"
+          >
             <div className="text-sm text-slate-800">{it.label}</div>
             <div className="text-sm font-semibold text-rose-600">{fmt(it.cost)}</div>
           </div>
         ))}
       </div>
-      <div className="mt-2 text-sm text-slate-700">Category Total: <span className="font-semibold">{fmt(total)}</span></div>
+      <div className="mt-2 text-sm text-slate-700">
+        Category Total: <span className="font-semibold">{fmt(total)}</span>
+      </div>
     </div>
   );
 }
 
-// Helper bound in component scope via onClick
-async function generateSummary(this: any) { /* placeholder to satisfy TS during parse in some tools */ }
+// Removed erroneous placeholder; generateSummary is defined within the component
 
 function DistrictEvidenceAccordion() {
   const [open, setOpen] = useState<number | null>(null);
@@ -2634,6 +2655,7 @@ function DistrictEvidenceAccordion() {
     </div>
   );
 }
+
 
 
 

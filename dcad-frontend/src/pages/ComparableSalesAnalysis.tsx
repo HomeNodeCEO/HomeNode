@@ -1214,6 +1214,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                         {label === 'Basement SF'
                           ? fmtSqftSafe(subject?.basement_sqft)
+                          : label === 'Functional Utility'
+                            ? 'Adequate'
                           : label === 'Heating/Cooling'
                             ? (() => {
                                 const h = (subject?.heating || '').toString().trim();
@@ -1266,6 +1268,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
                         {label === 'Basement SF'
                           ? fmtSqftSafe(subject?.basement_sqft)
+                          : label === 'Functional Utility'
+                            ? 'Adequate'
                           // Heating/Cooling mirroring: comparables show same derived display as subject
                           : label === 'Heating/Cooling'
                             ? (() => {
@@ -1681,6 +1685,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                         {label === 'Basement SF'
                           ? fmtSqftSafe(subject?.basement_sqft)
+                          : label === 'Functional Utility'
+                            ? 'Adequate'
                           : label === 'Heating/Cooling'
                             ? (() => {
                                 const h = (subject?.heating || '').toString().trim();
@@ -1720,6 +1726,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
                         {label === 'Basement SF'
                           ? fmtSqftSafe(subject?.basement_sqft)
+                          : label === 'Functional Utility'
+                            ? 'Adequate'
                           // Heating/Cooling mirroring: comparables show same derived display as subject
                           : label === 'Heating/Cooling'
                             ? (() => {

@@ -1227,7 +1227,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 return h || a;
                               })()
                           : label === 'Solar Panels'
-                              ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
+                              ? 'None'
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe(subject?.garage_area_sqft)
                                 : label === 'Porches/Decks'
@@ -1281,9 +1281,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 if (h && a) return `${h} / ${a}`;
                                 return h || a;
                               })()
-                          // Solar Panels mirroring: comparables show same presence/area as subject
+                          // Solar Panels: fixed display of 'None' for all comparables
                           : label === 'Solar Panels'
-                            ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
+                            ? 'None'
                           // Fencing mirroring: comparables show same fence type as subject
                           : label === 'Fencing'
                             ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
@@ -1698,7 +1698,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 return h || a;
                               })()
                           : label === 'Solar Panels'
-                              ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
+                              ? 'None'
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe(subject?.garage_area_sqft)
                                 : label === 'Porches/Decks'
@@ -1739,9 +1739,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 if (h && a) return `${h} / ${a}`;
                                 return h || a;
                               })()
-                          // Solar Panels mirroring: comparables show same presence/area as subject
+                          // Solar Panels: fixed display of 'None' for all comparables
                           : label === 'Solar Panels'
-                            ? (subject?.solar_panels ? (subject?.solar_area_sqft ? fmtSqftSafe(subject?.solar_area_sqft) : 'Yes') : '-')
+                            ? 'None'
                           // Fencing mirroring: comparables show same fence type as subject
                           : label === 'Fencing'
                             ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()

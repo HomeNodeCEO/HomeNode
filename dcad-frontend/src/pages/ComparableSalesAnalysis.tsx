@@ -1270,9 +1270,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                       ? poolDisplay(subject?.pool)
                                     : label === 'Easements'
                                       ? 'None Known'
-                                    // Secondary Improvements: show joined list from subject
+                                    // Secondary Improvements: placeholder display
                                     : label === 'Secondary Improvements'
-                                      ? ((subject?.secondary_improvements_text ?? '') as any)
+                                      ? 'N/A'
                                       : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
@@ -1314,6 +1314,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                           : label === 'Garage/Parking'
                             ? fmtSqftSafe((compGarage || [])[i] ?? '')
+                          // Secondary Improvements: placeholder display for comparables
+                          : label === 'Secondary Improvements'
+                            ? 'N/A'
                             : ''}
                         </td>,
                         <td
@@ -1722,9 +1725,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                       })()
                                     : label === 'Easements'
                                       ? 'None Known'
-                                    // Secondary Improvements: show joined list from subject
+                                    // Secondary Improvements: placeholder display
                                     : label === 'Secondary Improvements'
-                                      ? ((subject?.secondary_improvements_text ?? '') as any)
+                                      ? 'N/A'
                                       : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
@@ -1774,6 +1777,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                           : label === 'Garage/Parking'
                             ? fmtSqftSafe((compGarage || [])[i] ?? '')
+                          // Secondary Improvements: placeholder display for comparables
+                          : label === 'Secondary Improvements'
+                            ? 'N/A'
                             : ''}
                         </td>,
                         <td

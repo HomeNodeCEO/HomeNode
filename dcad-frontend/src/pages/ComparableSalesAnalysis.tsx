@@ -1068,6 +1068,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? String((compClasses || [])[i] ?? '')
                               : label === 'Actual Age'
                                 ? (compAges[i] ?? '')
+                              : label === 'Condition/Updating'
+                                ? (conditionCode || '')
                               : label === 'View'
                                 ? ((subject?.view || 'Neutral') as any)
                                 : ''}
@@ -1545,6 +1547,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? String((compClasses || [])[i] ?? '')
                               : label === 'Actual Age'
                                 ? (compAges[i] ?? '')
+                              : label === 'Condition/Updating'
+                                ? (conditionCode || '')
                               : label === 'View'
                                 ? ((subject?.view || 'Neutral') as any)
                                 : ''}

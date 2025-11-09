@@ -33,12 +33,16 @@ type SubjectData = {
 export default function ComparableSalesAnalysis() {
   const location = useLocation();
   const navigate = useNavigate();
-    // CONDITION_CODE_INTAKE: read condCode from query (set by PropertyReport Sample Evidence link) and used in Condition/Updating rows\r\nconst conditionCode = useMemo(() => {
+  const propertyId = useMemo(() => {
+    const p = new URLSearchParams(location.search);
+    return p.get('propertyId') || '';
+  }, [location.search]);
+  // CONDITION_CODE_INTAKE: read condCode from query (set by PropertyReport Sample Evidence link) and used in Condition/Updating rows
+  const conditionCode = useMemo(() => {
     const p = new URLSearchParams(location.search);
     return p.get('condCode') || '';
   }, [location.search]);
-
-  const [subject, setSubject] = useState<SubjectData | null>(null);
+const [subject, setSubject] = useState<SubjectData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [photos, setPhotos] = useState<File[]>([]);
@@ -387,7 +391,7 @@ export default function ComparableSalesAnalysis() {
     </head><body>
       <h1>Protest Summary</h1>
       <div class="meta">Generated ${new Date().toLocaleString()}</div>
-      <div>${(summary || '').replace(/\n/g,'<br/>')}</div>
+      <div>${(summary || '').replace(/\r?\n/g,'<br/>')}</div>
     </body></html>`;
     const w = window.open('', '_blank');
     if (!w) return;
@@ -1029,14 +1033,8 @@ export default function ComparableSalesAnalysis() {
                       case 'Const Type':
                         subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
                         break;
-                      case 'Class':
-                        subjectValue = subject?.building_class || '';
-                        break;
                       case 'Actual Age':
                         subjectValue = subject?.actual_age ?? '';
-                        break;
-                      case 'Condition/Updating':
-                        subjectValue = conditionCode || '';
                         break;
                       case 'Condition/Updating':
                         subjectValue = conditionCode || '';
@@ -1513,12 +1511,6 @@ export default function ComparableSalesAnalysis() {
                         break;
                       case 'Actual Age':
                         subjectValue = subject?.actual_age ?? '';
-                        break;
-                      case 'Condition/Updating':
-                        subjectValue = conditionCode || '';
-                        break;
-                      case 'Condition/Updating':
-                        subjectValue = conditionCode || '';
                         break;
                       default:
                         subjectValue = '';
@@ -2574,6 +2566,14 @@ function DistrictEvidenceAccordion() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
 
 
 

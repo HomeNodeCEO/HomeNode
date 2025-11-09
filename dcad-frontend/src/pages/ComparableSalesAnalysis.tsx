@@ -1033,6 +1033,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       case 'Const Type':
                         subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
                         break;
+                      // SALES SUBJECT CLASS: from subject.building_class (core.primary_improvements.building_class)
+                      case 'Class':
+                        subjectValue = subject?.building_class || '';
+                        break;
                       case 'Actual Age':
                         subjectValue = subject?.actual_age ?? '';
                         break;
@@ -1506,6 +1510,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       case 'Const Type':
                         subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
                         break;
+                      // EQUITY SUBJECT CLASS: from subject.building_class (core.primary_improvements.building_class)
                       case 'Class':
                         subjectValue = subject?.building_class || '';
                         break;

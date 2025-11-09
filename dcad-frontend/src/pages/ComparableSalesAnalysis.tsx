@@ -1512,6 +1512,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       case 'Actual Age':
                         subjectValue = subject?.actual_age ?? '';
                         break;
+                      case 'Condition/Updating':
+                        subjectValue = conditionCode || '';
+                        break;
                       default:
                         subjectValue = '';
                     }

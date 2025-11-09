@@ -693,7 +693,15 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
                 if (!accountId) return "#";
                 const base = `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`;
                 const s = (propertyCondition || '').toLowerCase();
-                const code = s.includes('significant damage') ? 'C5' : '';
+                // CONDITION_CODE_MAPPING: convert radio selection to condCode for grids
+                const code = (() => {
+                  if (s.includes('significant damage')) return 'C5';
+                  if (s.includes('repair')) return 'C4';
+                  if (s.includes('adequately maintained') || s.includes('adequate')) return 'C3';
+                  if (s.includes('some upgrades')) return 'C3+';
+                  if (s.includes('remodeled')) return 'C2';
+                  return '';
+                })();
                 return code ? `${base}&condCode=${encodeURIComponent(code)}` : base;
               })()}
               aria-label="Sample Evidence Packet"
@@ -1675,6 +1683,7 @@ export default function PropertyReport() {
     </div>
   );
 }
+
 
 
 

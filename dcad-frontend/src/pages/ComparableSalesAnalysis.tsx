@@ -852,6 +852,18 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }
     return arr;
   }, [compPrices, netAdjustments]);
+
+  // SALES: Opinion of Market Value — median of indicated values (non-zero)
+  const opinionMedian = useMemo<number | null>(() => {
+    const vals = (indicatedValues || [])
+      .map((v) => (typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v)))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .sort((a, b) => a - b);
+    if (!vals.length) return null;
+    const mid = Math.floor(vals.length / 2);
+    const median = vals.length % 2 === 0 ? (vals[mid - 1] + vals[mid]) / 2 : vals[mid];
+    return Math.round(median);
+  }, [indicatedValues]);
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     const v = subject?.bedroom_count as any;
@@ -1397,7 +1409,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         <div className="mt-4 rounded-2xl border border-slate-200 bg-white">
           <div className="p-6 text-center">
             <div className="text-xl font-semibold text-slate-900">Opinion of Market Value</div>
-            <div className="mt-2 text-5xl font-extrabold" style={{ color: '#9A4A00' }}>$466,000</div>
+            <div className="mt-2 text-5xl font-extrabold" style={{ color: '#9A4A00' }}>
+              {opinionMedian != null ? fmtCurrency(opinionMedian) : 'N/A'}
+            </div>
             <p className="mt-4 text-slate-700 max-w-4xl mx-auto">
               Based on the sales comparison analysis of comparable properties in the immediate neighborhood and
               accounting for necessary cost-to-cure repairs.

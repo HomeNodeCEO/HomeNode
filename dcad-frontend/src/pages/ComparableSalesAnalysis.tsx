@@ -33,11 +33,7 @@ type SubjectData = {
 export default function ComparableSalesAnalysis() {
   const location = useLocation();
   const navigate = useNavigate();
-  const propertyId = useMemo(() => {
-    const p = new URLSearchParams(location.search);
-    return p.get('propertyId') || '';
-  }, [location.search]);
-  const conditionCode = useMemo(() => {
+    // CONDITION_CODE_INTAKE: read condCode from query (set by PropertyReport Sample Evidence link) and used in Condition/Updating rows\r\nconst conditionCode = useMemo(() => {
     const p = new URLSearchParams(location.search);
     return p.get('condCode') || '';
   }, [location.search]);
@@ -2578,6 +2574,7 @@ function DistrictEvidenceAccordion() {
     </div>
   );
 }
+
 
 
 

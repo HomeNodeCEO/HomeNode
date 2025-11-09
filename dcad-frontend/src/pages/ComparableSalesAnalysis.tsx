@@ -1260,13 +1260,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe(subject?.garage_area_sqft)
                                 : label === 'Porches/Decks'
-                                  ? (() => {
-                                      const v: any = subject?.deck;
-                                      if (typeof v === 'boolean') return v ? 'Yes' : '-';
-                                      const s = (v ?? '').toString().trim();
-                                      if (!s) return '-';
-                                      return /^n(?:o)?$/i.test(s) ? '-' : s;
-                                    })()
+                                  ? 'N/A'
                               : label === 'Fencing'
                                     ? (() => {
                                         const s = (subject?.fence_type ?? '').toString().trim();
@@ -1305,15 +1299,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Fencing mirroring: comparables show same fence type as subject
                           : label === 'Fencing'
                             ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
-                          // Porches/Decks mirroring: comparables match subject's porch/deck value
+                          // Porches/Decks: fixed display of 'N/A' for all comparables
                           : label === 'Porches/Decks'
-                            ? (() => {
-                                const v: any = subject?.deck;
-                                if (typeof v === 'boolean') return v ? 'Yes' : '-';
-                                const s = (v ?? '').toString().trim();
-                                if (!s) return '-';
-                                return /^n(?:o)?$/i.test(s) ? '-' : s;
-                              })()
+                            ? 'N/A'
                           // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
                           : label === 'Pool'
                             ? poolDisplay(subject?.pool)
@@ -1726,13 +1714,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               : label === 'Garage/Parking'
                                 ? fmtSqftSafe(subject?.garage_area_sqft)
                                 : label === 'Porches/Decks'
-                                  ? (() => {
-                                      const v: any = subject?.deck;
-                                      if (typeof v === 'boolean') return v ? 'Yes' : '-';
-                                      const s = (v ?? '').toString().trim();
-                                      if (!s) return '-';
-                                      return /^n(?:o)?$/i.test(s) ? '-' : s;
-                                    })()
+                                  ? 'N/A'
                                   : label === 'Fencing'
                                     ? (() => {
                                         const s = (subject?.fence_type ?? '').toString().trim();
@@ -1769,15 +1751,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Fencing mirroring: comparables show same fence type as subject
                           : label === 'Fencing'
                             ? (() => { const s = (subject?.fence_type ?? '').toString().trim(); return s || '-'; })()
-                          // Porches/Decks mirroring: comparables match subject's porch/deck value
+                          // Porches/Decks: fixed display of 'N/A' for all comparables
                           : label === 'Porches/Decks'
-                            ? (() => {
-                                const v: any = subject?.deck;
-                                if (typeof v === 'boolean') return v ? 'Yes' : '-';
-                                const s = (v ?? '').toString().trim();
-                                if (!s) return '-';
-                                return /^n(?:o)?$/i.test(s) ? '-' : s;
-                              })()
+                            ? 'N/A'
                           // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
                           : label === 'Pool'
                             ? (() => {

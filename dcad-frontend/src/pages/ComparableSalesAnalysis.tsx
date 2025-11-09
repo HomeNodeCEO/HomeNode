@@ -268,6 +268,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     // Placeholder for future automation; keep state intact for now.
   };
 
+  // Auto-trigger Test on initial load once subject data is available
+  const didAutoTest = useRef(false);
+  useEffect(() => {
+    if (!didAutoTest.current && subject) {
+      didAutoTest.current = true;
+      onClickTest();
+    }
+  }, [subject]);
+
   // Cost to Cure data (also used for rendering)
   const costToCure = useMemo(() => ({
     left: [

@@ -105,6 +105,21 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
     return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
   };
+  // Display helper: normalize pool value from DB (boolean or 'T'/'N') to 'Yes'/'No'
+  const poolDisplay = (raw: any): string => {
+    if (raw === true) return 'Yes';
+    if (raw === false) return 'No';
+    const s = String(raw ?? '').trim();
+    if (!s) return 'N/A';
+    const up = s.toUpperCase();
+    if (up === 'T') return 'Yes';
+    if (up === 'N') return 'No';
+    if (up === 'N/A' || up === 'NA') return 'N/A';
+    const low = up.toLowerCase();
+    if (['yes','y','1','true'].includes(low)) return 'Yes';
+    if (['no','n','none','0','false'].includes(low)) return 'No';
+    return s;
+  };
   const onClickTest = () => {
     setCompAddresses(['123 Main St', '456 Edge Dr', '789 Third St', '1012 Oak Rd']);
     const subj = parseSqftNum(subject?.total_living_area);
@@ -611,7 +626,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         return t.includes('pool') || d.includes('pool');
                       });
                       if (hasPool) return 'T';
-                      return 'N';
+                      return 'N/A';
                     })(),
                   }));
                 }
@@ -1258,18 +1273,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                         return s || '-';
                                       })()
                                     : label === 'Pool'
-                                      ? (() => {
-                                          const v: any = subject?.pool;
-                                          const toBool = (x: any): boolean | null => {
-                                            if (typeof x === 'boolean') return x;
-                                            const s = String(x ?? '').trim().toLowerCase();
-                                            if (!s) return null;
-                                            if (['no','n','none','0','false'].includes(s)) return false;
-                                            return true;
-                                          };
-                                          const b = toBool(v);
-                                          return b === null ? '-' : (b ? 'Yes' : 'No');
-                                        })()
+                                      ? poolDisplay(subject?.pool)
                                     : label === 'Easements'
                                       ? 'None Known'
                                     // Secondary Improvements: show joined list from subject
@@ -1312,35 +1316,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               })()
                           // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
                           : label === 'Pool'
-                            ? (() => {
-                                const raw: any = subject?.pool;
-                                const str = String(raw ?? '').trim();
-                                if (!str) return '-';
-                                const up = str.toUpperCase();
-                                if (up === 'N') return 'No';
-                                if (up === 'T') return 'Yes';
-                                const low = up.toLowerCase();
-                                if (['no','n','none','0','false'].includes(low)) return 'No';
-                                if (['yes','y','1','true'].includes(low)) return 'Yes';
-                                return str;
-                              })()
+                            ? poolDisplay(subject?.pool)
                           // Easements: subject always displays "None Known"
                           : label === 'Easements'
                             ? 'None Known'
                           // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
                           : label === 'Pool'
-                            ? (() => {
-                                const raw: any = subject?.pool;
-                                const str = String(raw ?? '').trim();
-                                if (!str) return '-';
-                                const up = str.toUpperCase();
-                                if (up === 'N') return 'No';
-                                if (up === 'T') return 'Yes';
-                                const low = up.toLowerCase();
-                                if (['no','n','none','0','false'].includes(low)) return 'No';
-                                if (['yes','y','1','true'].includes(low)) return 'Yes';
-                                return str;
-                              })()
+                            ? poolDisplay(subject?.pool)
                           // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
                           : label === 'Garage/Parking'
                             ? fmtSqftSafe((compGarage || [])[i] ?? '')

@@ -37,6 +37,10 @@ export default function ComparableSalesAnalysis() {
     const p = new URLSearchParams(location.search);
     return p.get('propertyId') || '';
   }, [location.search]);
+  const conditionCode = useMemo(() => {
+    const p = new URLSearchParams(location.search);
+    return p.get('condCode') || '';
+  }, [location.search]);
 
   const [subject, setSubject] = useState<SubjectData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1035,6 +1039,12 @@ export default function ComparableSalesAnalysis() {
                       case 'Actual Age':
                         subjectValue = subject?.actual_age ?? '';
                         break;
+                      case 'Condition/Updating':
+                        subjectValue = conditionCode || '';
+                        break;
+                      case 'Condition/Updating':
+                        subjectValue = conditionCode || '';
+                        break;
                       default:
                         subjectValue = '';
                     }
@@ -1507,6 +1517,12 @@ export default function ComparableSalesAnalysis() {
                         break;
                       case 'Actual Age':
                         subjectValue = subject?.actual_age ?? '';
+                        break;
+                      case 'Condition/Updating':
+                        subjectValue = conditionCode || '';
+                        break;
+                      case 'Condition/Updating':
+                        subjectValue = conditionCode || '';
                         break;
                       default:
                         subjectValue = '';
@@ -2562,6 +2578,9 @@ function DistrictEvidenceAccordion() {
     </div>
   );
 }
+
+
+
 
 
 

@@ -689,7 +689,13 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             </Link>
             {/* Moved Sign Up CTA next to Sample Evidence Packet at bottom */}
             <Link
-              to={accountId ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}` : "#"}
+              to={(() => {
+                if (!accountId) return "#";
+                const base = `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`;
+                const s = (propertyCondition || '').toLowerCase();
+                const code = s.includes('significant damage') ? 'C5' : '';
+                return code ? `${base}&condCode=${encodeURIComponent(code)}` : base;
+              })()}
               aria-label="Sample Evidence Packet"
               className="btn normal-case px-5 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
             >
@@ -1669,6 +1675,7 @@ export default function PropertyReport() {
     </div>
   );
 }
+
 
 
 

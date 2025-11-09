@@ -1806,7 +1806,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         key={`eq-net-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((netAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
                   <tr className="font-medium">
@@ -1818,7 +1818,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         key={`eq-gross-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((grossAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
                   <tr className="font-semibold">
@@ -1830,7 +1830,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         key={`eq-iv-adj-${i}`}
                         className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((indicatedValues || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
                 </tbody>

@@ -836,6 +836,22 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }
     return arr;
   }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments]);
+
+  // SALES: Indicated Values — sale price plus net adjustments per comparable
+  const indicatedValues = useMemo<number[]>(() => {
+    const arr: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      const toNum = (v: any): number => {
+        if (v === null || v === undefined || v === '') return 0;
+        const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const price = toNum((compPrices || [])[i]);
+      const net = toNum((netAdjustments || [])[i]);
+      arr.push(price + net);
+    }
+    return arr;
+  }, [compPrices, netAdjustments]);
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     const v = subject?.bedroom_count as any;
@@ -1368,7 +1384,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         key={`iv-adj-${i}`}
                         className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300 border-r"
                         style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
-                      ></td>,
+                      >{fmtCurrency((indicatedValues || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
                 </tbody>

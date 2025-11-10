@@ -180,3 +180,33 @@ export function toTile(row: AccountRow) {
   };
 }
 
+/** ---------------- Compatibility exports for existing components ---------------- */
+
+// Some components import types/functions with older names. Provide thin aliases to avoid
+// touching many files while we iterate.
+
+// Older code imports `PropertyDetail` — map it to the current `AccountDetail` shape.
+export type PropertyDetail = AccountDetail;
+
+// Older code imports `fetchPropertyDetail` — reuse the existing fetchProperty/getAccount logic.
+export async function fetchPropertyDetail(accountId: string): Promise<PropertyDetail> {
+  return getAccount(accountId);
+}
+
+// Search compatibility
+export type SearchItem = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  raw: AccountRow;
+};
+
+// Older code expects `apiSearch` and `toSearchItems` from '@/lib/api'
+export async function apiSearch(q: string, limit = 25, offset = 0): Promise<AccountRow[]> {
+  return searchAccounts(q, limit, offset);
+}
+
+export function toSearchItems(rows: AccountRow[]): SearchItem[] {
+  return rows.map(toTile);
+}
+

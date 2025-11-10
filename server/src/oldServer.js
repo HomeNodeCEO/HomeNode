@@ -282,6 +282,8 @@ app.get("/api/search", async (req, res) => {
     if (!q) return res.json([]);
 
     const isExactId = /^\d{17}$/.test(q);
+    // Guard against very short address fragments to avoid expensive wide scans
+    if (!isExactId && q.length < 3) return res.json([]);
     const params = [];
     let where = "";
     if (isExactId) {

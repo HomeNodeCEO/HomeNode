@@ -23,7 +23,7 @@ export function makeUrl(path: string, params?: Record<string, string | number | 
 /** Fetch JSON with timeout + nicer errors */
 async function fetchJSON<T = any>(input: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), init?.timeoutMs ?? 15000);
+  const timeout = setTimeout(() => controller.abort(), init?.timeoutMs ?? 25000);
 
   try {
     const res = await fetch(input, { ...init, signal: controller.signal });

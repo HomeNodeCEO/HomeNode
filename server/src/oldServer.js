@@ -281,7 +281,8 @@ app.get("/api/search", async (req, res) => {
 
     if (!q) return res.json([]);
 
-    const isExactId = /^\d{17}$/.test(q);
+    // Accept 17-character alphanumeric account IDs (some end with a letter)
+    const isExactId = /^[0-9A-Za-z]{17}$/.test(q);
     // Guard against very short address fragments to avoid expensive wide scans
     if (!isExactId && q.length < 3) return res.json([]);
     const params = [];

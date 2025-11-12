@@ -1199,7 +1199,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`ag-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       ></td>,
                     ])}
                   </tr>
@@ -1819,11 +1819,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Net Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-net-desc-${i}`} className="px-4 py-2 border-b border-slate-300 border-r-2 border-slate-300"></td>,
+                      <td key={`eq-net-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`eq-net-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((netAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>

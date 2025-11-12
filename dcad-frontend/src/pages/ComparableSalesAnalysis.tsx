@@ -1031,7 +1031,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`addr-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
                       ></td>,
                     ])}
                   </tr>
@@ -1049,7 +1049,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
                       ></td>,
                     ])}
                   </tr>
@@ -1497,7 +1497,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td
                           key={`eq-addr-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                          style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
                         ></td>,
                     ])}
                   </tr>
@@ -1509,7 +1509,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`eq-v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
                       ></td>,
                     ])}
                   </tr>

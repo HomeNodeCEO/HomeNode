@@ -1031,7 +1031,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`addr-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #cbd5e1', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       ></td>,
                     ])}
                   </tr>
@@ -1049,7 +1049,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #cbd5e1', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       ></td>,
                     ])}
                   </tr>
@@ -1147,7 +1147,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <td
                             key={`${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
-                            style={{ borderLeft: '2px solid #cbd5e1', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                            style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                           >
                             {label === 'Concessions'
                               ? (() => {
@@ -1404,7 +1404,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`iv-adj-${i}`}
                         className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #cbd5e1', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((indicatedValues || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1497,7 +1497,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td
                           key={`eq-addr-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={{ borderLeft: '2px solid #cbd5e1', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                         ></td>,
                     ])}
                   </tr>
@@ -1694,7 +1694,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`eq-rooms-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 bg-white border-r"
-                        style={{ borderLeft: '2px solid #cbd5e1', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         {/* EQUITY: Room Count adjustments = BedAdj + BathAdj */}
                         {fmtCurrency((roomCountTotalAdjustments || [])[i] ?? 0)}

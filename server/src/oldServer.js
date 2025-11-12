@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import pg from "pg";
+import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
 
 const app = express();
@@ -20,6 +21,51 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
 // simple health
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Lightweight email submission endpoint for Sign Up form
+// Expects JSON: { ownerName: string, ownerTelephone: string, accountId?: string }
+app.post("/api/signup/email", async (req, res) => {
+  try {
+    const { ownerName, ownerTelephone, accountId } = req.body || {};
+    if (!ownerName || !ownerTelephone) {
+      return res.status(400).json({ error: "missing_owner_fields" });
+    }
+
+    // Configure transporter from env. Prefer SMTP_URL if provided; otherwise fall back to host/port/user/pass.
+    const smtpUrl = process.env.SMTP_URL || process.env.SMTP_CONNECTION_URL;
+    let transporter;
+    if (smtpUrl) {
+      transporter = nodemailer.createTransport(smtpUrl);
+    } else if (process.env.SMTP_HOST) {
+      transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: parseInt(process.env.SMTP_PORT || "587", 10),
+        secure: process.env.SMTP_SECURE === "1" || process.env.SMTP_SECURE === "true",
+        auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" } : undefined,
+      });
+    }
+
+    const to = "homenodeceo@gmail.com";
+    const subject = `New Enrollment Submission${accountId ? ` - ${accountId}` : ""}`;
+    const text = `A new enrollment was submitted.\n\nOwner Name: ${ownerName}\nTelephone: ${ownerTelephone}\n${accountId ? `Account ID: ${accountId}\n` : ""}`;
+
+    if (transporter) {
+      await transporter.sendMail({
+        to,
+        from: process.env.MAIL_FROM || process.env.SMTP_FROM || "no-reply@homenode",
+        subject,
+        text,
+      });
+    } else {
+      // No SMTP configured; log as a fallback
+      console.log("[signup/email]", { to, subject, text });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("/api/signup/email failed", err);
+    res.status(500).json({ error: "email_failed" });
+  }
+});
 
 /**
  * GET /api/accounts/:id

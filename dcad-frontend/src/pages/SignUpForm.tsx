@@ -336,18 +336,13 @@ export default function SignUpForm() {
 
   async function submit() {
     try {
-      // Fetch base PDF (original form) to send to backend for stamping
-      const baseResp = await fetch(rawPdfUrl);
-      if (!baseResp.ok) throw new Error('Unable to fetch base PDF');
-      const baseBlob = await baseResp.blob();
-      const reader = new FileReader();
-      const basePdfData: string = await new Promise((res, rej) => {
-        reader.onload = () => res(String(reader.result));
-        reader.onerror = () => rej(new Error('Failed to read base PDF'));
-        reader.readAsDataURL(baseBlob);
-      });
-      const payload = { accountId, signature: sigUrl, basePdfData, fields };
-      const res = await fetch(api.makeUrl('/api/signup/submit'), {
+      // Minimal email submission to backend with owner and phone details
+      const payload = {
+        accountId,
+        ownerName: fields.ownerName,
+        ownerTelephone: fields.ownerTelephone,
+      };
+      const res = await fetch(api.makeUrl('/api/signup/email'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

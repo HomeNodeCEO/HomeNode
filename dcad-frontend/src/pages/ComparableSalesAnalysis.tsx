@@ -1065,7 +1065,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`adj-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #cbd5e1', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         Adjustment
                       </td>,
@@ -1188,7 +1188,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     {Array.from({ length: 4 }).map((_, i) => [
                       <td
                         key={`ag-desc-${i}`}
-                        className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"
+                        className="px-4 py-2 border-b border-slate-200"
                       >
                         <div className="grid grid-cols-3 text-sm">
                           <div className="text-center">Tot</div>
@@ -1217,7 +1217,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     {Array.from({ length: 4 }).map((_, i) => [
                       <td
                         key={`rooms-desc-${i}`}
-                        className="px-4 py-2 bg-white border-b border-slate-200 border-r-2 border-slate-300"
+                        className="px-4 py-2 bg-white border-b border-slate-200"
                       >
                         <div className="grid grid-cols-3 text-sm h-5">
                           <div className="text-center h-full flex items-center justify-center">{compRooms[i]?.tot ?? ''}</div>
@@ -1235,7 +1235,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`rooms-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 bg-white border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         {/* SALES: Room Count adjustments = BedAdj + BathAdj */}
                         {fmtCurrency((roomCountTotalAdjustments || [])[i] ?? 0)}
@@ -1250,11 +1250,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       {loading ? 'Loading...' : fmtSqftSafe(subject?.total_living_area)}
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">{fmtSqftSafe(compGla[i] ?? '')}</td>,
+                      <td key={`gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtSqftSafe(compGla[i] ?? '')}</td>,
                       <td
                         key={`gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((glaAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1313,7 +1313,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                       : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
-                        <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
+                        <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
                         {label === 'Basement SF'
                           ? fmtSqftSafe(subject?.basement_sqft)
@@ -1359,7 +1359,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td
                           key={`${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                         ></td>,
                       ])}
                     </tr>
@@ -1372,11 +1372,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Net Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`net-desc-${i}`} className="px-4 py-2 border-b border-slate-300 border-r-2 border-slate-300"></td>,
+                      <td key={`net-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`net-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((netAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1387,11 +1387,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Gross Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`gross-desc-${i}`} className="px-4 py-2 border-b border-slate-300 border-r-2 border-slate-300"></td>,
+                      <td key={`gross-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`gross-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((grossAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1509,7 +1509,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`eq-v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       ></td>,
                     ])}
                   </tr>
@@ -1519,11 +1519,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       Description
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-adj-desc-${i}`} className="px-4 py-2 border-b border-slate-300 border-r-2 border-slate-300">Description</td>,
+                      <td key={`eq-adj-desc-${i}`} className="px-4 py-2 border-b border-slate-300">Description</td>,
                       <td
                         key={`eq-adj-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         Adjustment
                       </td>,
@@ -1590,7 +1590,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           {subjectValue}
                         </td>
                         {Array.from({ length: 4 }).map((_, i) => [
-                          <td key={`eq-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
+                          <td key={`eq-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
                             {label === 'Concessions'
                               ? fmtCurrency((compConcessions || [])[i] ?? '')
                               : label === 'NBHD Code'
@@ -1613,7 +1613,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <td
                             key={`eq-${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
-                            style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                            style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                           >
                             {label === 'Concessions'
                               ? (() => {
@@ -1648,7 +1648,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     {Array.from({ length: 4 }).map((_, i) => [
                       <td
                         key={`eq-ag-desc-${i}`}
-                        className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300"
+                        className="px-4 py-2 border-b border-slate-200"
                       >
                         <div className="grid grid-cols-3 text-sm">
                           <div className="text-center">Tot</div>
@@ -1659,7 +1659,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`eq-ag-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       ></td>,
                     ])}
                   </tr>
@@ -1708,11 +1708,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       {loading ? 'Loading...' : fmtSqftSafe(subject?.total_living_area)}
                     </td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">{fmtSqftSafe(compGla[i] ?? '')}</td>,
+                      <td key={`eq-gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtSqftSafe(compGla[i] ?? '')}</td>,
                       <td
                         key={`eq-gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((glaAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1767,7 +1767,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                       : ''}
                       </td>
                       {Array.from({ length: 4 }).map((_, i) => [
-                        <td key={`eq2-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200 border-r-2 border-slate-300">
+                        <td key={`eq2-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
                         {label === 'Basement SF'
                           ? fmtSqftSafe(subject?.basement_sqft)
@@ -1810,7 +1810,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td
                           key={`eq2-${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                         ></td>,
                       ])}
                     </tr>
@@ -1831,11 +1831,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Gross Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-gross-desc-${i}`} className="px-4 py-2 border-b border-slate-300 border-r-2 border-slate-300"></td>,
+                      <td key={`eq-gross-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`eq-gross-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((grossAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1843,11 +1843,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 bg-orange-200 border-t border-b border-slate-300">INDICATED VALUE</td>
                     <td className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
                     {Array.from({ length: 4 }).map((_, i) => [
-                      <td key={`eq-iv-desc-${i}`} className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300 border-r-2 border-slate-300"></td>,
+                      <td key={`eq-iv-desc-${i}`} className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300"></td>,
                       <td
                         key={`eq-iv-adj-${i}`}
                         className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((indicatedValues || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>

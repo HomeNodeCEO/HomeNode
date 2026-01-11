@@ -22,6 +22,33 @@ const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 // simple health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+// SMTP status (non-sensitive): helps verify Render env is set correctly
+app.get("/api/signup/smtp-status", (_req, res) => {
+  const usingUrl = Boolean(process.env.SMTP_URL || process.env.SMTP_CONNECTION_URL);
+  const hasHost = Boolean(process.env.SMTP_HOST);
+  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : null;
+  const secure = process.env.SMTP_SECURE === "1" || process.env.SMTP_SECURE === "true";
+  const hasUser = Boolean(process.env.SMTP_USER);
+  const hasPass = Boolean(process.env.SMTP_PASS);
+  const fromSet = Boolean(process.env.MAIL_FROM || process.env.SMTP_FROM);
+  const cors = process.env.CORS_ORIGIN || process.env.CORS_ORIGINS || null;
+  const configured = usingUrl || hasHost;
+  res.json({
+    ok: true,
+    smtp: {
+      configured,
+      using_url: usingUrl,
+      has_host: hasHost,
+      port,
+      secure,
+      has_user: hasUser,
+      has_pass: hasPass,
+      from_set: fromSet,
+    },
+    cors_origin: cors,
+  });
+});
+
 // Lightweight email submission endpoint for Sign Up form
 // Expects JSON: { ownerName: string, ownerTelephone: string, accountId?: string }
 app.post("/api/signup/email", async (req, res) => {
@@ -51,7 +78,23 @@ app.post("/api/signup/email", async (req, res) => {
 
     if (!transporter) {
       // Enforce SMTP presence so frontends/tests don't get false positives
-      return res.status(500).json({ error: "smtp_not_configured" });
+      const usingUrl = Boolean(process.env.SMTP_URL || process.env.SMTP_CONNECTION_URL);
+      const hasHost = Boolean(process.env.SMTP_HOST);
+      const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : null;
+      const secure = process.env.SMTP_SECURE === "1" || process.env.SMTP_SECURE === "true";
+      const hasUser = Boolean(process.env.SMTP_USER);
+      const fromSet = Boolean(process.env.MAIL_FROM || process.env.SMTP_FROM);
+      return res.status(500).json({
+        error: "smtp_not_configured",
+        detail: {
+          using_url: usingUrl,
+          has_host: hasHost,
+          port,
+          secure,
+          has_user: hasUser,
+          from_set: fromSet,
+        },
+      });
     }
 
     await transporter.sendMail({

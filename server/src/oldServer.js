@@ -106,8 +106,12 @@ app.post("/api/signup/email", async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
-    console.error("/api/signup/email failed", err);
-    res.status(500).json({ error: "email_failed" });
+    const msg = err?.message || "unknown_error";
+    const code = err?.code || null;
+    const responseCode = err?.responseCode || null;
+    const command = err?.command || null;
+    console.error("/api/signup/email failed", { message: msg, code, responseCode, command });
+    res.status(500).json({ error: "email_failed", message: msg, code, responseCode, command });
   }
 });
 

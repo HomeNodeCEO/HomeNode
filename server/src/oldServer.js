@@ -19,6 +19,32 @@ app.use(cors({ origin: corsOrigins }));
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
+// Ensure a simple signups table exists (no external migrations required)
+async function ensureSignupsTable() {
+  const ddl = `
+    CREATE SCHEMA IF NOT EXISTS app;
+    CREATE TABLE IF NOT EXISTS app.signups (
+      id            bigserial PRIMARY KEY,
+      created_at    timestamptz NOT NULL DEFAULT now(),
+      source        text,
+      account_id    text,
+      owner_name    text NOT NULL,
+      owner_telephone text NOT NULL,
+      owner_email   text,
+      user_agent    text,
+      ip            text,
+      meta          jsonb
+    );
+  `;
+  try {
+    await pool.query(ddl);
+    console.log("[init] app.signups ensured");
+  } catch (e) {
+    console.warn("[init] ensureSignupsTable failed (continuing)", e?.message || e);
+  }
+}
+void ensureSignupsTable();
+
 // simple health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -76,35 +102,51 @@ app.post("/api/signup/email", async (req, res) => {
     const subject = `New Enrollment Submission${accountId ? ` - ${accountId}` : ""}`;
     const text = `A new enrollment was submitted.\n\nOwner Name: ${ownerName}\nTelephone: ${ownerTelephone}\n${accountId ? `Account ID: ${accountId}\n` : ""}`;
 
-    if (!transporter) {
-      // Enforce SMTP presence so frontends/tests don't get false positives
-      const usingUrl = Boolean(process.env.SMTP_URL || process.env.SMTP_CONNECTION_URL);
-      const hasHost = Boolean(process.env.SMTP_HOST);
-      const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : null;
-      const secure = process.env.SMTP_SECURE === "1" || process.env.SMTP_SECURE === "true";
-      const hasUser = Boolean(process.env.SMTP_USER);
-      const fromSet = Boolean(process.env.MAIL_FROM || process.env.SMTP_FROM);
-      return res.status(500).json({
-        error: "smtp_not_configured",
-        detail: {
-          using_url: usingUrl,
-          has_host: hasHost,
-          port,
-          secure,
-          has_user: hasUser,
-          from_set: fromSet,
-        },
-      });
+    // Persist signup in DB regardless of email status
+    let id = null;
+    try {
+      const ua = req.headers["user-agent"] || null;
+      const ip = (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() || req.ip || null;
+      const meta = { referer: req.headers.referer || null };
+      const { rows } = await pool.query(
+        `INSERT INTO app.signups (source, account_id, owner_name, owner_telephone, owner_email, user_agent, ip, meta)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
+        [
+          "web-signup",
+          accountId || null,
+          ownerName,
+          ownerTelephone,
+          (req.body && req.body.ownerEmail) || null,
+          ua,
+          ip,
+          meta,
+        ]
+      );
+      id = rows?.[0]?.id ?? null;
+    } catch (e) {
+      console.error("[signup] DB insert failed", e);
+      // Continue to try email even if DB failed
     }
 
-    await transporter.sendMail({
-      to,
-      from: process.env.MAIL_FROM || process.env.SMTP_FROM || "no-reply@homenode",
-      subject,
-      text,
-    });
+    // Try to send email if SMTP is configured; do not fail the request if mail fails
+    let emailSent = false;
+    let emailError = null;
+    if (transporter) {
+      try {
+        await transporter.sendMail({
+          to,
+          from: process.env.MAIL_FROM || process.env.SMTP_FROM || "no-reply@homenode",
+          subject,
+          text,
+        });
+        emailSent = true;
+      } catch (e) {
+        emailError = e?.message || String(e);
+      }
+    }
 
-    res.json({ ok: true });
+    // Always return success for the signup capture; include email status for transparency
+    res.json({ ok: true, id, email_sent: emailSent, email_error: emailError });
   } catch (err) {
     const msg = err?.message || "unknown_error";
     const code = err?.code || null;

@@ -49,17 +49,18 @@ app.post("/api/signup/email", async (req, res) => {
     const subject = `New Enrollment Submission${accountId ? ` - ${accountId}` : ""}`;
     const text = `A new enrollment was submitted.\n\nOwner Name: ${ownerName}\nTelephone: ${ownerTelephone}\n${accountId ? `Account ID: ${accountId}\n` : ""}`;
 
-    if (transporter) {
-      await transporter.sendMail({
-        to,
-        from: process.env.MAIL_FROM || process.env.SMTP_FROM || "no-reply@homenode",
-        subject,
-        text,
-      });
-    } else {
-      // No SMTP configured; log as a fallback
-      console.log("[signup/email]", { to, subject, text });
+    if (!transporter) {
+      // Enforce SMTP presence so frontends/tests don't get false positives
+      return res.status(500).json({ error: "smtp_not_configured" });
     }
+
+    await transporter.sendMail({
+      to,
+      from: process.env.MAIL_FROM || process.env.SMTP_FROM || "no-reply@homenode",
+      subject,
+      text,
+    });
+
     res.json({ ok: true });
   } catch (err) {
     console.error("/api/signup/email failed", err);

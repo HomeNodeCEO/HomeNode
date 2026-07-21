@@ -845,9 +845,30 @@ class AddressSearchDetailsResponse(BaseModel):
 
 # ---------------------- Routes ----------------------
 
+@app.get("/", include_in_schema=False)
+def root():
+    worker_enabled = os.getenv("RUN_DCAD_WORKER", "true").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    return {
+        "ok": True,
+        "service": "dcad-scraper-with-api",
+        "worker_enabled": worker_enabled,
+        "health": "/health",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health", include_in_schema=False)
 def health():
-    return {"ok": True, "pdf_features": _PDF_LIBS_AVAILABLE}
+    worker_enabled = os.getenv("RUN_DCAD_WORKER", "true").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    return {
+        "ok": True,
+        "pdf_features": _PDF_LIBS_AVAILABLE,
+        "worker_enabled": worker_enabled,
+    }
 
 class SignupRequest(BaseModel):
     accountId: str | None = None

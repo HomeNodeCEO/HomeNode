@@ -14,9 +14,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of your app
 COPY . .
 
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/app:/app/scraper
 ENV PORT=8080
+ENV RUN_DCAD_WORKER=true
 EXPOSE 8080
 
-# Start FastAPI
-CMD ["python", "-m", "uvicorn", "scraper.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Keep the public API/health check and continuous scraper alive together on the
+# existing Render web-service instance.
+CMD ["python", "-m", "scraper.service_runner"]

@@ -101,6 +101,94 @@ export interface MarketValueHistoryRow {
   total_value?: number | string | null;
 }
 
+export interface SaleParcelLink {
+  source_position: number;
+  parcel_sequence: number;
+  parcel_role: 'primary' | 'additional';
+  parcel_number_raw: string;
+  parcel_number_normalized?: string | null;
+  account_id?: string | null;
+  match_method: string;
+  is_resolved: boolean;
+}
+
+export interface SaleRow {
+  sale_id: string | number | null;
+  source_record_id: string | number | null;
+  primary_account_id: string | null;
+  county: string | null;
+  neighborhood_code: string | null;
+  subdivision: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  closing_date: string | null;
+  sale_price: string | number | null;
+  days_on_market: number | null;
+  concessions: string | null;
+  seller_contributions: string | number | null;
+  listing_contract_date: string | null;
+  buyer_financing: string | null;
+  mls_status: string | null;
+  source: string | null;
+  source_filename: string | null;
+  source_row_number: number | null;
+  match_status: 'exact' | 'normalized' | 'secondary' | 'multiple' | 'unmatched';
+  has_multiple_parcel_numbers: boolean;
+  multi_parcel_status: 'single' | 'possible' | 'confirmed';
+  has_unresolved_parcel: boolean;
+  requires_additional_review: boolean;
+  data_quality_flags: string[];
+  provided_parcel_fields: number;
+  resolved_account_count: number;
+  linked_parcels: SaleParcelLink[];
+  mls_bedrooms_total: number | null;
+  mls_bathrooms_total_integer: number | null;
+  mls_bathrooms_full: number | null;
+  mls_bathrooms_half: number | null;
+  mls_living_area: string | number | null;
+  mls_lot_size_area: string | number | null;
+  mls_year_built: number | null;
+  mls_garage_spaces: string | number | null;
+  mls_garage_yn: boolean | null;
+  mls_pool_yn: boolean | null;
+  ratio_current_price_by_living_area: string | number | null;
+  ratio_close_price_by_list_price: string | number | null;
+  ratio_close_price_by_original_list_price: string | number | null;
+  ratio_close_price_by_living_area: string | number | null;
+  cad_bedroom_count: number | null;
+  cad_bath_count: string | number | null;
+  cad_baths_full: number | null;
+  cad_baths_half: number | null;
+  cad_living_area_sqft: number | null;
+  cad_total_area_sqft: number | null;
+  cad_year_built: number | null;
+  cad_effective_year_built: number | null;
+  cad_stories: string | null;
+  cad_pool: boolean | null;
+  cad_building_class: string | null;
+  cad_land_value: string | number | null;
+  cad_improvement_value: string | number | null;
+  cad_market_value: string | number | null;
+}
+
+export interface SalesSearchParams {
+  q?: string;
+  accountId?: string;
+  excludeAccountId?: string;
+  neighborhoodCode?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  matched?: boolean;
+  review?: boolean;
+  multiParcel?: 'single' | 'possible' | 'confirmed';
+  limit?: number;
+  offset?: number;
+}
+
 /** ---------------- API calls (DB only; no scraper) ---------------- */
 
 /**
@@ -125,6 +213,26 @@ export async function getMarketValueHistory(accountId: string): Promise<MarketVa
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/market_value_history`);
   return fetchJSON<MarketValueHistoryRow[]>(url);
+}
+
+/** Search transaction-level sales without expanding one price per linked parcel. */
+export async function searchSales(params: SalesSearchParams = {}): Promise<SaleRow[]> {
+  const url = makeUrl('/api/sales', {
+    q: params.q?.trim(),
+    account_id: params.accountId?.trim(),
+    exclude_account_id: params.excludeAccountId?.trim(),
+    neighborhood_code: params.neighborhoodCode?.trim(),
+    date_from: params.dateFrom,
+    date_to: params.dateTo,
+    min_price: params.minPrice,
+    max_price: params.maxPrice,
+    matched: params.matched,
+    review: params.review,
+    multi_parcel: params.multiParcel,
+    limit: params.limit ?? 25,
+    offset: params.offset ?? 0,
+  });
+  return fetchJSON<SaleRow[]>(url);
 }
 
 /**

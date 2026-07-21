@@ -18,7 +18,7 @@ try:
 except Exception:
     pass
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 
 # ---- DCAD project bits ----
 # Synchronous browser + fetchers
@@ -27,7 +27,7 @@ from dcad.fetch import browser, get_detail_html, get_history_html, polite_pause
 from dcad.parse_detail import parse_detail_html
 from dcad.parse_history import parse_history_html
 # Upsert into Postgres
-from dcad.upsert import upsert_parsed
+from dcad.upsert import get_engine, upsert_parsed
 
 # Optional schema override for raw JSON table as well
 _SCHEMA = os.getenv("DB_SCHEMA") or os.getenv("DCAD_SCHEMA") or os.getenv("PGSCHEMA")
@@ -47,14 +47,16 @@ def _json_default(o: Any) -> Any:
 
 
 def _save_raw_json(account_id: str, tax_year: int, source_url: str, raw_obj: Dict[str, Any]) -> None:
-    """Persist a raw snapshot of what we scraped into public.dcad_json_raw."""
+    """Persist a raw snapshot of what we scraped into dcad_json_raw."""
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
         raise RuntimeError("DATABASE_URL is not set")
 
     payload = json.dumps(raw_obj, default=_json_default)
 
-    engine = create_engine(db_url, future=True)
+    # Reuse the process-wide SQLAlchemy engine. Creating a new engine for every
+    # account eventually exhausts database connections in a long-running worker.
+    engine = get_engine()
 
     sql = text(
         f"""
@@ -161,7 +163,8 @@ def run_for_account(account_id: str) -> None:
     if tax_year is None:
         tax_year = datetime.now().year
 
-    # 3) Save raw snapshot (log error but proceed if saving fails)
+    # 3) Save the raw snapshot. A failure must propagate so the continuous
+    # worker records a retry instead of treating an incomplete write as success.
     snapshot = {
         "account_id": account_id,
         "tax_year": tax_year,
@@ -169,10 +172,7 @@ def run_for_account(account_id: str) -> None:
         "detail": detail,
         "history": history,
     }
-    try:
-        _save_raw_json(account_id, tax_year, source_url, snapshot)
-    except Exception as e:
-        log.error("Saving raw JSON failed for account_id=%s: %s", account_id, e, exc_info=True)
+    _save_raw_json(account_id, tax_year, source_url, snapshot)
 
     # 4) Upsert the parsed structures into your normalized tables
     upsert_parsed(account_id, detail, history)

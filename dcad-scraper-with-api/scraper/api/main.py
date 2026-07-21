@@ -45,11 +45,13 @@ try:
     from ..dcad.parse_detail import parse_detail_html  # type: ignore
     from ..dcad.history_service import build_history_for_account  # type: ignore
     from ..dcad.upsert import get_engine as _get_db_engine, _tbl as _tblname  # type: ignore
+    from ..dcad.worker import WorkerConfig as _WorkerConfig, campaign_status as _campaign_status  # type: ignore
 except Exception:
     from utils import normalize_account_id
     from dcad.parse_detail import parse_detail_html
     from dcad.history_service import build_history_for_account  # NEW
     from dcad.upsert import get_engine as _get_db_engine, _tbl as _tblname  # type: ignore
+    from dcad.worker import WorkerConfig as _WorkerConfig, campaign_status as _campaign_status  # type: ignore
 
 app = FastAPI(title="DCAD Scraper API")
 
@@ -845,9 +847,42 @@ class AddressSearchDetailsResponse(BaseModel):
 
 # ---------------------- Routes ----------------------
 
+@app.get("/", include_in_schema=False)
+def root():
+    worker_enabled = os.getenv("RUN_DCAD_WORKER", "true").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    return {
+        "ok": True,
+        "service": "dcad-scraper-with-api",
+        "worker_enabled": worker_enabled,
+        "health": "/health",
+        "scrape_status": "/scrape/status",
+        "docs": "/docs",
+    }
+
+
 @app.get("/health", include_in_schema=False)
 def health():
-    return {"ok": True, "pdf_features": _PDF_LIBS_AVAILABLE}
+    worker_enabled = os.getenv("RUN_DCAD_WORKER", "true").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    return {
+        "ok": True,
+        "pdf_features": _PDF_LIBS_AVAILABLE,
+        "worker_enabled": worker_enabled,
+    }
+
+
+@app.get("/scrape/status", include_in_schema=False)
+def scrape_status():
+    engine = _db_engine_or_none()
+    if engine is None:
+        raise HTTPException(status_code=503, detail="database_unavailable")
+    try:
+        return _campaign_status(engine, _WorkerConfig.from_env())
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"campaign_status_unavailable: {error}")
 
 class SignupRequest(BaseModel):
     accountId: str | None = None

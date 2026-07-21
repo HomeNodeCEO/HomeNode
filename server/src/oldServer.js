@@ -169,7 +169,7 @@ app.get("/api/accounts/:id", async (req, res) => {
     const accountSql = `
       SELECT
         a.account_id,
-        a.address,
+        COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) AS address,
         a.county,
         a.neighborhood_code,
         a.subdivision,
@@ -187,6 +187,20 @@ app.get("/api/accounts/:id", async (req, res) => {
         ORDER BY m.tax_year DESC
         LIMIT 1
       ) mv ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
+               ) AS address
+        FROM core.dcad_json_raw r
+        WHERE r.account_id = a.account_id
+          AND COALESCE(
+                NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
+                NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
+              ) IS NOT NULL
+        ORDER BY r.tax_year DESC, r.fetched_at DESC
+        LIMIT 1
+      ) raw_loc ON NULLIF(BTRIM(a.address), '') IS NULL
       WHERE a.account_id = $1
     `;
     const { rows: accRows } = await pool.query(accountSql, [id]);
@@ -432,7 +446,7 @@ app.get("/api/search", async (req, res) => {
     const sql = `
       SELECT
         a.account_id,
-        a.address,
+        COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) AS address,
         a.county,
         a.neighborhood_code,
         a.subdivision,
@@ -450,6 +464,20 @@ app.get("/api/search", async (req, res) => {
         ORDER BY m.tax_year DESC
         LIMIT 1
       ) mv ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
+               ) AS address
+        FROM core.dcad_json_raw r
+        WHERE r.account_id = a.account_id
+          AND COALESCE(
+                NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
+                NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
+              ) IS NOT NULL
+        ORDER BY r.tax_year DESC, r.fetched_at DESC
+        LIMIT 1
+      ) raw_loc ON NULLIF(BTRIM(a.address), '') IS NULL
       WHERE ${where}
       ORDER BY a.account_id
       LIMIT $${params.push(limit)} OFFSET $${params.push(offset)}
@@ -459,6 +487,197 @@ app.get("/api/search", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "search_failed" });
+  }
+});
+
+/**
+ * GET /api/sales
+ * Search transaction-level sales from core.v_sales_enriched.
+ *
+ * Supported filters:
+ *   q, account_id, exclude_account_id, neighborhood_code, date_from,
+ *   date_to, min_price, max_price, matched, review, multi_parcel,
+ *   limit, offset
+ *
+ * A multi-parcel transaction is returned once. Its sale price must never be
+ * multiplied by the number of linked parcels.
+ */
+app.get("/api/sales", async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+    const accountId = String(req.query.account_id || "").trim();
+    const excludeAccountId = String(req.query.exclude_account_id || "").trim();
+    const neighborhoodCode = String(req.query.neighborhood_code || "").trim();
+    const dateFrom = String(req.query.date_from || "").trim();
+    const dateTo = String(req.query.date_to || "").trim();
+    const multiParcel = String(req.query.multi_parcel || "").trim().toLowerCase();
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || "25"), 10) || 25, 1), 200);
+    const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
+
+    const parseOptionalBoolean = (value, name) => {
+      if (value === undefined || value === null || value === "") return null;
+      const normalized = String(value).trim().toLowerCase();
+      if (["true", "1", "yes"].includes(normalized)) return true;
+      if (["false", "0", "no"].includes(normalized)) return false;
+      throw new Error(`invalid_${name}`);
+    };
+
+    const matched = parseOptionalBoolean(req.query.matched, "matched");
+    const review = parseOptionalBoolean(req.query.review, "review");
+    if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+      return res.status(400).json({ error: "invalid_date_from" });
+    }
+    if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      return res.status(400).json({ error: "invalid_date_to" });
+    }
+    if (multiParcel && !["single", "possible", "confirmed"].includes(multiParcel)) {
+      return res.status(400).json({ error: "invalid_multi_parcel" });
+    }
+
+    const parsePrice = (value, name) => {
+      if (value === undefined || value === null || value === "") return null;
+      const parsed = Number(String(value).replace(/[$,\s]/g, ""));
+      if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`invalid_${name}`);
+      return parsed;
+    };
+    const minPrice = parsePrice(req.query.min_price, "min_price");
+    const maxPrice = parsePrice(req.query.max_price, "max_price");
+    if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) {
+      return res.status(400).json({ error: "invalid_price_range" });
+    }
+
+    const params = [];
+    const where = [];
+    const bind = (value) => `$${params.push(value)}`;
+    const addAccountFilter = (id) => {
+      const placeholder = bind(id);
+      where.push(`(
+        v.primary_account_id = ${placeholder}
+        OR EXISTS (
+          SELECT 1
+          FROM core.sale_parcels sp
+          WHERE sp.source_record_id = v.source_record_id
+            AND sp.account_id = ${placeholder}
+        )
+      )`);
+    };
+
+    if (accountId) addAccountFilter(accountId);
+    if (excludeAccountId) {
+      const placeholder = bind(excludeAccountId);
+      where.push(`(
+        v.primary_account_id IS DISTINCT FROM ${placeholder}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM core.sale_parcels excluded_sp
+          WHERE excluded_sp.source_record_id = v.source_record_id
+            AND excluded_sp.account_id = ${placeholder}
+        )
+      )`);
+    }
+    if (neighborhoodCode) where.push(`sale_account.neighborhood_code = ${bind(neighborhoodCode)}`);
+    if (q) {
+      if (/^[0-9A-Za-z]{17}$/.test(q)) {
+        addAccountFilter(q);
+      } else {
+        const pattern = bind(`%${q.replace(/%/g, "").replace(/_/g, "")}%`);
+        where.push(`(
+          v.address ILIKE ${pattern}
+          OR sale_account.address ILIKE ${pattern}
+          OR v.city ILIKE ${pattern}
+          OR v.source ILIKE ${pattern}
+        )`);
+      }
+    }
+    if (dateFrom) where.push(`v.closing_date >= ${bind(dateFrom)}::date`);
+    if (dateTo) where.push(`v.closing_date <= ${bind(dateTo)}::date`);
+    if (minPrice !== null) where.push(`v.sale_price >= ${bind(minPrice)}`);
+    if (maxPrice !== null) where.push(`v.sale_price <= ${bind(maxPrice)}`);
+    if (matched !== null) {
+      where.push(matched ? "v.primary_account_id IS NOT NULL" : "v.primary_account_id IS NULL");
+    }
+    if (review !== null) where.push(`v.requires_additional_review = ${bind(review)}`);
+    if (multiParcel) where.push(`v.multi_parcel_status = ${bind(multiParcel)}`);
+
+    const sql = `
+      SELECT
+        v.sale_id,
+        v.source_record_id,
+        v.primary_account_id,
+        v.county,
+        sale_account.neighborhood_code,
+        sale_account.subdivision,
+        COALESCE(NULLIF(BTRIM(v.address), ''), NULLIF(BTRIM(sale_account.address), '')) AS address,
+        v.city,
+        v.state,
+        v.zip,
+        v.closing_date,
+        v.sale_price,
+        v.days_on_market,
+        v.concessions,
+        v.seller_contributions,
+        v.listing_contract_date,
+        v.buyer_financing,
+        v.mls_status,
+        v.source,
+        v.source_filename,
+        v.source_row_number,
+        v.match_status,
+        v.has_multiple_parcel_numbers,
+        v.multi_parcel_status,
+        v.has_unresolved_parcel,
+        v.requires_additional_review,
+        v.data_quality_flags,
+        v.provided_parcel_fields,
+        v.resolved_account_count,
+        v.linked_parcels,
+        v.mls_bedrooms_total,
+        v.mls_bathrooms_total_integer,
+        v.mls_bathrooms_full,
+        v.mls_bathrooms_half,
+        v.mls_living_area,
+        v.mls_lot_size_area,
+        v.mls_year_built,
+        v.mls_garage_spaces,
+        v.mls_garage_yn,
+        v.mls_pool_yn,
+        v.ratio_current_price_by_living_area,
+        v.ratio_close_price_by_list_price,
+        v.ratio_close_price_by_original_list_price,
+        v.ratio_close_price_by_living_area,
+        v.cad_bedroom_count,
+        v.cad_bath_count,
+        v.cad_baths_full,
+        v.cad_baths_half,
+        v.cad_living_area_sqft,
+        v.cad_total_area_sqft,
+        v.cad_year_built,
+        v.cad_effective_year_built,
+        v.cad_stories,
+        v.cad_pool,
+        v.cad_building_class,
+        v.cad_land_value,
+        v.cad_improvement_value,
+        v.cad_market_value
+      FROM core.v_sales_enriched v
+      LEFT JOIN core.accounts sale_account
+        ON sale_account.account_id = v.primary_account_id
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY v.closing_date DESC NULLS LAST,
+               v.source_record_id DESC NULLS LAST,
+               v.sale_id DESC NULLS LAST
+      LIMIT ${bind(limit)} OFFSET ${bind(offset)}
+    `;
+
+    const { rows } = await pool.query(sql, params);
+    res.json(rows);
+  } catch (err) {
+    const message = err?.message || "sales_search_failed";
+    if (String(message).startsWith("invalid_")) {
+      return res.status(400).json({ error: message });
+    }
+    console.error("/api/sales failed", err);
+    res.status(500).json({ error: "sales_search_failed" });
   }
 });
 

@@ -62,3 +62,20 @@ Use these columns from `core.v_sales_enriched`:
 
 Unmatched sales intentionally remain in the view with a null `sale_id` and
 null `primary_account_id`, so they are available for broad market analysis.
+
+## Application API
+
+The Node application API exposes the enriched view through `GET /api/sales`.
+It returns one row per transaction and supports these optional query filters:
+
+- `q` (address, city, source, or exact 17-character account ID)
+- `account_id` (primary or additional linked parcel)
+- `exclude_account_id` (exclude sales linked to the subject parcel)
+- `neighborhood_code` (matched CAD-account neighborhood)
+- `date_from` and `date_to` (`YYYY-MM-DD`)
+- `min_price` and `max_price`
+- `matched` and `review` (boolean)
+- `multi_parcel` (`single`, `possible`, or `confirmed`)
+- `limit` (maximum 200) and `offset`
+
+The frontend client is `searchSales()` in `dcad-frontend/src/lib/api.ts`.

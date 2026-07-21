@@ -1,6 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import * as api from '@/lib/api';
+import type { SaleRow } from '@/lib/api';
 import { fetchDetail } from '@/lib/dcad';
 
 type SubjectData = {
@@ -100,6 +101,19 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     { tot: null, bd: null, full: null, half: null },
     { tot: null, bd: null, full: null, half: null },
   ]);
+  const [salesQuery, setSalesQuery] = useState('');
+  const [salesDateFrom, setSalesDateFrom] = useState(() => {
+    const date = new Date();
+    date.setFullYear(date.getFullYear() - 2);
+    return date.toISOString().slice(0, 10);
+  });
+  const [salesDateTo, setSalesDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [includeUnmatchedSales, setIncludeUnmatchedSales] = useState(false);
+  const [sameNeighborhoodOnly, setSameNeighborhoodOnly] = useState(false);
+  const [salesResults, setSalesResults] = useState<SaleRow[]>([]);
+  const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>([null, null, null, null]);
+  const [salesLoading, setSalesLoading] = useState(false);
+  const [salesError, setSalesError] = useState<string | null>(null);
   const parseSqftNum = (v: unknown): number | null => {
     if (v === null || v === undefined || v === '') return null;
     const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
@@ -265,18 +279,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompRooms([comp1, comp2, comp3, comp4]);
   };
   const onClickRun = () => {
-    // Placeholder for future automation; keep state intact for now.
+    // Equity automation remains a separate workflow from transaction selection.
   };
-
-  // Auto-trigger Test on initial load once subject data is available
-  const didAutoTest = useRef(false);
-  useEffect(() => {
-    if (!didAutoTest.current && subject) {
-      didAutoTest.current = true;
-      onClickTest();
-    }
-  }, [subject]);
-
   // Cost to Cure data (also used for rendering)
   const costToCure = useMemo(() => ({
     left: [
@@ -769,6 +773,119 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
   };
 
+  const saleKey = (sale: SaleRow): string =>
+    sale.source_record_id != null ? `source-${sale.source_record_id}` : `legacy-${sale.sale_id}`;
+
+  const saleNumber = (value: unknown): number | null => {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const saleDateDisplay = (value: string | null): string => {
+    if (!value) return '';
+    const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US');
+  };
+
+  const saleDisplayAddress = (sale: SaleRow): string => {
+    if (sale.address?.trim()) return sale.address.trim();
+    if (sale.primary_account_id) return `Account ${sale.primary_account_id} (address unavailable)`;
+    return `Unmatched sale${sale.source_row_number ? ` ${sale.source_row_number}` : ''}`;
+  };
+
+  const mlsLotSizeSqft = (value: unknown): number | null => {
+    const area = saleNumber(value);
+    if (area == null || area <= 0) return null;
+    // The MLS export omits its unit column: sub-100 values are acreage,
+    // while the larger values are already square feet.
+    return area < 100 ? area * 43_560 : area;
+  };
+
+  const applySaleToSlot = (sale: SaleRow, slot: number) => {
+    const livingArea = saleNumber(sale.cad_living_area_sqft ?? sale.mls_living_area);
+    const price = saleNumber(sale.sale_price);
+    const concessions = saleNumber(sale.seller_contributions);
+    const landSize = mlsLotSizeSqft(sale.mls_lot_size_area);
+    const yearBuilt = saleNumber(sale.cad_year_built ?? sale.mls_year_built);
+    const bedrooms = saleNumber(sale.cad_bedroom_count ?? sale.mls_bedrooms_total);
+    const fullBaths = saleNumber(sale.cad_baths_full ?? sale.mls_bathrooms_full);
+    const halfBaths = saleNumber(sale.cad_baths_half ?? sale.mls_bathrooms_half);
+    const totalRooms = bedrooms == null ? null : Math.round(bedrooms) + 3;
+
+    setSelectedSales((current) => current.map((item, index) => index === slot ? sale : item));
+    setCompAddresses((current) => current.map((value, index) => index === slot ? saleDisplayAddress(sale) : value));
+    setCompGla((current) => current.map((value, index) => index === slot ? livingArea : value));
+    setCompPrices((current) => current.map((value, index) => index === slot ? price : value));
+    setCompConcessions((current) => current.map((value, index) => index === slot ? concessions : value));
+    setCompTimeAdjustments((current) => current.map((value, index) => index === slot ? null : value));
+    setCompSaleDates((current) => current.map((value, index) => index === slot ? saleDateDisplay(sale.closing_date) : value));
+    setCompLandSize((current) => current.map((value, index) => index === slot ? landSize : value));
+    setCompClasses((current) => current.map((value, index) => index === slot ? (sale.cad_building_class || null) : value));
+    setCompAges((current) => current.map((value, index) => index === slot && yearBuilt != null ? Math.max(0, new Date().getFullYear() - yearBuilt) : (index === slot ? null : value)));
+    setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
+    setCompRooms((current) => current.map((value, index) => index === slot ? {
+      tot: totalRooms,
+      bd: bedrooms == null ? null : Math.round(bedrooms),
+      full: fullBaths == null ? null : Math.round(fullBaths),
+      half: halfBaths == null ? null : Math.round(halfBaths),
+    } : value));
+    setSalesError(null);
+  };
+
+  const addSaleAsComparable = (sale: SaleRow) => {
+    if (selectedSales.some((item) => item && saleKey(item) === saleKey(sale))) return;
+    const openSlot = selectedSales.findIndex((item) => item === null);
+    if (openSlot < 0) {
+      setSalesError('Four comparables are already selected. Remove one before adding another sale.');
+      return;
+    }
+    applySaleToSlot(sale, openSlot);
+  };
+
+  const removeComparable = (slot: number) => {
+    setSelectedSales((current) => current.map((item, index) => index === slot ? null : item));
+    setCompAddresses((current) => current.map((value, index) => index === slot ? '' : value));
+    setCompGla((current) => current.map((value, index) => index === slot ? null : value));
+    setCompPrices((current) => current.map((value, index) => index === slot ? null : value));
+    setCompConcessions((current) => current.map((value, index) => index === slot ? null : value));
+    setCompTimeAdjustments((current) => current.map((value, index) => index === slot ? null : value));
+    setCompSaleDates((current) => current.map((value, index) => index === slot ? '' : value));
+    setCompLandSize((current) => current.map((value, index) => index === slot ? null : value));
+    setCompClasses((current) => current.map((value, index) => index === slot ? null : value));
+    setCompAges((current) => current.map((value, index) => index === slot ? null : value));
+    setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
+    setCompRooms((current) => current.map((value, index) => index === slot ? { tot: null, bd: null, full: null, half: null } : value));
+  };
+
+  const clearComparables = () => {
+    [0, 1, 2, 3].forEach(removeComparable);
+    setSalesError(null);
+  };
+
+  const runSalesSearch = async () => {
+    setSalesLoading(true);
+    setSalesError(null);
+    try {
+      const rows = await api.searchSales({
+        q: salesQuery.trim() || undefined,
+        excludeAccountId: propertyId || undefined,
+        neighborhoodCode: sameNeighborhoodOnly ? (subject?.nbhd_code || undefined) : undefined,
+        dateFrom: salesDateFrom || undefined,
+        dateTo: salesDateTo || undefined,
+        matched: includeUnmatchedSales ? undefined : true,
+        limit: 50,
+      });
+      setSalesResults(rows);
+      if (!rows.length) setSalesError('No sales matched these filters.');
+    } catch (searchError: any) {
+      setSalesResults([]);
+      setSalesError(searchError?.message || 'Sales search failed');
+    } finally {
+      setSalesLoading(false);
+    }
+  };
+
   // SALES/EQUITY: Class row adjustments logic
   // Comp 1: +3% of sale price; Comp 2: -3% of sale price (superior class);
   // Comp 3: 0 (same class as subject); Comp 4: +3% of sale price
@@ -966,6 +1083,169 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </p>
         </div>
 
+        <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-1">
+            <div className="text-base font-semibold text-slate-900">Comparable Sale Search</div>
+            <div className="text-sm text-slate-600">
+              Select up to four sales for {subject?.address || propertyId || 'the subject property'}. Selected transactions populate the sales-comparison grid below.
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(260px,1fr)_160px_160px_auto] lg:items-end">
+            <label className="grid gap-1 text-sm text-slate-700">
+              <span>Address, city, or parcel/account ID</span>
+              <input
+                value={salesQuery}
+                onChange={(event) => setSalesQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void runSalesSearch();
+                }}
+                placeholder="e.g. SNOWMASS, Garland, or a 17-character ID"
+                className="rounded-md border border-slate-300 px-3 py-2"
+              />
+            </label>
+            <label className="grid gap-1 text-sm text-slate-700">
+              <span>Closing date from</span>
+              <input
+                type="date"
+                value={salesDateFrom}
+                onChange={(event) => setSalesDateFrom(event.target.value)}
+                className="rounded-md border border-slate-300 px-3 py-2"
+              />
+            </label>
+            <label className="grid gap-1 text-sm text-slate-700">
+              <span>Closing date to</span>
+              <input
+                type="date"
+                value={salesDateTo}
+                onChange={(event) => setSalesDateTo(event.target.value)}
+                className="rounded-md border border-slate-300 px-3 py-2"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void runSalesSearch()}
+              disabled={salesLoading}
+              className="rounded-md border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60"
+            >
+              {salesLoading ? 'Searching...' : 'Search Sales'}
+            </button>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-700">
+            <label className="inline-flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={includeUnmatchedSales}
+                onChange={(event) => setIncludeUnmatchedSales(event.target.checked)}
+              />
+              Include unmatched MLS sales
+            </label>
+            <label className={`inline-flex items-center gap-2 ${subject?.nbhd_code ? '' : 'text-slate-400'}`}>
+              <input
+                type="checkbox"
+                checked={sameNeighborhoodOnly}
+                disabled={!subject?.nbhd_code}
+                onChange={(event) => setSameNeighborhoodOnly(event.target.checked)}
+              />
+              Same CAD neighborhood only{subject?.nbhd_code ? ` (${subject.nbhd_code})` : ' (neighborhood unavailable)'}
+            </label>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {selectedSales.map((sale, index) => (
+              <div key={index} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="font-semibold text-slate-900">Comparable {index + 1}</div>
+                    <div className="mt-1 text-slate-700">{sale ? saleDisplayAddress(sale) : 'Not selected'}</div>
+                    {sale && <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id ? 'Matched account' : 'Unmatched sale'} · {saleDateDisplay(sale.closing_date)}</div>}
+                  </div>
+                  {sale && (
+                    <button
+                      type="button"
+                      onClick={() => removeComparable(index)}
+                      className="text-xs font-medium text-red-700 hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {salesError && <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">{salesError}</div>}
+
+          {salesResults.length > 0 && (
+            <div className="mt-4 max-h-[430px] overflow-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[900px] text-left text-sm">
+                <thead className="sticky top-0 bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2">Property</th>
+                    <th className="px-3 py-2">Sale</th>
+                    <th className="px-3 py-2">Characteristics</th>
+                    <th className="px-3 py-2">Review</th>
+                    <th className="px-3 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {salesResults.map((sale) => {
+                    const selected = selectedSales.some((item) => item && saleKey(item) === saleKey(sale));
+                    const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
+                    const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
+                    const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
+                    return (
+                      <tr key={saleKey(sale)} className="border-t border-slate-200 align-top">
+                        <td className="px-3 py-3">
+                          <div className="font-medium text-slate-900">{sale.address || 'Address unavailable'}</div>
+                          <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id || `Unmatched source row ${sale.source_row_number || ''}`}</div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="font-semibold text-slate-900">{fmtCurrency(sale.sale_price) || 'Price unavailable'}</div>
+                          <div className="mt-1 text-xs text-slate-500">{saleDateDisplay(sale.closing_date)} · DOM {sale.days_on_market ?? '—'}</div>
+                        </td>
+                        <td className="px-3 py-3 text-slate-700">
+                          <div>{fmtSqftSafe(livingArea)} · {bedrooms ?? '—'} bd · {baths ?? '—'} ba</div>
+                          <div className="mt-1 text-xs text-slate-500">Built {sale.cad_year_built ?? sale.mls_year_built ?? '—'} · {sale.neighborhood_code || 'No neighborhood code'}</div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap gap-1">
+                            {sale.multi_parcel_status !== 'single' && (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
+                                {sale.multi_parcel_status} multi-parcel
+                              </span>
+                            )}
+                            {sale.has_unresolved_parcel && (
+                              <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-900">Unresolved parcel</span>
+                            )}
+                            {sale.requires_additional_review && (
+                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-900">Review required</span>
+                            )}
+                            {!sale.requires_additional_review && sale.multi_parcel_status === 'single' && (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">Standard</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => addSaleAsComparable(sale)}
+                            disabled={selected}
+                            className="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
+                          >
+                            {selected ? 'Selected' : 'Use as Comparable'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
         <div className="card bg-white shadow-sm rounded-2xl">
           <div className="card-body p-0 overflow-x-auto">
             <div className="px-6 pt-4 pb-3 flex items-center justify-between gap-3">
@@ -976,17 +1256,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={onClickTest}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-red-600 bg-red-600 text-white hover:bg-red-700"
+                  onClick={clearComparables}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                 >
-                  Test
+                  Clear Comparables
                 </button>
                 <button
                   type="button"
-                  onClick={onClickRun}
+                  onClick={() => void runSalesSearch()}
                   className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
                 >
-                  Run
+                  Refresh Sales
                 </button>
               </div>
             </div>

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Sequence
+from pathlib import Path
 
 
 log = logging.getLogger("dcad.service_runner")
@@ -26,9 +27,11 @@ def _request_stop(signum: int, _frame) -> None:
     log.info("Received signal %s; stopping child processes", signum)
 
 
-def _start_process(name: str, command: Sequence[str]) -> subprocess.Popen:
+def _start_process(
+    name: str, command: Sequence[str], *, env: dict[str, str] | None = None
+) -> subprocess.Popen:
     log.info("Starting %s: %s", name, " ".join(command))
-    return subprocess.Popen(list(command))
+    return subprocess.Popen(list(command), env=env)
 
 
 def _stop_process(name: str, process: subprocess.Popen, timeout_seconds: int = 30) -> None:
@@ -50,6 +53,16 @@ def run() -> int:
     run_worker = _env_bool("RUN_DCAD_WORKER", True)
     children: list[tuple[str, subprocess.Popen]] = []
 
+    # Render can inject a service-level PYTHONPATH that overrides the image's
+    # ENV value. Build the child path here so the dcad package is always
+    # importable regardless of any inherited platform setting.
+    child_env = os.environ.copy()
+    scraper_dir = str(Path(__file__).resolve().parent)
+    inherited_pythonpath = child_env.get("PYTHONPATH", "")
+    child_env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (scraper_dir, inherited_pythonpath) if part
+    )
+
     api_command = (
         sys.executable,
         "-m",
@@ -60,11 +73,11 @@ def run() -> int:
         "--port",
         port,
     )
-    children.append(("api", _start_process("api", api_command)))
+    children.append(("api", _start_process("api", api_command, env=child_env)))
 
     if run_worker:
         worker_command = (sys.executable, "-m", "dcad.worker")
-        children.append(("worker", _start_process("worker", worker_command)))
+        children.append(("worker", _start_process("worker", worker_command, env=child_env)))
     else:
         log.warning("RUN_DCAD_WORKER is disabled; only the API will run")
 

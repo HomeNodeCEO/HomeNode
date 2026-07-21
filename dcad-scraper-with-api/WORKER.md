@@ -7,21 +7,24 @@ both processes and stops the service if either process exits unexpectedly.
 
 ## Scheduling behavior
 
-1. Existing successful scrapes are bootstrapped from `core.dcad_json_raw`.
-2. Known accounts without a successful scrape are processed first.
-3. Failures receive exponential backoff, capped at seven days, so one invalid
-   account cannot block the queue.
-4. After the backlog is complete, the oldest successful account is refreshed
-   when it reaches `SCRAPE_REFRESH_DAYS` (30 days by default).
-5. A database lease makes restarts safe and prevents multiple workers from
+1. `app.dcad_residential_targets` is the authoritative Dallas residential list
+   and preserves the source CSV row order.
+2. The initial phase processes only target IDs that had no raw scrape when the
+   campaign was loaded.
+3. When every initially missing target succeeds, the worker records an
+   `initial_missing_complete` event and begins full-list cycle 1 at the top of
+   the CSV.
+4. Full-list cycles continue in source order. Completing the final target
+   records a `full_cycle_complete` event and immediately starts the next cycle.
+5. Failures receive exponential backoff, capped at seven days. Other targets
+   continue while a failed account waits, but a phase or cycle is not declared
+   complete until every target has succeeded.
+6. A database lease makes restarts safe and prevents multiple workers from
    processing the same account simultaneously.
 
-Accounts labeled `Collin` are excluded by default because the page fetcher uses
-Dallas CAD URLs. Accounts with a missing county remain eligible because many of
-the previously scraped Dallas records have no county label.
-
-This worker refreshes accounts already present in `core.accounts`. Discovering
-brand-new DCAD account IDs is a separate ingestion task.
+The residential target table—not `core.accounts.county`—controls selection.
+Collin County rows already present elsewhere in the database have no effect on
+this campaign.
 
 ## Local commands
 
@@ -30,6 +33,7 @@ Run these commands from `dcad-scraper-with-api/scraper` with `DATABASE_URL` and
 
 ```powershell
 python -m dcad.worker --migrate-only
+python -m dcad.import_residential_targets "C:\path\to\DCAD Accounts.csv"
 python -m dcad.worker --once
 python -m dcad.worker
 ```
@@ -45,6 +49,8 @@ default. Set `RUN_DCAD_WORKER=false` only when the API must run by itself.
 Set `DATABASE_URL` to the database's **internal** Render URL. Do not commit the
 URL to Git. The service also expects `DB_SCHEMA=core` and uses
 `SCRAPE_STATE_SCHEMA=app` by default.
+
+Campaign progress is available from the public API at `/scrape/status`.
 
 Only one worker instance should run initially. The default request pacing is a
 two-second delay after each account, in addition to the one-second pause between
@@ -70,4 +76,9 @@ FROM app.dcad_scrape_state
 WHERE status = 'retry'
 ORDER BY attempts DESC, next_attempt_at
 LIMIT 100;
+
+SELECT event_type, cycle_number, event_payload, created_at
+FROM app.dcad_campaign_events
+ORDER BY event_id DESC
+LIMIT 20;
 ```

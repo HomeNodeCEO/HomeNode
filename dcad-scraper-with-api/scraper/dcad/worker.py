@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
@@ -8,6 +9,7 @@ import signal
 import socket
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import Engine, text
@@ -18,6 +20,7 @@ from dcad.upsert import get_engine
 
 log = logging.getLogger("dcad.worker")
 _stop_requested = False
+DEFAULT_CAMPAIGN_KEY = "dallas_residential"
 
 
 def _identifier(value: str, label: str) -> str:
@@ -37,6 +40,7 @@ def _env_bool(name: str, default: bool) -> bool:
 class WorkerConfig:
     data_schema: str
     state_schema: str
+    campaign_key: str
     excluded_counties: tuple[str, ...]
     refresh_days: int
     delay_seconds: float
@@ -57,6 +61,7 @@ class WorkerConfig:
         return cls(
             data_schema=_identifier(os.getenv("DB_SCHEMA", "core"), "DB_SCHEMA"),
             state_schema=_identifier(os.getenv("SCRAPE_STATE_SCHEMA", "app"), "SCRAPE_STATE_SCHEMA"),
+            campaign_key=os.getenv("SCRAPE_CAMPAIGN_KEY", DEFAULT_CAMPAIGN_KEY).strip(),
             excluded_counties=excluded,
             refresh_days=max(1, int(os.getenv("SCRAPE_REFRESH_DAYS", "30"))),
             delay_seconds=max(0.0, float(os.getenv("SCRAPE_DELAY_SECONDS", "2"))),
@@ -79,6 +84,18 @@ def _accounts_table(config: WorkerConfig) -> str:
 
 def _raw_table(config: WorkerConfig) -> str:
     return f'"{config.data_schema}"."dcad_json_raw"'
+
+
+def _targets_table(config: WorkerConfig) -> str:
+    return f'"{config.state_schema}"."dcad_residential_targets"'
+
+
+def _campaign_table(config: WorkerConfig) -> str:
+    return f'"{config.state_schema}"."dcad_residential_campaign"'
+
+
+def _events_table(config: WorkerConfig) -> str:
+    return f'"{config.state_schema}"."dcad_campaign_events"'
 
 
 def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
@@ -104,6 +121,12 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
+        migration = (
+            Path(__file__).resolve().parents[2]
+            / "migrations"
+            / "003_dcad_residential_campaign.sql"
+        )
+        conn.execute(text(migration.read_text(encoding="utf-8")))
 
 
 def verify_state_schema(engine: Engine, config: WorkerConfig) -> None:
@@ -145,25 +168,20 @@ def bootstrap_existing_successes(engine: Engine, config: WorkerConfig) -> int:
 
 
 def target_account_count(engine: Engine, config: WorkerConfig) -> int:
-    accounts = _accounts_table(config)
+    targets = _targets_table(config)
+    campaign = _campaign_table(config)
     sql = text(
         f"""
         SELECT count(*)
-        FROM {accounts} a
-        WHERE a.account_id ~ :account_id_regex
-          AND NOT (
-              UPPER(COALESCE(a.county, '')) = ANY(CAST(:excluded_counties AS text[]))
-          )
+        FROM {targets} t
+        JOIN {campaign} c ON c.campaign_key = :campaign_key
         """
     )
     with engine.connect() as conn:
         return int(
             conn.execute(
                 sql,
-                {
-                    "account_id_regex": config.account_id_regex,
-                    "excluded_counties": list(config.excluded_counties),
-                },
+                {"campaign_key": config.campaign_key},
             ).scalar_one()
         )
 
@@ -173,35 +191,35 @@ def claim_next_account(
     config: WorkerConfig,
     worker_id: str,
 ) -> Optional[tuple[str, int]]:
-    accounts = _accounts_table(config)
-    raw = _raw_table(config)
     state = _state_table(config)
+    targets = _targets_table(config)
+    campaign = _campaign_table(config)
     sql = text(
         f"""
         WITH candidate AS (
-            SELECT a.account_id,
-                   COALESCE(s.last_success_at, r.fetched_at) AS effective_last_success
-            FROM {accounts} a
-            LEFT JOIN {state} s ON s.account_id = a.account_id
-            LEFT JOIN {raw} r ON r.account_id = a.account_id
-            WHERE a.account_id ~ :account_id_regex
-              AND NOT (
-                  UPPER(COALESCE(a.county, '')) = ANY(CAST(:excluded_counties AS text[]))
-              )
-              AND COALESCE(s.status, 'pending') <> 'disabled'
+            SELECT t.account_id
+            FROM {targets} t
+            JOIN {campaign} c ON c.campaign_key = :campaign_key
+            LEFT JOIN {state} s ON s.account_id = t.account_id
+            WHERE COALESCE(s.status, 'pending') <> 'disabled'
               AND (s.lease_expires_at IS NULL OR s.lease_expires_at <= now())
-              AND COALESCE(s.next_attempt_at, now()) <= now()
               AND (
-                  COALESCE(s.last_success_at, r.fetched_at) IS NULL
-                  OR COALESCE(s.last_success_at, r.fetched_at)
-                     <= now() - make_interval(days => :refresh_days)
+                  COALESCE(s.status, 'pending') <> 'retry'
+                  OR COALESCE(s.next_attempt_at, now()) <= now()
               )
-            ORDER BY
-              CASE WHEN COALESCE(s.last_success_at, r.fetched_at) IS NULL THEN 0 ELSE 1 END,
-              COALESCE(s.next_attempt_at, '-infinity'::timestamptz),
-              COALESCE(s.last_success_at, r.fetched_at),
-              a.account_id
-            FOR UPDATE OF a SKIP LOCKED
+              AND (
+                  (
+                      c.phase = 'initial_missing'
+                      AND t.initial_missing
+                      AND t.initial_completed_at IS NULL
+                  )
+                  OR (
+                      c.phase = 'full_cycle'
+                      AND t.last_completed_cycle < c.cycle_number
+                  )
+              )
+            ORDER BY t.source_position
+            FOR UPDATE OF t SKIP LOCKED
             LIMIT 1
         )
         INSERT INTO {state} (
@@ -212,7 +230,7 @@ def claim_next_account(
                'leased',
                0,
                now(),
-               c.effective_last_success,
+               NULL,
                now(),
                now() + make_interval(mins => :lease_minutes),
                :worker_id,
@@ -232,9 +250,7 @@ def claim_next_account(
         row = conn.execute(
             sql,
             {
-                "account_id_regex": config.account_id_regex,
-                "excluded_counties": list(config.excluded_counties),
-                "refresh_days": config.refresh_days,
+                "campaign_key": config.campaign_key,
                 "lease_minutes": config.lease_minutes,
                 "worker_id": worker_id,
             },
@@ -246,6 +262,8 @@ def claim_next_account(
 
 def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
     state = _state_table(config)
+    targets = _targets_table(config)
+    campaign = _campaign_table(config)
     sql = text(
         f"""
         UPDATE {state}
@@ -262,6 +280,32 @@ def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
     )
     with engine.begin() as conn:
         conn.execute(sql, {"account_id": account_id, "refresh_days": config.refresh_days})
+        conn.execute(
+            text(
+                f"""
+                UPDATE {targets} t
+                SET initial_completed_at = CASE
+                        WHEN c.phase = 'initial_missing' AND t.initial_missing
+                        THEN now()
+                        ELSE t.initial_completed_at
+                    END,
+                    last_completed_cycle = CASE
+                        WHEN c.phase = 'full_cycle'
+                        THEN c.cycle_number
+                        ELSE t.last_completed_cycle
+                    END,
+                    last_cycle_success_at = CASE
+                        WHEN c.phase = 'full_cycle'
+                        THEN now()
+                        ELSE t.last_cycle_success_at
+                    END
+                FROM {campaign} c
+                WHERE c.campaign_key = :campaign_key
+                  AND t.account_id = :account_id
+                """
+            ),
+            {"campaign_key": config.campaign_key, "account_id": account_id},
+        )
 
 
 def retry_delay_seconds(config: WorkerConfig, prior_attempts: int) -> int:
@@ -323,6 +367,242 @@ def release_claim(engine: Engine, config: WorkerConfig, account_id: str) -> None
         )
 
 
+def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
+    campaign = _campaign_table(config)
+    targets = _targets_table(config)
+    state = _state_table(config)
+    events = _events_table(config)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                SELECT c.campaign_key,
+                       c.source_filename,
+                       c.source_sha256,
+                       c.total_source_rows,
+                       c.total_valid_targets,
+                       c.invalid_source_rows,
+                       c.initial_missing_count,
+                       c.phase,
+                       c.cycle_number,
+                       c.loaded_at,
+                       c.phase_started_at,
+                       c.initial_completed_at,
+                       c.current_cycle_started_at,
+                       c.last_cycle_completed_at,
+                       count(t.account_id) FILTER (
+                           WHERE t.initial_missing
+                             AND t.initial_completed_at IS NOT NULL
+                       ) AS initial_completed,
+                       count(t.account_id) FILTER (
+                           WHERE t.initial_missing
+                             AND t.initial_completed_at IS NULL
+                       ) AS initial_remaining,
+                       count(t.account_id) FILTER (
+                           WHERE t.last_completed_cycle >= c.cycle_number
+                       ) AS cycle_completed,
+                       count(t.account_id) FILTER (
+                           WHERE t.last_completed_cycle < c.cycle_number
+                       ) AS cycle_remaining,
+                       count(t.account_id) FILTER (
+                           WHERE s.status = 'retry'
+                       ) AS retry_targets,
+                       min(t.source_position) FILTER (
+                           WHERE (
+                               c.phase = 'initial_missing'
+                               AND t.initial_missing
+                               AND t.initial_completed_at IS NULL
+                           ) OR (
+                               c.phase = 'full_cycle'
+                               AND t.last_completed_cycle < c.cycle_number
+                           )
+                       ) AS next_source_position
+                FROM {campaign} c
+                LEFT JOIN {targets} t ON true
+                LEFT JOIN {state} s ON s.account_id = t.account_id
+                WHERE c.campaign_key = :campaign_key
+                GROUP BY c.campaign_key, c.source_filename, c.source_sha256,
+                         c.total_source_rows, c.total_valid_targets,
+                         c.invalid_source_rows, c.initial_missing_count,
+                         c.phase, c.cycle_number, c.loaded_at,
+                         c.phase_started_at, c.initial_completed_at,
+                         c.current_cycle_started_at, c.last_cycle_completed_at
+                """
+            ),
+            {"campaign_key": config.campaign_key},
+        ).mappings().first()
+        if row is None:
+            return {
+                "loaded": False,
+                "campaign_key": config.campaign_key,
+                "phase": "awaiting_target_import",
+            }
+
+        event = conn.execute(
+            text(
+                f"""
+                SELECT event_type, cycle_number, event_payload, created_at
+                FROM {events}
+                WHERE campaign_key = :campaign_key
+                ORDER BY event_id DESC
+                LIMIT 1
+                """
+            ),
+            {"campaign_key": config.campaign_key},
+        ).mappings().first()
+
+    result = dict(row)
+    result["loaded"] = True
+    if result["phase"] != "full_cycle":
+        result["cycle_completed"] = 0
+        result["cycle_remaining"] = result["total_valid_targets"]
+    result["latest_event"] = dict(event) if event else None
+    return result
+
+
+def advance_campaign_if_complete(
+    engine: Engine, config: WorkerConfig
+) -> Optional[dict[str, object]]:
+    campaign = _campaign_table(config)
+    targets = _targets_table(config)
+    events = _events_table(config)
+    with engine.begin() as conn:
+        current = conn.execute(
+            text(
+                f"""
+                SELECT phase, cycle_number, total_valid_targets,
+                       initial_missing_count
+                FROM {campaign}
+                WHERE campaign_key = :campaign_key
+                FOR UPDATE
+                """
+            ),
+            {"campaign_key": config.campaign_key},
+        ).mappings().first()
+        if current is None:
+            return None
+
+        if current["phase"] == "initial_missing":
+            remaining = int(
+                conn.execute(
+                    text(
+                        f"""
+                        SELECT count(*)
+                        FROM {targets}
+                        WHERE initial_missing
+                          AND initial_completed_at IS NULL
+                        """
+                    )
+                ).scalar_one()
+            )
+            if remaining:
+                return None
+
+            payload = {
+                "valid_targets": int(current["total_valid_targets"]),
+                "initial_missing_completed": int(current["initial_missing_count"]),
+                "next_phase": "full_cycle",
+                "next_cycle_number": 1,
+            }
+            conn.execute(
+                text(
+                    f"""
+                    INSERT INTO {events} (
+                        campaign_key, event_type, cycle_number, event_payload
+                    ) VALUES (
+                        :campaign_key, 'initial_missing_complete', 0,
+                        CAST(:payload AS jsonb)
+                    )
+                    ON CONFLICT (campaign_key, event_type, cycle_number)
+                    DO NOTHING
+                    """
+                ),
+                {
+                    "campaign_key": config.campaign_key,
+                    "payload": json.dumps(payload),
+                },
+            )
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE {campaign}
+                    SET phase = 'full_cycle',
+                        cycle_number = 1,
+                        initial_completed_at = now(),
+                        current_cycle_started_at = now(),
+                        phase_started_at = now(),
+                        updated_at = now()
+                    WHERE campaign_key = :campaign_key
+                    """
+                ),
+                {"campaign_key": config.campaign_key},
+            )
+            return {"event_type": "initial_missing_complete", **payload}
+
+        cycle_number = int(current["cycle_number"])
+        remaining = int(
+            conn.execute(
+                text(
+                    f"""
+                    SELECT count(*)
+                    FROM {targets}
+                    WHERE last_completed_cycle < :cycle_number
+                    """
+                ),
+                {"cycle_number": cycle_number},
+            ).scalar_one()
+        )
+        if remaining:
+            return None
+
+        payload = {
+            "completed_cycle_number": cycle_number,
+            "completed_targets": int(current["total_valid_targets"]),
+            "next_cycle_number": cycle_number + 1,
+        }
+        conn.execute(
+            text(
+                f"""
+                INSERT INTO {events} (
+                    campaign_key, event_type, cycle_number, event_payload
+                ) VALUES (
+                    :campaign_key, 'full_cycle_complete', :cycle_number,
+                    CAST(:payload AS jsonb)
+                )
+                ON CONFLICT (campaign_key, event_type, cycle_number)
+                DO NOTHING
+                """
+            ),
+            {
+                "campaign_key": config.campaign_key,
+                "cycle_number": cycle_number,
+                "payload": json.dumps(payload),
+            },
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {campaign}
+                SET cycle_number = :next_cycle_number,
+                    last_cycle_completed_at = now(),
+                    current_cycle_started_at = now(),
+                    phase_started_at = now(),
+                    updated_at = now()
+                WHERE campaign_key = :campaign_key
+                """
+            ),
+            {
+                "campaign_key": config.campaign_key,
+                "next_cycle_number": cycle_number + 1,
+            },
+        )
+        return {"event_type": "full_cycle_complete", **payload}
+
+
+def _log_campaign_event(event: dict[str, object]) -> None:
+    log.warning("DCAD CAMPAIGN EVENT %s", json.dumps(event, default=str, sort_keys=True))
+
+
 def _sleep(seconds: float) -> None:
     deadline = time.monotonic() + seconds
     while not _stop_requested and time.monotonic() < deadline:
@@ -347,15 +627,17 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
 
     bootstrapped = bootstrap_existing_successes(engine, config)
     total_targets = target_account_count(engine, config)
+    progress = campaign_status(engine, config)
     worker_id = f"{socket.gethostname()}:{os.getpid()}"
     log.info(
-        "Worker ready id=%s targets=%d existing_successes_bootstrapped=%d "
-        "refresh_days=%d excluded_counties=%s",
+        "Worker ready id=%s campaign=%s targets=%d phase=%s cycle=%s "
+        "existing_successes_bootstrapped=%d",
         worker_id,
+        config.campaign_key,
         total_targets,
+        progress.get("phase"),
+        progress.get("cycle_number", 0),
         bootstrapped,
-        config.refresh_days,
-        ",".join(config.excluded_counties) or "(none)",
     )
 
     successes = 0
@@ -363,9 +645,25 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
     while not _stop_requested:
         claim = claim_next_account(engine, config, worker_id)
         if claim is None:
+            event = advance_campaign_if_complete(engine, config)
+            if event is not None:
+                _log_campaign_event(event)
+                if once:
+                    return 0
+                continue
             if once:
                 return 0
-            log.info("No account is currently due; sleeping %.1f seconds", config.idle_seconds)
+            progress = campaign_status(engine, config)
+            log.info(
+                "No campaign target is currently due; phase=%s initial_remaining=%s "
+                "cycle=%s cycle_remaining=%s retry_targets=%s sleeping=%.1f",
+                progress.get("phase"),
+                progress.get("initial_remaining"),
+                progress.get("cycle_number"),
+                progress.get("cycle_remaining"),
+                progress.get("retry_targets"),
+                config.idle_seconds,
+            )
             _sleep(config.idle_seconds)
             continue
 
@@ -429,6 +727,7 @@ def main() -> int:
         ensure_state_schema(engine, config)
         bootstrapped = bootstrap_existing_successes(engine, config)
         log.info("Scrape state schema ready; bootstrapped=%d", bootstrapped)
+        log.info("Campaign status: %s", json.dumps(campaign_status(engine, config), default=str))
         return 0
     return run_worker(config, once=args.once)
 

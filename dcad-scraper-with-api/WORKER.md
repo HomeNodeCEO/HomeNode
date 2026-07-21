@@ -34,9 +34,13 @@ Run these commands from `dcad-scraper-with-api/scraper` with `DATABASE_URL` and
 ```powershell
 python -m dcad.worker --migrate-only
 python -m dcad.import_residential_targets "C:\path\to\DCAD Accounts.csv"
+python -m dcad.import_sales "C:\path\to\sales.csv" --source-name "Garland MLS two-year sales" --dry-run
 python -m dcad.worker --once
 python -m dcad.worker
 ```
+
+See `SALES_IMPORT.md` for the full sales-source, parcel-link, and enriched-view
+contract.
 
 `--once` is the safest smoke test. It processes at most one due account.
 

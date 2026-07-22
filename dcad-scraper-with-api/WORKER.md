@@ -21,6 +21,11 @@ both processes and stops the service if either process exits unexpectedly.
    complete until every target has succeeded.
 6. A database lease makes restarts safe and prevents multiple workers from
    processing the same account simultaneously.
+7. Five consecutive DCAD connection, timeout, rate-limit, or server failures
+   open a shared outage circuit. The campaign pauses for five minutes, allows
+   one leased recovery probe, and resumes automatically after a successful or
+   otherwise reachable DCAD response. Invalid-property and database errors do
+   not count as DCAD outages.
 
 The residential target table—not `core.accounts.county`—controls selection.
 Collin County rows already present elsewhere in the database have no effect on
@@ -54,6 +59,11 @@ Set `DATABASE_URL` to the database's **internal** Render URL. Do not commit the
 URL to Git. The service also expects `DB_SCHEMA=core` and uses
 `SCRAPE_STATE_SCHEMA=app` by default.
 
+The outage circuit defaults can be tuned with
+`SCRAPE_OUTAGE_FAILURE_THRESHOLD` (default `5`) and
+`SCRAPE_OUTAGE_PAUSE_SECONDS` (default `300`). The defaults are intentionally
+conservative so an individual bad account cannot pause the campaign.
+
 Campaign progress is available from the public API at `/scrape/status`.
 
 Only one worker instance should run initially. The default request pacing is a
@@ -85,4 +95,9 @@ SELECT event_type, cycle_number, event_payload, created_at
 FROM app.dcad_campaign_events
 ORDER BY event_id DESC
 LIMIT 20;
+
+SELECT upstream_failure_count, outage_pause_started_at, outage_paused_until,
+       outage_count, outage_probe_worker_id, left(outage_last_error, 200)
+FROM app.dcad_residential_campaign
+WHERE campaign_key = 'dallas_residential';
 ```

@@ -58,8 +58,13 @@ def _load_source(path: Path) -> tuple[list[tuple[int, str]], int, list[str]]:
 
 def _migration_sql() -> str:
     root = Path(__file__).resolve().parents[2]
-    return (root / "migrations" / "003_dcad_residential_campaign.sql").read_text(
-        encoding="utf-8"
+    migrations = root / "migrations"
+    return "\n".join(
+        (migrations / migration_name).read_text(encoding="utf-8")
+        for migration_name in (
+            "003_dcad_residential_campaign.sql",
+            "006_dcad_outage_circuit.sql",
+        )
     )
 
 
@@ -198,6 +203,13 @@ def import_targets(path: Path) -> dict[str, object]:
                     initial_completed_at = NULL,
                     current_cycle_started_at = NULL,
                     last_cycle_completed_at = NULL,
+                    upstream_failure_count = 0,
+                    outage_pause_started_at = NULL,
+                    outage_paused_until = NULL,
+                    outage_last_error = NULL,
+                    outage_count = 0,
+                    outage_probe_worker_id = NULL,
+                    outage_probe_lease_expires_at = NULL,
                     updated_at = now()
                 """,
                 (

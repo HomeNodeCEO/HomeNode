@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from requests import exceptions as requests_exceptions
 from sqlalchemy import Engine, text
 
 from dcad.run_once import run_for_account
@@ -48,6 +49,8 @@ class WorkerConfig:
     lease_minutes: int
     retry_base_seconds: int
     retry_max_seconds: int
+    outage_failure_threshold: int
+    outage_pause_seconds: int
     auto_migrate: bool
     account_id_regex: str
 
@@ -69,6 +72,12 @@ class WorkerConfig:
             lease_minutes=max(1, int(os.getenv("SCRAPE_LEASE_MINUTES", "15"))),
             retry_base_seconds=max(30, int(os.getenv("SCRAPE_RETRY_BASE_SECONDS", "300"))),
             retry_max_seconds=max(300, int(os.getenv("SCRAPE_RETRY_MAX_SECONDS", "604800"))),
+            outage_failure_threshold=max(
+                2, int(os.getenv("SCRAPE_OUTAGE_FAILURE_THRESHOLD", "5"))
+            ),
+            outage_pause_seconds=max(
+                30, int(os.getenv("SCRAPE_OUTAGE_PAUSE_SECONDS", "300"))
+            ),
             auto_migrate=_env_bool("SCRAPE_AUTO_MIGRATE", True),
             account_id_regex=os.getenv("SCRAPE_ACCOUNT_ID_REGEX", r"^[[:alnum:]]{17}$"),
         )
@@ -121,12 +130,13 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
-        migration = (
-            Path(__file__).resolve().parents[2]
-            / "migrations"
-            / "003_dcad_residential_campaign.sql"
-        )
-        conn.execute(text(migration.read_text(encoding="utf-8")))
+        migration_root = Path(__file__).resolve().parents[2] / "migrations"
+        for migration_name in (
+            "003_dcad_residential_campaign.sql",
+            "006_dcad_outage_circuit.sql",
+        ):
+            migration = migration_root / migration_name
+            conn.execute(text(migration.read_text(encoding="utf-8")))
 
 
 def verify_state_schema(engine: Engine, config: WorkerConfig) -> None:
@@ -196,10 +206,44 @@ def claim_next_account(
     campaign = _campaign_table(config)
     sql = text(
         f"""
-        WITH candidate AS (
+        WITH locked_campaign AS (
+            SELECT c.*
+            FROM {campaign} c
+            WHERE c.campaign_key = :campaign_key
+            FOR UPDATE
+        ),
+        available_campaign AS (
+            SELECT c.*
+            FROM locked_campaign c
+            WHERE c.outage_paused_until IS NULL
+               OR (
+                    c.outage_paused_until <= now()
+                    AND (
+                        c.outage_probe_lease_expires_at IS NULL
+                        OR c.outage_probe_lease_expires_at <= now()
+                        OR c.outage_probe_worker_id = :worker_id
+                    )
+               )
+        ),
+        campaign_gate AS (
+            UPDATE {campaign} c
+            SET outage_probe_worker_id = CASE
+                    WHEN gate.outage_paused_until IS NULL THEN NULL
+                    ELSE :worker_id
+                END,
+                outage_probe_lease_expires_at = CASE
+                    WHEN gate.outage_paused_until IS NULL THEN NULL
+                    ELSE now() + make_interval(mins => :lease_minutes)
+                END,
+                updated_at = now()
+            FROM available_campaign gate
+            WHERE c.campaign_key = gate.campaign_key
+            RETURNING c.phase, c.cycle_number
+        ),
+        candidate AS (
             SELECT t.account_id
             FROM {targets} t
-            JOIN {campaign} c ON c.campaign_key = :campaign_key
+            JOIN campaign_gate c ON true
             LEFT JOIN {state} s ON s.account_id = t.account_id
             WHERE COALESCE(s.status, 'pending') <> 'disabled'
               AND (s.lease_expires_at IS NULL OR s.lease_expires_at <= now())
@@ -260,7 +304,164 @@ def claim_next_account(
     return str(row["account_id"]), int(row["attempts"])
 
 
-def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
+UPSTREAM_OUTAGE_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+def is_upstream_outage_error(error: BaseException) -> bool:
+    """Return true only for failures that indicate DCAD itself is unavailable."""
+    current: Optional[BaseException] = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if isinstance(
+            current,
+            (
+                requests_exceptions.Timeout,
+                requests_exceptions.ConnectionError,
+                requests_exceptions.RetryError,
+            ),
+        ):
+            return True
+        if isinstance(current, requests_exceptions.HTTPError):
+            response = getattr(current, "response", None)
+            status_code = getattr(response, "status_code", None)
+            return status_code in UPSTREAM_OUTAGE_STATUS_CODES
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def should_pause_for_outage(
+    failure_count: int,
+    threshold: int,
+    circuit_was_open: bool,
+) -> bool:
+    return circuit_was_open or failure_count >= threshold
+
+
+def record_upstream_failure(
+    engine: Engine,
+    config: WorkerConfig,
+    worker_id: str,
+    error: BaseException,
+) -> dict[str, object]:
+    campaign = _campaign_table(config)
+    message = f"{error.__class__.__name__}: {error}"[:2000]
+    with engine.begin() as conn:
+        current = conn.execute(
+            text(
+                f"""
+                SELECT upstream_failure_count, outage_paused_until,
+                       outage_probe_worker_id
+                FROM {campaign}
+                WHERE campaign_key = :campaign_key
+                FOR UPDATE
+                """
+            ),
+            {"campaign_key": config.campaign_key},
+        ).mappings().first()
+        if current is None:
+            return {
+                "paused": False,
+                "transitioned": False,
+                "failure_count": 0,
+            }
+
+        failure_count = int(current["upstream_failure_count"] or 0) + 1
+        circuit_was_open = current["outage_paused_until"] is not None
+        paused = should_pause_for_outage(
+            failure_count,
+            config.outage_failure_threshold,
+            circuit_was_open,
+        )
+        if paused:
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE {campaign}
+                    SET upstream_failure_count = :failure_count,
+                        outage_pause_started_at = CASE
+                            WHEN outage_paused_until IS NULL THEN now()
+                            ELSE outage_pause_started_at
+                        END,
+                        outage_paused_until = now() + make_interval(secs => :pause_seconds),
+                        outage_last_error = :last_error,
+                        outage_count = outage_count + CASE
+                            WHEN outage_paused_until IS NULL THEN 1
+                            ELSE 0
+                        END,
+                        outage_probe_worker_id = NULL,
+                        outage_probe_lease_expires_at = NULL,
+                        updated_at = now()
+                    WHERE campaign_key = :campaign_key
+                    """
+                ),
+                {
+                    "campaign_key": config.campaign_key,
+                    "failure_count": failure_count,
+                    "pause_seconds": config.outage_pause_seconds,
+                    "last_error": message,
+                },
+            )
+        else:
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE {campaign}
+                    SET upstream_failure_count = :failure_count,
+                        outage_last_error = :last_error,
+                        updated_at = now()
+                    WHERE campaign_key = :campaign_key
+                    """
+                ),
+                {
+                    "campaign_key": config.campaign_key,
+                    "failure_count": failure_count,
+                    "last_error": message,
+                },
+            )
+
+    return {
+        "paused": paused,
+        "transitioned": paused and not circuit_was_open,
+        "failure_count": failure_count,
+        "pause_seconds": config.outage_pause_seconds if paused else 0,
+        "probe_worker": current["outage_probe_worker_id"] == worker_id,
+    }
+
+
+def reset_outage_circuit(engine: Engine, config: WorkerConfig) -> bool:
+    """Record evidence that DCAD is reachable and clear any shared pause."""
+    campaign = _campaign_table(config)
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                WITH previous AS (
+                    SELECT campaign_key, upstream_failure_count,
+                           outage_paused_until
+                    FROM {campaign}
+                    WHERE campaign_key = :campaign_key
+                    FOR UPDATE
+                )
+                UPDATE {campaign} c
+                SET upstream_failure_count = 0,
+                    outage_pause_started_at = NULL,
+                    outage_paused_until = NULL,
+                    outage_last_error = NULL,
+                    outage_probe_worker_id = NULL,
+                    outage_probe_lease_expires_at = NULL,
+                    updated_at = now()
+                FROM previous p
+                WHERE c.campaign_key = p.campaign_key
+                RETURNING (p.outage_paused_until IS NOT NULL) AS recovered
+                """
+            ),
+            {"campaign_key": config.campaign_key},
+        ).mappings().first()
+    return bool(row and row["recovered"])
+
+
+def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> bool:
     state = _state_table(config)
     targets = _targets_table(config)
     campaign = _campaign_table(config)
@@ -306,6 +507,31 @@ def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
             ),
             {"campaign_key": config.campaign_key, "account_id": account_id},
         )
+        recovery = conn.execute(
+            text(
+                f"""
+                WITH previous AS (
+                    SELECT campaign_key, outage_paused_until
+                    FROM {campaign}
+                    WHERE campaign_key = :campaign_key
+                    FOR UPDATE
+                )
+                UPDATE {campaign} c
+                SET upstream_failure_count = 0,
+                    outage_pause_started_at = NULL,
+                    outage_paused_until = NULL,
+                    outage_last_error = NULL,
+                    outage_probe_worker_id = NULL,
+                    outage_probe_lease_expires_at = NULL,
+                    updated_at = now()
+                FROM previous p
+                WHERE c.campaign_key = p.campaign_key
+                RETURNING (p.outage_paused_until IS NOT NULL) AS recovered
+                """
+            ),
+            {"campaign_key": config.campaign_key},
+        ).mappings().first()
+    return bool(recovery and recovery["recovered"])
 
 
 def retry_delay_seconds(config: WorkerConfig, prior_attempts: int) -> int:
@@ -348,8 +574,14 @@ def mark_failure(
     return delay
 
 
-def release_claim(engine: Engine, config: WorkerConfig, account_id: str) -> None:
+def release_claim(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    worker_id: Optional[str] = None,
+) -> None:
     state = _state_table(config)
+    campaign = _campaign_table(config)
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -365,6 +597,20 @@ def release_claim(engine: Engine, config: WorkerConfig, account_id: str) -> None
             ),
             {"account_id": account_id},
         )
+        if worker_id:
+            conn.execute(
+                text(
+                    f"""
+                    UPDATE {campaign}
+                    SET outage_probe_worker_id = NULL,
+                        outage_probe_lease_expires_at = NULL,
+                        updated_at = now()
+                    WHERE campaign_key = :campaign_key
+                      AND outage_probe_worker_id = :worker_id
+                    """
+                ),
+                {"campaign_key": config.campaign_key, "worker_id": worker_id},
+            )
 
 
 def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
@@ -390,6 +636,18 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
                        c.initial_completed_at,
                        c.current_cycle_started_at,
                        c.last_cycle_completed_at,
+                       c.upstream_failure_count,
+                       c.outage_pause_started_at,
+                       c.outage_paused_until,
+                       c.outage_last_error,
+                       c.outage_count,
+                       c.outage_probe_worker_id,
+                       c.outage_probe_lease_expires_at,
+                       CASE
+                           WHEN c.outage_paused_until IS NULL THEN 'closed'
+                           WHEN c.outage_paused_until > now() THEN 'open'
+                           ELSE 'half_open'
+                       END AS outage_circuit_state,
                        count(t.account_id) FILTER (
                            WHERE t.initial_missing
                              AND t.initial_completed_at IS NOT NULL
@@ -426,7 +684,11 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
                          c.invalid_source_rows, c.initial_missing_count,
                          c.phase, c.cycle_number, c.loaded_at,
                          c.phase_started_at, c.initial_completed_at,
-                         c.current_cycle_started_at, c.last_cycle_completed_at
+                         c.current_cycle_started_at, c.last_cycle_completed_at,
+                         c.upstream_failure_count, c.outage_pause_started_at,
+                         c.outage_paused_until, c.outage_last_error,
+                         c.outage_count, c.outage_probe_worker_id,
+                         c.outage_probe_lease_expires_at
                 """
             ),
             {"campaign_key": config.campaign_key},
@@ -453,6 +715,8 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
 
     result = dict(row)
     result["loaded"] = True
+    result["outage_failure_threshold"] = config.outage_failure_threshold
+    result["outage_pause_seconds"] = config.outage_pause_seconds
     if result["phase"] != "full_cycle":
         result["cycle_completed"] = 0
         result["cycle_remaining"] = result["total_valid_targets"]
@@ -656,12 +920,15 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
             progress = campaign_status(engine, config)
             log.info(
                 "No campaign target is currently due; phase=%s initial_remaining=%s "
-                "cycle=%s cycle_remaining=%s retry_targets=%s sleeping=%.1f",
+                "cycle=%s cycle_remaining=%s retry_targets=%s circuit=%s "
+                "paused_until=%s sleeping=%.1f",
                 progress.get("phase"),
                 progress.get("initial_remaining"),
                 progress.get("cycle_number"),
                 progress.get("cycle_remaining"),
                 progress.get("retry_targets"),
+                progress.get("outage_circuit_state"),
+                progress.get("outage_paused_until"),
                 config.idle_seconds,
             )
             _sleep(config.idle_seconds)
@@ -669,7 +936,7 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
 
         account_id, prior_attempts = claim
         if _stop_requested:
-            release_claim(engine, config, account_id)
+            release_claim(engine, config, account_id, worker_id)
             break
 
         started = time.monotonic()
@@ -678,17 +945,48 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
         except Exception as error:
             failures += 1
             delay = mark_failure(engine, config, account_id, prior_attempts, error)
+            upstream_outage = is_upstream_outage_error(error)
+            if upstream_outage:
+                circuit = record_upstream_failure(
+                    engine,
+                    config,
+                    worker_id,
+                    error,
+                )
+                if circuit["paused"]:
+                    log.warning(
+                        "DCAD outage circuit open account_id=%s failures=%s "
+                        "threshold=%d pause_seconds=%d probe_worker=%s",
+                        account_id,
+                        circuit["failure_count"],
+                        config.outage_failure_threshold,
+                        config.outage_pause_seconds,
+                        circuit["probe_worker"],
+                    )
+            else:
+                recovered = reset_outage_circuit(engine, config)
+                if recovered:
+                    log.warning(
+                        "DCAD outage circuit closed after a reachable non-upstream response"
+                    )
             log.error(
-                "Scrape failed account_id=%s attempt=%d retry_in_seconds=%d error=%s",
+                "Scrape failed account_id=%s attempt=%d retry_in_seconds=%d "
+                "upstream_outage=%s error=%s",
                 account_id,
                 prior_attempts + 1,
                 delay,
+                upstream_outage,
                 error,
                 exc_info=True,
             )
         else:
             successes += 1
-            mark_success(engine, config, account_id)
+            recovered = mark_success(engine, config, account_id)
+            if recovered:
+                log.warning(
+                    "DCAD outage circuit recovered account_id=%s; campaign resumed",
+                    account_id,
+                )
             log.info(
                 "Scrape succeeded account_id=%s duration_seconds=%.2f totals_success=%d totals_failed=%d",
                 account_id,

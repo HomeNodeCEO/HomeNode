@@ -4,6 +4,7 @@ import cors from "cors";
 import pg from "pg";
 import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
+import { parsePropertySearch } from "./util/propertySearch.js";
 
 const app = express();
 app.use(express.json());
@@ -420,7 +421,9 @@ app.get("/api/accounts/:id/market_value_history", async (req, res) => {
 
 /**
  * GET /api/search?q=&limit=&offset=
- * Simple search by address (ILIKE) or exact 17-char account_id.
+ * Search by exact account ID or indexed street/city metadata. A full address
+ * resolves its exact account first, then scopes related results to that same
+ * street and city without considering the house number.
  * Returns an array of AccountRow objects for the frontend.
  */
 app.get("/api/search", async (req, res) => {
@@ -431,26 +434,84 @@ app.get("/api/search", async (req, res) => {
 
     if (!q) return res.json([]);
 
-    // Accept 17-character alphanumeric account IDs (some end with a letter)
-    const isExactId = /^[0-9A-Za-z]{17}$/.test(q);
+    const parsed = parsePropertySearch(q);
     // Guard against very short address fragments to avoid expensive wide scans
-    if (!isExactId && q.length < 3) return res.json([]);
+    if (!parsed.isAccountId && parsed.streetName.length < 3) return res.json([]);
+
+    let exactTarget = null;
+    if (!parsed.isAccountId && parsed.hasHouseNumber) {
+      const exactParams = [parsed.normalizedAddress];
+      let citySql = "";
+      if (parsed.city) {
+        exactParams.push(parsed.city);
+        citySql = "AND upper(a.city) = $2";
+      }
+      const exact = await pool.query(
+        `
+          SELECT a.account_id, a.street_name, a.city
+          FROM core.accounts a
+          WHERE upper(btrim(split_part(a.address, ',', 1))) = $1
+            AND a.address IS NOT NULL
+            ${citySql}
+          LIMIT 1
+        `,
+        exactParams,
+      );
+      exactTarget = exact.rows[0] || null;
+    }
+
     const params = [];
-    let where = "";
-    if (isExactId) {
-      where = `a.account_id = $${params.push(q)}`;
+    const bind = (value) => `$${params.push(value)}`;
+    let where;
+    let matchSql;
+    let orderSql;
+
+    if (parsed.isAccountId) {
+      where = `a.account_id = ${bind(q.toUpperCase())}`;
+      matchSql = `'exact_account'`;
+      orderSql = "a.account_id";
     } else {
-      where = `a.address ILIKE $${params.push('%' + q.replace(/%/g, '').replace(/_/g, '') + '%')}`;
+      const targetStreet = String(exactTarget?.street_name || parsed.streetName).toUpperCase();
+      const targetCity = String(exactTarget?.city || parsed.city || "").toUpperCase() || null;
+      const streetPlaceholder = bind(exactTarget?.street_name ? targetStreet : `${targetStreet}%`);
+      const streetOperator = exactTarget?.street_name ? "=" : "LIKE";
+      const streetWhere = `upper(a.street_name) ${streetOperator} ${streetPlaceholder}`;
+      const cityWhere = targetCity ? `AND upper(a.city) = ${bind(targetCity)}` : "";
+      const exactAccountPlaceholder = exactTarget?.account_id
+        ? bind(exactTarget.account_id)
+        : null;
+      const normalizedAddressPlaceholder = bind(parsed.normalizedAddress);
+
+      const exactTargetNeedsFallback = exactAccountPlaceholder && !exactTarget?.street_name;
+      where = exactTargetNeedsFallback
+        ? `(a.account_id = ${exactAccountPlaceholder} OR (${streetWhere} ${cityWhere}))`
+        : `(${streetWhere} ${cityWhere})`;
+      matchSql = exactAccountPlaceholder
+        ? `CASE WHEN a.account_id = ${exactAccountPlaceholder} THEN 'exact_address' ELSE 'same_street' END`
+        : `CASE WHEN upper(btrim(split_part(a.address, ',', 1))) = ${normalizedAddressPlaceholder} THEN 'exact_address' ELSE 'same_street' END`;
+      orderSql = `
+        CASE
+          ${exactAccountPlaceholder ? `WHEN a.account_id = ${exactAccountPlaceholder} THEN 0` : ""}
+          WHEN upper(btrim(split_part(a.address, ',', 1))) = ${normalizedAddressPlaceholder} THEN 1
+          ELSE 2
+        END,
+        NULLIF(regexp_replace(split_part(btrim(a.address), ' ', 1), '[^0-9]', '', 'g'), '')::bigint NULLS LAST,
+        a.account_id
+      `;
     }
 
     const sql = `
       SELECT
         a.account_id,
         COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) AS address,
+        a.street_name,
+        a.city,
+        a.postal_code,
         a.county,
         a.neighborhood_code,
         a.subdivision,
         a.legal_description,
+        ${matchSql} AS search_match,
         COALESCE(vsc.certified_year, mv.tax_year)                 AS latest_tax_year,
         COALESCE(vsc.market_value, mv.total_value)                AS latest_market_value,
         COALESCE(vsc.improvement_value, mv.imp_value)             AS latest_improvement_value,
@@ -479,8 +540,8 @@ app.get("/api/search", async (req, res) => {
         LIMIT 1
       ) raw_loc ON NULLIF(BTRIM(a.address), '') IS NULL
       WHERE ${where}
-      ORDER BY a.account_id
-      LIMIT $${params.push(limit)} OFFSET $${params.push(offset)}
+      ORDER BY ${orderSql}
+      LIMIT ${bind(limit)} OFFSET ${bind(offset)}
     `;
     const { rows } = await pool.query(sql, params);
     res.json(rows);

@@ -20,6 +20,7 @@ test("parses a full address into house number, street, and city", () => {
     streetName: "SNOWMASS LN",
     city: "GARLAND",
     hasHouseNumber: true,
+    isAddressPrefix: true,
   });
 });
 
@@ -32,6 +33,20 @@ test("keeps a street-only query broad", () => {
     streetName: "SNOWMASS",
     city: null,
     hasHouseNumber: false,
+    isAddressPrefix: false,
+  });
+});
+
+test("keeps a house-number-only query as an address prefix", () => {
+  assert.deepEqual(parsePropertySearch("1909"), {
+    raw: "1909",
+    isAccountId: false,
+    normalizedAddress: "1909",
+    houseNumber: null,
+    streetName: "1909",
+    city: null,
+    hasHouseNumber: false,
+    isAddressPrefix: true,
   });
 });
 

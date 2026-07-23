@@ -10,7 +10,7 @@ type ApiSearchRow = {
   street_name?: string | null;
   city?: string | null;
   postal_code?: string | null;
-  search_match?: "exact_account" | "exact_address" | "same_street" | null;
+  search_match?: "exact_account" | "exact_address" | "address_prefix" | "same_street" | null;
   owner: string | null;
   situs_address: string | null;
   latest_market_value?: number | string | null; // <- allow MV from backend if present
@@ -139,7 +139,7 @@ export default function PropertySearchPage() {
     setErr(null);
     let items: SearchItem[] = [];
     try {
-      items = await requestItems(query, 25);
+      items = await requestItems(query, 50);
       if (requestId === searchRequestRef.current) {
         setResults(items);
         if (!items || items.length === 0) {
@@ -182,11 +182,12 @@ export default function PropertySearchPage() {
     }
   }
 
-  // Debounce typing → search after 300ms idle
+  // A short debounce keeps autocomplete responsive without applying stale
+  // responses when the user continues typing.
   useEffect(() => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     const query = q.trim();
-    debounceTimerRef.current = setTimeout(() => void runSearch(query), 300);
+    debounceTimerRef.current = setTimeout(() => void runSearch(query), 180);
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
@@ -243,7 +244,7 @@ export default function PropertySearchPage() {
         </button>
       </form>
       <div style={{ fontSize: 12, opacity: 0.68 }}>
-        Press Enter to open an exact property. Street searches show matching house numbers in the same city.
+        Results update as you type. House numbers and street letters narrow the address tiles; press Enter to open an exact property.
       </div>
 
       {/* Status */}

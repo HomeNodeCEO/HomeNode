@@ -421,9 +421,9 @@ app.get("/api/accounts/:id/market_value_history", async (req, res) => {
 
 /**
  * GET /api/search?q=&limit=&offset=
- * Search by exact account ID or indexed street/city metadata. A full address
- * resolves its exact account first, then scopes related results to that same
- * street and city without considering the house number.
+ * Search by exact account ID or indexed address/street/city metadata. Queries
+ * beginning with a house number remain full-address prefixes so every
+ * keystroke narrows the same autocomplete results.
  * Returns an array of AccountRow objects for the frontend.
  */
 app.get("/api/search", async (req, res) => {
@@ -435,30 +435,7 @@ app.get("/api/search", async (req, res) => {
     if (!q) return res.json([]);
 
     const parsed = parsePropertySearch(q);
-    // Guard against very short address fragments to avoid expensive wide scans
-    if (!parsed.isAccountId && parsed.streetName.length < 3) return res.json([]);
-
-    let exactTarget = null;
-    if (!parsed.isAccountId && parsed.hasHouseNumber) {
-      const exactParams = [parsed.normalizedAddress];
-      let citySql = "";
-      if (parsed.city) {
-        exactParams.push(parsed.city);
-        citySql = "AND upper(a.city) = $2";
-      }
-      const exact = await pool.query(
-        `
-          SELECT a.account_id, a.street_name, a.city
-          FROM core.accounts a
-          WHERE upper(btrim(split_part(a.address, ',', 1))) = $1
-            AND a.address IS NOT NULL
-            ${citySql}
-          LIMIT 1
-        `,
-        exactParams,
-      );
-      exactTarget = exact.rows[0] || null;
-    }
+    if (!parsed.isAccountId && !parsed.normalizedAddress) return res.json([]);
 
     const params = [];
     const bind = (value) => `$${params.push(value)}`;
@@ -470,32 +447,47 @@ app.get("/api/search", async (req, res) => {
       where = `a.account_id = ${bind(q.toUpperCase())}`;
       matchSql = `'exact_account'`;
       orderSql = "a.account_id";
-    } else {
-      const targetStreet = String(exactTarget?.street_name || parsed.streetName).toUpperCase();
-      const targetCity = String(exactTarget?.city || parsed.city || "").toUpperCase() || null;
-      const streetPlaceholder = bind(exactTarget?.street_name ? targetStreet : `${targetStreet}%`);
-      const streetOperator = exactTarget?.street_name ? "=" : "LIKE";
-      const streetWhere = `upper(a.street_name) ${streetOperator} ${streetPlaceholder}`;
-      const cityWhere = targetCity ? `AND upper(a.city) = ${bind(targetCity)}` : "";
-      const exactAccountPlaceholder = exactTarget?.account_id
-        ? bind(exactTarget.account_id)
-        : null;
+    } else if (parsed.isAddressPrefix) {
+      const addressLineSql = `upper(btrim(split_part(a.address, ',', 1))) COLLATE "C"`;
       const normalizedAddressPlaceholder = bind(parsed.normalizedAddress);
+      const addressPrefixPlaceholder = bind(`${parsed.normalizedAddress}%`);
+      const cityWhere = parsed.city
+        ? `AND upper(a.city) = ${bind(parsed.city)}`
+        : "";
 
-      const exactTargetNeedsFallback = exactAccountPlaceholder && !exactTarget?.street_name;
-      where = exactTargetNeedsFallback
-        ? `(a.account_id = ${exactAccountPlaceholder} OR (${streetWhere} ${cityWhere}))`
-        : `(${streetWhere} ${cityWhere})`;
-      matchSql = exactAccountPlaceholder
-        ? `CASE WHEN a.account_id = ${exactAccountPlaceholder} THEN 'exact_address' ELSE 'same_street' END`
-        : `CASE WHEN upper(btrim(split_part(a.address, ',', 1))) = ${normalizedAddressPlaceholder} THEN 'exact_address' ELSE 'same_street' END`;
-      orderSql = `
+      where = `
+        a.address IS NOT NULL
+        AND ${addressLineSql} LIKE ${addressPrefixPlaceholder}
+        ${cityWhere}
+      `;
+      matchSql = `
         CASE
-          ${exactAccountPlaceholder ? `WHEN a.account_id = ${exactAccountPlaceholder} THEN 0` : ""}
-          WHEN upper(btrim(split_part(a.address, ',', 1))) = ${normalizedAddressPlaceholder} THEN 1
-          ELSE 2
-        END,
-        NULLIF(regexp_replace(split_part(btrim(a.address), ' ', 1), '[^0-9]', '', 'g'), '')::bigint NULLS LAST,
+          WHEN ${addressLineSql} = ${normalizedAddressPlaceholder} THEN 'exact_address'
+          ELSE 'address_prefix'
+        END
+      `;
+      orderSql = `
+        ${addressLineSql},
+        upper(COALESCE(a.city, '')) COLLATE "C",
+        a.account_id
+      `;
+    } else {
+      const streetSql = `upper(a.street_name) COLLATE "C"`;
+      const citySql = `upper(COALESCE(a.city, '')) COLLATE "C"`;
+      const addressLineSql = `upper(btrim(split_part(a.address, ',', 1))) COLLATE "C"`;
+      const streetPlaceholder = bind(`${parsed.streetName}%`);
+      const cityWhere = parsed.city ? `AND upper(a.city) = ${bind(parsed.city)}` : "";
+
+      where = `
+        a.street_name IS NOT NULL
+        AND ${streetSql} LIKE ${streetPlaceholder}
+        ${cityWhere}
+      `;
+      matchSql = `'same_street'`;
+      orderSql = `
+        ${streetSql},
+        ${citySql},
+        ${addressLineSql},
         a.account_id
       `;
     }

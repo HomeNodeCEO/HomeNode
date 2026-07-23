@@ -877,6 +877,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         limit: 50,
       });
       setSalesResults(rows);
+      const refreshedByKey = new Map(rows.map((sale) => [saleKey(sale), sale]));
+      selectedSales.forEach((selected, slot) => {
+        if (!selected) return;
+        const refreshed = refreshedByKey.get(saleKey(selected));
+        if (refreshed) applySaleToSlot(refreshed, slot);
+      });
       if (!rows.length) setSalesError('No sales matched these filters.');
     } catch (searchError: any) {
       setSalesResults([]);

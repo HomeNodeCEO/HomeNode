@@ -1040,16 +1040,42 @@ async def get_detail(account_id: str):
             try:
                 pl = (db_detail.get("property_location") or {}) if isinstance(db_detail, dict) else {}
                 owner = (db_detail.get("owner") or {}) if isinstance(db_detail, dict) else {}
+                primary = (db_detail.get("main_improvement") or {}) if isinstance(db_detail, dict) else {}
                 need_loc = not bool(pl.get("address") or pl.get("subject_address")) or not bool(pl.get("neighborhood")) or not bool(pl.get("mapsco"))
                 need_owner = owner.get("mailing_address") in (None, "")
                 need_legal = not bool((db_detail.get("legal_description") or {}).get("lines"))
-                if need_loc or need_owner or need_legal:
+                need_bedroom = primary.get("bedroom_count") in (None, "")
+                need_baths = (
+                    primary.get("baths_full") in (None, "")
+                    and primary.get("baths_half") in (None, "")
+                    and primary.get("bath_count") in (None, "")
+                )
+                need_characteristics = need_bedroom or need_baths
+                if need_loc or need_owner or need_legal or need_characteristics:
                     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
                         detail_html = await _fetch_text(client, _mkurl(ACCOUNT_PATH, account_id))
                     parsed = parse_detail_html(html=detail_html)
                     parsed_pl = (parsed.get("property_location") or {}) if isinstance(parsed, dict) else {}
                     parsed_owner = (parsed.get("owner") or {}) if isinstance(parsed, dict) else {}
                     parsed_legal = (parsed.get("legal_description") or {}) if isinstance(parsed, dict) else {}
+                    parsed_primary = (
+                        parsed.get("main_improvement")
+                        or parsed.get("primary_improvements")
+                        or {}
+                    ) if isinstance(parsed, dict) else {}
+                    recovered_characteristics = {}
+                    if isinstance(parsed_primary, dict):
+                        for key in ("bedroom_count", "baths_full", "baths_half", "bath_count"):
+                            value = parsed_primary.get(key)
+                            if value not in (None, ""):
+                                recovered_characteristics[key] = value
+                    if recovered_characteristics:
+                        for primary_key in ("main_improvement", "main_improvements", "primary_improvements"):
+                            db_detail.setdefault(primary_key, {})
+                            if isinstance(db_detail[primary_key], dict):
+                                for key, value in recovered_characteristics.items():
+                                    if db_detail[primary_key].get(key) in (None, ""):
+                                        db_detail[primary_key][key] = value
                     # Merge location
                     if parsed_pl:
                         db_detail.setdefault("property_location", {})
@@ -1139,6 +1165,7 @@ async def get_detail(account_id: str):
                             except Exception:
                                 subdivisions = None
                             mailing_persist = (db_detail.get("owner") or {}).get("mailing_address")
+                            refreshed_primary = (db_detail.get("main_improvement") or {})
                             if addr or nbh or mco or mailing_persist:
                                 conn2.execute(
                                     _sql_text(f"UPDATE {_tblname('accounts')} SET address=COALESCE(:a,address), neighborhood_code=COALESCE(:n,neighborhood_code), mapsco=COALESCE(:m,mapsco), subdivision=COALESCE(:s, subdivision) WHERE account_id=:id"),
@@ -1178,6 +1205,26 @@ async def get_detail(account_id: str):
                                             "deed_date": None,
                                         },
                                     )
+                            if recovered_characteristics:
+                                conn2.execute(
+                                    _sql_text(
+                                        f"""
+                                        UPDATE {_tblname('primary_improvements')}
+                                        SET bedroom_count = COALESCE(bedroom_count, CAST(:bedroom_count AS INTEGER)),
+                                            baths_full = COALESCE(baths_full, CAST(:baths_full AS INTEGER)),
+                                            baths_half = COALESCE(baths_half, CAST(:baths_half AS INTEGER)),
+                                            bath_count = COALESCE(bath_count, :bath_count)
+                                        WHERE account_id = :account_id
+                                        """
+                                    ),
+                                    {
+                                        "account_id": account_id,
+                                        "bedroom_count": refreshed_primary.get("bedroom_count"),
+                                        "baths_full": refreshed_primary.get("baths_full"),
+                                        "baths_half": refreshed_primary.get("baths_half"),
+                                        "bath_count": refreshed_primary.get("bath_count"),
+                                    },
+                                )
                     except Exception:
                         pass
             except Exception:

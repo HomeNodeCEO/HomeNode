@@ -23,6 +23,21 @@ both processes and stops the service if either process exits unexpectedly.
    processing the same account simultaneously.
 
 The residential target table—not `core.accounts.county`—controls selection.
+
+## Property-search metadata
+
+The HomeNode property search uses indexed `street_name`, `city`, and
+`postal_code` fields on `core.accounts`. Populate or refresh them from the DCAD
+account export with a rollback-only pass followed by the committed pass:
+
+```powershell
+python tools/backfill_account_search_fields.py "C:\path\to\DCAD Accounts.csv"
+python tools/backfill_account_search_fields.py "C:\path\to\DCAD Accounts.csv" --apply
+```
+
+The tool updates existing accounts only. Dallas metadata comes from the export;
+for accounts outside that file, it derives the fields from an existing formatted
+`street, city, state zip` address when available.
 Collin County rows already present elsewhere in the database have no effect on
 this campaign.
 

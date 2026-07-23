@@ -79,3 +79,19 @@ It returns one row per transaction and supports these optional query filters:
 - `limit` (maximum 200) and `offset`
 
 The frontend client is `searchSales()` in `dcad-frontend/src/lib/api.ts`.
+
+## Backfill sale addresses from the DCAD account export
+
+The MLS export does not contain property addresses. After importing sales, use
+the DCAD account export to fill blank situs addresses for matched sale accounts:
+
+```powershell
+python tools/backfill_sales_addresses.py "C:\path\to\DCAD Accounts.csv"
+python tools/backfill_sales_addresses.py "C:\path\to\DCAD Accounts.csv" --apply
+```
+
+The first command is a rollback-only dry run. The `--apply` command updates only
+existing `core.accounts` and `core.sales` rows with blank address fields. It does
+not create accounts and does not replace a nonblank address. Unmatched sales stay
+available and flagged for review because the MLS source provides no address that
+can be assigned safely without an account match.

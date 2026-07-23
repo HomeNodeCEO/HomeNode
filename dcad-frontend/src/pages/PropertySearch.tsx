@@ -227,6 +227,12 @@ export default function PropertySearchPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
             placeholder="e.g. 1909 SNOWMASS LN, Garland or a 17-character account ID"
             className="input"
           />

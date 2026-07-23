@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState, useRef } from 'react';
 import * as api from '@/lib/api';
 import type { SaleRow } from '@/lib/api';
 import { fetchDetail } from '@/lib/dcad';
+import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 
 type SubjectData = {
   accountId: string;
@@ -450,8 +451,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             land_size_sqft: null,
             bedroom_count: (imp as any)?.bedroom_count ?? null,
             bath_count: (imp as any)?.bath_count ?? null,
-            baths_full: null,
-            baths_half: null,
+            baths_full: (imp as any)?.baths_full ?? null,
+            baths_half: (imp as any)?.baths_half ?? null,
             basement: (imp as any)?.basement ?? null,
             basement_raw: (imp as any)?.basement_raw ?? null,
             heating: (imp as any)?.heating ?? null,
@@ -552,11 +553,21 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               })(),
             }));
           } catch { /* optional augment failed; ignore */ }
-          // Final optional enrichment: if basement still missing and a scraper API base is configured, query it
+          // Refresh legacy rows whose original scrape predates bedroom/full-half bath capture.
+          // The scraper endpoint persists the recovered values, so later visits stay DB-backed.
           try {
             const env: any = (import.meta as any).env || {};
-            const base = (env.VITE_SCRAPER_BASE || env.VITE_SCRAPER_URL || '').toString().replace(/\/+$/, '');
-            if (base) {
+            const base = (
+              env.VITE_SCRAPER_BASE ||
+              env.VITE_SCRAPER_URL ||
+              'https://dcad-scraper-with-api.onrender.com'
+            ).toString().replace(/\/+$/, '');
+            const needsBedroom = (imp as any)?.bedroom_count == null || (imp as any)?.bedroom_count === '';
+            const needsBaths =
+              ((imp as any)?.baths_full == null || (imp as any)?.baths_full === '') &&
+              ((imp as any)?.baths_half == null || (imp as any)?.baths_half === '') &&
+              ((imp as any)?.bath_count == null || (imp as any)?.bath_count === '');
+            if (base && (needsBedroom || needsBaths)) {
               const res = await fetch(`${base}/detail/${encodeURIComponent(propertyId)}`);
               if (res.ok) {
                 const payload: any = await res.json();
@@ -579,6 +590,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 if (mi || (bsf || 0) > 0) {
                   setSubject(prev => ({
                     ...(prev || { accountId: propertyId }),
+                    bedroom_count: prev?.bedroom_count ?? (mi as any)?.bedroom_count ?? (detail as any)?.bedroom_count ?? null,
+                    baths_full: prev?.baths_full ?? (mi as any)?.baths_full ?? null,
+                    baths_half: prev?.baths_half ?? (mi as any)?.baths_half ?? null,
+                    bath_count: prev?.bath_count ?? (mi as any)?.bath_count ?? null,
                     basement: prev?.basement ?? (mi as any)?.basement ?? null,
                     basement_raw: prev?.basement_raw ?? (mi as any)?.basement_raw ?? null,
                     heating: prev?.heating ?? (mi as any)?.heating ?? null,
@@ -1002,22 +1017,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   }, [opinionMedian]);
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
-    const v = subject?.bedroom_count as any;
-    if (v === null || v === undefined || v === '') return undefined;
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : undefined;
+    return parseWholeCount(subject?.bedroom_count);
   }, [subject?.bedroom_count]);
   const subjectBathsFull = useMemo(() => {
-    const v = subject?.baths_full as any;
-    if (v === null || v === undefined || v === '') return undefined;
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : undefined;
+    return parseWholeCount(subject?.baths_full);
   }, [subject?.baths_full]);
   const subjectBathsHalf = useMemo(() => {
-    const v = subject?.baths_half as any;
-    if (v === null || v === undefined || v === '') return undefined;
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    return Number.isFinite(n) && n >= 0 ? n : undefined;
+    return parseWholeCount(subject?.baths_half);
   }, [subject?.baths_half]);
   const subjectBathCount = useMemo(() => {
     const v = subject?.bath_count as any;
@@ -1026,14 +1032,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return Number.isFinite(n) && n >= 0 ? n : undefined;
   }, [subject?.bath_count]);
   const subjectBathsDisplay = useMemo(() => {
-    if (subjectBathsFull !== undefined || subjectBathsHalf !== undefined) {
-      const full = subjectBathsFull ?? 0;
-      const half = subjectBathsHalf ?? 0;
-      return `${full}.${half}`;
-    }
-    if (subjectBathCount !== undefined) return String(subjectBathCount);
-    return '';
-  }, [subjectBathsFull, subjectBathsHalf, subjectBathCount]);
+    return formatBathCount(subject?.baths_full, subject?.baths_half, subject?.bath_count);
+  }, [subject?.baths_full, subject?.baths_half, subject?.bath_count]);
   const subjectTotalRooms = useMemo(() => {
     if (subjectBedrooms === undefined) return undefined;
     return (subjectBedrooms as number) + 3;

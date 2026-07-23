@@ -1,5 +1,5 @@
 // src/pages/PropertySearch.tsx (resilient to different api.ts versions)
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import * as api from "@/lib/api"; // we'll safely probe for functions at runtime
 
@@ -7,6 +7,10 @@ import * as api from "@/lib/api"; // we'll safely probe for functions at runtime
 type ApiSearchRow = {
   account_id: string;
   address?: string | null; // <- NEW: many endpoints return 'address' (core.accounts.address)
+  street_name?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  search_match?: "exact_account" | "exact_address" | "same_street" | null;
   owner: string | null;
   situs_address: string | null;
   latest_market_value?: number | string | null; // <- allow MV from backend if present
@@ -25,8 +29,6 @@ const fmtUSD = new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: 0,
 });
-
-const DEFAULT_COUNTY_ID = 1;
 
 /** Normalize any search response into rows */
 function normalizeRows(input: unknown): ApiSearchRow[] {
@@ -112,6 +114,8 @@ export default function PropertySearchPage() {
   const [results, setResults] = useState<SearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const searchRequestRef = useRef(0);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 
   function normalizeAddress(s: string): string {
@@ -123,10 +127,12 @@ export default function PropertySearchPage() {
   }
 
   // Fetch results only (no navigation); returns fetched items
-  async function runSearch(): Promise<SearchItem[]> {
-    const query = q.trim();
+  async function runSearch(query = q.trim()): Promise<SearchItem[]> {
+    const requestId = ++searchRequestRef.current;
     if (!query) {
       setResults([]);
+      setErr(null);
+      setLoading(false);
       return [];
     }
     setLoading(true);
@@ -134,30 +140,56 @@ export default function PropertySearchPage() {
     let items: SearchItem[] = [];
     try {
       items = await requestItems(query, 25);
-      setResults(items);
-      if (!items || items.length === 0) {
-        setErr('No results found');
+      if (requestId === searchRequestRef.current) {
+        setResults(items);
+        if (!items || items.length === 0) {
+          setErr('No results found');
+        }
       }
     } catch (e: any) {
-      setErr(String(e?.message || e));
+      if (requestId === searchRequestRef.current) {
+        setErr(String(e?.message || e));
+      }
     } finally {
-      setLoading(false);
+      if (requestId === searchRequestRef.current) {
+        setLoading(false);
+      }
     }
     return items;
   }
 
-  // Explicit navigation: on Search button click, go to first result (same as top tile)
-  async function goToTopResult() {
-    const items = results.length > 0 ? results : await runSearch();
-    if (items && items.length > 0) {
-      navigate(`/report/${encodeURIComponent(items[0].id)}`);
+  // Enter/Search opens an exact account or address. Broad street searches stay
+  // on this page and show the same-street, same-city result tiles.
+  async function submitSearch(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+
+    const query = q.trim();
+    const items = await runSearch(query);
+    if (!items.length) return;
+
+    const exactFromApi = items.find((item) =>
+      item.raw?.search_match === "exact_account" || item.raw?.search_match === "exact_address"
+    );
+    const normalizedQueryAddress = normalizeAddress(query.split(",", 1)[0]);
+    const exactByAddress = items.find((item) =>
+      normalizeAddress(item.raw?.address || item.raw?.situs_address || "") === normalizedQueryAddress
+    );
+    const exact = /^[0-9A-Za-z]{17}$/.test(query) ? items[0] : (exactFromApi || exactByAddress);
+
+    if (exact) {
+      navigate(`/report/${encodeURIComponent(exact.id)}`);
     }
   }
 
   // Debounce typing → search after 300ms idle
   useEffect(() => {
-    const t = setTimeout(runSearch, 300);
-    return () => clearTimeout(t);
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    const query = q.trim();
+    debounceTimerRef.current = setTimeout(() => void runSearch(query), 300);
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
@@ -182,7 +214,8 @@ export default function PropertySearchPage() {
       <h1 style={{ margin: 0 }}>Property Search</h1>
 
       {/* Query + Filters */}
-      <div
+      <form
+        onSubmit={submitSearch}
         style={{
           display: "grid",
           gap: 8,
@@ -194,14 +227,17 @@ export default function PropertySearchPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="e.g. 26272500060150000 or SNOWMASS"
+            placeholder="e.g. 1909 SNOWMASS LN, Garland or a 17-character account ID"
             className="input"
           />
         </Labeled>
 
-        <button type="button" onClick={goToTopResult} className="btn">
-          Search
+        <button type="submit" disabled={loading} className="btn">
+          {loading ? "Searching…" : "Search"}
         </button>
+      </form>
+      <div style={{ fontSize: 12, opacity: 0.68 }}>
+        Press Enter to open an exact property. Street searches show matching house numbers in the same city.
       </div>
 
       {/* Status */}
@@ -246,6 +282,12 @@ export default function PropertySearchPage() {
 
                 {/* Account ID (secondary line) */}
                 <div style={{ fontSize: 12, opacity: 0.75 }}>{r.id}</div>
+
+                {r.raw?.city && (
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>
+                    {r.raw.city}{r.raw.postal_code ? `, TX ${r.raw.postal_code}` : ""}
+                  </div>
+                )}
 
                 {/* Market Value (third line) */}
                 <div style={{ fontSize: 12, opacity: 0.6 }}>

@@ -49,6 +49,10 @@ async function fetchJSON<T = any>(input: string, init?: RequestInit & { timeoutM
 export interface AccountRow {
   account_id: string;
   address: string | null;
+  street_name?: string | null;
+  city?: string | null;
+  postal_code?: string | null;
+  search_match?: 'exact_account' | 'exact_address' | 'same_street' | null;
   county: string | null;
   neighborhood_code: string | null;
   subdivision: string | null;

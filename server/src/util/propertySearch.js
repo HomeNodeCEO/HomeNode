@@ -1,5 +1,6 @@
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z]{17}$/;
 const HOUSE_NUMBER_PATTERN = /^([0-9]+[A-Za-z]?(?:-[0-9]+[A-Za-z]?)?(?:\s+1\/2)?)\s+(.+)$/;
+const ADDRESS_PREFIX_PATTERN = /^[0-9]/;
 
 export function normalizeSearchText(value) {
   return String(value || "")
@@ -33,6 +34,7 @@ export function parsePropertySearch(value) {
     streetName: houseMatch?.[2] || normalizedAddress,
     city: normalizePropertyCity(cityPart) || null,
     hasHouseNumber: Boolean(houseMatch),
+    isAddressPrefix: ADDRESS_PREFIX_PATTERN.test(normalizedAddress),
   };
 }
 

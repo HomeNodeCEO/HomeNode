@@ -5,6 +5,8 @@ import type { ComparableRecommendationsResponse, SaleRow } from '@/lib/api';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 
+const COMPARABLE_COUNT = 6;
+
 type SubjectData = {
   accountId: string;
   address?: string | null;
@@ -83,36 +85,31 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return '';
   };
   // Test/Run controls and sample comparables
-  const [compAddresses, setCompAddresses] = useState<string[]>(['', '', '', '']);
-  const [compGla, setCompGla] = useState<Array<number | null>>([null, null, null, null]);
-  const [compPrices, setCompPrices] = useState<Array<number | null>>([null, null, null, null]);
-  const [compConcessions, setCompConcessions] = useState<Array<number | null>>([null, null, null, null]);
+  const [compAddresses, setCompAddresses] = useState<string[]>(() => Array(COMPARABLE_COUNT).fill(''));
+  const [compGla, setCompGla] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
+  const [compPrices, setCompPrices] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
+  const [compConcessions, setCompConcessions] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   // Date of Sale/Time adjustments per comparable (can be positive or negative)
-  const [compTimeAdjustments, setCompTimeAdjustments] = useState<Array<number | null>>([null, null, null, null]);
-  const [compSaleDates, setCompSaleDates] = useState<string[]>(['', '', '', '']);
-  const [compLandSize, setCompLandSize] = useState<Array<number | null>>([null, null, null, null]);
-  const [compClasses, setCompClasses] = useState<Array<number | string | null>>([null, null, null, null]);
+  const [compTimeAdjustments, setCompTimeAdjustments] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
+  const [compSaleDates, setCompSaleDates] = useState<string[]>(() => Array(COMPARABLE_COUNT).fill(''));
+  const [compLandSize, setCompLandSize] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
+  const [compClasses, setCompClasses] = useState<Array<number | string | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   // Test-mode comparable ages for the "Actual Age" row
-  const [compAges, setCompAges] = useState<Array<number | null>>([null, null, null, null]);
+  const [compAges, setCompAges] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   // Test-mode comparable garage areas
-  const [compGarage, setCompGarage] = useState<Array<number | null>>([null, null, null, null]);
-  const [compRooms, setCompRooms] = useState<Array<{ tot: number | null; bd: number | null; full: number | null; half: number | null }>>([
-    { tot: null, bd: null, full: null, half: null },
-    { tot: null, bd: null, full: null, half: null },
-    { tot: null, bd: null, full: null, half: null },
-    { tot: null, bd: null, full: null, half: null },
-  ]);
+  const [compGarage, setCompGarage] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
+  const [compRooms, setCompRooms] = useState<Array<{ tot: number | null; bd: number | null; full: number | null; half: number | null }>>(
+    () => Array.from({ length: COMPARABLE_COUNT }, () => ({ tot: null, bd: null, full: null, half: null })),
+  );
   const [salesQuery, setSalesQuery] = useState('');
-  const [salesDateFrom, setSalesDateFrom] = useState(() => {
-    const date = new Date();
-    date.setFullYear(date.getFullYear() - 2);
-    return date.toISOString().slice(0, 10);
-  });
+  const [salesDateFrom, setSalesDateFrom] = useState('');
   const [salesDateTo, setSalesDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [includeUnmatchedSales, setIncludeUnmatchedSales] = useState(false);
   const [sameNeighborhoodOnly, setSameNeighborhoodOnly] = useState(false);
   const [salesResults, setSalesResults] = useState<SaleRow[]>([]);
-  const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>([null, null, null, null]);
+  const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>(
+    () => Array(COMPARABLE_COUNT).fill(null),
+  );
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesError, setSalesError] = useState<string | null>(null);
   const [recommendationSummary, setRecommendationSummary] = useState<ComparableRecommendationsResponse | null>(null);
@@ -137,16 +134,18 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return s;
   };
   const onClickTest = () => {
-    setCompAddresses(['123 Main St', '456 Edge Dr', '789 Third St', '1012 Oak Rd']);
+    setCompAddresses(['123 Main St', '456 Edge Dr', '789 Third St', '1012 Oak Rd', '1415 Pine St', '1617 Cedar Ln']);
     const subj = parseSqftNum(subject?.total_living_area);
     if (subj && subj > 0) {
       const v1 = Math.round(subj * 0.95);
       const v2 = Math.round(subj * 1.05);
       const v3 = Math.round(subj * 1.0);
       const v4 = Math.round(subj * 1.02);
-      setCompGla([v1, v2, v3, v4]);
+      const v5 = Math.round(subj * 0.97);
+      const v6 = Math.round(subj * 1.03);
+      setCompGla([v1, v2, v3, v4, v5, v6]);
     } else {
-      setCompGla([null, null, null, null]);
+      setCompGla(Array(COMPARABLE_COUNT).fill(null));
     }
 
     // Compute comparable sale prices from subject market value
@@ -161,19 +160,21 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const p2 = Math.round(subjVal * 1.02); // comp 2: +2%
       const p3 = Math.round(subjVal * 1.03); // comp 3: +3%
       const p4 = Math.round(subjVal * 0.99); // comp 4: -1%
-      setCompPrices([p1, p2, p3, p4]);
+      const p5 = Math.round(subjVal * 1.01); // comp 5: +1%
+      const p6 = Math.round(subjVal * 0.97); // comp 6: -3%
+      setCompPrices([p1, p2, p3, p4, p5, p6]);
     } else {
-      setCompPrices([null, null, null, null]);
+      setCompPrices(Array(COMPARABLE_COUNT).fill(null));
     }
 
     // Fixed concessions by comparable
-    setCompConcessions([5000, 5000, 0, 3000]);
+    setCompConcessions([5000, 5000, 0, 3000, 0, 2500]);
 
     // Fixed Date of Sale/Time adjustments by comparable
-    setCompTimeAdjustments([-2000, 4000, -2000, -3000]);
+    setCompTimeAdjustments([-2000, 4000, -2000, -3000, 0, 1000]);
 
     // Fixed sale dates by comparable
-    setCompSaleDates(['11/05/2025', '07/16/2025', '11/25/2025', '09/10/2025']);
+    setCompSaleDates(['11/05/2025', '07/16/2025', '11/25/2025', '09/10/2025', '01/14/2026', '03/20/2026']);
 
     // Land size from subject +/- 2%
     const subjLand = parseSqftNum(subject?.land_size_sqft);
@@ -182,9 +183,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const l2 = Math.round(subjLand * 0.98); // -2%
       const l3 = Math.round(subjLand * 0.98); // -2%
       const l4 = Math.round(subjLand * 1.02); // +2%
-      setCompLandSize([l1, l2, l3, l4]);
+      const l5 = Math.round(subjLand);
+      const l6 = Math.round(subjLand * 1.01);
+      setCompLandSize([l1, l2, l3, l4, l5, l6]);
     } else {
-      setCompLandSize([null, null, null, null]);
+      setCompLandSize(Array(COMPARABLE_COUNT).fill(null));
     }
 
     // Garage/Parking sqft adjustments per comparable (rounded up)
@@ -194,9 +197,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const g2 = Math.ceil(subjGarage * 0.98); // -2%
       const g3 = Math.ceil(subjGarage * 1.0);  // same
       const g4 = Math.ceil(subjGarage * 1.02); // +2%
-      setCompGarage([g1, g2, g3, g4]);
+      const g5 = Math.ceil(subjGarage);
+      const g6 = Math.ceil(subjGarage * 0.99);
+      setCompGarage([g1, g2, g3, g4, g5, g6]);
     } else {
-      setCompGarage([null, null, null, null]);
+      setCompGarage(Array(COMPARABLE_COUNT).fill(null));
     }
 
     // Class adjustments relative to subject building class
@@ -211,11 +216,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const c2 = subjClassNum + 1;
       const c3 = subjClassNum;
       const c4 = Math.max(0, subjClassNum - 1);
-      setCompClasses([c1, c2, c3, c4]);
+      const c5 = subjClassNum;
+      const c6 = subjClassNum + 1;
+      setCompClasses([c1, c2, c3, c4, c5, c6]);
     } else {
       // If not numeric, mirror the subject's class label for all comps
       const s = (subject?.building_class ?? '') as any;
-      setCompClasses([s, s, s, s]);
+      setCompClasses(Array(COMPARABLE_COUNT).fill(s));
     }
 
     // Actual Age adjustments per comparable
@@ -226,12 +233,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const a2 = subjAge + 3; // comp 2: +3 years
       const a3 = subjAge;     // comp 3: same
       let a4 = subjAge - 4; // comp 4: -4 years
+      const a5 = subjAge + 1;
+      const a6 = subjAge;
       if (subjAge === 0) { a1 = 0; a4 = 0; }
       a1 = Math.max(0, a1);
       a4 = Math.max(0, a4);
-      setCompAges([a1, a2, a3, a4]);
+      setCompAges([a1, a2, a3, a4, a5, a6]);
     } else {
-      setCompAges([null, null, null, null]);
+      setCompAges(Array(COMPARABLE_COUNT).fill(null));
     }
 
     // Compute comparable 1 room counts based on subject
@@ -278,7 +287,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       full: fh ? fh.full : null,
       half: fh ? fh.half : null,
     };
-    setCompRooms([comp1, comp2, comp3, comp4]);
+    const comp5 = { ...comp4 };
+    const comp6 = { ...comp2 };
+    setCompRooms([comp1, comp2, comp3, comp4, comp5, comp6]);
   };
   const onClickRun = () => {
     // Equity automation remains a separate workflow from transaction selection.
@@ -804,6 +815,21 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US');
   };
 
+  const saleIsOverTwoYears = (sale: SaleRow): boolean => {
+    if (sale.soldOverTwoYears != null) return sale.soldOverTwoYears;
+    if (!sale.closing_date) return false;
+    const saleDate = new Date(`${sale.closing_date.slice(0, 10)}T12:00:00Z`);
+    if (Number.isNaN(saleDate.getTime())) return false;
+    const now = new Date();
+    const cutoff = new Date(Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+    ));
+    cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 2);
+    return saleDate < cutoff;
+  };
+
   const saleDisplayAddress = (sale: SaleRow): string => {
     if (sale.address?.trim()) return sale.address.trim();
     if (sale.primary_account_id) return `Account ${sale.primary_account_id} (address unavailable)`;
@@ -853,7 +879,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (selectedSales.some((item) => item && saleKey(item) === saleKey(sale))) return;
     const openSlot = selectedSales.findIndex((item) => item === null);
     if (openSlot < 0) {
-      setSalesError('Four comparables are already selected. Remove one before adding another sale.');
+      setSalesError('Six comparables are already selected. Remove one before adding another sale.');
       return;
     }
     applySaleToSlot(sale, openSlot);
@@ -875,7 +901,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const clearComparables = () => {
-    [0, 1, 2, 3].forEach(removeComparable);
+    Array.from({ length: COMPARABLE_COUNT }, (_, index) => index).forEach(removeComparable);
     setSalesError(null);
   };
 
@@ -896,10 +922,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setRecommendationSummary(response);
       setSalesResults(response.sales);
       clearComparables();
-      response.sales.slice(0, 4).forEach((sale, slot) => {
+      const recommendedSales = response.recommended_sales?.length
+        ? response.recommended_sales
+        : response.sales.slice(0, COMPARABLE_COUNT);
+      recommendedSales.slice(0, COMPARABLE_COUNT).forEach((sale, slot) => {
         applySaleToSlot(sale, slot);
       });
-      if (!response.sales.length) {
+      if (!recommendedSales.length) {
         setSalesError('No sales had both parcel coordinates and living-area data for scoring.');
       }
     } catch (recommendationError: any) {
@@ -953,7 +982,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   // Comp 3: 0 (same class as subject); Comp 4: +3% of sale price
   const classAdjustments = useMemo(() => {
     const prices = compPrices || [];
-    return [0, 1, 2, 3].map((i) => {
+    return Array.from({ length: COMPARABLE_COUNT }, (_, i) => {
       const v: any = prices[i];
       const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
       if (!Number.isFinite(n) || n <= 0) return null;
@@ -967,20 +996,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   // - Bedroom count adjustment: set to $0 for all comparables (for now)
   // - Bathroom count adjustment: Comp1 +$3,000; Comp2 -$3,000; Comp3 +$1,500; Comp4 $0
   // The Room Count adjustment per comparable is the sum of BedAdj + BathAdj
-  const roomCountBedAdjustments = useMemo<number[]>(() => [0, 0, 0, 0], []);
-  const roomCountBathAdjustments = useMemo<number[]>(() => [3000, -3000, 1500, 0], []);
+  const roomCountBedAdjustments = useMemo<number[]>(() => Array(COMPARABLE_COUNT).fill(0), []);
+  const roomCountBathAdjustments = useMemo<number[]>(() => [3000, -3000, 1500, 0, 0, 0], []);
   const roomCountTotalAdjustments = useMemo<number[]>(
     () => roomCountBedAdjustments.map((b, i) => b + (roomCountBathAdjustments[i] ?? 0)),
     [roomCountBedAdjustments, roomCountBathAdjustments]
   );
   // SALES/EQUITY: Gross Living Area (GLA) adjustments logic
   // Comp1: +$3,000; Comp2: -$3,000; Comp3: $0; Comp4: -$2,000
-  const glaAdjustments = useMemo<number[]>(() => [3000, -3000, 0, -2000], []);
+  const glaAdjustments = useMemo<number[]>(() => [3000, -3000, 0, -2000, 0, 0], []);
 
   // SALES/EQUITY: Net Adjustments — sum all signed adjustments per comparable
   const netAdjustments = useMemo<number[]>(() => {
     const arr: number[] = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < COMPARABLE_COUNT; i++) {
       const toNum = (v: any): number => {
         if (v === null || v === undefined || v === '') return 0;
         const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
@@ -1003,7 +1032,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   // SALES/EQUITY: Gross Adjustments — sum of absolute values of all adjustments per comparable
   const grossAdjustments = useMemo<number[]>(() => {
     const arr: number[] = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < COMPARABLE_COUNT; i++) {
       const toNum = (v: any): number => {
         if (v === null || v === undefined || v === '') return 0;
         const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
@@ -1025,7 +1054,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   // SALES: Indicated Values — sale price plus net adjustments per comparable
   const indicatedValues = useMemo<number[]>(() => {
     const arr: number[] = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < COMPARABLE_COUNT; i++) {
       const toNum = (v: any): number => {
         if (v === null || v === undefined || v === '') return 0;
         const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
@@ -1134,7 +1163,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           <div className="flex flex-col gap-1">
             <div className="text-base font-semibold text-slate-900">Comparable Sale Search</div>
             <div className="text-sm text-slate-600">
-              Select up to four sales for {subject?.address || propertyId || 'the subject property'}. Selected transactions populate the sales-comparison grid below.
+              Select up to six sales for {subject?.address || propertyId || 'the subject property'}. Selected transactions populate the sales-comparison grid below.
             </div>
           </div>
 
@@ -1175,7 +1204,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               disabled={salesLoading || !propertyId}
               className="rounded-md border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
             >
-              Recommend Best 4
+              Recommend Top 6
             </button>
             <button
               type="button"
@@ -1190,6 +1219,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
             Recommendations use DCAD parcel-center distance at 60% and living-area similarity at 40%.
             The 10% living-area setting controls how quickly that score declines; it does not exclude larger or smaller properties.
+            Sales over two years old are flagged and are left out of the recommended six when at least six sales from the last year score above 70.
             Neighborhood code is shown for review but is not yet scored.
           </div>
 
@@ -1220,6 +1250,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <div>
                     <div className="font-semibold text-slate-900">Comparable {index + 1}</div>
                     <div className="mt-1 text-slate-700">{sale ? saleDisplayAddress(sale) : 'Not selected'}</div>
+                    {sale && saleIsOverTwoYears(sale) && (
+                      <div className="mt-1 text-xs font-semibold text-amber-800">Sale over two years old</div>
+                    )}
                     {sale && <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id ? 'Matched account' : 'Unmatched sale'} · {saleDateDisplay(sale.closing_date)}</div>}
                   </div>
                   {sale && (
@@ -1252,6 +1285,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               {recommendationSummary.coverage.missing_square_footage_count > 0 && (
                 <> {recommendationSummary.coverage.missing_square_footage_count.toLocaleString()} lacked living-area data.</>
               )}
+              {recommendationSummary.recommendation_policy && (
+                <>
+                  {' '}{recommendationSummary.recommendation_policy.recentHighScoreCount.toLocaleString()} sales from the last year scored above 70.
+                  {recommendationSummary.recommendation_policy.olderSaleExclusionApplied
+                    ? ' Sales over two years old were excluded from the recommended six.'
+                    : ' Older sales remain eligible as clearly flagged fallbacks.'}
+                </>
+              )}
             </div>
           )}
 
@@ -1274,6 +1315,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
                     const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
                     const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
+                    const olderThanTwoYears = saleIsOverTwoYears(sale);
                     return (
                       <tr key={saleKey(sale)} className="border-t border-slate-200 align-top">
                         <td className="px-3 py-3">
@@ -1287,6 +1329,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-sm font-semibold text-indigo-900">
                                   #{sale.score_rank} · {sale.comparableScore.toFixed(1)}
                                 </span>
+                                {sale.recommendationRank != null && (
+                                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
+                                    Recommended #{sale.recommendationRank}
+                                  </span>
+                                )}
                                 {sale.score_requires_review && (
                                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">Review</span>
                                 )}
@@ -1297,6 +1344,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               <div className="mt-1 text-xs text-slate-500">
                                 Location {sale.locationScore?.toFixed(1)} · Size {sale.squareFootageScore?.toFixed(1)}
                               </div>
+                              {sale.recommendationExclusionReason === 'six_recent_high_score_sales_available' && (
+                                <div className="mt-1 text-xs font-medium text-amber-800">
+                                  Not recommended because six recent sales scored above 70.
+                                </div>
+                              )}
                             </div>
                           ) : (
                             <span className="text-xs text-slate-500">Manual result</span>
@@ -1322,6 +1374,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                             )}
                             {sale.requires_additional_review && (
                               <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-900">Review required</span>
+                            )}
+                            {olderThanTwoYears && (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Sale over 2 years old</span>
                             )}
                             {!sale.requires_additional_review && sale.multi_parcel_status === 'single' && (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">Standard</span>
@@ -1374,7 +1429,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
             {error && <div className="px-6 pb-4 text-red-600 text-sm">{error}</div>}
 
-            <div style={{ minWidth: 850 }}>
+            <div style={{ minWidth: 1180 }}>
               {/* Tighten cell padding by ~50% */}
               <style>{`.tight-grid th, .tight-grid td { padding: 0.25rem 0.5rem !important; }`}</style>
               <table className="w-full text-sm tight-grid" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -1387,12 +1442,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     >
                       Subject
                     </th>
-                {Array.from({ length: 4 }).map((_, i) => (
+                {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => (
                   <th
                     key={i}
                     colSpan={2}
-                    className={`text-left px-4 py-2 border-b border-slate-300 bg-white ${i < 3 ? 'border-r' : ''}`}
-                    style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                    className={`text-left px-4 py-2 border-b border-slate-300 bg-white ${i < COMPARABLE_COUNT - 1 ? 'border-r' : ''}`}
+                    style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                   >
                     {`Comparable ${i + 1}`}
                   </th>
@@ -1407,12 +1462,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       {/* subject address (optional) */}
                       {subject?.address || ''}
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`addr-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{compAddresses[i] || ''}</td>,
                       <td
                         key={`addr-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                       ></td>,
                     ])}
                   </tr>
@@ -1425,12 +1480,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                       {fmtCurrency(subject?.market_value ?? '')}
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`v-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtCurrency(compPrices[i] ?? '')}</td>,
                       <td
                         key={`v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                       ></td>,
                     ])}
                   </tr>
@@ -1441,12 +1496,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>
                       Description
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`adj-desc-${i}`} className="px-4 py-2 border-b border-slate-300">Description</td>,
                       <td
                         key={`adj-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         Adjustment
                       </td>,
@@ -1503,7 +1558,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                           {subjectValue}
                         </td>
-                        {Array.from({ length: 4 }).map((_, i) => [
+                        {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                           <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
                             {label === 'Concessions'
                               ? fmtCurrency((compConcessions || [])[i] ?? '')
@@ -1528,7 +1583,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <td
                             key={`${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
-                            style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                            style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                           >
                             {label === 'Concessions'
                               ? (() => {
@@ -1566,7 +1621,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>Baths</div>
                       </div>
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td
                         key={`ag-desc-${i}`}
                         className="px-4 py-2 border-b border-slate-200"
@@ -1580,7 +1635,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`ag-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       ></td>,
                     ])}
                   </tr>
@@ -1595,7 +1650,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{subjectBathsDisplay}</div>
                       </div>
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td
                         key={`rooms-desc-${i}`}
                         className="px-4 py-2 bg-white border-b border-slate-200"
@@ -1616,7 +1671,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`rooms-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 bg-white border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         {/* SALES: Room Count adjustments = BedAdj + BathAdj */}
                         {fmtCurrency((roomCountTotalAdjustments || [])[i] ?? 0)}
@@ -1630,12 +1685,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                       {loading ? 'Loading...' : fmtSqftSafe(subject?.total_living_area)}
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtSqftSafe(compGla[i] ?? '')}</td>,
                       <td
                         key={`gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((glaAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1693,7 +1748,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                       ? 'N/A'
                                       : ''}
                       </td>
-                      {Array.from({ length: 4 }).map((_, i) => [
+                      {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                         <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
                         {label === 'Basement SF'
@@ -1740,7 +1795,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td
                           key={`${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                         ></td>,
                       ])}
                     </tr>
@@ -1752,12 +1807,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <tr className="font-medium">
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Net Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`net-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`net-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((netAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1767,12 +1822,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <tr className="font-medium">
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Gross Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`gross-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`gross-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((grossAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1780,12 +1835,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <tr className="font-semibold">
                     <td className="px-4 py-2 bg-orange-200 border-t border-b border-slate-300">INDICATED VALUE</td>
                     <td className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`iv-desc-${i}`} className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300"></td>,
                       <td
                         key={`iv-adj-${i}`}
                         className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((indicatedValues || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -1844,7 +1899,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
             {error && <div className="px-6 pb-4 text-red-600 text-sm">{error}</div>}
 
-            <div style={{ minWidth: 850 }}>
+            <div style={{ minWidth: 1180 }}>
               <table className="w-full text-sm tight-grid" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
                 <thead>
                   <tr className="text-slate-700">
@@ -1855,12 +1910,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     >
                       Subject
                     </th>
-                {Array.from({ length: 4 }).map((_, i) => (
+                {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => (
                   <th
                     key={i}
                     colSpan={2}
-                    className={`text-left px-4 py-2 border-b border-slate-300 bg-white ${i < 3 ? 'border-r' : ''}`}
-                    style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                    className={`text-left px-4 py-2 border-b border-slate-300 bg-white ${i < COMPARABLE_COUNT - 1 ? 'border-r' : ''}`}
+                    style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                   >
                     {`Comparable ${i + 1}`}
                   </th>
@@ -1873,24 +1928,24 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                       {subject?.address || ''}
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`eq-addr-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{compAddresses[i] || ''}</td>,
                         <td
                           key={`eq-addr-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                          style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                         ></td>,
                     ])}
                   </tr>
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Value vs Sales</td>
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>{fmtCurrency(subject?.market_value ?? '')}</td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`eq-v-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtCurrency(compPrices[i] ?? '')}</td>,
                       <td
                         key={`eq-v-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={i < 3 ? { borderRightColor: '#cad5e2' } : undefined}
+                        style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                       ></td>,
                     ])}
                   </tr>
@@ -1899,12 +1954,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>
                       Description
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`eq-adj-desc-${i}`} className="px-4 py-2 border-b border-slate-300">Description</td>,
                       <td
                         key={`eq-adj-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         Adjustment
                       </td>,
@@ -1970,7 +2025,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                           {subjectValue}
                         </td>
-                        {Array.from({ length: 4 }).map((_, i) => [
+                        {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                           <td key={`eq-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
                             {label === 'Concessions'
                               ? fmtCurrency((compConcessions || [])[i] ?? '')
@@ -1994,7 +2049,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <td
                             key={`eq-${label}-adj-${i}`}
                             className="px-4 py-2 border-b border-slate-200 border-r"
-                            style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                            style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                           >
                             {label === 'Concessions'
                               ? (() => {
@@ -2026,7 +2081,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                       <div className="grid grid-cols-3 text-sm h-5"><div className="text-center h-full flex items-center justify-center">Total</div><div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>Beds</div><div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>Baths</div></div>
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td
                         key={`eq-ag-desc-${i}`}
                         className="px-4 py-2 border-b border-slate-200"
@@ -2040,7 +2095,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`eq-ag-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       ></td>,
                     ])}
                   </tr>
@@ -2054,7 +2109,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <div className="text-center h-full flex items-center justify-center" style={{ borderLeft: '2px solid #cbd5e1' }}>{subjectBathsDisplay || '-'}</div>
                       </div>
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td
                         key={`eq-rooms-desc-${i}`}
                         className="px-4 py-2 bg-white border-b border-slate-200"
@@ -2075,7 +2130,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <td
                         key={`eq-rooms-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 bg-white border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >
                         {/* EQUITY: Room Count adjustments = BedAdj + BathAdj */}
                         {fmtCurrency((roomCountTotalAdjustments || [])[i] ?? 0)}
@@ -2088,12 +2143,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
                       {loading ? 'Loading...' : fmtSqftSafe(subject?.total_living_area)}
                     </td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`eq-gla-desc-${i}`} className="px-4 py-2 border-b border-slate-200">{fmtSqftSafe(compGla[i] ?? '')}</td>,
                       <td
                         key={`eq-gla-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-200 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((glaAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
@@ -2147,7 +2202,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                       ? 'N/A'
                                       : ''}
                       </td>
-                      {Array.from({ length: 4 }).map((_, i) => [
+                      {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                         <td key={`eq2-${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
                           {/* Basement SF mirroring: comparables match the subject's basement_sqft (including '-') */}
                         {label === 'Basement SF'
@@ -2191,7 +2246,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td
                           key={`eq2-${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
-                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                          style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                         ></td>,
                       ])}
                     </tr>
@@ -2199,36 +2254,36 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <tr className="font-medium">
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Net Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`eq-net-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`eq-net-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((netAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
                   <tr className="font-medium">
                     <td className="px-4 py-2 border-b border-slate-300 bg-white">Gross Adjustments</td>
                     <td className="px-4 py-2 border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`eq-gross-desc-${i}`} className="px-4 py-2 border-b border-slate-300"></td>,
                       <td
                         key={`eq-gross-adj-${i}`}
                         className="px-4 py-2 border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((grossAdjustments || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>
                   <tr className="font-semibold">
                     <td className="px-4 py-2 bg-orange-200 border-t border-b border-slate-300">INDICATED VALUE</td>
                     <td className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300" style={{ backgroundColor: '#FEF3C7' }}>-</td>
-                    {Array.from({ length: 4 }).map((_, i) => [
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                       <td key={`eq-iv-desc-${i}`} className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300"></td>,
                       <td
                         key={`eq-iv-adj-${i}`}
                         className="px-4 py-2 bg-slate-100 border-t border-b border-slate-300 border-r"
-                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < 3 ? { borderRightColor: '#cad5e2' } : {}) }}
+                        style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
                       >{fmtCurrency((indicatedValues || [])[i] ?? 0)}</td>,
                     ])}
                   </tr>

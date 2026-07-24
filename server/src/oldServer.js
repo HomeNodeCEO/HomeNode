@@ -265,28 +265,23 @@ app.get("/api/accounts/:id", async (req, res) => {
     const { rows: impRows } = await pool.query(impSql, [id]);
 
     // The CAD improvement table does not contain a dependable detached/attached
-    // field. Use the newest MLS observation linked to this account, while
-    // preserving its provenance for the frontend.
+    // field. Use the account-level profile, which fills structural and
+    // architectural fields independently from the latest nonblank MLS
+    // observations and supports source-attributed verified overrides.
     const housingSql = `
       SELECT
         structural_style,
         housing_type,
         attachment_type,
         architectural_style,
-        mls_status,
         source_name,
-        COALESCE(close_date, listing_contract_date) AS observed_at
-      FROM core.sales_source_records
-      WHERE primary_account_id = $1
-        AND (
-          structural_style IS NOT NULL
-          OR architectural_style IS NOT NULL
-        )
-      ORDER BY
-        COALESCE(close_date, listing_contract_date) DESC NULLS LAST,
-        updated_at DESC,
-        id DESC
-      LIMIT 1
+        source_url,
+        source_record_reference,
+        observed_at,
+        confidence,
+        profile_source
+      FROM core.v_account_housing_profiles
+      WHERE account_id = $1
     `;
     const { rows: housingRows } = await pool.query(housingSql, [id]);
 

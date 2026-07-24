@@ -47,6 +47,7 @@ export async function fetchDetail(accountId: string, countyId = 1) {
   const data = await getAccountDb((accountId || '').trim());
   const acc = data?.account || ({} as any);
   const imp = (data?.primary_improvements as any) || {};
+  const housingProfile = (data as any)?.housing_profile || null;
   const os = (data as any)?.owner_summary || null;
   const lc = (data as any)?.legal_current || null;
   const lh = (data as any)?.legal_history || null;
@@ -107,6 +108,7 @@ export async function fetchDetail(accountId: string, countyId = 1) {
       building_class: imp?.building_class ?? undefined,
       total_area_sqft: (imp as any)?.total_area_sqft ?? undefined,
     },
+    housing_profile: housingProfile,
     additional_improvements: (data as any)?.additional_improvements || [],
     secondary_improvements: (data as any)?.secondary_improvements || [],
     land_detail: (data as any)?.land_detail || [],

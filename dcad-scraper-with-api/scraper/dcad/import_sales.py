@@ -13,11 +13,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-import psycopg2
-from psycopg2.extras import Json, execute_batch, execute_values
-
-
-EXPECTED_HEADERS = [
+BASE_HEADERS = [
     "BedroomsTotal",
     "BathroomsTotalInteger",
     "BathroomsFull",
@@ -42,6 +38,11 @@ EXPECTED_HEADERS = [
     "ParcelNumber2",
     "BuyerFinancing",
 ]
+STYLE_HEADERS = [
+    "StructuralStyle",
+    "ArchitecturalStyle",
+]
+EXPECTED_HEADERS = BASE_HEADERS + STYLE_HEADERS
 ACCOUNT_PATTERN = re.compile(r"^[A-Z0-9]{17}$")
 EMBEDDED_ACCOUNT_PATTERN = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{17})(?![A-Z0-9])")
 
@@ -97,6 +98,50 @@ def _stable_hash(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _classify_structural_style(value: str | None) -> tuple[str | None, str]:
+    """Return a concise housing type and an attachment safeguard classification."""
+    raw = _clean(value)
+    if not raw:
+        return None, "unknown"
+
+    normalized = raw.casefold()
+    has_detached = "single detached" in normalized
+    has_attached = any(
+        marker in normalized
+        for marker in (
+            "attached",
+            "duplex",
+            "condo/townhome",
+            "apartment",
+        )
+    )
+    if has_attached and has_detached:
+        attachment_type = "mixed"
+        housing_type = "Mixed/Review"
+    elif has_attached:
+        attachment_type = "attached"
+        if "condo/townhome" in normalized:
+            housing_type = "Condo/Townhome"
+        elif "duplex" in normalized or "attached" in normalized:
+            housing_type = "Attached/Duplex"
+        else:
+            housing_type = "Attached"
+    elif has_detached:
+        attachment_type = "detached"
+        housing_type = "Single Family"
+    elif "garden/zero lot line" in normalized:
+        attachment_type = "unknown"
+        housing_type = "Garden/Zero Lot Line"
+    elif "farm/ranch house" in normalized:
+        attachment_type = "unknown"
+        housing_type = "Farm/Ranch House"
+    else:
+        attachment_type = "unknown"
+        housing_type = raw
+
+    return housing_type, attachment_type
+
+
 def _load_rows(path: Path) -> list[tuple[int, dict[str, str]]]:
     rows: list[tuple[int, dict[str, str]]] = []
     hashes: set[str] = set()
@@ -111,7 +156,12 @@ def _load_rows(path: Path) -> list[tuple[int, dict[str, str]]]:
             raw_payload = {
                 header: _clean(source_row.get(header)) for header in EXPECTED_HEADERS
             }
-            record_hash = _stable_hash(raw_payload)
+            # Style columns were added after the original import. Keeping the
+            # original 23-column hash lets the revised export enrich those rows
+            # in place instead of creating a second copy of every prior sale.
+            record_hash = _stable_hash(
+                {header: raw_payload[header] for header in BASE_HEADERS}
+            )
             if record_hash in hashes:
                 raise ValueError(
                     f"Duplicate source row content at CSV row {source_row_number}"
@@ -195,6 +245,15 @@ def _to_bool(value: str, field: str, flags: list[str]) -> bool | None:
 
 def _typed_values(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
     flags: list[str] = []
+    mls_status = raw["MlsStatus"] or None
+    record_type = (
+        "closed_sale"
+        if (mls_status or "").strip().casefold() == "closed"
+        else "listing"
+    )
+    housing_type, attachment_type = _classify_structural_style(
+        raw["StructuralStyle"]
+    )
     typed = {
         "bedrooms_total": _to_int(raw["BedroomsTotal"], "bedrooms_total", flags),
         "bathrooms_total_integer": _to_int(
@@ -231,7 +290,8 @@ def _typed_values(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
         "seller_contributions": _to_decimal(
             raw["SellerContributions"], "seller_contributions", flags
         ),
-        "mls_status": raw["MlsStatus"] or None,
+        "mls_status": mls_status,
+        "record_type": record_type,
         "garage_spaces": _to_decimal(raw["GarageSpaces"], "garage_spaces", flags),
         "garage_yn": _to_bool(raw["GarageYN"], "garage_yn", flags),
         "pool_yn": _to_bool(raw["PoolYN"], "pool_yn", flags),
@@ -241,6 +301,10 @@ def _typed_values(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
         "parcel_number_raw": raw["ParcelNumber"] or None,
         "parcel_number2_raw": raw["ParcelNumber2"] or None,
         "buyer_financing": raw["BuyerFinancing"] or None,
+        "structural_style": raw["StructuralStyle"] or None,
+        "housing_type": housing_type,
+        "attachment_type": attachment_type,
+        "architectural_style": raw["ArchitecturalStyle"] or None,
     }
 
     price = typed["current_price"]
@@ -250,23 +314,34 @@ def _typed_values(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
     contract_date = typed["listing_contract_date"]
 
     if price is None:
-        flags.append("missing_sale_price")
+        flags.append(
+            "missing_sale_price"
+            if record_type == "closed_sale"
+            else "missing_listing_price"
+        )
     elif price <= 0:
         flags.append("non_positive_sale_price")
     elif price < Decimal("10000"):
         flags.append("low_sale_price")
     if days_on_market is not None and days_on_market < 0:
         flags.append("negative_days_on_market")
-    if close_date is None:
+    if record_type == "closed_sale" and close_date is None:
         flags.append("missing_close_date")
     if close_date and contract_date and contract_date > close_date:
         flags.append("listing_contract_date_after_close_date")
-    if contributions is None:
-        flags.append("missing_seller_contributions")
-    elif price is not None and contributions > price:
-        flags.append("seller_contributions_exceed_sale_price")
-    if typed["buyer_financing"] is None:
-        flags.append("missing_buyer_financing")
+    if record_type == "closed_sale":
+        if contributions is None:
+            flags.append("missing_seller_contributions")
+        elif price is not None and contributions > price:
+            flags.append("seller_contributions_exceed_sale_price")
+        if typed["buyer_financing"] is None:
+            flags.append("missing_buyer_financing")
+    if attachment_type == "mixed":
+        flags.append("conflicting_attachment_classification")
+    elif attachment_type == "attached":
+        flags.append("attached_housing_type")
+    if housing_type is None:
+        flags.append("missing_housing_type")
 
     return typed, list(dict.fromkeys(flags))
 
@@ -417,7 +492,9 @@ def _prepare_sales(
             PreparedSale(
                 source_row_number=source_row_number,
                 raw_payload=raw,
-                source_record_hash=_stable_hash(raw),
+                source_record_hash=_stable_hash(
+                    {header: raw[header] for header in BASE_HEADERS}
+                ),
                 transaction_fingerprint=transaction_fingerprint,
                 typed=typed,
                 parcel_links=links,
@@ -454,6 +531,10 @@ def _summary(
         for account_id in [row.primary_account_id]
         if account_id
     )
+    record_type_counts = Counter(row.typed["record_type"] for row in prepared)
+    attachment_counts = Counter(
+        row.typed["attachment_type"] for row in prepared
+    )
     return {
         "source_rows": len(prepared),
         "match_status": dict(match_counts),
@@ -466,6 +547,8 @@ def _summary(
         ),
         "distinct_resolved_accounts": len(resolved_accounts),
         "county_rows": dict(county_counts),
+        "record_type": dict(record_type_counts),
+        "attachment_type": dict(attachment_counts),
         "parcel_link_rows": sum(len(row.parcel_links) for row in prepared),
         "resolved_parcel_links": sum(
             1 for row in prepared for link in row.parcel_links if link.account_id
@@ -483,6 +566,9 @@ def _summary(
 def import_sales(
     path: Path, source_name: str, dry_run: bool = False
 ) -> dict[str, Any]:
+    import psycopg2
+    from psycopg2.extras import Json, execute_batch, execute_values
+
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise RuntimeError("DATABASE_URL is not set")
@@ -549,6 +635,11 @@ def import_sales(
                         typed["parcel_number_raw"],
                         typed["parcel_number2_raw"],
                         typed["buyer_financing"],
+                        typed["record_type"],
+                        typed["structural_style"],
+                        typed["housing_type"],
+                        typed["attachment_type"],
+                        typed["architectural_style"],
                         row.primary_account_id,
                         row.match_status,
                         row.has_multiple_parcel_numbers,
@@ -576,6 +667,8 @@ def import_sales(
                     year_built, close_date, seller_contributions, mls_status,
                     garage_spaces, garage_yn, pool_yn, listing_contract_date,
                     parcel_number_raw, parcel_number2_raw, buyer_financing,
+                    record_type, structural_style, housing_type,
+                    attachment_type, architectural_style,
                     primary_account_id, match_status,
                     has_multiple_parcel_numbers, multi_parcel_status,
                     has_unresolved_parcel, requires_additional_review,
@@ -615,6 +708,11 @@ def import_sales(
                     parcel_number_raw = EXCLUDED.parcel_number_raw,
                     parcel_number2_raw = EXCLUDED.parcel_number2_raw,
                     buyer_financing = EXCLUDED.buyer_financing,
+                    record_type = EXCLUDED.record_type,
+                    structural_style = EXCLUDED.structural_style,
+                    housing_type = EXCLUDED.housing_type,
+                    attachment_type = EXCLUDED.attachment_type,
+                    architectural_style = EXCLUDED.architectural_style,
                     primary_account_id = EXCLUDED.primary_account_id,
                     match_status = EXCLUDED.match_status,
                     has_multiple_parcel_numbers = EXCLUDED.has_multiple_parcel_numbers,
@@ -667,7 +765,15 @@ def import_sales(
                 page_size=1000,
             )
 
-            matched_rows = [row for row in prepared if row.primary_account_id]
+            matched_rows = [
+                row
+                for row in prepared
+                if row.primary_account_id
+                and row.typed["record_type"] == "closed_sale"
+                and row.typed["close_date"] is not None
+                and row.typed["current_price"] is not None
+                and row.typed["current_price"] > 0
+            ]
             account_ids = list({row.primary_account_id for row in matched_rows})
             existing_by_key: dict[tuple[str, date | None, Decimal | None], list[tuple[int, int | None]]] = {}
             if account_ids:
@@ -766,6 +872,17 @@ def import_sales(
                 {
                     "source_records_upserted": len(record_ids),
                     "canonical_sales_submitted": len(sales_values),
+                    "listings_preserved": sum(
+                        1
+                        for row in prepared
+                        if row.typed["record_type"] == "listing"
+                    ),
+                    "closed_rows_not_canonicalized": sum(
+                        1
+                        for row in prepared
+                        if row.typed["record_type"] == "closed_sale"
+                        and row not in matched_rows
+                    ),
                     "existing_sales_attached": existing_sales_attached,
                     "existing_sales_already_linked": existing_sales_already_linked,
                 }

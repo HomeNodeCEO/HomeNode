@@ -67,6 +67,15 @@ export interface AccountRow {
 
 export interface AccountDetail {
   account: AccountRow;
+  housing_profile: {
+    structural_style?: string | null;
+    housing_type?: string | null;
+    attachment_type?: 'detached' | 'attached' | 'mixed' | 'unknown' | null;
+    architectural_style?: string | null;
+    mls_status?: string | null;
+    source_name?: string | null;
+    observed_at?: string | null;
+  } | null;
   primary_improvements: {
     construction_type?: string | null;
     percent_complete?: number | null;
@@ -135,6 +144,11 @@ export interface SaleRow {
   listing_contract_date: string | null;
   buyer_financing: string | null;
   mls_status: string | null;
+  record_type: 'closed_sale' | 'listing';
+  structural_style: string | null;
+  housing_type: string | null;
+  attachment_type: 'detached' | 'attached' | 'mixed' | 'unknown';
+  architectural_style: string | null;
   source: string | null;
   source_filename: string | null;
   source_row_number: number | null;
@@ -214,6 +228,8 @@ export interface SalesSearchParams {
   matched?: boolean;
   review?: boolean;
   multiParcel?: 'single' | 'possible' | 'confirmed';
+  recordType?: 'closed_sale' | 'listing' | 'all';
+  includeAttached?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -320,6 +336,8 @@ export async function searchSales(params: SalesSearchParams = {}): Promise<SaleR
     matched: params.matched,
     review: params.review,
     multi_parcel: params.multiParcel,
+    record_type: params.recordType,
+    include_attached: params.includeAttached,
     limit: params.limit ?? 25,
     offset: params.offset ?? 0,
   });

@@ -264,6 +264,32 @@ app.get("/api/accounts/:id", async (req, res) => {
     `;
     const { rows: impRows } = await pool.query(impSql, [id]);
 
+    // The CAD improvement table does not contain a dependable detached/attached
+    // field. Use the newest MLS observation linked to this account, while
+    // preserving its provenance for the frontend.
+    const housingSql = `
+      SELECT
+        structural_style,
+        housing_type,
+        attachment_type,
+        architectural_style,
+        mls_status,
+        source_name,
+        COALESCE(close_date, listing_contract_date) AS observed_at
+      FROM core.sales_source_records
+      WHERE primary_account_id = $1
+        AND (
+          structural_style IS NOT NULL
+          OR architectural_style IS NOT NULL
+        )
+      ORDER BY
+        COALESCE(close_date, listing_contract_date) DESC NULLS LAST,
+        updated_at DESC,
+        id DESC
+      LIMIT 1
+    `;
+    const { rows: housingRows } = await pool.query(housingSql, [id]);
+
     // Latest owner summary (mailing + name)
     const ownerSql = `
       SELECT owner_name, mailing_address, tax_year
@@ -340,6 +366,7 @@ app.get("/api/accounts/:id", async (req, res) => {
     const resp = {
       account: accRows[0],
       primary_improvements: impRows[0] || null,
+      housing_profile: housingRows[0] || null,
       owner_summary: ownerRows[0] || null,
       legal_current: legalRows[0] || null,
       legal_history: legalHistRows[0] || null,
@@ -698,6 +725,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
     const candidateWhere = [
       "sale.primary_account_id IS NOT NULL",
       "sale.primary_account_id <> $1",
+      "sale.record_type = 'closed_sale'",
+      "sale.attachment_type NOT IN ('attached', 'mixed')",
     ];
     if (dateFrom) {
       candidateParams.push(dateFrom);
@@ -776,6 +805,11 @@ app.get("/api/sales/recommendations", async (req, res) => {
         sale.listing_contract_date,
         sale.buyer_financing,
         sale.mls_status,
+        sale.record_type,
+        sale.structural_style,
+        sale.housing_type,
+        sale.attachment_type,
+        sale.architectural_style,
         sale.source,
         sale.source_filename,
         sale.source_row_number,
@@ -969,7 +1003,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
  * Supported filters:
  *   q, account_id, exclude_account_id, neighborhood_code, date_from,
  *   date_to, min_price, max_price, matched, review, multi_parcel,
- *   limit, offset
+ *   record_type, include_attached, limit, offset
  *
  * A multi-parcel transaction is returned once. Its sale price must never be
  * multiplied by the number of linked parcels.
@@ -980,6 +1014,7 @@ app.get("/api/sales", async (req, res) => {
     const accountId = String(req.query.account_id || "").trim();
     const excludeAccountId = String(req.query.exclude_account_id || "").trim();
     const neighborhoodCode = String(req.query.neighborhood_code || "").trim();
+    const recordType = String(req.query.record_type || "closed_sale").trim().toLowerCase();
     const dateFrom = String(req.query.date_from || "").trim();
     const dateTo = String(req.query.date_to || "").trim();
     const multiParcel = String(req.query.multi_parcel || "").trim().toLowerCase();
@@ -996,6 +1031,8 @@ app.get("/api/sales", async (req, res) => {
 
     const matched = parseOptionalBoolean(req.query.matched, "matched");
     const review = parseOptionalBoolean(req.query.review, "review");
+    const includeAttached =
+      parseOptionalBoolean(req.query.include_attached, "include_attached") ?? false;
     if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
       return res.status(400).json({ error: "invalid_date_from" });
     }
@@ -1004,6 +1041,9 @@ app.get("/api/sales", async (req, res) => {
     }
     if (multiParcel && !["single", "possible", "confirmed"].includes(multiParcel)) {
       return res.status(400).json({ error: "invalid_multi_parcel" });
+    }
+    if (!["closed_sale", "listing", "all"].includes(recordType)) {
+      return res.status(400).json({ error: "invalid_record_type" });
     }
 
     const parsePrice = (value, name) => {
@@ -1061,8 +1101,14 @@ app.get("/api/sales", async (req, res) => {
         )`);
       }
     }
-    if (dateFrom) where.push(`v.closing_date >= ${bind(dateFrom)}::date`);
-    if (dateTo) where.push(`v.closing_date <= ${bind(dateTo)}::date`);
+    const activityDateColumn =
+      recordType === "listing"
+        ? "v.listing_contract_date"
+        : recordType === "all"
+          ? "COALESCE(v.closing_date, v.listing_contract_date)"
+          : "v.closing_date";
+    if (dateFrom) where.push(`${activityDateColumn} >= ${bind(dateFrom)}::date`);
+    if (dateTo) where.push(`${activityDateColumn} <= ${bind(dateTo)}::date`);
     if (minPrice !== null) where.push(`v.sale_price >= ${bind(minPrice)}`);
     if (maxPrice !== null) where.push(`v.sale_price <= ${bind(maxPrice)}`);
     if (matched !== null) {
@@ -1070,6 +1116,10 @@ app.get("/api/sales", async (req, res) => {
     }
     if (review !== null) where.push(`v.requires_additional_review = ${bind(review)}`);
     if (multiParcel) where.push(`v.multi_parcel_status = ${bind(multiParcel)}`);
+    if (recordType !== "all") where.push(`v.record_type = ${bind(recordType)}`);
+    if (!includeAttached) {
+      where.push("v.attachment_type NOT IN ('attached', 'mixed')");
+    }
 
     const sql = `
       SELECT
@@ -1091,6 +1141,11 @@ app.get("/api/sales", async (req, res) => {
         v.listing_contract_date,
         v.buyer_financing,
         v.mls_status,
+        v.record_type,
+        v.structural_style,
+        v.housing_type,
+        v.attachment_type,
+        v.architectural_style,
         v.source,
         v.source_filename,
         v.source_row_number,

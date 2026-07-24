@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS core.sales_source_records (
     close_date                              date,
     seller_contributions                    numeric,
     mls_status                              text,
+    record_type                             text NOT NULL DEFAULT 'closed_sale',
+    structural_style                        text,
+    housing_type                            text,
+    attachment_type                         text NOT NULL DEFAULT 'unknown',
+    architectural_style                     text,
     garage_spaces                           numeric,
     garage_yn                               boolean,
     pool_yn                                 boolean,
@@ -52,9 +57,45 @@ CREATE TABLE IF NOT EXISTS core.sales_source_records (
         CHECK (match_status IN ('exact', 'normalized', 'secondary', 'multiple', 'unmatched')),
     CONSTRAINT sales_source_records_multi_status_check
         CHECK (multi_parcel_status IN ('single', 'possible', 'confirmed')),
+    CONSTRAINT sales_source_records_record_type_check
+        CHECK (record_type IN ('closed_sale', 'listing')),
+    CONSTRAINT sales_source_records_attachment_type_check
+        CHECK (attachment_type IN ('detached', 'attached', 'mixed', 'unknown')),
     CONSTRAINT sales_source_records_flags_array_check
         CHECK (jsonb_typeof(data_quality_flags) = 'array')
 );
+
+ALTER TABLE core.sales_source_records
+    ADD COLUMN IF NOT EXISTS record_type text NOT NULL DEFAULT 'closed_sale',
+    ADD COLUMN IF NOT EXISTS structural_style text,
+    ADD COLUMN IF NOT EXISTS housing_type text,
+    ADD COLUMN IF NOT EXISTS attachment_type text NOT NULL DEFAULT 'unknown',
+    ADD COLUMN IF NOT EXISTS architectural_style text;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'sales_source_records_record_type_check'
+          AND conrelid = 'core.sales_source_records'::regclass
+    ) THEN
+        ALTER TABLE core.sales_source_records
+            ADD CONSTRAINT sales_source_records_record_type_check
+            CHECK (record_type IN ('closed_sale', 'listing'));
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'sales_source_records_attachment_type_check'
+          AND conrelid = 'core.sales_source_records'::regclass
+    ) THEN
+        ALTER TABLE core.sales_source_records
+            ADD CONSTRAINT sales_source_records_attachment_type_check
+            CHECK (attachment_type IN ('detached', 'attached', 'mixed', 'unknown'));
+    END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS sales_source_records_primary_account_idx
     ON core.sales_source_records (primary_account_id);
@@ -67,6 +108,18 @@ CREATE INDEX IF NOT EXISTS sales_source_records_fingerprint_idx
 
 CREATE INDEX IF NOT EXISTS sales_source_records_review_idx
     ON core.sales_source_records (requires_additional_review, close_date DESC);
+
+CREATE INDEX IF NOT EXISTS sales_source_records_record_type_idx
+    ON core.sales_source_records (
+        record_type,
+        COALESCE(close_date, listing_contract_date) DESC
+    );
+
+CREATE INDEX IF NOT EXISTS sales_source_records_housing_idx
+    ON core.sales_source_records (
+        attachment_type,
+        housing_type
+    );
 
 CREATE TABLE IF NOT EXISTS core.sale_parcels (
     id                       bigserial PRIMARY KEY,
@@ -227,7 +280,12 @@ SELECT
     value_current.improvement_value AS cad_improvement_value,
     value_current.market_value AS cad_market_value,
     src.raw_payload,
-    COALESCE(src.loaded_at, s.loaded_at) AS loaded_at
+    COALESCE(src.loaded_at, s.loaded_at) AS loaded_at,
+    COALESCE(src.record_type, 'closed_sale') AS record_type,
+    src.structural_style,
+    src.housing_type,
+    COALESCE(src.attachment_type, 'unknown') AS attachment_type,
+    src.architectural_style
 FROM core.sales s
 FULL OUTER JOIN core.sales_source_records src
     ON src.id = s.source_record_id
@@ -244,4 +302,4 @@ LEFT JOIN core.value_summary_current value_current
     );
 
 COMMENT ON VIEW core.v_sales_enriched IS
-    'One row per sale transaction. Includes legacy sales, all imported source rows, linked parcel flags, MLS snapshots, and current CAD characteristics. Multi-parcel prices remain transaction-level and must not be summed once per parcel.';
+    'One row per closed sale or listing record. Includes legacy sales, all imported source rows, linked parcel flags, MLS snapshots, housing/architectural style, and current CAD characteristics. Multi-parcel prices remain transaction-level and must not be summed once per parcel.';

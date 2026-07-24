@@ -67,15 +67,7 @@ export interface AccountRow {
 
 export interface AccountDetail {
   account: AccountRow;
-  housing_profile: {
-    structural_style?: string | null;
-    housing_type?: string | null;
-    attachment_type?: 'detached' | 'attached' | 'mixed' | 'unknown' | null;
-    architectural_style?: string | null;
-    mls_status?: string | null;
-    source_name?: string | null;
-    observed_at?: string | null;
-  } | null;
+  housing_profile: HousingProfile | null;
   primary_improvements: {
     construction_type?: string | null;
     percent_complete?: number | null;
@@ -216,6 +208,29 @@ export interface SaleRow {
   recommendationExclusionReason?: string | null;
 }
 
+export interface HousingProfile {
+  structural_style?: string | null;
+  housing_type?: string | null;
+  attachment_type?: 'detached' | 'attached' | 'mixed' | 'unknown' | null;
+  architectural_style?: string | null;
+  mls_status?: string | null;
+  source_name?: string | null;
+  source_url?: string | null;
+  source_record_reference?: string | null;
+  observed_at?: string | null;
+  confidence?: string | number | null;
+  profile_source?: 'verified_override' | 'mls_source_record' | string | null;
+}
+
+export interface HousingProfileUpdate {
+  housing_type: string;
+  attachment_type: 'detached' | 'attached' | 'mixed' | 'unknown';
+  architectural_style?: string | null;
+  source_url?: string | null;
+  notes?: string | null;
+  source_record_reference?: string | null;
+}
+
 export interface SalesSearchParams {
   q?: string;
   accountId?: string;
@@ -313,6 +328,24 @@ export async function getAccount(accountId: string): Promise<AccountDetail> {
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}`);
   return fetchJSON<AccountDetail>(url);
+}
+
+/** Save a source-attributed manual housing classification for an account. */
+export async function updateAccountHousingProfile(
+  accountId: string,
+  update: HousingProfileUpdate,
+  editorKey: string,
+): Promise<{ ok: true; housing_profile: HousingProfile }> {
+  const id = (accountId || '').trim();
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/housing-profile`);
+  return fetchJSON<{ ok: true; housing_profile: HousingProfile }>(url, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify(update),
+  });
 }
 
 /** Market value history for an account */

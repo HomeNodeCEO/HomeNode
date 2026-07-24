@@ -7,6 +7,13 @@ export const DEFAULT_COMPARABLE_SCORING = Object.freeze({
   squareFootageScaleRatio: 0.1,
 });
 
+export const DEFAULT_RECOMMENDATION_POLICY = Object.freeze({
+  count: 6,
+  recentYears: 1,
+  olderThanYears: 2,
+  highScoreThreshold: 70,
+});
+
 function finiteNumber(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -22,6 +29,105 @@ function softSimilarity(value, scale) {
     return null;
   }
   return 100 / (1 + value / scale);
+}
+
+function validDate(value) {
+  const parsed = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
+}
+
+function utcDateOnly(value) {
+  const parsed = validDate(value);
+  return parsed
+    ? new Date(Date.UTC(
+        parsed.getUTCFullYear(),
+        parsed.getUTCMonth(),
+        parsed.getUTCDate(),
+      ))
+    : null;
+}
+
+function yearsBefore(value, years) {
+  const result = new Date(value.getTime());
+  result.setUTCFullYear(result.getUTCFullYear() - years);
+  return result;
+}
+
+export function classifySaleAge(closingDate, referenceDate = new Date()) {
+  const saleDate = utcDateOnly(closingDate);
+  const reference = utcDateOnly(referenceDate);
+  if (!saleDate || !reference) {
+    return {
+      saleAgeDays: null,
+      soldWithinOneYear: false,
+      soldOverTwoYears: false,
+    };
+  }
+
+  const oneYearCutoff = yearsBefore(reference, 1);
+  const twoYearCutoff = yearsBefore(reference, 2);
+  return {
+    saleAgeDays: Math.max(
+      0,
+      Math.floor((reference.getTime() - saleDate.getTime()) / 86_400_000),
+    ),
+    soldWithinOneYear: saleDate >= oneYearCutoff && saleDate <= reference,
+    soldOverTwoYears: saleDate < twoYearCutoff,
+  };
+}
+
+export function applyRecommendationPolicy(
+  rankedSales,
+  {
+    referenceDate = new Date(),
+    policy = DEFAULT_RECOMMENDATION_POLICY,
+  } = {},
+) {
+  const classifiedSales = rankedSales.map((sale) => ({
+    ...sale,
+    ...classifySaleAge(sale.closing_date, referenceDate),
+  }));
+  const recentHighScoreCount = classifiedSales.filter(
+    (sale) =>
+      sale.soldWithinOneYear &&
+      finiteNumber(sale.comparableScore) > policy.highScoreThreshold,
+  ).length;
+  const scoreAboveThresholdCount = classifiedSales.filter(
+    (sale) => finiteNumber(sale.comparableScore) > policy.highScoreThreshold,
+  ).length;
+  const olderSaleExclusionApplied = recentHighScoreCount >= policy.count;
+  const eligibleSales = olderSaleExclusionApplied
+    ? classifiedSales.filter((sale) => !sale.soldOverTwoYears)
+    : classifiedSales;
+  const recommendedSales = eligibleSales.slice(0, policy.count);
+  const recommendationRanks = new Map(
+    recommendedSales.map((sale, index) => [sale, index + 1]),
+  );
+
+  const sales = classifiedSales.map((sale) => {
+    const recommendationRank = recommendationRanks.get(sale) ?? null;
+    return {
+      ...sale,
+      recommended: recommendationRank !== null,
+      recommendationRank,
+      recommendationExclusionReason:
+        olderSaleExclusionApplied && sale.soldOverTwoYears
+          ? "six_recent_high_score_sales_available"
+          : null,
+    };
+  });
+
+  return {
+    sales,
+    recommendedSales: sales.filter((sale) => sale.recommended),
+    policy: {
+      ...policy,
+      referenceDate: validDate(referenceDate)?.toISOString() ?? null,
+      recentHighScoreCount,
+      scoreAboveThresholdCount,
+      olderSaleExclusionApplied,
+    },
+  };
 }
 
 export function haversineMiles(latitudeA, longitudeA, latitudeB, longitudeB) {

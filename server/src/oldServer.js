@@ -6,7 +6,9 @@ import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
 import { parsePropertySearch } from "./util/propertySearch.js";
 import {
+  applyRecommendationPolicy,
   DEFAULT_COMPARABLE_SCORING,
+  DEFAULT_RECOMMENDATION_POLICY,
   scoreComparable,
 } from "./util/comparableScoring.js";
 import {
@@ -578,7 +580,10 @@ app.get("/api/sales/recommendations", async (req, res) => {
     const dateFrom = String(req.query.date_from || "").trim();
     const dateTo = String(req.query.date_to || "").trim();
     const resultLimit = Math.min(
-      Math.max(parseInt(String(req.query.limit || "25"), 10) || 25, 4),
+      Math.max(
+        parseInt(String(req.query.limit || "25"), 10) || 25,
+        DEFAULT_RECOMMENDATION_POLICY.count,
+      ),
       100,
     );
     if (!/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
@@ -900,6 +905,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
     scored.forEach((candidate, index) => {
       candidate.score_rank = index + 1;
     });
+    const recommendationResult = applyRecommendationPolicy(scored);
 
     res.json({
       subject: {
@@ -935,8 +941,16 @@ app.get("/api/sales/recommendations", async (req, res) => {
         missing_location_count: missingLocationCount,
         unsupported_county_count: unsupportedCountyCount,
         missing_square_footage_count: missingSquareFootageCount,
+        recommended_count: recommendationResult.recommendedSales.length,
+        older_than_two_years_count: recommendationResult.sales.filter(
+          (sale) => sale.soldOverTwoYears,
+        ).length,
+        recent_high_score_count:
+          recommendationResult.policy.recentHighScoreCount,
       },
-      sales: scored.slice(0, resultLimit),
+      recommendation_policy: recommendationResult.policy,
+      recommended_sales: recommendationResult.recommendedSales,
+      sales: recommendationResult.sales.slice(0, resultLimit),
     });
   } catch (err) {
     const message = err?.message || "comparable_recommendations_failed";

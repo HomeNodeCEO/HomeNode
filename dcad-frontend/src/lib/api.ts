@@ -194,6 +194,12 @@ export interface SaleRow {
   squareFootageDifferencePercent?: number;
   score_rank?: number;
   score_requires_review?: boolean;
+  saleAgeDays?: number | null;
+  soldWithinOneYear?: boolean;
+  soldOverTwoYears?: boolean;
+  recommended?: boolean;
+  recommendationRank?: number | null;
+  recommendationExclusionReason?: string | null;
 }
 
 export interface SalesSearchParams {
@@ -256,7 +262,21 @@ export interface ComparableRecommendationsResponse {
     missing_location_count: number;
     unsupported_county_count: number;
     missing_square_footage_count: number;
+    recommended_count: number;
+    older_than_two_years_count: number;
+    recent_high_score_count: number;
   };
+  recommendation_policy: {
+    count: number;
+    recentYears: number;
+    olderThanYears: number;
+    highScoreThreshold: number;
+    referenceDate: string | null;
+    recentHighScoreCount: number;
+    scoreAboveThresholdCount: number;
+    olderSaleExclusionApplied: boolean;
+  };
+  recommended_sales: SaleRow[];
   sales: SaleRow[];
 }
 

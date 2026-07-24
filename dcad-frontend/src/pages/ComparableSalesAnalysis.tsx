@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import * as api from '@/lib/api';
-import type { SaleRow } from '@/lib/api';
+import type { ComparableRecommendationsResponse, SaleRow } from '@/lib/api';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 
@@ -115,6 +115,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>([null, null, null, null]);
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesError, setSalesError] = useState<string | null>(null);
+  const [recommendationSummary, setRecommendationSummary] = useState<ComparableRecommendationsResponse | null>(null);
   const parseSqftNum = (v: unknown): number | null => {
     if (v === null || v === undefined || v === '') return null;
     const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
@@ -878,6 +879,45 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSalesError(null);
   };
 
+  const runRecommendedSales = async () => {
+    if (!propertyId) {
+      setSalesError('A subject property is required before comparable sales can be recommended.');
+      return;
+    }
+    setSalesLoading(true);
+    setSalesError(null);
+    try {
+      const response = await api.getComparableRecommendations({
+        subjectAccountId: propertyId,
+        dateFrom: salesDateFrom || undefined,
+        dateTo: salesDateTo || undefined,
+        limit: 50,
+      });
+      setRecommendationSummary(response);
+      setSalesResults(response.sales);
+      clearComparables();
+      response.sales.slice(0, 4).forEach((sale, slot) => {
+        applySaleToSlot(sale, slot);
+      });
+      if (!response.sales.length) {
+        setSalesError('No sales had both parcel coordinates and living-area data for scoring.');
+      }
+    } catch (recommendationError: any) {
+      setRecommendationSummary(null);
+      setSalesResults([]);
+      const message = String(recommendationError?.message || '');
+      if (message.includes('subject_location_unavailable')) {
+        setSalesError('The subject parcel could not be located in the DCAD GIS service.');
+      } else if (message.includes('subject_living_area_unavailable')) {
+        setSalesError('The subject is missing living-area data required for comparable scoring.');
+      } else {
+        setSalesError(message || 'Comparable recommendation scoring failed.');
+      }
+    } finally {
+      setSalesLoading(false);
+    }
+  };
+
   const runSalesSearch = async () => {
     setSalesLoading(true);
     setSalesError(null);
@@ -891,6 +931,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         matched: includeUnmatchedSales ? undefined : true,
         limit: 50,
       });
+      setRecommendationSummary(null);
       setSalesResults(rows);
       const refreshedByKey = new Map(rows.map((sale) => [saleKey(sale), sale]));
       selectedSales.forEach((selected, slot) => {
@@ -1097,7 +1138,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(260px,1fr)_160px_160px_auto] lg:items-end">
+          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(260px,1fr)_160px_160px_auto_auto] lg:items-end">
             <label className="grid gap-1 text-sm text-slate-700">
               <span>Address, city, or parcel/account ID</span>
               <input
@@ -1130,12 +1171,26 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </label>
             <button
               type="button"
+              onClick={() => void runRecommendedSales()}
+              disabled={salesLoading || !propertyId}
+              className="rounded-md border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
+            >
+              Recommend Best 4
+            </button>
+            <button
+              type="button"
               onClick={() => void runSalesSearch()}
               disabled={salesLoading}
               className="rounded-md border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60"
             >
               {salesLoading ? 'Searching...' : 'Search Sales'}
             </button>
+          </div>
+
+          <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
+            Recommendations use DCAD parcel-center distance at 60% and living-area similarity at 40%.
+            The 10% living-area setting controls how quickly that score declines; it does not exclude larger or smaller properties.
+            Neighborhood code is shown for review but is not yet scored.
           </div>
 
           <div className="mt-3 flex flex-wrap gap-4 text-sm text-slate-700">
@@ -1183,12 +1238,30 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
           {salesError && <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">{salesError}</div>}
 
+          {recommendationSummary && (
+            <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+              <span className="font-semibold">{recommendationSummary.coverage.eligible_count.toLocaleString()} scored sales</span>
+              {' '}from {recommendationSummary.coverage.candidate_count.toLocaleString()} candidates.
+              {' '}Subject location confidence: {recommendationSummary.subject.location_confidence}.
+              {recommendationSummary.coverage.missing_location_count > 0 && (
+                <> {recommendationSummary.coverage.missing_location_count.toLocaleString()} lacked parcel coordinates.</>
+              )}
+              {recommendationSummary.coverage.unsupported_county_count > 0 && (
+                <> {recommendationSummary.coverage.unsupported_county_count.toLocaleString()} Collin County sales await a separate county GIS source.</>
+              )}
+              {recommendationSummary.coverage.missing_square_footage_count > 0 && (
+                <> {recommendationSummary.coverage.missing_square_footage_count.toLocaleString()} lacked living-area data.</>
+              )}
+            </div>
+          )}
+
           {salesResults.length > 0 && (
             <div className="mt-4 max-h-[430px] overflow-auto rounded-xl border border-slate-200">
-              <table className="w-full min-w-[900px] text-left text-sm">
+              <table className="w-full min-w-[1080px] text-left text-sm">
                 <thead className="sticky top-0 bg-slate-100 text-slate-700">
                   <tr>
                     <th className="px-3 py-2">Property</th>
+                    <th className="px-3 py-2">Comparable Score</th>
                     <th className="px-3 py-2">Sale</th>
                     <th className="px-3 py-2">Characteristics</th>
                     <th className="px-3 py-2">Review</th>
@@ -1206,6 +1279,28 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td className="px-3 py-3">
                           <div className="font-medium text-slate-900">{sale.address || 'Address unavailable'}</div>
                           <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id || `Unmatched source row ${sale.source_row_number || ''}`}</div>
+                        </td>
+                        <td className="px-3 py-3">
+                          {sale.comparableScore != null ? (
+                            <div>
+                              <div className="inline-flex items-center gap-2">
+                                <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-sm font-semibold text-indigo-900">
+                                  #{sale.score_rank} · {sale.comparableScore.toFixed(1)}
+                                </span>
+                                {sale.score_requires_review && (
+                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">Review</span>
+                                )}
+                              </div>
+                              <div className="mt-1 text-xs text-slate-600">
+                                {sale.distanceMiles?.toFixed(2)} mi · {sale.squareFootageDifferencePercent?.toFixed(1)}% size difference
+                              </div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                Location {sale.locationScore?.toFixed(1)} · Size {sale.squareFootageScore?.toFixed(1)}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-500">Manual result</span>
+                          )}
                         </td>
                         <td className="px-3 py-3">
                           <div className="font-semibold text-slate-900">{fmtCurrency(sale.sale_price) || 'Price unavailable'}</div>

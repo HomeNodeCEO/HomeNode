@@ -11,6 +11,7 @@ sys.path.insert(0, str(SCRAPER_ROOT))
 from dcad.import_sales import (  # noqa: E402
     BASE_HEADERS,
     _classify_structural_style,
+    _migration_sql,
     _stable_hash,
     _typed_values,
 )
@@ -103,6 +104,15 @@ class RecordTypeTests(unittest.TestCase):
             {header: revised[header] for header in BASE_HEADERS}
         )
         self.assertEqual(first_hash, revised_hash)
+
+
+class MigrationBundleTests(unittest.TestCase):
+    def test_housing_profile_schema_and_verified_overrides_are_reapplied(self) -> None:
+        sql = _migration_sql()
+        self.assertIn("core.account_housing_profiles", sql)
+        self.assertIn("core.v_account_housing_profiles", sql)
+        self.assertIn("26262500020080000", sql)
+        self.assertIn("26262500010210000", sql)
 
 
 if __name__ == "__main__":

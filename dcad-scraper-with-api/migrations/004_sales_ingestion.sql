@@ -121,6 +121,151 @@ CREATE INDEX IF NOT EXISTS sales_source_records_housing_idx
         housing_type
     );
 
+CREATE TABLE IF NOT EXISTS core.account_housing_profiles (
+    account_id               text PRIMARY KEY
+                             REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+    structural_style         text,
+    housing_type             text,
+    attachment_type          text NOT NULL DEFAULT 'unknown',
+    architectural_style      text,
+    source_name              text NOT NULL,
+    source_url               text,
+    source_record_reference  text,
+    observed_at              timestamptz,
+    confidence               numeric(4, 3) NOT NULL DEFAULT 1.000,
+    notes                    text,
+    created_at               timestamptz NOT NULL DEFAULT now(),
+    updated_at               timestamptz NOT NULL DEFAULT now(),
+
+    CONSTRAINT account_housing_profiles_attachment_type_check
+        CHECK (attachment_type IN ('detached', 'attached', 'mixed', 'unknown')),
+    CONSTRAINT account_housing_profiles_confidence_check
+        CHECK (confidence >= 0 AND confidence <= 1),
+    CONSTRAINT account_housing_profiles_value_check
+        CHECK (
+            NULLIF(btrim(structural_style), '') IS NOT NULL
+            OR NULLIF(btrim(architectural_style), '') IS NOT NULL
+        )
+);
+
+COMMENT ON TABLE core.account_housing_profiles IS
+    'Curated, source-attributed account-level housing and architectural classifications. Used only as a fallback when an individual MLS source row omits the field.';
+
+CREATE OR REPLACE VIEW core.v_account_housing_profiles AS
+WITH account_ids AS (
+    SELECT DISTINCT primary_account_id AS account_id
+    FROM core.sales_source_records
+    WHERE primary_account_id IS NOT NULL
+    UNION
+    SELECT account_id
+    FROM core.account_housing_profiles
+),
+latest_structural AS (
+    SELECT DISTINCT ON (primary_account_id)
+        primary_account_id AS account_id,
+        structural_style,
+        housing_type,
+        attachment_type,
+        source_name,
+        COALESCE(close_date, listing_contract_date)::timestamptz AS observed_at
+    FROM core.sales_source_records
+    WHERE primary_account_id IS NOT NULL
+      AND NULLIF(btrim(structural_style), '') IS NOT NULL
+    ORDER BY
+        primary_account_id,
+        COALESCE(close_date, listing_contract_date) DESC NULLS LAST,
+        updated_at DESC,
+        id DESC
+),
+latest_architectural AS (
+    SELECT DISTINCT ON (primary_account_id)
+        primary_account_id AS account_id,
+        architectural_style,
+        source_name,
+        COALESCE(close_date, listing_contract_date)::timestamptz AS observed_at
+    FROM core.sales_source_records
+    WHERE primary_account_id IS NOT NULL
+      AND NULLIF(btrim(architectural_style), '') IS NOT NULL
+    ORDER BY
+        primary_account_id,
+        COALESCE(close_date, listing_contract_date) DESC NULLS LAST,
+        updated_at DESC,
+        id DESC
+)
+SELECT
+    ids.account_id,
+    COALESCE(
+        NULLIF(btrim(curated.structural_style), ''),
+        structural.structural_style
+    ) AS structural_style,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+            THEN curated.housing_type
+        ELSE structural.housing_type
+    END AS housing_type,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+            THEN curated.attachment_type
+        ELSE COALESCE(structural.attachment_type, 'unknown')
+    END AS attachment_type,
+    COALESCE(
+        NULLIF(btrim(curated.architectural_style), ''),
+        architectural.architectural_style
+    ) AS architectural_style,
+    COALESCE(
+        CASE
+            WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+              OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+                THEN curated.source_name
+        END,
+        structural.source_name,
+        architectural.source_name
+    ) AS source_name,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.source_url
+    END AS source_url,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.source_record_reference
+    END AS source_record_reference,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.observed_at
+        ELSE GREATEST(structural.observed_at, architectural.observed_at)
+    END AS observed_at,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.confidence
+        ELSE 1.000::numeric
+    END AS confidence,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN 'verified_override'
+        ELSE 'mls_source_record'
+    END AS profile_source
+FROM account_ids ids
+LEFT JOIN latest_structural structural
+    ON structural.account_id = ids.account_id
+LEFT JOIN latest_architectural architectural
+    ON architectural.account_id = ids.account_id
+LEFT JOIN core.account_housing_profiles curated
+    ON curated.account_id = ids.account_id
+WHERE COALESCE(
+    NULLIF(btrim(curated.structural_style), ''),
+    structural.structural_style,
+    NULLIF(btrim(curated.architectural_style), ''),
+    architectural.architectural_style
+) IS NOT NULL;
+
+COMMENT ON VIEW core.v_account_housing_profiles IS
+    'One field-complete housing profile per account. Curated verified values take precedence; otherwise each field uses its latest nonblank MLS observation independently.';
+
 CREATE TABLE IF NOT EXISTS core.sale_parcels (
     id                       bigserial PRIMARY KEY,
     source_record_id         bigint NOT NULL
@@ -282,10 +427,24 @@ SELECT
     src.raw_payload,
     COALESCE(src.loaded_at, s.loaded_at) AS loaded_at,
     COALESCE(src.record_type, 'closed_sale') AS record_type,
-    src.structural_style,
-    src.housing_type,
-    COALESCE(src.attachment_type, 'unknown') AS attachment_type,
-    src.architectural_style
+    COALESCE(
+        NULLIF(btrim(src.structural_style), ''),
+        housing_profile.structural_style
+    ) AS structural_style,
+    CASE
+        WHEN NULLIF(btrim(src.structural_style), '') IS NOT NULL
+            THEN src.housing_type
+        ELSE housing_profile.housing_type
+    END AS housing_type,
+    CASE
+        WHEN NULLIF(btrim(src.structural_style), '') IS NOT NULL
+            THEN COALESCE(src.attachment_type, 'unknown')
+        ELSE COALESCE(housing_profile.attachment_type, 'unknown')
+    END AS attachment_type,
+    COALESCE(
+        NULLIF(btrim(src.architectural_style), ''),
+        housing_profile.architectural_style
+    ) AS architectural_style
 FROM core.sales s
 FULL OUTER JOIN core.sales_source_records src
     ON src.id = s.source_record_id
@@ -293,6 +452,11 @@ LEFT JOIN parcel_rollup pr
     ON pr.source_record_id = src.id
 LEFT JOIN core.accounts a
     ON a.account_id = COALESCE(NULLIF(btrim(s.account_id), ''), src.primary_account_id)
+LEFT JOIN core.v_account_housing_profiles housing_profile
+    ON housing_profile.account_id = COALESCE(
+        NULLIF(btrim(s.account_id), ''),
+        src.primary_account_id
+    )
 LEFT JOIN core.primary_improvements pi
     ON pi.account_id = COALESCE(NULLIF(btrim(s.account_id), ''), src.primary_account_id)
 LEFT JOIN core.value_summary_current value_current

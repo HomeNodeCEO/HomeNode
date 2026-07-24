@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import * as api from '@/lib/api';
-import type { ComparableRecommendationsResponse, SaleRow } from '@/lib/api';
+import type { ComparableRecommendationsResponse, SalePhoto, SaleRow } from '@/lib/api';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 
@@ -57,6 +57,66 @@ const HOUSING_TYPE_OPTIONS = [
   'Other',
 ];
 
+type GalleryState = {
+  title: string;
+  photos: SalePhoto[];
+  index: number;
+  loading: boolean;
+  error: string | null;
+};
+
+function MlsPhoto({
+  src,
+  alt,
+  photoCount = 0,
+  onOpen,
+  compact = false,
+}: {
+  src?: string | null;
+  alt: string;
+  photoCount?: number;
+  onOpen?: () => void;
+  compact?: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [src]);
+
+  const size = compact ? 'h-16 w-24' : 'h-28 w-full min-w-[8rem]';
+  if (!src || failed) {
+    return (
+      <div
+        className={`${size} flex items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-2 text-center text-[11px] font-medium text-slate-500`}
+        aria-label={`${alt}: MLS photo unavailable`}
+      >
+        MLS photo unavailable
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={!onOpen}
+      className={`${size} group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-left shadow-sm disabled:cursor-default`}
+      aria-label={`View ${photoCount || 1} MLS photo${photoCount === 1 ? '' : 's'} for ${alt}`}
+    >
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        className="h-full w-full object-cover transition-transform duration-200 group-enabled:hover:scale-[1.03]"
+        onError={() => setFailed(true)}
+      />
+      {onOpen && (
+        <span className="absolute bottom-1.5 right-1.5 rounded-full bg-slate-950/80 px-2 py-0.5 text-[10px] font-semibold text-white">
+          View {photoCount || 1}
+        </span>
+      )}
+    </button>
+  );
+}
+
 export default function ComparableSalesAnalysis() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -74,6 +134,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [photos, setPhotos] = useState<File[]>([]);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const [subjectPhotos, setSubjectPhotos] = useState<SalePhoto[]>([]);
+  const [gallery, setGallery] = useState<GalleryState | null>(null);
   const [summary, setSummary] = useState('');
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
@@ -154,6 +216,92 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   });
   const [housingEditSaving, setHousingEditSaving] = useState(false);
   const [housingEditError, setHousingEditError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSubjectPhotos([]);
+    if (!propertyId) return () => { cancelled = true; };
+    void api.getAccountPhotos(propertyId)
+      .then((response) => {
+        if (!cancelled) setSubjectPhotos(response.photos || []);
+      })
+      .catch(() => {
+        if (!cancelled) setSubjectPhotos([]);
+      });
+    return () => { cancelled = true; };
+  }, [propertyId]);
+
+  useEffect(() => {
+    if (!gallery) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setGallery(null);
+      } else if (event.key === 'ArrowLeft' && gallery.photos.length > 1) {
+        setGallery((current) => current ? {
+          ...current,
+          index: (current.index - 1 + current.photos.length) % current.photos.length,
+        } : current);
+      } else if (event.key === 'ArrowRight' && gallery.photos.length > 1) {
+        setGallery((current) => current ? {
+          ...current,
+          index: (current.index + 1) % current.photos.length,
+        } : current);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [gallery]);
+
+  const openSubjectGallery = () => {
+    if (!subjectPhotos.length) return;
+    setGallery({
+      title: subject?.address || propertyId || 'Subject property',
+      photos: subjectPhotos,
+      index: 0,
+      loading: false,
+      error: null,
+    });
+  };
+
+  const openSaleGallery = async (sale: SaleRow) => {
+    if (!sale.source_record_id || !sale.primary_photo_url) return;
+    const fallbackPhoto: SalePhoto = {
+      id: `primary-${sale.source_record_id}`,
+      source_record_id: sale.source_record_id,
+      media_url: sale.primary_photo_url,
+      order_number: 0,
+      is_primary: true,
+      caption: null,
+      mime_type: null,
+      permission: null,
+      modification_timestamp: null,
+    };
+    const title = saleDisplayAddress(sale);
+    setGallery({
+      title,
+      photos: [fallbackPhoto],
+      index: 0,
+      loading: true,
+      error: null,
+    });
+    try {
+      const response = await api.getSalePhotos(sale.source_record_id);
+      setGallery((current) => current?.title === title ? {
+        ...current,
+        photos: response.photos?.length ? response.photos : [fallbackPhoto],
+        index: 0,
+        loading: false,
+        error: response.photos?.length ? null : 'No additional MLS photos were returned.',
+      } : current);
+    } catch (photoError: any) {
+      setGallery((current) => current?.title === title ? {
+        ...current,
+        loading: false,
+        error: photoError?.message || 'The MLS gallery could not be loaded.',
+      } : current);
+    }
+  };
+
   const parseSqftNum = (v: unknown): number | null => {
     if (v === null || v === undefined || v === '') return null;
     const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
@@ -1464,6 +1612,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     </button>
                   )}
                 </div>
+                {sale && (
+                  <div className="mt-3">
+                    <MlsPhoto
+                      src={sale.primary_photo_url}
+                      alt={saleDisplayAddress(sale)}
+                      photoCount={Number(sale.photo_count || 0)}
+                      onOpen={sale.primary_photo_url ? () => void openSaleGallery(sale) : undefined}
+                    />
+                  </div>
+                )}
                 {sale?.primary_account_id && (
                   <button
                     type="button"
@@ -1538,8 +1696,19 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         }`}
                       >
                         <td className="px-3 py-3">
-                          <div className="font-medium text-slate-900">{sale.address || 'Address unavailable'}</div>
-                          <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id || `Unmatched source row ${sale.source_row_number || ''}`}</div>
+                          <div className="flex min-w-[260px] items-start gap-3">
+                            <MlsPhoto
+                              src={sale.primary_photo_url}
+                              alt={saleDisplayAddress(sale)}
+                              photoCount={Number(sale.photo_count || 0)}
+                              onOpen={sale.primary_photo_url ? () => void openSaleGallery(sale) : undefined}
+                              compact
+                            />
+                            <div className="min-w-0">
+                              <div className="font-medium text-slate-900">{sale.address || 'Address unavailable'}</div>
+                              <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id || `Unmatched source row ${sale.source_row_number || ''}`}</div>
+                            </div>
+                          </div>
                         </td>
                         <td className="px-3 py-3">
                           {sale.comparableScore != null ? (
@@ -1652,6 +1821,110 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
         </div>
+
+        {gallery && (
+          <div
+            className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`MLS photos for ${gallery.title}`}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setGallery(null);
+            }}
+          >
+            <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-slate-950">{gallery.title}</h2>
+                  <p className="mt-0.5 text-sm text-slate-600">
+                    MLS photo {Math.min(gallery.index + 1, gallery.photos.length)} of {gallery.photos.length}
+                    {gallery.loading ? ' · Loading full gallery…' : ''}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGallery(null)}
+                  className="rounded-full border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  aria-label="Close MLS photo gallery"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="relative flex min-h-0 flex-1 items-center justify-center bg-slate-950 p-4">
+                {gallery.photos[gallery.index] ? (
+                  <img
+                    src={gallery.photos[gallery.index].media_url}
+                    alt={gallery.photos[gallery.index].caption || `${gallery.title} MLS photo ${gallery.index + 1}`}
+                    className="max-h-[68vh] max-w-full object-contain"
+                  />
+                ) : (
+                  <div className="py-24 text-sm text-slate-300">No MLS photo is available.</div>
+                )}
+                {gallery.photos.length > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setGallery((current) => current ? {
+                        ...current,
+                        index: (current.index - 1 + current.photos.length) % current.photos.length,
+                      } : current)}
+                      className="absolute left-5 rounded-full bg-white/90 px-4 py-3 text-xl font-bold text-slate-950 shadow-lg hover:bg-white"
+                      aria-label="Previous MLS photo"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setGallery((current) => current ? {
+                        ...current,
+                        index: (current.index + 1) % current.photos.length,
+                      } : current)}
+                      className="absolute right-5 rounded-full bg-white/90 px-4 py-3 text-xl font-bold text-slate-950 shadow-lg hover:bg-white"
+                      aria-label="Next MLS photo"
+                    >
+                      ›
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div className="border-t border-slate-200 bg-white px-5 py-3">
+                {gallery.error && (
+                  <div className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">{gallery.error}</div>
+                )}
+                {gallery.photos[gallery.index]?.caption && (
+                  <p className="mb-2 text-sm text-slate-700">{gallery.photos[gallery.index].caption}</p>
+                )}
+                {gallery.photos.length > 1 && (
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {gallery.photos.map((photo, index) => (
+                      <button
+                        key={`${photo.id}-${index}`}
+                        type="button"
+                        onClick={() => setGallery((current) => current ? { ...current, index } : current)}
+                        className={`h-16 w-24 flex-none overflow-hidden rounded-md border-2 ${
+                          index === gallery.index ? 'border-indigo-600' : 'border-transparent'
+                        }`}
+                        aria-label={`Show MLS photo ${index + 1}`}
+                      >
+                        <img
+                          src={photo.media_url}
+                          alt=""
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-2 text-xs text-slate-500">
+                  Photos are shown in MLS order. Availability and reuse remain subject to the source record’s media permission.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {editingHousingSale && (
           <div
@@ -1874,6 +2147,37 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               </tr>
             </thead>
                 <tbody>
+                  {/* Row: ordered MLS primary photos */}
+                  <tr>
+                    <td className="px-4 py-2 border-b border-slate-200 bg-white">Photo</td>
+                    <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
+                      <MlsPhoto
+                        src={subjectPhotos[0]?.media_url}
+                        alt={subject?.address || propertyId || 'Subject property'}
+                        photoCount={subjectPhotos.length}
+                        onOpen={subjectPhotos.length ? openSubjectGallery : undefined}
+                      />
+                    </td>
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => {
+                      const sale = selectedSales[i];
+                      return [
+                        <td key={`photo-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
+                          <MlsPhoto
+                            src={sale?.primary_photo_url}
+                            alt={sale ? saleDisplayAddress(sale) : `Comparable ${i + 1}`}
+                            photoCount={Number(sale?.photo_count || 0)}
+                            onOpen={sale?.primary_photo_url ? () => void openSaleGallery(sale) : undefined}
+                          />
+                        </td>,
+                        <td
+                          key={`photo-adj-${i}`}
+                          className="px-4 py-2 border-b border-slate-200 border-r"
+                          style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
+                        ></td>,
+                      ];
+                    })}
+                  </tr>
+
                   {/* Row: Address */}
                   <tr>
                     <td className="px-4 py-2 border-b border-slate-200 bg-white">Address</td>

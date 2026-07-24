@@ -117,6 +117,37 @@ export interface SaleParcelLink {
   is_resolved: boolean;
 }
 
+export interface SalePhoto {
+  id: string | number;
+  source_record_id: string | number;
+  media_url: string;
+  order_number: number | null;
+  is_primary: boolean;
+  caption: string | null;
+  mime_type: string | null;
+  permission: string | null;
+  modification_timestamp: string | null;
+}
+
+export interface SalePhotosResponse {
+  source_record_id: string | number;
+  listing_key: string | null;
+  listing_id: string | null;
+  source_name: string | null;
+  photos: SalePhoto[];
+}
+
+export interface AccountPhotosResponse {
+  account_id: string;
+  source_record_id: string | number | null;
+  listing_key: string | null;
+  listing_id: string | null;
+  source_name: string | null;
+  record_type?: 'closed_sale' | 'listing' | null;
+  activity_date?: string | null;
+  photos: SalePhoto[];
+}
+
 export interface SaleRow {
   sale_id: string | number | null;
   source_record_id: string | number | null;
@@ -181,6 +212,8 @@ export interface SaleRow {
   cad_land_value: string | number | null;
   cad_improvement_value: string | number | null;
   cad_market_value: string | number | null;
+  primary_photo_url: string | null;
+  photo_count: number;
   latitude?: string | number | null;
   longitude?: string | number | null;
   location_status?: 'matched' | 'not_found' | 'invalid' | null;
@@ -330,6 +363,13 @@ export async function getAccount(accountId: string): Promise<AccountDetail> {
   return fetchJSON<AccountDetail>(url);
 }
 
+/** Load the latest ordered MLS photo gallery available for an account. */
+export async function getAccountPhotos(accountId: string): Promise<AccountPhotosResponse> {
+  const id = (accountId || '').trim();
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/photos`);
+  return fetchJSON<AccountPhotosResponse>(url);
+}
+
 /** Save a source-attributed manual housing classification for an account. */
 export async function updateAccountHousingProfile(
   accountId: string,
@@ -375,6 +415,15 @@ export async function searchSales(params: SalesSearchParams = {}): Promise<SaleR
     offset: params.offset ?? 0,
   });
   return fetchJSON<SaleRow[]>(url);
+}
+
+/** Lazily load the ordered MLS gallery for one imported sale/listing row. */
+export async function getSalePhotos(
+  sourceRecordId: string | number,
+): Promise<SalePhotosResponse> {
+  const id = String(sourceRecordId ?? '').trim();
+  const url = makeUrl(`/api/sales/${encodeURIComponent(id)}/photos`);
+  return fetchJSON<SalePhotosResponse>(url);
 }
 
 /** Rank matched sales by DCAD parcel proximity and continuous living-area similarity. */

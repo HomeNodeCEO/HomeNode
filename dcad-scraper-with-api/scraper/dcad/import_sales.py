@@ -348,9 +348,11 @@ def _typed_values(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
 
 def _migration_sql() -> str:
     root = Path(__file__).resolve().parents[2]
-    return (root / "migrations" / "004_sales_ingestion.sql").read_text(
-        encoding="utf-8"
+    migrations = (
+        root / "migrations" / "004_sales_ingestion.sql",
+        root / "migrations" / "009_verified_account_housing_profiles.sql",
     )
+    return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
 
 
 def _account_map(connection, variants: set[str]) -> dict[str, dict[str, Any]]:

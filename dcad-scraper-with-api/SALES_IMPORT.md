@@ -5,13 +5,14 @@ parcel IDs to existing CAD accounts.
 
 ## Tables and view
 
-- `core.sales_source_records` stores every imported row, all typed MLS fields,
-  the exact raw payload, match status, and quality flags.
+- `core.sales_source_records` stores every imported sale or listing row, all
+  typed MLS fields, the exact raw payload, match status, and quality flags.
 - `core.sale_parcels` stores every supplied parcel field and its optional
   `core.accounts` match. A sale can link to multiple accounts without copying
   the full transaction price to each account.
-- `core.sales` remains the canonical transaction table for rows with a verified
-  primary account. `source_record_id` links it back to the preserved source.
+- `core.sales` remains the canonical transaction table for verified rows whose
+  MLS status is `Closed` and which have a close date and positive price.
+  Active, pending, option, and contingent listings never enter this table.
 - `core.v_sales_enriched` exposes legacy sales, matched imports, unmatched
   imports, parcel flags, MLS snapshots, and current CAD characteristics as one
   row per transaction.
@@ -32,9 +33,24 @@ python -m dcad.import_sales "C:\path\to\sales.csv" `
   --source-name "Garland MLS two-year sales"
 ```
 
-The importer is idempotent. It hashes the complete source row, upserts the
-preserved source record, rebuilds its parcel relationships, and reuses the
-existing canonical sale on subsequent runs.
+The importer is idempotent for the original 23 sales columns. The later
+`StructuralStyle` and `ArchitecturalStyle` columns enrich matching rows in
+place rather than duplicating the original import. It rebuilds parcel
+relationships and reuses the existing canonical sale on subsequent runs.
+
+## MLS status and housing safeguards
+
+- `record_type = 'closed_sale'` only when `MlsStatus` is `Closed`; all other
+  statuses use `record_type = 'listing'`.
+- `StructuralStyle` is preserved verbatim and mapped to `housing_type`.
+- `attachment_type` is normalized to `detached`, `attached`, `mixed`, or
+  `unknown`. Contradictory values such as
+  `Attached or 1/2 Duplex, Single Detached` are marked `mixed` and flagged for
+  review.
+- `ArchitecturalStyle` is preserved verbatim, including multiple styles.
+- Comparable searches exclude `attached` and `mixed` rows by default. Unknown
+  housing classifications stay eligible so otherwise useful sales are not
+  silently discarded.
 
 ## Parcel behavior
 
@@ -59,6 +75,11 @@ Use these columns from `core.v_sales_enriched`:
 - `requires_additional_review`
 - `data_quality_flags`
 - `linked_parcels`
+- `record_type`
+- `structural_style`
+- `housing_type`
+- `attachment_type`
+- `architectural_style`
 
 Unmatched sales intentionally remain in the view with a null `sale_id` and
 null `primary_account_id`, so they are available for broad market analysis.
@@ -76,6 +97,9 @@ It returns one row per transaction and supports these optional query filters:
 - `min_price` and `max_price`
 - `matched` and `review` (boolean)
 - `multi_parcel` (`single`, `possible`, or `confirmed`)
+- `record_type` (`closed_sale`, `listing`, or `all`; defaults to
+  `closed_sale`)
+- `include_attached` (boolean; defaults to `false`)
 - `limit` (maximum 200) and `offset`
 
 The frontend client is `searchSales()` in `dcad-frontend/src/lib/api.ts`.

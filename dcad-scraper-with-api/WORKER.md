@@ -54,6 +54,38 @@ python -m dcad.worker --once
 python -m dcad.worker
 ```
 
+## MLS photos
+
+The property/sales export must include `ListingKey` (preferred) or `ListingId`
+so a separate RESO Media export can be attached to the correct transaction.
+The media CSV must contain:
+
+- `ResourceRecordKey` (matching the property export's `ListingKey`) or
+  `ResourceRecordID` (matching `ListingId`)
+- `MediaURL`
+- `Order`
+- `PreferredPhotoYN`
+
+`MediaKey`, `ClassName`, `MIMEType`, `ShortDescription`, `Permission`, and
+`ModificationTimestamp` are optional but preserved when present.
+
+Validate the media export without changing the database:
+
+```powershell
+python -m dcad.import_sales_media "C:\path\to\media.csv" --dry-run
+```
+
+Load or refresh galleries:
+
+```powershell
+python -m dcad.import_sales_media "C:\path\to\media.csv"
+```
+
+Use `--replace` only for a complete media export. It removes the prior gallery
+for each matched listing before loading the replacement rows. The frontend uses
+the preferred photo first, then the MLS `Order`, and fetches the remaining
+gallery only after a user opens a photo.
+
 See `SALES_IMPORT.md` for the full sales-source, parcel-link, and enriched-view
 contract.
 

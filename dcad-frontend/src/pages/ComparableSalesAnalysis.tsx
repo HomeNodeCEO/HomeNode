@@ -38,6 +38,25 @@ type SubjectData = {
   architectural_style?: string | null;
 };
 
+type HousingEditForm = {
+  housingType: string;
+  attachmentType: 'detached' | 'attached' | 'mixed' | 'unknown';
+  architecturalStyle: string;
+  sourceUrl: string;
+  notes: string;
+};
+
+const HOUSING_TYPE_OPTIONS = [
+  'Single Family Detached',
+  'Single Family Attached',
+  'Condo/Townhome',
+  'Duplex',
+  'Multi-Family',
+  'Garden/Zero Lot Line',
+  'Farm/Ranch House',
+  'Other',
+];
+
 export default function ComparableSalesAnalysis() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -116,7 +135,25 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   );
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesError, setSalesError] = useState<string | null>(null);
+  const [salesNotice, setSalesNotice] = useState<string | null>(null);
   const [recommendationSummary, setRecommendationSummary] = useState<ComparableRecommendationsResponse | null>(null);
+  const [editingHousingSale, setEditingHousingSale] = useState<SaleRow | null>(null);
+  const [housingEditForm, setHousingEditForm] = useState<HousingEditForm>({
+    housingType: '',
+    attachmentType: 'unknown',
+    architecturalStyle: '',
+    sourceUrl: '',
+    notes: '',
+  });
+  const [housingEditorKey, setHousingEditorKey] = useState(() => {
+    try {
+      return window.sessionStorage.getItem('homenode-editor-key') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [housingEditSaving, setHousingEditSaving] = useState(false);
+  const [housingEditError, setHousingEditError] = useState<string | null>(null);
   const parseSqftNum = (v: unknown): number | null => {
     if (v === null || v === undefined || v === '') return null;
     const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
@@ -850,6 +887,132 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return `Unmatched sale${sale.source_row_number ? ` ${sale.source_row_number}` : ''}`;
   };
 
+  const housingTypeNeedsReview = (sale: SaleRow): boolean =>
+    !(sale.structural_style || sale.housing_type || '').trim();
+
+  const attachmentNeedsReview = (sale: SaleRow): boolean =>
+    !housingTypeNeedsReview(sale) &&
+    (!sale.attachment_type || sale.attachment_type === 'unknown');
+
+  const housingTypeGridValue = (sale: SaleRow | null | undefined): string => {
+    if (!sale) return 'Not available';
+    if (housingTypeNeedsReview(sale)) return '⚠ Review — housing type unknown';
+    return sale.structural_style || sale.housing_type || 'Not available';
+  };
+
+  const suggestedAttachmentType = (
+    housingType: string,
+    current: HousingEditForm['attachmentType'],
+  ): HousingEditForm['attachmentType'] => {
+    const normalized = housingType.trim().toLowerCase();
+    if (/\bdetached\b/.test(normalized) || normalized === 'single family') return 'detached';
+    if (
+      /\battached\b/.test(normalized) ||
+      normalized.includes('townhome') ||
+      normalized.includes('townhouse') ||
+      normalized.includes('condo') ||
+      normalized.includes('duplex')
+    ) {
+      return 'attached';
+    }
+    if (normalized.includes('multi-family') || normalized.includes('multifamily')) return 'mixed';
+    return current;
+  };
+
+  const openHousingEditor = (sale: SaleRow) => {
+    if (!sale.primary_account_id) {
+      setSalesError('This MLS row is not matched to a CAD account, so its property type cannot be saved yet.');
+      return;
+    }
+    const housingType = (sale.structural_style || sale.housing_type || '').trim();
+    setEditingHousingSale(sale);
+    setHousingEditForm({
+      housingType,
+      attachmentType: sale.attachment_type || 'unknown',
+      architecturalStyle: (sale.architectural_style || '').trim(),
+      sourceUrl: '',
+      notes: '',
+    });
+    setHousingEditError(null);
+    setSalesNotice(null);
+  };
+
+  const saveHousingProfile = async () => {
+    const sale = editingHousingSale;
+    const accountId = sale?.primary_account_id;
+    if (!sale || !accountId) return;
+    if (!housingEditForm.housingType.trim()) {
+      setHousingEditError('Housing type is required before the correction can be confirmed.');
+      return;
+    }
+    if (!housingEditorKey.trim()) {
+      setHousingEditError('Enter your personal editor key to save database changes.');
+      return;
+    }
+
+    setHousingEditSaving(true);
+    setHousingEditError(null);
+    try {
+      const result = await api.updateAccountHousingProfile(
+        accountId,
+        {
+          housing_type: housingEditForm.housingType.trim(),
+          attachment_type: housingEditForm.attachmentType,
+          architectural_style: housingEditForm.architecturalStyle.trim() || null,
+          source_url: housingEditForm.sourceUrl.trim() || null,
+          source_record_reference: sale.source_record_id
+            ? `HomeNode sale source record ${sale.source_record_id}`
+            : null,
+          notes: housingEditForm.notes.trim() || null,
+        },
+        housingEditorKey.trim(),
+      );
+      try {
+        window.sessionStorage.setItem('homenode-editor-key', housingEditorKey.trim());
+      } catch {
+        // The edit still succeeds when session storage is unavailable.
+      }
+
+      const profile = result.housing_profile;
+      const withProfile = (item: SaleRow): SaleRow =>
+        item.primary_account_id === accountId
+          ? {
+              ...item,
+              structural_style: profile.structural_style || profile.housing_type || null,
+              housing_type: profile.housing_type || profile.structural_style || null,
+              attachment_type: profile.attachment_type || 'unknown',
+              architectural_style: profile.architectural_style || null,
+            }
+          : item;
+      setSalesResults((current) => current.map(withProfile));
+      setSelectedSales((current) => current.map((item) => item ? withProfile(item) : item));
+      if (subject?.accountId === accountId) {
+        setSubject((current) => current ? {
+          ...current,
+          structural_style: profile.structural_style || profile.housing_type || null,
+          housing_type: profile.housing_type || profile.structural_style || null,
+          attachment_type: profile.attachment_type || 'unknown',
+          architectural_style: profile.architectural_style || null,
+        } : current);
+      }
+      setSalesNotice(
+        `Saved verified housing information for ${saleDisplayAddress(sale)}. The score and current ordering were not changed.`,
+      );
+      setEditingHousingSale(null);
+    } catch (saveError: any) {
+      const message = String(saveError?.message || '');
+      if (message.includes('invalid_editor_key')) {
+        setHousingEditError('The editor key was not accepted. Check it and try again.');
+      } else if (message.includes('housing_profile_editor_not_configured')) {
+        setHousingEditError('Manual database editing has not been enabled on the server yet.');
+      } else {
+        setHousingEditError(message || 'The housing profile could not be saved.');
+      }
+    } finally {
+      setHousingEditSaving(false);
+    }
+  };
+
   const mlsLotSizeSqft = (value: unknown): number | null => {
     const area = saleNumber(value);
     if (area == null || area <= 0) return null;
@@ -926,6 +1089,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }
     setSalesLoading(true);
     setSalesError(null);
+    setSalesNotice(null);
     try {
       const response = await api.getComparableRecommendations({
         subjectAccountId: propertyId,
@@ -964,6 +1128,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const runSalesSearch = async () => {
     setSalesLoading(true);
     setSalesError(null);
+    setSalesNotice(null);
     try {
       const rows = await api.searchSales({
         q: salesQuery.trim() || undefined,
@@ -1258,14 +1423,34 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-4">
-            {selectedSales.map((sale, index) => (
-              <div key={index} className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+            {selectedSales.map((sale, index) => {
+              const missingHousingType = sale ? housingTypeNeedsReview(sale) : false;
+              const unknownAttachment = sale ? attachmentNeedsReview(sale) : false;
+              return (
+                <div
+                key={index}
+                className={`rounded-lg border p-3 text-sm ${
+                  missingHousingType
+                    ? 'border-amber-300 bg-amber-50'
+                    : 'border-slate-200 bg-slate-50'
+                }`}
+                >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <div className="font-semibold text-slate-900">Comparable {index + 1}</div>
                     <div className="mt-1 text-slate-700">{sale ? saleDisplayAddress(sale) : 'Not selected'}</div>
                     {sale && saleIsOverTwoYears(sale) && (
                       <div className="mt-1 text-xs font-semibold text-amber-800">Sale over two years old</div>
+                    )}
+                    {missingHousingType && (
+                      <div className="mt-1 text-xs font-semibold text-amber-900">
+                        Housing type unknown — verify before relying on this sale.
+                      </div>
+                    )}
+                    {unknownAttachment && (
+                      <div className="mt-1 text-xs font-medium text-amber-800">
+                        Attached/detached status is not verified.
+                      </div>
                     )}
                     {sale && <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id ? 'Matched account' : 'Unmatched sale'} · {saleDateDisplay(sale.closing_date)}</div>}
                   </div>
@@ -1279,11 +1464,22 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     </button>
                   )}
                 </div>
+                {sale?.primary_account_id && (
+                  <button
+                    type="button"
+                    onClick={() => openHousingEditor(sale)}
+                    className="mt-2 text-xs font-semibold text-indigo-700 hover:underline"
+                  >
+                    Review / edit housing type
+                  </button>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
 
           {salesError && <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">{salesError}</div>}
+          {salesNotice && <div className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{salesNotice}</div>}
 
           {recommendationSummary && (
             <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
@@ -1330,8 +1526,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
                     const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
                     const olderThanTwoYears = saleIsOverTwoYears(sale);
+                    const missingHousingType = housingTypeNeedsReview(sale);
+                    const unknownAttachment = attachmentNeedsReview(sale);
                     return (
-                      <tr key={saleKey(sale)} className="border-t border-slate-200 align-top">
+                      <tr
+                        key={saleKey(sale)}
+                        className={`border-t align-top ${
+                          missingHousingType
+                            ? 'border-amber-200 bg-amber-50/40'
+                            : 'border-slate-200'
+                        }`}
+                      >
                         <td className="px-3 py-3">
                           <div className="font-medium text-slate-900">{sale.address || 'Address unavailable'}</div>
                           <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id || `Unmatched source row ${sale.source_row_number || ''}`}</div>
@@ -1376,7 +1581,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <div>{fmtSqftSafe(livingArea)} · {bedrooms ?? '—'} bd · {baths ?? '—'} ba</div>
                           <div className="mt-1 text-xs text-slate-500">Built {sale.cad_year_built ?? sale.mls_year_built ?? '—'} · {sale.neighborhood_code || 'No neighborhood code'}</div>
                           <div className="mt-1 text-xs text-slate-500">
-                            {sale.structural_style || sale.housing_type || 'Housing type unavailable'}
+                            {missingHousingType ? (
+                              <span className="font-semibold text-amber-900">Housing type unknown — review needed</span>
+                            ) : (
+                              sale.structural_style || sale.housing_type
+                            )}
                             {' · '}
                             {sale.architectural_style || 'Architectural style unavailable'}
                           </div>
@@ -1394,23 +1603,46 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                             {sale.requires_additional_review && (
                               <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-900">Review required</span>
                             )}
+                            {missingHousingType && (
+                              <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-950">
+                                Housing type needs review
+                              </span>
+                            )}
+                            {unknownAttachment && (
+                              <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-900">
+                                Attached/detached unverified
+                              </span>
+                            )}
                             {olderThanTwoYears && (
                               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Sale over 2 years old</span>
                             )}
-                            {!sale.requires_additional_review && sale.multi_parcel_status === 'single' && (
+                            {!sale.requires_additional_review &&
+                              !missingHousingType &&
+                              !unknownAttachment &&
+                              sale.multi_parcel_status === 'single' && (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">Standard</span>
                             )}
                           </div>
                         </td>
                         <td className="px-3 py-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => addSaleAsComparable(sale)}
-                            disabled={selected}
-                            className="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
-                          >
-                            {selected ? 'Selected' : 'Use as Comparable'}
-                          </button>
+                          <div className="flex flex-col items-end gap-2">
+                            <button
+                              type="button"
+                              onClick={() => addSaleAsComparable(sale)}
+                              disabled={selected}
+                              className="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
+                            >
+                              {selected ? 'Selected' : 'Use as Comparable'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openHousingEditor(sale)}
+                              disabled={!sale.primary_account_id}
+                              className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-indigo-400 hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Review / edit type
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1420,6 +1652,174 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
         </div>
+
+        {editingHousingSale && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="housing-editor-title"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !housingEditSaving) {
+                setEditingHousingSale(null);
+              }
+            }}
+          >
+            <form
+              className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void saveHousingProfile();
+              }}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h2 id="housing-editor-title" className="text-lg font-semibold text-slate-950">
+                    Review housing classification
+                  </h2>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {saleDisplayAddress(editingHousingSale)} · Account {editingHousingSale.primary_account_id}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingHousingSale(null)}
+                  disabled={housingEditSaving}
+                  className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                  aria-label="Close housing editor"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                Saving creates a verified account-level correction. The original MLS row stays unchanged,
+                and this sale keeps its current comparable score and position.
+              </div>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                <label className="grid gap-1 text-sm text-slate-700">
+                  <span className="font-medium">Housing type *</span>
+                  <input
+                    list="housing-type-options"
+                    value={housingEditForm.housingType}
+                    onChange={(event) => {
+                      const housingType = event.target.value;
+                      setHousingEditForm((current) => ({
+                        ...current,
+                        housingType,
+                        attachmentType: suggestedAttachmentType(housingType, current.attachmentType),
+                      }));
+                    }}
+                    placeholder="e.g. Single Family Detached"
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                    autoFocus
+                  />
+                  <datalist id="housing-type-options">
+                    {HOUSING_TYPE_OPTIONS.map((option) => <option key={option} value={option} />)}
+                  </datalist>
+                </label>
+
+                <label className="grid gap-1 text-sm text-slate-700">
+                  <span className="font-medium">Attached/detached classification *</span>
+                  <select
+                    value={housingEditForm.attachmentType}
+                    onChange={(event) => setHousingEditForm((current) => ({
+                      ...current,
+                      attachmentType: event.target.value as HousingEditForm['attachmentType'],
+                    }))}
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  >
+                    <option value="detached">Detached</option>
+                    <option value="attached">Attached</option>
+                    <option value="mixed">Mixed / multi-unit</option>
+                    <option value="unknown">Still unknown</option>
+                  </select>
+                </label>
+
+                <label className="grid gap-1 text-sm text-slate-700 sm:col-span-2">
+                  <span className="font-medium">Architectural style</span>
+                  <input
+                    value={housingEditForm.architecturalStyle}
+                    onChange={(event) => setHousingEditForm((current) => ({
+                      ...current,
+                      architecturalStyle: event.target.value,
+                    }))}
+                    placeholder="Optional — leave blank when the MLS does not provide it"
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+
+                <label className="grid gap-1 text-sm text-slate-700 sm:col-span-2">
+                  <span className="font-medium">Verification source URL</span>
+                  <input
+                    type="url"
+                    value={housingEditForm.sourceUrl}
+                    onChange={(event) => setHousingEditForm((current) => ({
+                      ...current,
+                      sourceUrl: event.target.value,
+                    }))}
+                    placeholder="Optional MLS, agent, or listing page URL"
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+
+                <label className="grid gap-1 text-sm text-slate-700 sm:col-span-2">
+                  <span className="font-medium">Review notes</span>
+                  <textarea
+                    value={housingEditForm.notes}
+                    onChange={(event) => setHousingEditForm((current) => ({
+                      ...current,
+                      notes: event.target.value,
+                    }))}
+                    placeholder="Optional explanation of what you confirmed"
+                    rows={3}
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+
+                <label className="grid gap-1 text-sm text-slate-700 sm:col-span-2">
+                  <span className="font-medium">Personal editor key *</span>
+                  <input
+                    type="password"
+                    value={housingEditorKey}
+                    onChange={(event) => setHousingEditorKey(event.target.value)}
+                    autoComplete="off"
+                    placeholder="Required to write to the database"
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                  <span className="text-xs text-slate-500">
+                    After a successful save, the key is kept only for this browser tab.
+                  </span>
+                </label>
+              </div>
+
+              {housingEditError && (
+                <div className="mt-4 rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {housingEditError}
+                </div>
+              )}
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingHousingSale(null)}
+                  disabled={housingEditSaving}
+                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={housingEditSaving}
+                  className="rounded-md border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {housingEditSaving ? 'Saving…' : 'Save verified correction'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
 
         <div className="card bg-white shadow-sm rounded-2xl">
           <div className="card-body p-0 overflow-x-auto">
@@ -1596,7 +1996,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
                               : label === 'Housing Type'
-                                ? (selectedSales[i]?.structural_style || selectedSales[i]?.housing_type || 'Not available')
+                                ? housingTypeGridValue(selectedSales[i])
                               : label === 'Architectural Style'
                                 ? (selectedSales[i]?.architectural_style || 'Not available')
                               : label === 'Const Type'
@@ -2074,7 +2474,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
                               : label === 'Housing Type'
-                                ? (selectedSales[i]?.structural_style || selectedSales[i]?.housing_type || 'Not available')
+                                ? housingTypeGridValue(selectedSales[i])
                               : label === 'Architectural Style'
                                 ? (selectedSales[i]?.architectural_style || 'Not available')
                               : label === 'Const Type'

@@ -175,6 +175,25 @@ export interface SaleRow {
   cad_land_value: string | number | null;
   cad_improvement_value: string | number | null;
   cad_market_value: string | number | null;
+  latitude?: string | number | null;
+  longitude?: string | number | null;
+  location_status?: 'matched' | 'not_found' | 'invalid' | null;
+  location_source?: string | null;
+  location_precision?: string | null;
+  location_confidence?: 'high' | 'medium' | 'low' | null;
+  location_review_required?: boolean;
+  location_review_reason?: string | null;
+  location_geocoded_at?: string | null;
+  comparable_square_feet?: number | null;
+  comparableScore?: number;
+  distanceMiles?: number;
+  locationScore?: number;
+  squareFootageScore?: number;
+  squareFootageDifference?: number;
+  squareFootageDifferenceRatio?: number;
+  squareFootageDifferencePercent?: number;
+  score_rank?: number;
+  score_requires_review?: boolean;
 }
 
 export interface SalesSearchParams {
@@ -191,6 +210,54 @@ export interface SalesSearchParams {
   multiParcel?: 'single' | 'possible' | 'confirmed';
   limit?: number;
   offset?: number;
+}
+
+export interface ComparableRecommendationParams {
+  subjectAccountId: string;
+  dateFrom?: string;
+  dateTo?: string;
+  limit?: number;
+  locationWeight?: number;
+  squareFootageWeight?: number;
+  locationScaleMiles?: number;
+  squareFootageScaleRatio?: number;
+}
+
+export interface ComparableRecommendationsResponse {
+  subject: {
+    account_id: string;
+    address: string | null;
+    city: string | null;
+    county: string | null;
+    neighborhood_code: string | null;
+    living_area_sqft: number;
+    latitude: number;
+    longitude: number;
+    location_source: string;
+    location_precision: string;
+    location_confidence: 'high' | 'medium' | 'low';
+    location_review_required: boolean;
+    location_review_reason: string | null;
+    location_geocoded_at: string | null;
+  };
+  scoring: {
+    locationWeight: number;
+    squareFootageWeight: number;
+    locationScaleMiles: number;
+    squareFootageScaleRatio: number;
+    locationWeightPercent: number;
+    squareFootageWeightPercent: number;
+    squareFootageScalePercent: number;
+    squareFootageIsHardFilter: false;
+  };
+  coverage: {
+    candidate_count: number;
+    eligible_count: number;
+    missing_location_count: number;
+    unsupported_county_count: number;
+    missing_square_footage_count: number;
+  };
+  sales: SaleRow[];
 }
 
 /** ---------------- API calls (DB only; no scraper) ---------------- */
@@ -237,6 +304,23 @@ export async function searchSales(params: SalesSearchParams = {}): Promise<SaleR
     offset: params.offset ?? 0,
   });
   return fetchJSON<SaleRow[]>(url);
+}
+
+/** Rank matched sales by DCAD parcel proximity and continuous living-area similarity. */
+export async function getComparableRecommendations(
+  params: ComparableRecommendationParams,
+): Promise<ComparableRecommendationsResponse> {
+  const url = makeUrl('/api/sales/recommendations', {
+    subject_account_id: params.subjectAccountId.trim(),
+    date_from: params.dateFrom,
+    date_to: params.dateTo,
+    limit: params.limit ?? 25,
+    location_weight: params.locationWeight,
+    square_footage_weight: params.squareFootageWeight,
+    location_scale_miles: params.locationScaleMiles,
+    square_footage_scale_ratio: params.squareFootageScaleRatio,
+  });
+  return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
 }
 
 /**

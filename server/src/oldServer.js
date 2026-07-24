@@ -5,6 +5,14 @@ import pg from "pg";
 import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
 import { parsePropertySearch } from "./util/propertySearch.js";
+import {
+  DEFAULT_COMPARABLE_SCORING,
+  scoreComparable,
+} from "./util/comparableScoring.js";
+import {
+  ensureAccountLocationsTable,
+  refreshAccountLocations,
+} from "./services/accountLocations.js";
 
 const app = express();
 app.use(express.json());
@@ -45,6 +53,15 @@ async function ensureSignupsTable() {
   }
 }
 void ensureSignupsTable();
+
+const accountLocationsReady = ensureAccountLocationsTable(pool)
+  .then(() => console.log("[init] core.account_locations ensured"))
+  .catch((error) => {
+    console.warn(
+      "[init] ensureAccountLocationsTable failed (will retry on request)",
+      error?.message || error,
+    );
+  });
 
 // simple health
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -540,6 +557,394 @@ app.get("/api/search", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "search_failed" });
+  }
+});
+
+/**
+ * GET /api/sales/recommendations
+ *
+ * Ranks matched CAD sales using parcel-centroid distance (60%) and continuous
+ * living-area similarity (40%). The 10% living-area scale is intentionally a
+ * soft scoring curve, not an eligibility filter.
+ */
+app.get("/api/sales/recommendations", async (req, res) => {
+  try {
+    await accountLocationsReady;
+    await ensureAccountLocationsTable(pool);
+
+    const subjectAccountId = String(
+      req.query.subject_account_id || "",
+    ).trim();
+    const dateFrom = String(req.query.date_from || "").trim();
+    const dateTo = String(req.query.date_to || "").trim();
+    const resultLimit = Math.min(
+      Math.max(parseInt(String(req.query.limit || "25"), 10) || 25, 4),
+      100,
+    );
+    if (!/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+      return res.status(400).json({ error: "invalid_date_from" });
+    }
+    if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      return res.status(400).json({ error: "invalid_date_to" });
+    }
+
+    const parseTunableNumber = (value, fallback, minimum, maximum) => {
+      if (value === undefined || value === null || value === "") return fallback;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed < minimum || parsed > maximum) {
+        throw new Error("invalid_scoring_configuration");
+      }
+      return parsed;
+    };
+    const scoringConfig = {
+      locationWeight: parseTunableNumber(
+        req.query.location_weight,
+        DEFAULT_COMPARABLE_SCORING.locationWeight,
+        0,
+        1,
+      ),
+      squareFootageWeight: parseTunableNumber(
+        req.query.square_footage_weight,
+        DEFAULT_COMPARABLE_SCORING.squareFootageWeight,
+        0,
+        1,
+      ),
+      locationScaleMiles: parseTunableNumber(
+        req.query.location_scale_miles,
+        DEFAULT_COMPARABLE_SCORING.locationScaleMiles,
+        0.05,
+        25,
+      ),
+      squareFootageScaleRatio: parseTunableNumber(
+        req.query.square_footage_scale_ratio,
+        DEFAULT_COMPARABLE_SCORING.squareFootageScaleRatio,
+        0.01,
+        1,
+      ),
+    };
+    if (scoringConfig.locationWeight + scoringConfig.squareFootageWeight <= 0) {
+      return res.status(400).json({ error: "invalid_scoring_configuration" });
+    }
+
+    const loadSubject = async () => {
+      const { rows } = await pool.query(
+        `
+          SELECT
+            account.account_id,
+            account.address,
+            account.city,
+            account.county,
+            account.neighborhood_code,
+            COALESCE(improvement.living_area_sqft, improvement.total_living_area) AS living_area_sqft,
+            location.latitude,
+            location.longitude,
+            location.status AS location_status,
+            location.source AS location_source,
+            location.precision AS location_precision,
+            location.confidence AS location_confidence,
+            location.review_required AS location_review_required,
+            location.review_reason AS location_review_reason,
+            location.geocoded_at
+          FROM core.accounts account
+          LEFT JOIN core.primary_improvements improvement
+            ON improvement.account_id = account.account_id
+          LEFT JOIN core.account_locations location
+            ON location.account_id = account.account_id
+          WHERE account.account_id = $1
+        `,
+        [subjectAccountId],
+      );
+      return rows[0] || null;
+    };
+
+    let subject = await loadSubject();
+    if (!subject) {
+      return res.status(404).json({ error: "subject_not_found" });
+    }
+    if (
+      subject.location_status !== "matched" ||
+      subject.latitude == null ||
+      subject.longitude == null
+    ) {
+      await refreshAccountLocations(pool, [subject], { batchSize: 1 });
+      subject = await loadSubject();
+    }
+    if (
+      subject?.location_status !== "matched" ||
+      subject?.latitude == null ||
+      subject?.longitude == null
+    ) {
+      return res.status(422).json({
+        error: "subject_location_unavailable",
+        subject_account_id: subjectAccountId,
+      });
+    }
+    if (!Number.isFinite(Number(subject.living_area_sqft)) || Number(subject.living_area_sqft) <= 0) {
+      return res.status(422).json({
+        error: "subject_living_area_unavailable",
+        subject_account_id: subjectAccountId,
+      });
+    }
+
+    const candidateParams = [subjectAccountId];
+    const candidateWhere = [
+      "sale.primary_account_id IS NOT NULL",
+      "sale.primary_account_id <> $1",
+    ];
+    if (dateFrom) {
+      candidateParams.push(dateFrom);
+      candidateWhere.push(
+        `sale.closing_date >= $${candidateParams.length}::date`,
+      );
+    }
+    if (dateTo) {
+      candidateParams.push(dateTo);
+      candidateWhere.push(
+        `sale.closing_date <= $${candidateParams.length}::date`,
+      );
+    }
+
+    const missingLocations = await pool.query(
+      `
+        SELECT
+          sale.primary_account_id AS account_id,
+          MAX(account.address) AS address,
+          MAX(account.county) AS county,
+          MAX(sale.closing_date) AS latest_sale_date
+        FROM core.v_sales_enriched sale
+        JOIN core.accounts account
+          ON account.account_id = sale.primary_account_id
+        LEFT JOIN core.account_locations location
+          ON location.account_id = sale.primary_account_id
+        WHERE ${candidateWhere.join(" AND ")}
+          AND (
+            account.county IS NULL
+            OR account.county ILIKE '%dallas%'
+          )
+          AND (
+            location.account_id IS NULL
+            OR (
+              location.status <> 'matched'
+              AND location.geocoded_at < now() - interval '7 days'
+            )
+          )
+        GROUP BY sale.primary_account_id
+        ORDER BY MAX(sale.closing_date) DESC NULLS LAST
+        LIMIT 250
+      `,
+      candidateParams,
+    );
+    if (missingLocations.rows.length) {
+      try {
+        await refreshAccountLocations(pool, missingLocations.rows, {
+          batchSize: 50,
+        });
+      } catch (error) {
+        console.warn(
+          "[recommendations] candidate location refresh failed; using cached coverage",
+          error?.message || error,
+        );
+      }
+    }
+
+    const candidateSql = `
+      SELECT
+        sale.sale_id,
+        sale.source_record_id,
+        sale.primary_account_id,
+        sale.county,
+        account.county AS account_county,
+        account.neighborhood_code,
+        account.subdivision,
+        COALESCE(NULLIF(BTRIM(sale.address), ''), NULLIF(BTRIM(account.address), '')) AS address,
+        sale.city,
+        sale.state,
+        sale.zip,
+        sale.closing_date,
+        sale.sale_price,
+        sale.days_on_market,
+        sale.concessions,
+        sale.seller_contributions,
+        sale.listing_contract_date,
+        sale.buyer_financing,
+        sale.mls_status,
+        sale.source,
+        sale.source_filename,
+        sale.source_row_number,
+        sale.match_status,
+        sale.has_multiple_parcel_numbers,
+        sale.multi_parcel_status,
+        sale.has_unresolved_parcel,
+        sale.requires_additional_review,
+        sale.data_quality_flags,
+        sale.provided_parcel_fields,
+        sale.resolved_account_count,
+        sale.linked_parcels,
+        sale.mls_bedrooms_total,
+        sale.mls_bathrooms_total_integer,
+        sale.mls_bathrooms_full,
+        sale.mls_bathrooms_half,
+        sale.mls_living_area,
+        sale.mls_lot_size_area,
+        sale.mls_year_built,
+        sale.mls_garage_spaces,
+        sale.mls_garage_yn,
+        sale.mls_pool_yn,
+        sale.ratio_current_price_by_living_area,
+        sale.ratio_close_price_by_list_price,
+        sale.ratio_close_price_by_original_list_price,
+        sale.ratio_close_price_by_living_area,
+        sale.cad_bedroom_count,
+        sale.cad_bath_count,
+        sale.cad_baths_full,
+        sale.cad_baths_half,
+        sale.cad_living_area_sqft,
+        sale.cad_total_area_sqft,
+        sale.cad_year_built,
+        sale.cad_effective_year_built,
+        sale.cad_stories,
+        sale.cad_pool,
+        sale.cad_building_class,
+        sale.cad_land_value,
+        sale.cad_improvement_value,
+        sale.cad_market_value,
+        location.latitude,
+        location.longitude,
+        location.status AS location_status,
+        location.source AS location_source,
+        location.precision AS location_precision,
+        location.confidence AS location_confidence,
+        location.review_required AS location_review_required,
+        location.review_reason AS location_review_reason,
+        location.geocoded_at AS location_geocoded_at
+      FROM core.v_sales_enriched sale
+      JOIN core.accounts account
+        ON account.account_id = sale.primary_account_id
+      LEFT JOIN core.account_locations location
+        ON location.account_id = sale.primary_account_id
+      WHERE ${candidateWhere.join(" AND ")}
+      ORDER BY sale.closing_date DESC NULLS LAST,
+               sale.source_record_id DESC NULLS LAST,
+               sale.sale_id DESC NULLS LAST
+      LIMIT 10000
+    `;
+    const { rows: candidates } = await pool.query(
+      candidateSql,
+      candidateParams,
+    );
+
+    let missingLocationCount = 0;
+    let unsupportedCountyCount = 0;
+    let missingSquareFootageCount = 0;
+    const scored = [];
+    for (const candidate of candidates) {
+      if (
+        candidate.location_status !== "matched" ||
+        candidate.latitude == null ||
+        candidate.longitude == null
+      ) {
+        const candidateCounty = String(candidate.account_county || "")
+          .trim()
+          .toLowerCase();
+        if (candidateCounty && !candidateCounty.includes("dallas")) {
+          unsupportedCountyCount += 1;
+        } else {
+          missingLocationCount += 1;
+        }
+        continue;
+      }
+      const comparableSquareFeet =
+        candidate.cad_living_area_sqft ?? candidate.mls_living_area;
+      if (
+        !Number.isFinite(Number(comparableSquareFeet)) ||
+        Number(comparableSquareFeet) <= 0
+      ) {
+        missingSquareFootageCount += 1;
+        continue;
+      }
+      const score = scoreComparable(
+        {
+          subjectLatitude: subject.latitude,
+          subjectLongitude: subject.longitude,
+          comparableLatitude: candidate.latitude,
+          comparableLongitude: candidate.longitude,
+          subjectSquareFeet: subject.living_area_sqft,
+          comparableSquareFeet,
+        },
+        scoringConfig,
+      );
+      if (!score) continue;
+      scored.push({
+        ...candidate,
+        ...score,
+        comparable_square_feet: Number(comparableSquareFeet),
+        score_requires_review:
+          Boolean(candidate.requires_additional_review) ||
+          Boolean(candidate.location_review_required),
+      });
+    }
+
+    scored.sort(
+      (left, right) =>
+        right.comparableScore - left.comparableScore ||
+        left.distanceMiles - right.distanceMiles ||
+        left.squareFootageDifferenceRatio -
+          right.squareFootageDifferenceRatio ||
+        String(right.closing_date || "").localeCompare(
+          String(left.closing_date || ""),
+        ),
+    );
+    scored.forEach((candidate, index) => {
+      candidate.score_rank = index + 1;
+    });
+
+    res.json({
+      subject: {
+        account_id: subject.account_id,
+        address: subject.address,
+        city: subject.city,
+        county: subject.county,
+        neighborhood_code: subject.neighborhood_code,
+        living_area_sqft: Number(subject.living_area_sqft),
+        latitude: Number(subject.latitude),
+        longitude: Number(subject.longitude),
+        location_source: subject.location_source,
+        location_precision: subject.location_precision,
+        location_confidence: subject.location_confidence,
+        location_review_required: subject.location_review_required,
+        location_review_reason: subject.location_review_reason,
+        location_geocoded_at: subject.geocoded_at,
+      },
+      scoring: {
+        ...scoringConfig,
+        locationWeightPercent: Math.round(scoringConfig.locationWeight * 100),
+        squareFootageWeightPercent: Math.round(
+          scoringConfig.squareFootageWeight * 100,
+        ),
+        squareFootageScalePercent: Math.round(
+          scoringConfig.squareFootageScaleRatio * 100,
+        ),
+        squareFootageIsHardFilter: false,
+      },
+      coverage: {
+        candidate_count: candidates.length,
+        eligible_count: scored.length,
+        missing_location_count: missingLocationCount,
+        unsupported_county_count: unsupportedCountyCount,
+        missing_square_footage_count: missingSquareFootageCount,
+      },
+      sales: scored.slice(0, resultLimit),
+    });
+  } catch (err) {
+    const message = err?.message || "comparable_recommendations_failed";
+    if (String(message).startsWith("invalid_")) {
+      return res.status(400).json({ error: message });
+    }
+    console.error("/api/sales/recommendations failed", err);
+    res.status(500).json({ error: "comparable_recommendations_failed" });
   }
 });
 

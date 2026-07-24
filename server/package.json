@@ -5,6 +5,7 @@
     "main": "index.js",
   "scripts": {
         "test": "node --test",
+        "backfill:locations": "node scripts/backfillAccountLocations.js",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"
   },

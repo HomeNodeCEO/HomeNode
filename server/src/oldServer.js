@@ -15,6 +15,10 @@ import {
   ensureAccountLocationsTable,
   refreshAccountLocations,
 } from "./services/accountLocations.js";
+import {
+  editorKeyMatches,
+  normalizeHousingProfileUpdate,
+} from "./util/housingProfileEdit.js";
 
 const app = express();
 app.use(express.json());
@@ -398,6 +402,123 @@ app.get("/api/accounts/:id", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "accounts_failed" });
+  }
+});
+
+/**
+ * PATCH /api/accounts/:id/housing-profile
+ * Saves a verified, account-level housing classification without changing the
+ * immutable MLS source row. The profile becomes the fallback for every sale
+ * linked to the same parcel.
+ */
+app.patch("/api/accounts/:id/housing-profile", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (!configuredEditorKey) {
+    return res.status(503).json({ error: "housing_profile_editor_not_configured" });
+  }
+  if (
+    !editorKeyMatches(
+      req.get("x-homenode-editor-key"),
+      configuredEditorKey,
+    )
+  ) {
+    return res.status(401).json({ error: "invalid_editor_key" });
+  }
+
+  let update;
+  try {
+    update = normalizeHousingProfileUpdate(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "invalid_housing_profile" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const accountResult = await client.query(
+      "SELECT 1 FROM core.accounts WHERE account_id = $1",
+      [id],
+    );
+    if (!accountResult.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "account_not_found" });
+    }
+
+    await client.query(
+      `
+        INSERT INTO core.account_housing_profiles (
+          account_id,
+          structural_style,
+          housing_type,
+          attachment_type,
+          architectural_style,
+          source_name,
+          source_url,
+          source_record_reference,
+          observed_at,
+          confidence,
+          notes
+        ) VALUES (
+          $1, $2, $3, $4, $5,
+          'HomeNode manual comparable review',
+          $6, $7, now(), 1.000, $8
+        )
+        ON CONFLICT (account_id) DO UPDATE SET
+          structural_style = EXCLUDED.structural_style,
+          housing_type = EXCLUDED.housing_type,
+          attachment_type = EXCLUDED.attachment_type,
+          architectural_style = EXCLUDED.architectural_style,
+          source_name = EXCLUDED.source_name,
+          source_url = EXCLUDED.source_url,
+          source_record_reference = EXCLUDED.source_record_reference,
+          observed_at = EXCLUDED.observed_at,
+          confidence = EXCLUDED.confidence,
+          notes = EXCLUDED.notes,
+          updated_at = now()
+      `,
+      [
+        id,
+        update.structuralStyle,
+        update.housingType,
+        update.attachmentType,
+        update.architecturalStyle,
+        update.sourceUrl,
+        update.sourceRecordReference,
+        update.notes,
+      ],
+    );
+
+    const { rows } = await client.query(
+      `
+        SELECT
+          structural_style,
+          housing_type,
+          attachment_type,
+          architectural_style,
+          source_name,
+          source_url,
+          source_record_reference,
+          observed_at,
+          confidence,
+          profile_source
+        FROM core.v_account_housing_profiles
+        WHERE account_id = $1
+      `,
+      [id],
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, housing_profile: rows[0] });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("/api/accounts/:id/housing-profile failed", error);
+    return res.status(500).json({ error: "housing_profile_update_failed" });
+  } finally {
+    client.release();
   }
 });
 

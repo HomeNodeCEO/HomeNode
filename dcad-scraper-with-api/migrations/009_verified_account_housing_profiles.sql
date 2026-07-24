@@ -53,4 +53,5 @@ ON CONFLICT (account_id) DO UPDATE SET
     observed_at = EXCLUDED.observed_at,
     confidence = EXCLUDED.confidence,
     notes = EXCLUDED.notes,
-    updated_at = now();
+    updated_at = now()
+WHERE core.account_housing_profiles.source_name <> 'HomeNode manual comparable review';

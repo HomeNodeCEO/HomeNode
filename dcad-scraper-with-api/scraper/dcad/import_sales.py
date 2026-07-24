@@ -43,6 +43,10 @@ STYLE_HEADERS = [
     "ArchitecturalStyle",
 ]
 EXPECTED_HEADERS = BASE_HEADERS + STYLE_HEADERS
+OPTIONAL_SOURCE_HEADERS = [
+    "ListingKey",
+    "ListingId",
+]
 ACCOUNT_PATTERN = re.compile(r"^[A-Z0-9]{17}$")
 EMBEDDED_ACCOUNT_PATTERN = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{17})(?![A-Z0-9])")
 
@@ -152,9 +156,12 @@ def _load_rows(path: Path) -> list[tuple[int, dict[str, str]]]:
         if missing:
             raise ValueError(f"CSV is missing required columns: {', '.join(missing)}")
 
+        source_headers = EXPECTED_HEADERS + [
+            header for header in OPTIONAL_SOURCE_HEADERS if header in headers
+        ]
         for source_row_number, source_row in enumerate(reader, start=2):
             raw_payload = {
-                header: _clean(source_row.get(header)) for header in EXPECTED_HEADERS
+                header: _clean(source_row.get(header)) for header in source_headers
             }
             # Style columns were added after the original import. Keeping the
             # original 23-column hash lets the revised export enrich those rows
@@ -305,6 +312,8 @@ def _typed_values(raw: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
         "housing_type": housing_type,
         "attachment_type": attachment_type,
         "architectural_style": raw["ArchitecturalStyle"] or None,
+        "listing_key": raw.get("ListingKey") or None,
+        "listing_id": raw.get("ListingId") or None,
     }
 
     price = typed["current_price"]
@@ -351,6 +360,7 @@ def _migration_sql() -> str:
     migrations = (
         root / "migrations" / "004_sales_ingestion.sql",
         root / "migrations" / "009_verified_account_housing_profiles.sql",
+        root / "migrations" / "010_sales_media.sql",
     )
     return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
 
@@ -642,6 +652,8 @@ def import_sales(
                         typed["housing_type"],
                         typed["attachment_type"],
                         typed["architectural_style"],
+                        typed["listing_key"],
+                        typed["listing_id"],
                         row.primary_account_id,
                         row.match_status,
                         row.has_multiple_parcel_numbers,
@@ -670,7 +682,8 @@ def import_sales(
                     garage_spaces, garage_yn, pool_yn, listing_contract_date,
                     parcel_number_raw, parcel_number2_raw, buyer_financing,
                     record_type, structural_style, housing_type,
-                    attachment_type, architectural_style,
+                    attachment_type, architectural_style, listing_key,
+                    listing_id,
                     primary_account_id, match_status,
                     has_multiple_parcel_numbers, multi_parcel_status,
                     has_unresolved_parcel, requires_additional_review,
@@ -715,6 +728,14 @@ def import_sales(
                     housing_type = EXCLUDED.housing_type,
                     attachment_type = EXCLUDED.attachment_type,
                     architectural_style = EXCLUDED.architectural_style,
+                    listing_key = COALESCE(
+                        NULLIF(EXCLUDED.listing_key, ''),
+                        core.sales_source_records.listing_key
+                    ),
+                    listing_id = COALESCE(
+                        NULLIF(EXCLUDED.listing_id, ''),
+                        core.sales_source_records.listing_id
+                    ),
                     primary_account_id = EXCLUDED.primary_account_id,
                     match_status = EXCLUDED.match_status,
                     has_multiple_parcel_numbers = EXCLUDED.has_multiple_parcel_numbers,

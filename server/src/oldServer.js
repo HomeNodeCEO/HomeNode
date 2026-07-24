@@ -406,6 +406,84 @@ app.get("/api/accounts/:id", async (req, res) => {
 });
 
 /**
+ * GET /api/accounts/:id/photos
+ * Returns the latest ordered MLS image gallery available for an account.
+ * The source listing/sale record remains explicit so the UI never confuses
+ * placeholder imagery with MLS evidence.
+ */
+app.get("/api/accounts/:id/photos", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    const { rows: sourceRows } = await pool.query(
+      `
+        SELECT
+          src.id AS source_record_id,
+          src.listing_key,
+          src.listing_id,
+          src.source_name,
+          src.record_type,
+          COALESCE(src.close_date, src.listing_contract_date) AS activity_date
+        FROM core.sales_source_records src
+        JOIN core.v_sales_media_summary media
+          ON media.source_record_id = src.id
+        WHERE src.primary_account_id = $1
+        ORDER BY
+          COALESCE(src.close_date, src.listing_contract_date) DESC NULLS LAST,
+          (src.record_type = 'listing') DESC,
+          src.updated_at DESC,
+          src.id DESC
+        LIMIT 1
+      `,
+      [id],
+    );
+    if (!sourceRows.length) {
+      return res.json({
+        account_id: id,
+        source_record_id: null,
+        listing_key: null,
+        listing_id: null,
+        source_name: null,
+        photos: [],
+      });
+    }
+    const source = sourceRows[0];
+    const { rows: photos } = await pool.query(
+      `
+        SELECT
+          id,
+          source_record_id,
+          media_url,
+          order_number,
+          preferred_photo_yn AS is_primary,
+          short_description AS caption,
+          mime_type,
+          permission,
+          modification_timestamp
+        FROM core.sales_source_media
+        WHERE source_record_id = $1
+          AND media_category = 'image'
+        ORDER BY
+          preferred_photo_yn DESC,
+          order_number NULLS LAST,
+          id
+      `,
+      [source.source_record_id],
+    );
+    res.json({
+      account_id: id,
+      ...source,
+      photos,
+    });
+  } catch (error) {
+    console.error("/api/accounts/:id/photos failed", error);
+    res.status(500).json({ error: "account_photos_failed" });
+  }
+});
+
+/**
  * PATCH /api/accounts/:id/housing-profile
  * Saves a verified, account-level housing classification without changing the
  * immutable MLS source row. The profile becomes the fallback for every sale
@@ -966,6 +1044,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
         sale.cad_land_value,
         sale.cad_improvement_value,
         sale.cad_market_value,
+        media.primary_photo_url,
+        COALESCE(media.photo_count, 0) AS photo_count,
         location.latitude,
         location.longitude,
         location.status AS location_status,
@@ -980,6 +1060,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
         ON account.account_id = sale.primary_account_id
       LEFT JOIN core.account_locations location
         ON location.account_id = sale.primary_account_id
+      LEFT JOIN core.v_sales_media_summary media
+        ON media.source_record_id = sale.source_record_id
       WHERE ${candidateWhere.join(" AND ")}
       ORDER BY sale.closing_date DESC NULLS LAST,
                sale.source_record_id DESC NULLS LAST,
@@ -1301,10 +1383,14 @@ app.get("/api/sales", async (req, res) => {
         v.cad_building_class,
         v.cad_land_value,
         v.cad_improvement_value,
-        v.cad_market_value
+        v.cad_market_value,
+        media.primary_photo_url,
+        COALESCE(media.photo_count, 0) AS photo_count
       FROM core.v_sales_enriched v
       LEFT JOIN core.accounts sale_account
         ON sale_account.account_id = v.primary_account_id
+      LEFT JOIN core.v_sales_media_summary media
+        ON media.source_record_id = v.source_record_id
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY v.closing_date DESC NULLS LAST,
                v.source_record_id DESC NULLS LAST,
@@ -1321,6 +1407,59 @@ app.get("/api/sales", async (req, res) => {
     }
     console.error("/api/sales failed", err);
     res.status(500).json({ error: "sales_search_failed" });
+  }
+});
+
+/**
+ * GET /api/sales/:sourceRecordId/photos
+ * Lazily loads an ordered gallery after the user opens a comparable image.
+ */
+app.get("/api/sales/:sourceRecordId/photos", async (req, res) => {
+  const sourceRecordId = String(req.params.sourceRecordId || "").trim();
+  if (!/^[1-9][0-9]*$/.test(sourceRecordId)) {
+    return res.status(400).json({ error: "invalid_source_record_id" });
+  }
+  try {
+    const { rows: sourceRows } = await pool.query(
+      `
+        SELECT id AS source_record_id, listing_key, listing_id, source_name
+        FROM core.sales_source_records
+        WHERE id = $1
+      `,
+      [sourceRecordId],
+    );
+    if (!sourceRows.length) {
+      return res.status(404).json({ error: "sale_source_record_not_found" });
+    }
+    const { rows: photos } = await pool.query(
+      `
+        SELECT
+          id,
+          source_record_id,
+          media_url,
+          order_number,
+          preferred_photo_yn AS is_primary,
+          short_description AS caption,
+          mime_type,
+          permission,
+          modification_timestamp
+        FROM core.sales_source_media
+        WHERE source_record_id = $1
+          AND media_category = 'image'
+        ORDER BY
+          preferred_photo_yn DESC,
+          order_number NULLS LAST,
+          id
+      `,
+      [sourceRecordId],
+    );
+    res.json({
+      ...sourceRows[0],
+      photos,
+    });
+  } catch (error) {
+    console.error("/api/sales/:sourceRecordId/photos failed", error);
+    res.status(500).json({ error: "sale_photos_failed" });
   }
 });
 

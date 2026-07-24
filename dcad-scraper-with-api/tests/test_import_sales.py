@@ -105,12 +105,21 @@ class RecordTypeTests(unittest.TestCase):
         )
         self.assertEqual(first_hash, revised_hash)
 
+    def test_listing_keys_are_optional_source_metadata(self) -> None:
+        typed, _ = _typed_values(
+            source_row(ListingKey="NTREIS-KEY-123", ListingId="MLS-123")
+        )
+        self.assertEqual(typed["listing_key"], "NTREIS-KEY-123")
+        self.assertEqual(typed["listing_id"], "MLS-123")
+
 
 class MigrationBundleTests(unittest.TestCase):
     def test_housing_profile_schema_and_verified_overrides_are_reapplied(self) -> None:
         sql = _migration_sql()
         self.assertIn("core.account_housing_profiles", sql)
         self.assertIn("core.v_account_housing_profiles", sql)
+        self.assertIn("core.sales_source_media", sql)
+        self.assertIn("core.v_sales_media_summary", sql)
         self.assertIn("26262500020080000", sql)
         self.assertIn("26262500010210000", sql)
 

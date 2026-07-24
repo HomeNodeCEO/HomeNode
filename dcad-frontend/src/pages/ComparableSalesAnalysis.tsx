@@ -32,6 +32,10 @@ type SubjectData = {
   solar_area_sqft?: number | null;
   garage_area_sqft?: number | null;
   pool?: boolean | string | null;
+  structural_style?: string | null;
+  housing_type?: string | null;
+  attachment_type?: 'detached' | 'attached' | 'mixed' | 'unknown' | null;
+  architectural_style?: string | null;
 };
 
 export default function ComparableSalesAnalysis() {
@@ -450,6 +454,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         if (typeof (api as any).getAccount === 'function') {
           const d = await (api as any).getAccount(propertyId);
           const imp = d?.primary_improvements || {};
+          const housing = d?.housing_profile || {};
           setSubject({
             accountId: propertyId,
             address: d?.account?.address ?? null,
@@ -472,6 +477,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             deck: (imp as any)?.deck ?? null,
             fence_type: (imp as any)?.fence_type ?? null,
             pool: (imp as any)?.pool ?? null,
+            structural_style: housing?.structural_style ?? null,
+            housing_type: housing?.housing_type ?? null,
+            attachment_type: housing?.attachment_type ?? null,
+            architectural_style: housing?.architectural_style ?? null,
           });
           // Try to augment with scraper detail for missing fields (e.g., land size, building class)
           try {
@@ -681,6 +690,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         const d = await fetchDetail(propertyId);
         const detail = d?.detail || d;
         const mi = detail?.main_improvement || {};
+        const housing = detail?.housing_profile || {};
         // land size from land_detail
         const landRows: Array<{ area_sqft?: string | number }>|undefined = detail?.land_detail;
         const landSize = Array.isArray(landRows)
@@ -741,6 +751,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           air_conditioning: (mi as any)?.air_conditioning ?? (detail as any)?.air_conditioning ?? null,
           basement_sqft: (basementSqft || 0) > 0 ? basementSqft : null,
           garage_area_sqft: (garageSqft || 0) > 0 ? garageSqft : null,
+          structural_style: housing?.structural_style ?? null,
+          housing_type: housing?.housing_type ?? null,
+          attachment_type: housing?.attachment_type ?? null,
+          architectural_style: housing?.architectural_style ?? null,
           solar_panels: (() => {
             const sec: any[] = (detail as any)?.secondary_improvements || [];
             const addl: any[] = (detail as any)?.additional_improvements || [];
@@ -1361,6 +1375,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         <td className="px-3 py-3 text-slate-700">
                           <div>{fmtSqftSafe(livingArea)} · {bedrooms ?? '—'} bd · {baths ?? '—'} ba</div>
                           <div className="mt-1 text-xs text-slate-500">Built {sale.cad_year_built ?? sale.mls_year_built ?? '—'} · {sale.neighborhood_code || 'No neighborhood code'}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {sale.structural_style || sale.housing_type || 'Housing type unavailable'}
+                            {' · '}
+                            {sale.architectural_style || 'Architectural style unavailable'}
+                          </div>
                         </td>
                         <td className="px-3 py-3">
                           <div className="flex flex-wrap gap-1">
@@ -1514,6 +1533,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Date of Sale/Time',
                     'Land Size',
                     'View',
+                    'Housing Type',
+                    'Architectural Style',
                     'Const Type',
                     'Class',
                     'Actual Age',
@@ -1535,6 +1556,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         break;
                       case 'View':
                         subjectValue = subject?.view || 'Neutral';
+                        break;
+                      case 'Housing Type':
+                        subjectValue = subject?.structural_style || subject?.housing_type || 'Not available';
+                        break;
+                      case 'Architectural Style':
+                        subjectValue = subject?.architectural_style || 'Not available';
                         break;
                       case 'Const Type':
                         subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
@@ -1568,6 +1595,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? (compSaleDates[i] || '')
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'Housing Type'
+                                ? (selectedSales[i]?.structural_style || selectedSales[i]?.housing_type || 'Not available')
+                              : label === 'Architectural Style'
+                                ? (selectedSales[i]?.architectural_style || 'Not available')
                               : label === 'Const Type'
                                 ? normalizeConstType(subject?.stories, subject?.construction_type)
                               : label === 'Class'
@@ -1971,6 +2002,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Date of Sale/Time',
                     'Land Size',
                     'View',
+                    'Housing Type',
+                    'Architectural Style',
                     'Const Type',
                     'Class',
                     'Actual Age',
@@ -2003,6 +2036,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       case 'View':
                         subjectValue = subject?.view || 'Neutral';
                         break;
+                      case 'Housing Type':
+                        subjectValue = subject?.structural_style || subject?.housing_type || 'Not available';
+                        break;
+                      case 'Architectural Style':
+                        subjectValue = subject?.architectural_style || 'Not available';
+                        break;
                       case 'Const Type':
                         subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
                         break;
@@ -2034,6 +2073,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               : label === 'Date of Sale/Time' ? '-'
                               : label === 'Land Size'
                                 ? fmtSqftSafe((compLandSize || [])[i] ?? '')
+                              : label === 'Housing Type'
+                                ? (selectedSales[i]?.structural_style || selectedSales[i]?.housing_type || 'Not available')
+                              : label === 'Architectural Style'
+                                ? (selectedSales[i]?.architectural_style || 'Not available')
                               : label === 'Const Type'
                                 ? normalizeConstType(subject?.stories, subject?.construction_type)
                               : label === 'Class'

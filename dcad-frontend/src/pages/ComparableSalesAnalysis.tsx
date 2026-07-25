@@ -2,6 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import * as api from '@/lib/api';
 import type { ComparableRecommendationsResponse, SalePhoto, SaleRow } from '@/lib/api';
+import GroupedAdjustmentAnalysis from '@/components/GroupedAdjustmentAnalysis';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 
@@ -3039,6 +3040,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           </div>
         </div>
+
+        <GroupedAdjustmentAnalysis
+          key={propertyId}
+          subjectAccountId={propertyId}
+        />
 
         {/* Adjustment Breakdown */}
         <div className="mt-6">

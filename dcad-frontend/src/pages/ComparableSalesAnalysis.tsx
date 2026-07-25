@@ -168,7 +168,7 @@ function calculateLivingAreaGroupedAdjustment(
   );
   const selectedAdjustment = eligibleAdjustments[eligibleAdjustments.length - 1];
   if (!selectedAdjustment) return 0;
-  const signedDifference = ((subjectValue - comparableValue) / 100) * selectedAdjustment.amount;
+  const signedDifference = (subjectValue - comparableValue) * selectedAdjustment.amount;
   return Math.round(signedDifference / 100) * 100;
 }
 
@@ -1313,7 +1313,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       )),
     [appliedGroupedAdjustmentEntries, subjectPoolGroup, comparablePoolGroups],
   );
-  // Gross living-area adjustments use the selected market-derived rate per 100 square feet.
+  // Gross living-area adjustments use the selected market-derived rate per square foot.
   const glaAdjustments = useMemo<number[]>(
     () => compGla.map((comparableValue) =>
       calculateLivingAreaGroupedAdjustment(
@@ -1441,11 +1441,24 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       : dimensionKey === 'garage'
         ? 'garage space'
         : dimensionKey === 'living_area'
-          ? '100 square feet'
+          ? 'square foot'
           : 'pool difference';
-    const appliedText =
-      `${study.marketLabel} — ${study.transitionLabel} study selected: ${signedAdjustment(study.baseAmount)} × ` +
-      `${study.factorPercent}% = ${signedAdjustment(study.amount)} per ${unitLabel}`;
+    const hasLivingAreaFormula =
+      dimensionKey === 'living_area' &&
+      study.sourcePriceDifference != null &&
+      study.sourceLivingAreaDifference != null &&
+      Number.isFinite(study.sourcePriceDifference) &&
+      Number.isFinite(study.sourceLivingAreaDifference) &&
+      study.sourceLivingAreaDifference > 0;
+    const appliedText = hasLivingAreaFormula
+      ? `${study.marketLabel} — ${study.transitionLabel} ${study.optionLabel}: ` +
+        `${signedAdjustment(study.sourcePriceDifference!)} ÷ ` +
+        `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(study.sourceLivingAreaDifference!)} SF = ` +
+        `${signedAdjustment(study.baseAmount)} per SF; ${study.factorPercent}% factoring = ` +
+        `${signedAdjustment(study.amount)} per SF`
+      : `${study.marketLabel} — ${study.transitionLabel} study selected: ` +
+        `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% = ` +
+        `${signedAdjustment(study.amount)} per ${unitLabel}`;
     const selectedCount = selectedSales.filter(Boolean).length;
     const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;
     return `${appliedText}. This universal rate currently adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;

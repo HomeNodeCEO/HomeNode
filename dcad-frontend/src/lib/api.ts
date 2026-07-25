@@ -374,6 +374,8 @@ export interface GroupedAnalysisGroup {
   medianPricePerSquareFoot: number | null;
   averageLivingArea: number | null;
   medianLivingArea: number | null;
+  minimumLivingArea: number | null;
+  maximumLivingArea: number | null;
   averageDaysOnMarket: number | null;
   medianDaysOnMarket: number | null;
 }
@@ -389,7 +391,7 @@ export interface GroupedAnalysisTransition {
 }
 
 export interface GroupedAnalysisDimension {
-  key: 'bathrooms' | 'garage' | 'pool';
+  key: 'bathrooms' | 'garage' | 'pool' | 'living_area';
   label: string;
   groups: GroupedAnalysisGroup[];
   transitions: GroupedAnalysisTransition[];
@@ -427,6 +429,7 @@ export interface GroupedAnalysisResponse {
     bathroom_sale_count: number;
     garage_sale_count: number;
     pool_sale_count: number;
+    living_area_sale_count: number;
   };
   filters: {
     record_type: 'closed_sale';

@@ -7,6 +7,10 @@ import GroupedAdjustmentAnalysis, {
 } from '@/components/GroupedAdjustmentAnalysis';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
+import {
+  bathroomEquivalentValue,
+  calculateNumericGroupedAdjustment,
+} from '@/lib/comparableAdjustments';
 
 const COMPARABLE_COUNT = 6;
 
@@ -126,28 +130,6 @@ function finiteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function bathroomGroupValue(
-  totalInteger: unknown,
-  fullBaths: unknown,
-  halfBaths: unknown,
-  cadBathCount?: unknown,
-): number | null {
-  const explicitTotal = finiteNumber(totalInteger);
-  if (explicitTotal !== null && explicitTotal >= 0) return Math.round(explicitTotal);
-
-  const full = finiteNumber(fullBaths);
-  const half = finiteNumber(halfBaths);
-  if (full !== null || half !== null) {
-    return Math.max(0, Math.round(full || 0) + Math.round(half || 0));
-  }
-
-  const cadCount = finiteNumber(cadBathCount);
-  if (cadCount === null || cadCount < 0) return null;
-  const whole = Math.floor(cadCount);
-  const halfCount = Math.round((cadCount - whole) * 10);
-  return whole + Math.max(0, halfCount);
-}
-
 function booleanValue(value: unknown): boolean | null {
   if (value === true || value === false) return value;
   const normalized = String(value ?? '').trim().toLowerCase();
@@ -160,28 +142,6 @@ function garageSpacesFromArea(value: unknown): number | null {
   const area = finiteNumber(value);
   if (area === null || area <= 0) return null;
   return Math.max(1, Math.min(12, Math.round(area / 225)));
-}
-
-function calculateNumericGroupedAdjustment(
-  adjustments: AppliedGroupedAdjustment[],
-  dimensionKey: 'bathrooms' | 'garage',
-  subjectValue: number | null,
-  comparableValue: number | null,
-): number {
-  if (subjectValue === null || comparableValue === null || subjectValue === comparableValue) return 0;
-  const low = Math.min(subjectValue, comparableValue);
-  const high = Math.max(subjectValue, comparableValue);
-  const marketDifference = adjustments
-    .filter((adjustment) => (
-      adjustment.dimensionKey === dimensionKey &&
-      typeof adjustment.fromGroupValue === 'number' &&
-      typeof adjustment.toGroupValue === 'number' &&
-      adjustment.fromGroupValue >= low &&
-      adjustment.toGroupValue <= high
-    ))
-    .reduce((total, adjustment) => total + adjustment.amount, 0);
-
-  return subjectValue > comparableValue ? marketDifference : -marketDifference;
 }
 
 function calculatePoolGroupedAdjustment(
@@ -1410,7 +1370,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     [appliedGroupedAdjustments],
   );
   const subjectBathroomGroup = useMemo(
-    () => bathroomGroupValue(
+    () => bathroomEquivalentValue(
       null,
       subject?.baths_full,
       subject?.baths_half,
@@ -1430,14 +1390,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
       const sale = selectedSales[index];
       if (sale) {
-        return bathroomGroupValue(
+        return bathroomEquivalentValue(
           sale.mls_bathrooms_total_integer,
           sale.mls_bathrooms_full ?? sale.cad_baths_full,
           sale.mls_bathrooms_half ?? sale.cad_baths_half,
           sale.cad_bath_count,
         );
       }
-      return bathroomGroupValue(
+      return bathroomEquivalentValue(
         null,
         compRooms[index]?.full,
         compRooms[index]?.half,
@@ -1889,6 +1849,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
                     const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
                     const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
+                    const garageSpaces = finiteNumber(sale.mls_garage_spaces);
+                    const garageLabel = garageSpaces !== null
+                      ? `${Math.max(0, Math.round(garageSpaces))} garage ${Math.round(garageSpaces) === 1 ? 'space' : 'spaces'}`
+                      : sale.mls_garage_yn === false
+                        ? '0 garage spaces'
+                        : 'Garage spaces unavailable';
+                    const hasPool = booleanValue(sale.mls_pool_yn ?? sale.cad_pool);
                     const olderThanTwoYears = saleIsOverTwoYears(sale);
                     const missingHousingType = housingTypeNeedsReview(sale);
                     const unknownAttachment = attachmentNeedsReview(sale);
@@ -1950,10 +1917,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         </td>
                         <td className="px-3 py-3">
                           <div className="font-semibold text-slate-900">{fmtCurrency(sale.sale_price) || 'Price unavailable'}</div>
-                          <div className="mt-1 text-xs text-slate-500">{saleDateDisplay(sale.closing_date)} · DOM {sale.days_on_market ?? '—'}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {saleDateDisplay(sale.closing_date)} · DOM {sale.days_on_market ?? '—'} · MLS {sale.listing_id || '—'}
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-slate-700">
                           <div>{fmtSqftSafe(livingArea)} · {bedrooms ?? '—'} bd · {baths ?? '—'} ba</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            {garageLabel} · Pool {hasPool === null ? 'unavailable' : hasPool ? 'Yes' : 'No'}
+                          </div>
                           <div className="mt-1 text-xs text-slate-500">Built {sale.cad_year_built ?? sale.mls_year_built ?? '—'} · {sale.neighborhood_code || 'No neighborhood code'}</div>
                           <div className="mt-1 text-xs text-slate-500">
                             {missingHousingType ? (

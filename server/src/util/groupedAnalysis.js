@@ -54,6 +54,8 @@ function normalizeGroupRow(row) {
     ),
     averageLivingArea: round(finiteNumber(row.average_living_area), 0),
     medianLivingArea: round(finiteNumber(row.median_living_area), 0),
+    minimumLivingArea: round(finiteNumber(row.minimum_living_area), 0),
+    maximumLivingArea: round(finiteNumber(row.maximum_living_area), 0),
     averageDaysOnMarket: round(finiteNumber(row.average_days_on_market), 1),
     medianDaysOnMarket: round(finiteNumber(row.median_days_on_market), 1),
   };
@@ -74,6 +76,8 @@ function emptyGroup(groupValue) {
     medianPricePerSquareFoot: null,
     averageLivingArea: null,
     medianLivingArea: null,
+    minimumLivingArea: null,
+    maximumLivingArea: null,
     averageDaysOnMarket: null,
     medianDaysOnMarket: null,
   };
@@ -120,6 +124,62 @@ function adjustmentOptions(previous, current) {
       "Average sale-price difference",
       current.averageSalePrice,
       previous.averageSalePrice,
+    ),
+  ].filter(Boolean);
+}
+
+function livingAreaAdjustmentOptions(previous, current) {
+  if (!previous.sampleSize || !current.sampleSize) return [];
+
+  const reliability = reliabilityFor(previous.sampleSize, current.sampleSize);
+  const createOption = (
+    basis,
+    label,
+    currentPrice,
+    previousPrice,
+    currentArea,
+    previousArea,
+  ) => {
+    if (
+      !Number.isFinite(currentPrice) ||
+      !Number.isFinite(previousPrice) ||
+      !Number.isFinite(currentArea) ||
+      !Number.isFinite(previousArea)
+    ) {
+      return null;
+    }
+    const areaDifference = currentArea - previousArea;
+    if (areaDifference <= 0) return null;
+    const rawAmount = ((currentPrice - previousPrice) / areaDifference) * 100;
+    return {
+      id: basis,
+      label,
+      basis,
+      rawAmount: round(rawAmount, 2),
+      amount: roundAdjustment(rawAmount),
+      reliability,
+      sampleSizeLow: Math.min(previous.sampleSize, current.sampleSize),
+      sampleSizeHigh: Math.max(previous.sampleSize, current.sampleSize),
+      recommended: basis === "median_sale_price_difference",
+    };
+  };
+
+  return [
+    createOption(
+      "median_sale_price_difference",
+      "Median sale-price difference per 100 sf",
+      current.medianSalePrice,
+      previous.medianSalePrice,
+      current.medianLivingArea,
+      previous.medianLivingArea,
+    ),
+    createOption(
+      "average_sale_price_difference",
+      "Average sale-price difference per 100 sf",
+      current.averageSalePrice,
+      previous.averageSalePrice,
+      current.averageLivingArea,
+      previous.averageLivingArea,
     ),
   ].filter(Boolean);
 }
@@ -200,6 +260,54 @@ function buildPoolDimension(rows) {
   };
 }
 
+function livingAreaGroupLabel(group, index) {
+  if (
+    !Number.isFinite(group.minimumLivingArea) ||
+    !Number.isFinite(group.maximumLivingArea)
+  ) {
+    return `Band ${index}`;
+  }
+  const minimum = Math.floor(group.minimumLivingArea / 100) * 100;
+  const maximum = Math.ceil(group.maximumLivingArea / 100) * 100;
+  return `${minimum.toLocaleString("en-US")} - ${maximum.toLocaleString("en-US")} sf`;
+}
+
+function buildLivingAreaDimension(rows) {
+  const normalized = rows.map(normalizeGroupRow);
+  const byValue = new Map(
+    normalized
+      .filter((row) => Number.isInteger(row.groupValue))
+      .map((row) => [row.groupValue, row]),
+  );
+  const groups = Array.from({ length: 10 }, (_, index) => {
+    const groupValue = index + 1;
+    const group = byValue.get(groupValue) ?? emptyGroup(groupValue);
+    return {
+      ...group,
+      label: livingAreaGroupLabel(group, groupValue),
+    };
+  });
+  const transitions = groups.slice(1).map((current, index) => {
+    const previous = groups[index];
+    return {
+      id: `${previous.groupValue}-to-${current.groupValue}`,
+      label: `${previous.label} to ${current.label}`,
+      fromGroupValue: previous.groupValue,
+      toGroupValue: current.groupValue,
+      fromSampleSize: previous.sampleSize,
+      toSampleSize: current.sampleSize,
+      options: livingAreaAdjustmentOptions(previous, current),
+    };
+  });
+
+  return {
+    key: "living_area",
+    label: "Gross living area",
+    groups,
+    transitions,
+  };
+}
+
 export function buildGroupedAnalysis(rows) {
   const rowsFor = (dimension) =>
     rows.filter((row) => row.dimension === dimension);
@@ -221,5 +329,6 @@ export function buildGroupedAnalysis(rows) {
       plural: "spaces",
     }),
     buildPoolDimension(rowsFor("pool")),
+    buildLivingAreaDimension(rowsFor("living_area")),
   ];
 }

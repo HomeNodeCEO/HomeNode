@@ -24,6 +24,12 @@ export type AppliedGroupedAdjustment = {
   amount: number;
 };
 
+export type GroupedAdjustmentImpactPreview = {
+  adjustments: number[];
+  selectedCount: number;
+  affectedCount: number;
+};
+
 type SelectedAdjustment = {
   option: GroupedAdjustmentOption;
 };
@@ -86,11 +92,37 @@ function factoredAmount(amount: number, factorPercent: number) {
   return Math.round((amount * factorPercent) / 100 / 100) * 100;
 }
 
+function buildAppliedAdjustment(
+  dimension: GroupedAnalysisDimension,
+  transition: GroupedAnalysisTransition,
+  option: GroupedAdjustmentOption,
+  factorPercent: number,
+): AppliedGroupedAdjustment {
+  const id = transitionKey(dimension.key, transition.id);
+  return {
+    id,
+    dimensionKey: dimension.key,
+    dimensionLabel: dimension.label,
+    transitionId: transition.id,
+    transitionLabel: transition.label,
+    fromGroupValue: transition.fromGroupValue,
+    toGroupValue: transition.toGroupValue,
+    optionId: option.id,
+    optionLabel: option.label,
+    basis: option.basis,
+    reliability: option.reliability,
+    baseAmount: option.amount,
+    factorPercent,
+    amount: factoredAmount(option.amount, factorPercent),
+  };
+}
+
 function DimensionTable({
   dimension,
   selections,
   factors,
   appliedAdjustments,
+  getImpactPreview,
   onSelect,
   onFactorChange,
   onApply,
@@ -100,13 +132,10 @@ function DimensionTable({
   selections: Record<string, SelectedAdjustment>;
   factors: Record<string, string>;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
+  getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
   onSelect: (key: string, option: GroupedAdjustmentOption) => void;
   onFactorChange: (key: string, factor: string) => void;
-  onApply: (
-    transition: GroupedAnalysisTransition,
-    option: GroupedAdjustmentOption,
-    factorPercent: number,
-  ) => void;
+  onApply: (adjustment: AppliedGroupedAdjustment) => void;
   onRemove: (key: string) => void;
 }) {
   return (
@@ -180,6 +209,12 @@ function DimensionTable({
             const result = selectedOption && factorValid
               ? factoredAmount(selectedOption.amount, factorPercent)
               : null;
+            const draftAdjustment = selectedOption && factorValid
+              ? buildAppliedAdjustment(dimension, transition, selectedOption, factorPercent)
+              : null;
+            const impactPreview = draftAdjustment
+              ? getImpactPreview(draftAdjustment)
+              : null;
             const applied = appliedAdjustments[key];
             const isCurrentApplied = Boolean(
               applied &&
@@ -207,7 +242,24 @@ function DimensionTable({
                           <button
                             key={option.id}
                             type="button"
-                            onClick={() => onSelect(key, option)}
+                            onClick={() => {
+                              onSelect(key, option);
+                              if (applied) {
+                                const nextFactor = Number(factorText);
+                                if (
+                                  factorText.trim() !== '' &&
+                                  Number.isFinite(nextFactor) &&
+                                  nextFactor >= 0
+                                ) {
+                                  onApply(buildAppliedAdjustment(
+                                    dimension,
+                                    transition,
+                                    option,
+                                    nextFactor,
+                                  ));
+                                }
+                              }
+                            }}
                             className={`rounded-lg border px-3 py-2 text-left transition ${
                               isSelected
                                 ? 'border-emerald-500 bg-emerald-50 ring-2 ring-emerald-200'
@@ -246,7 +298,25 @@ function DimensionTable({
                           step="1"
                           inputMode="decimal"
                           value={factorText}
-                          onChange={(event) => onFactorChange(key, event.target.value)}
+                          onChange={(event) => {
+                            const nextFactorText = event.target.value;
+                            onFactorChange(key, nextFactorText);
+                            if (applied && selectedOption) {
+                              const nextFactor = Number(nextFactorText);
+                              if (
+                                nextFactorText.trim() !== '' &&
+                                Number.isFinite(nextFactor) &&
+                                nextFactor >= 0
+                              ) {
+                                onApply(buildAppliedAdjustment(
+                                  dimension,
+                                  transition,
+                                  selectedOption,
+                                  nextFactor,
+                                ));
+                              }
+                            }
+                          }}
                           className="w-28 rounded-md border border-slate-300 bg-white px-3 py-2 text-right text-sm font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
                           aria-describedby={`factor-help-${key}`}
                         />
@@ -287,12 +357,51 @@ function DimensionTable({
                           </button>
                         )}
                       </div>
+                      {impactPreview && (
+                        <div
+                          className={`mt-3 rounded-lg border px-3 py-2 text-xs leading-5 ${
+                            impactPreview.affectedCount > 0
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                              : 'border-amber-200 bg-amber-50 text-amber-950'
+                          }`}
+                          aria-live="polite"
+                          data-testid={`grid-preview-${key}`}
+                        >
+                          {impactPreview.selectedCount === 0 ? (
+                            'Add comparables to preview how this figure will affect the grid.'
+                          ) : impactPreview.affectedCount === 0 ? (
+                            <>
+                              No selected comparable currently crosses {transition.label}. You can save this
+                              figure, but it will not change the current grid until a comparable has that
+                              feature difference.
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-semibold">
+                                Grid preview ({impactPreview.affectedCount} of {impactPreview.selectedCount} affected):
+                              </span>{' '}
+                              {impactPreview.adjustments
+                                .map((amount, index) => amount !== 0
+                                  ? `Comp ${index + 1}: ${formatSignedCurrency(amount)}`
+                                  : null)
+                                .filter(Boolean)
+                                .join(' / ')}
+                            </>
+                          )}
+                          {dimension.key === 'bathrooms' && result != null && (
+                            <div className="mt-1 text-slate-600">
+                              Full-bath step: {formatSignedCurrency(Math.abs(result))} / Half-bath step:{' '}
+                              {formatSignedCurrency(Math.abs(result) / 2)}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <button
                         type="button"
                         disabled={!selectedOption || !factorValid}
                         onClick={() => {
-                          if (selectedOption && factorValid) {
-                            onApply(transition, selectedOption, factorPercent);
+                          if (draftAdjustment) {
+                            onApply(draftAdjustment);
                           }
                         }}
                         className={`mt-3 w-full rounded-lg px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500 ${
@@ -301,7 +410,13 @@ function DimensionTable({
                             : 'bg-emerald-700 text-white hover:bg-emerald-800'
                         }`}
                       >
-                        {isCurrentApplied ? 'Applied to Sales Grid' : applied ? 'Update Adjustment' : 'Apply Adjustment'}
+                        {isCurrentApplied
+                          ? impactPreview?.affectedCount
+                            ? `Applied to ${impactPreview.affectedCount} Comparable${impactPreview.affectedCount === 1 ? '' : 's'}`
+                            : 'Applied - No Matching Difference'
+                          : applied
+                            ? 'Update Adjustment'
+                            : 'Apply Adjustment'}
                       </button>
                     </div>
                   </>
@@ -322,11 +437,13 @@ function DimensionTable({
 export default function GroupedAdjustmentAnalysis({
   subjectAccountId,
   appliedAdjustments,
+  getImpactPreview,
   onApplyAdjustment,
   onRemoveAdjustment,
 }: {
   subjectAccountId: string;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
+  getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
   onApplyAdjustment: (adjustment: AppliedGroupedAdjustment) => void;
   onRemoveAdjustment: (adjustmentId: string) => void;
 }) {
@@ -477,6 +594,7 @@ export default function GroupedAdjustmentAnalysis({
                     selections={selections}
                     factors={factors}
                     appliedAdjustments={appliedAdjustments}
+                    getImpactPreview={getImpactPreview}
                     onSelect={(key, option) =>
                       setSelections((current) => ({
                         ...current,
@@ -489,25 +607,7 @@ export default function GroupedAdjustmentAnalysis({
                         [key]: factor,
                       }))
                     }
-                    onApply={(transition, option, factorPercent) => {
-                      const id = transitionKey(dimension.key, transition.id);
-                      onApplyAdjustment({
-                        id,
-                        dimensionKey: dimension.key,
-                        dimensionLabel: dimension.label,
-                        transitionId: transition.id,
-                        transitionLabel: transition.label,
-                        fromGroupValue: transition.fromGroupValue,
-                        toGroupValue: transition.toGroupValue,
-                        optionId: option.id,
-                        optionLabel: option.label,
-                        basis: option.basis,
-                        reliability: option.reliability,
-                        baseAmount: option.amount,
-                        factorPercent,
-                        amount: factoredAmount(option.amount, factorPercent),
-                      });
-                    }}
+                    onApply={onApplyAdjustment}
                     onRemove={onRemoveAdjustment}
                   />
                 ))}

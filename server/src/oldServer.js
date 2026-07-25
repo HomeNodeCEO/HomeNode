@@ -1428,8 +1428,9 @@ app.get("/api/sales", async (req, res) => {
  * Builds one-year grouped adjustment studies for any requested combination of
  * the subject's city, ZIP code, and cumulative one-through-five-mile radii.
  * Closed, single-parcel sales are grouped by total bathrooms, garage spaces,
- * and pool presence. Missing garage spaces are treated as zero only when the
- * MLS explicitly says the property has no garage.
+ * pool presence, and ten ordered living-area bands. Missing garage spaces are
+ * treated as zero only when the MLS explicitly says the property has no
+ * garage.
  */
 app.get("/api/sales/grouped-analysis", async (req, res) => {
   try {

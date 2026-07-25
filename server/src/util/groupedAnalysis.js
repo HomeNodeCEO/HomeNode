@@ -150,13 +150,16 @@ function livingAreaAdjustmentOptions(previous, current) {
     }
     const areaDifference = currentArea - previousArea;
     if (areaDifference <= 0) return null;
-    const rawAmount = ((currentPrice - previousPrice) / areaDifference) * 100;
+    const priceDifference = currentPrice - previousPrice;
+    const rawAmount = priceDifference / areaDifference;
     return {
       id: basis,
       label,
       basis,
       rawAmount: round(rawAmount, 2),
-      amount: roundAdjustment(rawAmount),
+      amount: Math.round(rawAmount),
+      priceDifference: round(priceDifference, 2),
+      livingAreaDifference: round(areaDifference, 2),
       reliability,
       sampleSizeLow: Math.min(previous.sampleSize, current.sampleSize),
       sampleSizeHigh: Math.max(previous.sampleSize, current.sampleSize),
@@ -167,7 +170,7 @@ function livingAreaAdjustmentOptions(previous, current) {
   return [
     createOption(
       "median_sale_price_difference",
-      "Median sale-price difference per 100 sf",
+      "Median sale-price difference per square foot",
       current.medianSalePrice,
       previous.medianSalePrice,
       current.medianLivingArea,
@@ -175,7 +178,7 @@ function livingAreaAdjustmentOptions(previous, current) {
     ),
     createOption(
       "average_sale_price_difference",
-      "Average sale-price difference per 100 sf",
+      "Average sale-price difference per square foot",
       current.averageSalePrice,
       previous.averageSalePrice,
       current.averageLivingArea,

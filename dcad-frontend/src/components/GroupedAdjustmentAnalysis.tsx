@@ -23,6 +23,8 @@ export type AppliedGroupedAdjustment = {
   basis: string;
   reliability: GroupedAdjustmentOption['reliability'];
   baseAmount: number;
+  sourcePriceDifference?: number;
+  sourceLivingAreaDifference?: number;
   factorPercent: number;
   amount: number;
 };
@@ -95,8 +97,15 @@ function recommendedOption(transition: GroupedAnalysisTransition) {
   return transition.options.find((option) => option.recommended) || transition.options[0];
 }
 
-function factoredAmount(amount: number, factorPercent: number) {
-  return Math.round((amount * factorPercent) / 100 / 100) * 100;
+function factoredAmount(
+  amount: number,
+  factorPercent: number,
+  dimensionKey: GroupedAnalysisDimension['key'],
+) {
+  const factored = (amount * factorPercent) / 100;
+  return dimensionKey === 'living_area'
+    ? Math.round(factored)
+    : Math.round(factored / 100) * 100;
 }
 
 function buildAppliedAdjustment(
@@ -123,8 +132,10 @@ function buildAppliedAdjustment(
     basis: option.basis,
     reliability: option.reliability,
     baseAmount: option.amount,
+    sourcePriceDifference: option.priceDifference,
+    sourceLivingAreaDifference: option.livingAreaDifference,
     factorPercent,
-    amount: factoredAmount(option.amount, factorPercent),
+    amount: factoredAmount(option.amount, factorPercent, dimension.key),
   };
 }
 
@@ -160,7 +171,7 @@ function DimensionTable({
         <div className="text-base font-semibold text-slate-900">{dimension.label}</div>
         <div className="text-xs text-slate-600">
           {isLivingArea
-            ? 'All eligible sales are ordered by living area and divided into ten market bands. Each study is normalized to a 100-square-foot adjustment.'
+            ? 'All eligible sales are ordered by living area and divided into ten market bands. Each study divides the group price difference by the difference in median or average living area.'
             : 'Groups include every category through the highest observed value. Empty categories remain visible.'}
         </div>
       </div>
@@ -226,7 +237,7 @@ function DimensionTable({
             const factorPercent = Number(factorText);
             const factorValid = factorText.trim() !== '' && Number.isFinite(factorPercent) && factorPercent >= 0;
             const result = selectedOption && factorValid
-              ? factoredAmount(selectedOption.amount, factorPercent)
+              ? factoredAmount(selectedOption.amount, factorPercent, dimension.key)
               : null;
             const draftAdjustment = selectedOption && factorValid
               ? buildAppliedAdjustment(
@@ -301,7 +312,7 @@ function DimensionTable({
                             <div className="flex items-center gap-2">
                               <span className="font-semibold text-slate-900">
                                 {formatSignedCurrency(option.amount)}
-                                {isLivingArea ? ' / 100 sf' : ''}
+                                {isLivingArea ? ' / SF' : ''}
                               </span>
                               {option.recommended && (
                                 <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
@@ -313,6 +324,16 @@ function DimensionTable({
                               </span>
                             </div>
                             <div className="mt-1 text-xs text-slate-600">{option.label}</div>
+                            {isLivingArea &&
+                              option.priceDifference != null &&
+                              option.livingAreaDifference != null &&
+                              Number.isFinite(option.priceDifference) &&
+                              Number.isFinite(option.livingAreaDifference) && (
+                                <div className="mt-1 text-xs font-medium text-slate-700">
+                                  {formatCurrency(option.priceDifference)} ÷{' '}
+                                  {formatNumber(option.livingAreaDifference)} SF
+                                </div>
+                              )}
                           </button>
                         );
                       })}
@@ -375,7 +396,7 @@ function DimensionTable({
                           <div className="mt-1 text-xl font-semibold text-slate-900">
                             {result == null
                               ? '—'
-                              : `${formatSignedCurrency(result)}${isLivingArea ? ' / 100 sf' : ''}`}
+                              : `${formatSignedCurrency(result)}${isLivingArea ? ' / SF' : ''}`}
                           </div>
                           {selectedOption && factorValid && factorPercent !== 100 && (
                             <div className="text-xs text-slate-500">
@@ -448,7 +469,7 @@ function DimensionTable({
                           )}
                           {dimension.key === 'living_area' && result != null && (
                             <div className="mt-1 text-slate-600">
-                              Uniform rate per 100 square feet: {formatSignedCurrency(Math.abs(result))}
+                              Uniform rate per square foot: {formatSignedCurrency(Math.abs(result))}
                             </div>
                           )}
                         </div>

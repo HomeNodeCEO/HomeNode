@@ -353,6 +353,8 @@ export interface GroupedAdjustmentOption {
   basis: 'median_sale_price_difference' | 'average_sale_price_difference';
   rawAmount: number;
   amount: number;
+  priceDifference?: number;
+  livingAreaDifference?: number;
   reliability: GroupedAdjustmentReliability;
   sampleSizeLow: number;
   sampleSizeHigh: number;
@@ -558,7 +560,7 @@ export async function getComparableRecommendations(
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
 }
 
-/** Build current one-year bathroom, garage, and pool grouped adjustment studies. */
+/** Build current one-year bathroom, garage, pool, and living-area grouped adjustment studies. */
 export async function getGroupedAdjustmentAnalysis(
   subjectAccountId: string,
   asOf?: string,

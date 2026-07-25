@@ -282,7 +282,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [compTimeAdjustments, setCompTimeAdjustments] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   const [compSaleDates, setCompSaleDates] = useState<string[]>(() => Array(COMPARABLE_COUNT).fill(''));
   const [compLandSize, setCompLandSize] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
-  const [compClasses, setCompClasses] = useState<Array<number | string | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   // Test-mode comparable ages for the "Age/Effective" row
   const [compAges, setCompAges] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   // Test-mode comparable garage areas
@@ -1140,7 +1139,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompTimeAdjustments((current) => current.map((value, index) => index === slot ? null : value));
     setCompSaleDates((current) => current.map((value, index) => index === slot ? saleDateDisplay(sale.closing_date) : value));
     setCompLandSize((current) => current.map((value, index) => index === slot ? landSize : value));
-    setCompClasses((current) => current.map((value, index) => index === slot ? (sale.cad_building_class || null) : value));
     setCompAges((current) => current.map((value, index) => index === slot && yearBuilt != null ? Math.max(0, new Date().getFullYear() - yearBuilt) : (index === slot ? null : value)));
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
     setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
@@ -1173,7 +1171,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompTimeAdjustments((current) => current.map((value, index) => index === slot ? null : value));
     setCompSaleDates((current) => current.map((value, index) => index === slot ? '' : value));
     setCompLandSize((current) => current.map((value, index) => index === slot ? null : value));
-    setCompClasses((current) => current.map((value, index) => index === slot ? null : value));
     setCompAges((current) => current.map((value, index) => index === slot ? null : value));
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
     setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
@@ -1259,21 +1256,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesLoading(false);
     }
   };
-
-  // SALES/EQUITY: Class row adjustments logic
-  // Comp 1: +3% of sale price; Comp 2: -3% of sale price (superior class);
-  // Comp 3: 0 (same class as subject); Comp 4: +3% of sale price
-  const classAdjustments = useMemo(() => {
-    const prices = compPrices || [];
-    return Array.from({ length: COMPARABLE_COUNT }, (_, i) => {
-      const v: any = prices[i];
-      const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-      if (!Number.isFinite(n) || n <= 0) return null;
-      const pct = i === 1 ? -0.03 : (i === 2 ? 0 : 0.03);
-      const adj = Math.round(n * pct);
-      return adj;
-    });
-  }, [compPrices]);
 
   const appliedGroupedAdjustmentEntries = useMemo(
     () => Object.values(appliedGroupedAdjustments),
@@ -1395,7 +1377,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       };
       const concession = toNum((compConcessions || [])[i]);
       const timeAdj = toNum((compTimeAdjustments || [])[i]);
-      const classAdj = toNum((classAdjustments || [])[i]);
       const roomAdj = toNum((roomCountTotalAdjustments || [])[i]);
       const glaAdj = toNum((glaAdjustments || [])[i]);
       const garageAdj = toNum((garageAdjustments || [])[i]);
@@ -1403,11 +1384,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       // Land Size and Age/Effective currently $0
       const landAdj = 0;
       const ageAdj = 0;
-      const total = (concession > 0 ? -concession : 0) + timeAdj + classAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
+      const total = (concession > 0 ? -concession : 0) + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
+  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
 
   // SALES/EQUITY: Gross Adjustments — sum of absolute values of all adjustments per comparable
   const grossAdjustments = useMemo<number[]>(() => {
@@ -1420,18 +1401,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       };
       const concession = Math.abs(toNum((compConcessions || [])[i]));
       const timeAdj = Math.abs(toNum((compTimeAdjustments || [])[i]));
-      const classAdj = Math.abs(toNum((classAdjustments || [])[i]));
       const roomAdj = Math.abs(toNum((roomCountTotalAdjustments || [])[i]));
       const glaAdj = Math.abs(toNum((glaAdjustments || [])[i]));
       const garageAdj = Math.abs(toNum((garageAdjustments || [])[i]));
       const poolAdj = Math.abs(toNum((poolAdjustments || [])[i]));
       const landAdj = 0;
       const ageAdj = 0;
-      const total = concession + timeAdj + classAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
+      const total = concession + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
+  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
 
   // SALES: Indicated Values — sale price plus net adjustments per comparable
   const indicatedValues = useMemo<number[]>(() => {
@@ -2428,7 +2408,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Housing Type',
                     'Architectural Style',
                     'Const Type',
-                    'CAD Class',
                     'Age/Effective',
                     'Condition',
                     'Quality',
@@ -2458,10 +2437,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         break;
                       case 'Const Type':
                         subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
-                        break;
-                      // SALES SUBJECT CLASS: from subject.building_class (core.primary_improvements.building_class)
-                      case 'CAD Class':
-                        subjectValue = subject?.building_class || '';
                         break;
                       case 'Age/Effective':
                         subjectValue = subject?.actual_age ?? '';
@@ -2519,8 +2494,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? (selectedSales[i]?.architectural_style || 'Not available')
                               : label === 'Const Type'
                                 ? normalizeConstType(subject?.stories, subject?.construction_type)
-                              : label === 'CAD Class'
-                                ? String((compClasses || [])[i] ?? '')
                               : label === 'Age/Effective'
                                 ? (compAges[i] ?? '')
                               : label === 'Condition'
@@ -2570,12 +2543,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? ''
                               : label === 'Land Size'
                                 ? fmtCurrency(0)
-                              : label === 'CAD Class'
-                                ? (() => {
-                                    const v = (classAdjustments || [])[i] ?? null;
-                                    if (v === null || v === undefined || v === 0) return '';
-                                    return fmtCurrency(v);
-                                  })()
                               // SALES: Age/Effective – adjustments fixed at $0 for all comparables
                               : label === 'Age/Effective'
                                 ? fmtCurrency(0)

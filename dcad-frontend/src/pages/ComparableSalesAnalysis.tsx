@@ -1425,7 +1425,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   );
 
   // SALES/EQUITY: Room Count adjustments logic (Beds + Baths).
-  // Bathroom adjustments are assembled from every adjacent grouped study the user applies.
+  // One selected grouped study supplies the universal per-bath rate.
   const roomCountBedAdjustments = useMemo<number[]>(() => Array(COMPARABLE_COUNT).fill(0), []);
   const roomCountBathAdjustments = useMemo<number[]>(
     () => comparableBathroomGroups.map((comparableValue) =>
@@ -1587,13 +1587,18 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (!studies.length) {
       return 'No grouped study has been applied yet. Select a supported market difference above, enter any desired factor, and apply it to update the grid.';
     }
-    const appliedText = studies
-      .map((study) =>
-        `${study.transitionLabel}: ${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% = ${signedAdjustment(study.amount)}`)
-      .join('; ');
+    const study = studies[studies.length - 1];
+    const unitLabel = dimensionKey === 'bathrooms'
+      ? 'full bath'
+      : dimensionKey === 'garage'
+        ? 'garage space'
+        : 'pool difference';
+    const appliedText =
+      `${study.transitionLabel} study selected: ${signedAdjustment(study.baseAmount)} × ` +
+      `${study.factorPercent}% = ${signedAdjustment(study.amount)} per ${unitLabel}`;
     const selectedCount = selectedSales.filter(Boolean).length;
     const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;
-    return `${appliedText}. The current schedule adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
+    return `${appliedText}. This universal rate currently adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
   };
 
   const previewGroupedAdjustment = (
@@ -3314,10 +3319,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           appliedAdjustments={appliedGroupedAdjustments}
           getImpactPreview={previewGroupedAdjustment}
           onApplyAdjustment={(adjustment) =>
-            setAppliedGroupedAdjustments((current) => ({
-              ...current,
-              [adjustment.id]: adjustment,
-            }))
+            setAppliedGroupedAdjustments((current) => {
+              const next: Record<string, AppliedGroupedAdjustment> = Object.fromEntries(
+                Object.entries(current).filter(
+                  ([, applied]) => applied.dimensionKey !== adjustment.dimensionKey,
+                ),
+              );
+              next[adjustment.id] = adjustment;
+              return next;
+            })
           }
           onRemoveAdjustment={(adjustmentId) =>
             setAppliedGroupedAdjustments((current) => {

@@ -344,6 +344,87 @@ export interface ComparableRecommendationsResponse {
   sales: SaleRow[];
 }
 
+export type GroupedAdjustmentReliability = 'strong' | 'moderate' | 'limited';
+
+export interface GroupedAdjustmentOption {
+  id: 'median_sale_price_difference' | 'average_sale_price_difference';
+  label: string;
+  basis: 'median_sale_price_difference' | 'average_sale_price_difference';
+  rawAmount: number;
+  amount: number;
+  reliability: GroupedAdjustmentReliability;
+  sampleSizeLow: number;
+  sampleSizeHigh: number;
+  recommended: boolean;
+}
+
+export interface GroupedAnalysisGroup {
+  groupValue: number | boolean;
+  label: string;
+  sampleSize: number;
+  minimumSalePrice: number | null;
+  maximumSalePrice: number | null;
+  averageSalePrice: number | null;
+  medianSalePrice: number | null;
+  lowerQuartileSalePrice: number | null;
+  upperQuartileSalePrice: number | null;
+  salePriceStandardDeviation: number | null;
+  averagePricePerSquareFoot: number | null;
+  medianPricePerSquareFoot: number | null;
+  averageLivingArea: number | null;
+  medianLivingArea: number | null;
+  averageDaysOnMarket: number | null;
+  medianDaysOnMarket: number | null;
+}
+
+export interface GroupedAnalysisTransition {
+  id: string;
+  label: string;
+  fromGroupValue: number | boolean;
+  toGroupValue: number | boolean;
+  fromSampleSize: number;
+  toSampleSize: number;
+  options: GroupedAdjustmentOption[];
+}
+
+export interface GroupedAnalysisDimension {
+  key: 'bathrooms' | 'garage' | 'pool';
+  label: string;
+  groups: GroupedAnalysisGroup[];
+  transitions: GroupedAnalysisTransition[];
+}
+
+export interface GroupedAnalysisResponse {
+  subject: {
+    account_id: string;
+    address: string | null;
+  };
+  market: {
+    scope: 'city';
+    city: string;
+    county: string | null;
+    label: string;
+  };
+  period: {
+    start: string | null;
+    end: string | null;
+  };
+  population: {
+    eligible_sale_count: number;
+    bathroom_sale_count: number;
+    garage_sale_count: number;
+    pool_sale_count: number;
+  };
+  filters: {
+    record_type: 'closed_sale';
+    minimum_sale_price: number;
+    multi_parcel_status: 'single';
+    attached_housing_excluded: boolean;
+    period_years: number;
+  };
+  dimensions: GroupedAnalysisDimension[];
+}
+
 /** ---------------- API calls (DB only; no scraper) ---------------- */
 
 /**
@@ -441,6 +522,18 @@ export async function getComparableRecommendations(
     square_footage_scale_ratio: params.squareFootageScaleRatio,
   });
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
+}
+
+/** Build current one-year bathroom, garage, and pool grouped adjustment studies. */
+export async function getGroupedAdjustmentAnalysis(
+  subjectAccountId: string,
+  asOf?: string,
+): Promise<GroupedAnalysisResponse> {
+  const url = makeUrl('/api/sales/grouped-analysis', {
+    subject_account_id: subjectAccountId.trim(),
+    as_of: asOf,
+  });
+  return fetchJSON<GroupedAnalysisResponse>(url, { timeoutMs: 90000 });
 }
 
 /**

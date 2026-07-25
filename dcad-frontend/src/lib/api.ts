@@ -151,6 +151,7 @@ export interface AccountPhotosResponse {
 export interface SaleRow {
   sale_id: string | number | null;
   source_record_id: string | number | null;
+  listing_id: string | null;
   primary_account_id: string | null;
   county: string | null;
   neighborhood_code: string | null;

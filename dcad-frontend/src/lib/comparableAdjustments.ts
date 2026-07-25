@@ -46,9 +46,12 @@ export function bathroomEquivalentValue(
 }
 
 /**
- * Apply a piecewise grouped schedule between the subject and comparable.
- * Fractional bathroom differences receive the same fractional share of the
- * relevant full-bath adjustment, while the sign follows appraisal convention:
+ * Apply the currently selected grouped study as one universal per-unit rate.
+ *
+ * The transition that produced the study (for example, 1-to-2 baths) is market
+ * evidence for the rate, not a restriction on where the rate can be used.
+ * Fractional bathroom differences receive the same fractional share of that
+ * selected full-bath rate, while the sign follows appraisal convention:
  * add for an inferior comparable and subtract for a superior comparable.
  */
 export function calculateNumericGroupedAdjustment(
@@ -59,33 +62,17 @@ export function calculateNumericGroupedAdjustment(
 ): number {
   if (subjectValue === null || comparableValue === null || subjectValue === comparableValue) return 0;
 
-  const low = Math.min(subjectValue, comparableValue);
-  const high = Math.max(subjectValue, comparableValue);
-  const marketDifference = adjustments
-    .filter((adjustment) => (
-      adjustment.dimensionKey === dimensionKey &&
-      typeof adjustment.fromGroupValue === 'number' &&
-      typeof adjustment.toGroupValue === 'number'
-    ))
-    .reduce((total, adjustment) => {
-      const stepLow = Math.min(
-        adjustment.fromGroupValue as number,
-        adjustment.toGroupValue as number,
-      );
-      const stepHigh = Math.max(
-        adjustment.fromGroupValue as number,
-        adjustment.toGroupValue as number,
-      );
-      const stepSize = stepHigh - stepLow;
-      if (stepSize <= 0) return total;
+  const eligibleAdjustments = adjustments.filter((adjustment) => (
+    adjustment.dimensionKey === dimensionKey &&
+    typeof adjustment.fromGroupValue === 'number' &&
+    typeof adjustment.toGroupValue === 'number'
+  ));
+  const selectedAdjustment = eligibleAdjustments[eligibleAdjustments.length - 1];
+  if (!selectedAdjustment) return 0;
 
-      const overlap = Math.max(0, Math.min(high, stepHigh) - Math.max(low, stepLow));
-      return total + (adjustment.amount * (overlap / stepSize));
-    }, 0);
-
-  const signedDifference = subjectValue > comparableValue
-    ? marketDifference
-    : -marketDifference;
+  const signedDifference = (
+    subjectValue - comparableValue
+  ) * selectedAdjustment.amount;
   const roundedDifference = Math.round(signedDifference);
   return roundedDifference === 0 ? 0 : roundedDifference;
 }

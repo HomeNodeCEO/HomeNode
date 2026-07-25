@@ -195,9 +195,10 @@ function DimensionTable({
       </div>
 
       <div className="border-t border-slate-200 bg-slate-50/70 p-4">
-        <div className="text-sm font-semibold text-slate-900">Selectable adjacent-group adjustments</div>
+        <div className="text-sm font-semibold text-slate-900">Alternative market-supported unit adjustments</div>
         <div className="mt-1 text-xs text-slate-600">
-          Median differences are recommended. Average differences remain available for professional judgment.
+          Each tile is an alternative study. Applying one uses its factored figure uniformly for every
+          difference in this section and replaces the currently applied figure for this section.
         </div>
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           {dimension.transitions.map((transition) => {
@@ -216,6 +217,9 @@ function DimensionTable({
               ? getImpactPreview(draftAdjustment)
               : null;
             const applied = appliedAdjustments[key];
+            const hasAppliedDimension = Object.values(appliedAdjustments).some(
+              (adjustment) => adjustment.dimensionKey === dimension.key,
+            );
             const isCurrentApplied = Boolean(
               applied &&
               selectedOption &&
@@ -371,9 +375,13 @@ function DimensionTable({
                             'Add comparables to preview how this figure will affect the grid.'
                           ) : impactPreview.affectedCount === 0 ? (
                             <>
-                              No selected comparable currently crosses {transition.label}. You can save this
-                              figure, but it will not change the current grid until a comparable has that
-                              feature difference.
+                              This figure is ready to apply uniformly. The current comparables have no
+                              {dimension.key === 'bathrooms'
+                                ? ' equivalent-bath'
+                                : dimension.key === 'garage'
+                                  ? ' garage-space'
+                                  : ' pool-status'}{' '}
+                              difference from the subject, so the current grid would remain unchanged.
                             </>
                           ) : (
                             <>
@@ -390,8 +398,18 @@ function DimensionTable({
                           )}
                           {dimension.key === 'bathrooms' && result != null && (
                             <div className="mt-1 text-slate-600">
-                              Full-bath step: {formatSignedCurrency(Math.abs(result))} / Half-bath step:{' '}
+                              Uniform rate — full bath: {formatSignedCurrency(Math.abs(result))} / half bath:{' '}
                               {formatSignedCurrency(Math.abs(result) / 2)}
+                            </div>
+                          )}
+                          {dimension.key === 'garage' && result != null && (
+                            <div className="mt-1 text-slate-600">
+                              Uniform rate per garage space: {formatSignedCurrency(Math.abs(result))}
+                            </div>
+                          )}
+                          {dimension.key === 'pool' && result != null && (
+                            <div className="mt-1 text-slate-600">
+                              Applied to every subject/comparable pool-status difference.
                             </div>
                           )}
                         </div>
@@ -413,10 +431,12 @@ function DimensionTable({
                         {isCurrentApplied
                           ? impactPreview?.affectedCount
                             ? `Applied to ${impactPreview.affectedCount} Comparable${impactPreview.affectedCount === 1 ? '' : 's'}`
-                            : 'Applied - No Matching Difference'
+                            : 'Applied - No Current Difference'
                           : applied
                             ? 'Update Adjustment'
-                            : 'Apply Adjustment'}
+                            : hasAppliedDimension
+                              ? 'Apply & Replace Current Rate'
+                              : 'Apply Adjustment'}
                       </button>
                     </div>
                   </>

@@ -255,6 +255,26 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
 
   const address = resolveAddress(detail) || "—";
   const neighborhood = detail?.property_location?.neighborhood || "";
+  const ownerNameForProtest = useMemo(() => {
+    const owner: any = detail?.owner || {};
+    const primaryOwner = owner?.owner_name || owner?.name || "";
+    const multiOwner =
+      Array.isArray(owner?.multi_owner) && owner.multi_owner.length
+        ? owner.multi_owner[0]?.owner_name || owner.multi_owner[0]?.name || ""
+        : "";
+    const ownerHistory =
+      Array.isArray((detail as any)?.history?.owner_history) &&
+      (detail as any).history.owner_history.length
+        ? (detail as any).history.owner_history[0]?.owner || ""
+        : "";
+
+    return String(primaryOwner || multiOwner || ownerHistory).trim();
+  }, [detail]);
+  const protestUrl = accountId
+    ? `/signup?accountId=${encodeURIComponent(accountId)}${
+        ownerNameForProtest ? `&ownerName=${encodeURIComponent(ownerNameForProtest)}` : ""
+      }`
+    : "/signup";
 
   return (
     <div className="card bg-white shadow-lg overflow-hidden rounded-2xl" style={{ backgroundColor: "#ffffff" }}>
@@ -316,7 +336,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <Link
             to={accountId ? "/ComparableSalesAnalysis?propertyId=" + encodeURIComponent(accountId) : "#"}
             aria-label="Sales Comparison Approach"
@@ -348,6 +368,13 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           >
             Income Approach
           </button>
+          <Link
+            to={protestUrl}
+            aria-label="Property Tax Protest"
+            className="btn normal-case rounded-md px-4 py-2 bg-blue-600 border-blue-600 text-white hover:bg-blue-700 hover:border-blue-700"
+          >
+            Property Tax Protest
+          </Link>
         </div>
       </div>
     </div>

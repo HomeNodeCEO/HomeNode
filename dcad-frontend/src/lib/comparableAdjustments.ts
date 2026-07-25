@@ -86,5 +86,6 @@ export function calculateNumericGroupedAdjustment(
   const signedDifference = subjectValue > comparableValue
     ? marketDifference
     : -marketDifference;
-  return Math.round(signedDifference);
+  const roundedDifference = Math.round(signedDifference);
+  return roundedDifference === 0 ? 0 : roundedDifference;
 }

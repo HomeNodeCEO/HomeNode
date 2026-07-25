@@ -2,13 +2,16 @@ import { useMemo, useState } from 'react';
 import * as api from '@/lib/api';
 import type {
   GroupedAdjustmentOption,
+  GroupedAnalysesResponse,
+  GroupedAnalysisBreakdownKey,
   GroupedAnalysisDimension,
-  GroupedAnalysisResponse,
   GroupedAnalysisTransition,
 } from '@/lib/api';
 
 export type AppliedGroupedAdjustment = {
   id: string;
+  marketKey: GroupedAnalysisBreakdownKey;
+  marketLabel: string;
   dimensionKey: GroupedAnalysisDimension['key'];
   dimensionLabel: string;
   transitionId: string;
@@ -80,8 +83,12 @@ function reliabilityClasses(reliability: GroupedAdjustmentOption['reliability'])
   return 'bg-amber-100 text-amber-900';
 }
 
-function transitionKey(dimensionKey: GroupedAnalysisDimension['key'], transitionId: string) {
-  return `${dimensionKey}:${transitionId}`;
+function transitionKey(
+  marketKey: GroupedAnalysisBreakdownKey,
+  dimensionKey: GroupedAnalysisDimension['key'],
+  transitionId: string,
+) {
+  return `${marketKey}:${dimensionKey}:${transitionId}`;
 }
 
 function recommendedOption(transition: GroupedAnalysisTransition) {
@@ -93,14 +100,18 @@ function factoredAmount(amount: number, factorPercent: number) {
 }
 
 function buildAppliedAdjustment(
+  marketKey: GroupedAnalysisBreakdownKey,
+  marketLabel: string,
   dimension: GroupedAnalysisDimension,
   transition: GroupedAnalysisTransition,
   option: GroupedAdjustmentOption,
   factorPercent: number,
 ): AppliedGroupedAdjustment {
-  const id = transitionKey(dimension.key, transition.id);
+  const id = transitionKey(marketKey, dimension.key, transition.id);
   return {
     id,
+    marketKey,
+    marketLabel,
     dimensionKey: dimension.key,
     dimensionLabel: dimension.label,
     transitionId: transition.id,
@@ -118,6 +129,8 @@ function buildAppliedAdjustment(
 }
 
 function DimensionTable({
+  marketKey,
+  marketLabel,
   dimension,
   selections,
   factors,
@@ -128,6 +141,8 @@ function DimensionTable({
   onApply,
   onRemove,
 }: {
+  marketKey: GroupedAnalysisBreakdownKey;
+  marketLabel: string;
   dimension: GroupedAnalysisDimension;
   selections: Record<string, SelectedAdjustment>;
   factors: Record<string, string>;
@@ -202,7 +217,7 @@ function DimensionTable({
         </div>
         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           {dimension.transitions.map((transition) => {
-            const key = transitionKey(dimension.key, transition.id);
+            const key = transitionKey(marketKey, dimension.key, transition.id);
             const selectedOption = selections[key]?.option || recommendedOption(transition);
             const factorText = factors[key] ?? '100';
             const factorPercent = Number(factorText);
@@ -211,7 +226,14 @@ function DimensionTable({
               ? factoredAmount(selectedOption.amount, factorPercent)
               : null;
             const draftAdjustment = selectedOption && factorValid
-              ? buildAppliedAdjustment(dimension, transition, selectedOption, factorPercent)
+              ? buildAppliedAdjustment(
+                  marketKey,
+                  marketLabel,
+                  dimension,
+                  transition,
+                  selectedOption,
+                  factorPercent,
+                )
               : null;
             const impactPreview = draftAdjustment
               ? getImpactPreview(draftAdjustment)
@@ -256,6 +278,8 @@ function DimensionTable({
                                   nextFactor >= 0
                                 ) {
                                   onApply(buildAppliedAdjustment(
+                                    marketKey,
+                                    marketLabel,
                                     dimension,
                                     transition,
                                     option,
@@ -313,6 +337,8 @@ function DimensionTable({
                                 nextFactor >= 0
                               ) {
                                 onApply(buildAppliedAdjustment(
+                                  marketKey,
+                                  marketLabel,
                                   dimension,
                                   transition,
                                   selectedOption,
@@ -454,6 +480,28 @@ function DimensionTable({
   );
 }
 
+const BREAKDOWN_OPTIONS: Array<{
+  key: GroupedAnalysisBreakdownKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: 'city',
+    label: 'Entire subject city',
+    description: 'The existing citywide market study.',
+  },
+  {
+    key: 'zip',
+    label: 'Subject ZIP code',
+    description: 'Sales sharing the subject property’s five-digit ZIP code.',
+  },
+  ...([1, 2, 3, 4, 5] as const).map((miles) => ({
+    key: `radius_${miles}` as GroupedAnalysisBreakdownKey,
+    label: `Within ${miles} mile${miles === 1 ? '' : 's'}`,
+    description: `A cumulative radius including every eligible sale from 0 to ${miles} mile${miles === 1 ? '' : 's'} away.`,
+  })),
+];
+
 export default function GroupedAdjustmentAnalysis({
   subjectAccountId,
   appliedAdjustments,
@@ -468,25 +516,47 @@ export default function GroupedAdjustmentAnalysis({
   onRemoveAdjustment: (adjustmentId: string) => void;
 }) {
   const [active, setActive] = useState(false);
-  const [analysis, setAnalysis] = useState<GroupedAnalysisResponse | null>(null);
+  const [selectedBreakdowns, setSelectedBreakdowns] = useState<GroupedAnalysisBreakdownKey[]>([]);
+  const [analysisResult, setAnalysisResult] = useState<GroupedAnalysesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selections, setSelections] = useState<Record<string, SelectedAdjustment>>({});
   const [factors, setFactors] = useState<Record<string, string>>({});
   const asOfDate = useMemo(() => localDateString(), []);
 
+  const updateBreakdowns = (next: GroupedAnalysisBreakdownKey[]) => {
+    setSelectedBreakdowns(next);
+    setAnalysisResult(null);
+    setError(null);
+  };
+
+  const toggleBreakdown = (key: GroupedAnalysisBreakdownKey) => {
+    updateBreakdowns(
+      selectedBreakdowns.includes(key)
+        ? selectedBreakdowns.filter((item) => item !== key)
+        : [...selectedBreakdowns, key],
+    );
+  };
+
   const loadAnalysis = async () => {
     if (!subjectAccountId) {
       setError('A subject property is required before grouped analysis can run.');
       return;
     }
-    setActive(true);
-    if (analysis || loading) return;
+    if (!selectedBreakdowns.length) {
+      setError('Select at least one market breakdown before calculating results.');
+      return;
+    }
     setLoading(true);
+    setAnalysisResult(null);
     setError(null);
     try {
-      setAnalysis(
-        await api.getGroupedAdjustmentAnalysis(subjectAccountId, asOfDate),
+      setAnalysisResult(
+        await api.getGroupedAdjustmentAnalyses(
+          subjectAccountId,
+          selectedBreakdowns,
+          asOfDate,
+        ),
       );
     } catch (loadError) {
       setError(
@@ -514,7 +584,7 @@ export default function GroupedAdjustmentAnalysis({
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={() => void loadAnalysis()}
+            onClick={() => setActive(true)}
             className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
               active
                 ? 'bg-emerald-700 text-white shadow-sm'
@@ -524,57 +594,102 @@ export default function GroupedAdjustmentAnalysis({
             Grouped Analysis
           </button>
           <span className="text-xs text-slate-500">
-            Additional methodology buttons can be added alongside this one.
+            Choose one or more required market breakdowns before calculating results.
           </span>
         </div>
       </div>
 
       {active && (
         <div className="p-5">
+          <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <legend className="px-1 text-base font-semibold text-slate-900">
+              Required: choose market breakdowns
+            </legend>
+            <div className="mt-1 text-sm text-slate-600">
+              Select any combination or all seven. Distance studies are cumulative radii centered on the subject parcel.
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {BREAKDOWN_OPTIONS.map((option) => {
+                const checked = selectedBreakdowns.includes(option.key);
+                return (
+                  <label
+                    key={option.key}
+                    className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition ${
+                      checked
+                        ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-200'
+                        : 'border-slate-200 bg-white hover:border-slate-400'
+                    } ${loading ? 'cursor-not-allowed opacity-60' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={loading}
+                      onChange={() => toggleBreakdown(option.key)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
+                    />
+                    <span>
+                      <span className="block text-sm font-semibold text-slate-900">{option.label}</span>
+                      <span className="mt-0.5 block text-xs leading-5 text-slate-600">{option.description}</span>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={loading}
+                onClick={() => updateBreakdowns(BREAKDOWN_OPTIONS.map((option) => option.key))}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                disabled={loading || selectedBreakdowns.length === 0}
+                onClick={() => updateBreakdowns([])}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Clear selection
+              </button>
+              <button
+                type="button"
+                disabled={loading || selectedBreakdowns.length === 0}
+                onClick={() => void loadAnalysis()}
+                className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {loading
+                  ? 'Calculating selected breakdowns…'
+                  : `Calculate ${selectedBreakdowns.length || ''} selected breakdown${selectedBreakdowns.length === 1 ? '' : 's'}`}
+              </button>
+              <span className="text-xs font-medium text-slate-500">
+                {selectedBreakdowns.length} of {BREAKDOWN_OPTIONS.length} selected
+              </span>
+            </div>
+          </fieldset>
+
           {loading && (
-            <div className="rounded-lg bg-slate-50 px-4 py-5 text-sm text-slate-600">
-              Calculating the latest one-year groups…
+            <div className="mt-4 rounded-lg bg-slate-50 px-4 py-5 text-sm text-slate-600">
+              Calculating the latest one-year groups for each selected market area…
             </div>
           )}
           {error && (
-            <div className="rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <div className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
               {error}
             </div>
           )}
-          {analysis && (
+          {analysisResult && (
             <>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Market</div>
-                  <div className="mt-1 font-semibold text-slate-900">{analysis.market.label}</div>
+              {analysisResult.unavailable_breakdowns.length > 0 && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                  <div className="font-semibold">Some selected breakdowns are unavailable</div>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    {analysisResult.unavailable_breakdowns.map((item) => (
+                      <li key={item.key}>{item.label}: {item.reason}</li>
+                    ))}
+                  </ul>
                 </div>
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Study period</div>
-                  <div className="mt-1 font-semibold text-slate-900">
-                    {formatDate(analysis.period.start)} – {formatDate(analysis.period.end)}
-                  </div>
-                </div>
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Eligible sales</div>
-                  <div className="mt-1 text-xl font-semibold text-slate-900">
-                    {analysis.population.eligible_sale_count.toLocaleString()}
-                  </div>
-                </div>
-                <div className="rounded-lg bg-slate-50 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Applied studies</div>
-                  <div className="mt-1 text-xl font-semibold text-slate-900">
-                    {appliedEntries.length}
-                    <span className="ml-1 text-sm font-medium text-slate-500">
-                      across {appliedDimensionCount}/3 sections
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950">
-                This grouped analysis shows unadjusted market differences. Sale price can also reflect living area,
-                age, condition, and location, so sample strength and professional judgment remain important.
-              </div>
+              )}
 
               {appliedEntries.length > 0 && (
                 <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
@@ -589,7 +704,7 @@ export default function GroupedAdjustmentAnalysis({
                             {formatSignedCurrency(adjustment.amount)}
                           </span>
                           <span className="ml-1 text-xs text-slate-500">
-                            ({adjustment.optionLabel}, {formatNumber(adjustment.factorPercent, 0)}%)
+                            ({adjustment.marketLabel}; {adjustment.optionLabel}, {formatNumber(adjustment.factorPercent, 0)}%)
                           </span>
                         </div>
                         <button
@@ -606,32 +721,99 @@ export default function GroupedAdjustmentAnalysis({
                 </div>
               )}
 
-              <div className="mt-5 space-y-5">
-                {analysis.dimensions.map((dimension) => (
-                  <DimensionTable
-                    key={dimension.key}
-                    dimension={dimension}
-                    selections={selections}
-                    factors={factors}
-                    appliedAdjustments={appliedAdjustments}
-                    getImpactPreview={getImpactPreview}
-                    onSelect={(key, option) =>
-                      setSelections((current) => ({
-                        ...current,
-                        [key]: { option },
-                      }))
-                    }
-                    onFactorChange={(key, factor) =>
-                      setFactors((current) => ({
-                        ...current,
-                        [key]: factor,
-                      }))
-                    }
-                    onApply={onApplyAdjustment}
-                    onRemove={onRemoveAdjustment}
-                  />
+              <div className="mt-5 space-y-8">
+                {analysisResult.analyses.map((analysis) => (
+                  <section
+                    key={analysis.market.key}
+                    data-testid={`grouped-breakdown-${analysis.market.key}`}
+                    className="rounded-2xl border border-slate-300 bg-slate-50/40 p-4 md:p-5"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                          Selected market breakdown
+                        </div>
+                        <h3 className="mt-1 text-xl font-semibold text-slate-950">{analysis.market.label}</h3>
+                      </div>
+                      <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
+                        {analysis.market.scope === 'radius'
+                          ? `${analysis.market.radius_miles}-mile cumulative radius`
+                          : analysis.market.scope === 'zip'
+                            ? 'ZIP study'
+                            : 'Citywide study'}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+                      <div className="rounded-lg bg-white p-3 shadow-sm">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Market</div>
+                        <div className="mt-1 font-semibold text-slate-900">{analysis.market.label}</div>
+                      </div>
+                      <div className="rounded-lg bg-white p-3 shadow-sm">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Study period</div>
+                        <div className="mt-1 font-semibold text-slate-900">
+                          {formatDate(analysis.period.start)} – {formatDate(analysis.period.end)}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white p-3 shadow-sm">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Eligible sales</div>
+                        <div className="mt-1 text-xl font-semibold text-slate-900">
+                          {analysis.population.eligible_sale_count.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-white p-3 shadow-sm">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Applied studies</div>
+                        <div className="mt-1 text-xl font-semibold text-slate-900">
+                          {appliedEntries.length}
+                          <span className="ml-1 text-sm font-medium text-slate-500">
+                            across {appliedDimensionCount}/3 sections
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-950">
+                      These are unadjusted market differences for this selected area. Sale price can also reflect
+                      living area, age, condition, and location, so sample strength and professional judgment remain important.
+                    </div>
+
+                    <div className="mt-5 space-y-5">
+                      {analysis.dimensions.map((dimension) => (
+                        <DimensionTable
+                          key={`${analysis.market.key}:${dimension.key}`}
+                          marketKey={analysis.market.key}
+                          marketLabel={analysis.market.label}
+                          dimension={dimension}
+                          selections={selections}
+                          factors={factors}
+                          appliedAdjustments={appliedAdjustments}
+                          getImpactPreview={getImpactPreview}
+                          onSelect={(key, option) =>
+                            setSelections((current) => ({
+                              ...current,
+                              [key]: { option },
+                            }))
+                          }
+                          onFactorChange={(key, factor) =>
+                            setFactors((current) => ({
+                              ...current,
+                              [key]: factor,
+                            }))
+                          }
+                          onApply={onApplyAdjustment}
+                          onRemove={onRemoveAdjustment}
+                        />
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
+
+              {analysisResult.analyses.length === 0 && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                  None of the selected market breakdowns can be calculated for this subject.
+                </div>
+              )}
             </>
           )}
         </div>

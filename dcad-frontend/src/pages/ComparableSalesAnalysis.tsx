@@ -1594,7 +1594,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         ? 'garage space'
         : 'pool difference';
     const appliedText =
-      `${study.transitionLabel} study selected: ${signedAdjustment(study.baseAmount)} × ` +
+      `${study.marketLabel} — ${study.transitionLabel} study selected: ${signedAdjustment(study.baseAmount)} × ` +
       `${study.factorPercent}% = ${signedAdjustment(study.amount)} per ${unitLabel}`;
     const selectedCount = selectedSales.filter(Boolean).length;
     const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;

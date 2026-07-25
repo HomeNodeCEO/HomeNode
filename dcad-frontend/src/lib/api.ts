@@ -395,15 +395,27 @@ export interface GroupedAnalysisDimension {
   transitions: GroupedAnalysisTransition[];
 }
 
+export type GroupedAnalysisBreakdownKey =
+  | 'city'
+  | 'zip'
+  | 'radius_1'
+  | 'radius_2'
+  | 'radius_3'
+  | 'radius_4'
+  | 'radius_5';
+
 export interface GroupedAnalysisResponse {
   subject: {
     account_id: string;
     address: string | null;
   };
   market: {
-    scope: 'city';
-    city: string;
+    key: GroupedAnalysisBreakdownKey;
+    scope: 'city' | 'zip' | 'radius';
+    city: string | null;
     county: string | null;
+    postal_code: string | null;
+    radius_miles: number | null;
     label: string;
   };
   period: {
@@ -424,6 +436,24 @@ export interface GroupedAnalysisResponse {
     period_years: number;
   };
   dimensions: GroupedAnalysisDimension[];
+}
+
+export interface GroupedAnalysesResponse {
+  subject: {
+    account_id: string;
+    address: string | null;
+    city: string | null;
+    county: string | null;
+    postal_code: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  };
+  analyses: GroupedAnalysisResponse[];
+  unavailable_breakdowns: Array<{
+    key: GroupedAnalysisBreakdownKey;
+    label: string;
+    reason: string;
+  }>;
 }
 
 /** ---------------- API calls (DB only; no scraper) ---------------- */
@@ -535,6 +565,20 @@ export async function getGroupedAdjustmentAnalysis(
     as_of: asOf,
   });
   return fetchJSON<GroupedAnalysisResponse>(url, { timeoutMs: 90000 });
+}
+
+/** Build one or more selected grouped studies for the same subject and period. */
+export async function getGroupedAdjustmentAnalyses(
+  subjectAccountId: string,
+  breakdowns: GroupedAnalysisBreakdownKey[],
+  asOf?: string,
+): Promise<GroupedAnalysesResponse> {
+  const url = makeUrl('/api/sales/grouped-analysis', {
+    subject_account_id: subjectAccountId.trim(),
+    as_of: asOf,
+    breakdowns: breakdowns.join(','),
+  });
+  return fetchJSON<GroupedAnalysesResponse>(url, { timeoutMs: 120000 });
 }
 
 /**

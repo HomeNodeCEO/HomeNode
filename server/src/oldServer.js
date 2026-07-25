@@ -983,6 +983,11 @@ app.get("/api/sales/recommendations", async (req, res) => {
       SELECT
         sale.sale_id,
         sale.source_record_id,
+        (
+          SELECT source_record.listing_id
+          FROM core.sales_source_records source_record
+          WHERE source_record.id = sale.source_record_id
+        ) AS listing_id,
         sale.primary_account_id,
         sale.county,
         account.county AS account_county,
@@ -1324,6 +1329,11 @@ app.get("/api/sales", async (req, res) => {
       SELECT
         v.sale_id,
         v.source_record_id,
+        (
+          SELECT source_record.listing_id
+          FROM core.sales_source_records source_record
+          WHERE source_record.id = v.source_record_id
+        ) AS listing_id,
         v.primary_account_id,
         v.county,
         sale_account.neighborhood_code,

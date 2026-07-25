@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
-import * as api from "@/lib/api";
 
 /* =========================
    Types (relaxed for speed)
@@ -211,18 +210,13 @@ function SectionCard({
 }
 
 /* =========================================================================
-   AddressHero (carousel + top row + full-width 2x3 stat grid with icons)
+   AddressHero (property photos, identity, and appraisal approach actions)
    ========================================================================= */
 function AddressHero({ detail, accountId }: { detail: DcadDetail | null; accountId?: string }) {
   const [idx, setIdx] = useState(0);
-  // AddressHero: state for Overall Property Condition selection
-  const [propertyCondition, setPropertyCondition] = useState<string>('');
-  // Upload Photos UI and handlers — lives in AddressHero in src/pages/PropertyReport.tsx
-  const [userPhotos, setUserPhotos] = useState<string[]>([]);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const photos = useMemo<string[]>(() => {
-    const fromApi = (detail as any)?.photos as string[] | undefined;
+    const fromApi = detail?.photos;
     if (fromApi && fromApi.length > 0) return fromApi;
     return [
       "https://images.unsplash.com/photo-1568605114967-8130f3a36994?q=80&w=2100&auto=format&fit=crop",
@@ -230,282 +224,48 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
       "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?q=80&w=2100&auto=format&fit=crop",
     ];
   }, [detail]);
-  const displayPhotos = useMemo<string[]>(() => [...userPhotos, ...photos], [userPhotos, photos]);
 
-  const canSlide = displayPhotos.length > 1;
-  const goPrev = () => setIdx((p) => (p - 1 + displayPhotos.length) % displayPhotos.length);
-  const goNext = () => setIdx((p) => (p + 1) % displayPhotos.length);
+  const canSlide = photos.length > 1;
+  const goPrev = () => setIdx((current) => (current - 1 + photos.length) % photos.length);
+  const goNext = () => setIdx((current) => (current + 1) % photos.length);
+
   useEffect(() => {
-    if (displayPhotos.length && idx >= displayPhotos.length) setIdx(0);
-  }, [displayPhotos.length]);
+    if (photos.length && idx >= photos.length) setIdx(0);
+  }, [idx, photos.length]);
 
-  const handleUploadClick = () => fileInputRef.current?.click();
-  const onSelectFiles = (e: any) => {
-    const files: File[] = Array.from(e?.target?.files || []);
-    if (!files.length) return;
-    const urls = files.map((f) => URL.createObjectURL(f));
-    setUserPhotos((prev) => [...prev, ...urls]);
-    // reset input so selecting same files again re-triggers change
-    if (e?.target) e.target.value = '';
+  type AddressDetail = DcadDetail & {
+    address?: unknown;
+    situs_address?: unknown;
+    location_address?: unknown;
+    property_location?: NonNullable<DcadDetail["property_location"]> & {
+      situs_address?: unknown;
+    };
   };
-
-  // Prefer nested property_location.address, but gracefully fallback to common backend fields
-  const resolveAddress = (d: any): string => {
-    const a =
-      d?.property_location?.address ??
-      d?.address ??
-      d?.situs_address ??
-      d?.property_location?.situs_address ??
-      d?.location_address ??
+  const resolveAddress = (value: DcadDetail | null): string => {
+    const source = value as AddressDetail | null;
+    const address =
+      source?.property_location?.address ??
+      source?.address ??
+      source?.situs_address ??
+      source?.property_location?.situs_address ??
+      source?.location_address ??
       "";
-    return typeof a === "string" ? a.trim() : String(a || "").trim();
+    return typeof address === "string" ? address.trim() : String(address || "").trim();
   };
+
   const address = resolveAddress(detail) || "—";
   const neighborhood = detail?.property_location?.neighborhood || "";
-  const mapsco = detail?.property_location?.mapsco || "";
-
-  const jurisdictions = ["County", "School", "City", "Hospital", "Other"];
-
-  // ---- money helpers (local) ----
-  const currency = (n: number | null | undefined) =>
-    typeof n === "number"
-      ? new Intl.NumberFormat("en-US", {
-          style: "currency",
-          currency: "USD",
-          maximumFractionDigits: 0,
-        }).format(n)
-      : "—";
-
-  const parseMoney = (s?: string | number | null): number | null => {
-    if (s === null || s === undefined) return null;
-    if (typeof s === "number") return s;
-    const cleaned = String(s).replace(/[^0-9.-]/g, "");
-    const n = Number(cleaned);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  // Prefer the raw JSON string if present; otherwise format the parsed number.
-  const showMoney = (raw?: string | number | null): string => {
-    if (raw === null || raw === undefined || raw === "") return "—";
-    const n = typeof raw === "number" ? raw : Number(String(raw).replace(/[^0-9.-]/g, ""));
-    if (Number.isFinite(n)) return currency(n as number);
-    return String(raw);
-  };
-
-  const v = detail?.value_summary;
-  const marketValNum = parseMoney(v?.market_value);
-  const assessValNum = parseMoney(v?.capped_value) ?? marketValNum;
-  const improvementValNum = parseMoney(v?.improvement_value);
-  const landValNum = parseMoney(v?.land_value);
-  const cappedLossNum =
-    marketValNum != null && assessValNum != null ? Math.max(0, marketValNum - assessValNum) : null;
-
-  const taxAgent = v?.tax_agent || "-";
-
-  // Owner name for CTA (used to prefill signup form when navigating)
-  const ownerNameForCta = useMemo(() => {
-    const o: any = (detail as any)?.owner || {};
-    const fromOwner = o?.owner_name || o?.name || '';
-    const fromMulti = Array.isArray(o?.multi_owner) && o.multi_owner.length
-      ? (o.multi_owner[0]?.owner_name || o.multi_owner[0]?.name || '')
-      : '';
-    const fromHistory = Array.isArray((detail as any)?.history?.owner_history) && (detail as any).history.owner_history.length
-      ? ((detail as any).history.owner_history[0]?.owner || '')
-      : '';
-    return String(fromOwner || fromMulti || fromHistory || '').trim();
-  }, [detail]);
-
-  /* ---------- Icon primitives (inline SVGs) ---------- */
-  const IconBox = ({
-    children,
-    colorClass,
-    colorStyle,
-  }: {
-    children: ReactNode;
-    colorClass?: string;
-    colorStyle?: React.CSSProperties;
-  }) => (
-    <div
-      className={`flex items-center justify-center rounded-md border shrink-0 ${colorClass || ""}`}
-      style={{
-        backgroundColor: "#e2e8f0", // icon square fill
-        borderColor: "#e2e8f0", // icon square outline
-        height: "2.5rem",
-        width: "2.5rem",
-        ...(colorStyle || {}),
-      }}
-    >
-      {children}
-    </div>
-  );
-
-  const DollarIcon = () => <span className="font-bold text-lg leading-none">$</span>;
-
-  const CourthouseIcon = () => (
-    <svg
-      viewBox="0 0 24 24"
-      className="w-6 h-6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M3 10h18" />
-      <path d="M5 10 12 6l7 4" />
-      <path d="M6 10v8M12 10v8M18 10v8" />
-      <path d="M9 18h6" />
-    </svg>
-  );
-
-  const TrendingDownIcon = () => (
-    <svg
-      viewBox="0 0 24 24"
-      className="w-6 h-6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 16l-6-6-4 4-6-6" />
-      <path d="M21 16h-6v-6" />
-    </svg>
-  );
-
-  const BuildingIcon = () => (
-    <svg
-      viewBox="0 0 24 24"
-      className="w-6 h-6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="6" y="3" width="12" height="18" rx="1" />
-      <path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2M12 21v-4" />
-    </svg>
-  );
-
-  const MapPinIcon = () => (
-    <svg
-      viewBox="0 0 24 24"
-      className="w-6 h-6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 22s-7-5.5-7-10a7 7 0 1 1 14 0c0 4.5-7 10-7 10z" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-
-  const PersonTieIcon = () => (
-    <svg
-      viewBox="0 0 24 24"
-      className="w-6 h-6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="7" r="3" />
-      <path d="M6 21v-3a6 6 0 0 1 12 0v3" />
-      <path d="M12 10l1 2-1 2-1-2 1-2z" />
-    </svg>
-  );
-
-  // Modal state for Market Value History (simple inline modal)
-  const [mvOpen, setMvOpen] = useState(false);
-  const [mvLoading, setMvLoading] = useState(false);
-  const [mvErr, setMvErr] = useState<string | null>(null);
-  const [mvRows, setMvRows] = useState<api.MarketValueHistoryRow[] | null>(null);
-
-  const openMvHistory = async () => {
-    if (!accountId) return;
-    setMvOpen(true);
-    if (mvRows && mvRows.length) return;
-    setMvLoading(true);
-    setMvErr(null);
-    try {
-      const data = await api.getMarketValueHistory(accountId);
-      setMvRows(Array.isArray(data) ? data : []);
-    } catch (e: any) {
-      setMvErr(e?.message || 'Failed to load history');
-    } finally {
-      setMvLoading(false);
-    }
-  };
-  const StatBox = ({
-    label,
-    value,
-    cta,
-    icon,
-    onClick,
-  }: {
-    label: string;
-    value: string;
-    cta: string;
-    icon: ReactNode;
-    onClick?: () => void;
-  }) => (
-    <div
-      className="rounded-lg border shadow p-3"
-      style={{ backgroundColor: "#f4f7fa", borderColor: "#d7e1ea" }}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          {icon}
-          <div className="min-w-0">
-            <div className="text-xl uppercase tracking-wide opacity-60 font-medium">
-              {label}
-            </div>
-            <div className="text-xl font-semibold mt-0.5 truncate">{value}</div>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClick}
-          className="btn btn-sm normal-case rounded-md px-4 py-2 bg-green-600 border-green-600 text-white hover:bg-green-700 hover:border-green-700"
-        >
-          {cta}
-        </button>
-      </div>
-    </div>
-  );
 
   return (
     <div className="card bg-white shadow-lg overflow-hidden rounded-2xl" style={{ backgroundColor: "#ffffff" }}>
-      {/* Slider */}
       <figure className="relative">
-        {/* Reduce hero image height to ~half while keeping full width */}
         <img
-          src={displayPhotos[idx]}
+          src={photos[idx]}
           alt="Property"
           className="w-full object-cover select-none"
           style={{ height: 250 }}
           draggable={false}
         />
-        {/* Upload Photos button (top-right of photo) */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={onSelectFiles}
-        />
-        <button
-          type="button"
-          onClick={handleUploadClick}
-          className="absolute top-3 right-3 z-20 btn btn-sm normal-case bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
-        >
-          Upload Photos
-        </button>
         {canSlide && (
           <>
             <button
@@ -514,7 +274,9 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
               aria-label="Previous image"
               className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-gray-300/95 hover:bg-gray-400 text-gray-800 flex items-center justify-center shadow-lg border border-gray-400/70 ring-1 ring-gray-400/40 backdrop-blur-[1px] focus:outline-none focus:ring-2 focus:ring-white/90"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 19l-7-7 7-7" /></svg>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 19l-7-7 7-7" />
+              </svg>
             </button>
             <button
               type="button"
@@ -522,17 +284,22 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
               aria-label="Next image"
               className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-gray-300/95 hover:bg-gray-400 text-gray-800 flex items-center justify-center shadow-lg border border-gray-400/70 ring-1 ring-gray-400/40 backdrop-blur-[1px] focus:outline-none focus:ring-2 focus:ring-white/90"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 5l7 7-7 7" /></svg>
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 5l7 7-7 7" />
+              </svg>
             </button>
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 rounded-full bg-black/30 px-3 py-1.5 flex gap-1.5 backdrop-blur-[1px]">
-              {displayPhotos.map((_, i) => (
+              {photos.map((_, imageIndex) => (
                 <button
-                  key={i}
-                  onClick={() => setIdx(i)}
-                  aria-label={`Go to image ${i + 1}`}
+                  key={imageIndex}
+                  type="button"
+                  onClick={() => setIdx(imageIndex)}
+                  aria-label={"Go to image " + (imageIndex + 1)}
                   className={
                     "h-2.5 w-2.5 rounded-full border transition " +
-                    (i === idx ? "bg-gray-300 border-gray-200" : "bg-white/70 hover:bg-white border-white/80")
+                    (imageIndex === idx
+                      ? "bg-gray-300 border-gray-200"
+                      : "bg-white/70 hover:bg-white border-white/80")
                   }
                 />
               ))}
@@ -541,214 +308,47 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
         )}
       </figure>
 
-      {/* Body */}
       <div className="card-body p-4 bg-white" style={{ backgroundColor: "#ffffff" }}>
-        {/* Top row: LEFT (address + chips) | RIGHT (actions) */}
-        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
-          {/* LEFT */}
-          <div className="flex-1">
-            <div className="text-xl font-semibold">{address}</div>
-            <div className="text-sm opacity-70">
-              {neighborhood && <span>Neighborhood: {neighborhood}</span>}
-              {neighborhood && mapsco ? <span> · </span> : null}
-              {mapsco && <span>MAPSCO: {mapsco}</span>}
-            </div>
-
-            {/* Removed jurisdiction chips (County, School, City, Hospital, Other) as requested */}
-          </div>
-
-          {/* RIGHT */}
-          <div className="flex items-center gap-2 self-start md:self-auto">
-            {/* (moved) Sign Up CTA */}
-            {/* Removed Generate Protest Packet button (relocated as Submit below condition) */}
-            <button
-              type="button"
-              aria-label="Open change log"
-              className="btn normal-case px-5 py-2 rounded-md bg-blue-700 border-blue-700 text-white hover:bg-blue-800 hover:border-blue-800"
-            >
-              Change Log
-            </button>
-            <button
-              type="button"
-              aria-label="Generate PDF"
-              className="btn normal-case px-5 py-2 rounded-md bg-red-600 border-red-600 text-white hover:bg-red-700 hover:border-red-700"
-            >
-              Generate PDF
-            </button>
+        <div>
+          <div className="text-xl font-semibold">{address}</div>
+          <div className="text-sm opacity-70">
+            Neighborhood Code: {neighborhood || "—"}
           </div>
         </div>
 
-        {/* FULL-WIDTH 2x3 stats grid (with icons & colors) */}
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-          <StatBox
-            label="Market Value"
-            value={showMoney(v?.market_value)}
-            cta="History"
-            onClick={openMvHistory}
-            icon={
-              <IconBox colorClass="text-green-700">
-                <DollarIcon />
-              </IconBox>
+        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+          <Link
+            to={accountId ? "/ComparableSalesAnalysis?propertyId=" + encodeURIComponent(accountId) : "#"}
+            aria-label="Sales Comparison Approach"
+            aria-disabled={!accountId}
+            className={
+              "btn normal-case rounded-md px-4 py-2 " +
+              (accountId
+                ? "bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
+                : "pointer-events-none bg-slate-200 border-slate-200 text-slate-500")
             }
-          />
-
-          <StatBox
-            label="Assessed Value"
-            value={showMoney(v?.capped_value ?? v?.market_value)}
-            cta="History"
-            icon={
-              <IconBox colorClass="text-blue-700">
-                <CourthouseIcon />
-              </IconBox>
-            }
-          />
-
-          <StatBox
-            label="Land Value"
-            value={showMoney(v?.land_value)}
-            cta="Sales"
-            icon={
-              <IconBox colorClass="text-orange-600">
-                <MapPinIcon />
-              </IconBox>
-            }
-          />
-
-          <StatBox
-            label="Improvement Value"
-            value={showMoney(v?.improvement_value)}
-            cta="Cost"
-            icon={
-              <IconBox colorClass="text-purple-700">
-                <BuildingIcon />
-              </IconBox>
-            }
-          />
-
-          <StatBox
-            label="Cap Loss"
-            value={showMoney(cappedLossNum)}
-            cta="Detail"
-            icon={
-              <IconBox colorClass="text-red-700">
-                <TrendingDownIcon />
-              </IconBox>
-            }
-          />
-
-          <StatBox
-            label="Tax Agent"
-            value={taxAgent}
-            cta="Data"
-            icon={
-              <IconBox colorStyle={{ color: "#8b4513" }}>
-                <PersonTieIcon />
-              </IconBox>
-            }
-          />
+          >
+            Sales Comparison Approach
+          </Link>
+          <button
+            type="button"
+            disabled
+            title="Cost Approach is coming soon"
+            aria-label="Cost Approach coming soon"
+            className="btn normal-case rounded-md px-4 py-2 bg-slate-200 border-slate-200 text-slate-500"
+          >
+            Cost Approach
+          </button>
+          <button
+            type="button"
+            disabled
+            title="Income Approach is coming soon"
+            aria-label="Income Approach coming soon"
+            className="btn normal-case rounded-md px-4 py-2 bg-slate-200 border-slate-200 text-slate-500"
+          >
+            Income Approach
+          </button>
         </div>
-        {/* Overall Property Condition (AddressHero extras) */}
-        {/* NOTE: Lives in AddressHero under the stat tiles */}
-        <div className="mt-4 rounded-2xl border p-4" style={{ backgroundColor: '#f4f7fa', borderColor: '#d7e1ea' }}>
-          <div className="text-base font-semibold text-slate-900">Overall Property Condition</div>
-          <div className="text-xs text-slate-600 mt-1">
-            Select the option that best describes your property's current overall condition
-          </div>
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
-            {[
-              'My home has significant damage',
-              'My home has some repair needs',
-              'My home is adequately maintained',
-              'My home has some upgrades',
-              'My home has been remodeled',
-            ].map((label, i) => (
-              <label key={i} className="inline-flex items-center gap-2 text-sm text-slate-800">
-                <input
-                  type="radio"
-                  name="overall-condition"
-                  value={label}
-                  checked={propertyCondition === label}
-                  onChange={() => setPropertyCondition(label)}
-                  className="h-4 w-4 border-slate-300 text-slate-700 focus:ring-slate-500"
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-        {/* Submit action for AddressHero (moved from top-right controls) */}
-        <div className="mt-3 flex justify-end">
-          {/* Move Sign Up CTA next to sample evidence button */}
-          <div className="flex items-center gap-2">
-            <Link
-              to={accountId ? `/signup?accountId=${encodeURIComponent(accountId)}${ownerNameForCta ? `&ownerName=${encodeURIComponent(ownerNameForCta)}` : ''}` : '/signup'}
-              aria-label="Sign up (No upfront cost)"
-              className="btn normal-case px-4 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
-            >
-              Sign Up Here (No Upfront Cost)
-            </Link>
-            {/* Moved Sign Up CTA next to Sample Evidence Packet at bottom */}
-            <Link
-              to={(() => {
-                if (!accountId) return "#";
-                const base = `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`;
-                const s = (propertyCondition || '').toLowerCase();
-                // CONDITION_CODE_MAPPING: convert radio selection to condCode for grids
-                const code = (() => {
-                  if (s.includes('significant damage')) return 'C5';
-                  if (s.includes('repair')) return 'C4';
-                  if (s.includes('adequately maintained') || s.includes('adequate')) return 'C3';
-                  if (s.includes('some upgrades')) return 'C3+';
-                  if (s.includes('remodeled')) return 'C2';
-                  return '';
-                })();
-                return code ? `${base}&condCode=${encodeURIComponent(code)}` : base;
-              })()}
-              aria-label="Sample Evidence Packet"
-              className="btn normal-case px-5 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
-            >
-              Sample Evidence Packet
-            </Link>
-          </div>
-        </div>
-        {/* Market Value History Modal */}
-        {mvOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center">
-            <div className="absolute inset-0 bg-black/30" onClick={() => setMvOpen(false)}></div>
-            <div className="relative z-10 bg-white rounded-xl shadow-xl border border-slate-200 w-[min(92vw,520px)] max-h-[80vh] overflow-hidden">
-              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-                <div className="font-semibold">Market Value History</div>
-                <button className="text-slate-600 hover:text-slate-800" onClick={() => setMvOpen(false)} aria-label="Close">✕</button>
-              </div>
-              <div className="p-4 overflow-auto">
-                {mvLoading && <div className="text-sm text-slate-600">Loading…</div>}
-                {mvErr && <div className="text-sm text-red-600">{mvErr}</div>}
-                {!mvLoading && !mvErr && (
-                  mvRows && mvRows.length ? (
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="text-slate-600">
-                          <th className="text-left py-2">Year</th>
-                          <th className="text-right py-2">Market Value</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                      {mvRows.map((r, i) => (
-                        <tr key={i} className="border-t border-slate-200">
-                          <td className="py-2">{r.tax_year}</td>
-                          <td className="py-2 text-right">{showMoney((r as any).market_value ?? (r as any).total_value)}</td>
-                        </tr>
-                      ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="text-sm text-slate-600">No market value history.</div>
-                  )
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -1002,7 +602,44 @@ function Collapsible({ title, defaultOpen = false, children }: { title: string; 
   );
 }
 
-/* (Value Summary card removed; information shown in Address Hero) */
+function AppraisalDistrictData({ detail }: { detail: DcadDetail | null }) {
+  const values = detail?.value_summary;
+  const parseMoney = (value?: string | number | null): number | null => {
+    if (value === null || value === undefined || value === "") return null;
+    const parsed = typeof value === "number"
+      ? value
+      : Number(String(value).replace(/[^0-9.-]/g, ""));
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const formatMoney = (value?: string | number | null): string => {
+    const parsed = parseMoney(value);
+    return parsed === null
+      ? "—"
+      : new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+          maximumFractionDigits: 0,
+        }).format(parsed);
+  };
+
+  const marketValue = parseMoney(values?.market_value);
+  const assessedValue = parseMoney(values?.capped_value) ?? marketValue;
+  const capLoss =
+    marketValue !== null && assessedValue !== null
+      ? Math.max(0, marketValue - assessedValue)
+      : null;
+
+  return (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <LabelValue label="Market Value" value={formatMoney(values?.market_value)} />
+      <LabelValue label="Assessed Value" value={formatMoney(values?.capped_value ?? values?.market_value)} />
+      <LabelValue label="Land Value" value={formatMoney(values?.land_value)} />
+      <LabelValue label="Improvement Value" value={formatMoney(values?.improvement_value)} />
+      <LabelValue label="Cap Loss" value={formatMoney(capLoss)} />
+      <LabelValue label="Tax Agent" value={values?.tax_agent || "—"} />
+    </div>
+  );
+}
 
 function PropertySpecs({ detail }: { detail: DcadDetail | null }) {
   const m = detail?.main_improvement as any;
@@ -1600,6 +1237,15 @@ export default function PropertyReport() {
 
         {/* Address hero (full width) */}
         <AddressHero detail={detail} accountId={account} />
+
+        {/* Appraisal district values (full width, default collapsed) */}
+        <div className="card bg-white shadow-sm rounded-2xl">
+          <div className="card-body p-4">
+            <Collapsible title="Appraisal District Data" defaultOpen={false}>
+              <AppraisalDistrictData detail={detail} />
+            </Collapsible>
+          </div>
+        </div>
 
         {/* Ownership (full width) */}
         <OwnerAndLegal detail={detail} />

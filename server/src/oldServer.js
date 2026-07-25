@@ -1667,12 +1667,23 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
               )
             )
         ),
+        living_area_ranked AS (
+          SELECT
+            eligible.*,
+            NTILE(10) OVER (
+              ORDER BY living_area, sale_price, closing_date
+            ) AS living_area_group
+          FROM eligible
+          WHERE living_area > 0
+        ),
         coverage AS (
           SELECT
             COUNT(*)::integer AS eligible_sale_count,
             COUNT(bathrooms_total)::integer AS bathroom_sale_count,
             COUNT(garage_spaces)::integer AS garage_sale_count,
             COUNT(pool_yn)::integer AS pool_sale_count,
+            (COUNT(living_area) FILTER (WHERE living_area > 0))::integer
+              AS living_area_sale_count,
             (SELECT period_end FROM parameters) AS period_end,
             (
               SELECT (period_end - INTERVAL '1 year')::date
@@ -1704,6 +1715,10 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
               AS average_living_area,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY living_area)
               FILTER (WHERE living_area > 0) AS median_living_area,
+            MIN(living_area) FILTER (WHERE living_area > 0)
+              AS minimum_living_area,
+            MAX(living_area) FILTER (WHERE living_area > 0)
+              AS maximum_living_area,
             AVG(days_on_market) FILTER (WHERE days_on_market >= 0)
               AS average_days_on_market,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY days_on_market)
@@ -1737,6 +1752,10 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
               AS average_living_area,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY living_area)
               FILTER (WHERE living_area > 0) AS median_living_area,
+            MIN(living_area) FILTER (WHERE living_area > 0)
+              AS minimum_living_area,
+            MAX(living_area) FILTER (WHERE living_area > 0)
+              AS maximum_living_area,
             AVG(days_on_market) FILTER (WHERE days_on_market >= 0)
               AS average_days_on_market,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY days_on_market)
@@ -1770,6 +1789,10 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
               AS average_living_area,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY living_area)
               FILTER (WHERE living_area > 0) AS median_living_area,
+            MIN(living_area) FILTER (WHERE living_area > 0)
+              AS minimum_living_area,
+            MAX(living_area) FILTER (WHERE living_area > 0)
+              AS maximum_living_area,
             AVG(days_on_market) FILTER (WHERE days_on_market >= 0)
               AS average_days_on_market,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY days_on_market)
@@ -1777,6 +1800,39 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
           FROM eligible
           WHERE pool_yn IS NOT NULL
           GROUP BY pool_yn
+
+          UNION ALL
+
+          SELECT
+            'living_area'::text AS dimension,
+            living_area_group::text AS group_value,
+            COUNT(*)::integer AS sample_size,
+            MIN(sale_price) AS minimum_sale_price,
+            MAX(sale_price) AS maximum_sale_price,
+            AVG(sale_price) AS average_sale_price,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price) AS median_sale_price,
+            percentile_cont(0.25) WITHIN GROUP
+              (ORDER BY sale_price) AS lower_quartile_sale_price,
+            percentile_cont(0.75) WITHIN GROUP
+              (ORDER BY sale_price) AS upper_quartile_sale_price,
+            stddev_samp(sale_price) AS sale_price_standard_deviation,
+            AVG(sale_price / living_area)
+              AS average_price_per_square_foot,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price / living_area)
+              AS median_price_per_square_foot,
+            AVG(living_area) AS average_living_area,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY living_area) AS median_living_area,
+            MIN(living_area) AS minimum_living_area,
+            MAX(living_area) AS maximum_living_area,
+            AVG(days_on_market) FILTER (WHERE days_on_market >= 0)
+              AS average_days_on_market,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY days_on_market)
+              FILTER (WHERE days_on_market >= 0) AS median_days_on_market
+          FROM living_area_ranked
+          GROUP BY living_area_group
         )
         SELECT dimension_rows.*, coverage.*
         FROM dimension_rows
@@ -1785,7 +1841,8 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
           CASE dimension
             WHEN 'bathrooms' THEN 1
             WHEN 'garage' THEN 2
-            ELSE 3
+            WHEN 'pool' THEN 3
+            ELSE 4
           END,
           CASE
             WHEN dimension = 'pool' AND group_value = 'false' THEN 0
@@ -1835,6 +1892,7 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
           bathroom_sale_count: Number(coverageRow.bathroom_sale_count || 0),
           garage_sale_count: Number(coverageRow.garage_sale_count || 0),
           pool_sale_count: Number(coverageRow.pool_sale_count || 0),
+          living_area_sale_count: Number(coverageRow.living_area_sale_count || 0),
         },
         filters: {
           record_type: "closed_sale",

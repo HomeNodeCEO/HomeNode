@@ -2,7 +2,9 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState, useRef } from 'react';
 import * as api from '@/lib/api';
 import type { ComparableRecommendationsResponse, SalePhoto, SaleRow } from '@/lib/api';
-import GroupedAdjustmentAnalysis from '@/components/GroupedAdjustmentAnalysis';
+import GroupedAdjustmentAnalysis, {
+  type AppliedGroupedAdjustment,
+} from '@/components/GroupedAdjustmentAnalysis';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 
@@ -118,6 +120,82 @@ function MlsPhoto({
   );
 }
 
+function finiteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function bathroomGroupValue(
+  totalInteger: unknown,
+  fullBaths: unknown,
+  halfBaths: unknown,
+  cadBathCount?: unknown,
+): number | null {
+  const explicitTotal = finiteNumber(totalInteger);
+  if (explicitTotal !== null && explicitTotal >= 0) return Math.round(explicitTotal);
+
+  const full = finiteNumber(fullBaths);
+  const half = finiteNumber(halfBaths);
+  if (full !== null || half !== null) {
+    return Math.max(0, Math.round(full || 0) + Math.round(half || 0));
+  }
+
+  const cadCount = finiteNumber(cadBathCount);
+  if (cadCount === null || cadCount < 0) return null;
+  const whole = Math.floor(cadCount);
+  const halfCount = Math.round((cadCount - whole) * 10);
+  return whole + Math.max(0, halfCount);
+}
+
+function booleanValue(value: unknown): boolean | null {
+  if (value === true || value === false) return value;
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (['true', 't', 'yes', 'y', '1'].includes(normalized)) return true;
+  if (['false', 'f', 'no', 'n', '0', 'none'].includes(normalized)) return false;
+  return null;
+}
+
+function garageSpacesFromArea(value: unknown): number | null {
+  const area = finiteNumber(value);
+  if (area === null || area <= 0) return null;
+  return Math.max(1, Math.min(12, Math.round(area / 225)));
+}
+
+function calculateNumericGroupedAdjustment(
+  adjustments: AppliedGroupedAdjustment[],
+  dimensionKey: 'bathrooms' | 'garage',
+  subjectValue: number | null,
+  comparableValue: number | null,
+): number {
+  if (subjectValue === null || comparableValue === null || subjectValue === comparableValue) return 0;
+  const low = Math.min(subjectValue, comparableValue);
+  const high = Math.max(subjectValue, comparableValue);
+  const marketDifference = adjustments
+    .filter((adjustment) => (
+      adjustment.dimensionKey === dimensionKey &&
+      typeof adjustment.fromGroupValue === 'number' &&
+      typeof adjustment.toGroupValue === 'number' &&
+      adjustment.fromGroupValue >= low &&
+      adjustment.toGroupValue <= high
+    ))
+    .reduce((total, adjustment) => total + adjustment.amount, 0);
+
+  return subjectValue > comparableValue ? marketDifference : -marketDifference;
+}
+
+function calculatePoolGroupedAdjustment(
+  adjustments: AppliedGroupedAdjustment[],
+  subjectValue: boolean | null,
+  comparableValue: boolean | null,
+): number {
+  if (subjectValue === null || comparableValue === null || subjectValue === comparableValue) return 0;
+  const poolAdjustment = adjustments
+    .filter((adjustment) => adjustment.dimensionKey === 'pool')
+    .reduce((total, adjustment) => total + adjustment.amount, 0);
+  return subjectValue ? poolAdjustment : -poolAdjustment;
+}
+
 export default function ComparableSalesAnalysis() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -196,6 +274,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>(
     () => Array(COMPARABLE_COUNT).fill(null),
   );
+  const [appliedGroupedAdjustments, setAppliedGroupedAdjustments] = useState<
+    Record<string, AppliedGroupedAdjustment>
+  >({});
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesError, setSalesError] = useState<string | null>(null);
   const [salesNotice, setSalesNotice] = useState<string | null>(null);
@@ -217,6 +298,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   });
   const [housingEditSaving, setHousingEditSaving] = useState(false);
   const [housingEditError, setHousingEditError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAppliedGroupedAdjustments({});
+  }, [propertyId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1320,15 +1405,99 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     });
   }, [compPrices]);
 
-  // SALES/EQUITY: Room Count adjustments logic (Beds + Baths)
-  // - Bedroom count adjustment: set to $0 for all comparables (for now)
-  // - Bathroom count adjustment: Comp1 +$3,000; Comp2 -$3,000; Comp3 +$1,500; Comp4 $0
-  // The Room Count adjustment per comparable is the sum of BedAdj + BathAdj
+  const appliedGroupedAdjustmentEntries = useMemo(
+    () => Object.values(appliedGroupedAdjustments),
+    [appliedGroupedAdjustments],
+  );
+  const subjectBathroomGroup = useMemo(
+    () => bathroomGroupValue(
+      null,
+      subject?.baths_full,
+      subject?.baths_half,
+      subject?.bath_count,
+    ),
+    [subject?.baths_full, subject?.baths_half, subject?.bath_count],
+  );
+  const subjectGarageGroup = useMemo(
+    () => garageSpacesFromArea(subject?.garage_area_sqft),
+    [subject?.garage_area_sqft],
+  );
+  const subjectPoolGroup = useMemo(
+    () => booleanValue(subject?.pool),
+    [subject?.pool],
+  );
+  const comparableBathroomGroups = useMemo(
+    () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
+      const sale = selectedSales[index];
+      if (sale) {
+        return bathroomGroupValue(
+          sale.mls_bathrooms_total_integer,
+          sale.mls_bathrooms_full ?? sale.cad_baths_full,
+          sale.mls_bathrooms_half ?? sale.cad_baths_half,
+          sale.cad_bath_count,
+        );
+      }
+      return bathroomGroupValue(
+        null,
+        compRooms[index]?.full,
+        compRooms[index]?.half,
+      );
+    }),
+    [selectedSales, compRooms],
+  );
+  const comparableGarageGroups = useMemo(
+    () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
+      const sale = selectedSales[index];
+      const explicitSpaces = finiteNumber(sale?.mls_garage_spaces);
+      if (explicitSpaces !== null && explicitSpaces >= 0) return Math.round(explicitSpaces);
+      if (sale?.mls_garage_yn === false) return 0;
+      return garageSpacesFromArea(compGarage[index]);
+    }),
+    [selectedSales, compGarage],
+  );
+  const comparablePoolGroups = useMemo(
+    () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
+      const sale = selectedSales[index];
+      return booleanValue(sale?.mls_pool_yn ?? sale?.cad_pool);
+    }),
+    [selectedSales],
+  );
+
+  // SALES/EQUITY: Room Count adjustments logic (Beds + Baths).
+  // Bathroom adjustments are assembled from every adjacent grouped study the user applies.
   const roomCountBedAdjustments = useMemo<number[]>(() => Array(COMPARABLE_COUNT).fill(0), []);
-  const roomCountBathAdjustments = useMemo<number[]>(() => [3000, -3000, 1500, 0, 0, 0], []);
+  const roomCountBathAdjustments = useMemo<number[]>(
+    () => comparableBathroomGroups.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'bathrooms',
+        subjectBathroomGroup,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectBathroomGroup, comparableBathroomGroups],
+  );
   const roomCountTotalAdjustments = useMemo<number[]>(
     () => roomCountBedAdjustments.map((b, i) => b + (roomCountBathAdjustments[i] ?? 0)),
     [roomCountBedAdjustments, roomCountBathAdjustments]
+  );
+  const garageAdjustments = useMemo<number[]>(
+    () => comparableGarageGroups.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'garage',
+        subjectGarageGroup,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectGarageGroup, comparableGarageGroups],
+  );
+  const poolAdjustments = useMemo<number[]>(
+    () => comparablePoolGroups.map((comparableValue) =>
+      calculatePoolGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        subjectPoolGroup,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectPoolGroup, comparablePoolGroups],
   );
   // SALES/EQUITY: Gross Living Area (GLA) adjustments logic
   // Comp1: +$3,000; Comp2: -$3,000; Comp3: $0; Comp4: -$2,000
@@ -1348,14 +1517,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const classAdj = toNum((classAdjustments || [])[i]);
       const roomAdj = toNum((roomCountTotalAdjustments || [])[i]);
       const glaAdj = toNum((glaAdjustments || [])[i]);
+      const garageAdj = toNum((garageAdjustments || [])[i]);
+      const poolAdj = toNum((poolAdjustments || [])[i]);
       // Land Size, Actual Age currently $0
       const landAdj = 0;
       const ageAdj = 0;
-      const total = (concession > 0 ? -concession : 0) + timeAdj + classAdj + roomAdj + glaAdj + landAdj + ageAdj;
+      const total = (concession > 0 ? -concession : 0) + timeAdj + classAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments]);
+  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
 
   // SALES/EQUITY: Gross Adjustments — sum of absolute values of all adjustments per comparable
   const grossAdjustments = useMemo<number[]>(() => {
@@ -1371,13 +1542,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const classAdj = Math.abs(toNum((classAdjustments || [])[i]));
       const roomAdj = Math.abs(toNum((roomCountTotalAdjustments || [])[i]));
       const glaAdj = Math.abs(toNum((glaAdjustments || [])[i]));
+      const garageAdj = Math.abs(toNum((garageAdjustments || [])[i]));
+      const poolAdj = Math.abs(toNum((poolAdjustments || [])[i]));
       const landAdj = 0;
       const ageAdj = 0;
-      const total = concession + timeAdj + classAdj + roomAdj + glaAdj + landAdj + ageAdj;
+      const total = concession + timeAdj + classAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments]);
+  }, [compConcessions, compTimeAdjustments, classAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
 
   // SALES: Indicated Values — sale price plus net adjustments per comparable
   const indicatedValues = useMemo<number[]>(() => {
@@ -1436,6 +1609,38 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (subjectBedrooms === undefined) return undefined;
     return (subjectBedrooms as number) + 3;
   }, [subjectBedrooms]);
+
+  const groupedStudiesFor = (dimensionKey: AppliedGroupedAdjustment['dimensionKey']) =>
+    appliedGroupedAdjustmentEntries.filter((adjustment) => adjustment.dimensionKey === dimensionKey);
+
+  const signedAdjustment = (value: number) => {
+    const formatted = fmtCurrency(Math.abs(value));
+    return value > 0 ? `+${formatted}` : value < 0 ? `−${formatted}` : formatted;
+  };
+
+  const groupedBreakdownSummary = (
+    dimensionKey: AppliedGroupedAdjustment['dimensionKey'],
+    gridAdjustments: number[],
+  ) => {
+    const studies = groupedStudiesFor(dimensionKey);
+    if (!studies.length) {
+      return 'No grouped study has been applied yet. Select a supported market difference above, enter any desired factor, and apply it to update the grid.';
+    }
+    const appliedText = studies
+      .map((study) =>
+        `${study.transitionLabel}: ${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% = ${signedAdjustment(study.amount)}`)
+      .join('; ');
+    const selectedCount = selectedSales.filter(Boolean).length;
+    const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;
+    return `${appliedText}. The current schedule adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
+  };
+
+  const groupedGridImpact = (gridAdjustments: number[]) => {
+    const impacts = gridAdjustments
+      .map((amount, index) => selectedSales[index] ? `Comp ${index + 1}: ${signedAdjustment(amount)}` : null)
+      .filter(Boolean);
+    return impacts.length ? impacts.join(' · ') : 'Add comparables to see the grid impact.';
+  };
 
   return (
     <div className="min-h-screen bg-base-200">
@@ -2196,6 +2401,24 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     ])}
                   </tr>
 
+                  {/* Row: MLS number */}
+                  <tr>
+                    <td className="px-4 py-2 border-b border-slate-200 bg-white">MLS Number</td>
+                    <td className="px-4 py-2 border-b border-slate-200 text-slate-500" style={{ backgroundColor: '#FEF3C7' }}>
+                      Subject
+                    </td>
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
+                      <td key={`mls-desc-${i}`} className="px-4 py-2 border-b border-slate-200 font-medium text-slate-700">
+                        {selectedSales[i]?.listing_id || '—'}
+                      </td>,
+                      <td
+                        key={`mls-adj-${i}`}
+                        className="px-4 py-2 border-b border-slate-200 border-r"
+                        style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
+                      ></td>,
+                    ])}
+                  </tr>
+
                   {/* Row: Value vs Sales */}
                   {/* SALES GRID: Indicated Value — placeholder; applied after adjustments to derive indicated value from each comparable */}
                   {/* EQUITY GRID: Indicated Value — placeholder; applied after adjustments to derive indicated value from each comparable */}
@@ -2467,7 +2690,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           : label === 'Solar Panels'
                               ? 'None'
                               : label === 'Garage/Parking'
-                                ? fmtSqftSafe(subject?.garage_area_sqft)
+                                ? (subjectGarageGroup !== null
+                                    ? `${subjectGarageGroup} ${subjectGarageGroup === 1 ? 'space' : 'spaces'}${subject?.garage_area_sqft ? ` · ${fmtSqftSafe(subject.garage_area_sqft)}` : ''}`
+                                    : fmtSqftSafe(subject?.garage_area_sqft))
                                 : label === 'Porches/Decks'
                                   ? 'N/A'
                               : label === 'Fencing'
@@ -2511,18 +2736,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Porches/Decks: fixed display of 'N/A' for all comparables
                           : label === 'Porches/Decks'
                             ? 'N/A'
-                          // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
+                          // Pool (comparables): use the comparable's MLS value, with CAD as fallback.
                           : label === 'Pool'
-                            ? poolDisplay(subject?.pool)
+                            ? poolDisplay(selectedSales[i]?.mls_pool_yn ?? selectedSales[i]?.cad_pool)
                           // Easements: subject always displays "None Known"
                           : label === 'Easements'
                             ? 'None Known'
-                          // Pool (comparables): map subject pool code to display (N -> No, T -> Yes)
-                          : label === 'Pool'
-                            ? poolDisplay(subject?.pool)
-                          // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
+                          // Garage/Parking: prefer the MLS space count used by grouped analysis.
                           : label === 'Garage/Parking'
-                            ? fmtSqftSafe((compGarage || [])[i] ?? '')
+                            ? (comparableGarageGroups[i] !== null
+                                ? `${comparableGarageGroups[i]} ${comparableGarageGroups[i] === 1 ? 'space' : 'spaces'}`
+                                : fmtSqftSafe((compGarage || [])[i] ?? ''))
                           // Secondary Improvements: placeholder display for comparables
                           : label === 'Secondary Improvements'
                             ? 'N/A'
@@ -2532,7 +2756,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           key={`${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
                           style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
-                        ></td>,
+                        >
+                          {label === 'Garage/Parking'
+                            ? fmtCurrency(garageAdjustments[i] ?? 0)
+                            : label === 'Pool'
+                              ? fmtCurrency(poolAdjustments[i] ?? 0)
+                              : ''}
+                        </td>,
                       ])}
                     </tr>
                   ))}
@@ -2671,6 +2901,22 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           className="px-4 py-2 border-b border-slate-200 border-r"
                           style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                         ></td>,
+                    ])}
+                  </tr>
+                  <tr>
+                    <td className="px-4 py-2 border-b border-slate-200 bg-white">MLS Number</td>
+                    <td className="px-4 py-2 border-b border-slate-200 text-slate-500" style={{ backgroundColor: '#FEF3C7' }}>
+                      Subject
+                    </td>
+                    {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
+                      <td key={`eq-mls-desc-${i}`} className="px-4 py-2 border-b border-slate-200 font-medium text-slate-700">
+                        {selectedSales[i]?.listing_id || '—'}
+                      </td>,
+                      <td
+                        key={`eq-mls-adj-${i}`}
+                        className="px-4 py-2 border-b border-slate-200 border-r"
+                        style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
+                      ></td>,
                     ])}
                   </tr>
                   <tr>
@@ -2933,7 +3179,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           : label === 'Solar Panels'
                               ? 'None'
                               : label === 'Garage/Parking'
-                                ? fmtSqftSafe(subject?.garage_area_sqft)
+                                ? (subjectGarageGroup !== null
+                                    ? `${subjectGarageGroup} ${subjectGarageGroup === 1 ? 'space' : 'spaces'}${subject?.garage_area_sqft ? ` · ${fmtSqftSafe(subject.garage_area_sqft)}` : ''}`
+                                    : fmtSqftSafe(subject?.garage_area_sqft))
                                 : label === 'Porches/Decks'
                                   ? 'N/A'
                                   : label === 'Pool'
@@ -2977,15 +3225,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Porches/Decks: fixed display of 'N/A' for all comparables
                           : label === 'Porches/Decks'
                             ? 'N/A'
-                          // Pool (comparables): use same display helper as Sales grid
+                          // Pool (comparables): use the comparable's MLS value, with CAD as fallback.
                           : label === 'Pool'
-                            ? poolDisplay(subject?.pool)
+                            ? poolDisplay(selectedSales[i]?.mls_pool_yn ?? selectedSales[i]?.cad_pool)
                           // Easements: subject always displays "None Known"
                           : label === 'Easements'
                             ? 'None Known'
-                          // Garage/Parking adjustments: comps use compGarage derived from subject (+2%, -2%, =, +2%)
+                          // Garage/Parking: prefer the MLS space count used by grouped analysis.
                           : label === 'Garage/Parking'
-                            ? fmtSqftSafe((compGarage || [])[i] ?? '')
+                            ? (comparableGarageGroups[i] !== null
+                                ? `${comparableGarageGroups[i]} ${comparableGarageGroups[i] === 1 ? 'space' : 'spaces'}`
+                                : fmtSqftSafe((compGarage || [])[i] ?? ''))
                           // Secondary Improvements: placeholder display for comparables
                           : label === 'Secondary Improvements'
                             ? 'N/A'
@@ -2995,7 +3245,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           key={`eq2-${label}-adj-${i}`}
                           className="px-4 py-2 border-b border-slate-200 border-r"
                           style={{ borderLeft: '2px solid #e2e8f0', ...(i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : {}) }}
-                        ></td>,
+                        >
+                          {label === 'Garage/Parking'
+                            ? fmtCurrency(garageAdjustments[i] ?? 0)
+                            : label === 'Pool'
+                              ? fmtCurrency(poolAdjustments[i] ?? 0)
+                              : ''}
+                        </td>,
                       ])}
                     </tr>
                   ))}
@@ -3044,13 +3300,76 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         <GroupedAdjustmentAnalysis
           key={propertyId}
           subjectAccountId={propertyId}
+          appliedAdjustments={appliedGroupedAdjustments}
+          onApplyAdjustment={(adjustment) =>
+            setAppliedGroupedAdjustments((current) => ({
+              ...current,
+              [adjustment.id]: adjustment,
+            }))
+          }
+          onRemoveAdjustment={(adjustmentId) =>
+            setAppliedGroupedAdjustments((current) => {
+              const next = { ...current };
+              delete next[adjustmentId];
+              return next;
+            })
+          }
         />
 
         {/* Adjustment Breakdown */}
         <div className="mt-6">
           <div className="text-xl font-semibold text-slate-900">Adjustment Breakdown</div>
           <div className="text-sm text-slate-600">
-            Detailed methodology comparison showing how our adjustments provide more accurate valuations than district assessments.
+            Live methodology summary based on the studies and factors currently applied to the sales comparison grid.
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            {[
+              {
+                key: 'bathrooms' as const,
+                label: 'Bath Count',
+                adjustments: roomCountBathAdjustments,
+              },
+              {
+                key: 'garage' as const,
+                label: 'Garages/Parking',
+                adjustments: garageAdjustments,
+              },
+              {
+                key: 'pool' as const,
+                label: 'Pool',
+                adjustments: poolAdjustments,
+              },
+            ].map((summaryItem) => {
+              const studies = groupedStudiesFor(summaryItem.key);
+              return (
+                <div
+                  key={`live-summary-${summaryItem.key}`}
+                  className={`rounded-xl border p-4 ${
+                    studies.length
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-slate-200 bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold text-slate-900">{summaryItem.label}</div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      studies.length
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      {studies.length ? `${studies.length} applied` : 'Not applied'}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-700">
+                    {groupedBreakdownSummary(summaryItem.key, summaryItem.adjustments)}
+                  </p>
+                  <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-medium text-slate-700">
+                    {groupedGridImpact(summaryItem.adjustments)}
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -3250,10 +3569,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
               <div className="pl-2">
                 <div className="text-lg font-semibold mb-2">Bath Count</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
+                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
                 <p className="mt-2 text-sm text-slate-700">
-                  We analyze the relationship between bathroom count and sale prices, considering the quality and
-                  functionality of bathrooms, not just quantity.
+                  {groupedBreakdownSummary('bathrooms', roomCountBathAdjustments)}
                 </p>
                 <div className="mt-3 text-red-600 font-semibold">District Method</div>
                 <p className="mt-1 text-sm text-slate-700">
@@ -3261,9 +3579,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   size, or functionality.
                 </p>
                 <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
+                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
                   <div className="text-xs text-slate-700 mt-1">
-                    Our analysis recognizes that bathroom value depends on quality and appropriateness, not just count.
+                    {groupedGridImpact(roomCountBathAdjustments)}
                   </div>
                 </div>
               </div>
@@ -3380,10 +3698,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
               <div className="pl-2">
                 <div className="text-lg font-semibold mb-2">Garages/Parking</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
+                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
                 <p className="mt-2 text-sm text-slate-700">
-                  We evaluate garage and parking features based on capacity, quality, and functionality, considering
-                  regional climate factors and urban density impacts on parking value.
+                  {groupedBreakdownSummary('garage', garageAdjustments)}
                 </p>
                 <div className="mt-3 text-red-600 font-semibold">District Method</div>
                 <p className="mt-1 text-sm text-slate-700">
@@ -3391,10 +3708,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   detached, or regional parking demand variations.
                 </p>
                 <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
+                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
                   <div className="text-xs text-slate-700 mt-1">
-                    Our method considers the full value impact of different parking configurations and regional demand
-                    factors.
+                    {groupedGridImpact(garageAdjustments)}
                   </div>
                 </div>
               </div>
@@ -3458,10 +3774,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
               <div className="pl-2">
                 <div className="text-lg font-semibold mb-2">Pool</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
+                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
                 <p className="mt-2 text-sm text-slate-700">
-                  We analyze pool features based on size, type, condition, and regional climate factors, considering
-                  maintenance costs and buyer preferences in the specific market.
+                  {groupedBreakdownSummary('pool', poolAdjustments)}
                 </p>
                 <div className="mt-3 text-red-600 font-semibold">District Method</div>
                 <p className="mt-1 text-sm text-slate-700">
@@ -3469,9 +3784,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   concerns or regional preferences.
                 </p>
                 <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
+                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
                   <div className="text-xs text-slate-700 mt-1">
-                    Our analysis considers the full cost-benefit analysis of pools in the current market environment.
+                    {groupedGridImpact(poolAdjustments)}
                   </div>
                 </div>
               </div>

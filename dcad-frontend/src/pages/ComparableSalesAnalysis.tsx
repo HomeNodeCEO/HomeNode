@@ -65,6 +65,45 @@ const HOUSING_TYPE_OPTIONS = [
   'Other',
 ];
 
+const UAD_CONDITION_RATINGS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'] as const;
+const UAD_QUALITY_RATINGS = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'] as const;
+
+function normalizeUadConditionRating(value: unknown): string {
+  const match = String(value ?? '').trim().toUpperCase().match(/^C([1-6])/);
+  return match ? `C${match[1]}` : '';
+}
+
+function UadRatingSelect({
+  ariaLabel,
+  value,
+  ratings,
+  onChange,
+  disabled = false,
+}: {
+  ariaLabel: string;
+  value: string;
+  ratings: readonly string[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <select
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      disabled={disabled}
+      className="w-full min-w-[4.75rem] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+    >
+      <option value="">Select</option>
+      {ratings.map((rating) => (
+        <option key={rating} value={rating}>
+          {rating}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 type GalleryState = {
   title: string;
   photos: SalePhoto[];
@@ -179,7 +218,7 @@ export default function ComparableSalesAnalysis() {
     const p = new URLSearchParams(location.search);
     return p.get('propertyId') || '';
   }, [location.search]);
-  // CONDITION_CODE_INTAKE: read condCode from query (set by PropertyReport Sample Evidence link) and used in Condition/Updating rows
+  // Read the property-report condition choice and normalize it to a valid UAD C1-C6 rating.
   const conditionCode = useMemo(() => {
     const p = new URLSearchParams(location.search);
     return p.get('condCode') || '';
@@ -225,6 +264,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return '';
   };
   // Test/Run controls and sample comparables
+  const [subjectCondition, setSubjectCondition] = useState(() =>
+    normalizeUadConditionRating(conditionCode),
+  );
+  const [subjectQuality, setSubjectQuality] = useState('');
+  const [compConditions, setCompConditions] = useState<string[]>(
+    () => Array(COMPARABLE_COUNT).fill(''),
+  );
+  const [compQualities, setCompQualities] = useState<string[]>(
+    () => Array(COMPARABLE_COUNT).fill(''),
+  );
   const [compAddresses, setCompAddresses] = useState<string[]>(() => Array(COMPARABLE_COUNT).fill(''));
   const [compGla, setCompGla] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   const [compPrices, setCompPrices] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
@@ -278,6 +327,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   useEffect(() => {
     setAppliedGroupedAdjustments({});
   }, [propertyId]);
+
+  useEffect(() => {
+    setSubjectCondition(normalizeUadConditionRating(conditionCode));
+    setSubjectQuality('');
+    setCompConditions(Array(COMPARABLE_COUNT).fill(''));
+    setCompQualities(Array(COMPARABLE_COUNT).fill(''));
+  }, [conditionCode, propertyId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1087,6 +1143,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompClasses((current) => current.map((value, index) => index === slot ? (sale.cad_building_class || null) : value));
     setCompAges((current) => current.map((value, index) => index === slot && yearBuilt != null ? Math.max(0, new Date().getFullYear() - yearBuilt) : (index === slot ? null : value)));
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
+    setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
+    setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
     setCompRooms((current) => current.map((value, index) => index === slot ? {
       tot: totalRooms,
       bd: bedrooms == null ? null : Math.round(bedrooms),
@@ -1118,6 +1176,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompClasses((current) => current.map((value, index) => index === slot ? null : value));
     setCompAges((current) => current.map((value, index) => index === slot ? null : value));
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
+    setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
+    setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
     setCompRooms((current) => current.map((value, index) => index === slot ? { tot: null, bd: null, full: null, half: null } : value));
   };
 
@@ -2352,7 +2412,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Const Type',
                     'CAD Class',
                     'Actual Age',
-                    'Condition/Updating',
+                    'Condition',
+                    'Quality',
                   ].map((label) => {
                     let subjectValue: any = '';
                     switch (label) {
@@ -2387,8 +2448,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       case 'Actual Age':
                         subjectValue = subject?.actual_age ?? '';
                         break;
-                      case 'Condition/Updating':
-                        subjectValue = conditionCode || '';
+                      case 'Condition':
+                        subjectValue = subjectCondition;
+                        break;
+                      case 'Quality':
+                        subjectValue = subjectQuality;
                         break;
                       default:
                         subjectValue = '';
@@ -2400,7 +2464,23 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           className={`px-4 py-2 border-b border-slate-200 ${label === 'Housing Type' ? 'whitespace-nowrap' : ''}`}
                           style={{ backgroundColor: '#FEF3C7' }}
                         >
-                          {subjectValue}
+                          {label === 'Condition' ? (
+                            <UadRatingSelect
+                              ariaLabel="Subject condition"
+                              value={subjectCondition}
+                              ratings={UAD_CONDITION_RATINGS}
+                              onChange={setSubjectCondition}
+                            />
+                          ) : label === 'Quality' ? (
+                            <UadRatingSelect
+                              ariaLabel="Subject quality"
+                              value={subjectQuality}
+                              ratings={UAD_QUALITY_RATINGS}
+                              onChange={setSubjectQuality}
+                            />
+                          ) : (
+                            subjectValue
+                          )}
                         </td>
                         {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                           <td
@@ -2425,8 +2505,34 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? String((compClasses || [])[i] ?? '')
                               : label === 'Actual Age'
                                 ? (compAges[i] ?? '')
-                              : label === 'Condition/Updating'
-                                ? (conditionCode || '')
+                              : label === 'Condition'
+                                ? (
+                                  <UadRatingSelect
+                                    ariaLabel={`Comparable ${i + 1} condition`}
+                                    value={compConditions[i] || ''}
+                                    ratings={UAD_CONDITION_RATINGS}
+                                    disabled={!selectedSales[i]}
+                                    onChange={(value) =>
+                                      setCompConditions((current) =>
+                                        current.map((item, index) => index === i ? value : item)
+                                      )
+                                    }
+                                  />
+                                )
+                              : label === 'Quality'
+                                ? (
+                                  <UadRatingSelect
+                                    ariaLabel={`Comparable ${i + 1} quality`}
+                                    value={compQualities[i] || ''}
+                                    ratings={UAD_QUALITY_RATINGS}
+                                    disabled={!selectedSales[i]}
+                                    onChange={(value) =>
+                                      setCompQualities((current) =>
+                                        current.map((item, index) => index === i ? value : item)
+                                      )
+                                    }
+                                  />
+                                )
                               : label === 'View'
                                 ? ((subject?.view || 'Neutral') as any)
                                 : ''}

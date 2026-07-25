@@ -128,7 +128,7 @@ function MlsPhoto({
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [src]);
 
-  const size = compact ? 'h-16 w-24' : 'h-28 w-full min-w-[8rem]';
+  const size = compact ? 'h-16 w-24' : 'h-28 w-full min-w-0';
   if (!src || failed) {
     return (
       <div
@@ -996,7 +996,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   const housingTypeGridValue = (sale: SaleRow | null | undefined): string => {
     if (!sale) return 'Not available';
-    if (housingTypeNeedsReview(sale)) return '⚠ Review — housing type unknown';
+    if (housingTypeNeedsReview(sale)) return '⚠ Review';
     return sale.structural_style || sale.housing_type || 'Not available';
   };
 
@@ -2273,10 +2273,28 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
             {error && <div className="px-6 pb-4 text-red-600 text-sm">{error}</div>}
 
-            <div style={{ minWidth: 1180 }}>
-              {/* Tighten cell padding by ~50% */}
-              <style>{`.tight-grid th, .tight-grid td { padding: 0.25rem 0.5rem !important; }`}</style>
-              <table className="w-full text-sm tight-grid" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+            <div style={{ minWidth: '108rem' }}>
+              <style>{`
+                .tight-grid {
+                  table-layout: fixed;
+                  width: 100%;
+                }
+                .tight-grid th,
+                .tight-grid td {
+                  padding: 0.25rem 0.5rem !important;
+                  overflow-wrap: anywhere;
+                  vertical-align: middle;
+                }
+              `}</style>
+              <table className="w-full table-fixed text-sm tight-grid" style={{ borderCollapse: 'separate', borderSpacing: 0 }}>
+                <colgroup>
+                  <col style={{ width: '8rem' }} />
+                  <col style={{ width: '10rem' }} />
+                  {Array.from({ length: COMPARABLE_COUNT }).flatMap((_, i) => [
+                    <col key={`comp-description-width-${i}`} style={{ width: '9rem' }} />,
+                    <col key={`comp-adjustment-width-${i}`} style={{ width: '6rem' }} />,
+                  ])}
+                </colgroup>
                 <thead>
                   <tr className="text-slate-700">
                     <th className="text-left px-4 py-2 border-b border-slate-300 w-32 bg-white">Feature</th>
@@ -2461,7 +2479,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       <tr key={label}>
                         <td className="px-4 py-2 border-b border-slate-200 bg-white">{label}</td>
                         <td
-                          className={`px-4 py-2 border-b border-slate-200 ${label === 'Housing Type' ? 'whitespace-nowrap' : ''}`}
+                          className="px-4 py-2 border-b border-slate-200"
                           style={{ backgroundColor: '#FEF3C7' }}
                         >
                           {label === 'Condition' ? (
@@ -2485,7 +2503,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
                           <td
                             key={`${label}-desc-${i}`}
-                            className={`px-4 py-2 border-b border-slate-200 ${label === 'Housing Type' ? 'whitespace-nowrap' : ''}`}
+                            className="px-4 py-2 border-b border-slate-200"
                           >
                             {label === 'Concessions'
                               ? fmtCurrency((compConcessions || [])[i] ?? '')

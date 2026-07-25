@@ -157,6 +157,21 @@ function calculatePoolGroupedAdjustment(
   return subjectValue ? poolAdjustment : -poolAdjustment;
 }
 
+function calculateLivingAreaGroupedAdjustment(
+  adjustments: AppliedGroupedAdjustment[],
+  subjectValue: number | null,
+  comparableValue: number | null,
+): number {
+  if (subjectValue === null || comparableValue === null || subjectValue === comparableValue) return 0;
+  const eligibleAdjustments = adjustments.filter(
+    (adjustment) => adjustment.dimensionKey === 'living_area',
+  );
+  const selectedAdjustment = eligibleAdjustments[eligibleAdjustments.length - 1];
+  if (!selectedAdjustment) return 0;
+  const signedDifference = ((subjectValue - comparableValue) / 100) * selectedAdjustment.amount;
+  return Math.round(signedDifference / 100) * 100;
+}
+
 export default function ComparableSalesAnalysis() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -1221,6 +1236,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     () => booleanValue(subject?.pool),
     [subject?.pool],
   );
+  const subjectLivingArea = useMemo(
+    () => finiteNumber(subject?.total_living_area),
+    [subject?.total_living_area],
+  );
   const comparableBathroomGroups = useMemo(
     () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
       const sale = selectedSales[index];
@@ -1294,9 +1313,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       )),
     [appliedGroupedAdjustmentEntries, subjectPoolGroup, comparablePoolGroups],
   );
-  // SALES/EQUITY: Gross Living Area (GLA) adjustments logic
-  // Comp1: +$3,000; Comp2: -$3,000; Comp3: $0; Comp4: -$2,000
-  const glaAdjustments = useMemo<number[]>(() => [3000, -3000, 0, -2000, 0, 0], []);
+  // Gross living-area adjustments use the selected market-derived rate per 100 square feet.
+  const glaAdjustments = useMemo<number[]>(
+    () => compGla.map((comparableValue) =>
+      calculateLivingAreaGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        subjectLivingArea,
+        finiteNumber(comparableValue),
+      )),
+    [appliedGroupedAdjustmentEntries, subjectLivingArea, compGla],
+  );
 
   // SALES/EQUITY: Net Adjustments — sum all signed adjustments per comparable
   const netAdjustments = useMemo<number[]>(() => {
@@ -1414,7 +1440,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       ? 'full bath'
       : dimensionKey === 'garage'
         ? 'garage space'
-        : 'pool difference';
+        : dimensionKey === 'living_area'
+          ? '100 square feet'
+          : 'pool difference';
     const appliedText =
       `${study.marketLabel} — ${study.transitionLabel} study selected: ${signedAdjustment(study.baseAmount)} × ` +
       `${study.factorPercent}% = ${signedAdjustment(study.amount)} per ${unitLabel}`;
@@ -1444,6 +1472,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           'garage',
           subjectGarageGroup,
           comparableValue,
+        ));
+    } else if (draftAdjustment.dimensionKey === 'living_area') {
+      adjustments = compGla.map((comparableValue) =>
+        calculateLivingAreaGroupedAdjustment(
+          candidateAdjustments,
+          subjectLivingArea,
+          finiteNumber(comparableValue),
         ));
     } else {
       adjustments = comparablePoolGroups.map((comparableValue) =>
@@ -2302,7 +2337,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Housing Type',
                     'Architectural Style',
                     'Const Type',
-                    'Class',
+                    'CAD Class',
                     'Actual Age',
                     'Condition/Updating',
                   ].map((label) => {
@@ -2333,7 +2368,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         subjectValue = normalizeConstType(subject?.stories, subject?.construction_type);
                         break;
                       // SALES SUBJECT CLASS: from subject.building_class (core.primary_improvements.building_class)
-                      case 'Class':
+                      case 'CAD Class':
                         subjectValue = subject?.building_class || '';
                         break;
                       case 'Actual Age':
@@ -2348,11 +2383,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     return (
                       <tr key={label}>
                         <td className="px-4 py-2 border-b border-slate-200 bg-white">{label}</td>
-                        <td className="px-4 py-2 border-b border-slate-200" style={{ backgroundColor: '#FEF3C7' }}>
+                        <td
+                          className={`px-4 py-2 border-b border-slate-200 ${label === 'Housing Type' ? 'whitespace-nowrap' : ''}`}
+                          style={{ backgroundColor: '#FEF3C7' }}
+                        >
                           {subjectValue}
                         </td>
                         {Array.from({ length: COMPARABLE_COUNT }).map((_, i) => [
-                          <td key={`${label}-desc-${i}`} className="px-4 py-2 border-b border-slate-200">
+                          <td
+                            key={`${label}-desc-${i}`}
+                            className={`px-4 py-2 border-b border-slate-200 ${label === 'Housing Type' ? 'whitespace-nowrap' : ''}`}
+                          >
                             {label === 'Concessions'
                               ? fmtCurrency((compConcessions || [])[i] ?? '')
                               : label === 'NBHD Code'
@@ -2367,7 +2408,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? (selectedSales[i]?.architectural_style || 'Not available')
                               : label === 'Const Type'
                                 ? normalizeConstType(subject?.stories, subject?.construction_type)
-                              : label === 'Class'
+                              : label === 'CAD Class'
                                 ? String((compClasses || [])[i] ?? '')
                               : label === 'Actual Age'
                                 ? (compAges[i] ?? '')
@@ -2392,7 +2433,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? ''
                               : label === 'Land Size'
                                 ? fmtCurrency(0)
-                              : label === 'Class'
+                              : label === 'CAD Class'
                                 ? (() => {
                                     const v = (classAdjustments || [])[i] ?? null;
                                     if (v === null || v === undefined || v === 0) return '';
@@ -2493,7 +2534,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   </tr>
 
                   {/* SALES GRID: Indicated Value placeholder — apply Net/Gross adjustments against comparables to derive indicated value */}
-                  {/* SALES GRID: Additional features section — Basement SF, Functional Utility, Heating/Cooling, Solar Panels, Porches/Decks, Fencing, Pool, Easements, Secondary Improvements */}
+                  {/* SALES GRID: Additional features section — Basement SF, Functional Utility, Heating/Cooling, Solar Panels, Porches/Decks, Fencing, Pool, Secondary Improvements */}
                   {/* EQUITY GRID: Row logic mapping for adjustments (mirrors Sales grid labels) */}
                   {[
                     'Basement SF',
@@ -2504,7 +2545,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Porches/Decks',
                     'Fencing',
                     'Pool',
-                    'Easements',
                     'Secondary Improvements',
                   ].map((label) => (
                     // SALES GRID FEATURE ROW: Functional Utility — placeholder; add logic if/when defined
@@ -2540,8 +2580,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                       })()
                                     : label === 'Pool'
                                       ? poolDisplay(subject?.pool)
-                                    : label === 'Easements'
-                                      ? 'None Known'
                                     // Secondary Improvements: placeholder display
                                     : label === 'Secondary Improvements'
                                       ? 'N/A'
@@ -2577,9 +2615,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           // Pool (comparables): use the comparable's MLS value, with CAD as fallback.
                           : label === 'Pool'
                             ? poolDisplay(selectedSales[i]?.mls_pool_yn ?? selectedSales[i]?.cad_pool)
-                          // Easements: subject always displays "None Known"
-                          : label === 'Easements'
-                            ? 'None Known'
                           // Garage/Parking: prefer the MLS space count used by grouped analysis.
                           : label === 'Garage/Parking'
                             ? (comparableGarageGroups[i] !== null
@@ -2708,7 +2743,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             Live methodology summary based on the studies and factors currently applied to the sales comparison grid.
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
             {[
               {
                 key: 'bathrooms' as const,
@@ -2724,6 +2759,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 key: 'pool' as const,
                 label: 'Pool',
                 adjustments: poolAdjustments,
+              },
+              {
+                key: 'living_area' as const,
+                label: 'Gross Living Area',
+                adjustments: glaAdjustments,
               },
             ].map((summaryItem) => {
               const studies = groupedStudiesFor(summaryItem.key);

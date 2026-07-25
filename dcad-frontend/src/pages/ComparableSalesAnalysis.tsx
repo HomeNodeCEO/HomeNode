@@ -4,6 +4,7 @@ import * as api from '@/lib/api';
 import type { ComparableRecommendationsResponse, SalePhoto, SaleRow } from '@/lib/api';
 import GroupedAdjustmentAnalysis, {
   type AppliedGroupedAdjustment,
+  type GroupedAdjustmentImpactPreview,
 } from '@/components/GroupedAdjustmentAnalysis';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
@@ -1593,6 +1594,44 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const selectedCount = selectedSales.filter(Boolean).length;
     const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;
     return `${appliedText}. The current schedule adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
+  };
+
+  const previewGroupedAdjustment = (
+    draftAdjustment: AppliedGroupedAdjustment,
+  ): GroupedAdjustmentImpactPreview => {
+    const candidateAdjustments = [draftAdjustment];
+    let adjustments: number[];
+
+    if (draftAdjustment.dimensionKey === 'bathrooms') {
+      adjustments = comparableBathroomGroups.map((comparableValue) =>
+        calculateNumericGroupedAdjustment(
+          candidateAdjustments,
+          'bathrooms',
+          subjectBathroomGroup,
+          comparableValue,
+        ));
+    } else if (draftAdjustment.dimensionKey === 'garage') {
+      adjustments = comparableGarageGroups.map((comparableValue) =>
+        calculateNumericGroupedAdjustment(
+          candidateAdjustments,
+          'garage',
+          subjectGarageGroup,
+          comparableValue,
+        ));
+    } else {
+      adjustments = comparablePoolGroups.map((comparableValue) =>
+        calculatePoolGroupedAdjustment(
+          candidateAdjustments,
+          subjectPoolGroup,
+          comparableValue,
+        ));
+    }
+
+    const selectedCount = selectedSales.filter(Boolean).length;
+    const affectedCount = adjustments.filter(
+      (amount, index) => selectedSales[index] && amount !== 0,
+    ).length;
+    return { adjustments, selectedCount, affectedCount };
   };
 
   const groupedGridImpact = (gridAdjustments: number[]) => {
@@ -3273,6 +3312,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           key={propertyId}
           subjectAccountId={propertyId}
           appliedAdjustments={appliedGroupedAdjustments}
+          getImpactPreview={previewGroupedAdjustment}
           onApplyAdjustment={(adjustment) =>
             setAppliedGroupedAdjustments((current) => ({
               ...current,

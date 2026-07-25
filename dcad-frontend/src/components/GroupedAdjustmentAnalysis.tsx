@@ -153,12 +153,15 @@ function DimensionTable({
   onApply: (adjustment: AppliedGroupedAdjustment) => void;
   onRemove: (key: string) => void;
 }) {
+  const isLivingArea = dimension.key === 'living_area';
   return (
     <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="border-b border-slate-200 px-4 py-3">
         <div className="text-base font-semibold text-slate-900">{dimension.label}</div>
         <div className="text-xs text-slate-600">
-          Groups include every category through the highest observed value. Empty categories remain visible.
+          {isLivingArea
+            ? 'All eligible sales are ordered by living area and divided into ten market bands. Each study is normalized to a 100-square-foot adjustment.'
+            : 'Groups include every category through the highest observed value. Empty categories remain visible.'}
         </div>
       </div>
 
@@ -215,7 +218,7 @@ function DimensionTable({
           Each tile is an alternative study. Applying one uses its factored figure uniformly for every
           difference in this section and replaces the currently applied figure for this section.
         </div>
-        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <div className={`mt-3 grid grid-cols-1 gap-3 ${isLivingArea ? '' : 'lg:grid-cols-2'}`}>
           {dimension.transitions.map((transition) => {
             const key = transitionKey(marketKey, dimension.key, transition.id);
             const selectedOption = selections[key]?.option || recommendedOption(transition);
@@ -298,6 +301,7 @@ function DimensionTable({
                             <div className="flex items-center gap-2">
                               <span className="font-semibold text-slate-900">
                                 {formatSignedCurrency(option.amount)}
+                                {isLivingArea ? ' / 100 sf' : ''}
                               </span>
                               {option.recommended && (
                                 <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">
@@ -369,7 +373,9 @@ function DimensionTable({
                             Resulting adjustment
                           </div>
                           <div className="mt-1 text-xl font-semibold text-slate-900">
-                            {result == null ? '—' : formatSignedCurrency(result)}
+                            {result == null
+                              ? '—'
+                              : `${formatSignedCurrency(result)}${isLivingArea ? ' / 100 sf' : ''}`}
                           </div>
                           {selectedOption && factorValid && factorPercent !== 100 && (
                             <div className="text-xs text-slate-500">
@@ -377,7 +383,7 @@ function DimensionTable({
                             </div>
                           )}
                         </div>
-                        {applied && !isCurrentApplied && (
+                        {applied && (
                           <button
                             type="button"
                             onClick={() => onRemove(key)}
@@ -406,7 +412,9 @@ function DimensionTable({
                                 ? ' equivalent-bath'
                                 : dimension.key === 'garage'
                                   ? ' garage-space'
-                                  : ' pool-status'}{' '}
+                                  : dimension.key === 'living_area'
+                                    ? ' living-area'
+                                    : ' pool-status'}{' '}
                               difference from the subject, so the current grid would remain unchanged.
                             </>
                           ) : (
@@ -436,6 +444,11 @@ function DimensionTable({
                           {dimension.key === 'pool' && result != null && (
                             <div className="mt-1 text-slate-600">
                               Applied to every subject/comparable pool-status difference.
+                            </div>
+                          )}
+                          {dimension.key === 'living_area' && result != null && (
+                            <div className="mt-1 text-slate-600">
+                              Uniform rate per 100 square feet: {formatSignedCurrency(Math.abs(result))}
                             </div>
                           )}
                         </div>

@@ -16,20 +16,18 @@ const {
   calculateNumericGroupedAdjustment,
 } = await import(moduleUrl);
 
-const schedule = [
-  {
-    dimensionKey: 'bathrooms',
-    fromGroupValue: 2,
-    toGroupValue: 3,
-    amount: 87_000,
-  },
-  {
-    dimensionKey: 'bathrooms',
-    fromGroupValue: 3,
-    toGroupValue: 4,
-    amount: 149_500,
-  },
-];
+const oneToTwoBathStudy = {
+  dimensionKey: 'bathrooms',
+  fromGroupValue: 1,
+  toGroupValue: 2,
+  amount: 98_000,
+};
+const threeToFourBathStudy = {
+  dimensionKey: 'bathrooms',
+  fromGroupValue: 3,
+  toGroupValue: 4,
+  amount: 149_500,
+};
 
 assert.equal(bathroomEquivalentValue(null, 2, 1), 2.5);
 assert.equal(bathroomEquivalentValue(null, 2, 2), 3);
@@ -37,47 +35,59 @@ assert.equal(bathroomEquivalentValue(null, null, null, 2.2), 3);
 assert.equal(bathroomEquivalentValue(null, 3, 1), 3.5);
 
 assert.equal(
-  calculateNumericGroupedAdjustment(schedule, 'bathrooms', 2, 2.5),
-  -43_500,
+  calculateNumericGroupedAdjustment([oneToTwoBathStudy], 'bathrooms', 2, 2.5),
+  -49_000,
   'A comparable with one superior half bath should receive half the full adjustment downward.',
 );
 assert.equal(
-  calculateNumericGroupedAdjustment(schedule, 'bathrooms', 2.5, 2),
-  43_500,
+  calculateNumericGroupedAdjustment([oneToTwoBathStudy], 'bathrooms', 2.5, 2),
+  49_000,
   'A comparable with one inferior half bath should receive half the full adjustment upward.',
 );
 assert.equal(
-  calculateNumericGroupedAdjustment(schedule, 'bathrooms', 3, 3.5),
-  -74_750,
+  calculateNumericGroupedAdjustment([oneToTwoBathStudy], 'bathrooms', 3, 3.5),
+  -49_000,
   '2.2 and 3.1 differ by only one half bath after equivalent-bath conversion.',
 );
 assert.equal(
-  calculateNumericGroupedAdjustment(schedule, 'bathrooms', 3.5, 3),
-  74_750,
+  calculateNumericGroupedAdjustment([oneToTwoBathStudy], 'bathrooms', 3.5, 3),
+  49_000,
   'The same half-bath difference should reverse direction when the subject is superior.',
 );
 assert.equal(
-  calculateNumericGroupedAdjustment(schedule, 'bathrooms', 3.5, 2),
-  161_750,
-  'A comparison spanning multiple bath intervals should combine both selected studies.',
-);
-
-const updatedSchedule = [
-  schedule[0],
-  {
-    ...schedule[1],
-    amount: 81_700,
-  },
-];
-assert.equal(
-  calculateNumericGroupedAdjustment(updatedSchedule, 'bathrooms', 3.5, 2),
-  127_850,
-  'Changing a selected study should replace that interval amount in the resulting schedule.',
+  calculateNumericGroupedAdjustment([oneToTwoBathStudy], 'bathrooms', 7, 8),
+  -98_000,
+  'A 1-to-2 bath study should supply the same unit rate to a 7-to-8 bath difference.',
 );
 assert.equal(
-  calculateNumericGroupedAdjustment([schedule[1]], 'bathrooms', 2, 2.5),
-  0,
-  'A study must not affect a comparison that does not cross its feature interval.',
+  calculateNumericGroupedAdjustment([threeToFourBathStudy], 'bathrooms', 2, 2.5),
+  -74_750,
+  'A 3-to-4 bath study should apply to any half-bath difference.',
+);
+assert.equal(
+  calculateNumericGroupedAdjustment(
+    [oneToTwoBathStudy, threeToFourBathStudy],
+    'bathrooms',
+    2,
+    2.5,
+  ),
+  -74_750,
+  'The most recently selected study should replace the prior universal rate.',
+);
+assert.equal(
+  calculateNumericGroupedAdjustment(
+    [{
+      dimensionKey: 'garage',
+      fromGroupValue: 0,
+      toGroupValue: 1,
+      amount: 10_000,
+    }],
+    'garage',
+    2,
+    0,
+  ),
+  20_000,
+  'A selected garage study should apply once for every garage-space difference.',
 );
 
 console.log('Comparable adjustment tests passed.');

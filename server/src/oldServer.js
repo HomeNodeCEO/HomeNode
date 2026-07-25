@@ -19,6 +19,7 @@ import {
   editorKeyMatches,
   normalizeHousingProfileUpdate,
 } from "./util/housingProfileEdit.js";
+import { buildGroupedAnalysis } from "./util/groupedAnalysis.js";
 
 const app = express();
 app.use(express.json());
@@ -1407,6 +1408,280 @@ app.get("/api/sales", async (req, res) => {
     }
     console.error("/api/sales failed", err);
     res.status(500).json({ error: "sales_search_failed" });
+  }
+});
+
+/**
+ * GET /api/sales/grouped-analysis
+ *
+ * Builds a one-year, city-level grouped adjustment study for the subject.
+ * Closed, single-parcel sales are grouped by total bathrooms, garage spaces,
+ * and pool presence. Missing garage spaces are treated as zero only when the
+ * MLS explicitly says the property has no garage.
+ */
+app.get("/api/sales/grouped-analysis", async (req, res) => {
+  try {
+    const subjectAccountId = String(
+      req.query.subject_account_id || "",
+    ).trim();
+    const asOfDate = String(req.query.as_of || "").trim();
+    if (!/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (asOfDate && !/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
+      return res.status(400).json({ error: "invalid_as_of" });
+    }
+
+    const subjectResult = await pool.query(
+      `
+        SELECT
+          account.account_id,
+          account.address,
+          account.city,
+          account.county
+        FROM core.accounts account
+        WHERE account.account_id = $1
+      `,
+      [subjectAccountId],
+    );
+    const subject = subjectResult.rows[0];
+    if (!subject) {
+      return res.status(404).json({ error: "subject_not_found" });
+    }
+    if (!String(subject.city || "").trim()) {
+      return res.status(422).json({
+        error: "subject_market_area_unavailable",
+        subject_account_id: subjectAccountId,
+      });
+    }
+
+    const { rows } = await pool.query(
+      `
+        WITH parameters AS (
+          SELECT
+            COALESCE(NULLIF($1, '')::date, CURRENT_DATE) AS period_end,
+            BTRIM($2) AS subject_city,
+            NULLIF(BTRIM($3), '') AS subject_county
+        ),
+        eligible AS (
+          SELECT
+            sale.sale_price::numeric AS sale_price,
+            sale.closing_date,
+            sale.mls_bathrooms_total_integer::integer AS bathrooms_total,
+            CASE
+              WHEN sale.mls_garage_spaces IS NOT NULL
+                THEN ROUND(sale.mls_garage_spaces)::integer
+              WHEN sale.mls_garage_yn = false
+                THEN 0
+              ELSE NULL
+            END AS garage_spaces,
+            COALESCE(sale.mls_pool_yn, sale.cad_pool) AS pool_yn,
+            COALESCE(
+              NULLIF(sale.mls_living_area, 0),
+              NULLIF(sale.cad_living_area_sqft, 0)
+            )::numeric AS living_area,
+            sale.days_on_market
+          FROM core.v_sales_enriched sale
+          JOIN core.accounts sale_account
+            ON sale_account.account_id = sale.primary_account_id
+          CROSS JOIN parameters
+          WHERE sale.record_type = 'closed_sale'
+            AND sale.closing_date >=
+              (parameters.period_end - INTERVAL '1 year')::date
+            AND sale.closing_date <= parameters.period_end
+            AND sale.sale_price >= 10000
+            AND sale.multi_parcel_status = 'single'
+            AND sale.attachment_type NOT IN ('attached', 'mixed')
+            AND LOWER(BTRIM(sale_account.city)) =
+              LOWER(parameters.subject_city)
+            AND (
+              parameters.subject_county IS NULL
+              OR REGEXP_REPLACE(
+                LOWER(BTRIM(sale_account.county)),
+                '\\s+county$',
+                ''
+              ) = REGEXP_REPLACE(
+                LOWER(parameters.subject_county),
+                '\\s+county$',
+                ''
+              )
+            )
+        ),
+        coverage AS (
+          SELECT
+            COUNT(*)::integer AS eligible_sale_count,
+            COUNT(bathrooms_total)::integer AS bathroom_sale_count,
+            COUNT(garage_spaces)::integer AS garage_sale_count,
+            COUNT(pool_yn)::integer AS pool_sale_count,
+            (SELECT period_end FROM parameters) AS period_end,
+            (
+              SELECT (period_end - INTERVAL '1 year')::date
+              FROM parameters
+            ) AS period_start
+          FROM eligible
+        ),
+        dimension_rows AS (
+          SELECT
+            'bathrooms'::text AS dimension,
+            bathrooms_total::text AS group_value,
+            COUNT(*)::integer AS sample_size,
+            MIN(sale_price) AS minimum_sale_price,
+            MAX(sale_price) AS maximum_sale_price,
+            AVG(sale_price) AS average_sale_price,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price) AS median_sale_price,
+            percentile_cont(0.25) WITHIN GROUP
+              (ORDER BY sale_price) AS lower_quartile_sale_price,
+            percentile_cont(0.75) WITHIN GROUP
+              (ORDER BY sale_price) AS upper_quartile_sale_price,
+            stddev_samp(sale_price) AS sale_price_standard_deviation,
+            AVG(sale_price / NULLIF(living_area, 0))
+              FILTER (WHERE living_area > 0) AS average_price_per_square_foot,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price / NULLIF(living_area, 0))
+              FILTER (WHERE living_area > 0) AS median_price_per_square_foot,
+            AVG(living_area) FILTER (WHERE living_area > 0)
+              AS average_living_area,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY living_area)
+              FILTER (WHERE living_area > 0) AS median_living_area,
+            AVG(days_on_market) FILTER (WHERE days_on_market >= 0)
+              AS average_days_on_market,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY days_on_market)
+              FILTER (WHERE days_on_market >= 0) AS median_days_on_market
+          FROM eligible
+          WHERE bathrooms_total >= 1
+          GROUP BY bathrooms_total
+
+          UNION ALL
+
+          SELECT
+            'garage'::text AS dimension,
+            garage_spaces::text AS group_value,
+            COUNT(*)::integer AS sample_size,
+            MIN(sale_price) AS minimum_sale_price,
+            MAX(sale_price) AS maximum_sale_price,
+            AVG(sale_price) AS average_sale_price,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price) AS median_sale_price,
+            percentile_cont(0.25) WITHIN GROUP
+              (ORDER BY sale_price) AS lower_quartile_sale_price,
+            percentile_cont(0.75) WITHIN GROUP
+              (ORDER BY sale_price) AS upper_quartile_sale_price,
+            stddev_samp(sale_price) AS sale_price_standard_deviation,
+            AVG(sale_price / NULLIF(living_area, 0))
+              FILTER (WHERE living_area > 0) AS average_price_per_square_foot,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price / NULLIF(living_area, 0))
+              FILTER (WHERE living_area > 0) AS median_price_per_square_foot,
+            AVG(living_area) FILTER (WHERE living_area > 0)
+              AS average_living_area,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY living_area)
+              FILTER (WHERE living_area > 0) AS median_living_area,
+            AVG(days_on_market) FILTER (WHERE days_on_market >= 0)
+              AS average_days_on_market,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY days_on_market)
+              FILTER (WHERE days_on_market >= 0) AS median_days_on_market
+          FROM eligible
+          WHERE garage_spaces >= 0
+          GROUP BY garage_spaces
+
+          UNION ALL
+
+          SELECT
+            'pool'::text AS dimension,
+            pool_yn::text AS group_value,
+            COUNT(*)::integer AS sample_size,
+            MIN(sale_price) AS minimum_sale_price,
+            MAX(sale_price) AS maximum_sale_price,
+            AVG(sale_price) AS average_sale_price,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price) AS median_sale_price,
+            percentile_cont(0.25) WITHIN GROUP
+              (ORDER BY sale_price) AS lower_quartile_sale_price,
+            percentile_cont(0.75) WITHIN GROUP
+              (ORDER BY sale_price) AS upper_quartile_sale_price,
+            stddev_samp(sale_price) AS sale_price_standard_deviation,
+            AVG(sale_price / NULLIF(living_area, 0))
+              FILTER (WHERE living_area > 0) AS average_price_per_square_foot,
+            percentile_cont(0.5) WITHIN GROUP
+              (ORDER BY sale_price / NULLIF(living_area, 0))
+              FILTER (WHERE living_area > 0) AS median_price_per_square_foot,
+            AVG(living_area) FILTER (WHERE living_area > 0)
+              AS average_living_area,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY living_area)
+              FILTER (WHERE living_area > 0) AS median_living_area,
+            AVG(days_on_market) FILTER (WHERE days_on_market >= 0)
+              AS average_days_on_market,
+            percentile_cont(0.5) WITHIN GROUP (ORDER BY days_on_market)
+              FILTER (WHERE days_on_market >= 0) AS median_days_on_market
+          FROM eligible
+          WHERE pool_yn IS NOT NULL
+          GROUP BY pool_yn
+        )
+        SELECT dimension_rows.*, coverage.*
+        FROM dimension_rows
+        CROSS JOIN coverage
+        ORDER BY
+          CASE dimension
+            WHEN 'bathrooms' THEN 1
+            WHEN 'garage' THEN 2
+            ELSE 3
+          END,
+          CASE
+            WHEN dimension = 'pool' AND group_value = 'false' THEN 0
+            WHEN dimension = 'pool' AND group_value = 'true' THEN 1
+            ELSE group_value::integer
+          END
+      `,
+      [
+        asOfDate,
+        String(subject.city || ""),
+        String(subject.county || ""),
+      ],
+    );
+
+    const coverageRow = rows[0] || {};
+    res.json({
+      subject: {
+        account_id: subject.account_id,
+        address: subject.address,
+      },
+      market: {
+        scope: "city",
+        city: subject.city,
+        county: subject.county,
+        label: [subject.city, subject.county].filter(Boolean).join(", "),
+      },
+      period: {
+        start: coverageRow.period_start || null,
+        end: coverageRow.period_end || asOfDate || null,
+      },
+      population: {
+        eligible_sale_count: Number(coverageRow.eligible_sale_count || 0),
+        bathroom_sale_count: Number(coverageRow.bathroom_sale_count || 0),
+        garage_sale_count: Number(coverageRow.garage_sale_count || 0),
+        pool_sale_count: Number(coverageRow.pool_sale_count || 0),
+      },
+      filters: {
+        record_type: "closed_sale",
+        minimum_sale_price: 10000,
+        multi_parcel_status: "single",
+        attached_housing_excluded: true,
+        period_years: 1,
+      },
+      dimensions: buildGroupedAnalysis(rows),
+    });
+  } catch (error) {
+    console.error("/api/sales/grouped-analysis failed", error);
+    res.status(500).json({
+      error: "grouped_analysis_failed",
+      ...(process.env.GROUPED_ANALYSIS_DEBUG === "true"
+        ? {
+            detail: error?.message || String(error),
+            database_code: error?.code || null,
+          }
+        : {}),
+    });
   }
 });
 

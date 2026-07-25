@@ -56,5 +56,28 @@ assert.equal(
   74_750,
   'The same half-bath difference should reverse direction when the subject is superior.',
 );
+assert.equal(
+  calculateNumericGroupedAdjustment(schedule, 'bathrooms', 3.5, 2),
+  161_750,
+  'A comparison spanning multiple bath intervals should combine both selected studies.',
+);
+
+const updatedSchedule = [
+  schedule[0],
+  {
+    ...schedule[1],
+    amount: 81_700,
+  },
+];
+assert.equal(
+  calculateNumericGroupedAdjustment(updatedSchedule, 'bathrooms', 3.5, 2),
+  127_850,
+  'Changing a selected study should replace that interval amount in the resulting schedule.',
+);
+assert.equal(
+  calculateNumericGroupedAdjustment([schedule[1]], 'bathrooms', 2, 2.5),
+  0,
+  'A study must not affect a comparison that does not cross its feature interval.',
+);
 
 console.log('Comparable adjustment tests passed.');

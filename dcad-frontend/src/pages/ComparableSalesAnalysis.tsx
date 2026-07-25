@@ -283,7 +283,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [compSaleDates, setCompSaleDates] = useState<string[]>(() => Array(COMPARABLE_COUNT).fill(''));
   const [compLandSize, setCompLandSize] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   const [compClasses, setCompClasses] = useState<Array<number | string | null>>(() => Array(COMPARABLE_COUNT).fill(null));
-  // Test-mode comparable ages for the "Actual Age" row
+  // Test-mode comparable ages for the "Age/Effective" row
   const [compAges, setCompAges] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   // Test-mode comparable garage areas
   const [compGarage, setCompGarage] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
@@ -1400,7 +1400,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const glaAdj = toNum((glaAdjustments || [])[i]);
       const garageAdj = toNum((garageAdjustments || [])[i]);
       const poolAdj = toNum((poolAdjustments || [])[i]);
-      // Land Size, Actual Age currently $0
+      // Land Size and Age/Effective currently $0
       const landAdj = 0;
       const ageAdj = 0;
       const total = (concession > 0 ? -concession : 0) + timeAdj + classAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
@@ -2429,7 +2429,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Architectural Style',
                     'Const Type',
                     'CAD Class',
-                    'Actual Age',
+                    'Age/Effective',
                     'Condition',
                     'Quality',
                   ].map((label) => {
@@ -2463,7 +2463,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       case 'CAD Class':
                         subjectValue = subject?.building_class || '';
                         break;
-                      case 'Actual Age':
+                      case 'Age/Effective':
                         subjectValue = subject?.actual_age ?? '';
                         break;
                       case 'Condition':
@@ -2521,7 +2521,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? normalizeConstType(subject?.stories, subject?.construction_type)
                               : label === 'CAD Class'
                                 ? String((compClasses || [])[i] ?? '')
-                              : label === 'Actual Age'
+                              : label === 'Age/Effective'
                                 ? (compAges[i] ?? '')
                               : label === 'Condition'
                                 ? (
@@ -2576,8 +2576,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                     if (v === null || v === undefined || v === 0) return '';
                                     return fmtCurrency(v);
                                   })()
-                              // SALES: Actual Age – adjustments fixed at $0 for all comparables
-                              : label === 'Actual Age'
+                              // SALES: Age/Effective – adjustments fixed at $0 for all comparables
+                              : label === 'Age/Effective'
                                 ? fmtCurrency(0)
                               : ''}
                           </td>,

@@ -3,10 +3,39 @@ import assert from "node:assert/strict";
 import {
   applyRecommendationPolicy,
   classifySaleAge,
+  filterComparablesForMarket,
   haversineMiles,
   polygonCentroid,
   scoreComparable,
 } from "../src/util/comparableScoring.js";
+
+test("market studies keep only sales inside the selected city, ZIP, or radius", () => {
+  const sales = [
+    { id: "garland-near", city: "Garland", zip: "75044-1234", distanceMiles: 0.8 },
+    { id: "garland-far", city: "GARLAND", zip: "75043", distanceMiles: 4.2 },
+    { id: "plano", city: "Plano", zip: "75074", distanceMiles: 2.5 },
+  ];
+  const subject = { city: " Garland ", postal_code: "75044" };
+
+  assert.deepEqual(
+    filterComparablesForMarket(sales, subject, { scope: "city" })
+      .map((sale) => sale.id),
+    ["garland-near", "garland-far"],
+  );
+  assert.deepEqual(
+    filterComparablesForMarket(sales, subject, { scope: "zip" })
+      .map((sale) => sale.id),
+    ["garland-near"],
+  );
+  assert.deepEqual(
+    filterComparablesForMarket(
+      sales,
+      subject,
+      { scope: "radius", radiusMiles: 3 },
+    ).map((sale) => sale.id),
+    ["garland-near", "plano"],
+  );
+});
 
 test("haversine distance is zero for the same parcel center", () => {
   assert.equal(haversineMiles(32.947, -96.656, 32.947, -96.656), 0);

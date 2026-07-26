@@ -288,6 +288,7 @@ export interface ComparableRecommendationParams {
   dateFrom?: string;
   dateTo?: string;
   limit?: number;
+  marketBreakdown?: GroupedAnalysisBreakdownKey;
   locationWeight?: number;
   squareFootageWeight?: number;
   locationScaleMiles?: number;
@@ -300,6 +301,7 @@ export interface ComparableRecommendationsResponse {
     address: string | null;
     city: string | null;
     county: string | null;
+    postal_code: string | null;
     neighborhood_code: string | null;
     living_area_sqft: number;
     latitude: number;
@@ -324,6 +326,8 @@ export interface ComparableRecommendationsResponse {
   coverage: {
     candidate_count: number;
     eligible_count: number;
+    total_scored_count?: number;
+    scope_eligible_count?: number;
     missing_location_count: number;
     unsupported_county_count: number;
     missing_square_footage_count: number;
@@ -340,6 +344,12 @@ export interface ComparableRecommendationsResponse {
     recentHighScoreCount: number;
     scoreAboveThresholdCount: number;
     olderSaleExclusionApplied: boolean;
+  };
+  study_market?: {
+    key: GroupedAnalysisBreakdownKey | null;
+    scope: 'city' | 'zip' | 'radius' | null;
+    radius_miles: number | null;
+    label: string;
   };
   recommended_sales: SaleRow[];
   sales: SaleRow[];
@@ -552,6 +562,7 @@ export async function getComparableRecommendations(
     date_from: params.dateFrom,
     date_to: params.dateTo,
     limit: params.limit ?? 25,
+    market_breakdown: params.marketBreakdown,
     location_weight: params.locationWeight,
     square_footage_weight: params.squareFootageWeight,
     location_scale_miles: params.locationScaleMiles,

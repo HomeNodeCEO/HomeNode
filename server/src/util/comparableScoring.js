@@ -212,6 +212,34 @@ export function scoreComparable(
   };
 }
 
+export function filterComparablesForMarket(
+  comparables,
+  subject,
+  breakdown,
+) {
+  if (!breakdown) return [...comparables];
+  const subjectCity = String(subject?.city || "").trim().toLowerCase();
+  const subjectZip = String(subject?.postal_code || "")
+    .replace(/\D/g, "")
+    .slice(0, 5);
+
+  return comparables.filter((comparable) => {
+    if (breakdown.scope === "city") {
+      return Boolean(subjectCity) &&
+        String(comparable.city || "").trim().toLowerCase() === subjectCity;
+    }
+    if (breakdown.scope === "zip") {
+      const comparableZip = String(comparable.zip || "")
+        .replace(/\D/g, "")
+        .slice(0, 5);
+      return Boolean(subjectZip) && comparableZip === subjectZip;
+    }
+    return breakdown.scope === "radius" &&
+      Number.isFinite(Number(comparable.distanceMiles)) &&
+      Number(comparable.distanceMiles) <= breakdown.radiusMiles;
+  });
+}
+
 function ringCentroid(ring) {
   if (!Array.isArray(ring) || ring.length < 3) return null;
   let crossSum = 0;

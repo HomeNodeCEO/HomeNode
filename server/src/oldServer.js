@@ -9,6 +9,7 @@ import {
   applyRecommendationPolicy,
   DEFAULT_COMPARABLE_SCORING,
   DEFAULT_RECOMMENDATION_POLICY,
+  filterComparablesForMarket,
   scoreComparable,
 } from "./util/comparableScoring.js";
 import {
@@ -802,6 +803,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
     ).trim();
     const dateFrom = String(req.query.date_from || "").trim();
     const dateTo = String(req.query.date_to || "").trim();
+    const marketBreakdownValue = String(
+      req.query.market_breakdown || "",
+    ).trim();
     const resultLimit = Math.min(
       Math.max(
         parseInt(String(req.query.limit || "25"), 10) || 25,
@@ -817,6 +821,24 @@ app.get("/api/sales/recommendations", async (req, res) => {
     }
     if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
       return res.status(400).json({ error: "invalid_date_to" });
+    }
+    let marketBreakdown = null;
+    if (marketBreakdownValue) {
+      try {
+        const parsedBreakdowns = parseGroupedAnalysisBreakdowns(
+          marketBreakdownValue,
+        );
+        if (parsedBreakdowns.length !== 1) {
+          return res.status(400).json({
+            error: "invalid_market_breakdown",
+          });
+        }
+        [marketBreakdown] = parsedBreakdowns;
+      } catch {
+        return res.status(400).json({
+          error: "invalid_market_breakdown",
+        });
+      }
     }
 
     const parseTunableNumber = (value, fallback, minimum, maximum) => {
@@ -865,6 +887,13 @@ app.get("/api/sales/recommendations", async (req, res) => {
             account.address,
             account.city,
             account.county,
+            NULLIF(
+              LEFT(
+                REGEXP_REPLACE(COALESCE(account.postal_code, ''), '\\D', '', 'g'),
+                5
+              ),
+              ''
+            ) AS postal_code,
             account.neighborhood_code,
             COALESCE(improvement.living_area_sqft, improvement.total_living_area) AS living_area_sqft,
             location.latitude,
@@ -924,6 +953,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
       "sale.record_type = 'closed_sale'",
       "sale.attachment_type NOT IN ('attached', 'mixed')",
     ];
+    if (marketBreakdown) {
+      candidateWhere.push(
+        "sale.sale_price >= 10000",
+        "sale.multi_parcel_status = 'single'",
+      );
+    }
     if (dateFrom) {
       candidateParams.push(dateFrom);
       candidateWhere.push(
@@ -995,9 +1030,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
         account.neighborhood_code,
         account.subdivision,
         COALESCE(NULLIF(BTRIM(sale.address), ''), NULLIF(BTRIM(account.address), '')) AS address,
-        sale.city,
+        COALESCE(NULLIF(BTRIM(sale.city), ''), NULLIF(BTRIM(account.city), '')) AS city,
         sale.state,
-        sale.zip,
+        COALESCE(NULLIF(BTRIM(sale.zip), ''), NULLIF(BTRIM(account.postal_code), '')) AS zip,
         sale.closing_date,
         sale.sale_price,
         sale.days_on_market,
@@ -1131,7 +1166,13 @@ app.get("/api/sales/recommendations", async (req, res) => {
       });
     }
 
-    scored.sort(
+    const scoped = filterComparablesForMarket(
+      scored,
+      subject,
+      marketBreakdown,
+    );
+
+    scoped.sort(
       (left, right) =>
         right.comparableScore - left.comparableScore ||
         left.distanceMiles - right.distanceMiles ||
@@ -1141,10 +1182,18 @@ app.get("/api/sales/recommendations", async (req, res) => {
           String(left.closing_date || ""),
         ),
     );
-    scored.forEach((candidate, index) => {
+    scoped.forEach((candidate, index) => {
       candidate.score_rank = index + 1;
     });
-    const recommendationResult = applyRecommendationPolicy(scored);
+    const recommendationResult = applyRecommendationPolicy(scoped);
+
+    const marketLabel = !marketBreakdown
+      ? "All eligible sales"
+      : marketBreakdown.scope === "city"
+        ? [subject.city, subject.county].filter(Boolean).join(", ")
+        : marketBreakdown.scope === "zip"
+          ? `ZIP ${subject.postal_code}`
+          : `Within ${marketBreakdown.radiusMiles} mile${marketBreakdown.radiusMiles === 1 ? "" : "s"} of ${subject.address || subject.account_id}`;
 
     res.json({
       subject: {
@@ -1152,6 +1201,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
         address: subject.address,
         city: subject.city,
         county: subject.county,
+        postal_code: subject.postal_code,
         neighborhood_code: subject.neighborhood_code,
         living_area_sqft: Number(subject.living_area_sqft),
         latitude: Number(subject.latitude),
@@ -1176,7 +1226,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
       },
       coverage: {
         candidate_count: candidates.length,
-        eligible_count: scored.length,
+        eligible_count: scoped.length,
+        total_scored_count: scored.length,
+        scope_eligible_count: scoped.length,
         missing_location_count: missingLocationCount,
         unsupported_county_count: unsupportedCountyCount,
         missing_square_footage_count: missingSquareFootageCount,
@@ -1188,6 +1240,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
           recommendationResult.policy.recentHighScoreCount,
       },
       recommendation_policy: recommendationResult.policy,
+      study_market: {
+        key: marketBreakdown?.key || null,
+        scope: marketBreakdown?.scope || null,
+        radius_miles: marketBreakdown?.radiusMiles || null,
+        label: marketLabel,
+      },
       recommended_sales: recommendationResult.recommendedSales,
       sales: recommendationResult.sales.slice(0, resultLimit),
     });

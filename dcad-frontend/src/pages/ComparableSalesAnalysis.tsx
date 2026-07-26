@@ -1391,40 +1391,27 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   );
 
   // SALES/EQUITY: Net Adjustments — sum all signed adjustments per comparable
-  const preRatingPrices = useMemo<number[]>(
-    () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
-      const salePrice = finiteNumber(compPrices[index]) || 0;
-      const concession = Math.max(0, finiteNumber(compConcessions[index]) || 0);
-      return salePrice
-        - concession
-        + (finiteNumber(compTimeAdjustments[index]) || 0)
-        + (roomCountTotalAdjustments[index] || 0)
-        + (glaAdjustments[index] || 0)
-        + (garageAdjustments[index] || 0)
-        + (poolAdjustments[index] || 0);
-    }),
-    [
-      compPrices,
-      compConcessions,
-      compTimeAdjustments,
-      roomCountTotalAdjustments,
-      glaAdjustments,
-      garageAdjustments,
-      poolAdjustments,
-    ],
+  // Rating placeholders follow the reported sale-price evidence. Concessions
+  // and the other objective adjustments remain separate rows in the grid.
+  const ratingPrices = useMemo<number[]>(
+    () => Array.from(
+      { length: COMPARABLE_COUNT },
+      (_, index) => finiteNumber(compPrices[index]) || 0,
+    ),
+    [compPrices],
   );
 
   const autoRatingResult = useMemo(
     () => inferAutoRatings(
       selectedSales.flatMap((sale, index) => (
-        sale && preRatingPrices[index] > 0
-          ? [{ id: `slot-${index}`, price: preRatingPrices[index] }]
+        sale && ratingPrices[index] > 0
+          ? [{ id: `slot-${index}`, price: ratingPrices[index] }]
           : []
       )),
       subjectCondition,
       subjectQuality,
     ),
-    [selectedSales, preRatingPrices, subjectCondition, subjectQuality],
+    [selectedSales, ratingPrices, subjectCondition, subjectQuality],
   );
 
   useEffect(() => {
@@ -1476,10 +1463,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const ratingAdjustmentResult = useMemo(
     () => deriveRatingAdjustments(
       selectedSales.flatMap((sale, index) => (
-        sale && preRatingPrices[index] > 0
+        sale && ratingPrices[index] > 0
           ? [{
               id: `slot-${index}`,
-              price: preRatingPrices[index],
+              price: ratingPrices[index],
               condition: compConditions[index] || '',
               quality: compQualities[index] || '',
             }]
@@ -1490,7 +1477,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     ),
     [
       selectedSales,
-      preRatingPrices,
+      ratingPrices,
       compConditions,
       compQualities,
       subjectCondition,

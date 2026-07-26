@@ -6,6 +6,10 @@ import GroupedAdjustmentAnalysis, {
   type AppliedGroupedAdjustment,
   type GroupedAdjustmentImpactPreview,
 } from '@/components/GroupedAdjustmentAnalysis';
+import ConditionQualityStudy, {
+  type ConditionQualityImpactPreview,
+  type ConditionQualityRatingAssignment,
+} from '@/components/ConditionQualityStudy';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 import {
@@ -13,12 +17,15 @@ import {
   calculateNumericGroupedAdjustment,
 } from '@/lib/comparableAdjustments';
 import {
-  deriveRatingAdjustments,
-  inferAutoRatings,
   normalizeUadRating,
   UAD_CONDITION_RATINGS,
   UAD_QUALITY_RATINGS,
 } from '@/lib/conditionQualityRatings';
+import {
+  calculateRatingAdjustment,
+  conditionQualitySaleKey,
+  type AppliedConditionQualityAdjustment,
+} from '@/lib/conditionQualityStudy';
 
 const COMPARABLE_COUNT = 6;
 
@@ -60,8 +67,6 @@ type HousingEditForm = {
   sourceUrl: string;
   notes: string;
 };
-
-type RatingSource = 'auto' | 'manual' | null;
 
 const HOUSING_TYPE_OPTIONS = [
   'Single Family Detached',
@@ -283,12 +288,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [compQualities, setCompQualities] = useState<string[]>(
     () => Array(COMPARABLE_COUNT).fill(''),
   );
-  const [compConditionSources, setCompConditionSources] = useState<RatingSource[]>(
-    () => Array(COMPARABLE_COUNT).fill(null),
-  );
-  const [compQualitySources, setCompQualitySources] = useState<RatingSource[]>(
-    () => Array(COMPARABLE_COUNT).fill(null),
-  );
+  const [conditionQualityRatings, setConditionQualityRatings] = useState<
+    Record<string, ConditionQualityRatingAssignment>
+  >({});
+  const [appliedConditionQualityAdjustments, setAppliedConditionQualityAdjustments] =
+    useState<Partial<Record<'condition' | 'quality', AppliedConditionQualityAdjustment>>>({});
   const [compAddresses, setCompAddresses] = useState<string[]>(() => Array(COMPARABLE_COUNT).fill(''));
   const [compGla, setCompGla] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
   const [compPrices, setCompPrices] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
@@ -340,6 +344,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   useEffect(() => {
     setAppliedGroupedAdjustments({});
+    setAppliedConditionQualityAdjustments({});
+    setConditionQualityRatings({});
   }, [propertyId]);
 
   useEffect(() => {
@@ -350,8 +356,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setDraftSubjectQuality('');
     setCompConditions(Array(COMPARABLE_COUNT).fill(''));
     setCompQualities(Array(COMPARABLE_COUNT).fill(''));
-    setCompConditionSources(Array(COMPARABLE_COUNT).fill(null));
-    setCompQualitySources(Array(COMPARABLE_COUNT).fill(null));
   }, [conditionCode, propertyId]);
 
   useEffect(() => {
@@ -1150,6 +1154,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const fullBaths = saleNumber(sale.cad_baths_full ?? sale.mls_bathrooms_full);
     const halfBaths = saleNumber(sale.cad_baths_half ?? sale.mls_bathrooms_half);
     const totalRooms = bedrooms == null ? null : Math.round(bedrooms) + 3;
+    const savedRatings = conditionQualityRatings[conditionQualitySaleKey(sale)];
 
     setSelectedSales((current) => current.map((item, index) => index === slot ? sale : item));
     setCompAddresses((current) => current.map((value, index) => index === slot ? saleDisplayAddress(sale) : value));
@@ -1161,10 +1166,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompLandSize((current) => current.map((value, index) => index === slot ? landSize : value));
     setCompAges((current) => current.map((value, index) => index === slot && yearBuilt != null ? Math.max(0, new Date().getFullYear() - yearBuilt) : (index === slot ? null : value)));
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
-    setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
-    setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
-    setCompConditionSources((current) => current.map((value, index) => index === slot ? null : value));
-    setCompQualitySources((current) => current.map((value, index) => index === slot ? null : value));
+    setCompConditions((current) => current.map((value, index) =>
+      index === slot ? (savedRatings?.condition || '') : value));
+    setCompQualities((current) => current.map((value, index) =>
+      index === slot ? (savedRatings?.quality || '') : value));
     setCompRooms((current) => current.map((value, index) => index === slot ? {
       tot: totalRooms,
       bd: bedrooms == null ? null : Math.round(bedrooms),
@@ -1197,8 +1202,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
     setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
     setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
-    setCompConditionSources((current) => current.map((value, index) => index === slot ? null : value));
-    setCompQualitySources((current) => current.map((value, index) => index === slot ? null : value));
     setCompRooms((current) => current.map((value, index) => index === slot ? { tot: null, bd: null, full: null, half: null } : value));
   };
 
@@ -1391,125 +1394,47 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   );
 
   // SALES/EQUITY: Net Adjustments — sum all signed adjustments per comparable
-  // Rating placeholders follow the reported sale-price evidence. Concessions
-  // and the other objective adjustments remain separate rows in the grid.
-  const ratingPrices = useMemo<number[]>(
-    () => Array.from(
-      { length: COMPARABLE_COUNT },
-      (_, index) => finiteNumber(compPrices[index]) || 0,
-    ),
-    [compPrices],
-  );
-
-  const autoRatingResult = useMemo(
-    () => inferAutoRatings(
-      selectedSales.flatMap((sale, index) => (
-        sale && ratingPrices[index] > 0
-          ? [{ id: `slot-${index}`, price: ratingPrices[index] }]
-          : []
-      )),
-      subjectCondition,
-      subjectQuality,
-    ),
-    [selectedSales, ratingPrices, subjectCondition, subjectQuality],
-  );
-
-  useEffect(() => {
-    const suggestions = new Map(
-      autoRatingResult.suggestions.map((suggestion) => [suggestion.id, suggestion]),
-    );
-
-    setCompConditions((current) => {
-      const next = current.map((value, index) => {
-        if (!selectedSales[index] || compConditionSources[index] === 'manual') return value;
-        return suggestions.get(`slot-${index}`)?.condition || value;
-      });
-      return next.some((value, index) => value !== current[index]) ? next : current;
-    });
-    setCompQualities((current) => {
-      const next = current.map((value, index) => {
-        if (!selectedSales[index] || compQualitySources[index] === 'manual') return value;
-        return suggestions.get(`slot-${index}`)?.quality || value;
-      });
-      return next.some((value, index) => value !== current[index]) ? next : current;
-    });
-    setCompConditionSources((current) => {
-      const next = current.map((value, index) => (
-        selectedSales[index] &&
-        value !== 'manual' &&
-        suggestions.get(`slot-${index}`)?.condition
-          ? 'auto'
-          : value
-      ));
-      return next.some((value, index) => value !== current[index]) ? next : current;
-    });
-    setCompQualitySources((current) => {
-      const next = current.map((value, index) => (
-        selectedSales[index] &&
-        value !== 'manual' &&
-        suggestions.get(`slot-${index}`)?.quality
-          ? 'auto'
-          : value
-      ));
-      return next.some((value, index) => value !== current[index]) ? next : current;
-    });
-  }, [
-    autoRatingResult,
-    selectedSales,
-    compConditionSources,
-    compQualitySources,
-  ]);
-
-  const ratingAdjustmentResult = useMemo(
-    () => deriveRatingAdjustments(
-      selectedSales.flatMap((sale, index) => (
-        sale && ratingPrices[index] > 0
-          ? [{
-              id: `slot-${index}`,
-              price: ratingPrices[index],
-              condition: compConditions[index] || '',
-              quality: compQualities[index] || '',
-            }]
-          : []
-      )),
-      subjectCondition,
-      subjectQuality,
-    ),
+  // Condition and quality remain separate from concessions and every other
+  // objective adjustment already present in the grid.
+  // Condition and quality stay at zero until the user explicitly applies a
+  // separately calculated market study. Grid dropdowns remain editable.
+  const conditionAdjustments = useMemo(
+    () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
+      const applied = appliedConditionQualityAdjustments.condition;
+      if (!selectedSales[index] || !applied) return 0;
+      return calculateRatingAdjustment(
+        applied.amount,
+        subjectCondition,
+        compConditions[index] || '',
+        'condition',
+      );
+    }),
     [
       selectedSales,
-      ratingPrices,
-      compConditions,
-      compQualities,
+      appliedConditionQualityAdjustments.condition,
       subjectCondition,
-      subjectQuality,
+      compConditions,
     ],
   );
 
-  const conditionAdjustments = useMemo(() => {
-    const bySlot = new Map(
-      ratingAdjustmentResult.adjustments.map((adjustment) => [
-        adjustment.id,
-        adjustment.conditionAdjustment,
-      ]),
-    );
-    return Array.from(
-      { length: COMPARABLE_COUNT },
-      (_, index) => bySlot.get(`slot-${index}`) || 0,
-    );
-  }, [ratingAdjustmentResult]);
-
-  const qualityAdjustments = useMemo(() => {
-    const bySlot = new Map(
-      ratingAdjustmentResult.adjustments.map((adjustment) => [
-        adjustment.id,
-        adjustment.qualityAdjustment,
-      ]),
-    );
-    return Array.from(
-      { length: COMPARABLE_COUNT },
-      (_, index) => bySlot.get(`slot-${index}`) || 0,
-    );
-  }, [ratingAdjustmentResult]);
+  const qualityAdjustments = useMemo(
+    () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
+      const applied = appliedConditionQualityAdjustments.quality;
+      if (!selectedSales[index] || !applied) return 0;
+      return calculateRatingAdjustment(
+        applied.amount,
+        subjectQuality,
+        compQualities[index] || '',
+        'quality',
+      );
+    }),
+    [
+      selectedSales,
+      appliedConditionQualityAdjustments.quality,
+      subjectQuality,
+      compQualities,
+    ],
+  );
 
   const netAdjustments = useMemo<number[]>(() => {
     const arr: number[] = [];
@@ -1704,6 +1629,75 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return impacts.length ? impacts.join(' · ') : 'Add comparables to see the grid impact.';
   };
 
+  const updateConditionQualityRating = (
+    sale: SaleRow,
+    dimension: 'condition' | 'quality',
+    value: string,
+  ) => {
+    const key = conditionQualitySaleKey(sale);
+    setConditionQualityRatings((current) => ({
+      ...current,
+      [key]: {
+        condition: current[key]?.condition || '',
+        quality: current[key]?.quality || '',
+        [dimension]: value,
+      },
+    }));
+
+    selectedSales.forEach((selectedSale, index) => {
+      if (!selectedSale || conditionQualitySaleKey(selectedSale) !== key) return;
+      if (dimension === 'condition') {
+        setCompConditions((current) =>
+          current.map((item, itemIndex) => itemIndex === index ? value : item));
+      } else {
+        setCompQualities((current) =>
+          current.map((item, itemIndex) => itemIndex === index ? value : item));
+      }
+    });
+  };
+
+  const previewConditionQualityAdjustment = (
+    draftAdjustment: AppliedConditionQualityAdjustment,
+  ): ConditionQualityImpactPreview => {
+    const adjustments = Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
+      if (!selectedSales[index]) return 0;
+      return calculateRatingAdjustment(
+        draftAdjustment.amount,
+        draftAdjustment.dimension === 'condition'
+          ? subjectCondition
+          : subjectQuality,
+        draftAdjustment.dimension === 'condition'
+          ? (compConditions[index] || '')
+          : (compQualities[index] || ''),
+        draftAdjustment.dimension,
+      );
+    });
+    const selectedCount = selectedSales.filter(Boolean).length;
+    const affectedCount = adjustments.filter(
+      (amount, index) => selectedSales[index] && amount !== 0,
+    ).length;
+    return { adjustments, selectedCount, affectedCount };
+  };
+
+  const conditionQualityBreakdownSummary = (
+    dimension: 'condition' | 'quality',
+    gridAdjustments: number[],
+  ) => {
+    const applied = appliedConditionQualityAdjustments[dimension];
+    if (!applied) {
+      return `No ${dimension} study adjustment has been applied. Run the Condition and Quality Study, rate the selected market sales, and apply a supported tile to update the grid.`;
+    }
+    const selectedCount = selectedSales.filter(Boolean).length;
+    const affectedCount = gridAdjustments.filter(
+      (amount, index) => selectedSales[index] && amount !== 0,
+    ).length;
+    return `${applied.marketLabel} — ${applied.transitionLabel} ${applied.optionLabel}: ` +
+      `${signedAdjustment(applied.rawDifference)} ÷ ${applied.gradeDifference} grade` +
+      `${applied.gradeDifference === 1 ? '' : 's'} = ${signedAdjustment(applied.baseAmount)} per grade; ` +
+      `${applied.factorPercent}% factoring = ${signedAdjustment(applied.amount)} per full grade. ` +
+      `Half-grade ranges receive half the rate. This currently adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
+  };
+
   const subjectRatingsApplied = Boolean(
     subjectCondition &&
     subjectQuality &&
@@ -1718,7 +1712,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSubjectCondition(condition);
     setSubjectQuality(quality);
     setSalesNotice(
-      `Applied subject ratings ${condition} / ${quality}. Auto-rated comparables remain editable in the grid.`,
+      `Applied subject ratings ${condition} / ${quality}. Condition and quality adjustments remain at zero until a study tile is applied.`,
     );
   };
 
@@ -1864,34 +1858,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               </div>
             </div>
 
-            {subjectRatingsApplied && selectedSales.some(Boolean) && (
+            {subjectRatingsApplied && (
               <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-                <span className="font-semibold text-slate-800">Auto-rating analysis:</span>{' '}
-                {autoRatingResult.conditionSplitFound
-                  ? 'a condition price break was found'
-                  : 'no supported condition price break yet'}
-                {'; '}
-                {autoRatingResult.qualitySplitFound
-                  ? 'a residual quality price break was found'
-                  : 'no supported residual quality price break yet'}.
-                {' '}
-                Condition rate:{' '}
-                <span className="font-semibold text-slate-800">
-                  {ratingAdjustmentResult.conditionRate
-                    ? `${fmtCurrency(ratingAdjustmentResult.conditionRate)} per full grade`
-                    : 'insufficient evidence'}
-                </span>
-                {'; '}quality rate:{' '}
-                <span className="font-semibold text-slate-800">
-                  {ratingAdjustmentResult.qualityRate
-                    ? `${fmtCurrency(ratingAdjustmentResult.qualityRate)} per full grade`
-                    : 'insufficient evidence'}
-                </span>
-                {ratingAdjustmentResult.lowConfidence && (
-                  <span className="ml-1 font-medium text-amber-700">
-                    Low-sample results should be reviewed.
-                  </span>
-                )}
+                Comparable condition and quality ratings remain manual and editable.
+                The grid will show $0 for both adjustments until a separate Condition and Quality Study tile is applied below.
               </div>
             )}
           </div>
@@ -1956,11 +1926,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     {sale && <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id ? 'Matched account' : 'Unmatched sale'} · {saleDateDisplay(sale.closing_date)}</div>}
                     {sale && subjectRatingsApplied && (
                       <div className="mt-1 text-xs font-medium text-indigo-700">
-                        Rating placeholder: {compConditions[index] || '—'} / {compQualities[index] || '—'}
-                        {' · '}
-                        {compConditionSources[index] === 'manual' || compQualitySources[index] === 'manual'
-                          ? 'Manual review'
-                          : 'Auto'}
+                        Manual ratings: {compConditions[index] || '—'} / {compQualities[index] || '—'}
                       </div>
                     )}
                   </div>
@@ -2752,12 +2718,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                     ratings={UAD_CONDITION_RATINGS}
                                     disabled={!selectedSales[i]}
                                     onChange={(value) => {
-                                      setCompConditions((current) =>
-                                        current.map((item, index) => index === i ? value : item)
-                                      );
-                                      setCompConditionSources((current) =>
-                                        current.map((item, index) => index === i ? 'manual' : item)
-                                      );
+                                      const sale = selectedSales[i];
+                                      if (sale) {
+                                        updateConditionQualityRating(sale, 'condition', value);
+                                      }
                                     }}
                                   />
                                 )
@@ -2769,12 +2733,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                     ratings={UAD_QUALITY_RATINGS}
                                     disabled={!selectedSales[i]}
                                     onChange={(value) => {
-                                      setCompQualities((current) =>
-                                        current.map((item, index) => index === i ? value : item)
-                                      );
-                                      setCompQualitySources((current) =>
-                                        current.map((item, index) => index === i ? 'manual' : item)
-                                      );
+                                      const sale = selectedSales[i];
+                                      if (sale) {
+                                        updateConditionQualityRating(sale, 'quality', value);
+                                      }
                                     }}
                                   />
                                 )
@@ -3072,6 +3034,30 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
         </div>
 
+        <ConditionQualityStudy
+          key={`condition-quality-${propertyId}`}
+          subjectAccountId={propertyId}
+          subjectCondition={subjectCondition}
+          subjectQuality={subjectQuality}
+          ratingAssignments={conditionQualityRatings}
+          appliedAdjustments={appliedConditionQualityAdjustments}
+          onRatingChange={updateConditionQualityRating}
+          getImpactPreview={previewConditionQualityAdjustment}
+          onOpenSale={(sale) => void openSaleGallery(sale)}
+          onApplyAdjustment={(adjustment) =>
+            setAppliedConditionQualityAdjustments((current) => ({
+              ...current,
+              [adjustment.dimension]: adjustment,
+            }))
+          }
+          onRemoveAdjustment={(dimension) =>
+            setAppliedConditionQualityAdjustments((current) => {
+              const next = { ...current };
+              delete next[dimension];
+              return next;
+            })
+          }
+        />
 
         <GroupedAdjustmentAnalysis
           key={propertyId}
@@ -3150,6 +3136,50 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   </div>
                   <p className="mt-2 text-xs leading-5 text-slate-700">
                     {groupedBreakdownSummary(summaryItem.key, summaryItem.adjustments)}
+                  </p>
+                  <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-medium text-slate-700">
+                    {groupedGridImpact(summaryItem.adjustments)}
+                  </div>
+                </div>
+              );
+            })}
+            {([
+              {
+                key: 'condition' as const,
+                label: 'Condition',
+                adjustments: conditionAdjustments,
+              },
+              {
+                key: 'quality' as const,
+                label: 'Quality',
+                adjustments: qualityAdjustments,
+              },
+            ]).map((summaryItem) => {
+              const applied = appliedConditionQualityAdjustments[summaryItem.key];
+              return (
+                <div
+                  key={`live-summary-${summaryItem.key}`}
+                  className={`rounded-xl border p-4 ${
+                    applied
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-slate-200 bg-slate-50'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-semibold text-slate-900">{summaryItem.label}</div>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      applied
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      {applied ? 'Applied' : 'Not applied'}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-slate-700">
+                    {conditionQualityBreakdownSummary(
+                      summaryItem.key,
+                      summaryItem.adjustments,
+                    )}
                   </p>
                   <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-medium text-slate-700">
                     {groupedGridImpact(summaryItem.adjustments)}
@@ -3305,9 +3335,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 <div className="text-lg font-semibold mb-2">Quality</div>
                 <div className="text-green-700 font-semibold">Current Applied Methodology</div>
                 <p className="mt-2 text-sm text-slate-700">
-                  {ratingAdjustmentResult.qualityRate
-                    ? `After condition adjustments, the selected sales support ${fmtCurrency(ratingAdjustmentResult.qualityRate)} per full quality grade relative to the subject's ${subjectQuality} rating. Half-grade ranges receive half this amount.`
-                    : 'Apply the subject ratings and select enough comparable sales to identify a supported residual quality premium.'}
+                  {conditionQualityBreakdownSummary('quality', qualityAdjustments)}
                 </p>
                 <div className="mt-3 text-red-600 font-semibold">District Method</div>
                 <p className="mt-1 text-sm text-slate-700">
@@ -3333,9 +3361,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 <div className="text-lg font-semibold mb-2">Condition</div>
                 <div className="text-green-700 font-semibold">Current Applied Methodology</div>
                 <p className="mt-2 text-sm text-slate-700">
-                  {ratingAdjustmentResult.conditionRate
-                    ? `Comparable price groups support ${fmtCurrency(ratingAdjustmentResult.conditionRate)} per full condition grade relative to the subject's ${subjectCondition} rating. Half-grade ranges receive half this amount.`
-                    : 'Apply the subject ratings and select enough comparable sales to identify a supported condition price difference.'}
+                  {conditionQualityBreakdownSummary('condition', conditionAdjustments)}
                 </p>
                 <div className="mt-3 text-red-600 font-semibold">District Method</div>
                 <p className="mt-1 text-sm text-slate-700">

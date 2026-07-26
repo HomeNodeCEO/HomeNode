@@ -12,6 +12,13 @@ import {
   bathroomEquivalentValue,
   calculateNumericGroupedAdjustment,
 } from '@/lib/comparableAdjustments';
+import {
+  deriveRatingAdjustments,
+  inferAutoRatings,
+  normalizeUadRating,
+  UAD_CONDITION_RATINGS,
+  UAD_QUALITY_RATINGS,
+} from '@/lib/conditionQualityRatings';
 
 const COMPARABLE_COUNT = 6;
 
@@ -54,6 +61,8 @@ type HousingEditForm = {
   notes: string;
 };
 
+type RatingSource = 'auto' | 'manual' | null;
+
 const HOUSING_TYPE_OPTIONS = [
   'Single Family Detached',
   'Single Family Attached',
@@ -65,12 +74,8 @@ const HOUSING_TYPE_OPTIONS = [
   'Other',
 ];
 
-const UAD_CONDITION_RATINGS = ['C1', 'C2', 'C3', 'C4', 'C5', 'C6'] as const;
-const UAD_QUALITY_RATINGS = ['Q1', 'Q2', 'Q3', 'Q4', 'Q5', 'Q6'] as const;
-
 function normalizeUadConditionRating(value: unknown): string {
-  const match = String(value ?? '').trim().toUpperCase().match(/^C([1-6])/);
-  return match ? `C${match[1]}` : '';
+  return normalizeUadRating(value, 'condition');
 }
 
 function UadRatingSelect({
@@ -268,11 +273,21 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     normalizeUadConditionRating(conditionCode),
   );
   const [subjectQuality, setSubjectQuality] = useState('');
+  const [draftSubjectCondition, setDraftSubjectCondition] = useState(() =>
+    normalizeUadConditionRating(conditionCode),
+  );
+  const [draftSubjectQuality, setDraftSubjectQuality] = useState('');
   const [compConditions, setCompConditions] = useState<string[]>(
     () => Array(COMPARABLE_COUNT).fill(''),
   );
   const [compQualities, setCompQualities] = useState<string[]>(
     () => Array(COMPARABLE_COUNT).fill(''),
+  );
+  const [compConditionSources, setCompConditionSources] = useState<RatingSource[]>(
+    () => Array(COMPARABLE_COUNT).fill(null),
+  );
+  const [compQualitySources, setCompQualitySources] = useState<RatingSource[]>(
+    () => Array(COMPARABLE_COUNT).fill(null),
   );
   const [compAddresses, setCompAddresses] = useState<string[]>(() => Array(COMPARABLE_COUNT).fill(''));
   const [compGla, setCompGla] = useState<Array<number | null>>(() => Array(COMPARABLE_COUNT).fill(null));
@@ -328,10 +343,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   }, [propertyId]);
 
   useEffect(() => {
-    setSubjectCondition(normalizeUadConditionRating(conditionCode));
+    const normalizedCondition = normalizeUadConditionRating(conditionCode);
+    setSubjectCondition(normalizedCondition);
     setSubjectQuality('');
+    setDraftSubjectCondition(normalizedCondition);
+    setDraftSubjectQuality('');
     setCompConditions(Array(COMPARABLE_COUNT).fill(''));
     setCompQualities(Array(COMPARABLE_COUNT).fill(''));
+    setCompConditionSources(Array(COMPARABLE_COUNT).fill(null));
+    setCompQualitySources(Array(COMPARABLE_COUNT).fill(null));
   }, [conditionCode, propertyId]);
 
   useEffect(() => {
@@ -1143,6 +1163,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
     setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
     setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
+    setCompConditionSources((current) => current.map((value, index) => index === slot ? null : value));
+    setCompQualitySources((current) => current.map((value, index) => index === slot ? null : value));
     setCompRooms((current) => current.map((value, index) => index === slot ? {
       tot: totalRooms,
       bd: bedrooms == null ? null : Math.round(bedrooms),
@@ -1175,6 +1197,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
     setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
     setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
+    setCompConditionSources((current) => current.map((value, index) => index === slot ? null : value));
+    setCompQualitySources((current) => current.map((value, index) => index === slot ? null : value));
     setCompRooms((current) => current.map((value, index) => index === slot ? { tot: null, bd: null, full: null, half: null } : value));
   };
 
@@ -1367,6 +1391,139 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   );
 
   // SALES/EQUITY: Net Adjustments — sum all signed adjustments per comparable
+  const preRatingPrices = useMemo<number[]>(
+    () => Array.from({ length: COMPARABLE_COUNT }, (_, index) => {
+      const salePrice = finiteNumber(compPrices[index]) || 0;
+      const concession = Math.max(0, finiteNumber(compConcessions[index]) || 0);
+      return salePrice
+        - concession
+        + (finiteNumber(compTimeAdjustments[index]) || 0)
+        + (roomCountTotalAdjustments[index] || 0)
+        + (glaAdjustments[index] || 0)
+        + (garageAdjustments[index] || 0)
+        + (poolAdjustments[index] || 0);
+    }),
+    [
+      compPrices,
+      compConcessions,
+      compTimeAdjustments,
+      roomCountTotalAdjustments,
+      glaAdjustments,
+      garageAdjustments,
+      poolAdjustments,
+    ],
+  );
+
+  const autoRatingResult = useMemo(
+    () => inferAutoRatings(
+      selectedSales.flatMap((sale, index) => (
+        sale && preRatingPrices[index] > 0
+          ? [{ id: `slot-${index}`, price: preRatingPrices[index] }]
+          : []
+      )),
+      subjectCondition,
+      subjectQuality,
+    ),
+    [selectedSales, preRatingPrices, subjectCondition, subjectQuality],
+  );
+
+  useEffect(() => {
+    const suggestions = new Map(
+      autoRatingResult.suggestions.map((suggestion) => [suggestion.id, suggestion]),
+    );
+
+    setCompConditions((current) => {
+      const next = current.map((value, index) => {
+        if (!selectedSales[index] || compConditionSources[index] === 'manual') return value;
+        return suggestions.get(`slot-${index}`)?.condition || value;
+      });
+      return next.some((value, index) => value !== current[index]) ? next : current;
+    });
+    setCompQualities((current) => {
+      const next = current.map((value, index) => {
+        if (!selectedSales[index] || compQualitySources[index] === 'manual') return value;
+        return suggestions.get(`slot-${index}`)?.quality || value;
+      });
+      return next.some((value, index) => value !== current[index]) ? next : current;
+    });
+    setCompConditionSources((current) => {
+      const next = current.map((value, index) => (
+        selectedSales[index] &&
+        value !== 'manual' &&
+        suggestions.get(`slot-${index}`)?.condition
+          ? 'auto'
+          : value
+      ));
+      return next.some((value, index) => value !== current[index]) ? next : current;
+    });
+    setCompQualitySources((current) => {
+      const next = current.map((value, index) => (
+        selectedSales[index] &&
+        value !== 'manual' &&
+        suggestions.get(`slot-${index}`)?.quality
+          ? 'auto'
+          : value
+      ));
+      return next.some((value, index) => value !== current[index]) ? next : current;
+    });
+  }, [
+    autoRatingResult,
+    selectedSales,
+    compConditionSources,
+    compQualitySources,
+  ]);
+
+  const ratingAdjustmentResult = useMemo(
+    () => deriveRatingAdjustments(
+      selectedSales.flatMap((sale, index) => (
+        sale && preRatingPrices[index] > 0
+          ? [{
+              id: `slot-${index}`,
+              price: preRatingPrices[index],
+              condition: compConditions[index] || '',
+              quality: compQualities[index] || '',
+            }]
+          : []
+      )),
+      subjectCondition,
+      subjectQuality,
+    ),
+    [
+      selectedSales,
+      preRatingPrices,
+      compConditions,
+      compQualities,
+      subjectCondition,
+      subjectQuality,
+    ],
+  );
+
+  const conditionAdjustments = useMemo(() => {
+    const bySlot = new Map(
+      ratingAdjustmentResult.adjustments.map((adjustment) => [
+        adjustment.id,
+        adjustment.conditionAdjustment,
+      ]),
+    );
+    return Array.from(
+      { length: COMPARABLE_COUNT },
+      (_, index) => bySlot.get(`slot-${index}`) || 0,
+    );
+  }, [ratingAdjustmentResult]);
+
+  const qualityAdjustments = useMemo(() => {
+    const bySlot = new Map(
+      ratingAdjustmentResult.adjustments.map((adjustment) => [
+        adjustment.id,
+        adjustment.qualityAdjustment,
+      ]),
+    );
+    return Array.from(
+      { length: COMPARABLE_COUNT },
+      (_, index) => bySlot.get(`slot-${index}`) || 0,
+    );
+  }, [ratingAdjustmentResult]);
+
   const netAdjustments = useMemo<number[]>(() => {
     const arr: number[] = [];
     for (let i = 0; i < COMPARABLE_COUNT; i++) {
@@ -1381,14 +1538,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const glaAdj = toNum((glaAdjustments || [])[i]);
       const garageAdj = toNum((garageAdjustments || [])[i]);
       const poolAdj = toNum((poolAdjustments || [])[i]);
+      const conditionAdj = toNum((conditionAdjustments || [])[i]);
+      const qualityAdj = toNum((qualityAdjustments || [])[i]);
       // Land Size and Age/Effective currently $0
       const landAdj = 0;
       const ageAdj = 0;
-      const total = (concession > 0 ? -concession : 0) + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
+      const total = (concession > 0 ? -concession : 0) + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + conditionAdj + qualityAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
+  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments, conditionAdjustments, qualityAdjustments]);
 
   // SALES/EQUITY: Gross Adjustments — sum of absolute values of all adjustments per comparable
   const grossAdjustments = useMemo<number[]>(() => {
@@ -1405,13 +1564,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const glaAdj = Math.abs(toNum((glaAdjustments || [])[i]));
       const garageAdj = Math.abs(toNum((garageAdjustments || [])[i]));
       const poolAdj = Math.abs(toNum((poolAdjustments || [])[i]));
+      const conditionAdj = Math.abs(toNum((conditionAdjustments || [])[i]));
+      const qualityAdj = Math.abs(toNum((qualityAdjustments || [])[i]));
       const landAdj = 0;
       const ageAdj = 0;
-      const total = concession + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + landAdj + ageAdj;
+      const total = concession + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + conditionAdj + qualityAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments]);
+  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments, conditionAdjustments, qualityAdjustments]);
 
   // SALES: Indicated Values — sale price plus net adjustments per comparable
   const indicatedValues = useMemo<number[]>(() => {
@@ -1556,6 +1717,24 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return impacts.length ? impacts.join(' · ') : 'Add comparables to see the grid impact.';
   };
 
+  const subjectRatingsApplied = Boolean(
+    subjectCondition &&
+    subjectQuality &&
+    subjectCondition === draftSubjectCondition &&
+    subjectQuality === draftSubjectQuality,
+  );
+
+  const applySubjectRatings = () => {
+    const condition = normalizeUadRating(draftSubjectCondition, 'condition');
+    const quality = normalizeUadRating(draftSubjectQuality, 'quality');
+    if (!condition || !quality) return;
+    setSubjectCondition(condition);
+    setSubjectQuality(quality);
+    setSalesNotice(
+      `Applied subject ratings ${condition} / ${quality}. Auto-rated comparables remain editable in the grid.`,
+    );
+  };
+
   return (
     <div className="min-h-screen bg-base-200">
       <div className="max-w-6xl mx-auto p-4">
@@ -1663,6 +1842,73 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </button>
           </div>
 
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,220px)_minmax(180px,220px)_auto_1fr] md:items-end">
+              <label className="grid gap-1 text-sm text-slate-700">
+                <span>Subject&apos;s Condition Rating</span>
+                <UadRatingSelect
+                  ariaLabel="Subject condition rating before comparable selection"
+                  value={draftSubjectCondition}
+                  ratings={UAD_CONDITION_RATINGS}
+                  onChange={setDraftSubjectCondition}
+                />
+              </label>
+              <label className="grid gap-1 text-sm text-slate-700">
+                <span>Subject&apos;s Quality Rating</span>
+                <UadRatingSelect
+                  ariaLabel="Subject quality rating before comparable selection"
+                  value={draftSubjectQuality}
+                  ratings={UAD_QUALITY_RATINGS}
+                  onChange={setDraftSubjectQuality}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={applySubjectRatings}
+                disabled={!draftSubjectCondition || !draftSubjectQuality}
+                className="rounded-md border border-slate-800 bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
+              >
+                Apply Subject Ratings
+              </button>
+              <div className="text-sm text-slate-600">
+                {subjectRatingsApplied
+                  ? `Applied to the subject grid as ${subjectCondition} / ${subjectQuality}.`
+                  : 'Select both ratings and apply them before adding or recommending comparables.'}
+              </div>
+            </div>
+
+            {subjectRatingsApplied && selectedSales.some(Boolean) && (
+              <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                <span className="font-semibold text-slate-800">Auto-rating analysis:</span>{' '}
+                {autoRatingResult.conditionSplitFound
+                  ? 'a condition price break was found'
+                  : 'no supported condition price break yet'}
+                {'; '}
+                {autoRatingResult.qualitySplitFound
+                  ? 'a residual quality price break was found'
+                  : 'no supported residual quality price break yet'}.
+                {' '}
+                Condition rate:{' '}
+                <span className="font-semibold text-slate-800">
+                  {ratingAdjustmentResult.conditionRate
+                    ? `${fmtCurrency(ratingAdjustmentResult.conditionRate)} per full grade`
+                    : 'insufficient evidence'}
+                </span>
+                {'; '}quality rate:{' '}
+                <span className="font-semibold text-slate-800">
+                  {ratingAdjustmentResult.qualityRate
+                    ? `${fmtCurrency(ratingAdjustmentResult.qualityRate)} per full grade`
+                    : 'insufficient evidence'}
+                </span>
+                {ratingAdjustmentResult.lowConfidence && (
+                  <span className="ml-1 font-medium text-amber-700">
+                    Low-sample results should be reviewed.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
             Recommendations use DCAD parcel-center distance at 60% and living-area similarity at 40%.
             The 10% living-area setting controls how quickly that score declines; it does not exclude larger or smaller properties.
@@ -1721,6 +1967,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                       </div>
                     )}
                     {sale && <div className="mt-1 text-xs text-slate-500">{sale.primary_account_id ? 'Matched account' : 'Unmatched sale'} · {saleDateDisplay(sale.closing_date)}</div>}
+                    {sale && subjectRatingsApplied && (
+                      <div className="mt-1 text-xs font-medium text-indigo-700">
+                        Rating placeholder: {compConditions[index] || '—'} / {compQualities[index] || '—'}
+                        {' · '}
+                        {compConditionSources[index] === 'manual' || compQualitySources[index] === 'manual'
+                          ? 'Manual review'
+                          : 'Auto'}
+                      </div>
+                    )}
                   </div>
                   {sale && (
                     <button
@@ -2462,14 +2717,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               ariaLabel="Subject condition"
                               value={subjectCondition}
                               ratings={UAD_CONDITION_RATINGS}
-                              onChange={setSubjectCondition}
+                              onChange={(value) => {
+                                setSubjectCondition(value);
+                                setDraftSubjectCondition(value);
+                              }}
                             />
                           ) : label === 'Quality' ? (
                             <UadRatingSelect
                               ariaLabel="Subject quality"
                               value={subjectQuality}
                               ratings={UAD_QUALITY_RATINGS}
-                              onChange={setSubjectQuality}
+                              onChange={(value) => {
+                                setSubjectQuality(value);
+                                setDraftSubjectQuality(value);
+                              }}
                             />
                           ) : (
                             subjectValue
@@ -2503,11 +2764,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                     value={compConditions[i] || ''}
                                     ratings={UAD_CONDITION_RATINGS}
                                     disabled={!selectedSales[i]}
-                                    onChange={(value) =>
+                                    onChange={(value) => {
                                       setCompConditions((current) =>
                                         current.map((item, index) => index === i ? value : item)
-                                      )
-                                    }
+                                      );
+                                      setCompConditionSources((current) =>
+                                        current.map((item, index) => index === i ? 'manual' : item)
+                                      );
+                                    }}
                                   />
                                 )
                               : label === 'Quality'
@@ -2517,11 +2781,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                     value={compQualities[i] || ''}
                                     ratings={UAD_QUALITY_RATINGS}
                                     disabled={!selectedSales[i]}
-                                    onChange={(value) =>
+                                    onChange={(value) => {
                                       setCompQualities((current) =>
                                         current.map((item, index) => index === i ? value : item)
-                                      )
-                                    }
+                                      );
+                                      setCompQualitySources((current) =>
+                                        current.map((item, index) => index === i ? 'manual' : item)
+                                      );
+                                    }}
                                   />
                                 )
                               : label === 'View'
@@ -2543,6 +2810,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 ? ''
                               : label === 'Land Size'
                                 ? fmtCurrency(0)
+                              : label === 'Condition'
+                                ? fmtCurrency((conditionAdjustments || [])[i] ?? 0)
+                              : label === 'Quality'
+                                ? fmtCurrency((qualityAdjustments || [])[i] ?? 0)
                               // SALES: Age/Effective – adjustments fixed at $0 for all comparables
                               : label === 'Age/Effective'
                                 ? fmtCurrency(0)
@@ -3040,15 +3311,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               </div>
             </div>
 
-            {/* Class */}
+            {/* Quality */}
             <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
               <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
               <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Class</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
+                <div className="text-lg font-semibold mb-2">Quality</div>
+                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
                 <p className="mt-2 text-sm text-slate-700">
-                  We assess property class through detailed quality analysis including materials, craftsmanship,
-                  finishes, and overall construction quality, comparing to recent sales of similar quality properties.
+                  {ratingAdjustmentResult.qualityRate
+                    ? `After condition adjustments, the selected sales support ${fmtCurrency(ratingAdjustmentResult.qualityRate)} per full quality grade relative to the subject's ${subjectQuality} rating. Half-grade ranges receive half this amount.`
+                    : 'Apply the subject ratings and select enough comparable sales to identify a supported residual quality premium.'}
                 </p>
                 <div className="mt-3 text-red-600 font-semibold">District Method</div>
                 <p className="mt-1 text-sm text-slate-700">
@@ -3056,10 +3328,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   differences that significantly impact market value.
                 </p>
                 <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
+                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
                   <div className="text-xs text-slate-700 mt-1">
-                    Our granular quality assessment provides more precise value adjustments based on actual market
-                    reactions to quality differences.
+                    {groupedGridImpact(qualityAdjustments)}
                   </div>
                 </div>
               </div>
@@ -3068,15 +3339,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
           {/* Third row of breakdown tiles */}
           <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Updating/Condition */}
+            {/* Condition */}
             <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
               <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
               <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Updating/Condition</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
+                <div className="text-lg font-semibold mb-2">Condition</div>
+                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
                 <p className="mt-2 text-sm text-slate-700">
-                  We evaluate property condition and updates through comprehensive analysis of renovation impact on sale
-                  prices, considering the quality and appropriateness of improvements.
+                  {ratingAdjustmentResult.conditionRate
+                    ? `Comparable price groups support ${fmtCurrency(ratingAdjustmentResult.conditionRate)} per full condition grade relative to the subject's ${subjectCondition} rating. Half-grade ranges receive half this amount.`
+                    : 'Apply the subject ratings and select enough comparable sales to identify a supported condition price difference.'}
                 </p>
                 <div className="mt-3 text-red-600 font-semibold">District Method</div>
                 <p className="mt-1 text-sm text-slate-700">
@@ -3084,10 +3356,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   adjustments that don't reflect actual market premiums.
                 </p>
                 <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
+                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
                   <div className="text-xs text-slate-700 mt-1">
-                    Our method considers the specific impact of various improvement types and their current market
-                    appeal.
+                    {groupedGridImpact(conditionAdjustments)}
                   </div>
                 </div>
               </div>

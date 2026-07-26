@@ -8,7 +8,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:adjustments": "node scripts/testComparableAdjustments.mjs"
+    "test:adjustments": "node scripts/testComparableAdjustments.mjs",
+    "test:ratings": "node scripts/testConditionQualityRatings.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.540.0",

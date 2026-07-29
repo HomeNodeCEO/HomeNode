@@ -4,7 +4,11 @@
 // - Back-compat aliases: search, searchByAddress, fetchDetail
 //   (defaults countyId to 1 = Dallas; override if you support more counties)
 
-import { getAccount as getAccountDb } from './api';
+import {
+  getAccount as getAccountDb,
+  getAccountPhotos,
+  searchSales,
+} from './api';
 
 // Health endpoint (proxied to the app server)
 export async function getHealth(): Promise<any> {
@@ -44,7 +48,18 @@ export const search = searchByAddress;
  */
 export async function fetchDetail(accountId: string, countyId = 1) {
   // Database-backed detail only (no scraper). Map DB result to the legacy detail shape
-  const data = await getAccountDb((accountId || '').trim());
+  const normalizedAccountId = (accountId || '').trim();
+  const [data, sales, photoResponse] = await Promise.all([
+    getAccountDb(normalizedAccountId),
+    searchSales({
+      accountId: normalizedAccountId,
+      matched: true,
+      recordType: 'closed_sale',
+      limit: 20,
+      offset: 0,
+    }).catch(() => []),
+    getAccountPhotos(normalizedAccountId).catch(() => null),
+  ]);
   const acc = data?.account || ({} as any);
   const imp = (data?.primary_improvements as any) || {};
   const housingProfile = (data as any)?.housing_profile || null;
@@ -60,7 +75,10 @@ export async function fetchDetail(accountId: string, countyId = 1) {
       address: acc?.address ?? undefined,
       neighborhood: acc?.neighborhood_code ?? undefined,
       mapsco: undefined,
-      city: undefined,
+      city: acc?.city ?? undefined,
+      postal_code: acc?.postal_code ?? undefined,
+      county: acc?.county ?? undefined,
+      subdivision: acc?.subdivision ?? undefined,
     },
     owner: os ? { owner_name: os.owner_name, mailing_address: os.mailing_address } : undefined,
     value_summary: {
@@ -123,7 +141,25 @@ export async function fetchDetail(accountId: string, countyId = 1) {
     exemption_details: undefined,
     arb_hearing: undefined,
     estimated_taxes_total: undefined,
-    photos: [],
+    homestead_yes: Boolean((data as any)?.homestead_yes),
+    sales_history: sales
+      .filter((sale) => sale?.closing_date || sale?.sale_price)
+      .sort((a, b) =>
+        String(b?.closing_date || '').localeCompare(String(a?.closing_date || ''))
+      )
+      .map((sale) => ({
+        source_record_id: sale?.source_record_id ?? undefined,
+        listing_id: sale?.listing_id ?? undefined,
+        closing_date: sale?.closing_date ?? undefined,
+        sale_price: sale?.sale_price ?? undefined,
+        days_on_market: sale?.days_on_market ?? undefined,
+        buyer_financing: sale?.buyer_financing ?? undefined,
+        mls_status: sale?.mls_status ?? undefined,
+        record_type: sale?.record_type ?? undefined,
+      })),
+    photos: photoResponse?.photos
+      ?.map((photo) => photo?.media_url)
+      .filter((url): url is string => Boolean(url?.trim())) || [],
   } as any;
 
   // Populate exemptions map (latest year) so UI can detect Homestead

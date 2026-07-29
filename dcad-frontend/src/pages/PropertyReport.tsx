@@ -1,28 +1,11 @@
-// src/pages/PropertyReport.tsx
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
 
-/* =========================
-   Types (relaxed for speed)
-   ========================= */
 type DcadOwner = {
   owner_name?: string;
   mailing_address?: string;
-  owner_type?: string;
-  ownership_pct?: string;
-  mineral_rights?: string;
-  deed_type?: string;
-  purchase_price?: string;
-  grantor?: string;
-  notes?: string;
-  multi_owner?: {
-    owner_name?: string;
-    mailing_address?: string;
-    owner_type?: string;
-    ownership_pct?: string;
-  }[];
 };
 
 type DcadValueSummary = {
@@ -31,9 +14,6 @@ type DcadValueSummary = {
   land_value?: string | number;
   market_value?: string | number;
   capped_value?: string | number;
-  tax_agent?: string;
-  revaluation_year?: string;
-  previous_revaluation_year?: string;
 };
 
 type DcadMainImprovement = {
@@ -43,110 +23,90 @@ type DcadMainImprovement = {
   actual_age?: string | number;
   desirability?: string;
   living_area_sqft?: string | number;
+  total_living_area?: string | number;
   total_area_sqft?: string | number;
   percent_complete?: string | number;
   stories?: number | string;
-  stories_text?: string;
-  depreciation_pct?: string;
   construction_type?: string;
   foundation?: string;
   roof_type?: string;
   roof_material?: string;
   exterior_material?: string;
-  basement?: string;
+  basement?: boolean | string;
   heating?: string;
   air_conditioning?: string;
+  bedroom_count?: string | number;
+  bath_count?: string | number;
   baths_full?: string | number;
   baths_half?: string | number;
   kitchens?: string | number;
-  wet_bars?: string | number;
+  wetbars?: string | number;
   fireplaces?: string | number;
-  sprinkler?: string;
-  deck?: string;
-  spa?: string;
-  pool?: string;
-  sauna?: string;
+  sprinkler?: boolean | string;
+  spa?: boolean | string;
+  pool?: boolean | string;
+  sauna?: boolean | string;
+  fence_type?: string;
+  number_units?: string | number;
 };
 
 type DcadLandRow = {
-  number?: string;
+  number?: string | number;
   state_code?: string;
   zoning?: string;
-  frontage_ft?: string;
-  depth_ft?: string;
-  area_sqft?: string;
+  frontage_ft?: string | number;
+  depth_ft?: string | number;
+  area_sqft?: string | number;
   pricing_method?: string;
-  unit_price?: string;
-  market_adjustment_pct?: string;
-  adjusted_price?: string;
+  unit_price?: string | number;
+  market_adjustment_pct?: string | number;
+  adjusted_price?: string | number;
   ag_land?: string;
 };
 
 type DcadImprovementRow = {
-  number?: string;
+  number?: string | number;
   improvement_type?: string;
   construction?: string;
   floor?: string;
   exterior_wall?: string;
-  area_sqft?: string;
+  area_sqft?: string | number;
+  value?: string | number;
+  year_built?: string | number;
+};
+
+type DcadExemptionRow = {
+  taxing_jurisdiction?: string;
+  homestead_exemption?: string | number;
+  disabled_vet?: string | number;
+  taxable_value?: string | number;
 };
 
 type DcadExemptionsMap = {
-  city?: { taxing_jurisdiction?: string; homestead_exemption?: string; taxable_value?: string };
-  school?: { taxing_jurisdiction?: string; homestead_exemption?: string; taxable_value?: string };
-  county?: { taxing_jurisdiction?: string; homestead_exemption?: string; taxable_value?: string };
-  college?: { taxing_jurisdiction?: string; homestead_exemption?: string; taxable_value?: string };
-  hospital?: { taxing_jurisdiction?: string; homestead_exemption?: string; taxable_value?: string };
-  special_district?: { taxing_jurisdiction?: string; homestead_exemption?: string; taxable_value?: string };
+  city?: DcadExemptionRow;
+  school?: DcadExemptionRow;
+  county?: DcadExemptionRow;
+  college?: DcadExemptionRow;
+  hospital?: DcadExemptionRow;
+  special_district?: DcadExemptionRow;
 };
 
-type DcadHistory = {
-  owner_history?: {
-    year?: number;
-    owner?: string;
-    legal_description?: string[];
-    deed_transfer_date?: string;
-  }[];
-  market_value?: {
-    year?: number;
-    improvement?: string;
-    land?: string;
-    total_market?: string;
-    homestead_capped?: string;
-  }[];
-  taxable_value?: {
-    year?: number;
-    city?: string;
-    isd?: string;
-    county?: string;
-    college?: string;
-    hospital?: string;
-    special_district?: string;
-  }[];
-  history_url?: string;
+type DcadSaleHistoryRow = {
+  source_record_id?: string | number;
+  listing_id?: string;
+  closing_date?: string;
+  sale_price?: string | number;
+  days_on_market?: string | number;
+  buyer_financing?: string;
+  mls_status?: string;
+  record_type?: string;
 };
 
-type DcadLegal = {
-  lines?: string[];
-  deed_transfer_date?: string;
-};
-
-type DcadExemptionDetails = {
-  applicant_name?: string;
-  ownership_pct?: string;
-  homestead_date?: string;
-  homestead_pct?: string;
-  other?: string;
-  other_pct?: string;
-  other_disabled_date?: string;
-  disabled_person?: string;
-  disabled_pct?: string;
-  tax_deferred?: string;
-  transferred?: string;
-  defer?: string;
-  capped_homestead?: string;
-  market_value?: string;
-  details_url?: string;
+type DcadHousingProfile = {
+  housing_type?: string;
+  attachment_type?: string;
+  architectural_style?: string;
+  profile_source?: string;
 };
 
 type DcadDetail = {
@@ -156,197 +116,601 @@ type DcadDetail = {
     neighborhood?: string;
     mapsco?: string;
     city?: string;
+    postal_code?: string;
+    county?: string;
+    subdivision?: string;
   };
   owner?: DcadOwner;
   value_summary?: DcadValueSummary;
   main_improvement?: DcadMainImprovement;
+  housing_profile?: DcadHousingProfile;
   additional_improvements?: DcadImprovementRow[];
   land_detail?: DcadLandRow[];
   exemptions?: DcadExemptionsMap;
-  history?: DcadHistory;
-  legal_description?: DcadLegal;
-  exemption_details?: DcadExemptionDetails;
-  arb_hearing?: { hearing_info?: string };
-  estimated_taxes_total?: string;
+  legal_description?: {
+    lines?: string[];
+    deed_transfer_date?: string;
+  };
+  sales_history?: DcadSaleHistoryRow[];
+  homestead_yes?: boolean;
   photos?: string[];
 };
 
-/* ==============
-   Shared Utils
-   ============== */
-function nonEmpty(v: any): boolean {
-  if (v === null || v === undefined) return false;
-  if (typeof v === "string") return v.trim().length > 0;
+function hasValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim().length > 0;
   return true;
 }
 
-function LabelValue({ label, value }: { label: string; value?: any }) {
-  const show = nonEmpty(value) ? String(value) : "—";
+function displayValue(value: unknown, fallback = "Not reported"): string {
+  return hasValue(value) ? String(value) : fallback;
+}
+
+function parseNumber(value: unknown): number | null {
+  if (!hasValue(value)) return null;
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(String(value).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatMoney(value: unknown): string {
+  const parsed = parseNumber(value);
+  if (parsed === null) return "Not reported";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(parsed);
+}
+
+function formatNumber(value: unknown, suffix = ""): string {
+  const parsed = parseNumber(value);
+  if (parsed === null) return "Not reported";
+  return `${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 2,
+  }).format(parsed)}${suffix}`;
+}
+
+function formatDate(value: unknown): string {
+  if (!hasValue(value)) return "Not reported";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.valueOf())) return String(value);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+function formatReportedBoolean(value: unknown): string {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  if (!hasValue(value)) return "Not reported";
+  const normalized = String(value).trim().toLowerCase();
+  if (["yes", "y", "true", "1"].includes(normalized)) return "Yes";
+  if (["no", "n", "false", "0"].includes(normalized)) return "No";
+  return String(value);
+}
+
+function formatBaths(improvement?: DcadMainImprovement): string {
+  const full = parseNumber(improvement?.baths_full);
+  const half = parseNumber(improvement?.baths_half);
+  if (full !== null || half !== null) {
+    return `${full ?? 0} full / ${half ?? 0} half`;
+  }
+  return displayValue(improvement?.bath_count);
+}
+
+function SummarySection({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
   return (
-    <div className="flex flex-col">
-      <div className="text-xs opacity-60">{label}</div>
-      <div className="text-sm">{show}</div>
-    </div>
+    <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
+      <div className="mb-4">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-800">
+          {title}
+        </h2>
+        {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+      </div>
+      {children}
+    </section>
   );
 }
 
-function SectionCard({
-  title,
-  children,
+function SummaryField({
+  label,
+  value,
   className = "",
 }: {
-  title: string;
-  children: ReactNode;
+  label: string;
+  value?: ReactNode;
   className?: string;
 }) {
   return (
-    <div className={`card bg-base-100 shadow-sm rounded-2xl ${className}`}>
-      <div className="card-body p-4">
-        <div className="text-base font-semibold mb-2">{title}</div>
-        {children}
+    <div className={`min-w-0 ${className}`}>
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 break-words text-sm font-semibold text-slate-900">
+        {value ?? "Not reported"}
       </div>
     </div>
   );
 }
 
-/* =========================================================================
-   AddressHero (property photos, identity, and appraisal approach actions)
-   ========================================================================= */
 function AddressHero({ detail, accountId }: { detail: DcadDetail | null; accountId?: string }) {
-  const [idx, setIdx] = useState(0);
-
-  const photos = useMemo<string[]>(() => {
-    const fromApi = detail?.photos;
-    if (fromApi && fromApi.length > 0) return fromApi;
-    return [
-      "https://images.unsplash.com/photo-1568605114967-8130f3a36994?q=80&w=2100&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?q=80&w=2100&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?q=80&w=2100&auto=format&fit=crop",
-    ];
-  }, [detail]);
-
-  const canSlide = photos.length > 1;
-  const goPrev = () => setIdx((current) => (current - 1 + photos.length) % photos.length);
-  const goNext = () => setIdx((current) => (current + 1) % photos.length);
+  const [photoIndex, setPhotoIndex] = useState(0);
+  const photos = useMemo(
+    () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
+    [detail?.photos],
+  );
 
   useEffect(() => {
-    if (photos.length && idx >= photos.length) setIdx(0);
-  }, [idx, photos.length]);
+    if (photoIndex >= photos.length) setPhotoIndex(0);
+  }, [photoIndex, photos.length]);
 
-  type AddressDetail = DcadDetail & {
-    address?: unknown;
-    situs_address?: unknown;
-    location_address?: unknown;
-    property_location?: NonNullable<DcadDetail["property_location"]> & {
-      situs_address?: unknown;
-    };
-  };
-  const resolveAddress = (value: DcadDetail | null): string => {
-    const source = value as AddressDetail | null;
-    const address =
-      source?.property_location?.address ??
-      source?.address ??
-      source?.situs_address ??
-      source?.property_location?.situs_address ??
-      source?.location_address ??
-      "";
-    return typeof address === "string" ? address.trim() : String(address || "").trim();
-  };
+  const address = displayValue(detail?.property_location?.address, "Property address unavailable");
+  const neighborhood = displayValue(detail?.property_location?.neighborhood);
+  const subdivision = displayValue(detail?.property_location?.subdivision);
+  const county = displayValue(detail?.property_location?.county);
+  const ownerName = displayValue(detail?.owner?.owner_name);
+  const ownerMailing = displayValue(detail?.owner?.mailing_address);
+  const legalLines = detail?.legal_description?.lines?.filter((line) => Boolean(line?.trim())) || [];
+  const legalDescription = legalLines.length
+    ? legalLines.join("\n")
+    : "No legal description is available for this parcel.";
+  const deedTransferDate = detail?.legal_description?.deed_transfer_date;
+  const improvement = detail?.main_improvement;
+  const housing = detail?.housing_profile;
+  const landRows = detail?.land_detail || [];
+  const additionalImprovements = detail?.additional_improvements || [];
+  const salesHistory = detail?.sales_history || [];
+  const values = detail?.value_summary;
 
-  const address = resolveAddress(detail) || "—";
-  const neighborhood = detail?.property_location?.neighborhood || "";
-  const ownerNameForProtest = useMemo(() => {
-    const owner: any = detail?.owner || {};
-    const primaryOwner = owner?.owner_name || owner?.name || "";
-    const multiOwner =
-      Array.isArray(owner?.multi_owner) && owner.multi_owner.length
-        ? owner.multi_owner[0]?.owner_name || owner.multi_owner[0]?.name || ""
-        : "";
-    const ownerHistory =
-      Array.isArray((detail as any)?.history?.owner_history) &&
-      (detail as any).history.owner_history.length
-        ? (detail as any).history.owner_history[0]?.owner || ""
-        : "";
+  const exemptionOrder: Array<[keyof DcadExemptionsMap, string]> = [
+    ["city", "City"],
+    ["school", "School"],
+    ["county", "County"],
+    ["college", "College"],
+    ["hospital", "Hospital"],
+    ["special_district", "Special District"],
+  ];
+  const exemptionRows = exemptionOrder
+    .map(([key, fallbackLabel]) => ({
+      key,
+      fallbackLabel,
+      row: detail?.exemptions?.[key],
+    }))
+    .filter(({ row }) => Boolean(row));
+  const exemptJurisdictionCount = exemptionRows.filter(
+    ({ row }) => (parseNumber(row?.homestead_exemption) || 0) > 0,
+  ).length;
+  const homestead = detail?.homestead_yes || exemptJurisdictionCount > 0;
 
-    return String(primaryOwner || multiOwner || ownerHistory).trim();
-  }, [detail]);
+  const totalLandArea = landRows.reduce(
+    (sum, row) => sum + (parseNumber(row.area_sqft) || 0),
+    0,
+  );
+  const primaryZoning =
+    landRows.map((row) => row.zoning).find((value) => hasValue(value)) || "Not reported";
+
   const protestUrl = accountId
     ? `/signup?accountId=${encodeURIComponent(accountId)}${
-        ownerNameForProtest ? `&ownerName=${encodeURIComponent(ownerNameForProtest)}` : ""
+        hasValue(detail?.owner?.owner_name)
+          ? `&ownerName=${encodeURIComponent(String(detail?.owner?.owner_name))}`
+          : ""
       }`
     : "/signup";
 
+  const canSlide = photos.length > 1;
+  const showPreviousPhoto = () =>
+    setPhotoIndex((current) => (current - 1 + photos.length) % photos.length);
+  const showNextPhoto = () =>
+    setPhotoIndex((current) => (current + 1) % photos.length);
+
   return (
-    <div className="card bg-white shadow-lg overflow-hidden rounded-2xl" style={{ backgroundColor: "#ffffff" }}>
-      <figure className="relative">
-        <img
-          src={photos[idx]}
-          alt="Property"
-          className="w-full object-cover select-none"
-          style={{ height: 250 }}
-          draggable={false}
-        />
-        {canSlide && (
+    <div
+      className="card overflow-hidden rounded-2xl bg-white shadow-lg"
+      style={{ backgroundColor: "#ffffff" }}
+    >
+      <figure className="relative h-64 bg-slate-100 sm:h-72">
+        {photos.length ? (
+          <img
+            src={photos[photoIndex]}
+            alt={`${address} property`}
+            className="h-full w-full select-none object-cover"
+            draggable={false}
+          />
+        ) : (
+          <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 text-slate-500">
+            <svg
+              className="mb-3 h-14 w-14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
+              <path d="M3 11.5 12 4l9 7.5" />
+              <path d="M5 10.5V20h14v-9.5" />
+              <path d="M9 20v-6h6v6" />
+            </svg>
+            <span className="text-sm font-medium">Property photo unavailable</span>
+          </div>
+        )}
+
+        {canSlide ? (
           <>
             <button
               type="button"
-              onClick={goPrev}
+              onClick={showPreviousPhoto}
               aria-label="Previous image"
-              className="absolute left-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-gray-300/95 hover:bg-gray-400 text-gray-800 flex items-center justify-center shadow-lg border border-gray-400/70 ring-1 ring-gray-400/40 backdrop-blur-[1px] focus:outline-none focus:ring-2 focus:ring-white/90"
+              className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-white/90 text-slate-800 shadow-lg hover:bg-white"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 19l-7-7 7-7" />
-              </svg>
+              <span aria-hidden="true">‹</span>
             </button>
             <button
               type="button"
-              onClick={goNext}
+              onClick={showNextPhoto}
               aria-label="Next image"
-              className="absolute right-3 top-1/2 -translate-y-1/2 z-20 w-10 h-10 rounded-full bg-gray-300/95 hover:bg-gray-400 text-gray-800 flex items-center justify-center shadow-lg border border-gray-400/70 ring-1 ring-gray-400/40 backdrop-blur-[1px] focus:outline-none focus:ring-2 focus:ring-white/90"
+              className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-white/90 text-slate-800 shadow-lg hover:bg-white"
             >
-              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 5l7 7-7 7" />
-              </svg>
+              <span aria-hidden="true">›</span>
             </button>
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 rounded-full bg-black/30 px-3 py-1.5 flex gap-1.5 backdrop-blur-[1px]">
-              {photos.map((_, imageIndex) => (
+            <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-full bg-black/40 px-3 py-2">
+              {photos.map((_, index) => (
                 <button
-                  key={imageIndex}
+                  key={index}
                   type="button"
-                  onClick={() => setIdx(imageIndex)}
-                  aria-label={"Go to image " + (imageIndex + 1)}
-                  className={
-                    "h-2.5 w-2.5 rounded-full border transition " +
-                    (imageIndex === idx
-                      ? "bg-gray-300 border-gray-200"
-                      : "bg-white/70 hover:bg-white border-white/80")
-                  }
+                  onClick={() => setPhotoIndex(index)}
+                  aria-label={`Go to image ${index + 1}`}
+                  className={`h-2.5 w-2.5 rounded-full border border-white ${
+                    index === photoIndex ? "bg-white" : "bg-white/40"
+                  }`}
                 />
               ))}
             </div>
           </>
-        )}
+        ) : null}
       </figure>
 
-      <div className="card-body p-4 bg-white" style={{ backgroundColor: "#ffffff" }}>
-        <div>
-          <div className="text-xl font-semibold">{address}</div>
-          <div className="text-sm opacity-70">
-            Neighborhood Code: {neighborhood || "—"}
+      <div className="card-body bg-white p-4 sm:p-6" style={{ backgroundColor: "#ffffff" }}>
+        <header className="border-b border-slate-200 pb-5">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{address}</h1>
+          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
+            <span>
+              Neighborhood Code: <strong className="text-slate-800">{neighborhood}</strong>
+            </span>
+            <span>
+              Zoning: <strong className="text-slate-800">{primaryZoning}</strong>
+            </span>
           </div>
+        </header>
+
+        <div className="mt-5 space-y-5">
+          <SummarySection
+            title="Subject Identification"
+            subtitle="Parcel, ownership, and recorded legal information"
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <SummaryField label="Parcel / Account Number" value={displayValue(accountId)} />
+              <SummaryField label="County" value={county} />
+              <SummaryField label="Subdivision" value={subdivision} />
+              <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
+              <SummaryField label="Owner Name" value={ownerName} className="sm:col-span-2" />
+              <SummaryField
+                label="Owner Mailing Address"
+                value={ownerMailing}
+                className="sm:col-span-2"
+              />
+              <SummaryField
+                label="Legal Description"
+                value={<span className="whitespace-pre-line">{legalDescription}</span>}
+                className="sm:col-span-2 lg:col-span-4"
+              />
+            </div>
+          </SummarySection>
+
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <SummarySection
+              title="Current Exemptions"
+              subtitle={`Tax year ${displayValue(values?.certified_year || detail?.tax_year)}`}
+            >
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <span
+                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                    homestead
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  Homestead: {homestead ? "Yes" : "No"}
+                </span>
+                {exemptJurisdictionCount > 0 ? (
+                  <span className="text-sm text-slate-600">
+                    Exemption recorded in{" "}
+                    <strong className="text-slate-900">{exemptJurisdictionCount}</strong>{" "}
+                    taxing unit{exemptJurisdictionCount === 1 ? "" : "s"}.
+                  </span>
+                ) : null}
+              </div>
+
+              {exemptionRows.length ? (
+                <div className="overflow-x-auto">
+                  <table className="table table-sm w-full">
+                    <thead>
+                      <tr>
+                        <th>Taxing Unit</th>
+                        <th className="text-right">Homestead</th>
+                        <th className="text-right">Taxable Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {exemptionRows.map(({ key, fallbackLabel, row }) => (
+                        <tr key={key}>
+                          <td>{displayValue(row?.taxing_jurisdiction, fallbackLabel)}</td>
+                          <td className="text-right">
+                            {formatMoney(row?.homestead_exemption)}
+                          </td>
+                          <td className="text-right">{formatMoney(row?.taxable_value)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600">
+                  No current exemption records were returned for this parcel.
+                </p>
+              )}
+            </SummarySection>
+
+            <SummarySection
+              title="Sales History"
+              subtitle="Linked closed-sale records and deed-transfer history"
+            >
+              {salesHistory.length ? (
+                <div className="overflow-x-auto">
+                  <table className="table table-sm w-full">
+                    <thead>
+                      <tr>
+                        <th>Sale Date</th>
+                        <th>MLS</th>
+                        <th className="text-right">Sale Price</th>
+                        <th className="text-right">DOM</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {salesHistory.slice(0, 8).map((sale, index) => (
+                        <tr key={sale.source_record_id || `${sale.listing_id}-${index}`}>
+                          <td>{formatDate(sale.closing_date)}</td>
+                          <td>{displayValue(sale.listing_id, "—")}</td>
+                          <td className="text-right">{formatMoney(sale.sale_price)}</td>
+                          <td className="text-right">
+                            {displayValue(sale.days_on_market, "—")}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4">
+                  <div className="text-sm font-semibold text-slate-800">
+                    No linked MLS sale records
+                  </div>
+                  <p className="mt-1 text-sm text-slate-600">
+                    The latest recorded deed transfer is {formatDate(deedTransferDate)}.
+                  </p>
+                </div>
+              )}
+            </SummarySection>
+          </div>
+
+          <SummarySection
+            title="Property Characteristics"
+            subtitle="Auto-populated appraisal-district and verified MLS characteristics"
+          >
+            <div className="grid grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 lg:grid-cols-5">
+              <SummaryField
+                label="Living Area"
+                value={formatNumber(
+                  improvement?.living_area_sqft || improvement?.total_living_area,
+                  " sq. ft.",
+                )}
+              />
+              <SummaryField
+                label="Total Area"
+                value={formatNumber(improvement?.total_area_sqft, " sq. ft.")}
+              />
+              <SummaryField label="Bedrooms" value={displayValue(improvement?.bedroom_count)} />
+              <SummaryField label="Bathrooms" value={formatBaths(improvement)} />
+              <SummaryField label="Stories" value={displayValue(improvement?.stories)} />
+              <SummaryField label="Year Built" value={displayValue(improvement?.year_built)} />
+              <SummaryField
+                label="Effective Year"
+                value={displayValue(improvement?.effective_year_built)}
+              />
+              <SummaryField label="Actual Age" value={displayValue(improvement?.actual_age)} />
+              <SummaryField
+                label="Building Class"
+                value={displayValue(improvement?.building_class)}
+              />
+              <SummaryField
+                label="Desirability"
+                value={displayValue(improvement?.desirability)}
+              />
+              <SummaryField
+                label="Housing Type"
+                value={displayValue(housing?.housing_type)}
+              />
+              <SummaryField
+                label="Attachment"
+                value={displayValue(housing?.attachment_type)}
+              />
+              <SummaryField
+                label="Architectural Style"
+                value={displayValue(housing?.architectural_style)}
+              />
+              <SummaryField
+                label="Construction"
+                value={displayValue(improvement?.construction_type)}
+              />
+              <SummaryField label="Foundation" value={displayValue(improvement?.foundation)} />
+              <SummaryField
+                label="Exterior"
+                value={displayValue(improvement?.exterior_material)}
+              />
+              <SummaryField
+                label="Roof"
+                value={[
+                  improvement?.roof_type,
+                  improvement?.roof_material,
+                ]
+                  .filter(hasValue)
+                  .join(" · ") || "Not reported"}
+              />
+              <SummaryField label="Heating" value={displayValue(improvement?.heating)} />
+              <SummaryField label="Air Conditioning" value={displayValue(improvement?.air_conditioning)} />
+              <SummaryField
+                label="Fireplaces"
+                value={displayValue(improvement?.fireplaces)}
+              />
+              <SummaryField label="Kitchens" value={displayValue(improvement?.kitchens)} />
+              <SummaryField label="Wet Bars" value={displayValue(improvement?.wetbars)} />
+              <SummaryField label="Pool" value={formatReportedBoolean(improvement?.pool)} />
+              <SummaryField
+                label="Sprinkler"
+                value={formatReportedBoolean(improvement?.sprinkler)}
+              />
+              <SummaryField label="Fence" value={displayValue(improvement?.fence_type)} />
+            </div>
+
+            {additionalImprovements.length ? (
+              <div className="mt-5 border-t border-slate-200 pt-4">
+                <h3 className="text-sm font-semibold text-slate-800">Additional Improvements</h3>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {additionalImprovements.map((row, index) => (
+                    <div
+                      key={`${row.number || index}-${row.improvement_type || "improvement"}`}
+                      className="rounded-xl border border-slate-200 bg-white p-3"
+                    >
+                      <div className="text-sm font-semibold text-slate-900">
+                        {displayValue(row.improvement_type, `Improvement ${index + 1}`)}
+                      </div>
+                      <div className="mt-1 text-xs leading-5 text-slate-600">
+                        {[row.construction, row.floor, row.exterior_wall]
+                          .filter(hasValue)
+                          .join(" · ") || "Construction details not reported"}
+                        <br />
+                        {formatNumber(row.area_sqft, " sq. ft.")}
+                        {hasValue(row.year_built)
+                          ? ` · Built ${displayValue(row.year_built)}`
+                          : ""}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </SummarySection>
+
+          <SummarySection
+            title="Land Details and Zoning"
+            subtitle={`${landRows.length} land record${landRows.length === 1 ? "" : "s"} returned`}
+          >
+            <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <SummaryField label="Primary Zoning" value={primaryZoning} />
+              <SummaryField
+                label="Total Land Area"
+                value={totalLandArea ? formatNumber(totalLandArea, " sq. ft.") : "Not reported"}
+              />
+              <SummaryField label="Land Value" value={formatMoney(values?.land_value)} />
+            </div>
+
+            {landRows.length ? (
+              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                <table className="table table-sm w-full">
+                  <thead>
+                    <tr>
+                      <th>Use / State Code</th>
+                      <th>Zoning</th>
+                      <th className="text-right">Area</th>
+                      <th className="text-right">Frontage × Depth</th>
+                      <th>Pricing</th>
+                      <th className="text-right">Adjusted Price</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {landRows.map((row, index) => (
+                      <tr key={row.number || index}>
+                        <td>{displayValue(row.state_code)}</td>
+                        <td>{displayValue(row.zoning)}</td>
+                        <td className="text-right">
+                          {formatNumber(row.area_sqft, " sq. ft.")}
+                        </td>
+                        <td className="text-right">
+                          {parseNumber(row.frontage_ft) !== null ||
+                          parseNumber(row.depth_ft) !== null
+                            ? `${formatNumber(row.frontage_ft, " ft.")} × ${formatNumber(
+                                row.depth_ft,
+                                " ft.",
+                              )}`
+                            : "Not reported"}
+                        </td>
+                        <td>{displayValue(row.pricing_method)}</td>
+                        <td className="text-right">{formatMoney(row.adjusted_price)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-slate-600">
+                No land detail records were returned for this parcel.
+              </p>
+            )}
+          </SummarySection>
+
+          <SummarySection
+            title="Appraisal District Values"
+            subtitle={`Certified tax year ${displayValue(
+              values?.certified_year || detail?.tax_year,
+            )}`}
+          >
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <SummaryField label="Market Value" value={formatMoney(values?.market_value)} />
+              <SummaryField
+                label="Assessed / Capped Value"
+                value={formatMoney(values?.capped_value || values?.market_value)}
+              />
+              <SummaryField label="Improvement Value" value={formatMoney(values?.improvement_value)} />
+              <SummaryField label="Land Value" value={formatMoney(values?.land_value)} />
+            </div>
+          </SummarySection>
         </div>
 
-        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-5 sm:grid-cols-2 lg:grid-cols-4">
           <Link
-            to={accountId ? "/ComparableSalesAnalysis?propertyId=" + encodeURIComponent(accountId) : "#"}
+            to={
+              accountId
+                ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`
+                : "#"
+            }
             aria-label="Sales Comparison Approach"
             aria-disabled={!accountId}
-            className={
-              "btn normal-case rounded-md px-4 py-2 " +
-              (accountId
-                ? "bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700 hover:border-emerald-700"
-                : "pointer-events-none bg-slate-200 border-slate-200 text-slate-500")
-            }
+            className={`btn normal-case rounded-md px-4 py-2 ${
+              accountId
+                ? "border-emerald-600 bg-emerald-600 text-white hover:border-emerald-700 hover:bg-emerald-700"
+                : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
+            }`}
           >
             Sales Comparison Approach
           </Link>
@@ -355,7 +719,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             disabled
             title="Cost Approach is coming soon"
             aria-label="Cost Approach coming soon"
-            className="btn normal-case rounded-md px-4 py-2 bg-slate-200 border-slate-200 text-slate-500"
+            className="btn normal-case rounded-md border-slate-200 bg-slate-200 px-4 py-2 text-slate-500"
           >
             Cost Approach
           </button>
@@ -364,14 +728,14 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             disabled
             title="Income Approach is coming soon"
             aria-label="Income Approach coming soon"
-            className="btn normal-case rounded-md px-4 py-2 bg-slate-200 border-slate-200 text-slate-500"
+            className="btn normal-case rounded-md border-slate-200 bg-slate-200 px-4 py-2 text-slate-500"
           >
             Income Approach
           </button>
           <Link
             to={protestUrl}
             aria-label="Property Tax Protest"
-            className="btn normal-case rounded-md px-4 py-2 bg-blue-600 border-blue-600 text-white hover:bg-blue-700 hover:border-blue-700"
+            className="btn normal-case rounded-md border-blue-600 bg-blue-600 px-4 py-2 text-white hover:border-blue-700 hover:bg-blue-700"
           >
             Property Tax Protest
           </Link>
@@ -381,856 +745,53 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
   );
 }
 
-/* ==================
-   Ownership Card
-   ================== */
-function OwnerAndLegal({ detail }: { detail: DcadDetail | null }) {
-  // Collapsible Ownership Information (default collapsed)
-  const [ownOpen, setOwnOpen] = useState(false);
-  const owner = (detail?.owner || {}) as DcadOwner;
-  const legal = detail?.legal_description;
-
-  // ---- helpers ----
-  const show = (v?: any) =>
-    v === null || v === undefined || String(v).trim() === "" ? "—" : String(v);
-
-  // Trim ISO timestamps to YYYY-MM-DD (keep existing date format, drop time/zone)
-  const dateOnly = (v: any) => {
-    if (v === null || v === undefined) return v;
-    const s = String(v);
-    const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
-    return m ? m[1] : s;
-  };
-
-  const YesNoPill = ({ yes }: { yes: boolean | null | undefined }) => (
-    <span
-      className={
-        "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium " +
-        (yes ? "bg-gray-900 text-white" : "bg-gray-200 text-gray-700")
-      }
-    >
-      {yes ? "Yes" : "No"}
-    </span>
-  );
-
-  // Homestead: infer from exemption details or exemptions map
-  const homesteadYes =
-    !!(detail?.exemption_details?.homestead_date || detail?.exemption_details?.homestead_pct) ||
-    !!(
-      detail?.exemptions &&
-      Object.values(detail.exemptions).some(
-        (r: any) => r?.homestead_exemption && String(r.homestead_exemption).trim() !== ""
-      )
-    );
-
-  // Agricultural use: heuristic based on land_detail
-  const agUseYes = !!detail?.land_detail?.some((r) => {
-    const v = (r.ag_land || r.state_code || "").toString().toLowerCase();
-    return v.includes("ag");
-  });
-
-  // Optional/mineral rights field if present
-  const mineralRights = owner?.mineral_rights || "—";
-
-  // Deed / ownership details
-  const deedDate =
-    legal?.deed_transfer_date ||
-    detail?.history?.owner_history?.find((h) => !!h.deed_transfer_date)?.deed_transfer_date ||
-    "—";
-  const deedType = owner?.deed_type || "—";
-  const purchasePrice = owner?.purchase_price || "—";
-  const grantor = owner?.grantor || "—";
-
-  // Current owner
-  const ownerName = show(owner?.owner_name);
-  const ownerMailing = show(
-    owner?.mailing_address || (owner as any)?.mailing || (owner as any)?.address
-  );
-  const ownerType = show(owner?.owner_type || "Individual");
-  const ownerPct = show(owner?.ownership_pct || "100%");
-
-  // Additional owners
-  const others: Array<any> = Array.isArray(owner?.multi_owner) ? owner.multi_owner! : [];
-
-  return (
-    <div className="card bg-white shadow-sm rounded-2xl">
-      <div className="card-body p-4">
-        {/* Ownership Information header (click to expand/collapse) */}
-        <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOwnOpen(v => !v)}>
-          <div className="text-base font-semibold">Ownership Information</div>
-          <svg className={`w-4 h-4 text-slate-600 transition-transform ${ownOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.17l3.71-2.94a.75.75 0 11.92 1.18l-4.25 3.37a.75.75 0 01-.92 0L5.21 8.41a.75.75 0 01.02-1.2z" clipRule="evenodd" />
-          </svg>
-        </button>
-        {ownOpen && (
-          <div className="mt-3">
-    
-    {/* Two-column layout */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Current Owner */}
-        <div>
-          <div className="text-sm font-semibold mb-2">Current Owner</div>
-          <div className="space-y-2 text-sm">
-            <div className="grid grid-cols-[170px,1fr] gap-3">
-              <div className="opacity-70">Name &amp; Mailing Address:</div>
-              <div>
-                <div className="font-medium">{ownerName}</div>
-                <div className="font-semibold">{ownerMailing}</div>
-              </div>
-            </div>
-            <div className="grid grid-cols-[170px,1fr] gap-3">
-              <div className="opacity-70">Owner Type:</div>
-              <div>{ownerType}</div>
-            </div>
-            <div className="grid grid-cols-[170px,1fr] gap-3">
-              <div className="opacity-70">Ownership %:</div>
-              <div className="font-semibold">{ownerPct}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Ownership Details */}
-        <div>
-          <div className="text-sm font-semibold mb-2">Ownership Details</div>
-          <div className="space-y-2 text-sm">
-            <div className="grid grid-cols-[170px,1fr] gap-3">
-              <div className="opacity-70">Deed Date:</div>
-              <div className="font-semibold">{show(dateOnly(deedDate))}</div>
-            </div>
-            <div className="grid grid-cols-[170px,1fr] gap-3">
-              <div className="opacity-70">Deed Type:</div>
-              <div className="font-semibold">{show(deedType)}</div>
-            </div>
-            <div className="grid grid-cols-[170px,1fr] gap-3">
-              <div className="opacity-70">Purchase Price:</div>
-              <div className="font-semibold">{show(purchasePrice)}</div>
-            </div>
-            <div className="grid grid-cols-[170px,1fr] gap-3">
-              <div className="opacity-70">Grantor:</div>
-              <div className="font-semibold">{show(grantor)}</div>
-            </div>
-          </div>
-        </div>
-
-        {/* Additional Info */}
-        <div className="md:col-span-1">
-          <div className="text-sm font-semibold mb-2">Additional Info</div>
-          <div className="space-y-3 text-sm">
-            <div className="grid grid-cols-[170px,1fr] items-center gap-3">
-              <div className="opacity-70">Homestead:</div>
-              <YesNoPill yes={homesteadYes} />
-            </div>
-            <div className="grid grid-cols-[170px,1fr] items-center gap-3">
-              <div className="opacity-70">Agricultural Use:</div>
-              <YesNoPill yes={agUseYes} />
-            </div>
-            <div className="grid grid-cols-[170px,1fr] items-center gap-3">
-              <div className="opacity-70">Mineral Rights:</div>
-              <div className="font-semibold">{show(mineralRights)}</div>
-            </div>
-            <div className="grid grid-cols-[170px,1fr] items-start gap-3">
-              <div className="opacity-70">Legal Description:</div>
-              <div className="font-semibold whitespace-pre-wrap">
-                {legal?.lines?.length ? legal.lines.join("\n") : "—"}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Additional Owners */}
-        <div className="md:col-span-1">
-          <div className="text-sm font-semibold mb-2">Additional Owners</div>
-          {others.length ? (
-            <div className="space-y-3">
-              {others.map((o, i) => {
-                const name = show(o?.owner_name);
-                const mailing = show(o?.mailing_address || o?.mailing || o?.address);
-                const type = show(o?.owner_type);
-                const pct = show(o?.ownership_pct);
-                return (
-                  <div key={i} className="rounded-lg border border-base-200 p-3">
-                    <div className="grid grid-cols-[170px,1fr] gap-3 text-sm">
-                      <div className="opacity-70">Owner Name &amp; Mailing Address:</div>
-                      <div>
-                        <div className="font-medium">{name}</div>
-                        <div className="font-semibold">{mailing}</div>
-                      </div>
-                      <div className="opacity-70">Owner Type:</div>
-                      <div>{type}</div>
-                      <div className="opacity-70">Ownership %:</div>
-                      <div className="font-semibold">{pct}</div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="text-sm opacity-70">No additional owners.</div>
-          )}
-        </div>
-      </div>
-
-      {/* Divider */}
-      <div className="border-t mt-4 pt-4" />
-
-      {/* Notes row */}
-      <div className="flex items-start justify-between gap-3">
-        <div className="text-sm font-semibold">Notes</div>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm normal-case"
-          aria-label="Edit notes"
-          title="Edit notes"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            className="w-4 h-4 mr-1"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 20h9" />
-            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
-          </svg>
-          Edit
-        </button>
-      </div>
-      <div className="mt-2 text-sm opacity-80">
-        {show(owner?.notes || (detail as any)?.notes)}
-      </div>
-
-      <div className="border-t mt-4" />
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Simple collapsible wrapper used for sections
-function Collapsible({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(!!defaultOpen);
-  return (
-    <div>
-      <button type="button" className="w-full flex items-center justify-between text-left" onClick={() => setOpen(v => !v)}>
-        <div className="text-base font-semibold">{title}</div>
-        <svg className={`w-4 h-4 text-slate-600 transition-transform ${open ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
-          <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.17l3.71-2.94a.75.75 0 11.92 1.18l-4.25 3.37a.75.75 0 01-.92 0L5.21 8.41a.75.75 0 01.02-1.2z" clipRule="evenodd" />
-        </svg>
-      </button>
-      {open && (
-        <div className="mt-3">
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AppraisalDistrictData({ detail }: { detail: DcadDetail | null }) {
-  const values = detail?.value_summary;
-  const parseMoney = (value?: string | number | null): number | null => {
-    if (value === null || value === undefined || value === "") return null;
-    const parsed = typeof value === "number"
-      ? value
-      : Number(String(value).replace(/[^0-9.-]/g, ""));
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const formatMoney = (value?: string | number | null): string => {
-    const parsed = parseMoney(value);
-    return parsed === null
-      ? "—"
-      : new Intl.NumberFormat("en-US", {
-          style: "currency",
-          currency: "USD",
-          maximumFractionDigits: 0,
-        }).format(parsed);
-  };
-
-  const marketValue = parseMoney(values?.market_value);
-  const assessedValue = parseMoney(values?.capped_value) ?? marketValue;
-  const capLoss =
-    marketValue !== null && assessedValue !== null
-      ? Math.max(0, marketValue - assessedValue)
-      : null;
-
-  return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <LabelValue label="Market Value" value={formatMoney(values?.market_value)} />
-      <LabelValue label="Assessed Value" value={formatMoney(values?.capped_value ?? values?.market_value)} />
-      <LabelValue label="Land Value" value={formatMoney(values?.land_value)} />
-      <LabelValue label="Improvement Value" value={formatMoney(values?.improvement_value)} />
-      <LabelValue label="Cap Loss" value={formatMoney(capLoss)} />
-      <LabelValue label="Tax Agent" value={values?.tax_agent || "—"} />
-    </div>
-  );
-}
-
-function PropertySpecs({ detail }: { detail: DcadDetail | null }) {
-  const m = detail?.main_improvement as any;
-  // Default Total Room Count: bedroom count + 3, with fallbacks for bedroom source
-  const bedsRaw = m?.bedroom_count ?? (detail as any)?.bedroom_count ?? (detail as any)?.characteristics?.bedrooms;
-  const bedsNum = typeof bedsRaw === 'string' ? Number(String(bedsRaw).replace(/[^0-9.-]/g, '')) : Number(bedsRaw);
-  const totalRoomCount = Number.isFinite(bedsNum) ? bedsNum + 3 : undefined;
-  return (
-    <div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <LabelValue label="Year Built" value={m?.year_built} />
-        <LabelValue label="Effective Year" value={m?.effective_year_built} />
-        <LabelValue label="Living Area (sqft)" value={m?.living_area_sqft} />
-        <LabelValue label="Total Area (sqft)" value={m?.total_area_sqft} />
-        <LabelValue label="Stories" value={m?.stories_text || m?.stories} />
-        <LabelValue label="Baths (Full)" value={m?.baths_full} />
-        <LabelValue label="Baths (Half)" value={m?.baths_half} />
-        <LabelValue label="Kitchens" value={m?.kitchens} />
-        <LabelValue label="Fireplaces" value={m?.fireplaces} />
-        <LabelValue label="Heating" value={m?.heating} />
-        <LabelValue label="A/C" value={m?.air_conditioning} />
-        <LabelValue label="Exterior" value={m?.exterior_material} />
-        <LabelValue label="Roof Type" value={m?.roof_type} />
-        <LabelValue label="Roof Material" value={m?.roof_material} />
-        <LabelValue label="Foundation" value={m?.foundation} />
-        <LabelValue label="Construction" value={m?.construction_type} />
-        {/* Additional fields requested */}
-        <LabelValue label="Building Class" value={m?.building_class} />
-        <LabelValue label="Percent Complete" value={m?.percent_complete} />
-        <LabelValue label="Depreciation" value={(m as any)?.depreciation || (m as any)?.depreciation_pct} />
-        <LabelValue label="Wet Bars" value={(m as any)?.wetbars ?? (m as any)?.wet_bars} />
-        <LabelValue label="Sprinkler" value={m?.sprinkler} />
-        <LabelValue label="Deck" value={m?.deck} />
-        <LabelValue label="Spa" value={m?.spa} />
-        <LabelValue label="Pool" value={m?.pool} />
-        <LabelValue label="Sauna" value={m?.sauna} />
-        <LabelValue label="Total Room Count" value={totalRoomCount} />
-      </div>
-    </div>
-  );
-}
-
-function LandDetails({ rows }: { rows: DcadLandRow[] | undefined }) {
-  return (
-    <SectionCard title="Land Details">
-      {rows?.length ? (
-        <div className="overflow-x-auto">
-          <table className="table table-sm">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>State Code</th>
-                <th>Zoning</th>
-                <th>Frontage (ft)</th>
-                <th>Depth (ft)</th>
-                <th>Area (sqft)</th>
-                <th>Pricing Method</th>
-                <th>Unit Price</th>
-                <th>Adj. Price</th>
-                <th>Market Adj.</th>
-                <th>Ag Land</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td>{r.number || i + 1}</td>
-                  <td>{r.state_code || "—"}</td>
-                  <td>{r.zoning || "—"}</td>
-                  <td>{r.frontage_ft || "—"}</td>
-                  <td>{r.depth_ft || "—"}</td>
-                  <td>{r.area_sqft || "—"}</td>
-                  <td>{r.pricing_method || "—"}</td>
-                  <td>{r.unit_price || "—"}</td>
-                  <td>{r.adjusted_price || "—"}</td>
-                  <td>{r.market_adjustment_pct || "—"}</td>
-                  <td>{r.ag_land || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="text-sm opacity-70">No land details.</div>
-      )}
-    </SectionCard>
-  );
-}
-
-function AdditionalImprovements({ rows }: { rows: DcadImprovementRow[] | undefined }) {
-  return (
-    <SectionCard title="Additional Improvements">
-      {rows?.length ? (
-        <div className="overflow-x-auto">
-          <table className="table table-sm">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Type</th>
-                <th>Construction</th>
-                <th>Floor</th>
-                <th>Exterior Wall</th>
-                <th>Area (sqft)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td>{r.number || i + 1}</td>
-                  <td>{r.improvement_type || "—"}</td>
-                  <td>{r.construction || "—"}</td>
-                  <td>{r.floor || "—"}</td>
-                  <td>{r.exterior_wall || "—"}</td>
-                  <td>{r.area_sqft || "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="text-sm opacity-70">No additional improvements.</div>
-      )}
-    </SectionCard>
-  );
-}
-
-function ExemptionsCard({ ex }: { ex?: DcadExemptionsMap }) {
-  const order: (keyof DcadExemptionsMap)[] = [
-    "city",
-    "school",
-    "county",
-    "college",
-    "hospital",
-    "special_district",
-  ];
-
-  return (
-    <SectionCard title="Exemptions (Current Year)">
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {order.map((key) => {
-          const row = ex?.[key];
-          return (
-            <div key={key} className="rounded-xl border border-base-200 p-3">
-              <div className="text-sm font-medium mb-1">
-                {row?.taxing_jurisdiction || key.replace(/_/g, ' ').toUpperCase()}
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-sm">
-                <LabelValue label="Homestead Exemption" value={row?.homestead_exemption} />
-                <LabelValue label="Taxable Value" value={row?.taxable_value} />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </SectionCard>
-  );
-}
-
-function ExemptionDetailsCard({ d }: { d?: DcadExemptionDetails }) {
-  if (!d) return null;
-  return (
-    <SectionCard title="Exemption Details">
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <LabelValue label="Applicant" value={d.applicant_name} />
-        <LabelValue label="Ownership %" value={d.ownership_pct} />
-        <LabelValue label="Homestead Date" value={d.homestead_date} />
-        <LabelValue label="Homestead %" value={d.homestead_pct} />
-        <LabelValue label="Other" value={d.other} />
-        <LabelValue label="Other %" value={d.other_pct} />
-        <LabelValue label="Disabled Person" value={d.disabled_person} />
-        <LabelValue label="Disabled %" value={d.disabled_pct} />
-        <LabelValue label="Tax Deferred" value={d.tax_deferred} />
-        <LabelValue label="Transferred" value={d.transferred} />
-        <LabelValue label="Defer" value={d.defer} />
-        <LabelValue label="Capped Homestead" value={d.capped_homestead} />
-        <LabelValue label="Market Value" value={d.market_value} />
-      </div>
-    </SectionCard>
-  );
-}
-
-function HistoryCard({ history }: { history?: DcadHistory }) {
-  if (!history) return null;
-
-  return (
-    <SectionCard title="History">
-      <div className="space-y-6">
-        {/* Owner History */}
-        <div>
-          <div className="text-sm font-medium mb-2">Owner History</div>
-          {history.owner_history?.length ? (
-            <div className="overflow-x-auto">
-              <table className="table table-sm">
-                <thead>
-                  <tr>
-                    <th>Year</th>
-                    <th>Owner</th>
-                    <th>Legal Description</th>
-                    <th>Deed Transfer</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.owner_history.map((h, i) => (
-                    <tr key={i}>
-                      <td>{h.year ?? "—"}</td>
-                      <td className="whitespace-pre-wrap">{h.owner || "—"}</td>
-                      <td className="whitespace-pre-wrap">
-                        {h.legal_description?.length ? h.legal_description.join("\n") : "—"}
-                      </td>
-                      <td>{h.deed_transfer_date || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="text-sm opacity-70">No owner history.</div>
-          )}
-        </div>
-
-        {/* Market Value History */}
-        <div>
-          <div className="text-sm font-medium mb-2">Market Value by Year</div>
-          {history.market_value?.length ? (
-            <div className="overflow-x-auto">
-              <table className="table table-sm">
-                <thead>
-                  <tr>
-                    <th>Year</th>
-                    <th>Improvement</th>
-                    <th>Land</th>
-                    <th>Total Market</th>
-                    <th>Homestead Capped</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.market_value.map((h, i) => (
-                    <tr key={i}>
-                      <td>{h.year ?? "—"}</td>
-                      <td>{h.improvement || "—"}</td>
-                      <td>{h.land || "—"}</td>
-                      <td>{h.total_market || "—"}</td>
-                      <td>{h.homestead_capped || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="text-sm opacity-70">No market value history.</div>
-          )}
-        </div>
-
-        {/* Taxable Value History */}
-        <div>
-          <div className="text-sm font-medium mb-2">Taxable Value by Year</div>
-          {history.taxable_value?.length ? (
-            <div className="overflow-x-auto">
-              <table className="table table-sm">
-                <thead>
-                  <tr>
-                    <th>Year</th>
-                    <th>City</th>
-                    <th>ISD</th>
-                    <th>County</th>
-                    <th>College</th>
-                    <th>Hospital</th>
-                    <th>Special District</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.taxable_value.map((h, i) => (
-                    <tr key={i}>
-                      <td>{h.year ?? "—"}</td>
-                      <td>{h.city || "—"}</td>
-                      <td>{h.isd || "—"}</td>
-                      <td>{h.county || "—"}</td>
-                      <td>{h.college || "—"}</td>
-                      <td>{h.hospital || "—"}</td>
-                      <td>{h.special_district || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="text-sm opacity-70">No taxable value history.</div>
-          )}
-        </div>
-      </div>
-    </SectionCard>
-  );
-}
-
-function OwnershipHistoryCard({ history }: { history?: DcadHistory }) {
-  const rows = history?.owner_history || [];
-  if (!rows || rows.length === 0) return null;
-  return (
-    <SectionCard title="Ownership History">
-      <div className="overflow-auto" style={{ maxHeight: 280 }}>
-        <table className="table table-sm">
-          <thead>
-            <tr>
-              <th>Year</th>
-              <th>Owner</th>
-              <th>Legal Description</th>
-              <th>Deed Transfer</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((h: any, i: number) => {
-              const year = h.year ?? h.observed_year ?? '�?"';
-              const owner = h.owner ?? (Array.isArray(h.owner_lines) ? h.owner_lines.join("\n") : '�?"');
-              const legal = Array.isArray(h.legal_description) ? h.legal_description.join("\n")
-                           : Array.isArray(h.legal_description_lines) ? h.legal_description_lines.join("\n")
-                           : '�?"';
-              const deed = h.deed_transfer_date ?? h.deed_transfer_date_iso ?? h.deed_transfer_date_raw ?? '�?"';
-              return (
-                <tr key={i}>
-                  <td>{year}</td>
-                  <td className="whitespace-pre-wrap">{owner}</td>
-                  <td className="whitespace-pre-wrap">{legal}</td>
-                  <td>{deed}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
-  );
-}
-
-function MarketValueHistoryCard({ history }: { history?: DcadHistory }) {
-  const rows = history?.market_value || [];
-  if (!rows || rows.length === 0) return null;
-  return (
-    <SectionCard title="Market Value History">
-      <div className="overflow-auto" style={{ maxHeight: 280 }}>
-        <table className="table table-sm">
-          <thead>
-            <tr>
-              <th>Year</th>
-              <th>Improvement</th>
-              <th>Land</th>
-              <th>Total Market</th>
-              <th>Homestead Capped</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((mv, i) => (
-              <tr key={i}>
-                <td>{mv.year ?? "?"}</td>
-                <td>{mv.improvement ?? "?"}</td>
-                <td>{mv.land ?? "?"}</td>
-                <td>{mv.total_market ?? "?"}</td>
-                <td>{mv.homestead_capped ?? "?"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
-  );
-}
-
-function TaxableValueHistoryCard({ history }: { history?: DcadHistory }) {
-  const rows = history?.taxable_value || [];
-  if (!rows || rows.length === 0) return null;
-  return (
-    <SectionCard title="Taxable Value History">
-      <div className="overflow-auto" style={{ maxHeight: 280 }}>
-        <table className="table table-sm">
-          <thead>
-            <tr>
-              <th>Year</th>
-              <th>City</th>
-              <th>ISD</th>
-              <th>County</th>
-              <th>College</th>
-              <th>Hospital</th>
-              <th>Special District</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((tv, i) => (
-              <tr key={i}>
-                <td>{tv.year ?? "?"}</td>
-                <td>{tv.city ?? "?"}</td>
-                <td>{tv.isd ?? "?"}</td>
-                <td>{tv.county ?? "?"}</td>
-                <td>{tv.college ?? "?"}</td>
-                <td>{tv.hospital ?? "?"}</td>
-                <td>{tv.special_district ?? "?"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
-  );
-}
-
-function ExemptionHistoryCard({ history }: { history?: DcadHistory }) {
-  const years = history?.exemptions || [] as any[];
-  if (!years || years.length === 0) return null;
-
-  // Flatten into rows: (year, category, taxing_jurisdiction, homestead_exemption, taxable_value)
-  const rows: Array<{year: number|string, category: string, tj: string, he: string, tv: string}> = [];
-  const order = ["city","school","county","college","hospital","special_district"];
-  for (const y of years) {
-    const ex = (y as any).exemptions || {};
-    for (const cat of order) {
-      const r = ex[cat];
-      if (r) {
-        rows.push({
-          year: (y as any).year ?? "?",
-          category: cat,
-          tj: r.taxing_jurisdiction ?? "?",
-          he: r.homestead_exemption ?? "?",
-          tv: r.taxable_value ?? "?",
-        });
-      } else {
-        // include empty row to show absence explicitly
-        rows.push({ year: (y as any).year ?? "?", category: cat, tj: "?", he: "?", tv: "?" });
-      }
-    }
-  }
-
-  return (
-    <SectionCard title="Exemption History">
-      <div className="overflow-auto" style={{ maxHeight: 280 }}>
-        <table className="table table-sm">
-          <thead>
-            <tr>
-              <th>Year</th>
-              <th>Category</th>
-              <th>Taxing Jurisdiction</th>
-              <th>Homestead Exemption</th>
-              <th>Taxable Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td>{r.year}</td>
-                <td>{r.category}</td>
-                <td>{r.tj}</td>
-                <td>{r.he}</td>
-                <td>{r.tv}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
-  );
-}
-
-function ArbAndTaxes({ detail }: { detail: DcadDetail | null }) {
-  const hearing = detail?.arb_hearing?.hearing_info;
-  const estTotal = detail?.estimated_taxes_total;
-  const et = (detail as any)?.estimated_taxes as any | undefined;
-  const hasTable = !!et;
-
-  if (!hearing && !estTotal && !hasTable) return null;
-
-  const order = ["city", "school", "county", "college", "hospital", "special_district"];
-  const rows = order.map((k) => ({ key: k, ...(et?.[k] || {}) }));
-
-  return (
-    <SectionCard title="ARB & Estimated Taxes">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
-        <LabelValue label="ARB Hearing" value={hearing} />
-        <LabelValue label="Estimated Taxes (Total)" value={estTotal} />
-      </div>
-
-      {hasTable && (
-        <div className="overflow-auto" style={{ maxHeight: 280 }}>
-          <table className="table table-sm">
-            <thead>
-              <tr>
-                <th>Jurisdiction</th>
-                <th>Taxing Unit</th>
-                <th>Rate per $100</th>
-                <th>Taxable Value</th>
-                <th>Estimated Taxes</th>
-                <th>Tax Ceiling</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td>{String(r.key).replace(/_/g, ' ')}</td>
-                  <td>{r.taxing_unit ?? '?'}</td>
-                  <td>{r.tax_rate_per_100 ?? '?'}</td>
-                  <td>{r.taxable_value ?? '?'}</td>
-                  <td>{r.estimated_taxes ?? '?'}</td>
-                  <td>{r.tax_ceiling ?? '?'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </SectionCard>
-  );
-}
-
-/* =====
-   Page
-   ===== */
 export default function PropertyReport() {
   const location = useLocation();
   const { accountId: routeAccountId } = useParams<{ accountId?: string }>();
 
   const presetAccount = useMemo(() => {
     if (routeAccountId) return routeAccountId;
-    const p = new URLSearchParams(location.search);
-    return p.get("account_id") || p.get("account") || "";
+    const params = new URLSearchParams(location.search);
+    return params.get("account_id") || params.get("account") || "";
   }, [location.search, routeAccountId]);
 
   const [account, setAccount] = useState(presetAccount);
   const [detail, setDetail] = useState<DcadDetail | null>(null);
   const [loading, setLoading] = useState(false);
-  const [raw, setRaw] = useState<any>(null);
   const hasAutoImported = useRef(false);
 
-  async function importFromDCAD() {
+  async function importFromDatabase() {
     if (!account) {
-      alert("Enter an Account ID first.");
+      window.alert("Enter an Account ID first.");
       return;
     }
     setLoading(true);
     try {
-      const resp = await fetchDetail(account);
-      setRaw(resp);
-      setDetail(resp?.detail ?? null);
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message || "Import failed");
+      const response = await fetchDetail(account);
+      setDetail(response?.detail ?? null);
+    } catch (error: unknown) {
+      console.error(error);
+      window.alert(error instanceof Error ? error.message : "Import failed");
     } finally {
       setLoading(false);
     }
   }
 
-  // Auto-import once if account is present in the URL
   useEffect(() => {
     if (!hasAutoImported.current && account) {
       hasAutoImported.current = true;
-      importFromDCAD();
+      void importFromDatabase();
     }
+    // The account is intentionally imported only once when the routed report opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
   return (
     <div className="min-h-screen bg-base-200">
-      {/* Top bar */}
       <div className="navbar bg-base-100 shadow-sm">
         <div className="container mx-auto px-4">
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-3">
-              <span className="text-xl font-semibold">Property Report</span>
-            </div>
+          <div className="flex w-full items-center justify-between">
+            <span className="text-xl font-semibold">Property Report</span>
             <Link to="/" className="btn btn-ghost btn-sm normal-case">
               ← Close Report
             </Link>
@@ -1238,126 +799,34 @@ export default function PropertyReport() {
         </div>
       </div>
 
-      {/* Body container */}
-      <div className="container mx-auto px-4 py-4 space-y-4">
-        {/* Import helper */}
-        <div className="card bg-base-100 rounded-2xl shadow-sm">
+      <main className="container mx-auto space-y-4 px-4 py-4">
+        <div className="card rounded-2xl bg-base-100 shadow-sm">
           <div className="card-body p-4">
-            <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-              <label className="text-sm font-medium opacity-70">Account ID</label>
+            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
+              <label htmlFor="property-account-id" className="text-sm font-medium opacity-70">
+                Account ID
+              </label>
               <input
+                id="property-account-id"
                 className="input input-bordered w-full sm:w-64"
                 placeholder="e.g. 26272500060150000"
                 value={account}
-                onChange={(e) => setAccount(e.target.value)}
+                onChange={(event) => setAccount(event.target.value)}
               />
               <button
+                type="button"
                 className="btn btn-primary normal-case"
-                onClick={importFromDCAD}
+                onClick={() => void importFromDatabase()}
                 disabled={loading || !account}
               >
-                {loading ? "Importing..." : "Import"}
+                {loading ? "Loading..." : "Load Report"}
               </button>
             </div>
           </div>
         </div>
 
-        {/* Address hero (full width) */}
         <AddressHero detail={detail} accountId={account} />
-
-        {/* Appraisal district values (full width, default collapsed) */}
-        <div className="card bg-white shadow-sm rounded-2xl">
-          <div className="card-body p-4">
-            <Collapsible title="Appraisal District Data" defaultOpen={false}>
-              <AppraisalDistrictData detail={detail} />
-            </Collapsible>
-          </div>
-        </div>
-
-        {/* Ownership (full width) */}
-        <OwnerAndLegal detail={detail} />
-
-        {/* Ownership History (full width, scrollable) */}
-        <OwnershipHistoryCard history={detail?.history} />
-
-        {/* Value Summary removed (duplicated by Address Hero) */}
-
-        {/* Collapsible: Property Specifications (default collapsed) */}
-        <div className="card bg-white shadow-sm rounded-2xl">
-          <div className="card-body p-4">
-            <Collapsible title="Property Specifications" defaultOpen={false}>
-              <PropertySpecs detail={detail} />
-            </Collapsible>
-          </div>
-        </div>
-
-        {/* Land + Additional Improvements */}
-        {/* Collapsible: Land Details */}
-        <div className="card bg-white shadow-sm rounded-2xl">
-          <div className="card-body p-4">
-            <Collapsible title="Land Details" defaultOpen={false}>
-              <LandDetails rows={detail?.land_detail} />
-            </Collapsible>
-          </div>
-        </div>
-
-        {/* Collapsible: Additional Improvements */}
-        <div className="card bg-white shadow-sm rounded-2xl">
-          <div className="card-body p-4">
-            <Collapsible title="Additional Improvements" defaultOpen={false}>
-              {(() => {
-                const src = (detail?.additional_improvements || []) as any[];
-                const normalized = src.map((r, i) => ({
-                  number: r.number ?? r.imp_num ?? i + 1,
-                  improvement_type: r.improvement_type ?? r.imp_type ?? '',
-                  construction: r.construction ?? '',
-                  floor: r.floor ?? r.floor_type ?? '',
-                  exterior_wall: r.exterior_wall ?? r.ext_wall ?? '',
-                  area_sqft: r.area_sqft ?? r.area_size ?? '',
-                }));
-                return <AdditionalImprovements rows={normalized as any} />;
-              })()}
-            </Collapsible>
-          </div>
-        </div>
-
-        {/* Collapsible: Exemptions */}
-        <div className="card bg-white shadow-sm rounded-2xl">
-          <div className="card-body p-4">
-            <Collapsible title="Exemptions" defaultOpen={false}>
-              <ExemptionsCard ex={detail?.exemptions} />
-            </Collapsible>
-          </div>
-        </div>
-
-        {/* Exemption details */}
-        <ExemptionDetailsCard d={detail?.exemption_details} />
-
-        {/* Exemption History */}
-        <ExemptionHistoryCard history={detail?.history} />
-
-        {/* Market Value History */}
-        <MarketValueHistoryCard history={detail?.history} />
-
-        {/* Taxable Value History */}
-        <TaxableValueHistoryCard history={detail?.history} />
-
-        {/* ARB + Estimated taxes */}
-        <ArbAndTaxes detail={detail} />
-
-        {/* Raw JSON to help mapping while we wire the rest */}
-        <details className="mt-2">
-          <summary className="cursor-pointer">Show raw API JSON</summary>
-          <pre className="whitespace-pre-wrap bg-base-100 p-3 rounded-xl text-xs">
-{JSON.stringify(raw, null, 2)}
-          </pre>
-        </details>
-      </div>
+      </main>
     </div>
   );
 }
-
-
-
-
-

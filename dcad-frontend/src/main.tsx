@@ -7,6 +7,7 @@ import PropertySearch from './pages/PropertySearch';
 import PropertyDetailsBase44 from './pages/PropertyDetailsBase44';
 import PropertyReport from './pages/PropertyReport';
 import ComparableSalesAnalysis from './pages/ComparableSalesAnalysis';
+import AppraisalReport from './pages/AppraisalReport';
 import SignUpForm from './pages/SignUpForm';
 
 function LegacyDetailRedirect() {
@@ -23,6 +24,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/property/:accountId" element={<LegacyDetailRedirect />} />
         <Route path="/report/:accountId" element={<PropertyReport />} />
         <Route path="/ComparableSalesAnalysis" element={<ComparableSalesAnalysis />} />
+        <Route path="/AppraisalReport" element={<AppraisalReport />} />
         <Route path="/signup" element={<SignUpForm />} />
       </Routes>
     </BrowserRouter>

@@ -697,7 +697,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           </SummarySection>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-5 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-5 sm:grid-cols-2 xl:grid-cols-5">
           <Link
             to={
               accountId
@@ -738,6 +738,22 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             className="btn normal-case rounded-md border-blue-600 bg-blue-600 px-4 py-2 text-white hover:border-blue-700 hover:bg-blue-700"
           >
             Property Tax Protest
+          </Link>
+          <Link
+            to={
+              accountId
+                ? `/AppraisalReport?propertyId=${encodeURIComponent(accountId)}`
+                : "#"
+            }
+            aria-label="Full Appraisal PDF"
+            aria-disabled={!accountId}
+            className={`btn normal-case rounded-md px-4 py-2 ${
+              accountId
+                ? "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
+                : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
+            }`}
+          >
+            Full Appraisal PDF
           </Link>
         </div>
       </div>

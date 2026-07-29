@@ -26,6 +26,7 @@ import {
   conditionQualitySaleKey,
   type AppliedConditionQualityAdjustment,
 } from '@/lib/conditionQualityStudy';
+import { saveAppraisalReportDraft } from '@/lib/appraisalReportDraft';
 
 const COMPARABLE_COUNT = 6;
 
@@ -1520,6 +1521,81 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const adjusted = Math.round(opinionMedian - 31900);
     return adjusted > 0 ? adjusted : 0;
   }, [opinionMedian]);
+
+  // Keep the current sales-comparison workfile available to the printable
+  // appraisal report. This remains browser-local until a server-side report
+  // workfile is introduced.
+  useEffect(() => {
+    if (!propertyId || !subject || !selectedSales.some(Boolean)) return;
+    saveAppraisalReportDraft({
+      version: 1,
+      accountId: propertyId,
+      savedAt: new Date().toISOString(),
+      source: 'sales-comparison-workspace',
+      subject: {
+        accountId: propertyId,
+        address: subject.address,
+        neighborhoodCode: subject.nbhd_code,
+        marketValue: subject.market_value,
+        livingArea: subject.total_living_area,
+        bedrooms: subject.bedroom_count,
+        bathsFull: subject.baths_full,
+        bathsHalf: subject.baths_half,
+        bathCount: subject.bath_count,
+        condition: subjectCondition,
+        quality: subjectQuality,
+      },
+      comparables: selectedSales.flatMap((sale, index) => {
+        if (!sale) return [];
+        return [{
+          sale,
+          condition: compConditions[index] || '',
+          quality: compQualities[index] || '',
+          netAdjustment: netAdjustments[index] || 0,
+          grossAdjustment: grossAdjustments[index] || 0,
+          indicatedValue: indicatedValues[index] || finiteNumber(sale.sale_price) || 0,
+          adjustments: {
+            concessions: finiteNumber(compConcessions[index]) || 0,
+            time: finiteNumber(compTimeAdjustments[index]) || 0,
+            roomCount: roomCountTotalAdjustments[index] || 0,
+            livingArea: glaAdjustments[index] || 0,
+            garage: garageAdjustments[index] || 0,
+            pool: poolAdjustments[index] || 0,
+            condition: conditionAdjustments[index] || 0,
+            quality: qualityAdjustments[index] || 0,
+          },
+        }];
+      }),
+      opinionOfValue: opinionMedian,
+      opinionAfterCostToCure: opinionAfterCtc,
+      salesNotes,
+      adjustmentNotes,
+    });
+  }, [
+    propertyId,
+    subject,
+    selectedSales,
+    subjectCondition,
+    subjectQuality,
+    compConditions,
+    compQualities,
+    netAdjustments,
+    grossAdjustments,
+    indicatedValues,
+    compConcessions,
+    compTimeAdjustments,
+    roomCountTotalAdjustments,
+    glaAdjustments,
+    garageAdjustments,
+    poolAdjustments,
+    conditionAdjustments,
+    qualityAdjustments,
+    opinionMedian,
+    opinionAfterCtc,
+    salesNotes,
+    adjustmentNotes,
+  ]);
+
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
     return parseWholeCount(subject?.bedroom_count);
@@ -1735,14 +1811,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16l4-4h10a2 2 0 0 0 2-2V8z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
               File My Protest
             </button>
-            <button
-              type="button"
+            <Link
+              to={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}`}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 border border-blue-600 text-white hover:bg-blue-700"
-              aria-label="Generate PDF"
+              aria-label="Generate Full Appraisal PDF"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16l4-4h10a2 2 0 0 0 2-2V8z"/><path d="M12 12h3"/><path d="M12 15h3"/><path d="M9 12h.01"/><path d="M9 15h.01"/></svg>
-              Generate PDF
-            </button>
+              Full Appraisal PDF
+            </Link>
             <button
               type="button"
               onClick={() => {

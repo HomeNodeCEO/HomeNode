@@ -247,8 +247,8 @@ export default function ConditionQualityStudy({
     try {
       const response = await api.getComparableRecommendations({
         subjectAccountId,
-        dateFrom,
-        dateTo: asOfDate,
+        analysisAsOf: asOfDate,
+        periodMonths: 12,
         limit: 100,
         marketBreakdown: marketKey,
       });
@@ -546,7 +546,7 @@ export default function ConditionQualityStudy({
               Required: choose one market area
             </legend>
             <p className="mt-1 text-sm text-slate-600">
-              The same 60% location and 40% living-area score orders the sales within the selected area.
+              The same 40% location, 30% living-area, and 30% sale-date score orders the one-year sales within the selected area.
             </p>
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {MARKET_OPTIONS.map((option) => (

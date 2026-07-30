@@ -1,17 +1,17 @@
 const EARTH_RADIUS_MILES = 3958.7613;
 
 export const DEFAULT_COMPARABLE_SCORING = Object.freeze({
-  locationWeight: 0.6,
-  squareFootageWeight: 0.4,
+  locationWeight: 0.4,
+  squareFootageWeight: 0.3,
+  salesDateWeight: 0.3,
   locationScaleMiles: 1,
   squareFootageScaleRatio: 0.1,
+  salesDateScaleDays: 365,
 });
 
 export const DEFAULT_RECOMMENDATION_POLICY = Object.freeze({
   count: 6,
-  recentYears: 1,
-  olderThanYears: 2,
-  highScoreThreshold: 70,
+  periodMonths: 12,
 });
 
 function finiteNumber(value) {
@@ -53,6 +53,42 @@ function yearsBefore(value, years) {
   return result;
 }
 
+function dateOnlyString(value) {
+  return value.toISOString().slice(0, 10);
+}
+
+export function analysisWindow(
+  referenceDate = new Date(),
+  periodMonths = DEFAULT_RECOMMENDATION_POLICY.periodMonths,
+) {
+  const reference = utcDateOnly(referenceDate);
+  const parsedPeriodMonths = Number(periodMonths);
+  if (
+    !reference ||
+    ![12, 24, 36].includes(parsedPeriodMonths)
+  ) {
+    return null;
+  }
+
+  const absoluteMonth =
+    reference.getUTCFullYear() * 12 +
+    reference.getUTCMonth() -
+    parsedPeriodMonths;
+  const targetYear = Math.floor(absoluteMonth / 12);
+  const targetMonth = ((absoluteMonth % 12) + 12) % 12;
+  const finalDayOfTargetMonth = new Date(
+    Date.UTC(targetYear, targetMonth + 1, 0),
+  ).getUTCDate();
+  const targetDay = Math.min(reference.getUTCDate(), finalDayOfTargetMonth);
+  const start = new Date(Date.UTC(targetYear, targetMonth, targetDay));
+
+  return {
+    analysisAsOf: dateOnlyString(reference),
+    analysisStartDate: dateOnlyString(start),
+    periodMonths: parsedPeriodMonths,
+  };
+}
+
 export function classifySaleAge(closingDate, referenceDate = new Date()) {
   const saleDate = utcDateOnly(closingDate);
   const reference = utcDateOnly(referenceDate);
@@ -60,6 +96,7 @@ export function classifySaleAge(closingDate, referenceDate = new Date()) {
     return {
       saleAgeDays: null,
       soldWithinOneYear: false,
+      soldOverOneYear: false,
       soldOverTwoYears: false,
     };
   }
@@ -72,6 +109,7 @@ export function classifySaleAge(closingDate, referenceDate = new Date()) {
       Math.floor((reference.getTime() - saleDate.getTime()) / 86_400_000),
     ),
     soldWithinOneYear: saleDate >= oneYearCutoff && saleDate <= reference,
+    soldOverOneYear: saleDate < oneYearCutoff,
     soldOverTwoYears: saleDate < twoYearCutoff,
   };
 }
@@ -83,23 +121,36 @@ export function applyRecommendationPolicy(
     policy = DEFAULT_RECOMMENDATION_POLICY,
   } = {},
 ) {
+  const periodMonths = Number(
+    policy.periodMonths ?? DEFAULT_RECOMMENDATION_POLICY.periodMonths,
+  );
+  const window = analysisWindow(referenceDate, periodMonths);
+  if (!window) {
+    throw new Error("invalid_analysis_period");
+  }
+  const analysisStart = utcDateOnly(window.analysisStartDate);
+  const analysisEnd = utcDateOnly(window.analysisAsOf);
   const classifiedSales = rankedSales.map((sale) => ({
     ...sale,
     ...classifySaleAge(sale.closing_date, referenceDate),
+    insideAnalysisPeriod: (() => {
+      const saleDate = utcDateOnly(sale.closing_date);
+      return Boolean(
+        saleDate &&
+        analysisStart &&
+        analysisEnd &&
+        saleDate >= analysisStart &&
+        saleDate <= analysisEnd,
+      );
+    })(),
   }));
-  const recentHighScoreCount = classifiedSales.filter(
-    (sale) =>
-      sale.soldWithinOneYear &&
-      finiteNumber(sale.comparableScore) > policy.highScoreThreshold,
-  ).length;
-  const scoreAboveThresholdCount = classifiedSales.filter(
-    (sale) => finiteNumber(sale.comparableScore) > policy.highScoreThreshold,
-  ).length;
-  const olderSaleExclusionApplied = recentHighScoreCount >= policy.count;
-  const eligibleSales = olderSaleExclusionApplied
-    ? classifiedSales.filter((sale) => !sale.soldOverTwoYears)
-    : classifiedSales;
-  const recommendedSales = eligibleSales.slice(0, policy.count);
+  const eligibleSales = classifiedSales.filter(
+    (sale) => sale.insideAnalysisPeriod,
+  );
+  const recommendedSales = eligibleSales.slice(
+    0,
+    policy.count ?? DEFAULT_RECOMMENDATION_POLICY.count,
+  );
   const recommendationRanks = new Map(
     recommendedSales.map((sale, index) => [sale, index + 1]),
   );
@@ -111,21 +162,44 @@ export function applyRecommendationPolicy(
       recommended: recommendationRank !== null,
       recommendationRank,
       recommendationExclusionReason:
-        olderSaleExclusionApplied && sale.soldOverTwoYears
-          ? "six_recent_high_score_sales_available"
+        !sale.insideAnalysisPeriod
+          ? "outside_analysis_period"
           : null,
     };
   });
+
+  const recentHighScoreCount = sales.filter(
+    (sale) =>
+      sale.soldWithinOneYear &&
+      finiteNumber(sale.comparableScore) > 70,
+  ).length;
+  const scoreAboveThresholdCount = sales.filter(
+    (sale) => finiteNumber(sale.comparableScore) > 70,
+  ).length;
 
   return {
     sales,
     recommendedSales: sales.filter((sale) => sale.recommended),
     policy: {
       ...policy,
-      referenceDate: validDate(referenceDate)?.toISOString() ?? null,
+      periodMonths,
+      analysisAsOf: window.analysisAsOf,
+      analysisStartDate: window.analysisStartDate,
+      referenceDate: `${window.analysisAsOf}T00:00:00.000Z`,
+      olderThanOneYearCount: sales.filter(
+        (sale) => sale.insideAnalysisPeriod && sale.soldOverOneYear,
+      ).length,
+      outsideAnalysisPeriodCount: sales.filter(
+        (sale) => !sale.insideAnalysisPeriod,
+      ).length,
+      expandedHistoricalPeriod: periodMonths > 12,
+      // Retained temporarily for compatibility with older deployed clients.
+      recentYears: 1,
+      olderThanYears: 1,
+      highScoreThreshold: 70,
       recentHighScoreCount,
       scoreAboveThresholdCount,
-      olderSaleExclusionApplied,
+      olderSaleExclusionApplied: periodMonths === 12,
     },
   };
 }
@@ -156,6 +230,8 @@ export function scoreComparable(
     comparableLongitude,
     subjectSquareFeet,
     comparableSquareFeet,
+    closingDate,
+    referenceDate = new Date(),
   },
   config = DEFAULT_COMPARABLE_SCORING,
 ) {
@@ -185,10 +261,19 @@ export function scoreComparable(
     squareFootageDifferenceRatio,
     config.squareFootageScaleRatio,
   );
-  const totalWeight = config.locationWeight + config.squareFootageWeight;
+  const saleAge = classifySaleAge(closingDate, referenceDate);
+  const salesDateScore = softSimilarity(
+    saleAge.saleAgeDays,
+    config.salesDateScaleDays,
+  );
+  const totalWeight =
+    config.locationWeight +
+    config.squareFootageWeight +
+    config.salesDateWeight;
   if (
     locationScore === null ||
     squareFootageScore === null ||
+    salesDateScore === null ||
     !Number.isFinite(totalWeight) ||
     totalWeight <= 0
   ) {
@@ -198,7 +283,8 @@ export function scoreComparable(
   const comparableScore =
     (
       locationScore * config.locationWeight +
-      squareFootageScore * config.squareFootageWeight
+      squareFootageScore * config.squareFootageWeight +
+      salesDateScore * config.salesDateWeight
     ) / totalWeight;
 
   return {
@@ -206,6 +292,11 @@ export function scoreComparable(
     distanceMiles: round(distanceMiles, 3),
     locationScore: round(locationScore, 1),
     squareFootageScore: round(squareFootageScore, 1),
+    salesDateScore: round(salesDateScore, 1),
+    saleAgeDays: saleAge.saleAgeDays,
+    soldWithinOneYear: saleAge.soldWithinOneYear,
+    soldOverOneYear: saleAge.soldOverOneYear,
+    soldOverTwoYears: saleAge.soldOverTwoYears,
     squareFootageDifference: round(squareFootageDifference, 0),
     squareFootageDifferenceRatio: round(squareFootageDifferenceRatio, 4),
     squareFootageDifferencePercent: round(squareFootageDifferenceRatio * 100, 1),

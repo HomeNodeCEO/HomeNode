@@ -229,6 +229,7 @@ export interface SaleRow {
   distanceMiles?: number;
   locationScore?: number;
   squareFootageScore?: number;
+  salesDateScore?: number;
   squareFootageDifference?: number;
   squareFootageDifferenceRatio?: number;
   squareFootageDifferencePercent?: number;
@@ -236,6 +237,7 @@ export interface SaleRow {
   score_requires_review?: boolean;
   saleAgeDays?: number | null;
   soldWithinOneYear?: boolean;
+  soldOverOneYear?: boolean;
   soldOverTwoYears?: boolean;
   recommended?: boolean;
   recommendationRank?: number | null;
@@ -285,14 +287,18 @@ export interface SalesSearchParams {
 
 export interface ComparableRecommendationParams {
   subjectAccountId: string;
+  analysisAsOf?: string;
+  periodMonths?: 12 | 24 | 36;
   dateFrom?: string;
   dateTo?: string;
   limit?: number;
   marketBreakdown?: GroupedAnalysisBreakdownKey;
   locationWeight?: number;
   squareFootageWeight?: number;
+  salesDateWeight?: number;
   locationScaleMiles?: number;
   squareFootageScaleRatio?: number;
+  salesDateScaleDays?: number;
 }
 
 export interface ComparableRecommendationsResponse {
@@ -316,10 +322,13 @@ export interface ComparableRecommendationsResponse {
   scoring: {
     locationWeight: number;
     squareFootageWeight: number;
+    salesDateWeight: number;
     locationScaleMiles: number;
     squareFootageScaleRatio: number;
+    salesDateScaleDays: number;
     locationWeightPercent: number;
     squareFootageWeightPercent: number;
+    salesDateWeightPercent: number;
     squareFootageScalePercent: number;
     squareFootageIsHardFilter: false;
   };
@@ -333,10 +342,17 @@ export interface ComparableRecommendationsResponse {
     missing_square_footage_count: number;
     recommended_count: number;
     older_than_two_years_count: number;
+    older_than_one_year_count: number;
     recent_high_score_count: number;
   };
   recommendation_policy: {
     count: number;
+    periodMonths: 12 | 24 | 36;
+    analysisAsOf: string;
+    analysisStartDate: string;
+    olderThanOneYearCount: number;
+    outsideAnalysisPeriodCount: number;
+    expandedHistoricalPeriod: boolean;
     recentYears: number;
     olderThanYears: number;
     highScoreThreshold: number;
@@ -344,6 +360,11 @@ export interface ComparableRecommendationsResponse {
     recentHighScoreCount: number;
     scoreAboveThresholdCount: number;
     olderSaleExclusionApplied: boolean;
+  };
+  analysis_period: {
+    analysis_as_of: string;
+    date_from: string;
+    period_months: 12 | 24 | 36;
   };
   study_market?: {
     key: GroupedAnalysisBreakdownKey | null;
@@ -676,14 +697,18 @@ export async function getComparableRecommendations(
 ): Promise<ComparableRecommendationsResponse> {
   const url = makeUrl('/api/sales/recommendations', {
     subject_account_id: params.subjectAccountId.trim(),
+    analysis_as_of: params.analysisAsOf,
+    period_months: params.periodMonths,
     date_from: params.dateFrom,
     date_to: params.dateTo,
     limit: params.limit ?? 25,
     market_breakdown: params.marketBreakdown,
     location_weight: params.locationWeight,
     square_footage_weight: params.squareFootageWeight,
+    sales_date_weight: params.salesDateWeight,
     location_scale_miles: params.locationScaleMiles,
     square_footage_scale_ratio: params.squareFootageScaleRatio,
+    sales_date_scale_days: params.salesDateScaleDays,
   });
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
 }

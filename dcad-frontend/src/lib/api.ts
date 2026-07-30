@@ -355,6 +355,123 @@ export interface ComparableRecommendationsResponse {
   sales: SaleRow[];
 }
 
+export type MarketConditionsAreaKey =
+  | 'city'
+  | 'zip'
+  | 'radius_1'
+  | 'radius_2'
+  | 'radius_3'
+  | 'radius_4'
+  | 'radius_5'
+  | 'custom';
+
+export type GeoJsonPolygon = {
+  type: 'Polygon';
+  coordinates: number[][][];
+};
+
+export interface MarketConditionsSubject {
+  account_id: string;
+  address: string | null;
+  city: string | null;
+  county: string | null;
+  postal_code: string | null;
+  neighborhood_code: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  location_status: 'matched' | 'not_found' | 'invalid' | null;
+  location_source: string | null;
+  location_precision: string | null;
+  location_confidence: 'high' | 'medium' | 'low' | null;
+  location_review_required: boolean;
+  location_review_reason: string | null;
+}
+
+export interface MarketConditionsSeriesPoint {
+  period_start: string | null;
+  sale_count: number;
+  median_sale_price: number | null;
+  median_days_on_market: number | null;
+  median_sale_to_list_ratio: number | null;
+  median_price_per_square_foot: number | null;
+}
+
+export interface MarketConditionsMapSale {
+  sale_id: string | number | null;
+  source_record_id: string | number | null;
+  account_id: string | null;
+  address: string | null;
+  city: string | null;
+  closing_date: string | null;
+  sale_price: number | null;
+  latitude: number | null;
+  longitude: number | null;
+}
+
+export interface MarketConditionsAnalysis {
+  market: {
+    key: MarketConditionsAreaKey;
+    scope: 'city' | 'zip' | 'radius' | 'custom';
+    label: string;
+    city: string | null;
+    county: string | null;
+    postal_code: string | null;
+    radius_miles: number | null;
+    custom_geometry: GeoJsonPolygon | null;
+    area_square_miles: number | null;
+    includes_subject: boolean | null;
+  };
+  period: {
+    start: string | null;
+    end: string | null;
+  };
+  population: {
+    eligible_sale_count: number;
+    mapped_sale_count: number;
+  };
+  summary: {
+    median_sale_price: number | null;
+    median_days_on_market: number | null;
+    median_sale_to_list_ratio: number | null;
+    median_price_per_square_foot: number | null;
+    minimum_sale_price: number | null;
+    maximum_sale_price: number | null;
+  };
+  series: {
+    monthly: MarketConditionsSeriesPoint[];
+    quarterly: MarketConditionsSeriesPoint[];
+    semiannual: MarketConditionsSeriesPoint[];
+    yearly: MarketConditionsSeriesPoint[];
+  };
+  map_sales: MarketConditionsMapSale[];
+  filters: {
+    record_type: 'closed_sale';
+    minimum_sale_price: number;
+    multi_parcel_status: 'single';
+    attached_housing_excluded: boolean;
+    period_months: number;
+  };
+}
+
+export interface MarketConditionsResponse {
+  subject: MarketConditionsSubject;
+  analyses: MarketConditionsAnalysis[];
+  unavailable_areas: Array<{
+    key: MarketConditionsAreaKey;
+    label: string;
+    reason: string;
+  }>;
+  independence_notice: string;
+}
+
+export interface MarketConditionsRequest {
+  subjectAccountId: string;
+  areaKeys: MarketConditionsAreaKey[];
+  asOf?: string;
+  periodMonths: 12 | 24 | 36;
+  customGeometry?: GeoJsonPolygon | null;
+}
+
 export type GroupedAdjustmentReliability = 'strong' | 'moderate' | 'limited';
 
 export interface GroupedAdjustmentOption {
@@ -569,6 +686,39 @@ export async function getComparableRecommendations(
     square_footage_scale_ratio: params.squareFootageScaleRatio,
   });
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
+}
+
+/** Load the subject location used to center the independent market-study map. */
+export async function getMarketConditionsContext(
+  subjectAccountId: string,
+): Promise<{ subject: MarketConditionsSubject }> {
+  const url = makeUrl('/api/sales/market-context', {
+    subject_account_id: subjectAccountId.trim(),
+  });
+  return fetchJSON<{ subject: MarketConditionsSubject }>(url, {
+    timeoutMs: 90000,
+  });
+}
+
+/** Build independent market-condition studies without filtering comparable inventory. */
+export async function runMarketConditionsAnalysis(
+  request: MarketConditionsRequest,
+): Promise<MarketConditionsResponse> {
+  const url = makeUrl('/api/sales/market-analysis');
+  return fetchJSON<MarketConditionsResponse>(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      subject_account_id: request.subjectAccountId.trim(),
+      area_keys: request.areaKeys,
+      as_of: request.asOf,
+      period_months: request.periodMonths,
+      custom_geometry: request.customGeometry || null,
+    }),
+    timeoutMs: 120000,
+  });
 }
 
 /** Build current one-year bathroom, garage, pool, and living-area grouped adjustment studies. */

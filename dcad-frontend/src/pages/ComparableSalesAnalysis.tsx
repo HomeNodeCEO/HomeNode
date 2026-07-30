@@ -34,6 +34,29 @@ import {
 } from '@/lib/marketConditionsDraft';
 
 const COMPARABLE_COUNT = 6;
+type SalesAnalysisPeriodMonths = 12 | 24 | 36;
+
+function localDateString(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function monthsBeforeDate(value: string, months: SalesAnalysisPeriodMonths): string {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  const originalDay = date.getDate();
+  date.setDate(1);
+  date.setMonth(date.getMonth() - months);
+  const finalDay = new Date(
+    date.getFullYear(),
+    date.getMonth() + 1,
+    0,
+  ).getDate();
+  date.setDate(Math.min(originalDay, finalDay));
+  return localDateString(date);
+}
 
 type SubjectData = {
   accountId: string;
@@ -315,8 +338,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     () => Array.from({ length: COMPARABLE_COUNT }, () => ({ tot: null, bd: null, full: null, half: null })),
   );
   const [salesQuery, setSalesQuery] = useState('');
-  const [salesDateFrom, setSalesDateFrom] = useState('');
-  const [salesDateTo, setSalesDateTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [salesAnalysisAsOf, setSalesAnalysisAsOf] = useState(() => localDateString());
+  const [salesPeriodMonths, setSalesPeriodMonths] =
+    useState<SalesAnalysisPeriodMonths>(12);
+  const salesDateFrom = useMemo(
+    () => monthsBeforeDate(salesAnalysisAsOf, salesPeriodMonths),
+    [salesAnalysisAsOf, salesPeriodMonths],
+  );
   const [includeUnmatchedSales, setIncludeUnmatchedSales] = useState(false);
   const [sameNeighborhoodOnly, setSameNeighborhoodOnly] = useState(false);
   const [salesResults, setSalesResults] = useState<SaleRow[]>([]);
@@ -1003,18 +1031,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US');
   };
 
-  const saleIsOverTwoYears = (sale: SaleRow): boolean => {
-    if (sale.soldOverTwoYears != null) return sale.soldOverTwoYears;
+  const saleIsOverOneYear = (sale: SaleRow): boolean => {
+    if (sale.soldOverOneYear != null) return sale.soldOverOneYear;
     if (!sale.closing_date) return false;
     const saleDate = new Date(`${sale.closing_date.slice(0, 10)}T12:00:00Z`);
     if (Number.isNaN(saleDate.getTime())) return false;
-    const now = new Date();
-    const cutoff = new Date(Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
-    ));
-    cutoff.setUTCFullYear(cutoff.getUTCFullYear() - 2);
+    const cutoffValue = monthsBeforeDate(salesAnalysisAsOf, 12);
+    const cutoff = new Date(`${cutoffValue}T12:00:00Z`);
+    if (Number.isNaN(cutoff.getTime())) return false;
     return saleDate < cutoff;
   };
 
@@ -1228,6 +1252,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSalesError(null);
   };
 
+  const resetSalesForAnalysisPeriodChange = () => {
+    setRecommendationSummary(null);
+    setSalesResults([]);
+    setSalesNotice(null);
+    clearComparables();
+  };
+
   const runRecommendedSales = async () => {
     if (!marketConditionsDraft) {
       setSalesError('Complete the current Market Conditions Analysis before recommending comparable sales.');
@@ -1243,8 +1274,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     try {
       const response = await api.getComparableRecommendations({
         subjectAccountId: propertyId,
-        dateFrom: salesDateFrom || undefined,
-        dateTo: salesDateTo || undefined,
+        analysisAsOf: salesAnalysisAsOf,
+        periodMonths: salesPeriodMonths,
         limit: 50,
       });
       setRecommendationSummary(response);
@@ -1289,7 +1320,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         excludeAccountId: propertyId || undefined,
         neighborhoodCode: sameNeighborhoodOnly ? (subject?.nbhd_code || undefined) : undefined,
         dateFrom: salesDateFrom || undefined,
-        dateTo: salesDateTo || undefined,
+        dateTo: salesAnalysisAsOf || undefined,
         matched: includeUnmatchedSales ? undefined : true,
         limit: 50,
       });
@@ -1886,24 +1917,35 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-700">
-              <span>Closing date from</span>
+              <span>Analysis as of</span>
               <input
                 type="date"
-                value={salesDateFrom}
+                value={salesAnalysisAsOf}
                 disabled={!marketConditionsDraft}
-                onChange={(event) => setSalesDateFrom(event.target.value)}
+                onChange={(event) => {
+                  setSalesAnalysisAsOf(event.target.value);
+                  resetSalesForAnalysisPeriodChange();
+                }}
                 className="rounded-md border border-slate-300 px-3 py-2"
               />
             </label>
             <label className="grid gap-1 text-sm text-slate-700">
-              <span>Closing date to</span>
-              <input
-                type="date"
-                value={salesDateTo}
+              <span>Historical period</span>
+              <select
+                value={salesPeriodMonths}
                 disabled={!marketConditionsDraft}
-                onChange={(event) => setSalesDateTo(event.target.value)}
+                onChange={(event) => {
+                  setSalesPeriodMonths(
+                    Number(event.target.value) as SalesAnalysisPeriodMonths,
+                  );
+                  resetSalesForAnalysisPeriodChange();
+                }}
                 className="rounded-md border border-slate-300 px-3 py-2"
-              />
+              >
+                <option value={12}>12 months</option>
+                <option value={24}>24 months</option>
+                <option value={36}>36 months</option>
+              </select>
             </label>
             <button
               type="button"
@@ -1975,9 +2017,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
 
           <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
-            Recommendations use DCAD parcel-center distance at 60% and living-area similarity at 40%.
+            Recommendations use DCAD parcel-center distance at 40%, living-area similarity at 30%, and sale-date recency at 30%.
             The 10% living-area setting controls how quickly that score declines; it does not exclude larger or smaller properties.
-            Sales over two years old are flagged and are left out of the recommended six when at least six sales from the last year score above 70.
+            The 12-month period is the default and excludes sales over one year old. Select 24 or 36 months to include older sales as recency-weighted fallback evidence.
             Neighborhood code is shown for review but is not yet scored.
           </div>
 
@@ -2018,8 +2060,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <div>
                     <div className="font-semibold text-slate-900">Comparable {index + 1}</div>
                     <div className="mt-1 text-slate-700">{sale ? saleDisplayAddress(sale) : 'Not selected'}</div>
-                    {sale && saleIsOverTwoYears(sale) && (
-                      <div className="mt-1 text-xs font-semibold text-amber-800">Sale over two years old</div>
+                    {sale && saleIsOverOneYear(sale) && (
+                      <div className="mt-1 text-xs font-semibold text-amber-800">Sale over one year old</div>
                     )}
                     {missingHousingType && (
                       <div className="mt-1 text-xs font-semibold text-amber-900">
@@ -2091,10 +2133,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               )}
               {recommendationSummary.recommendation_policy && (
                 <>
-                  {' '}{recommendationSummary.recommendation_policy.recentHighScoreCount.toLocaleString()} sales from the last year scored above 70.
-                  {recommendationSummary.recommendation_policy.olderSaleExclusionApplied
-                    ? ' Sales over two years old were excluded from the recommended six.'
-                    : ' Older sales remain eligible as clearly flagged fallbacks.'}
+                  {' '}The {recommendationSummary.recommendation_policy.periodMonths}-month analysis runs from{' '}
+                  {saleDateDisplay(recommendationSummary.recommendation_policy.analysisStartDate)} through{' '}
+                  {saleDateDisplay(recommendationSummary.recommendation_policy.analysisAsOf)}.
+                  {recommendationSummary.recommendation_policy.expandedHistoricalPeriod
+                    ? ` ${recommendationSummary.recommendation_policy.olderThanOneYearCount.toLocaleString()} sales over one year old are included as recency-weighted fallback evidence.`
+                    : ' Sales over one year old are excluded.'}
                 </>
               )}
             </div>
@@ -2126,7 +2170,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         ? '0 garage spaces'
                         : 'Garage spaces unavailable';
                     const hasPool = booleanValue(sale.mls_pool_yn ?? sale.cad_pool);
-                    const olderThanTwoYears = saleIsOverTwoYears(sale);
+                    const olderThanOneYear = saleIsOverOneYear(sale);
                     const missingHousingType = housingTypeNeedsReview(sale);
                     const unknownAttachment = attachmentNeedsReview(sale);
                     return (
@@ -2173,11 +2217,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 {sale.distanceMiles?.toFixed(2)} mi · {sale.squareFootageDifferencePercent?.toFixed(1)}% size difference
                               </div>
                               <div className="mt-1 text-xs text-slate-500">
-                                Location {sale.locationScore?.toFixed(1)} · Size {sale.squareFootageScore?.toFixed(1)}
+                                Location {sale.locationScore?.toFixed(1)} · GLA {sale.squareFootageScore?.toFixed(1)} · Date {sale.salesDateScore?.toFixed(1)}
                               </div>
-                              {sale.recommendationExclusionReason === 'six_recent_high_score_sales_available' && (
+                              {sale.recommendationExclusionReason === 'outside_analysis_period' && (
                                 <div className="mt-1 text-xs font-medium text-amber-800">
-                                  Not recommended because six recent sales scored above 70.
+                                  Outside the selected historical period.
                                 </div>
                               )}
                             </div>
@@ -2230,8 +2274,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 Attached/detached unverified
                               </span>
                             )}
-                            {olderThanTwoYears && (
-                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Sale over 2 years old</span>
+                            {olderThanOneYear && (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Sale over 1 year old</span>
                             )}
                             {!sale.requires_additional_review &&
                               !missingHousingType &&

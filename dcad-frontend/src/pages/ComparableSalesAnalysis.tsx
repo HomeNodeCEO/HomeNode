@@ -10,6 +10,7 @@ import ConditionQualityStudy, {
   type ConditionQualityImpactPreview,
   type ConditionQualityRatingAssignment,
 } from '@/components/ConditionQualityStudy';
+import MarketConditionsAnalysis from '@/components/MarketConditionsAnalysis';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 import {
@@ -27,6 +28,10 @@ import {
   type AppliedConditionQualityAdjustment,
 } from '@/lib/conditionQualityStudy';
 import { saveAppraisalReportDraft } from '@/lib/appraisalReportDraft';
+import {
+  readMarketConditionsDraft,
+  type MarketConditionsDraft,
+} from '@/lib/marketConditionsDraft';
 
 const COMPARABLE_COUNT = 6;
 
@@ -325,6 +330,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [salesError, setSalesError] = useState<string | null>(null);
   const [salesNotice, setSalesNotice] = useState<string | null>(null);
   const [recommendationSummary, setRecommendationSummary] = useState<ComparableRecommendationsResponse | null>(null);
+  const [marketConditionsDraft, setMarketConditionsDraft] =
+    useState<MarketConditionsDraft | null>(() =>
+      readMarketConditionsDraft(propertyId),
+    );
   const [editingHousingSale, setEditingHousingSale] = useState<SaleRow | null>(null);
   const [housingEditForm, setHousingEditForm] = useState<HousingEditForm>({
     housingType: '',
@@ -347,6 +356,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setAppliedGroupedAdjustments({});
     setAppliedConditionQualityAdjustments({});
     setConditionQualityRatings({});
+  }, [propertyId]);
+
+  useEffect(() => {
+    setMarketConditionsDraft(readMarketConditionsDraft(propertyId));
   }, [propertyId]);
 
   useEffect(() => {
@@ -1181,6 +1194,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const addSaleAsComparable = (sale: SaleRow) => {
+    if (!marketConditionsDraft) {
+      setSalesError('Complete the current Market Conditions Analysis before selecting comparable sales.');
+      return;
+    }
     if (selectedSales.some((item) => item && saleKey(item) === saleKey(sale))) return;
     const openSlot = selectedSales.findIndex((item) => item === null);
     if (openSlot < 0) {
@@ -1212,6 +1229,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const runRecommendedSales = async () => {
+    if (!marketConditionsDraft) {
+      setSalesError('Complete the current Market Conditions Analysis before recommending comparable sales.');
+      return;
+    }
     if (!propertyId) {
       setSalesError('A subject property is required before comparable sales can be recommended.');
       return;
@@ -1255,6 +1276,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const runSalesSearch = async () => {
+    if (!marketConditionsDraft) {
+      setSalesError('Complete the current Market Conditions Analysis before searching comparable sales.');
+      return;
+    }
     setSalesLoading(true);
     setSalesError(null);
     setSalesNotice(null);
@@ -1832,15 +1857,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
         </div>
 
-        {/* Neighborhood summary box */}
-        <div className="mb-4 rounded-xl border border-slate-200 bg-white px-6 py-4">
-          <p className="text-center">
-            There are <span className="text-amber-700 font-semibold">X</span> comparable properties currently offered for sale in the subjects neighborhood ranging in price from <span className="text-amber-700 font-semibold">$x</span> to <span className="text-amber-700 font-semibold">$x</span>.
-          </p>
-          <p className="text-center mt-2">
-            There are <span className="text-amber-700 font-semibold">8</span> comparable sales in the subject neighborhood within 12 months of the 1st of January ranging from <span className="text-amber-700 font-semibold">$x</span> to <span className="text-amber-700 font-semibold">$x</span>.
-          </p>
-        </div>
+        <MarketConditionsAnalysis
+          key={`market-conditions-${propertyId}`}
+          subjectAccountId={propertyId}
+          onCompletionChange={setMarketConditionsDraft}
+        />
 
         <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-1">
@@ -1855,6 +1876,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <span>Address, city, or parcel/account ID</span>
               <input
                 value={salesQuery}
+                disabled={!marketConditionsDraft}
                 onChange={(event) => setSalesQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void runSalesSearch();
@@ -1868,6 +1890,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <input
                 type="date"
                 value={salesDateFrom}
+                disabled={!marketConditionsDraft}
                 onChange={(event) => setSalesDateFrom(event.target.value)}
                 className="rounded-md border border-slate-300 px-3 py-2"
               />
@@ -1877,6 +1900,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <input
                 type="date"
                 value={salesDateTo}
+                disabled={!marketConditionsDraft}
                 onChange={(event) => setSalesDateTo(event.target.value)}
                 className="rounded-md border border-slate-300 px-3 py-2"
               />
@@ -1884,7 +1908,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             <button
               type="button"
               onClick={() => void runRecommendedSales()}
-              disabled={salesLoading || !propertyId}
+              disabled={salesLoading || !propertyId || !marketConditionsDraft}
               className="rounded-md border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
             >
               Recommend Top 6
@@ -1892,12 +1916,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             <button
               type="button"
               onClick={() => void runSalesSearch()}
-              disabled={salesLoading}
+              disabled={salesLoading || !marketConditionsDraft}
               className="rounded-md border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60"
             >
               {salesLoading ? 'Searching...' : 'Search Sales'}
             </button>
           </div>
+
+          {!marketConditionsDraft && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+              Complete the current Market Conditions Analysis above to unlock
+              comparable search and recommendations. The selected study areas
+              will remain independent from the comparable-sales inventory.
+            </div>
+          )}
 
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,220px)_minmax(180px,220px)_auto_1fr] md:items-end">

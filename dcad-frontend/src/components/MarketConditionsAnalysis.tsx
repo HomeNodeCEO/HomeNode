@@ -1,0 +1,1326 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import * as api from '@/lib/api';
+import type {
+  GeoJsonPolygon,
+  MarketConditionsAnalysis,
+  MarketConditionsAreaKey,
+  MarketConditionsMapSale,
+  MarketConditionsResponse,
+  MarketConditionsSeriesPoint,
+  MarketConditionsSubject,
+} from '@/lib/api';
+import {
+  readMarketConditionsDraft,
+  saveMarketConditionsDraft,
+  type MarketConditionsDraft,
+  type MarketConditionsReconciliation,
+  type MarketTrendConclusion,
+} from '@/lib/marketConditionsDraft';
+
+const MAPLIBRE_SCRIPT =
+  'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js';
+const MAPLIBRE_STYLE =
+  'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css';
+const TERRADRAW_SCRIPT =
+  'https://cdn.jsdelivr.net/npm/@watergis/maplibre-gl-terradraw@1.0.1/dist/maplibre-gl-terradraw.umd.js';
+const TERRADRAW_STYLE =
+  'https://cdn.jsdelivr.net/npm/@watergis/maplibre-gl-terradraw@1.0.1/dist/maplibre-gl-terradraw.css';
+const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/bright';
+
+type GeoJsonFeature = {
+  type: 'Feature';
+  id?: string | number;
+  geometry: {
+    type: string;
+    coordinates: unknown;
+  };
+  properties: Record<string, unknown>;
+};
+
+type GeoJsonFeatureCollection = {
+  type: 'FeatureCollection';
+  features: GeoJsonFeature[];
+};
+
+type MapSource = {
+  setData: (data: GeoJsonFeatureCollection) => void;
+};
+
+type MapInstance = {
+  on: (event: string, callback: () => void) => void;
+  addControl: (control: unknown, position?: string) => void;
+  addSource: (id: string, source: Record<string, unknown>) => void;
+  getSource: (id: string) => MapSource | undefined;
+  addLayer: (layer: Record<string, unknown>) => void;
+  getLayer: (id: string) => unknown;
+  remove: () => void;
+};
+
+type MarkerInstance = {
+  setLngLat: (coordinate: [number, number]) => MarkerInstance;
+  addTo: (map: MapInstance) => MarkerInstance;
+};
+
+type MapLibreGlobal = {
+  Map: new (options: Record<string, unknown>) => MapInstance;
+  Marker: new (options?: Record<string, unknown>) => MarkerInstance;
+};
+
+type TerraDrawInstance = {
+  on: (event: string, callback: () => void) => void;
+  getSnapshot: () => GeoJsonFeature[];
+  addFeatures?: (features: GeoJsonFeature[]) => void;
+  clear: () => void;
+};
+
+type TerraDrawControlInstance = {
+  getTerraDrawInstance: () => TerraDrawInstance;
+};
+
+type TerraDrawGlobal = {
+  MaplibreTerradrawControl: new (
+    options: Record<string, unknown>,
+  ) => TerraDrawControlInstance;
+};
+
+declare global {
+  interface Window {
+    maplibregl?: MapLibreGlobal;
+    MaplibreTerradrawControl?: TerraDrawGlobal;
+  }
+}
+
+type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
+
+type Props = {
+  subjectAccountId: string;
+  onCompletionChange?: (draft: MarketConditionsDraft | null) => void;
+};
+
+const AREA_OPTIONS: Array<{
+  key: MarketConditionsAreaKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: 'city',
+    label: 'Entire city',
+    description: 'All eligible detached sales in the subject city.',
+  },
+  {
+    key: 'zip',
+    label: 'Subject ZIP code',
+    description: 'Eligible sales sharing the subject ZIP code.',
+  },
+  ...[1, 2, 3, 4, 5].map((miles) => ({
+    key: `radius_${miles}` as MarketConditionsAreaKey,
+    label: `${miles}-mile radius`,
+    description: `A cumulative ${miles}-mile area centered on the subject parcel.`,
+  })),
+  {
+    key: 'custom',
+    label: 'Appraiser-drawn area',
+    description: 'A custom polygon drawn and edited on the map.',
+  },
+];
+
+const TREND_OPTIONS: Array<{
+  value: MarketTrendConclusion;
+  label: string;
+}> = [
+  { value: 'increasing', label: 'Increasing' },
+  { value: 'stable', label: 'Stable' },
+  { value: 'decreasing', label: 'Decreasing' },
+  { value: 'mixed', label: 'Mixed / transitional' },
+  { value: 'insufficient', label: 'Insufficient evidence' },
+];
+
+const INTERVAL_OPTIONS: Array<{ value: TrendInterval; label: string }> = [
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'quarterly', label: 'Quarterly' },
+  { value: 'semiannual', label: 'Semiannual' },
+  { value: 'yearly', label: 'Yearly' },
+];
+
+function todayInputValue(): string {
+  const now = new Date();
+  const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 10);
+}
+
+function money(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'Not available';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function numberText(value: number | null, digits = 0): string {
+  if (value === null || !Number.isFinite(value)) return 'Not available';
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
+function percentText(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'Not available';
+  return `${numberText(value, 1)}%`;
+}
+
+function dateText(value: string | null): string {
+  if (!value) return 'Not available';
+  const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(parsed.valueOf())) return value;
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(parsed);
+}
+
+function periodLabel(value: string | null, interval: TrendInterval): string {
+  if (!value) return 'Unknown';
+  const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(parsed.valueOf())) return value;
+  const year = parsed.getFullYear();
+  const month = parsed.getMonth();
+  if (interval === 'monthly') {
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      year: '2-digit',
+    }).format(parsed);
+  }
+  if (interval === 'quarterly') {
+    return `Q${Math.floor(month / 3) + 1} ${year}`;
+  }
+  if (interval === 'semiannual') {
+    return `${month < 6 ? 'H1' : 'H2'} ${year}`;
+  }
+  return String(year);
+}
+
+function addStyle(href: string, key: string): void {
+  if (document.querySelector(`link[data-homenode-map-style="${key}"]`)) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = href;
+  link.dataset.homenodeMapStyle = key;
+  document.head.appendChild(link);
+}
+
+function loadScript(
+  src: string,
+  key: string,
+  ready: () => boolean,
+): Promise<void> {
+  if (ready()) return Promise.resolve();
+  const existing = document.querySelector<HTMLScriptElement>(
+    `script[data-homenode-map-script="${key}"]`,
+  );
+  if (existing) {
+    return new Promise((resolve, reject) => {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener(
+        'error',
+        () => reject(new Error(`${key}_load_failed`)),
+        { once: true },
+      );
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.dataset.homenodeMapScript = key;
+    script.addEventListener('load', () => resolve(), { once: true });
+    script.addEventListener(
+      'error',
+      () => reject(new Error(`${key}_load_failed`)),
+      { once: true },
+    );
+    document.head.appendChild(script);
+  });
+}
+
+async function ensureMapLibraries(): Promise<void> {
+  addStyle(MAPLIBRE_STYLE, 'maplibre');
+  addStyle(TERRADRAW_STYLE, 'terradraw');
+  await loadScript(MAPLIBRE_SCRIPT, 'maplibre', () =>
+    Boolean(window.maplibregl),
+  );
+  await loadScript(TERRADRAW_SCRIPT, 'terradraw', () =>
+    Boolean(window.MaplibreTerradrawControl),
+  );
+}
+
+function resultFingerprint(
+  areaKeys: MarketConditionsAreaKey[],
+  asOfDate: string,
+  periodMonths: number,
+  customGeometry: GeoJsonPolygon | null,
+): string {
+  return JSON.stringify({
+    areaKeys: [...areaKeys].sort(),
+    asOfDate,
+    periodMonths,
+    customGeometry,
+  });
+}
+
+function makeSalesFeatureCollection(
+  sales: MarketConditionsMapSale[],
+): GeoJsonFeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: sales.flatMap((sale) => {
+      if (sale.latitude === null || sale.longitude === null) return [];
+      return [
+        {
+          type: 'Feature' as const,
+          id: String(sale.sale_id || sale.source_record_id || sale.account_id),
+          geometry: {
+            type: 'Point',
+            coordinates: [sale.longitude, sale.latitude],
+          },
+          properties: {
+            address: sale.address || 'Address unavailable',
+            salePrice: sale.sale_price,
+            closingDate: sale.closing_date,
+          },
+        },
+      ];
+    }),
+  };
+}
+
+function defaultReconciliation(
+  response: MarketConditionsResponse,
+): MarketConditionsReconciliation {
+  const labels = response.analyses.map((analysis) => analysis.market.label);
+  const populations = response.analyses
+    .map((analysis) => analysis.population.eligible_sale_count)
+    .filter((count) => count > 0);
+  const populationText = populations.length
+    ? `${Math.min(...populations).toLocaleString()} to ${Math.max(
+        ...populations,
+      ).toLocaleString()} sales`
+    : 'no eligible sales';
+  return {
+    trendConclusion: 'insufficient',
+    reliedUponAreaKeys: response.analyses.map(
+      (analysis) => analysis.market.key,
+    ),
+    explanation:
+      `The appraiser reviewed ${labels.join(', ') || 'the selected market areas'}. ` +
+      `The independent study populations range from ${populationText}. ` +
+      'Explain which geography and time interval receive the greatest weight, why that evidence best reflects the subject market, and how the reported trend conclusion was reconciled.',
+  };
+}
+
+function MarketMetricCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div className="mt-1 text-xl font-semibold text-slate-950">{value}</div>
+      {detail && <div className="mt-1 text-xs text-slate-500">{detail}</div>}
+    </div>
+  );
+}
+
+function MedianPriceBars({
+  points,
+  interval,
+}: {
+  points: MarketConditionsSeriesPoint[];
+  interval: TrendInterval;
+}) {
+  const visible = points.filter(
+    (point) =>
+      point.median_sale_price !== null &&
+      Number.isFinite(point.median_sale_price),
+  );
+  const maximum = Math.max(
+    ...visible.map((point) => point.median_sale_price || 0),
+    1,
+  );
+  if (!visible.length) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
+        No median sale-price series is available for this interval.
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4">
+      <div
+        className="flex min-h-[260px] items-end gap-3"
+        style={{ minWidth: Math.max(620, visible.length * 74) }}
+      >
+        {visible.map((point) => {
+          const value = point.median_sale_price || 0;
+          const height = Math.max(12, Math.round((value / maximum) * 180));
+          return (
+            <div
+              key={`${interval}:${point.period_start}`}
+              className="flex min-w-[58px] flex-1 flex-col items-center justify-end"
+            >
+              <div className="mb-2 text-center text-[11px] font-semibold text-slate-700">
+                {money(value)}
+              </div>
+              <div
+                className="w-full max-w-[54px] rounded-t-md bg-gradient-to-t from-emerald-700 to-emerald-400"
+                style={{ height }}
+                title={`${periodLabel(point.period_start, interval)}: ${money(
+                  value,
+                )} median from ${point.sale_count} sales`}
+              />
+              <div className="mt-2 text-center text-[11px] font-medium text-slate-600">
+                {periodLabel(point.period_start, interval)}
+              </div>
+              <div className="text-[10px] text-slate-400">
+                {point.sale_count} sale{point.sale_count === 1 ? '' : 's'}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StudyComparisonTable({
+  analyses,
+}: {
+  analyses: MarketConditionsAnalysis[];
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200">
+      <table className="min-w-full divide-y divide-slate-200 bg-white text-sm">
+        <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
+          <tr>
+            <th className="px-4 py-3">Study area</th>
+            <th className="px-4 py-3 text-right">Sales</th>
+            <th className="px-4 py-3 text-right">Median sale price</th>
+            <th className="px-4 py-3 text-right">Median DOM</th>
+            <th className="px-4 py-3 text-right">Median sale/list</th>
+            <th className="px-4 py-3 text-right">Median price/SF</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {analyses.map((analysis) => (
+            <tr key={analysis.market.key}>
+              <td className="px-4 py-3 font-semibold text-slate-900">
+                {analysis.market.label}
+              </td>
+              <td className="px-4 py-3 text-right">
+                {analysis.population.eligible_sale_count.toLocaleString()}
+              </td>
+              <td className="px-4 py-3 text-right">
+                {money(analysis.summary.median_sale_price)}
+              </td>
+              <td className="px-4 py-3 text-right">
+                {numberText(analysis.summary.median_days_on_market, 1)}
+              </td>
+              <td className="px-4 py-3 text-right">
+                {percentText(analysis.summary.median_sale_to_list_ratio)}
+              </td>
+              <td className="px-4 py-3 text-right">
+                {money(analysis.summary.median_price_per_square_foot)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export default function MarketConditionsAnalysis({
+  subjectAccountId,
+  onCompletionChange,
+}: Props) {
+  const savedDraft = useMemo(
+    () => readMarketConditionsDraft(subjectAccountId),
+    [subjectAccountId],
+  );
+  const [subject, setSubject] = useState<MarketConditionsSubject | null>(
+    savedDraft?.response.subject || null,
+  );
+  const [selectedAreaKeys, setSelectedAreaKeys] = useState<
+    MarketConditionsAreaKey[]
+  >(savedDraft?.selectedAreaKeys || ['city', 'zip', 'radius_1']);
+  const [asOfDate, setAsOfDate] = useState(
+    savedDraft?.asOfDate || todayInputValue(),
+  );
+  const [periodMonths, setPeriodMonths] = useState<12 | 24 | 36>(
+    savedDraft?.periodMonths || 24,
+  );
+  const [customGeometry, setCustomGeometry] = useState<GeoJsonPolygon | null>(
+    savedDraft?.response.analyses.find(
+      (analysis) => analysis.market.key === 'custom',
+    )?.market.custom_geometry || null,
+  );
+  const [analysisResult, setAnalysisResult] =
+    useState<MarketConditionsResponse | null>(savedDraft?.response || null);
+  const [reconciliation, setReconciliation] =
+    useState<MarketConditionsReconciliation>(
+      savedDraft?.reconciliation || {
+        trendConclusion: 'insufficient',
+        reliedUponAreaKeys: [],
+        explanation: '',
+      },
+    );
+  const [runSignature, setRunSignature] = useState(
+    savedDraft
+      ? resultFingerprint(
+          savedDraft.selectedAreaKeys,
+          savedDraft.asOfDate,
+          savedDraft.periodMonths,
+          savedDraft.response.analyses.find(
+            (analysis) => analysis.market.key === 'custom',
+          )?.market.custom_geometry || null,
+        )
+      : '',
+  );
+  const [chartInterval, setChartInterval] =
+    useState<TrendInterval>('monthly');
+  const [loadingContext, setLoadingContext] = useState(!subject);
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+  const [savingNarrative, setSavingNarrative] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
+  const [mapReady, setMapReady] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapInstance | null>(null);
+  const drawRef = useRef<TerraDrawInstance | null>(null);
+  const initialCustomGeometryRef = useRef(customGeometry);
+  const customSelected = selectedAreaKeys.includes('custom');
+
+  const currentSignature = useMemo(
+    () =>
+      resultFingerprint(
+        selectedAreaKeys,
+        asOfDate,
+        periodMonths,
+        customGeometry,
+      ),
+    [asOfDate, customGeometry, periodMonths, selectedAreaKeys],
+  );
+  const studyIsCurrent =
+    Boolean(analysisResult?.analyses.length) &&
+    runSignature === currentSignature;
+
+  useEffect(() => {
+    initialCustomGeometryRef.current = customGeometry;
+  }, [customGeometry]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!subjectAccountId) return () => undefined;
+    setLoadingContext(true);
+    void api
+      .getMarketConditionsContext(subjectAccountId)
+      .then((response) => {
+        if (!cancelled) setSubject(response.subject);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'The subject market context could not be loaded.',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingContext(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [subjectAccountId]);
+
+  useEffect(() => {
+    if (studyIsCurrent && analysisResult) {
+      const draft: MarketConditionsDraft = {
+        version: 1,
+        accountId: subjectAccountId,
+        savedAt: new Date().toISOString(),
+        asOfDate,
+        periodMonths,
+        selectedAreaKeys,
+        response: analysisResult,
+        reconciliation,
+      };
+      onCompletionChange?.(draft);
+    } else {
+      onCompletionChange?.(null);
+    }
+  }, [
+    analysisResult,
+    asOfDate,
+    onCompletionChange,
+    periodMonths,
+    reconciliation,
+    selectedAreaKeys,
+    studyIsCurrent,
+    subjectAccountId,
+  ]);
+
+  useEffect(() => {
+    if (
+      !customSelected ||
+      !mapContainerRef.current ||
+      !subject ||
+      subject.latitude === null ||
+      subject.longitude === null ||
+      mapRef.current
+    ) {
+      return () => undefined;
+    }
+    let cancelled = false;
+    let map: MapInstance | null = null;
+    void ensureMapLibraries()
+      .then(() => {
+        if (
+          cancelled ||
+          !mapContainerRef.current ||
+          !window.maplibregl ||
+          !window.MaplibreTerradrawControl ||
+          subject.latitude === null ||
+          subject.longitude === null
+        ) {
+          return;
+        }
+        map = new window.maplibregl.Map({
+          container: mapContainerRef.current,
+          style: MAP_STYLE_URL,
+          center: [subject.longitude, subject.latitude],
+          zoom: 12,
+          attributionControl: true,
+        });
+        mapRef.current = map;
+        map.on('load', () => {
+          if (!map || cancelled || !window.maplibregl) return;
+          new window.maplibregl.Marker({ color: '#dc2626' })
+            .setLngLat([subject.longitude as number, subject.latitude as number])
+            .addTo(map);
+          const terraDrawGlobal = window.MaplibreTerradrawControl;
+          if (!terraDrawGlobal) return;
+          const control =
+            new terraDrawGlobal.MaplibreTerradrawControl({
+              modes: ['polygon', 'select', 'delete-selection', 'delete'],
+              open: true,
+            });
+          map.addControl(control, 'top-left');
+          const draw = control.getTerraDrawInstance();
+          drawRef.current = draw;
+          draw.on('change', () => {
+            const polygon = draw
+              .getSnapshot()
+              .filter((feature) => feature.geometry.type === 'Polygon')
+              .at(-1);
+            if (!polygon || !Array.isArray(polygon.geometry.coordinates)) {
+              setCustomGeometry(null);
+              return;
+            }
+            setCustomGeometry({
+              type: 'Polygon',
+              coordinates: polygon.geometry.coordinates as number[][][],
+            });
+          });
+          if (initialCustomGeometryRef.current && draw.addFeatures) {
+            draw.addFeatures([
+              {
+                type: 'Feature',
+                geometry: initialCustomGeometryRef.current,
+                properties: { mode: 'polygon' },
+              },
+            ]);
+          }
+          setMapReady(true);
+        });
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setMapError(
+            loadError instanceof Error
+              ? loadError.message
+              : 'The drawing map could not be loaded.',
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+      setMapReady(false);
+      drawRef.current = null;
+      mapRef.current = null;
+      map?.remove();
+    };
+  }, [customSelected, subject]);
+
+  const customMapSales = useMemo(
+    () =>
+      analysisResult?.analyses.find(
+        (analysis) => analysis.market.key === 'custom',
+      )?.map_sales || [],
+    [analysisResult],
+  );
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const data = makeSalesFeatureCollection(customMapSales);
+    const existing = map.getSource('market-sales');
+    if (existing) {
+      existing.setData(data);
+      return;
+    }
+    map.addSource('market-sales', {
+      type: 'geojson',
+      data,
+      cluster: true,
+      clusterMaxZoom: 14,
+      clusterRadius: 42,
+    });
+    map.addLayer({
+      id: 'market-sales-clusters',
+      type: 'circle',
+      source: 'market-sales',
+      filter: ['has', 'point_count'],
+      paint: {
+        'circle-color': '#047857',
+        'circle-radius': [
+          'step',
+          ['get', 'point_count'],
+          15,
+          30,
+          20,
+          100,
+          26,
+        ],
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2,
+      },
+    });
+    map.addLayer({
+      id: 'market-sales-points',
+      type: 'circle',
+      source: 'market-sales',
+      filter: ['!', ['has', 'point_count']],
+      paint: {
+        'circle-color': '#10b981',
+        'circle-radius': 5,
+        'circle-stroke-color': '#064e3b',
+        'circle-stroke-width': 1,
+      },
+    });
+  }, [customMapSales, mapReady]);
+
+  function toggleArea(key: MarketConditionsAreaKey): void {
+    setSelectedAreaKeys((current) =>
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key],
+    );
+    setNotice(null);
+  }
+
+  async function runAnalysis(): Promise<void> {
+    if (!selectedAreaKeys.length) {
+      setError('Select at least one market area before running the study.');
+      return;
+    }
+    if (selectedAreaKeys.includes('custom') && !customGeometry) {
+      setError('Draw and complete a custom polygon before running that study.');
+      return;
+    }
+    setLoadingAnalysis(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await api.runMarketConditionsAnalysis({
+        subjectAccountId,
+        areaKeys: selectedAreaKeys,
+        asOf: asOfDate,
+        periodMonths,
+        customGeometry,
+      });
+      const nextReconciliation = defaultReconciliation(response);
+      const signature = resultFingerprint(
+        selectedAreaKeys,
+        asOfDate,
+        periodMonths,
+        customGeometry,
+      );
+      const draft: MarketConditionsDraft = {
+        version: 1,
+        accountId: subjectAccountId,
+        savedAt: new Date().toISOString(),
+        asOfDate,
+        periodMonths,
+        selectedAreaKeys,
+        response,
+        reconciliation: nextReconciliation,
+      };
+      setAnalysisResult(response);
+      setReconciliation(nextReconciliation);
+      setRunSignature(signature);
+      saveMarketConditionsDraft(draft);
+      setNotice(
+        `${response.analyses.length} independent market ${
+          response.analyses.length === 1 ? 'study is' : 'studies are'
+        } complete. Comparable inventory remains unchanged.`,
+      );
+    } catch (analysisError: unknown) {
+      setError(
+        analysisError instanceof Error
+          ? analysisError.message
+          : 'The market-condition studies could not be completed.',
+      );
+    } finally {
+      setLoadingAnalysis(false);
+    }
+  }
+
+  function saveReconciliation(): void {
+    if (!analysisResult || !studyIsCurrent) {
+      setError('Run the current market-study selections before saving reconciliation.');
+      return;
+    }
+    setSavingNarrative(true);
+    setError(null);
+    const draft: MarketConditionsDraft = {
+      version: 1,
+      accountId: subjectAccountId,
+      savedAt: new Date().toISOString(),
+      asOfDate,
+      periodMonths,
+      selectedAreaKeys,
+      response: analysisResult,
+      reconciliation,
+    };
+    saveMarketConditionsDraft(draft);
+    onCompletionChange?.(draft);
+    setNotice('Market conclusion and reconciliation were saved to the appraisal workfile.');
+    window.setTimeout(() => setSavingNarrative(false), 350);
+  }
+
+  const mappedCoverage = analysisResult?.analyses.reduce(
+    (totals, analysis) => ({
+      eligible:
+        totals.eligible + analysis.population.eligible_sale_count,
+      mapped: totals.mapped + analysis.population.mapped_sale_count,
+    }),
+    { eligible: 0, mapped: 0 },
+  );
+
+  return (
+    <section className="mb-4 rounded-2xl border border-emerald-200 bg-white shadow-sm">
+      <div className="border-b border-emerald-100 bg-emerald-50/60 p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
+              Required before comparable selection
+            </div>
+            <h2 className="mt-1 text-xl font-semibold text-slate-950">
+              Market Conditions Analysis
+            </h2>
+            <p className="mt-1 max-w-4xl text-sm text-slate-600">
+              Compare multiple independent geographies, review time-based market
+              evidence, and reconcile the market trend. These studies do not
+              filter or change the comparable-sales inventory.
+            </p>
+          </div>
+          <span
+            className={`rounded-full px-3 py-1 text-xs font-semibold ${
+              studyIsCurrent
+                ? 'bg-emerald-700 text-white'
+                : 'bg-amber-100 text-amber-900'
+            }`}
+          >
+            {studyIsCurrent ? 'Study complete' : 'Study required'}
+          </span>
+        </div>
+      </div>
+
+      <div className="space-y-5 p-5">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[180px_180px_1fr]">
+          <label className="grid gap-1 text-sm text-slate-700">
+            <span className="font-medium">Analysis as of</span>
+            <input
+              type="date"
+              value={asOfDate}
+              onChange={(event) => setAsOfDate(event.target.value)}
+              className="rounded-lg border border-slate-300 px-3 py-2"
+            />
+          </label>
+          <label className="grid gap-1 text-sm text-slate-700">
+            <span className="font-medium">Historical period</span>
+            <select
+              value={periodMonths}
+              onChange={(event) =>
+                setPeriodMonths(Number(event.target.value) as 12 | 24 | 36)
+              }
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+            >
+              <option value={12}>12 months</option>
+              <option value={24}>24 months</option>
+              <option value={36}>36 months</option>
+            </select>
+          </label>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            <span className="font-semibold text-slate-900">Subject market context:</span>{' '}
+            {loadingContext
+              ? 'Loading parcel location...'
+              : subject
+                ? `${subject.address || subject.account_id} · ${
+                    subject.city || 'City unavailable'
+                  } · ${subject.postal_code || 'ZIP unavailable'}`
+                : 'Unavailable'}
+          </div>
+        </div>
+
+        <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <legend className="text-base font-semibold text-slate-900">
+              Select one or more independent study areas
+            </legend>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedAreaKeys(AREA_OPTIONS.map((option) => option.key))
+                }
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Select all
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedAreaKeys([])}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {AREA_OPTIONS.map((option) => {
+              const selected = selectedAreaKeys.includes(option.key);
+              return (
+                <label
+                  key={option.key}
+                  className={`flex cursor-pointer gap-3 rounded-xl border p-3 ${
+                    selected
+                      ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-200'
+                      : 'border-slate-200 bg-white hover:border-slate-400'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={() => toggleArea(option.key)}
+                    className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-900">
+                      {option.label}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      {option.description}
+                    </span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        {selectedAreaKeys.includes('custom') && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-slate-950">
+                  Draw the appraiser-defined market area
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Use the polygon tool, click each boundary point, then click the
+                  starting point to finish. Edit or delete the shape before
+                  rerunning the study.
+                </p>
+              </div>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                  customGeometry
+                    ? 'bg-emerald-100 text-emerald-900'
+                    : 'bg-amber-100 text-amber-900'
+                }`}
+              >
+                {customGeometry ? 'Polygon ready' : 'Polygon required'}
+              </span>
+            </div>
+            {subject?.latitude !== null && subject?.longitude !== null ? (
+              <div
+                ref={mapContainerRef}
+                className="mt-4 h-[440px] w-full overflow-hidden rounded-xl border border-slate-300 bg-slate-100"
+                aria-label="Custom market area drawing map"
+              />
+            ) : (
+              <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+                The subject parcel location is unavailable, so a custom area
+                cannot be drawn yet.
+              </div>
+            )}
+            {mapError && (
+              <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                {mapError}
+              </div>
+            )}
+            {customGeometry && (
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <span className="text-sm font-medium text-emerald-800">
+                  {customGeometry.coordinates[0]?.length || 0} boundary points
+                  recorded.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    drawRef.current?.clear();
+                    setCustomGeometry(null);
+                  }}
+                  className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                >
+                  Clear custom area
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void runAnalysis()}
+            disabled={
+              loadingAnalysis ||
+              loadingContext ||
+              !subject ||
+              !selectedAreaKeys.length
+            }
+            className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+          >
+            {loadingAnalysis
+              ? 'Calculating market studies...'
+              : `Run ${selectedAreaKeys.length || ''} market ${
+                  selectedAreaKeys.length === 1 ? 'study' : 'studies'
+                }`}
+          </button>
+          <span className="text-xs text-slate-500">
+            Closed, single-parcel detached sales are analyzed independently in
+            every selected area.
+          </span>
+        </div>
+
+        {analysisResult && !studyIsCurrent && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            The area, date, period, or polygon changed after the last calculation.
+            Rerun the market studies before selecting comparables.
+          </div>
+        )}
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+            {error}
+          </div>
+        )}
+        {notice && (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950">
+            {notice}
+          </div>
+        )}
+
+        {analysisResult && (
+          <div className="space-y-6 border-t border-slate-200 pt-5">
+            <div>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold text-slate-950">
+                    Study comparison
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Compare population and median indicators before deciding
+                    which evidence receives the greatest weight.
+                  </p>
+                </div>
+                {mappedCoverage && mappedCoverage.eligible > 0 && (
+                  <span className="text-xs font-medium text-slate-500">
+                    {mappedCoverage.mapped.toLocaleString()} of{' '}
+                    {mappedCoverage.eligible.toLocaleString()} study observations
+                    have parcel coordinates across the independent results.
+                  </span>
+                )}
+              </div>
+              <div className="mt-3">
+                <StudyComparisonTable analyses={analysisResult.analyses} />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {INTERVAL_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setChartInterval(option.value)}
+                  className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                    chartInterval === option.value
+                      ? 'bg-slate-900 text-white'
+                      : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            {analysisResult.unavailable_areas.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <div className="font-semibold">Some selected areas were unavailable</div>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {analysisResult.unavailable_areas.map((item) => (
+                    <li key={item.key}>
+                      {item.label}: {item.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {analysisResult.analyses.map((analysis) => (
+              <article
+                key={analysis.market.key}
+                className="rounded-2xl border border-slate-300 bg-slate-50/40 p-4 md:p-5"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                      Independent market study
+                    </div>
+                    <h3 className="mt-1 text-xl font-semibold text-slate-950">
+                      {analysis.market.label}
+                    </h3>
+                    <div className="mt-1 text-sm text-slate-500">
+                      {dateText(analysis.period.start)} through{' '}
+                      {dateText(analysis.period.end)}
+                    </div>
+                  </div>
+                  <div className="text-right text-xs text-slate-500">
+                    <div className="font-semibold text-slate-900">
+                      {analysis.population.eligible_sale_count.toLocaleString()}{' '}
+                      eligible sales
+                    </div>
+                    {analysis.market.scope === 'custom' &&
+                      analysis.market.area_square_miles !== null && (
+                        <div>
+                          {numberText(
+                            analysis.market.area_square_miles,
+                            2,
+                          )}{' '}
+                          square miles
+                        </div>
+                      )}
+                  </div>
+                </div>
+
+                {analysis.market.scope === 'custom' &&
+                  analysis.market.includes_subject === false && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      The custom polygon does not include the subject parcel.
+                      The study remains available, but the appraiser should
+                      explain why this separate area is relevant.
+                    </div>
+                  )}
+
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <MarketMetricCard
+                    label="Median sale price"
+                    value={money(analysis.summary.median_sale_price)}
+                    detail={`${money(
+                      analysis.summary.minimum_sale_price,
+                    )} to ${money(analysis.summary.maximum_sale_price)}`}
+                  />
+                  <MarketMetricCard
+                    label="Median DOM"
+                    value={
+                      analysis.summary.median_days_on_market === null
+                        ? 'Not available'
+                        : `${numberText(
+                            analysis.summary.median_days_on_market,
+                            1,
+                          )} days`
+                    }
+                  />
+                  <MarketMetricCard
+                    label="Median sale/list ratio"
+                    value={percentText(
+                      analysis.summary.median_sale_to_list_ratio,
+                    )}
+                  />
+                  <MarketMetricCard
+                    label="Median price per SF"
+                    value={money(
+                      analysis.summary.median_price_per_square_foot,
+                    )}
+                  />
+                </div>
+
+                <div className="mt-5">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="font-semibold text-slate-900">
+                      {INTERVAL_OPTIONS.find(
+                        (option) => option.value === chartInterval,
+                      )?.label}{' '}
+                      median sale price
+                    </h4>
+                    <span className="text-xs text-slate-500">
+                      Bar labels show the median and sample size for each period.
+                    </span>
+                  </div>
+                  <MedianPriceBars
+                    points={analysis.series[chartInterval]}
+                    interval={chartInterval}
+                  />
+                </div>
+              </article>
+            ))}
+
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+                  Appraiser reconciliation
+                </div>
+                <h3 className="mt-1 text-lg font-semibold text-slate-950">
+                  Market trend conclusion and evidence weighting
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Explain why particular study populations and time intervals
+                  are most relevant. This narrative will be carried into the
+                  appraisal report.
+                </p>
+              </div>
+
+              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
+                <label className="grid gap-1 text-sm text-slate-700">
+                  <span className="font-medium">Market trend conclusion</span>
+                  <select
+                    value={reconciliation.trendConclusion}
+                    onChange={(event) =>
+                      setReconciliation((current) => ({
+                        ...current,
+                        trendConclusion: event.target
+                          .value as MarketTrendConclusion,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  >
+                    {TREND_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <fieldset>
+                  <legend className="text-sm font-medium text-slate-700">
+                    Studies given greatest weight
+                  </legend>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {analysisResult.analyses.map((analysis) => {
+                      const selected =
+                        reconciliation.reliedUponAreaKeys.includes(
+                          analysis.market.key,
+                        );
+                      return (
+                        <label
+                          key={analysis.market.key}
+                          className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold ${
+                            selected
+                              ? 'border-indigo-500 bg-indigo-100 text-indigo-950'
+                              : 'border-slate-300 bg-white text-slate-600'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() =>
+                              setReconciliation((current) => ({
+                                ...current,
+                                reliedUponAreaKeys: selected
+                                  ? current.reliedUponAreaKeys.filter(
+                                      (key) => key !== analysis.market.key,
+                                    )
+                                  : [
+                                      ...current.reliedUponAreaKeys,
+                                      analysis.market.key,
+                                    ],
+                              }))
+                            }
+                          />
+                          {analysis.market.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              </div>
+
+              <label className="mt-4 grid gap-1 text-sm text-slate-700">
+                <span className="font-medium">Reconciliation explanation</span>
+                <textarea
+                  value={reconciliation.explanation}
+                  onChange={(event) =>
+                    setReconciliation((current) => ({
+                      ...current,
+                      explanation: event.target.value,
+                    }))
+                  }
+                  rows={6}
+                  className="rounded-xl border border-slate-300 bg-white px-3 py-3 leading-6"
+                  placeholder="Explain why the selected geography, population, and trend intervals best represent the subject's market."
+                />
+              </label>
+
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={saveReconciliation}
+                  disabled={!studyIsCurrent || savingNarrative}
+                  className="rounded-lg bg-indigo-700 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                >
+                  {savingNarrative ? 'Saving...' : 'Save market reconciliation'}
+                </button>
+                <span className="text-xs text-slate-500">
+                  Choosing a study here documents evidentiary weight only; it
+                  does not filter comparable sales.
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}

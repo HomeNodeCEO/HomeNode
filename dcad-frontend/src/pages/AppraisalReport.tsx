@@ -2,12 +2,21 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import * as api from "@/lib/api";
 import type { SaleRow } from "@/lib/api";
+import type {
+  MarketConditionsAnalysis,
+  MarketConditionsSeriesPoint,
+} from "@/lib/api";
 import { fetchDetail } from "@/lib/dcad";
 import {
   readAppraisalReportDraft,
   type AppraisalReportComparable,
   type AppraisalReportSalesDraft,
 } from "@/lib/appraisalReportDraft";
+import {
+  readMarketConditionsDraft,
+  type MarketConditionsDraft,
+  type MarketTrendConclusion,
+} from "@/lib/marketConditionsDraft";
 
 type Detail = {
   tax_year?: string | number;
@@ -126,6 +135,75 @@ function signedMoney(value: number): string {
   return `${value > 0 ? "+" : "-"}${money(Math.abs(value))}`;
 }
 
+function percent(value: unknown): string {
+  const parsed = numberValue(value);
+  if (parsed === null) return "Not reported";
+  return `${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+  }).format(parsed)}%`;
+}
+
+function trendConclusionText(value: MarketTrendConclusion): string {
+  const labels: Record<MarketTrendConclusion, string> = {
+    increasing: "Increasing",
+    stable: "Stable",
+    decreasing: "Decreasing",
+    mixed: "Mixed / transitional",
+    insufficient: "Insufficient evidence",
+  };
+  return labels[value];
+}
+
+function reportPeriodLabel(value: string | null): string {
+  if (!value) return "Unknown";
+  const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(parsed.valueOf())) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    year: "2-digit",
+  }).format(parsed);
+}
+
+function ReportMedianPriceBars({
+  points,
+}: {
+  points: MarketConditionsSeriesPoint[];
+}) {
+  const visible = points
+    .filter((point) => numberValue(point.median_sale_price) !== null)
+    .slice(-12);
+  const maximum = Math.max(
+    ...visible.map((point) => numberValue(point.median_sale_price) || 0),
+    1,
+  );
+  if (!visible.length) {
+    return <div className="report-note">Monthly trend data is not available.</div>;
+  }
+  return (
+    <div className="report-market-bars">
+      {visible.map((point) => {
+        const value = numberValue(point.median_sale_price) || 0;
+        return (
+          <div
+            className="report-market-bar-column"
+            key={point.period_start || String(point.sale_count)}
+          >
+            <span>{money(value)}</span>
+            <div
+              className="report-market-bar"
+              style={{
+                height: `${Math.max(8, Math.round((value / maximum) * 88))}px`,
+              }}
+            />
+            <strong>{reportPeriodLabel(point.period_start)}</strong>
+            <small>{point.sale_count} sales</small>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Fact({
   label,
   value,
@@ -161,7 +239,7 @@ function PageHeader({
       <div className="report-page-meta">
         <strong>Draft</strong>
         <span>{address}</span>
-        <span>Page {page} of 5</span>
+        <span>Page {page} of 6</span>
       </div>
     </header>
   );
@@ -199,6 +277,9 @@ export default function AppraisalReport() {
   const [draft, setDraft] = useState<AppraisalReportSalesDraft | null>(() =>
     readAppraisalReportDraft(propertyId),
   );
+  const [marketDraft, setMarketDraft] = useState<MarketConditionsDraft | null>(
+    () => readMarketConditionsDraft(propertyId),
+  );
   const [recommended, setRecommended] = useState<AppraisalReportComparable[]>([]);
   const [loading, setLoading] = useState(Boolean(propertyId));
   const [salesLoading, setSalesLoading] = useState(false);
@@ -217,6 +298,7 @@ export default function AppraisalReport() {
 
   useEffect(() => {
     setDraft(readAppraisalReportDraft(propertyId));
+    setMarketDraft(readMarketConditionsDraft(propertyId));
   }, [propertyId]);
 
   useEffect(() => {
@@ -332,6 +414,22 @@ export default function AppraisalReport() {
           Math.max(...indicatedValues),
         )}`
       : "Not developed";
+  const marketAnalyses = marketDraft?.response.analyses || [];
+  const primaryMarketAnalysis: MarketConditionsAnalysis | null =
+    marketAnalyses.find((analysis) =>
+      marketDraft?.reconciliation.reliedUponAreaKeys.includes(
+        analysis.market.key,
+      ),
+    ) ||
+    marketAnalyses[0] ||
+    null;
+  const weightedMarketLabels = marketAnalyses
+    .filter((analysis) =>
+      marketDraft?.reconciliation.reliedUponAreaKeys.includes(
+        analysis.market.key,
+      ),
+    )
+    .map((analysis) => analysis.market.label);
 
   const printReport = () => {
     window.setTimeout(() => window.print(), 100);
@@ -519,6 +617,50 @@ export default function AppraisalReport() {
           font-size: 9.5px;
           line-height: 1.45;
         }
+        .report-market-bars {
+          display: flex;
+          align-items: flex-end;
+          gap: 6px;
+          min-height: 130px;
+          padding: 10px 8px 6px;
+          border: 1px solid #cbd5e1;
+          border-radius: 8px;
+          background: #f8fafc;
+        }
+        .report-market-bar-column {
+          display: flex;
+          min-width: 0;
+          flex: 1 1 0;
+          flex-direction: column;
+          align-items: center;
+          justify-content: flex-end;
+          text-align: center;
+        }
+        .report-market-bar-column > span {
+          margin-bottom: 3px;
+          color: #334155;
+          font-size: 6px;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        .report-market-bar {
+          width: 72%;
+          min-width: 12px;
+          max-width: 34px;
+          border-radius: 3px 3px 0 0;
+          background: linear-gradient(to top, #047857, #34d399);
+        }
+        .report-market-bar-column > strong {
+          margin-top: 3px;
+          color: #334155;
+          font-size: 6px;
+          white-space: nowrap;
+        }
+        .report-market-bar-column > small {
+          color: #94a3b8;
+          font-size: 5.5px;
+          white-space: nowrap;
+        }
         .report-table-wrap {
           overflow: hidden;
           border: 1px solid #cbd5e1;
@@ -655,6 +797,8 @@ export default function AppraisalReport() {
           .report-cover,
           .report-note,
           .report-facts,
+          .report-market-bars,
+          .report-market-bar,
           .report-approach-hero,
           .report-input-card,
           .report-reconciliation > div {
@@ -941,7 +1085,132 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={3} title="Sales Comparison Approach" address={address} />
+          <PageHeader page={3} title="Market Conditions" address={address} />
+          {marketDraft && marketAnalyses.length ? (
+            <>
+              <section className="report-section">
+                <div className="report-note">
+                  <strong>
+                    {marketAnalyses.length} independent market{" "}
+                    {marketAnalyses.length === 1 ? "study" : "studies"}.
+                  </strong>{" "}
+                  The selected areas were analyzed separately and did not limit
+                  or alter the comparable-sales inventory. The study period is{" "}
+                  {marketDraft.periodMonths} months through{" "}
+                  {dateText(marketDraft.asOfDate)}.
+                </div>
+              </section>
+
+              <section className="report-section">
+                <h2 className="report-section-title">Geographic Study Comparison</h2>
+                <div className="report-table-wrap">
+                  <table className="report-table">
+                    <colgroup>
+                      <col style={{ width: "31%" }} />
+                      <col style={{ width: "9%" }} />
+                      <col style={{ width: "17%" }} />
+                      <col style={{ width: "13%" }} />
+                      <col style={{ width: "15%" }} />
+                      <col style={{ width: "15%" }} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th>Study Area</th>
+                        <th className="numeric">Sales</th>
+                        <th className="numeric">Median Price</th>
+                        <th className="numeric">Median DOM</th>
+                        <th className="numeric">Sale/List</th>
+                        <th className="numeric">Price/SF</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {marketAnalyses.map((analysis) => (
+                        <tr key={analysis.market.key}>
+                          <td>
+                            <strong>{analysis.market.label}</strong>
+                            {marketDraft.reconciliation.reliedUponAreaKeys.includes(
+                              analysis.market.key,
+                            ) && <div>Given appraisal weight</div>}
+                          </td>
+                          <td className="numeric">
+                            {analysis.population.eligible_sale_count.toLocaleString()}
+                          </td>
+                          <td className="numeric">
+                            {money(analysis.summary.median_sale_price)}
+                          </td>
+                          <td className="numeric">
+                            {count(analysis.summary.median_days_on_market)}
+                          </td>
+                          <td className="numeric">
+                            {percent(analysis.summary.median_sale_to_list_ratio)}
+                          </td>
+                          <td className="numeric">
+                            {money(analysis.summary.median_price_per_square_foot)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              <section className="report-section">
+                <h2 className="report-section-title">
+                  Monthly Median Sale Price
+                  {primaryMarketAnalysis
+                    ? ` - ${primaryMarketAnalysis.market.label}`
+                    : ""}
+                </h2>
+                <ReportMedianPriceBars
+                  points={primaryMarketAnalysis?.series.monthly || []}
+                />
+              </section>
+
+              <section className="report-section">
+                <h2 className="report-section-title">Market Reconciliation</h2>
+                <div className="report-reconciliation">
+                  <div>
+                    <span>Market Trend Conclusion</span>
+                    <strong>
+                      {trendConclusionText(
+                        marketDraft.reconciliation.trendConclusion,
+                      )}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Studies Given Weight</span>
+                    <strong>
+                      {weightedMarketLabels.length
+                        ? weightedMarketLabels.join(", ")
+                        : "Not selected"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Total Studies Reviewed</span>
+                    <strong>{marketAnalyses.length}</strong>
+                  </div>
+                </div>
+                <div className="report-note" style={{ marginTop: 10 }}>
+                  {marketDraft.reconciliation.explanation ||
+                    "The appraiser has not yet entered a market reconciliation explanation."}
+                </div>
+              </section>
+            </>
+          ) : (
+            <section className="report-section">
+              <div className="report-note">
+                No completed Market Conditions Analysis was saved for this
+                subject. Complete the independent city, ZIP, radius, or custom
+                area studies from the Sales Comparison Approach page before
+                relying on a market-trend conclusion.
+              </div>
+            </section>
+          )}
+          <PageFooter generatedAt={generatedAt} />
+        </article>
+
+        <article className="report-page">
+          <PageHeader page={4} title="Sales Comparison Approach" address={address} />
           <section className="report-section">
             <div className="report-note">
               <strong>{salesSource}.</strong>{" "}
@@ -1075,7 +1344,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={4} title="Income Approach" address={address} />
+          <PageHeader page={5} title="Income Approach" address={address} />
           <section className="report-approach-hero">
             <div className="report-status">Preliminary methodology scaffold</div>
             <h2>Income Approach Not Yet Developed</h2>
@@ -1120,7 +1389,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={5} title="Cost Approach" address={address} />
+          <PageHeader page={6} title="Cost Approach" address={address} />
           <section className="report-approach-hero">
             <div className="report-status">Preliminary methodology scaffold</div>
             <h2>Cost Approach Not Yet Developed</h2>

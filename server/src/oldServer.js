@@ -22,6 +22,11 @@ import {
 } from "./util/housingProfileEdit.js";
 import { buildGroupedAnalysis } from "./util/groupedAnalysis.js";
 import { parseGroupedAnalysisBreakdowns } from "./util/groupedAnalysisBreakdowns.js";
+import {
+  buildMarketConditionsAnalyses,
+  getMarketContext,
+  marketConditionsErrorStatus,
+} from "./services/marketConditions.js";
 
 const app = express();
 app.use(express.json());
@@ -1991,6 +1996,58 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
             database_code: error?.code || null,
           }
         : {}),
+    });
+  }
+});
+
+/**
+ * GET /api/sales/market-context
+ *
+ * Returns the subject location and market identifiers needed to center the
+ * market-conditions map before a study is run.
+ */
+app.get("/api/sales/market-context", async (req, res) => {
+  const subjectAccountId = String(
+    req.query.subject_account_id || "",
+  ).trim();
+  try {
+    const subject = await getMarketContext(pool, subjectAccountId);
+    res.json({ subject });
+  } catch (error) {
+    const message = error?.message || "market_context_failed";
+    console.error("/api/sales/market-context failed", error);
+    res.status(marketConditionsErrorStatus(message)).json({
+      error: message,
+      ...(error?.detail ? { detail: error.detail } : {}),
+    });
+  }
+});
+
+/**
+ * POST /api/sales/market-analysis
+ *
+ * Builds independent market-conditions studies for any requested combination
+ * of city, ZIP, cumulative one-through-five-mile radii, and an appraiser-drawn
+ * GeoJSON polygon. These areas do not filter comparable recommendations.
+ */
+app.post("/api/sales/market-analysis", async (req, res) => {
+  try {
+    const result = await buildMarketConditionsAnalyses(pool, {
+      subjectAccountId: String(
+        req.body?.subject_account_id || "",
+      ).trim(),
+      areaKeys: req.body?.area_keys,
+      asOfDate: String(req.body?.as_of || "").trim(),
+      periodMonths: req.body?.period_months ?? 24,
+      customGeometry: req.body?.custom_geometry || null,
+    });
+    res.json(result);
+  } catch (error) {
+    const message = error?.message || "market_analysis_failed";
+    console.error("/api/sales/market-analysis failed", error);
+    res.status(marketConditionsErrorStatus(message)).json({
+      error: message,
+      ...(error?.detail ? { detail: error.detail } : {}),
     });
   }
 });

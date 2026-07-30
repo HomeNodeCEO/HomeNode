@@ -6,6 +6,7 @@ import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
 import { parsePropertySearch } from "./util/propertySearch.js";
 import {
+  analysisWindow,
   applyRecommendationPolicy,
   DEFAULT_COMPARABLE_SCORING,
   DEFAULT_RECOMMENDATION_POLICY,
@@ -794,9 +795,10 @@ app.get("/api/search", async (req, res) => {
 /**
  * GET /api/sales/recommendations
  *
- * Ranks matched CAD sales using parcel-centroid distance (60%) and continuous
- * living-area similarity (40%). The 10% living-area scale is intentionally a
- * soft scoring curve, not an eligibility filter.
+ * Ranks matched CAD sales using parcel-centroid distance (40%), continuous
+ * living-area similarity (30%), and closing-date recency (30%). The default
+ * 12-month analysis period excludes older sales unless the caller explicitly
+ * expands the period to 24 or 36 months.
  */
 app.get("/api/sales/recommendations", async (req, res) => {
   try {
@@ -808,6 +810,15 @@ app.get("/api/sales/recommendations", async (req, res) => {
     ).trim();
     const dateFrom = String(req.query.date_from || "").trim();
     const dateTo = String(req.query.date_to || "").trim();
+    const requestedAnalysisAsOf = String(
+      req.query.analysis_as_of ||
+      dateTo ||
+      new Date().toISOString().slice(0, 10),
+    ).trim();
+    const requestedPeriodMonths = Number(
+      req.query.period_months ||
+      DEFAULT_RECOMMENDATION_POLICY.periodMonths,
+    );
     const marketBreakdownValue = String(
       req.query.market_breakdown || "",
     ).trim();
@@ -827,6 +838,26 @@ app.get("/api/sales/recommendations", async (req, res) => {
     if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
       return res.status(400).json({ error: "invalid_date_to" });
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedAnalysisAsOf)) {
+      return res.status(400).json({ error: "invalid_analysis_as_of" });
+    }
+    if (
+      !Number.isInteger(requestedPeriodMonths) ||
+      ![12, 24, 36].includes(requestedPeriodMonths)
+    ) {
+      return res.status(400).json({ error: "invalid_analysis_period" });
+    }
+    const requestedWindow = analysisWindow(
+      requestedAnalysisAsOf,
+      requestedPeriodMonths,
+    );
+    if (!requestedWindow) {
+      return res.status(400).json({ error: "invalid_analysis_period" });
+    }
+    const effectiveDateFrom =
+      dateFrom || requestedWindow.analysisStartDate;
+    const effectiveDateTo =
+      dateTo || requestedWindow.analysisAsOf;
     let marketBreakdown = null;
     if (marketBreakdownValue) {
       try {
@@ -867,6 +898,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
         0,
         1,
       ),
+      salesDateWeight: parseTunableNumber(
+        req.query.sales_date_weight,
+        DEFAULT_COMPARABLE_SCORING.salesDateWeight,
+        0,
+        1,
+      ),
       locationScaleMiles: parseTunableNumber(
         req.query.location_scale_miles,
         DEFAULT_COMPARABLE_SCORING.locationScaleMiles,
@@ -879,8 +916,19 @@ app.get("/api/sales/recommendations", async (req, res) => {
         0.01,
         1,
       ),
+      salesDateScaleDays: parseTunableNumber(
+        req.query.sales_date_scale_days,
+        DEFAULT_COMPARABLE_SCORING.salesDateScaleDays,
+        30,
+        1095,
+      ),
     };
-    if (scoringConfig.locationWeight + scoringConfig.squareFootageWeight <= 0) {
+    if (
+      scoringConfig.locationWeight +
+        scoringConfig.squareFootageWeight +
+        scoringConfig.salesDateWeight <=
+      0
+    ) {
       return res.status(400).json({ error: "invalid_scoring_configuration" });
     }
 
@@ -964,18 +1012,14 @@ app.get("/api/sales/recommendations", async (req, res) => {
         "sale.multi_parcel_status = 'single'",
       );
     }
-    if (dateFrom) {
-      candidateParams.push(dateFrom);
-      candidateWhere.push(
-        `sale.closing_date >= $${candidateParams.length}::date`,
-      );
-    }
-    if (dateTo) {
-      candidateParams.push(dateTo);
-      candidateWhere.push(
-        `sale.closing_date <= $${candidateParams.length}::date`,
-      );
-    }
+    candidateParams.push(effectiveDateFrom);
+    candidateWhere.push(
+      `sale.closing_date >= $${candidateParams.length}::date`,
+    );
+    candidateParams.push(effectiveDateTo);
+    candidateWhere.push(
+      `sale.closing_date <= $${candidateParams.length}::date`,
+    );
 
     const missingLocations = await pool.query(
       `
@@ -1157,6 +1201,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
           comparableLongitude: candidate.longitude,
           subjectSquareFeet: subject.living_area_sqft,
           comparableSquareFeet,
+          closingDate: candidate.closing_date,
+          referenceDate: effectiveDateTo,
         },
         scoringConfig,
       );
@@ -1190,7 +1236,13 @@ app.get("/api/sales/recommendations", async (req, res) => {
     scoped.forEach((candidate, index) => {
       candidate.score_rank = index + 1;
     });
-    const recommendationResult = applyRecommendationPolicy(scoped);
+    const recommendationResult = applyRecommendationPolicy(scoped, {
+      referenceDate: effectiveDateTo,
+      policy: {
+        ...DEFAULT_RECOMMENDATION_POLICY,
+        periodMonths: requestedPeriodMonths,
+      },
+    });
 
     const marketLabel = !marketBreakdown
       ? "All eligible sales"
@@ -1224,9 +1276,13 @@ app.get("/api/sales/recommendations", async (req, res) => {
         squareFootageWeightPercent: Math.round(
           scoringConfig.squareFootageWeight * 100,
         ),
+        salesDateWeightPercent: Math.round(
+          scoringConfig.salesDateWeight * 100,
+        ),
         squareFootageScalePercent: Math.round(
           scoringConfig.squareFootageScaleRatio * 100,
         ),
+        salesDateScaleDays: Math.round(scoringConfig.salesDateScaleDays),
         squareFootageIsHardFilter: false,
       },
       coverage: {
@@ -1241,10 +1297,18 @@ app.get("/api/sales/recommendations", async (req, res) => {
         older_than_two_years_count: recommendationResult.sales.filter(
           (sale) => sale.soldOverTwoYears,
         ).length,
+        older_than_one_year_count: recommendationResult.sales.filter(
+          (sale) => sale.soldOverOneYear,
+        ).length,
         recent_high_score_count:
           recommendationResult.policy.recentHighScoreCount,
       },
       recommendation_policy: recommendationResult.policy,
+      analysis_period: {
+        analysis_as_of: effectiveDateTo,
+        date_from: effectiveDateFrom,
+        period_months: requestedPeriodMonths,
+      },
       study_market: {
         key: marketBreakdown?.key || null,
         scope: marketBreakdown?.scope || null,

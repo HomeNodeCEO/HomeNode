@@ -20,6 +20,10 @@ import {
   refreshAccountLocations,
 } from "./services/accountLocations.js";
 import {
+  ensureAccountQualitySchema,
+  resolveCanonicalAccountId,
+} from "./services/accountQuality.js";
+import {
   editorKeyMatches,
   normalizeHousingProfileUpdate,
 } from "./util/housingProfileEdit.js";
@@ -76,6 +80,15 @@ const accountLocationsReady = ensureAccountLocationsTable(pool)
   .catch((error) => {
     console.warn(
       "[init] ensureAccountLocationsTable failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+const accountQualityReady = ensureAccountQualitySchema(pool)
+  .then(() => console.log("[init] DCAD account quality schema ensured"))
+  .catch((error) => {
+    console.warn(
+      "[init] ensureAccountQualitySchema failed (continuing)",
       error?.message || error,
     );
   });
@@ -201,6 +214,8 @@ app.get("/api/accounts/:id", async (req, res) => {
   const id = String(req.params.id || "").trim();
   if (!id) return res.status(400).json({ error: "missing_id" });
   try {
+    await accountQualityReady;
+    const canonicalId = await resolveCanonicalAccountId(pool, id);
     const accountSql = `
       SELECT
         a.account_id,
@@ -209,6 +224,9 @@ app.get("/api/accounts/:id", async (req, res) => {
         a.neighborhood_code,
         a.subdivision,
         a.legal_description,
+        a.data_quality_status,
+        a.data_quality_flags,
+        a.canonical_account_id,
         COALESCE(vsc.certified_year, mv.tax_year)                 AS latest_tax_year,
         COALESCE(vsc.market_value, mv.total_value)                AS latest_market_value,
         COALESCE(vsc.improvement_value, mv.imp_value)             AS latest_improvement_value,
@@ -238,7 +256,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       ) raw_loc ON NULLIF(BTRIM(a.address), '') IS NULL
       WHERE a.account_id = $1
     `;
-    const { rows: accRows } = await pool.query(accountSql, [id]);
+    const { rows: accRows } = await pool.query(accountSql, [canonicalId]);
     if (!accRows.length) return res.status(404).json({ error: "not_found" });
 
     const impSql = `
@@ -277,7 +295,7 @@ app.get("/api/accounts/:id", async (req, res) => {
         baths_half
       FROM core.primary_improvements WHERE account_id = $1
     `;
-    const { rows: impRows } = await pool.query(impSql, [id]);
+    const { rows: impRows } = await pool.query(impSql, [canonicalId]);
 
     // The CAD improvement table does not contain a dependable detached/attached
     // field. Use the account-level profile, which fills structural and
@@ -298,7 +316,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       FROM core.v_account_housing_profiles
       WHERE account_id = $1
     `;
-    const { rows: housingRows } = await pool.query(housingSql, [id]);
+    const { rows: housingRows } = await pool.query(housingSql, [canonicalId]);
 
     // Latest owner summary (mailing + name)
     const ownerSql = `
@@ -308,7 +326,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       ORDER BY tax_year DESC
       LIMIT 1
     `;
-    const { rows: ownerRows } = await pool.query(ownerSql, [id]);
+    const { rows: ownerRows } = await pool.query(ownerSql, [canonicalId]);
 
     // Current legal description info (deed date, lines/text)
     const legalSql = `
@@ -317,7 +335,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       WHERE account_id = $1
       LIMIT 1
     `;
-    const { rows: legalRows } = await pool.query(legalSql, [id]);
+    const { rows: legalRows } = await pool.query(legalSql, [canonicalId]);
     const legalHistSql = `
       SELECT tax_year, legal_lines, legal_text, deed_transfer_date
       FROM core.legal_description_history
@@ -325,7 +343,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       ORDER BY tax_year DESC
       LIMIT 1
     `;
-    const { rows: legalHistRows } = await pool.query(legalHistSql, [id]);
+    const { rows: legalHistRows } = await pool.query(legalHistSql, [canonicalId]);
 
     // Exemptions summary (latest year) to determine homestead
     const exSql = `
@@ -334,7 +352,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       WHERE account_id = $1
       ORDER BY tax_year DESC
     `;
-    const { rows: exRowsAll } = await pool.query(exSql, [id]);
+    const { rows: exRowsAll } = await pool.query(exSql, [canonicalId]);
     let exRows = [];
     let exYear = null;
     let homesteadYes = false;
@@ -348,7 +366,7 @@ app.get("/api/accounts/:id", async (req, res) => {
     let landRows = [];
     try {
       const landYearSql = `SELECT MAX(tax_year) AS y FROM core.land_detail WHERE account_id = $1`;
-      const { rows: yRows } = await pool.query(landYearSql, [id]);
+      const { rows: yRows } = await pool.query(landYearSql, [canonicalId]);
       const y = yRows?.[0]?.y;
       if (y) {
         const landSql = `
@@ -367,14 +385,18 @@ app.get("/api/accounts/:id", async (req, res) => {
           WHERE account_id = $1 AND tax_year = $2
           ORDER BY line_number
         `;
-        const { rows } = await pool.query(landSql, [id, y]);
+        const { rows } = await pool.query(landSql, [canonicalId, y]);
         landRows = rows || [];
       }
     } catch (e) {
       console.error('land_detail query failed', e);
     }
     const resp = {
-      account: accRows[0],
+      account: {
+        ...accRows[0],
+        requested_account_id: id,
+        resolved_from_legacy: canonicalId !== id.toUpperCase(),
+      },
       primary_improvements: impRows[0] || null,
       housing_profile: housingRows[0] || null,
       owner_summary: ownerRows[0] || null,
@@ -404,7 +426,7 @@ app.get("/api/accounts/:id", async (req, res) => {
         WHERE account_id = $1
         ORDER BY sec_imp_number NULLS LAST, id
       `;
-      const { rows: secRows } = await pool.query(secSql, [id]);
+      const { rows: secRows } = await pool.query(secSql, [canonicalId]);
       resp.additional_improvements = secRows || [];
     } catch (e) {
       console.error('secondary_improvements query failed', e);
@@ -679,6 +701,7 @@ app.get("/api/accounts/:id/market_value_history", async (req, res) => {
  */
 app.get("/api/search", async (req, res) => {
   try {
+    await accountQualityReady;
     const q = String(req.query.q || "").trim();
     const limit = Math.min(parseInt(String(req.query.limit || "25"), 10) || 25, 100);
     const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
@@ -693,9 +716,14 @@ app.get("/api/search", async (req, res) => {
     let where;
     let matchSql;
     let orderSql;
+    let requestedLegacyAccountId = null;
 
     if (parsed.isAccountId) {
-      where = `a.account_id = ${bind(q.toUpperCase())}`;
+      const canonicalAccountId = await resolveCanonicalAccountId(pool, q);
+      if (canonicalAccountId !== q.toUpperCase()) {
+        requestedLegacyAccountId = q.toUpperCase();
+      }
+      where = `a.account_id = ${bind(canonicalAccountId)}`;
       matchSql = `'exact_account'`;
       orderSql = "a.account_id";
     } else if (parsed.isAddressPrefix) {
@@ -708,6 +736,7 @@ app.get("/api/search", async (req, res) => {
 
       where = `
         a.address IS NOT NULL
+        AND a.canonical_account_id IS NULL
         AND ${addressLineSql} LIKE ${addressPrefixPlaceholder}
         ${cityWhere}
       `;
@@ -731,6 +760,7 @@ app.get("/api/search", async (req, res) => {
 
       where = `
         a.street_name IS NOT NULL
+        AND a.canonical_account_id IS NULL
         AND ${streetSql} LIKE ${streetPlaceholder}
         ${cityWhere}
       `;
@@ -754,6 +784,9 @@ app.get("/api/search", async (req, res) => {
         a.neighborhood_code,
         a.subdivision,
         a.legal_description,
+        a.data_quality_status,
+        a.data_quality_flags,
+        a.canonical_account_id,
         ${matchSql} AS search_match,
         COALESCE(vsc.certified_year, mv.tax_year)                 AS latest_tax_year,
         COALESCE(vsc.market_value, mv.total_value)                AS latest_market_value,
@@ -787,7 +820,16 @@ app.get("/api/search", async (req, res) => {
       LIMIT ${bind(limit)} OFFSET ${bind(offset)}
     `;
     const { rows } = await pool.query(sql, params);
-    res.json(rows);
+    res.json(
+      requestedLegacyAccountId
+        ? rows.map((row) => ({
+            ...row,
+            requested_account_id: requestedLegacyAccountId,
+            resolved_from_legacy: true,
+            data_quality_status: "legacy_resolved",
+          }))
+        : rows,
+    );
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "search_failed" });

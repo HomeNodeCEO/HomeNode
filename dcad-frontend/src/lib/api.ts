@@ -57,6 +57,11 @@ export interface AccountRow {
   neighborhood_code: string | null;
   subdivision: string | null;
   legal_description: string | null;
+  data_quality_status?: string | null;
+  data_quality_flags?: string[] | null;
+  canonical_account_id?: string | null;
+  requested_account_id?: string | null;
+  resolved_from_legacy?: boolean;
 
   latest_tax_year?: number | null;
   latest_market_value?: string | number | null;       // core.market_values.total_value
@@ -846,13 +851,42 @@ export function formatCurrency(v: string | number | null | undefined) {
   }).format(n);
 }
 
+/** Keep city/state/ZIP metadata out of the primary search-tile heading. */
+export function formatSearchTileAddress(
+  address: string | null | undefined,
+  city?: string | null,
+) {
+  const value = String(address || '').replace(/\s+/g, ' ').trim().replace(/^,|,$/g, '');
+  if (!value) return '(Address unavailable)';
+
+  const normalize = (text: string) => text
+    .toUpperCase()
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const normalizedCity = normalize(String(city || ''));
+  const parts = value.split(',').map((part) => part.trim()).filter(Boolean);
+  if (normalizedCity) {
+    const cityIndex = parts.findIndex(
+      (part, index) => index > 0 && normalize(part) === normalizedCity,
+    );
+    if (cityIndex > 0) return parts.slice(0, cityIndex).join(', ');
+  }
+  if (parts.length >= 3) return parts.slice(0, -2).join(', ');
+  if (parts.length === 2 && /(?:\bTX\b|\bTEXAS\b|\d{5})/i.test(parts[1])) {
+    return parts[0];
+  }
+  return value;
+}
+
 /**
  * Build display fields for a result tile:
  *  - title: Address (primary)
  *  - subtitle: Account ID (and market value if present)
  */
 export function toTile(row: AccountRow) {
-  const title = (row.address && row.address.trim()) || '(No address)';
+  const title = formatSearchTileAddress(row.address, row.city);
   const mv = row.latest_market_value;
   const mvText = formatCurrency(mv);
   const subtitle = mvText ? `${row.account_id} · ${mvText}` : row.account_id;

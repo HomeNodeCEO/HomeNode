@@ -23,6 +23,7 @@ from sqlalchemy import text
 # ---- DCAD project bits ----
 # Synchronous browser + fetchers
 from dcad.fetch import browser, get_detail_html, get_history_html, polite_pause
+from dcad.data_quality import require_complete_detail
 # Parsers for "Main Improvement" (primary) and "Additional Improvements" (secondary/history)
 from dcad.parse_detail import parse_detail_html
 from dcad.parse_history import parse_history_html
@@ -80,18 +81,19 @@ def _save_raw_json(account_id: str, tax_year: int, source_url: str, raw_obj: Dic
 
 def run_for_account(account_id: str) -> None:
     """Scrape one account and upsert into Postgres."""
-    source_url = f"https://www.dallascad.org/Account/{account_id}"
+    source_url = f"https://www.dallascad.org/AcctDetailRes.aspx?ID={account_id}"
 
-    # 1) Fetch HTML (sync)
+    # Fetch and validate the detail page before spending another request on
+    # history. A transient DCAD blank page now becomes a retry instead of a
+    # false success and an N/A snapshot.
     with browser() as page:
         detail_html = get_detail_html(page, account_id)
+        detail = parse_detail_html(detail_html) if detail_html else {}
+        require_complete_detail(account_id, detail, detail_html)
         polite_pause()
         history_html = get_history_html(page, account_id)
 
-    # 2) Parse
-    detail = parse_detail_html(detail_html) if detail_html else {}
-
-    # 2b) Ensure mailing_address is present in parsed detail by using a DOM fallback on the Owner block
+    # Ensure mailing_address is present in parsed detail by using a DOM fallback on the Owner block
     try:
         if detail_html:
             owner = detail.get("owner") if isinstance(detail, dict) else None

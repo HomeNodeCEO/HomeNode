@@ -26,6 +26,18 @@ class AccountSearchNormalizationTests(unittest.TestCase):
     def test_rejects_blank_postal_code(self):
         self.assertIsNone(MODULE.normalize_postal_code("      "))
 
+    def test_builds_source_address_from_csv_fields(self):
+        self.assertEqual(
+            MODULE.source_address(
+                {
+                    "STREET_NUM": "510",
+                    "STREET_HALF_NUM": "",
+                    "FULL_STREET_NAME": "Dallas Ave",
+                }
+            ),
+            "510 DALLAS AVE",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,9 @@ from typing import Optional
 
 from sqlalchemy import Engine, text
 
+from dcad.account_recovery import dcad_site_is_healthy, exact_candidates, search_by_address
+from dcad.data_quality import IncompleteScrapeError
+from dcad.fetch import browser
 from dcad.run_once import run_for_account
 from dcad.upsert import get_engine
 
@@ -50,6 +53,9 @@ class WorkerConfig:
     retry_max_seconds: int
     auto_migrate: bool
     account_id_regex: str
+    recovery_attempt_threshold: int
+    recovery_every_accounts: int
+    recovery_health_account_id: str
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -71,6 +77,15 @@ class WorkerConfig:
             retry_max_seconds=max(300, int(os.getenv("SCRAPE_RETRY_MAX_SECONDS", "604800"))),
             auto_migrate=_env_bool("SCRAPE_AUTO_MIGRATE", True),
             account_id_regex=os.getenv("SCRAPE_ACCOUNT_ID_REGEX", r"^[[:alnum:]]{17}$"),
+            recovery_attempt_threshold=max(
+                2, int(os.getenv("SCRAPE_RECOVERY_ATTEMPTS", "3"))
+            ),
+            recovery_every_accounts=max(
+                1, int(os.getenv("SCRAPE_RECOVERY_EVERY_ACCOUNTS", "25"))
+            ),
+            recovery_health_account_id=os.getenv(
+                "SCRAPE_HEALTH_ACCOUNT_ID", "26272500060150000"
+            ).strip(),
         )
 
 
@@ -98,6 +113,10 @@ def _events_table(config: WorkerConfig) -> str:
     return f'"{config.state_schema}"."dcad_campaign_events"'
 
 
+def _reconciliations_table(config: WorkerConfig) -> str:
+    return f'"{config.state_schema}"."dcad_account_reconciliations"'
+
+
 def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
     state = _state_table(config)
     ddl = f"""
@@ -121,12 +140,13 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
     """
     with engine.begin() as conn:
         conn.execute(text(ddl))
-        migration = (
-            Path(__file__).resolve().parents[2]
-            / "migrations"
-            / "003_dcad_residential_campaign.sql"
-        )
-        conn.execute(text(migration.read_text(encoding="utf-8")))
+        migrations = Path(__file__).resolve().parents[2] / "migrations"
+        for migration_name in (
+            "003_dcad_residential_campaign.sql",
+            "011_dcad_data_quality_recovery.sql",
+        ):
+            migration = migrations / migration_name
+            conn.execute(text(migration.read_text(encoding="utf-8")))
 
 
 def verify_state_schema(engine: Engine, config: WorkerConfig) -> None:
@@ -274,12 +294,46 @@ def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
             lease_expires_at = NULL,
             worker_id = NULL,
             last_error = NULL,
+            quality_status = 'complete',
+            quality_flags = ARRAY[]::text[],
+            canonical_account_id = :account_id,
             updated_at = now()
         WHERE account_id = :account_id
         """
     )
     with engine.begin() as conn:
         conn.execute(sql, {"account_id": account_id, "refresh_days": config.refresh_days})
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_accounts_table(config)}
+                SET data_quality_status = 'complete',
+                    data_quality_flags = ARRAY[]::text[],
+                    canonical_account_id = NULL
+                WHERE account_id = :account_id
+                """
+            ),
+            {"account_id": account_id},
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_reconciliations_table(config)}
+                SET status = 'source_confirmed',
+                    canonical_account_id = :account_id,
+                    match_method = 'direct_retry',
+                    match_confidence = 1,
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = NULL,
+                    resolved_at = now(),
+                    updated_at = now()
+                WHERE source_account_id = :account_id
+                  AND status IN ('pending_search', 'retry', 'leased')
+                """
+            ),
+            {"account_id": account_id},
+        )
         conn.execute(
             text(
                 f"""
@@ -323,6 +377,11 @@ def mark_failure(
     state = _state_table(config)
     delay = retry_delay_seconds(config, prior_attempts)
     message = f"{error.__class__.__name__}: {error}"[:2000]
+    incomplete = isinstance(error, IncompleteScrapeError)
+    quality_status = "incomplete" if incomplete else "scrape_error"
+    quality_flags = (
+        list(error.assessment.reasons) if incomplete else ["scrape_error"]
+    )
     sql = text(
         f"""
         UPDATE {state}
@@ -332,6 +391,8 @@ def mark_failure(
             lease_expires_at = NULL,
             worker_id = NULL,
             last_error = :last_error,
+            quality_status = :quality_status,
+            quality_flags = CAST(:quality_flags AS text[]),
             updated_at = now()
         WHERE account_id = :account_id
         """
@@ -343,6 +404,23 @@ def mark_failure(
                 "account_id": account_id,
                 "delay_seconds": delay,
                 "last_error": message,
+                "quality_status": quality_status,
+                "quality_flags": "{" + ",".join(quality_flags) + "}",
+            },
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_accounts_table(config)}
+                SET data_quality_status = :quality_status,
+                    data_quality_flags = CAST(:quality_flags AS text[])
+                WHERE account_id = :account_id
+                """
+            ),
+            {
+                "account_id": account_id,
+                "quality_status": quality_status,
+                "quality_flags": "{" + ",".join(quality_flags) + "}",
             },
         )
     return delay
@@ -367,11 +445,486 @@ def release_claim(engine: Engine, config: WorkerConfig, account_id: str) -> None
         )
 
 
+def enqueue_address_recovery(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    reason: str,
+) -> bool:
+    targets = _targets_table(config)
+    accounts = _accounts_table(config)
+    reconciliations = _reconciliations_table(config)
+    with engine.begin() as conn:
+        source = conn.execute(
+            text(
+                f"""
+                SELECT COALESCE(NULLIF(btrim(t.source_address), ''),
+                               NULLIF(btrim(a.address), '')) AS source_address,
+                       COALESCE(NULLIF(btrim(t.source_city), ''),
+                                NULLIF(btrim(a.city), '')) AS source_city,
+                       COALESCE(NULLIF(btrim(t.source_postal_code), ''),
+                                NULLIF(btrim(a.postal_code), '')) AS source_postal_code
+                FROM {accounts} a
+                LEFT JOIN {targets} t ON t.account_id = a.account_id
+                WHERE a.account_id = :account_id
+                """
+            ),
+            {"account_id": account_id},
+        ).mappings().first()
+        if source is None:
+            return False
+
+        has_address = bool(str(source["source_address"] or "").strip())
+        status = "pending_search" if has_address else "needs_review"
+        conn.execute(
+            text(
+                f"""
+                INSERT INTO {reconciliations} (
+                    source_account_id, source_address, source_city,
+                    source_postal_code, status, next_attempt_at, evidence
+                ) VALUES (
+                    :account_id, :source_address, :source_city,
+                    :source_postal_code, :status, now(),
+                    CAST(:evidence AS jsonb)
+                )
+                ON CONFLICT (source_account_id) DO UPDATE SET
+                    source_address = COALESCE(EXCLUDED.source_address,
+                                              {reconciliations}.source_address),
+                    source_city = COALESCE(EXCLUDED.source_city,
+                                           {reconciliations}.source_city),
+                    source_postal_code = COALESCE(EXCLUDED.source_postal_code,
+                                                  {reconciliations}.source_postal_code),
+                    status = CASE
+                        WHEN {reconciliations}.status IN (
+                            'auto_matched', 'manual_matched', 'source_confirmed',
+                            'verified_invalid'
+                        ) THEN {reconciliations}.status
+                        ELSE EXCLUDED.status
+                    END,
+                    next_attempt_at = CASE
+                        WHEN {reconciliations}.status IN (
+                            'auto_matched', 'manual_matched', 'source_confirmed',
+                            'verified_invalid'
+                        ) THEN {reconciliations}.next_attempt_at
+                        ELSE now()
+                    END,
+                    evidence = {reconciliations}.evidence || EXCLUDED.evidence,
+                    updated_at = now()
+                """
+            ),
+            {
+                "account_id": account_id,
+                "source_address": source["source_address"],
+                "source_city": source["source_city"],
+                "source_postal_code": source["source_postal_code"],
+                "status": status,
+                "evidence": json.dumps(
+                    {"reason": reason, "queued_by": "continuous_worker"}
+                ),
+            },
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {accounts}
+                SET data_quality_status = :quality_status,
+                    data_quality_flags = ARRAY['incomplete_scrape', 'address_recovery']
+                WHERE account_id = :account_id
+                """
+            ),
+            {
+                "account_id": account_id,
+                "quality_status": "recovery_queued" if has_address else "needs_review",
+            },
+        )
+    return has_address
+
+
+def claim_next_reconciliation(
+    engine: Engine,
+    config: WorkerConfig,
+    worker_id: str,
+) -> Optional[dict[str, object]]:
+    reconciliations = _reconciliations_table(config)
+    sql = text(
+        f"""
+        WITH candidate AS (
+            SELECT source_account_id
+            FROM {reconciliations}
+            WHERE status IN ('pending_search', 'retry')
+              AND next_attempt_at <= now()
+              AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+            ORDER BY next_attempt_at, created_at
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        UPDATE {reconciliations} r
+        SET status = 'leased',
+            attempts = r.attempts + 1,
+            last_attempt_at = now(),
+            lease_expires_at = now() + make_interval(mins => :lease_minutes),
+            worker_id = :worker_id,
+            last_error = NULL,
+            updated_at = now()
+        FROM candidate c
+        WHERE r.source_account_id = c.source_account_id
+        RETURNING r.source_account_id, r.source_address, r.source_city,
+                  r.source_postal_code, r.attempts
+        """
+    )
+    with engine.begin() as conn:
+        row = conn.execute(
+            sql,
+            {"lease_minutes": config.lease_minutes, "worker_id": worker_id},
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def mark_reconciliation_retry(
+    engine: Engine,
+    config: WorkerConfig,
+    claim: dict[str, object],
+    error: BaseException,
+) -> int:
+    reconciliations = _reconciliations_table(config)
+    attempts = int(claim.get("attempts") or 1)
+    delay = retry_delay_seconds(config, max(0, attempts - 1))
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {reconciliations}
+                SET status = 'retry',
+                    next_attempt_at = now() + make_interval(secs => :delay),
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = :error,
+                    updated_at = now()
+                WHERE source_account_id = :account_id
+                """
+            ),
+            {
+                "account_id": claim["source_account_id"],
+                "delay": delay,
+                "error": f"{error.__class__.__name__}: {error}"[:2000],
+            },
+        )
+    return delay
+
+
+def mark_reconciliation_review(
+    engine: Engine,
+    config: WorkerConfig,
+    claim: dict[str, object],
+    *,
+    reason: str,
+    candidates: list[object],
+) -> None:
+    reconciliations = _reconciliations_table(config)
+    accounts = _accounts_table(config)
+    targets = _targets_table(config)
+    evidence_candidates = [
+        {
+            "account_id": getattr(candidate, "account_id", None),
+            "address": getattr(candidate, "address", None),
+            "city": getattr(candidate, "city", None),
+        }
+        for candidate in candidates
+    ]
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {reconciliations}
+                SET status = 'needs_review',
+                    candidate_count = :candidate_count,
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = :reason,
+                    evidence = evidence || CAST(:evidence AS jsonb),
+                    updated_at = now()
+                WHERE source_account_id = :account_id
+                """
+            ),
+            {
+                "account_id": claim["source_account_id"],
+                "candidate_count": len(candidates),
+                "reason": reason,
+                "evidence": json.dumps(
+                    {"review_reason": reason, "candidates": evidence_candidates}
+                ),
+            },
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {accounts}
+                SET data_quality_status = CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM {targets} t
+                            WHERE t.account_id = :account_id
+                        ) THEN 'needs_review'
+                        ELSE 'legacy_review'
+                    END,
+                    data_quality_flags = CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM {targets} t
+                            WHERE t.account_id = :account_id
+                        ) THEN ARRAY['incomplete_scrape', 'review_required']
+                        ELSE ARRAY['legacy_account', 'review_required']
+                    END
+                WHERE account_id = :account_id
+                """
+            ),
+            {"account_id": claim["source_account_id"]},
+        )
+
+
+def complete_reconciliation(
+    engine: Engine,
+    config: WorkerConfig,
+    claim: dict[str, object],
+    canonical_account_id: str,
+    candidate: object,
+    candidate_postal_code: str | None,
+) -> None:
+    source_account_id = str(claim["source_account_id"])
+    reconciliations = _reconciliations_table(config)
+    accounts = _accounts_table(config)
+    state = _state_table(config)
+    targets = _targets_table(config)
+    campaign = _campaign_table(config)
+    is_alias = canonical_account_id != source_account_id
+    evidence = json.dumps(
+        {
+            "selected_candidate": {
+                "account_id": canonical_account_id,
+                "address": getattr(candidate, "address", None),
+                "city": getattr(candidate, "city", None),
+                "postal_code": candidate_postal_code,
+            },
+            "validation": (
+                "unique_exact_normalized_address_city_postal_with_complete_detail"
+                if candidate_postal_code
+                else "unique_exact_normalized_address_and_city_with_complete_detail"
+            ),
+        }
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {reconciliations}
+                SET status = 'auto_matched',
+                    canonical_account_id = :canonical_account_id,
+                    match_method = :match_method,
+                    match_confidence = 1,
+                    candidate_count = 1,
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = NULL,
+                    evidence = evidence || CAST(:evidence AS jsonb),
+                    resolved_at = now(),
+                    updated_at = now()
+                WHERE source_account_id = :source_account_id
+                """
+            ),
+            {
+                "source_account_id": source_account_id,
+                "canonical_account_id": canonical_account_id,
+                "match_method": (
+                    "exact_address_city_postal"
+                    if candidate_postal_code
+                    else "exact_address_city"
+                ),
+                "evidence": evidence,
+            },
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {accounts}
+                SET data_quality_status = :quality_status,
+                    data_quality_flags = :quality_flags,
+                    canonical_account_id = :canonical_account_id
+                WHERE account_id = :source_account_id
+                """
+            ),
+            {
+                "source_account_id": source_account_id,
+                "canonical_account_id": canonical_account_id if is_alias else None,
+                "quality_status": "legacy_resolved" if is_alias else "complete",
+                "quality_flags": (
+                    ["legacy_account", "canonical_account_available"] if is_alias else []
+                ),
+            },
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {accounts}
+                SET data_quality_status = COALESCE(data_quality_status, 'complete')
+                WHERE account_id = :canonical_account_id
+                """
+            ),
+            {"canonical_account_id": canonical_account_id},
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {state}
+                SET status = 'succeeded',
+                    attempts = 0,
+                    last_success_at = now(),
+                    next_attempt_at = now() + make_interval(days => :refresh_days),
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = NULL,
+                    quality_status = :quality_status,
+                    quality_flags = :quality_flags,
+                    canonical_account_id = :canonical_account_id,
+                    updated_at = now()
+                WHERE account_id = :source_account_id
+                """
+            ),
+            {
+                "source_account_id": source_account_id,
+                "canonical_account_id": canonical_account_id,
+                "refresh_days": config.refresh_days,
+                "quality_status": "legacy_resolved" if is_alias else "complete",
+                "quality_flags": (
+                    ["legacy_account", "canonical_account_available"] if is_alias else []
+                ),
+            },
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {targets} t
+                SET initial_completed_at = CASE
+                        WHEN c.phase = 'initial_missing' AND t.initial_missing
+                        THEN now()
+                        ELSE t.initial_completed_at
+                    END,
+                    last_completed_cycle = CASE
+                        WHEN c.phase = 'full_cycle'
+                        THEN c.cycle_number
+                        ELSE t.last_completed_cycle
+                    END,
+                    last_cycle_success_at = CASE
+                        WHEN c.phase = 'full_cycle'
+                        THEN now()
+                        ELSE t.last_cycle_success_at
+                    END
+                FROM {campaign} c
+                WHERE c.campaign_key = :campaign_key
+                  AND t.account_id = :source_account_id
+                """
+            ),
+            {
+                "campaign_key": config.campaign_key,
+                "source_account_id": source_account_id,
+            },
+        )
+
+
+def process_reconciliation(
+    engine: Engine,
+    config: WorkerConfig,
+    claim: dict[str, object],
+) -> str:
+    source_account_id = str(claim["source_account_id"])
+    source_address = str(claim.get("source_address") or "").strip()
+    source_city = str(claim.get("source_city") or "").strip() or None
+    source_postal_code = re.sub(
+        r"\D", "", str(claim.get("source_postal_code") or "")
+    )[:5] or None
+    if not source_address:
+        mark_reconciliation_review(
+            engine,
+            config,
+            claim,
+            reason="No source address is available for DCAD recovery",
+            candidates=[],
+        )
+        return "needs_review"
+
+    with browser() as session:
+        if not dcad_site_is_healthy(session, config.recovery_health_account_id):
+            raise RuntimeError("DCAD health probe failed; address recovery deferred")
+        candidates = search_by_address(session, source_address, source_city)
+    matches = exact_candidates(candidates, source_address, source_city)
+    if len(matches) != 1:
+        reason = (
+            "No exact DCAD address match"
+            if not matches
+            else "Multiple exact DCAD address matches"
+        )
+        mark_reconciliation_review(
+            engine,
+            config,
+            claim,
+            reason=reason,
+            candidates=matches or candidates,
+        )
+        return "needs_review"
+
+    selected = matches[0]
+    with engine.connect() as conn:
+        candidate_postal_code = conn.execute(
+            text(
+                f"""
+                SELECT COALESCE(NULLIF(btrim(t.source_postal_code), ''),
+                               NULLIF(btrim(a.postal_code), ''))
+                FROM {_accounts_table(config)} a
+                LEFT JOIN {_targets_table(config)} t
+                  ON t.account_id = a.account_id
+                WHERE a.account_id = :account_id
+                """
+            ),
+            {"account_id": selected.account_id},
+        ).scalar_one_or_none()
+    candidate_postal_code = re.sub(
+        r"\D", "", str(candidate_postal_code or "")
+    )[:5] or None
+    if source_postal_code and candidate_postal_code != source_postal_code:
+        mark_reconciliation_review(
+            engine,
+            config,
+            claim,
+            reason=(
+                "Exact address candidate ZIP does not match the source ZIP"
+                if candidate_postal_code
+                else "Exact address candidate has no ZIP available for verification"
+            ),
+            candidates=matches,
+        )
+        return "needs_review"
+
+    run_for_account(selected.account_id)
+    complete_reconciliation(
+        engine,
+        config,
+        claim,
+        selected.account_id,
+        selected,
+        candidate_postal_code,
+    )
+    log.warning(
+        "DCAD account reconciled source_account_id=%s canonical_account_id=%s address=%s",
+        source_account_id,
+        selected.account_id,
+        source_address,
+    )
+    return "auto_matched"
+
+
 def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
     campaign = _campaign_table(config)
     targets = _targets_table(config)
     state = _state_table(config)
     events = _events_table(config)
+    reconciliations = _reconciliations_table(config)
     with engine.connect() as conn:
         row = conn.execute(
             text(
@@ -450,6 +1003,24 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
             ),
             {"campaign_key": config.campaign_key},
         ).mappings().first()
+        quality = conn.execute(
+            text(
+                f"""
+                SELECT count(*) FILTER (
+                           WHERE status IN ('pending_search', 'retry', 'leased')
+                       ) AS recovery_pending,
+                       count(*) FILTER (
+                           WHERE status = 'needs_review'
+                       ) AS needs_review,
+                       count(*) FILTER (
+                           WHERE status IN (
+                               'auto_matched', 'manual_matched', 'source_confirmed'
+                           )
+                       ) AS resolved
+                FROM {reconciliations}
+                """
+            )
+        ).mappings().one()
 
     result = dict(row)
     result["loaded"] = True
@@ -457,6 +1028,7 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
         result["cycle_completed"] = 0
         result["cycle_remaining"] = result["total_valid_targets"]
     result["latest_event"] = dict(event) if event else None
+    result["data_quality"] = dict(quality)
     return result
 
 
@@ -615,6 +1187,29 @@ def _request_stop(signum, _frame) -> None:
     log.info("Received signal %s; stopping after the current account", signum)
 
 
+def process_reconciliation_claim_safely(
+    engine: Engine,
+    config: WorkerConfig,
+    claim: dict[str, object],
+) -> None:
+    try:
+        outcome = process_reconciliation(engine, config, claim)
+        log.info(
+            "Address recovery finished source_account_id=%s outcome=%s",
+            claim["source_account_id"],
+            outcome,
+        )
+    except Exception as error:
+        delay = mark_reconciliation_retry(engine, config, claim, error)
+        log.error(
+            "Address recovery failed source_account_id=%s retry_in_seconds=%d error=%s",
+            claim["source_account_id"],
+            delay,
+            error,
+            exc_info=True,
+        )
+
+
 def run_worker(config: WorkerConfig, once: bool = False) -> int:
     if not os.getenv("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL is not set")
@@ -642,9 +1237,25 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
 
     successes = 0
     failures = 0
+    processed_since_recovery = 0 if once else config.recovery_every_accounts
     while not _stop_requested:
+        if not once and processed_since_recovery >= config.recovery_every_accounts:
+            recovery_claim = claim_next_reconciliation(engine, config, worker_id)
+            if recovery_claim is not None:
+                process_reconciliation_claim_safely(engine, config, recovery_claim)
+                processed_since_recovery = 0
+                _sleep(config.delay_seconds)
+                continue
+
         claim = claim_next_account(engine, config, worker_id)
         if claim is None:
+            recovery_claim = claim_next_reconciliation(engine, config, worker_id)
+            if recovery_claim is not None:
+                process_reconciliation_claim_safely(engine, config, recovery_claim)
+                if once:
+                    return 0
+                _sleep(config.delay_seconds)
+                continue
             event = advance_campaign_if_complete(engine, config)
             if event is not None:
                 _log_campaign_event(event)
@@ -678,6 +1289,22 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
         except Exception as error:
             failures += 1
             delay = mark_failure(engine, config, account_id, prior_attempts, error)
+            if (
+                isinstance(error, IncompleteScrapeError)
+                and prior_attempts + 1 >= config.recovery_attempt_threshold
+            ):
+                queued = enqueue_address_recovery(
+                    engine,
+                    config,
+                    account_id,
+                    reason=str(error),
+                )
+                log.warning(
+                    "Incomplete account recovery %s account_id=%s attempt=%d",
+                    "queued" if queued else "requires_manual_review",
+                    account_id,
+                    prior_attempts + 1,
+                )
             log.error(
                 "Scrape failed account_id=%s attempt=%d retry_in_seconds=%d error=%s",
                 account_id,
@@ -696,6 +1323,8 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
                 successes,
                 failures,
             )
+
+        processed_since_recovery += 1
 
         if once:
             break

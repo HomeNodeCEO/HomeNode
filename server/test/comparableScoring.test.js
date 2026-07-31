@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  analyzeComparableOutliers,
   analysisWindow,
   applyRecommendationPolicy,
   classifySaleAge,
@@ -9,6 +10,19 @@ import {
   polygonCentroid,
   scoreComparable,
 } from "../src/util/comparableScoring.js";
+
+function statisticalSale(index, pricePerSquareFoot, overrides = {}) {
+  const month = String((index % 10) + 1).padStart(2, "0");
+  return {
+    source_record_id: `sale-${index}`,
+    closing_date: `2026-${month}-15`,
+    comparableScore: 75 + (index % 10),
+    soldWithinOneYear: true,
+    comparable_square_feet: 1500,
+    sale_price: pricePerSquareFoot * 1500,
+    ...overrides,
+  };
+}
 
 test("market studies keep only sales inside the selected city, ZIP, or radius", () => {
   const sales = [
@@ -221,5 +235,43 @@ test("analysis windows clamp month-end dates safely", () => {
       analysisStartDate: "2023-02-28",
       periodMonths: 12,
     },
+  );
+});
+
+test("outlier analysis flags a price-per-square-foot extreme when three methods agree", () => {
+  const sales = Array.from({ length: 40 }, (_, index) =>
+    statisticalSale(index, 195 + (index % 11)),
+  );
+  sales[7] = statisticalSale(7, 500);
+
+  const result = analyzeComparableOutliers(sales, { scoreThreshold: 70 });
+  const outlier = result.sales.find((sale) => sale.source_record_id === "sale-7");
+
+  assert.equal(result.analysis.sample_sufficient, true);
+  assert.equal(result.analysis.qualified_sale_count, 40);
+  assert.equal(result.analysis.distinct_sale_months, 10);
+  assert.equal(result.analysis.outlier_count, 1);
+  assert.equal(outlier.statistical_outlier, true);
+  assert.equal(outlier.statistical_outlier_direction, "high");
+  assert.ok(outlier.statistical_outlier_methods.includes("standard_deviation"));
+  assert.ok(outlier.statistical_outlier_methods.includes("median_absolute_deviation"));
+  assert.ok(outlier.statistical_outlier_methods.includes("interquartile_range"));
+});
+
+test("outlier analysis does not flag sales when fewer than thirty qualify", () => {
+  const sales = Array.from({ length: 29 }, (_, index) =>
+    statisticalSale(index, index === 3 ? 500 : 200 + (index % 7)),
+  );
+
+  const result = analyzeComparableOutliers(sales, { scoreThreshold: 70 });
+
+  assert.equal(result.analysis.sample_sufficient, false);
+  assert.equal(result.analysis.outlier_count, 0);
+  assert.ok(result.analysis.warnings.some(
+    (warning) => warning.code === "minimum_sample_not_met",
+  ));
+  assert.equal(
+    result.sales.some((sale) => sale.statistical_outlier),
+    false,
   );
 });

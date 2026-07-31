@@ -347,6 +347,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   );
   const [includeUnmatchedSales, setIncludeUnmatchedSales] = useState(false);
   const [sameNeighborhoodOnly, setSameNeighborhoodOnly] = useState(false);
+  const [outlierScoreThreshold, setOutlierScoreThreshold] = useState(60);
   const [salesResults, setSalesResults] = useState<SaleRow[]>([]);
   const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>(
     () => Array(COMPARABLE_COUNT).fill(null),
@@ -358,6 +359,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [salesError, setSalesError] = useState<string | null>(null);
   const [salesNotice, setSalesNotice] = useState<string | null>(null);
   const [recommendationSummary, setRecommendationSummary] = useState<ComparableRecommendationsResponse | null>(null);
+  const [competitiveReplacementSale, setCompetitiveReplacementSale] =
+    useState<SaleRow | null>(null);
   const [marketConditionsDraft, setMarketConditionsDraft] =
     useState<MarketConditionsDraft | null>(() =>
       readMarketConditionsDraft(propertyId),
@@ -1061,6 +1064,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return sale.structural_style || sale.housing_type || 'Not available';
   };
 
+  const statisticalOutlierLabel = (sale: SaleRow): string => {
+    if (!sale.statistical_outlier) return '';
+    const direction = sale.statistical_outlier_direction === 'low' ? 'low' : 'high';
+    return `Statistical outlier · unusually ${direction} price/SF`;
+  };
+
   const suggestedAttachmentType = (
     housingType: string,
     current: HousingEditForm['attachmentType'],
@@ -1147,6 +1156,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           : item;
       setSalesResults((current) => current.map(withProfile));
       setSelectedSales((current) => current.map((item) => item ? withProfile(item) : item));
+      setRecommendationSummary((current) => current ? {
+        ...current,
+        recommended_sales: current.recommended_sales.map(withProfile),
+        competitive_sales: current.competitive_sales?.map(withProfile) || [],
+        sales: current.sales.map(withProfile),
+      } : current);
       if (subject?.accountId === accountId) {
         setSubject((current) => current ? {
           ...current,
@@ -1231,6 +1246,28 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     applySaleToSlot(sale, openSlot);
   };
 
+  const addCompetitiveSaleToPrimaryGrid = (sale: SaleRow) => {
+    if (selectedSales.some((item) => item && saleKey(item) === saleKey(sale))) {
+      setSalesNotice(`${saleDisplayAddress(sale)} is already in the primary grid.`);
+      return;
+    }
+    const openSlot = selectedSales.findIndex((item) => item === null);
+    if (openSlot >= 0) {
+      applySaleToSlot(sale, openSlot);
+      setSalesNotice(`${saleDisplayAddress(sale)} was added to Comparable ${openSlot + 1}.`);
+      return;
+    }
+    setCompetitiveReplacementSale(sale);
+  };
+
+  const replacePrimaryComparable = (slot: number) => {
+    if (!competitiveReplacementSale) return;
+    const address = saleDisplayAddress(competitiveReplacementSale);
+    applySaleToSlot(competitiveReplacementSale, slot);
+    setCompetitiveReplacementSale(null);
+    setSalesNotice(`${address} replaced Comparable ${slot + 1} in the primary grid.`);
+  };
+
   const removeComparable = (slot: number) => {
     setSelectedSales((current) => current.map((item, index) => index === slot ? null : item));
     setCompAddresses((current) => current.map((value, index) => index === slot ? '' : value));
@@ -1256,6 +1293,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setRecommendationSummary(null);
     setSalesResults([]);
     setSalesNotice(null);
+    setCompetitiveReplacementSale(null);
     clearComparables();
   };
 
@@ -1277,6 +1315,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         analysisAsOf: salesAnalysisAsOf,
         periodMonths: salesPeriodMonths,
         limit: 50,
+        outlierScoreThreshold,
       });
       setRecommendationSummary(response);
       setSalesResults(response.sales);
@@ -1325,6 +1364,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         limit: 50,
       });
       setRecommendationSummary(null);
+      setCompetitiveReplacementSale(null);
       setSalesResults(rows);
       const refreshedByKey = new Map(rows.map((sale) => [saleKey(sale), sale]));
       selectedSales.forEach((selected, slot) => {
@@ -1902,7 +1942,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(260px,1fr)_160px_160px_auto_auto] lg:items-end">
+          <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(240px,1fr)_150px_150px_140px_auto_auto] xl:items-end">
             <label className="grid gap-1 text-sm text-slate-700">
               <span>Address, city, or parcel/account ID</span>
               <input
@@ -1946,6 +1986,26 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 <option value={24}>24 months</option>
                 <option value={36}>36 months</option>
               </select>
+            </label>
+            <label className="grid gap-1 text-sm text-slate-700">
+              <span>Outlier score floor</span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={outlierScoreThreshold}
+                disabled={!marketConditionsDraft}
+                onChange={(event) => {
+                  const nextValue = Math.min(
+                    100,
+                    Math.max(0, Number(event.target.value) || 0),
+                  );
+                  setOutlierScoreThreshold(nextValue);
+                  resetSalesForAnalysisPeriodChange();
+                }}
+                className="rounded-md border border-slate-300 px-3 py-2"
+              />
             </label>
             <button
               type="button"
@@ -2063,6 +2123,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     {sale && saleIsOverOneYear(sale) && (
                       <div className="mt-1 text-xs font-semibold text-amber-800">Sale over one year old</div>
                     )}
+                    {sale?.statistical_outlier && (
+                      <div className="mt-1 text-xs font-semibold text-red-800">
+                        {statisticalOutlierLabel(sale)}
+                      </div>
+                    )}
                     {missingHousingType && (
                       <div className="mt-1 text-xs font-semibold text-amber-900">
                         Housing type unknown — verify before relying on this sale.
@@ -2144,8 +2209,55 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
 
-          {salesResults.length > 0 && (
-            <div className="mt-4 max-h-[430px] overflow-auto rounded-xl border border-slate-200">
+          {recommendationSummary?.statistical_analysis && (
+            <div
+              className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
+                recommendationSummary.statistical_analysis.sample_sufficient
+                  ? 'border-indigo-200 bg-indigo-50 text-indigo-950'
+                  : 'border-amber-200 bg-amber-50 text-amber-950'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-semibold">Comparable outlier audit</div>
+                <span className="rounded-full bg-white/80 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide">
+                  {recommendationSummary.statistical_analysis.confidence} confidence
+                </span>
+              </div>
+              <div className="mt-1">
+                {recommendationSummary.statistical_analysis.qualified_sale_count.toLocaleString()} one-year sales scored at least{' '}
+                {recommendationSummary.statistical_analysis.score_threshold};{' '}
+                {recommendationSummary.statistical_analysis.measured_sale_count.toLocaleString()} had usable price-per-square-foot data ({Math.round(
+                  recommendationSummary.statistical_analysis.coverage_ratio * 100,
+                )}% coverage), representing {recommendationSummary.statistical_analysis.effective_sample_size.toLocaleString()} distinct properties across {recommendationSummary.statistical_analysis.distinct_sale_months} sale months.
+              </div>
+              {recommendationSummary.statistical_analysis.sample_sufficient ? (
+                <div className="mt-1">
+                  Median {fmtCurrency(recommendationSummary.statistical_analysis.median_price_per_square_foot)}/SF · mean{' '}
+                  {fmtCurrency(recommendationSummary.statistical_analysis.mean_price_per_square_foot)}/SF · standard deviation{' '}
+                  {fmtCurrency(recommendationSummary.statistical_analysis.standard_deviation_price_per_square_foot)}/SF.{' '}
+                  {recommendationSummary.statistical_analysis.outlier_count} sale{recommendationSummary.statistical_analysis.outlier_count === 1 ? '' : 's'} were flagged only where at least two of the standard-deviation, median-deviation, and IQR tests agreed.
+                </div>
+              ) : (
+                <div className="mt-1 font-medium">
+                  No statistical outlier flags were applied because the qualified sample did not meet every sufficiency check.
+                </div>
+              )}
+              {recommendationSummary.statistical_analysis.warnings.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+                  {recommendationSummary.statistical_analysis.warnings.map((warning) => (
+                    <li key={warning.code}>{warning.message}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {(recommendationSummary ? recommendationSummary.recommended_sales : salesResults).length > 0 && (
+            <div className="mt-4">
+              <div className="mb-2 text-sm font-semibold text-slate-900">
+                {recommendationSummary ? 'Recommended Comparable Sales' : 'Sales Search Results'}
+              </div>
+              <div className="max-h-[430px] overflow-auto rounded-xl border border-slate-200">
               <table className="w-full min-w-[1080px] text-left text-sm">
                 <thead className="sticky top-0 bg-slate-100 text-slate-700">
                   <tr>
@@ -2158,7 +2270,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   </tr>
                 </thead>
                 <tbody>
-                  {salesResults.map((sale) => {
+                  {(recommendationSummary ? recommendationSummary.recommended_sales : salesResults).map((sale) => {
                     const selected = selectedSales.some((item) => item && saleKey(item) === saleKey(sale));
                     const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
                     const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
@@ -2277,9 +2389,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                             {olderThanOneYear && (
                               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Sale over 1 year old</span>
                             )}
+                            {sale.statistical_outlier && (
+                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-900">
+                                {statisticalOutlierLabel(sale)}
+                              </span>
+                            )}
                             {!sale.requires_additional_review &&
                               !missingHousingType &&
                               !unknownAttachment &&
+                              !sale.statistical_outlier &&
                               sale.multi_parcel_status === 'single' && (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">Standard</span>
                             )}
@@ -2310,6 +2428,170 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   })}
                 </tbody>
               </table>
+              </div>
+            </div>
+          )}
+
+          {recommendationSummary?.competitive_sales?.length > 0 && (
+            <section className="mt-6 rounded-2xl border border-slate-300 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-semibold text-slate-950">
+                    Additional Competitive Sales Grid
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    The next {recommendationSummary.competitive_sales.length} lower-ranked sales from the past year are retained as challengers to the primary six.
+                  </p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+                  Ranked with the same 40% location · 30% GLA · 30% sale-date model
+                </div>
+              </div>
+
+              <div className="mt-4 max-h-[520px] overflow-auto rounded-xl border border-slate-200 bg-white">
+                <table className="w-full min-w-[1100px] text-left text-sm">
+                  <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700">
+                    <tr>
+                      <th className="px-3 py-2">Rank / Score</th>
+                      <th className="px-3 py-2">Competitive Sale</th>
+                      <th className="px-3 py-2">Sale Information</th>
+                      <th className="px-3 py-2">Similarity</th>
+                      <th className="px-3 py-2">Statistical Review</th>
+                      <th className="px-3 py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recommendationSummary.competitive_sales.map((sale) => {
+                      const selected = selectedSales.some(
+                        (item) => item && saleKey(item) === saleKey(sale),
+                      );
+                      const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
+                      const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
+                      const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
+                      return (
+                        <tr
+                          key={`competitive-${saleKey(sale)}`}
+                          className={`border-t align-top ${
+                            sale.statistical_outlier
+                              ? 'border-red-200 bg-red-50/60'
+                              : 'border-slate-200'
+                          }`}
+                        >
+                          <td className="px-3 py-3">
+                            <div className="font-semibold text-indigo-950">
+                              #{sale.score_rank ?? '—'} · {sale.comparableScore?.toFixed(1) ?? '—'}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              Location {sale.locationScore?.toFixed(1) ?? '—'} · GLA {sale.squareFootageScore?.toFixed(1) ?? '—'} · Date {sale.salesDateScore?.toFixed(1) ?? '—'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex min-w-[250px] items-start gap-3">
+                              <MlsPhoto
+                                src={sale.primary_photo_url}
+                                alt={saleDisplayAddress(sale)}
+                                photoCount={Number(sale.photo_count || 0)}
+                                onOpen={sale.primary_photo_url ? () => void openSaleGallery(sale) : undefined}
+                                compact
+                              />
+                              <div>
+                                <div className="font-medium text-slate-950">{saleDisplayAddress(sale)}</div>
+                                <div className="mt-1 text-xs text-slate-500">
+                                  {sale.primary_account_id || 'Unmatched account'} · MLS {sale.listing_id || '—'}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="font-semibold text-slate-950">{fmtCurrency(sale.sale_price) || 'Price unavailable'}</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {saleDateDisplay(sale.closing_date)} · DOM {sale.days_on_market ?? '—'}
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {sale.price_per_square_foot != null ? `${fmtCurrency(sale.price_per_square_foot)}/SF` : 'Price/SF unavailable'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-slate-700">
+                            <div>{fmtSqftSafe(livingArea)} · {bedrooms ?? '—'} bd · {baths ?? '—'} ba</div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {sale.distanceMiles?.toFixed(2) ?? '—'} mi · {sale.squareFootageDifferencePercent?.toFixed(1) ?? '—'}% GLA difference
+                            </div>
+                            <div className="mt-1 text-xs text-slate-500">
+                              {sale.structural_style || sale.housing_type || 'Housing type unknown'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            {sale.statistical_outlier ? (
+                              <div className="rounded-lg border border-red-200 bg-red-100 px-2.5 py-2 text-xs text-red-950">
+                                <div className="font-semibold">{statisticalOutlierLabel(sale)}</div>
+                                <div className="mt-1">
+                                  Standard-deviation score {sale.price_per_square_foot_zscore?.toFixed(2) ?? '—'} · robust score {sale.price_per_square_foot_robust_zscore?.toFixed(2) ?? '—'}
+                                </div>
+                              </div>
+                            ) : sale.outlier_analysis_eligible ? (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900">
+                                Within tested distribution
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-500">Below statistical score floor</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => addCompetitiveSaleToPrimaryGrid(sale)}
+                              disabled={selected}
+                              className="rounded-md border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
+                            >
+                              {selected ? 'In Primary Grid' : 'Add To Primary Grid'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {competitiveReplacementSale && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Choose a primary comparable to replace"
+              className="mt-4 rounded-2xl border-2 border-indigo-300 bg-indigo-50 p-4 shadow-lg"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="font-semibold text-indigo-950">The primary grid already contains six sales.</div>
+                  <div className="mt-1 text-sm text-indigo-900">
+                    Choose which comparable to replace with {saleDisplayAddress(competitiveReplacementSale)}.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setCompetitiveReplacementSale(null)}
+                  className="text-sm font-semibold text-indigo-800 hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+                {selectedSales.map((sale, slot) => (
+                  <button
+                    key={`replace-primary-${slot}`}
+                    type="button"
+                    onClick={() => replacePrimaryComparable(slot)}
+                    className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-left text-sm text-slate-800 hover:border-indigo-500 hover:bg-indigo-100"
+                  >
+                    <span className="font-semibold">Replace Comparable {slot + 1}</span>
+                    <span className="mt-0.5 block text-xs text-slate-600">
+                      {sale ? saleDisplayAddress(sale) : 'Open slot'}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

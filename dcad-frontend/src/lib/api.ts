@@ -242,6 +242,15 @@ export interface SaleRow {
   recommended?: boolean;
   recommendationRank?: number | null;
   recommendationExclusionReason?: string | null;
+  price_per_square_foot?: number | null;
+  price_per_square_foot_zscore?: number | null;
+  price_per_square_foot_robust_zscore?: number | null;
+  statistical_outlier?: boolean;
+  statistical_outlier_direction?: 'high' | 'low' | null;
+  statistical_outlier_methods?: Array<
+    'standard_deviation' | 'median_absolute_deviation' | 'interquartile_range'
+  >;
+  outlier_analysis_eligible?: boolean;
 }
 
 export interface HousingProfile {
@@ -299,6 +308,34 @@ export interface ComparableRecommendationParams {
   locationScaleMiles?: number;
   squareFootageScaleRatio?: number;
   salesDateScaleDays?: number;
+  outlierScoreThreshold?: number;
+}
+
+export interface ComparableStatisticalAnalysis {
+  score_threshold: number;
+  minimum_sample_size: number;
+  qualified_sale_count: number;
+  measured_sale_count: number;
+  effective_sample_size: number;
+  duplicate_observation_count: number;
+  coverage_ratio: number;
+  distinct_sale_months: number;
+  largest_month_share: number;
+  sample_sufficient: boolean;
+  confidence: 'high' | 'moderate' | 'insufficient';
+  mean_price_per_square_foot: number | null;
+  median_price_per_square_foot: number | null;
+  standard_deviation_price_per_square_foot: number | null;
+  first_quartile_price_per_square_foot: number | null;
+  third_quartile_price_per_square_foot: number | null;
+  interquartile_range_price_per_square_foot: number | null;
+  median_absolute_deviation_price_per_square_foot: number | null;
+  skewness: number | null;
+  lower_fence_price_per_square_foot: number | null;
+  upper_fence_price_per_square_foot: number | null;
+  outlier_count: number;
+  methods: string[];
+  warnings: Array<{ code: string; message: string }>;
 }
 
 export interface ComparableRecommendationsResponse {
@@ -361,6 +398,7 @@ export interface ComparableRecommendationsResponse {
     scoreAboveThresholdCount: number;
     olderSaleExclusionApplied: boolean;
   };
+  statistical_analysis: ComparableStatisticalAnalysis;
   analysis_period: {
     analysis_as_of: string;
     date_from: string;
@@ -373,6 +411,7 @@ export interface ComparableRecommendationsResponse {
     label: string;
   };
   recommended_sales: SaleRow[];
+  competitive_sales: SaleRow[];
   sales: SaleRow[];
 }
 
@@ -709,6 +748,7 @@ export async function getComparableRecommendations(
     location_scale_miles: params.locationScaleMiles,
     square_footage_scale_ratio: params.squareFootageScaleRatio,
     sales_date_scale_days: params.salesDateScaleDays,
+    outlier_score_threshold: params.outlierScoreThreshold,
   });
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
 }

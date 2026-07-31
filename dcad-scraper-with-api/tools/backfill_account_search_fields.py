@@ -34,6 +34,15 @@ def normalize_postal_code(value: str | None) -> str | None:
     return digits[:5] if len(digits) >= 5 else None
 
 
+def source_address(row: dict[str, str | None]) -> str | None:
+    parts = (
+        normalize_text(row.get("STREET_NUM")),
+        normalize_text(row.get("STREET_HALF_NUM")),
+        normalize_text(row.get("FULL_STREET_NAME")),
+    )
+    return " ".join(part for part in parts if part) or None
+
+
 def iter_search_rows(csv_path: Path):
     with csv_path.open("r", encoding="utf-8-sig", newline="") as source:
         reader = csv.DictReader(source)
@@ -51,6 +60,7 @@ def iter_search_rows(csv_path: Path):
                 continue
             yield (
                 account_id,
+                source_address(row),
                 street_name,
                 normalize_city(row.get("PROPERTY_CITY")),
                 normalize_postal_code(row.get("PROPERTY_ZIPCODE")),
@@ -58,11 +68,17 @@ def iter_search_rows(csv_path: Path):
 
 
 def migration_sql() -> str:
-    return (
-        Path(__file__).resolve().parents[1]
-        / "migrations"
-        / "007_account_search_fields.sql"
-    ).read_text(encoding="utf-8")
+    migrations = Path(__file__).resolve().parents[1] / "migrations"
+    return (migrations / "007_account_search_fields.sql").read_text(
+        encoding="utf-8"
+    )
+
+
+def quality_migration_sql() -> str:
+    migrations = Path(__file__).resolve().parents[1] / "migrations"
+    return (migrations / "011_dcad_data_quality_recovery.sql").read_text(
+        encoding="utf-8"
+    )
 
 
 def backfill(csv_path: Path, *, apply: bool = False) -> dict[str, object]:
@@ -83,6 +99,10 @@ def backfill(csv_path: Path, *, apply: bool = False) -> dict[str, object]:
         connection = psycopg2.connect(database_url)
         try:
             with connection.cursor() as cursor:
+                # Recovery source columns must exist before the bulk target
+                # update. Search indexes remain deferred until after the bulk
+                # write so they are not maintained row by row.
+                cursor.execute(quality_migration_sql())
                 cursor.execute(
                     """
                     ALTER TABLE core.accounts
@@ -95,6 +115,7 @@ def backfill(csv_path: Path, *, apply: bool = False) -> dict[str, object]:
                     """
                     CREATE TEMP TABLE tmp_account_search_fields (
                         account_id text PRIMARY KEY,
+                        source_address text,
                         street_name text NOT NULL,
                         city text,
                         postal_code text
@@ -104,7 +125,7 @@ def backfill(csv_path: Path, *, apply: bool = False) -> dict[str, object]:
                 cursor.copy_expert(
                     """
                     COPY tmp_account_search_fields (
-                        account_id, street_name, city, postal_code
+                        account_id, source_address, street_name, city, postal_code
                     ) FROM STDIN WITH (FORMAT csv)
                     """,
                     copy_file,
@@ -120,17 +141,42 @@ def backfill(csv_path: Path, *, apply: bool = False) -> dict[str, object]:
                 cursor.execute(
                     """
                     UPDATE core.accounts a
-                    SET street_name = t.street_name,
+                    SET address = COALESCE(NULLIF(btrim(a.address), ''), t.source_address),
+                        street_name = t.street_name,
                         city = t.city,
                         postal_code = t.postal_code,
                         updated_at = now()
                     FROM tmp_account_search_fields t
                     WHERE a.account_id = t.account_id
-                      AND (a.street_name, a.city, a.postal_code)
-                          IS DISTINCT FROM (t.street_name, t.city, t.postal_code)
+                      AND (a.address, a.street_name, a.city, a.postal_code)
+                          IS DISTINCT FROM (
+                              COALESCE(NULLIF(btrim(a.address), ''), t.source_address),
+                              t.street_name, t.city, t.postal_code
+                          )
                     """
                 )
                 updated_accounts = cursor.rowcount
+
+                cursor.execute(
+                    """
+                    UPDATE app.dcad_residential_targets target
+                    SET source_address = source.source_address,
+                        source_city = source.city,
+                        source_postal_code = source.postal_code
+                    FROM tmp_account_search_fields source
+                    WHERE target.account_id = source.account_id
+                      AND (
+                          target.source_address,
+                          target.source_city,
+                          target.source_postal_code
+                      ) IS DISTINCT FROM (
+                          source.source_address,
+                          source.city,
+                          source.postal_code
+                      )
+                    """
+                )
+                target_source_rows_updated = cursor.rowcount
 
                 # Collin records already carry a complete formatted address
                 # ("street, city, TX zip"). Derive the same indexed fields for
@@ -186,6 +232,7 @@ def backfill(csv_path: Path, *, apply: bool = False) -> dict[str, object]:
         "csv_rows_staged": staged_rows,
         "matched_existing_accounts": matched_accounts,
         "accounts_updated": updated_accounts,
+        "target_source_rows_updated": target_source_rows_updated,
         "derived_accounts_updated": derived_accounts_updated,
         "applied": apply,
     }

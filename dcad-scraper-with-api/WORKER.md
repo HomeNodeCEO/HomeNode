@@ -21,8 +21,42 @@ both processes and stops the service if either process exits unexpectedly.
    complete until every target has succeeded.
 6. A database lease makes restarts safe and prevents multiple workers from
    processing the same account simultaneously.
+7. A detail page is counted as successful only when it contains a situs
+   address or market value and does not report `No Data`. Invalid responses are
+   rejected before the separate history request, so the check does not add a
+   network round trip to healthy accounts.
+8. After three incomplete responses while DCAD's known-good health account is
+   available, the worker searches the source address. A single exact
+   address/city/ZIP match is scraped and recorded as the canonical account.
+   Missing or ambiguous matches remain in the manual-review queue.
+9. One address-recovery item is processed per 25 normal campaign accounts by
+   default, limiting its effect on normal throughput.
 
 The residential target table—not `core.accounts.county`—controls selection.
+
+## Data-quality recovery
+
+Apply the source-address backfill before seeding the recovery queue. Both tools
+default to rollback-only validation:
+
+```powershell
+python tools/backfill_account_search_fields.py "C:\path\to\DCAD Accounts.csv"
+python tools/backfill_account_search_fields.py "C:\path\to\DCAD Accounts.csv" --apply
+python tools/requeue_incomplete_dcad_accounts.py
+python tools/requeue_incomplete_dcad_accounts.py --apply
+```
+
+The requeue tool performs the one-time historical scan outside worker startup.
+It reopens prior successes whose newest snapshot has neither address nor market
+value, creates legacy reconciliation items for Dallas accounts outside the
+authoritative target list, and applies the frontend review flags. Resolved
+legacy IDs remain as aliases to their canonical IDs for auditability.
+
+Relevant optional worker settings are:
+
+- `SCRAPE_RECOVERY_ATTEMPTS` (default `3`)
+- `SCRAPE_RECOVERY_EVERY_ACCOUNTS` (default `25`)
+- `SCRAPE_HEALTH_ACCOUNT_ID` (default `26272500060150000`)
 
 ## Property-search metadata
 

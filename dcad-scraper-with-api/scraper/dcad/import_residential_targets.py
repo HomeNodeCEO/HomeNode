@@ -15,6 +15,8 @@ from psycopg2.extras import Json
 
 CAMPAIGN_KEY = "dallas_residential"
 ACCOUNT_PATTERN = re.compile(r"^[A-Z0-9]{17}$")
+SPACE_PATTERN = re.compile(r"\s+")
+COUNTY_SUFFIX_PATTERN = re.compile(r"\s*\([^)]*\)\s*$")
 
 
 def _source_sha256(path: Path) -> str:
@@ -25,31 +27,56 @@ def _source_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_source(path: Path) -> tuple[list[tuple[int, str]], int, list[str]]:
-    rows: list[tuple[int, str]] = []
+def _normalized(value: str | None) -> str | None:
+    value = SPACE_PATTERN.sub(" ", str(value or "").strip()).upper()
+    return value or None
+
+
+def _source_address(row: dict[str | None, str | list[str] | None]) -> str | None:
+    number = _normalized(str(row.get("STREET_NUM") or ""))
+    half = _normalized(str(row.get("STREET_HALF_NUM") or ""))
+    street = _normalized(str(row.get("FULL_STREET_NAME") or ""))
+    return " ".join(part for part in (number, half, street) if part) or None
+
+
+def _source_city(value: str | None) -> str | None:
+    return _normalized(COUNTY_SUFFIX_PATTERN.sub("", str(value or "")))
+
+
+def _source_postal(value: str | None) -> str | None:
+    digits = re.sub(r"\D", "", str(value or ""))
+    return digits[:5] if len(digits) >= 5 else None
+
+
+def _load_source(path: Path) -> tuple[list[tuple[int, str, str | None, str | None, str | None, str | None]], int, list[str]]:
+    rows: list[tuple[int, str, str | None, str | None, str | None, str | None]] = []
     seen: set[str] = set()
     invalid: list[str] = []
     total_rows = 0
 
     with path.open("r", encoding="utf-8-sig", newline="") as source:
-        reader = csv.reader(source)
-        try:
-            header = next(reader)
-        except StopIteration as error:
-            raise ValueError("CSV is empty") from error
+        reader = csv.DictReader(source)
+        header = reader.fieldnames or []
         if not header or header[0].strip().upper() != "ACCOUNT_NUM":
             raise ValueError("CSV must have ACCOUNT_NUM as its first column")
 
         for source_position, row in enumerate(reader, start=1):
             total_rows += 1
-            account_id = (row[0] if row else "").strip().upper()
+            account_id = str(row.get("ACCOUNT_NUM") or "").strip().upper()
             if not ACCOUNT_PATTERN.fullmatch(account_id):
                 invalid.append(account_id)
                 continue
             if account_id in seen:
                 raise ValueError(f"Duplicate account ID in CSV: {account_id}")
             seen.add(account_id)
-            rows.append((source_position, account_id))
+            rows.append((
+                source_position,
+                account_id,
+                _source_address(row),
+                _normalized(str(row.get("FULL_STREET_NAME") or "")),
+                _source_city(str(row.get("PROPERTY_CITY") or "")),
+                _source_postal(str(row.get("PROPERTY_ZIPCODE") or "")),
+            ))
 
     if not rows:
         raise ValueError("CSV contains no valid account IDs")
@@ -64,6 +91,7 @@ def _migration_sql() -> str:
         for migration_name in (
             "003_dcad_residential_campaign.sql",
             "006_dcad_outage_circuit.sql",
+            "011_dcad_data_quality_recovery.sql",
         )
     )
 
@@ -89,17 +117,58 @@ def import_targets(path: Path) -> dict[str, object]:
                 """
                 CREATE TEMP TABLE tmp_dcad_residential_targets (
                     source_position integer PRIMARY KEY,
-                    account_id text UNIQUE NOT NULL
+                    account_id text UNIQUE NOT NULL,
+                    source_address text,
+                    street_name text,
+                    source_city text,
+                    source_postal_code text
                 ) ON COMMIT DROP
                 """
             )
             cursor.copy_expert(
                 """
-                COPY tmp_dcad_residential_targets (source_position, account_id)
+                COPY tmp_dcad_residential_targets (
+                    source_position, account_id, source_address, street_name,
+                    source_city, source_postal_code
+                )
                 FROM STDIN WITH (FORMAT csv)
                 """,
                 copy_buffer,
             )
+
+            cursor.execute(
+                """
+                INSERT INTO core.accounts (
+                    account_id, county, address, street_name, city, postal_code
+                )
+                SELECT account_id, 'DALLAS COUNTY', source_address,
+                       street_name, source_city, source_postal_code
+                FROM tmp_dcad_residential_targets
+                ON CONFLICT (account_id) DO UPDATE SET
+                    address = COALESCE(core.accounts.address, EXCLUDED.address),
+                    street_name = COALESCE(core.accounts.street_name, EXCLUDED.street_name),
+                    city = COALESCE(core.accounts.city, EXCLUDED.city),
+                    postal_code = COALESCE(core.accounts.postal_code, EXCLUDED.postal_code)
+                """
+            )
+            accounts_inserted = cursor.rowcount
+
+            cursor.execute(
+                """
+                UPDATE app.dcad_residential_targets target
+                SET source_address = source.source_address,
+                    source_city = source.source_city,
+                    source_postal_code = source.source_postal_code
+                FROM tmp_dcad_residential_targets source
+                WHERE target.account_id = source.account_id
+                  AND (target.source_address, target.source_city, target.source_postal_code)
+                      IS DISTINCT FROM (
+                          source.source_address, source.source_city,
+                          source.source_postal_code
+                      )
+                """
+            )
+            source_metadata_updated = cursor.rowcount
 
             cursor.execute(
                 """
@@ -126,23 +195,15 @@ def import_targets(path: Path) -> dict[str, object]:
                     "valid_targets": target_count,
                     "initial_missing": initial_missing_count,
                     "invalid_rows": invalid_rows,
+                    "source_metadata_updated": source_metadata_updated,
                 }
-
-            cursor.execute(
-                """
-                INSERT INTO core.accounts (account_id, county)
-                SELECT account_id, 'DALLAS COUNTY'
-                FROM tmp_dcad_residential_targets
-                ON CONFLICT (account_id) DO NOTHING
-                """
-            )
-            accounts_inserted = cursor.rowcount
 
             cursor.execute("TRUNCATE TABLE app.dcad_residential_targets")
             cursor.execute(
                 """
                 INSERT INTO app.dcad_residential_targets (
                     account_id, source_position, source_filename, source_sha256,
+                    source_address, source_city, source_postal_code,
                     initial_missing, initial_completed_at,
                     last_completed_cycle, imported_at
                 )
@@ -150,6 +211,9 @@ def import_targets(path: Path) -> dict[str, object]:
                        t.source_position,
                        %s,
                        %s,
+                       t.source_address,
+                       t.source_city,
+                       t.source_postal_code,
                        NOT EXISTS (
                            SELECT 1
                            FROM core.dcad_json_raw r

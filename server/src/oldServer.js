@@ -6,9 +6,11 @@ import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
 import { parsePropertySearch } from "./util/propertySearch.js";
 import {
+  analyzeComparableOutliers,
   analysisWindow,
   applyRecommendationPolicy,
   DEFAULT_COMPARABLE_SCORING,
+  DEFAULT_OUTLIER_ANALYSIS,
   DEFAULT_RECOMMENDATION_POLICY,
   filterComparablesForMarket,
   scoreComparable,
@@ -798,7 +800,10 @@ app.get("/api/search", async (req, res) => {
  * Ranks matched CAD sales using parcel-centroid distance (40%), continuous
  * living-area similarity (30%), and closing-date recency (30%). The default
  * 12-month analysis period excludes older sales unless the caller explicitly
- * expands the period to 24 or 36 months.
+ * expands the period to 24 or 36 months. The response also returns lower-ranked
+ * one-year challengers and a price-per-square-foot outlier audit for sales at
+ * or above the requested score floor. Statistical flags require at least 30
+ * distinct properties plus adequate data and time coverage.
  */
 app.get("/api/sales/recommendations", async (req, res) => {
   try {
@@ -923,6 +928,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
         1095,
       ),
     };
+    const outlierScoreThreshold = parseTunableNumber(
+      req.query.outlier_score_threshold,
+      DEFAULT_OUTLIER_ANALYSIS.scoreThreshold,
+      0,
+      100,
+    );
     if (
       scoringConfig.locationWeight +
         scoringConfig.squareFootageWeight +
@@ -1243,6 +1254,21 @@ app.get("/api/sales/recommendations", async (req, res) => {
         periodMonths: requestedPeriodMonths,
       },
     });
+    const outlierResult = analyzeComparableOutliers(
+      recommendationResult.sales,
+      {
+        ...DEFAULT_OUTLIER_ANALYSIS,
+        scoreThreshold: outlierScoreThreshold,
+      },
+    );
+    const analyzedSales = outlierResult.sales;
+    const recommendedSales = analyzedSales.filter((sale) => sale.recommended);
+    const competitiveSales = analyzedSales.filter(
+      (sale) =>
+        sale.insideAnalysisPeriod &&
+        sale.soldWithinOneYear &&
+        !sale.recommended,
+    );
 
     const marketLabel = !marketBreakdown
       ? "All eligible sales"
@@ -1293,17 +1319,18 @@ app.get("/api/sales/recommendations", async (req, res) => {
         missing_location_count: missingLocationCount,
         unsupported_county_count: unsupportedCountyCount,
         missing_square_footage_count: missingSquareFootageCount,
-        recommended_count: recommendationResult.recommendedSales.length,
-        older_than_two_years_count: recommendationResult.sales.filter(
+        recommended_count: recommendedSales.length,
+        older_than_two_years_count: analyzedSales.filter(
           (sale) => sale.soldOverTwoYears,
         ).length,
-        older_than_one_year_count: recommendationResult.sales.filter(
+        older_than_one_year_count: analyzedSales.filter(
           (sale) => sale.soldOverOneYear,
         ).length,
         recent_high_score_count:
           recommendationResult.policy.recentHighScoreCount,
       },
       recommendation_policy: recommendationResult.policy,
+      statistical_analysis: outlierResult.analysis,
       analysis_period: {
         analysis_as_of: effectiveDateTo,
         date_from: effectiveDateFrom,
@@ -1315,8 +1342,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
         radius_miles: marketBreakdown?.radiusMiles || null,
         label: marketLabel,
       },
-      recommended_sales: recommendationResult.recommendedSales,
-      sales: recommendationResult.sales.slice(0, resultLimit),
+      recommended_sales: recommendedSales,
+      competitive_sales: competitiveSales.slice(0, resultLimit),
+      sales: analyzedSales.slice(0, resultLimit),
     });
   } catch (err) {
     const message = err?.message || "comparable_recommendations_failed";

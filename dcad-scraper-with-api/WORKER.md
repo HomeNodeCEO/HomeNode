@@ -31,6 +31,10 @@ both processes and stops the service if either process exits unexpectedly.
    Missing or ambiguous matches remain in the manual-review queue.
 9. One address-recovery item is processed per 25 normal campaign accounts by
    default, limiting its effect on normal throughput.
+10. A valid property page that temporarily omits market value (including during
+    an active protest) completes the main campaign but enters a separate
+    market-value recovery lane. One value recheck runs per 100 normal accounts
+    by default, and a still-missing value is checked again after seven days.
 
 The residential target table—not `core.accounts.county`—controls selection.
 
@@ -57,6 +61,8 @@ Relevant optional worker settings are:
 - `SCRAPE_RECOVERY_ATTEMPTS` (default `3`)
 - `SCRAPE_RECOVERY_EVERY_ACCOUNTS` (default `25`)
 - `SCRAPE_HEALTH_ACCOUNT_ID` (default `26272500060150000`)
+- `SCRAPE_MARKET_VALUE_RECHECK_DAYS` (default `7`)
+- `SCRAPE_MARKET_VALUE_RECHECK_EVERY_ACCOUNTS` (default `100`)
 
 ## Property-search metadata
 
@@ -166,4 +172,9 @@ SELECT event_type, cycle_number, event_payload, created_at
 FROM app.dcad_campaign_events
 ORDER BY event_id DESC
 LIMIT 20;
+
+SELECT market_value_status, count(*)
+FROM app.dcad_scrape_state
+GROUP BY market_value_status
+ORDER BY market_value_status;
 ```

@@ -12,6 +12,7 @@ from dcad.import_sales import (  # noqa: E402
     BASE_HEADERS,
     _classify_structural_style,
     _migration_sql,
+    _source_record_hash,
     _stable_hash,
     _typed_values,
 )
@@ -112,6 +113,26 @@ class RecordTypeTests(unittest.TestCase):
         self.assertEqual(typed["listing_key"], "NTREIS-KEY-123")
         self.assertEqual(typed["listing_id"], "MLS-123")
 
+    def test_mls_number_is_stable_across_status_changes(self) -> None:
+        active = source_row(
+            ListingId="21298422",
+            MlsStatus="Active",
+            CloseDate="",
+            CurrentPrice="379000",
+        )
+        closed = source_row(
+            ListingId="21298422",
+            MlsStatus="Closed",
+            CloseDate="07/15/2026",
+            CurrentPrice="370000",
+        )
+        self.assertEqual(_source_record_hash(active), _source_record_hash(closed))
+
+    def test_distinct_mls_numbers_preserve_otherwise_identical_rows(self) -> None:
+        first = source_row(ListingId="21298422")
+        second = source_row(ListingId="21298480")
+        self.assertNotEqual(_source_record_hash(first), _source_record_hash(second))
+
 
 class MigrationBundleTests(unittest.TestCase):
     def test_housing_profile_schema_and_verified_overrides_are_reapplied(self) -> None:
@@ -120,6 +141,7 @@ class MigrationBundleTests(unittest.TestCase):
         self.assertIn("core.v_account_housing_profiles", sql)
         self.assertIn("core.sales_source_media", sql)
         self.assertIn("core.v_sales_media_summary", sql)
+        self.assertIn("sales_source_records_listing_id_unique_idx", sql)
         self.assertIn("26262500020080000", sql)
         self.assertIn("26262500010210000", sql)
 

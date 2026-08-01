@@ -102,6 +102,18 @@ def _stable_hash(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _source_record_hash(raw: dict[str, str]) -> str:
+    """Use stable MLS identity, with the legacy row hash as a fallback."""
+
+    listing_key = _clean(raw.get("ListingKey")).upper()
+    if listing_key:
+        return _stable_hash({"source": "NTREIS", "listing_key": listing_key})
+    listing_id = _clean(raw.get("ListingId")).upper()
+    if listing_id:
+        return _stable_hash({"source": "NTREIS", "listing_id": listing_id})
+    return _stable_hash({header: raw[header] for header in BASE_HEADERS})
+
+
 def _classify_structural_style(value: str | None) -> tuple[str | None, str]:
     """Return a concise housing type and an attachment safeguard classification."""
     raw = _clean(value)
@@ -166,9 +178,7 @@ def _load_rows(path: Path) -> list[tuple[int, dict[str, str]]]:
             # Style columns were added after the original import. Keeping the
             # original 23-column hash lets the revised export enrich those rows
             # in place instead of creating a second copy of every prior sale.
-            record_hash = _stable_hash(
-                {header: raw_payload[header] for header in BASE_HEADERS}
-            )
+            record_hash = _source_record_hash(raw_payload)
             if record_hash in hashes:
                 raise ValueError(
                     f"Duplicate source row content at CSV row {source_row_number}"
@@ -361,8 +371,34 @@ def _migration_sql() -> str:
         root / "migrations" / "004_sales_ingestion.sql",
         root / "migrations" / "009_verified_account_housing_profiles.sql",
         root / "migrations" / "010_sales_media.sql",
+        root / "migrations" / "013_sales_listing_identity.sql",
     )
     return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
+
+
+def _existing_hashes_by_listing_id(
+    connection, listing_ids: set[str]
+) -> dict[str, str]:
+    """Reuse legacy hashes for listings imported before MLS identity existed."""
+
+    if not listing_ids:
+        return {}
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT upper(btrim(listing_id)), source_record_hash
+            FROM core.sales_source_records
+            WHERE upper(btrim(listing_id)) = ANY(%s)
+            """,
+            (list(listing_ids),),
+        )
+        rows = cursor.fetchall()
+    hashes: dict[str, str] = {}
+    for listing_id, source_record_hash in rows:
+        if listing_id in hashes and hashes[listing_id] != source_record_hash:
+            raise ValueError(f"Multiple source records use MLS number {listing_id}")
+        hashes[listing_id] = source_record_hash
+    return hashes
 
 
 def _account_map(connection, variants: set[str]) -> dict[str, dict[str, Any]]:
@@ -504,9 +540,7 @@ def _prepare_sales(
             PreparedSale(
                 source_row_number=source_row_number,
                 raw_payload=raw,
-                source_record_hash=_stable_hash(
-                    {header: raw[header] for header in BASE_HEADERS}
-                ),
+                source_record_hash=_source_record_hash(raw),
                 transaction_fingerprint=transaction_fingerprint,
                 typed=typed,
                 parcel_links=links,
@@ -598,6 +632,18 @@ def import_sales(
     try:
         accounts = _account_map(connection, all_variants)
         prepared = _prepare_sales(rows, accounts)
+        existing_hashes = _existing_hashes_by_listing_id(
+            connection,
+            {
+                _clean(row.typed.get("listing_id")).upper()
+                for row in prepared
+                if _clean(row.typed.get("listing_id"))
+            },
+        )
+        for row in prepared:
+            listing_id = _clean(row.typed.get("listing_id")).upper()
+            if listing_id in existing_hashes:
+                row.source_record_hash = existing_hashes[listing_id]
         result = {
             "source_name": source_name,
             "source_filename": path.name,

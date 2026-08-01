@@ -33,9 +33,12 @@ python -m dcad.import_sales "C:\path\to\sales.csv" `
   --source-name "Garland MLS two-year sales"
 ```
 
-The importer is idempotent for the original 23 sales columns. The later
+Rows with `ListingKey` or `ListingId` use that stable NTREIS identity. This
+allows split exports to overlap at price boundaries and lets a later Active to
+Closed status refresh update the same record. Older exports without MLS
+identity retain the original 23-column idempotent hash. The later
 `StructuralStyle` and `ArchitecturalStyle` columns enrich matching rows in
-place rather than duplicating the original import. It rebuilds parcel
+place rather than duplicating the original import. The importer rebuilds parcel
 relationships and reuses the existing canonical sale on subsequent runs.
 
 ## MLS status and housing safeguards

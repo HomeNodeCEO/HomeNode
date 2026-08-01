@@ -15,7 +15,7 @@ from typing import Optional
 from sqlalchemy import Engine, text
 
 from dcad.account_recovery import dcad_site_is_healthy, exact_candidates, search_by_address
-from dcad.data_quality import IncompleteScrapeError
+from dcad.data_quality import CompletenessAssessment, IncompleteScrapeError
 from dcad.fetch import browser
 from dcad.run_once import run_for_account
 from dcad.upsert import get_engine
@@ -56,6 +56,8 @@ class WorkerConfig:
     recovery_attempt_threshold: int
     recovery_every_accounts: int
     recovery_health_account_id: str
+    market_value_recheck_days: int
+    market_value_recheck_every_accounts: int
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -86,6 +88,13 @@ class WorkerConfig:
             recovery_health_account_id=os.getenv(
                 "SCRAPE_HEALTH_ACCOUNT_ID", "26272500060150000"
             ).strip(),
+            market_value_recheck_days=max(
+                1, int(os.getenv("SCRAPE_MARKET_VALUE_RECHECK_DAYS", "7"))
+            ),
+            market_value_recheck_every_accounts=max(
+                1,
+                int(os.getenv("SCRAPE_MARKET_VALUE_RECHECK_EVERY_ACCOUNTS", "100")),
+            ),
         )
 
 
@@ -144,6 +153,7 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
         for migration_name in (
             "003_dcad_residential_campaign.sql",
             "011_dcad_data_quality_recovery.sql",
+            "012_dcad_market_value_rechecks.sql",
         ):
             migration = migrations / migration_name
             conn.execute(text(migration.read_text(encoding="utf-8")))
@@ -280,10 +290,24 @@ def claim_next_account(
     return str(row["account_id"]), int(row["attempts"])
 
 
-def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
+def mark_success(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    assessment: CompletenessAssessment,
+) -> None:
     state = _state_table(config)
     targets = _targets_table(config)
     campaign = _campaign_table(config)
+    market_value_present = assessment.market_value_present
+    quality_status = (
+        "complete" if market_value_present else "complete_missing_market_value"
+    )
+    quality_flags = (
+        []
+        if market_value_present
+        else ["missing_market_value", "possible_active_protest"]
+    )
     sql = text(
         f"""
         UPDATE {state}
@@ -294,26 +318,51 @@ def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
             lease_expires_at = NULL,
             worker_id = NULL,
             last_error = NULL,
-            quality_status = 'complete',
-            quality_flags = ARRAY[]::text[],
+            quality_status = :quality_status,
+            quality_flags = CAST(:quality_flags AS text[]),
             canonical_account_id = :account_id,
+            market_value_status = CASE
+                WHEN :market_value_present THEN 'present'
+                ELSE 'pending'
+            END,
+            market_value_attempts = CASE
+                WHEN :market_value_present THEN 0
+                ELSE market_value_attempts + 1
+            END,
+            market_value_missing_since = CASE
+                WHEN :market_value_present THEN NULL
+                ELSE COALESCE(market_value_missing_since, now())
+            END,
+            market_value_last_checked_at = now(),
+            market_value_next_check_at = CASE
+                WHEN :market_value_present THEN NULL
+                ELSE now() + make_interval(days => :market_value_recheck_days)
+            END,
             updated_at = now()
         WHERE account_id = :account_id
         """
     )
     with engine.begin() as conn:
-        conn.execute(sql, {"account_id": account_id, "refresh_days": config.refresh_days})
+        params = {
+            "account_id": account_id,
+            "refresh_days": config.refresh_days,
+            "quality_status": quality_status,
+            "quality_flags": "{" + ",".join(quality_flags) + "}",
+            "market_value_present": market_value_present,
+            "market_value_recheck_days": config.market_value_recheck_days,
+        }
+        conn.execute(sql, params)
         conn.execute(
             text(
                 f"""
                 UPDATE {_accounts_table(config)}
-                SET data_quality_status = 'complete',
-                    data_quality_flags = ARRAY[]::text[],
+                SET data_quality_status = :quality_status,
+                    data_quality_flags = CAST(:quality_flags AS text[]),
                     canonical_account_id = NULL
                 WHERE account_id = :account_id
                 """
             ),
-            {"account_id": account_id},
+            params,
         )
         conn.execute(
             text(
@@ -359,6 +408,91 @@ def mark_success(engine: Engine, config: WorkerConfig, account_id: str) -> None:
                 """
             ),
             {"campaign_key": config.campaign_key, "account_id": account_id},
+        )
+
+
+def record_market_value_assessment(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    assessment: CompletenessAssessment,
+) -> None:
+    """Track value availability for a canonical ID found by address recovery."""
+
+    market_value_present = assessment.market_value_present
+    quality_status = (
+        "complete" if market_value_present else "complete_missing_market_value"
+    )
+    quality_flags = (
+        []
+        if market_value_present
+        else ["missing_market_value", "possible_active_protest"]
+    )
+    params = {
+        "account_id": account_id,
+        "refresh_days": config.refresh_days,
+        "market_value_present": market_value_present,
+        "market_value_recheck_days": config.market_value_recheck_days,
+        "quality_status": quality_status,
+        "quality_flags": "{" + ",".join(quality_flags) + "}",
+    }
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                INSERT INTO {_state_table(config)} AS existing (
+                    account_id, status, attempts, last_attempt_at,
+                    last_success_at, next_attempt_at, quality_status,
+                    quality_flags, market_value_status,
+                    market_value_attempts, market_value_missing_since,
+                    market_value_last_checked_at, market_value_next_check_at,
+                    updated_at
+                ) VALUES (
+                    :account_id, 'succeeded', 0, now(), now(),
+                    now() + make_interval(days => :refresh_days),
+                    :quality_status, CAST(:quality_flags AS text[]),
+                    CASE WHEN :market_value_present THEN 'present' ELSE 'pending' END,
+                    CASE WHEN :market_value_present THEN 0 ELSE 1 END,
+                    CASE WHEN :market_value_present THEN NULL ELSE now() END,
+                    now(),
+                    CASE
+                        WHEN :market_value_present THEN NULL
+                        ELSE now() + make_interval(days => :market_value_recheck_days)
+                    END,
+                    now()
+                )
+                ON CONFLICT (account_id) DO UPDATE
+                SET quality_status = EXCLUDED.quality_status,
+                    quality_flags = EXCLUDED.quality_flags,
+                    market_value_status = EXCLUDED.market_value_status,
+                    market_value_attempts = CASE
+                        WHEN :market_value_present THEN 0
+                        ELSE existing.market_value_attempts + 1
+                    END,
+                    market_value_missing_since = CASE
+                        WHEN :market_value_present THEN NULL
+                        ELSE COALESCE(
+                            existing.market_value_missing_since,
+                            now()
+                        )
+                    END,
+                    market_value_last_checked_at = now(),
+                    market_value_next_check_at = EXCLUDED.market_value_next_check_at,
+                    updated_at = now()
+                """
+            ),
+            params,
+        )
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_accounts_table(config)}
+                SET data_quality_status = :quality_status,
+                    data_quality_flags = CAST(:quality_flags AS text[])
+                WHERE account_id = :account_id
+                """
+            ),
+            params,
         )
 
 
@@ -437,6 +571,103 @@ def release_claim(engine: Engine, config: WorkerConfig, account_id: str) -> None
                     lease_expires_at = NULL,
                     worker_id = NULL,
                     next_attempt_at = now(),
+                    updated_at = now()
+                WHERE account_id = :account_id
+                """
+            ),
+            {"account_id": account_id},
+        )
+
+
+def claim_next_market_value_recheck(
+    engine: Engine,
+    config: WorkerConfig,
+    worker_id: str,
+) -> Optional[tuple[str, int]]:
+    state = _state_table(config)
+    sql = text(
+        f"""
+        WITH candidate AS (
+            SELECT s.account_id
+            FROM {state} s
+            WHERE s.market_value_status IN ('pending', 'retry')
+              AND COALESCE(s.market_value_next_check_at, now()) <= now()
+              AND (s.lease_expires_at IS NULL OR s.lease_expires_at <= now())
+            ORDER BY s.market_value_next_check_at NULLS FIRST, s.account_id
+            FOR UPDATE OF s SKIP LOCKED
+            LIMIT 1
+        )
+        UPDATE {state} s
+        SET market_value_status = 'leased',
+            lease_expires_at = now() + make_interval(mins => :lease_minutes),
+            worker_id = :worker_id,
+            updated_at = now()
+        FROM candidate c
+        WHERE s.account_id = c.account_id
+        RETURNING s.account_id, s.market_value_attempts
+        """
+    )
+    with engine.begin() as conn:
+        row = conn.execute(
+            sql,
+            {
+                "lease_minutes": config.lease_minutes,
+                "worker_id": worker_id,
+            },
+        ).mappings().first()
+    if row is None:
+        return None
+    return str(row["account_id"]), int(row["market_value_attempts"])
+
+
+def mark_market_value_recheck_failure(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    prior_attempts: int,
+    error: BaseException,
+) -> int:
+    delay = retry_delay_seconds(config, prior_attempts)
+    message = f"{error.__class__.__name__}: {error}"[:2000]
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_state_table(config)}
+                SET market_value_status = 'retry',
+                    market_value_attempts = market_value_attempts + 1,
+                    market_value_last_checked_at = now(),
+                    market_value_next_check_at = now() + make_interval(secs => :delay_seconds),
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = :last_error,
+                    quality_status = 'complete_missing_market_value',
+                    quality_flags = ARRAY['missing_market_value', 'possible_active_protest'],
+                    updated_at = now()
+                WHERE account_id = :account_id
+                """
+            ),
+            {
+                "account_id": account_id,
+                "delay_seconds": delay,
+                "last_error": message,
+            },
+        )
+    return delay
+
+
+def release_market_value_claim(
+    engine: Engine, config: WorkerConfig, account_id: str
+) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_state_table(config)}
+                SET market_value_status = 'pending',
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    market_value_next_check_at = now(),
                     updated_at = now()
                 WHERE account_id = :account_id
                 """
@@ -901,7 +1132,7 @@ def process_reconciliation(
         )
         return "needs_review"
 
-    run_for_account(selected.account_id)
+    assessment = run_for_account(selected.account_id)
     complete_reconciliation(
         engine,
         config,
@@ -909,6 +1140,9 @@ def process_reconciliation(
         selected.account_id,
         selected,
         candidate_postal_code,
+    )
+    record_market_value_assessment(
+        engine, config, selected.account_id, assessment
     )
     log.warning(
         "DCAD account reconciled source_account_id=%s canonical_account_id=%s address=%s",
@@ -1021,6 +1255,19 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
                 """
             )
         ).mappings().one()
+        market_value_quality = conn.execute(
+            text(
+                f"""
+                SELECT count(*) FILTER (
+                           WHERE market_value_status IN ('pending', 'retry', 'leased')
+                       ) AS market_value_pending,
+                       count(*) FILTER (
+                           WHERE market_value_status = 'present'
+                       ) AS market_value_present
+                FROM {state}
+                """
+            )
+        ).mappings().one()
 
     result = dict(row)
     result["loaded"] = True
@@ -1028,7 +1275,7 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
         result["cycle_completed"] = 0
         result["cycle_remaining"] = result["total_valid_targets"]
     result["latest_event"] = dict(event) if event else None
-    result["data_quality"] = dict(quality)
+    result["data_quality"] = {**dict(quality), **dict(market_value_quality)}
     return result
 
 
@@ -1210,6 +1457,41 @@ def process_reconciliation_claim_safely(
         )
 
 
+def process_market_value_recheck_safely(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    prior_attempts: int,
+) -> None:
+    if _stop_requested:
+        release_market_value_claim(engine, config, account_id)
+        return
+    try:
+        assessment = run_for_account(account_id)
+    except Exception as error:
+        delay = mark_market_value_recheck_failure(
+            engine, config, account_id, prior_attempts, error
+        )
+        log.error(
+            "Market value recheck failed account_id=%s retry_in_seconds=%d error=%s",
+            account_id,
+            delay,
+            error,
+            exc_info=True,
+        )
+        return
+
+    mark_success(engine, config, account_id, assessment)
+    if assessment.market_value_present:
+        log.info("Market value recheck resolved account_id=%s", account_id)
+    else:
+        log.info(
+            "Market value still omitted account_id=%s next_check_days=%d",
+            account_id,
+            config.market_value_recheck_days,
+        )
+
+
 def run_worker(config: WorkerConfig, once: bool = False) -> int:
     if not os.getenv("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL is not set")
@@ -1238,6 +1520,7 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
     successes = 0
     failures = 0
     processed_since_recovery = 0 if once else config.recovery_every_accounts
+    processed_since_market_value = 0
     while not _stop_requested:
         if not once and processed_since_recovery >= config.recovery_every_accounts:
             recovery_claim = claim_next_reconciliation(engine, config, worker_id)
@@ -1247,11 +1530,38 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
                 _sleep(config.delay_seconds)
                 continue
 
+        if (
+            not once
+            and processed_since_market_value
+            >= config.market_value_recheck_every_accounts
+        ):
+            market_value_claim = claim_next_market_value_recheck(
+                engine, config, worker_id
+            )
+            if market_value_claim is not None:
+                process_market_value_recheck_safely(
+                    engine, config, *market_value_claim
+                )
+                processed_since_market_value = 0
+                _sleep(config.delay_seconds)
+                continue
+
         claim = claim_next_account(engine, config, worker_id)
         if claim is None:
             recovery_claim = claim_next_reconciliation(engine, config, worker_id)
             if recovery_claim is not None:
                 process_reconciliation_claim_safely(engine, config, recovery_claim)
+                if once:
+                    return 0
+                _sleep(config.delay_seconds)
+                continue
+            market_value_claim = claim_next_market_value_recheck(
+                engine, config, worker_id
+            )
+            if market_value_claim is not None:
+                process_market_value_recheck_safely(
+                    engine, config, *market_value_claim
+                )
                 if once:
                     return 0
                 _sleep(config.delay_seconds)
@@ -1285,7 +1595,7 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
 
         started = time.monotonic()
         try:
-            run_for_account(account_id)
+            assessment = run_for_account(account_id)
         except Exception as error:
             failures += 1
             delay = mark_failure(engine, config, account_id, prior_attempts, error)
@@ -1315,7 +1625,7 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
             )
         else:
             successes += 1
-            mark_success(engine, config, account_id)
+            mark_success(engine, config, account_id, assessment)
             log.info(
                 "Scrape succeeded account_id=%s duration_seconds=%.2f totals_success=%d totals_failed=%d",
                 account_id,
@@ -1325,6 +1635,7 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
             )
 
         processed_since_recovery += 1
+        processed_since_market_value += 1
 
         if once:
             break

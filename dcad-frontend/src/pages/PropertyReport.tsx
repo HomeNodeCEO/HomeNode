@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
+import { getAccountPhotos } from "@/lib/api";
 
 type DcadOwner = {
   owner_name?: string;
@@ -775,21 +776,41 @@ export default function PropertyReport() {
   const [detail, setDetail] = useState<DcadDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const hasAutoImported = useRef(false);
+  const loadRequestId = useRef(0);
 
   async function importFromDatabase() {
     if (!account) {
       window.alert("Enter an Account ID first.");
       return;
     }
+    const requestedAccount = account.trim();
+    const requestId = ++loadRequestId.current;
     setLoading(true);
     try {
-      const response = await fetchDetail(account);
+      const response = await fetchDetail(requestedAccount);
+      if (requestId !== loadRequestId.current) return;
       setDetail(response?.detail ?? null);
+
+      // The account payload is complete without MLS media. Load any future
+      // photo gallery in the background and never hold back the report.
+      void getAccountPhotos(requestedAccount)
+        .then((photoResponse) => {
+          if (requestId !== loadRequestId.current) return;
+          const photos = photoResponse?.photos
+            ?.map((photo) => photo?.media_url)
+            .filter((url): url is string => Boolean(url?.trim())) || [];
+          if (!photos.length) return;
+          setDetail((current) => (current ? { ...current, photos } : current));
+        })
+        .catch((error) => {
+          console.warn("Property photos were unavailable", error);
+        });
     } catch (error: unknown) {
+      if (requestId !== loadRequestId.current) return;
       console.error(error);
       window.alert(error instanceof Error ? error.message : "Import failed");
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   }
 

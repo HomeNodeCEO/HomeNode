@@ -34,6 +34,7 @@ import {
   getMarketContext,
   marketConditionsErrorStatus,
 } from "./services/marketConditions.js";
+import { getAccountSalesHistory } from "./services/accountSalesHistory.js";
 
 const app = express();
 app.use(express.json());
@@ -259,6 +260,11 @@ app.get("/api/accounts/:id", async (req, res) => {
     const { rows: accRows } = await pool.query(accountSql, [canonicalId]);
     if (!accRows.length) return res.status(404).json({ error: "not_found" });
 
+    // Sales history is core account data. Start its indexed lookup immediately
+    // and include it in this response instead of making the frontend wait on
+    // the general-purpose /api/sales view.
+    const salesHistoryPromise = getAccountSalesHistory(pool, canonicalId);
+
     const impSql = `
       SELECT
         construction_type,
@@ -406,6 +412,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       exemptions_summary: exRows,
       homestead_yes: homesteadYes,
       land_detail: landRows,
+      sales_history: await salesHistoryPromise,
       // Secondary improvements (all rows for account)
       additional_improvements: []
     };

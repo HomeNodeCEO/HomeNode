@@ -6,8 +6,6 @@
 
 import {
   getAccount as getAccountDb,
-  getAccountPhotos,
-  searchSales,
 } from './api';
 
 // Health endpoint (proxied to the app server)
@@ -49,17 +47,8 @@ export const search = searchByAddress;
 export async function fetchDetail(accountId: string, countyId = 1) {
   // Database-backed detail only (no scraper). Map DB result to the legacy detail shape
   const normalizedAccountId = (accountId || '').trim();
-  const [data, sales, photoResponse] = await Promise.all([
-    getAccountDb(normalizedAccountId),
-    searchSales({
-      accountId: normalizedAccountId,
-      matched: true,
-      recordType: 'closed_sale',
-      limit: 20,
-      offset: 0,
-    }).catch(() => []),
-    getAccountPhotos(normalizedAccountId).catch(() => null),
-  ]);
+  const data = await getAccountDb(normalizedAccountId);
+  const sales = data?.sales_history || [];
   const acc = data?.account || ({} as any);
   const imp = (data?.primary_improvements as any) || {};
   const housingProfile = (data as any)?.housing_profile || null;
@@ -157,9 +146,9 @@ export async function fetchDetail(accountId: string, countyId = 1) {
         mls_status: sale?.mls_status ?? undefined,
         record_type: sale?.record_type ?? undefined,
       })),
-    photos: photoResponse?.photos
-      ?.map((photo) => photo?.media_url)
-      .filter((url): url is string => Boolean(url?.trim())) || [],
+    // Photos are loaded independently by the report page and never delay the
+    // core property response.
+    photos: [],
   } as any;
 
   // Populate exemptions map (latest year) so UI can detect Homestead

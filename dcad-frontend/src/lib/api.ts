@@ -72,6 +72,17 @@ export interface AccountRow {
 
 export interface AccountDetail {
   account: AccountRow;
+  sales_history?: Array<{
+    sale_id: string | number | null;
+    source_record_id: string | number | null;
+    listing_id: string | null;
+    closing_date: string | null;
+    sale_price: string | number | null;
+    days_on_market: number | null;
+    buyer_financing: string | null;
+    mls_status: string | null;
+    record_type: 'closed_sale';
+  }>;
   housing_profile: HousingProfile | null;
   primary_improvements: {
     construction_type?: string | null;

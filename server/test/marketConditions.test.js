@@ -248,3 +248,39 @@ test("market recommendation combines mean and median and applies one-percent thr
   ]);
   assert.equal(decreasing.conclusion, "decreasing");
 });
+
+test("appraiser-defined area receives sixty percent of market reconciliation", () => {
+  const analysis = (key, change, score) => ({
+    market: { key, label: key.toUpperCase() },
+    population: { eligible_sale_count: 100 },
+    statistics: {
+      annualized_change_percent: change,
+      reliability_score: score,
+      sample_sufficient: true,
+      composite_cod: 10,
+      composite_cv: 12,
+    },
+  });
+  const result = buildMarketTrendRecommendation([
+    analysis("custom", 10, 50),
+    analysis("city", 0, 75),
+    analysis("zip", 0, 25),
+  ]);
+  assert.equal(result.weighting_method, "appraiser_defined_area_60_percent");
+  assert.equal(result.recommended_change_percent, 6);
+  assert.equal(
+    result.ranked_studies.find((study) => study.key === "custom")
+      .reconciliation_weight_percent,
+    60,
+  );
+  assert.equal(
+    result.ranked_studies.find((study) => study.key === "city")
+      .reconciliation_weight_percent,
+    30,
+  );
+  assert.equal(
+    result.ranked_studies.find((study) => study.key === "zip")
+      .reconciliation_weight_percent,
+    10,
+  );
+});

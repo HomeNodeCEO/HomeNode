@@ -778,6 +778,13 @@ function RecommendedDetermination({
         within ±{numberText(recommendation.stable_threshold_percent, 1)}% is
         classified as stable. The appraiser may override this recommendation.
       </p>
+      {recommendation.weighting_method === 'appraiser_defined_area_60_percent' ? (
+        <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-900">
+          The appraiser-defined area receives 60% of the reconciliation weight.
+          The remaining 40% is divided among the other studies according to their
+          reliability scores.
+        </div>
+      ) : null}
       {recommendation.ranked_studies.length > 0 && (
         <div className="mt-3 grid gap-2 md:grid-cols-3">
           {recommendation.ranked_studies.slice(0, 3).map((study) => (
@@ -793,6 +800,11 @@ function RecommendedDetermination({
                 {study.sale_count.toLocaleString()} sales ·{' '}
                 {signedPercentText(study.annualized_change_percent)}
               </div>
+              {study.reconciliation_weight_percent != null ? (
+                <div className="mt-1 font-semibold text-indigo-700">
+                  {numberText(study.reconciliation_weight_percent, 1)}% reconciliation weight
+                </div>
+              ) : null}
             </div>
           ))}
         </div>

@@ -63,6 +63,46 @@ function yearsBefore(value, years) {
   return result;
 }
 
+/**
+ * Reduce inconsistent CAD/MLS housing labels to the broad physical types that
+ * matter for comparable eligibility. Unknown data is intentionally not treated
+ * as a mismatch so incomplete MLS records remain available for review.
+ */
+export function normalizeComparableHousingType({
+  housingType,
+  attachmentType,
+  structuralStyle,
+} = {}) {
+  const text = [housingType, attachmentType, structuralStyle]
+    .filter((value) => value !== null && value !== undefined)
+    .join(" ")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  if (!text) return "unknown";
+  if (/\b(condo|minium)\b/.test(text)) return "condominium";
+  if (/\b(townhome|townhouse|town house)\b/.test(text)) return "townhouse";
+  if (/\b(duplex|triplex|fourplex|quadruplex|multi family|multifamily)\b/.test(text)) {
+    return "multi_family";
+  }
+  if (/\b(manufactured|mobile home)\b/.test(text)) return "manufactured";
+  if (/\b(detached|single family|singlefamily)\b/.test(text)) return "detached";
+  if (/\b(attached)\b/.test(text)) return "attached_other";
+  return "unknown";
+}
+
+export function compareHousingTypes(subject, comparable) {
+  const subjectHousingType = normalizeComparableHousingType(subject);
+  const comparableHousingType = normalizeComparableHousingType(comparable);
+  const known = subjectHousingType !== "unknown" && comparableHousingType !== "unknown";
+  return {
+    subjectHousingType,
+    comparableHousingType,
+    housingTypeKnown: known,
+    housingTypeCompatible: known ? subjectHousingType === comparableHousingType : true,
+  };
+}
+
 function mean(values) {
   if (!values.length) return null;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
@@ -476,7 +516,7 @@ export function applyRecommendationPolicy(
     })(),
   }));
   const eligibleSales = classifiedSales.filter(
-    (sale) => sale.insideAnalysisPeriod,
+    (sale) => sale.insideAnalysisPeriod && sale.housingTypeCompatible !== false,
   );
   const recommendedSales = eligibleSales.slice(
     0,
@@ -495,6 +535,8 @@ export function applyRecommendationPolicy(
       recommendationExclusionReason:
         !sale.insideAnalysisPeriod
           ? "outside_analysis_period"
+          : sale.housingTypeCompatible === false
+            ? "housing_type_mismatch"
           : null,
     };
   });
@@ -531,6 +573,9 @@ export function applyRecommendationPolicy(
       recentHighScoreCount,
       scoreAboveThresholdCount,
       olderSaleExclusionApplied: periodMonths === 12,
+      housingTypeMismatchCount: sales.filter(
+        (sale) => sale.housingTypeCompatible === false,
+      ).length,
     },
   };
 }
@@ -563,6 +608,12 @@ export function scoreComparable(
     comparableSquareFeet,
     closingDate,
     referenceDate = new Date(),
+    subjectHousingType,
+    subjectAttachmentType,
+    subjectStructuralStyle,
+    comparableHousingType,
+    comparableAttachmentType,
+    comparableStructuralStyle,
   },
   config = DEFAULT_COMPARABLE_SCORING,
 ) {
@@ -597,6 +648,18 @@ export function scoreComparable(
     saleAge.saleAgeDays,
     config.salesDateScaleDays,
   );
+  const housingComparison = compareHousingTypes(
+    {
+      housingType: subjectHousingType,
+      attachmentType: subjectAttachmentType,
+      structuralStyle: subjectStructuralStyle,
+    },
+    {
+      housingType: comparableHousingType,
+      attachmentType: comparableAttachmentType,
+      structuralStyle: comparableStructuralStyle,
+    },
+  );
   const totalWeight =
     config.locationWeight +
     config.squareFootageWeight +
@@ -611,12 +674,13 @@ export function scoreComparable(
     return null;
   }
 
-  const comparableScore =
-    (
-      locationScore * config.locationWeight +
-      squareFootageScore * config.squareFootageWeight +
-      salesDateScore * config.salesDateWeight
-    ) / totalWeight;
+  const comparableScore = housingComparison.housingTypeCompatible
+    ? (
+        locationScore * config.locationWeight +
+        squareFootageScore * config.squareFootageWeight +
+        salesDateScore * config.salesDateWeight
+      ) / totalWeight
+    : 0;
 
   return {
     comparableScore: round(comparableScore, 1),
@@ -628,6 +692,8 @@ export function scoreComparable(
     soldWithinOneYear: saleAge.soldWithinOneYear,
     soldOverOneYear: saleAge.soldOverOneYear,
     soldOverTwoYears: saleAge.soldOverTwoYears,
+    ...housingComparison,
+    housingTypeScore: housingComparison.housingTypeCompatible ? 100 : 0,
     squareFootageDifference: round(squareFootageDifference, 0),
     squareFootageDifferenceRatio: round(squareFootageDifferenceRatio, 4),
     squareFootageDifferencePercent: round(squareFootageDifferenceRatio * 100, 1),

@@ -139,6 +139,15 @@ const propertyEnrichmentReady = ensurePropertyEnrichmentSchema(pool)
     );
   });
 
+const REPORT_MANUAL_SECTION_KEYS = new Set([
+  "report.subject_identification",
+  "report.exemptions",
+  "report.sales_history",
+  "report.property_characteristics",
+  "report.land_details",
+  "report.appraisal_values",
+]);
+
 const salesReconciliationReady = ensureSalesReconciliationSchema(pool)
   .then(() => console.log("[init] sales reconciliation schema ensured"))
   .catch((error) => {
@@ -318,6 +327,25 @@ app.get("/api/accounts/:id", async (req, res) => {
     // and include it in this response instead of making the frontend wait on
     // the general-purpose /api/sales view.
     const salesHistoryPromise = getAccountSalesHistory(pool, canonicalId);
+    const reportManualValuesPromise = (async () => {
+      await propertyEnrichmentReady;
+      const { rows } = await pool.query(
+        `SELECT attribute_key, attribute_value, revision, reviewer, notes, updated_at
+         FROM app.property_attribute_manual_values
+         WHERE account_id = $1 AND attribute_key LIKE 'report.%'
+         ORDER BY attribute_key`,
+        [canonicalId],
+      );
+      return Object.fromEntries(
+        rows.map((row) => [row.attribute_key, {
+          value: row.attribute_value,
+          revision: Number(row.revision || 0),
+          reviewer: row.reviewer,
+          notes: row.notes,
+          updated_at: row.updated_at,
+        }]),
+      );
+    })();
 
     const impSql = `
       SELECT
@@ -467,6 +495,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       homestead_yes: homesteadYes,
       land_detail: landRows,
       sales_history: await salesHistoryPromise,
+      report_manual_values: await reportManualValuesPromise,
       // Secondary improvements (all rows for account)
       additional_improvements: []
     };
@@ -689,6 +718,148 @@ app.patch("/api/accounts/:id/housing-profile", async (req, res) => {
     await client.query("ROLLBACK").catch(() => {});
     console.error("/api/accounts/:id/housing-profile failed", error);
     return res.status(500).json({ error: "housing_profile_update_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/**
+ * Explicitly save user-verified Property Report section overrides. Source CAD
+ * and MLS rows remain immutable; every save is upserted and appended to the
+ * audit history. This endpoint intentionally supports Dallas and non-Dallas
+ * accounts because report editing is separate from the enrichment pipeline.
+ */
+app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  const sections = req.body?.sections;
+  if (!sections || typeof sections !== "object" || Array.isArray(sections)) {
+    return res.status(400).json({ error: "invalid_report_sections" });
+  }
+  const entries = Object.entries(sections);
+  if (
+    !entries.length ||
+    entries.length > REPORT_MANUAL_SECTION_KEYS.size ||
+    entries.some(([key, value]) =>
+      !REPORT_MANUAL_SECTION_KEYS.has(key) || value === undefined
+    )
+  ) {
+    return res.status(400).json({ error: "invalid_report_sections" });
+  }
+  const serializedSize = Buffer.byteLength(JSON.stringify(sections), "utf8");
+  if (serializedSize > 250_000) {
+    return res.status(413).json({ error: "report_sections_too_large" });
+  }
+
+  const reviewer = String(req.body?.reviewer || "HomeNode editor")
+    .trim()
+    .slice(0, 200) || "HomeNode editor";
+  const notes = String(req.body?.notes || "Property Report manual edit")
+    .trim()
+    .slice(0, 4000) || null;
+  let housingUpdate = null;
+  const characteristics = sections["report.property_characteristics"];
+  if (
+    characteristics?.housing_profile?.housing_type &&
+    typeof characteristics.housing_profile === "object"
+  ) {
+    try {
+      housingUpdate = normalizeHousingProfileUpdate({
+        ...characteristics.housing_profile,
+        notes,
+      });
+    } catch (error) {
+      return res.status(400).json({
+        error: error?.message || "invalid_housing_profile",
+      });
+    }
+  }
+  const client = await pool.connect();
+  try {
+    await propertyEnrichmentReady;
+    await client.query("BEGIN");
+    const canonicalId = await resolveCanonicalAccountId(client, requestedId);
+    const accountResult = await client.query(
+      "SELECT 1 FROM core.accounts WHERE account_id = $1",
+      [canonicalId],
+    );
+    if (!accountResult.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "account_not_found" });
+    }
+
+    if (housingUpdate) {
+      await client.query(
+        `INSERT INTO core.account_housing_profiles (
+           account_id, structural_style, housing_type, attachment_type,
+           architectural_style, source_name, observed_at, confidence, notes
+         ) VALUES ($1,$2,$3,$4,$5,'HomeNode Property Report manual edit',now(),1.000,$6)
+         ON CONFLICT (account_id) DO UPDATE SET
+           structural_style = EXCLUDED.structural_style,
+           housing_type = EXCLUDED.housing_type,
+           attachment_type = EXCLUDED.attachment_type,
+           architectural_style = EXCLUDED.architectural_style,
+           source_name = EXCLUDED.source_name,
+           observed_at = EXCLUDED.observed_at,
+           confidence = EXCLUDED.confidence,
+           notes = EXCLUDED.notes,
+           updated_at = now()`,
+        [
+          canonicalId,
+          housingUpdate.structuralStyle,
+          housingUpdate.housingType,
+          housingUpdate.attachmentType,
+          housingUpdate.architecturalStyle,
+          housingUpdate.notes,
+        ],
+      );
+    }
+
+    const saved = {};
+    for (const [attributeKey, attributeValue] of entries) {
+      const { rows: currentRows } = await client.query(
+        `SELECT revision FROM app.property_attribute_manual_values
+         WHERE account_id = $1 AND attribute_key = $2 FOR UPDATE`,
+        [canonicalId, attributeKey],
+      );
+      const revision = Number(currentRows[0]?.revision || 0) + 1;
+      const valueJson = JSON.stringify(attributeValue);
+      const { rows } = await client.query(
+        `INSERT INTO app.property_attribute_manual_values (
+           account_id, attribute_key, attribute_value, notes, reviewer, revision
+         ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)
+         ON CONFLICT (account_id, attribute_key) DO UPDATE SET
+           attribute_value = EXCLUDED.attribute_value,
+           notes = EXCLUDED.notes,
+           reviewer = EXCLUDED.reviewer,
+           revision = EXCLUDED.revision,
+           updated_at = now()
+         RETURNING attribute_key, attribute_value, revision, reviewer, notes, updated_at`,
+        [canonicalId, attributeKey, valueJson, notes, reviewer, revision],
+      );
+      await client.query(
+        `INSERT INTO app.property_attribute_manual_history (
+           account_id, attribute_key, attribute_value, notes, reviewer, revision
+         ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
+        [canonicalId, attributeKey, valueJson, notes, reviewer, revision],
+      );
+      saved[attributeKey] = {
+        value: rows[0].attribute_value,
+        revision: Number(rows[0].revision),
+        reviewer: rows[0].reviewer,
+        notes: rows[0].notes,
+        updated_at: rows[0].updated_at,
+      };
+    }
+    await client.query("COMMIT");
+    return res.json({ ok: true, account_id: canonicalId, manual_values: saved });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("/api/accounts/:id/report-manual-values failed", error);
+    return res.status(500).json({ error: "report_manual_values_update_failed" });
   } finally {
     client.release();
   }
@@ -1769,6 +1940,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
               ''
             ) AS postal_code,
             account.neighborhood_code,
+            profile.structural_style,
+            profile.housing_type,
+            profile.attachment_type,
             COALESCE(improvement.living_area_sqft, improvement.total_living_area) AS living_area_sqft,
             location.latitude,
             location.longitude,
@@ -1782,6 +1956,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
           FROM core.accounts account
           LEFT JOIN core.primary_improvements improvement
             ON improvement.account_id = account.account_id
+          LEFT JOIN core.v_account_housing_profiles profile
+            ON profile.account_id = account.account_id
           LEFT JOIN core.account_locations location
             ON location.account_id = account.account_id
           WHERE account.account_id = $1
@@ -2017,6 +2193,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
           comparableSquareFeet,
           closingDate: candidate.closing_date,
           referenceDate: effectiveDateTo,
+          subjectHousingType: subject.housing_type,
+          subjectAttachmentType: subject.attachment_type,
+          subjectStructuralStyle: subject.structural_style,
+          comparableHousingType: candidate.housing_type,
+          comparableAttachmentType: candidate.attachment_type,
+          comparableStructuralStyle: candidate.structural_style,
         },
         scoringConfig,
       );
@@ -2070,6 +2252,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
       (sale) =>
         sale.insideAnalysisPeriod &&
         sale.soldWithinOneYear &&
+        sale.housingTypeCompatible !== false &&
         !sale.recommended,
     );
 
@@ -2089,6 +2272,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
         county: subject.county,
         postal_code: subject.postal_code,
         neighborhood_code: subject.neighborhood_code,
+        structural_style: subject.structural_style,
+        housing_type: subject.housing_type,
+        attachment_type: subject.attachment_type,
         living_area_sqft: Number(subject.living_area_sqft),
         latitude: Number(subject.latitude),
         longitude: Number(subject.longitude),
@@ -2122,6 +2308,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
         missing_location_count: missingLocationCount,
         unsupported_county_count: unsupportedCountyCount,
         missing_square_footage_count: missingSquareFootageCount,
+        housing_type_mismatch_count:
+          recommendationResult.policy.housingTypeMismatchCount,
         recommended_count: recommendedSales.length,
         older_than_two_years_count: analyzedSales.filter(
           (sale) => sale.soldOverTwoYears,

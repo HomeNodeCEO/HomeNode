@@ -106,6 +106,64 @@ test("location, living area, and sale date contribute forty, thirty, and thirty 
   assert.equal(score.comparableScore, 85);
 });
 
+test("a known housing-type mismatch receives zero score and cannot enter the top six", () => {
+  const mismatch = scoreComparable({
+    subjectLatitude: 32.947,
+    subjectLongitude: -96.656,
+    comparableLatitude: 32.947,
+    comparableLongitude: -96.656,
+    subjectSquareFeet: 1500,
+    comparableSquareFeet: 1500,
+    subjectHousingType: "Single Family Residence",
+    subjectAttachmentType: "detached",
+    comparableHousingType: "Condominium",
+    comparableAttachmentType: "attached",
+    closingDate: "2026-07-24",
+    referenceDate: "2026-07-24",
+  });
+  assert.equal(mismatch.comparableScore, 0);
+  assert.equal(mismatch.housingTypeScore, 0);
+  assert.equal(mismatch.housingTypeCompatible, false);
+
+  const result = applyRecommendationPolicy([
+    { source_record_id: "condo", closing_date: "2026-07-24", ...mismatch },
+    {
+      source_record_id: "detached",
+      closing_date: "2026-07-24",
+      comparableScore: 80,
+      housingTypeCompatible: true,
+    },
+  ], { referenceDate: "2026-07-24" });
+  assert.deepEqual(
+    result.recommendedSales.map((sale) => sale.source_record_id),
+    ["detached"],
+  );
+  assert.equal(
+    result.sales.find((sale) => sale.source_record_id === "condo")
+      .recommendationExclusionReason,
+    "housing_type_mismatch",
+  );
+  assert.equal(result.policy.housingTypeMismatchCount, 1);
+});
+
+test("unknown housing classifications remain eligible but explicit matching types score normally", () => {
+  const unknown = scoreComparable({
+    subjectLatitude: 32.947,
+    subjectLongitude: -96.656,
+    comparableLatitude: 32.947,
+    comparableLongitude: -96.656,
+    subjectSquareFeet: 1500,
+    comparableSquareFeet: 1500,
+    subjectHousingType: "Single Family Detached",
+    comparableHousingType: null,
+    closingDate: "2026-07-24",
+    referenceDate: "2026-07-24",
+  });
+  assert.equal(unknown.housingTypeKnown, false);
+  assert.equal(unknown.housingTypeCompatible, true);
+  assert.equal(unknown.comparableScore, 100);
+});
+
 test("a one-year-old sale receives half of the sale-date component", () => {
   const score = scoreComparable({
     subjectLatitude: 32.947,

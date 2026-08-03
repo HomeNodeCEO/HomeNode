@@ -72,6 +72,7 @@ export interface AccountRow {
 
 export interface AccountDetail {
   account: AccountRow;
+  report_manual_values?: Partial<Record<ReportManualSectionKey, ReportManualValue>>;
   sales_history?: Array<{
     sale_id: string | number | null;
     source_record_id: string | number | null;
@@ -131,6 +132,22 @@ export interface SaleParcelLink {
   account_id?: string | null;
   match_method: string;
   is_resolved: boolean;
+}
+
+export type ReportManualSectionKey =
+  | 'report.subject_identification'
+  | 'report.exemptions'
+  | 'report.sales_history'
+  | 'report.property_characteristics'
+  | 'report.land_details'
+  | 'report.appraisal_values';
+
+export interface ReportManualValue {
+  value: unknown;
+  revision: number;
+  reviewer: string | null;
+  notes: string | null;
+  updated_at: string;
 }
 
 export interface SalePhoto {
@@ -246,6 +263,11 @@ export interface SaleRow {
   locationScore?: number;
   squareFootageScore?: number;
   salesDateScore?: number;
+  housingTypeScore?: number;
+  subjectHousingType?: string;
+  comparableHousingType?: string;
+  housingTypeKnown?: boolean;
+  housingTypeCompatible?: boolean;
   squareFootageDifference?: number;
   squareFootageDifferenceRatio?: number;
   squareFootageDifferencePercent?: number;
@@ -707,6 +729,8 @@ export interface MarketConditionsResponse {
   analyses: MarketConditionsAnalysis[];
   recommendation: {
     methodology_version: number;
+    weighting_method?: 'appraiser_defined_area_60_percent' | 'mean_median_reconciliation';
+    appraiser_defined_area_weight_percent?: number;
     stable_threshold_percent: number;
     conclusion:
       | 'increasing'
@@ -721,6 +745,7 @@ export interface MarketConditionsResponse {
       key: MarketConditionsAreaKey;
       label: string;
       reliability_score: number | null;
+      reconciliation_weight_percent?: number | null;
       sale_count: number;
       sample_sufficient: boolean;
       annualized_change_percent: number | null;
@@ -903,6 +928,28 @@ export async function updateAccountHousingProfile(
       'x-homenode-editor-key': editorKey,
     },
     body: JSON.stringify(update),
+  });
+}
+
+/** Save one or more explicitly edited Property Report sections with audit history. */
+export async function updatePropertyReportSections(
+  accountId: string,
+  sections: Partial<Record<ReportManualSectionKey, unknown>>,
+  editorKey: string,
+): Promise<{
+  ok: true;
+  account_id: string;
+  manual_values: Partial<Record<ReportManualSectionKey, ReportManualValue>>;
+}> {
+  const id = (accountId || '').trim();
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/report-manual-values`);
+  return fetchJSON(url, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify({ sections }),
   });
 }
 

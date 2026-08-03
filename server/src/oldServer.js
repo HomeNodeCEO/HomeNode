@@ -46,6 +46,11 @@ import {
   normalizeEffectiveDate,
 } from "./util/appraisalRatings.js";
 import { ensurePropertyEnrichmentSchema } from "./services/propertyEnrichment.js";
+import {
+  ensureSalesReconciliationSchema,
+  listSalesReconciliationQueue,
+  reconcileSalesSourceRecord,
+} from "./services/salesReconciliation.js";
 import { TrestleClient } from "./services/trestleClient.js";
 import {
   countyGisConfiguration,
@@ -130,6 +135,15 @@ const propertyEnrichmentReady = ensurePropertyEnrichmentSchema(pool)
   .catch((error) => {
     console.warn(
       "[init] ensurePropertyEnrichmentSchema failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+const salesReconciliationReady = ensureSalesReconciliationSchema(pool)
+  .then(() => console.log("[init] sales reconciliation schema ensured"))
+  .catch((error) => {
+    console.warn(
+      "[init] ensureSalesReconciliationSchema failed (will retry on request)",
       error?.message || error,
     );
   });
@@ -692,6 +706,66 @@ function requireEditor(req, res) {
   }
   return true;
 }
+
+/** Unmatched closed sales remain visible until a user verifies their CAD account. */
+app.get("/api/sales/reconciliation-queue", async (req, res) => {
+  try {
+    await salesReconciliationReady;
+    const queue = await listSalesReconciliationQueue(pool, {
+      limit: req.query.limit,
+      offset: req.query.offset,
+    });
+    return res.json(queue);
+  } catch (error) {
+    console.error("sales reconciliation queue failed", error);
+    return res.status(500).json({ error: "sales_reconciliation_queue_failed" });
+  }
+});
+
+/** Explicitly verify a sale-to-account link and upsert the canonical sale. */
+app.patch("/api/sales/:sourceRecordId/reconcile", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await salesReconciliationReady;
+    const result = await reconcileSalesSourceRecord(
+      pool,
+      req.params.sourceRecordId,
+      req.body,
+    );
+    try {
+      await refreshAccountLocations(
+        pool,
+        [
+          {
+            account_id: result.account.account_id,
+            address: result.account.address,
+            county: result.account.county,
+          },
+        ],
+        { batchSize: 1 },
+      );
+    } catch (locationError) {
+      console.warn(
+        "manual sale link saved; location refresh deferred",
+        locationError?.message || locationError,
+      );
+    }
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    const message = error?.message || "sales_reconciliation_failed";
+    const status =
+      message === "source_record_not_found" || message === "account_not_found"
+        ? 404
+        : String(message).startsWith("invalid_") ||
+            message === "source_record_not_closed_sale"
+          ? 400
+          : 500;
+    if (status === 500) {
+      console.error("sales reconciliation failed", error);
+    }
+    return res.status(status).json({ error: message });
+  }
+});
 
 /** Batch-load manually verified condition and quality ratings for MLS source rows. */
 app.get("/api/sales/reviews", async (req, res) => {
@@ -1751,14 +1825,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
       "sale.primary_account_id IS NOT NULL",
       "sale.primary_account_id <> $1",
       "sale.record_type = 'closed_sale'",
-      "sale.attachment_type NOT IN ('attached', 'mixed')",
     ];
-    if (marketBreakdown) {
-      candidateWhere.push(
-        "sale.sale_price >= 10000",
-        "sale.multi_parcel_status = 'single'",
-      );
-    }
     candidateParams.push(effectiveDateFrom);
     candidateWhere.push(
       `sale.closing_date >= $${candidateParams.length}::date`,
@@ -2128,7 +2195,7 @@ app.get("/api/sales", async (req, res) => {
     const matched = parseOptionalBoolean(req.query.matched, "matched");
     const review = parseOptionalBoolean(req.query.review, "review");
     const includeAttached =
-      parseOptionalBoolean(req.query.include_attached, "include_attached") ?? false;
+      parseOptionalBoolean(req.query.include_attached, "include_attached") ?? true;
     if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
       return res.status(400).json({ error: "invalid_date_from" });
     }
@@ -2490,9 +2557,6 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
             AND sale.closing_date >=
               (parameters.period_end - INTERVAL '1 year')::date
             AND sale.closing_date <= parameters.period_end
-            AND sale.sale_price >= 10000
-            AND sale.multi_parcel_status = 'single'
-            AND sale.attachment_type NOT IN ('attached', 'mixed')
             AND (
               (
                 parameters.breakdown_scope = 'city'
@@ -2788,9 +2852,10 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
         },
         filters: {
           record_type: "closed_sale",
-          minimum_sale_price: 10000,
-          multi_parcel_status: "single",
-          attached_housing_excluded: true,
+          minimum_sale_price: null,
+          review_flagged_sales_included: true,
+          multi_parcel_sales_included: true,
+          attached_housing_included: true,
           period_years: 1,
         },
         dimensions: buildGroupedAnalysis(rows),

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import * as api from "@/lib/api"; // we'll safely probe for functions at runtime
+import SalesReconciliationQueue from "@/components/SalesReconciliationQueue";
 
 // MOOLAH_ADD_MV_TYPE_AND_FMT
 type ApiSearchRow = {
@@ -372,6 +373,8 @@ export default function PropertySearchPage() {
       {!loading && !err && q.trim() && results.length === 0 && (
         <div>No matches.</div>
       )}
+
+      <SalesReconciliationQueue />
 
       <style>{`
         .input {

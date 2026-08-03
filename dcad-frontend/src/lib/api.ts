@@ -192,7 +192,7 @@ export interface SaleRow {
   source: string | null;
   source_filename: string | null;
   source_row_number: number | null;
-  match_status: 'exact' | 'normalized' | 'secondary' | 'multiple' | 'unmatched';
+  match_status: 'exact' | 'normalized' | 'secondary' | 'multiple' | 'unmatched' | 'manual_verified';
   has_multiple_parcel_numbers: boolean;
   multi_parcel_status: 'single' | 'possible' | 'confirmed';
   has_unresolved_parcel: boolean;
@@ -267,6 +267,53 @@ export interface SaleRow {
     'standard_deviation' | 'median_absolute_deviation' | 'interquartile_range'
   >;
   outlier_analysis_eligible?: boolean;
+}
+
+export interface SalesReconciliationQueueItem {
+  source_record_id: string | number;
+  listing_id: string | null;
+  source_name: string | null;
+  source_filename: string | null;
+  source_row_number: number | null;
+  record_type: 'closed_sale';
+  mls_status: string | null;
+  closing_date: string | null;
+  sale_price: string | number | null;
+  days_on_market: number | null;
+  listing_contract_date: string | null;
+  bedrooms_total: number | null;
+  bathrooms_total_integer: number | null;
+  bathrooms_full: number | null;
+  bathrooms_half: number | null;
+  living_area: string | number | null;
+  year_built: number | null;
+  structural_style: string | null;
+  architectural_style: string | null;
+  attachment_type: 'detached' | 'attached' | 'mixed' | 'unknown';
+  parcel_number_raw: string | null;
+  parcel_number2_raw: string | null;
+  primary_account_id: string | null;
+  match_status: SaleRow['match_status'];
+  multi_parcel_status: SaleRow['multi_parcel_status'];
+  has_unresolved_parcel: boolean;
+  requires_additional_review: boolean;
+  data_quality_flags: string[];
+  canonical_sale_id: string | number | null;
+  address_hint: string | null;
+  queue_reasons: string[];
+}
+
+export interface SalesReconciliationQueueResponse {
+  total: number;
+  limit: number;
+  offset: number;
+  items: SalesReconciliationQueueItem[];
+}
+
+export interface SalesReconciliationUpdate {
+  account_id: string;
+  notes?: string | null;
+  reviewer?: string | null;
 }
 
 export interface HousingProfile {
@@ -607,9 +654,11 @@ export interface MarketConditionsAnalysis {
   map_sales: MarketConditionsMapSale[];
   filters: {
     record_type: 'closed_sale';
-    minimum_sale_price: number;
-    multi_parcel_status: 'single';
-    attached_housing_excluded: boolean;
+    minimum_sale_price: number | null;
+    review_flagged_sales_included: boolean;
+    multi_parcel_sales_included: boolean;
+    attached_housing_included: boolean;
+    inclusive_start_date: boolean;
     period_months: number;
   };
 }
@@ -724,9 +773,10 @@ export interface GroupedAnalysisResponse {
   };
   filters: {
     record_type: 'closed_sale';
-    minimum_sale_price: number;
-    multi_parcel_status: 'single';
-    attached_housing_excluded: boolean;
+    minimum_sale_price: number | null;
+    review_flagged_sales_included: boolean;
+    multi_parcel_sales_included: boolean;
+    attached_housing_included: boolean;
     period_years: number;
   };
   dimensions: GroupedAnalysisDimension[];
@@ -785,6 +835,43 @@ export async function updateAccountHousingProfile(
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/housing-profile`);
   return fetchJSON<{ ok: true; housing_profile: HousingProfile }>(url, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify(update),
+  });
+}
+
+/** Load source MLS sales that still need a manually verified CAD account. */
+export async function getSalesReconciliationQueue(
+  limit = 20,
+  offset = 0,
+): Promise<SalesReconciliationQueueResponse> {
+  const url = makeUrl('/api/sales/reconciliation-queue', { limit, offset });
+  return fetchJSON<SalesReconciliationQueueResponse>(url, { timeoutMs: 90000 });
+}
+
+/** Save a verified sale-to-account link and upsert the canonical sale. */
+export async function reconcileSalesSourceRecord(
+  sourceRecordId: string | number,
+  update: SalesReconciliationUpdate,
+  editorKey: string,
+): Promise<{
+  ok: true;
+  sale_id: string | number;
+  account: {
+    account_id: string;
+    address: string | null;
+    city: string | null;
+    postal_code: string | null;
+    county: string | null;
+  };
+  unresolved_parcel_count: number;
+}> {
+  const url = makeUrl(`/api/sales/${encodeURIComponent(String(sourceRecordId))}/reconcile`);
+  return fetchJSON(url, {
     method: 'PATCH',
     headers: {
       'content-type': 'application/json',

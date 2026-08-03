@@ -142,6 +142,8 @@ class MigrationBundleTests(unittest.TestCase):
         self.assertIn("core.sales_source_media", sql)
         self.assertIn("core.v_sales_media_summary", sql)
         self.assertIn("sales_source_records_listing_id_unique_idx", sql)
+        self.assertIn("manual_verified", sql)
+        self.assertIn("sales_reconciliation_history", sql)
         self.assertIn("26262500020080000", sql)
         self.assertIn("26262500010210000", sql)
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '@/lib/api';
 import type {
   GeoJsonPolygon,
@@ -49,13 +49,24 @@ type MapSource = {
   setData: (data: GeoJsonFeatureCollection) => void;
 };
 
+type BoundaryCoordinate = [number, number];
+
+type MapClickEvent = {
+  lngLat: { lng: number; lat: number };
+  point: { x: number; y: number };
+};
+
 type MapInstance = {
-  on: (event: string, callback: () => void) => void;
+  on: {
+    (event: 'load', callback: () => void): void;
+    (event: 'click', callback: (event: MapClickEvent) => void): void;
+  };
   addControl: (control: unknown, position?: string) => void;
   addSource: (id: string, source: Record<string, unknown>) => void;
   getSource: (id: string) => MapSource | undefined;
   addLayer: (layer: Record<string, unknown>) => void;
   getLayer: (id: string) => unknown;
+  project: (coordinate: BoundaryCoordinate) => { x: number; y: number };
   remove: () => void;
 };
 
@@ -72,8 +83,14 @@ type MapLibreGlobal = {
 type TerraDrawInstance = {
   on: (event: string, callback: () => void) => void;
   getSnapshot: () => GeoJsonFeature[];
-  addFeatures?: (features: GeoJsonFeature[]) => void;
+  addFeatures?: (features: GeoJsonFeature[]) => Array<{
+    id?: string | number;
+    valid: boolean;
+    reason?: string;
+  }>;
   clear: () => void;
+  getMode: () => string;
+  setMode: (mode: string) => void;
 };
 
 type TerraDrawControlInstance = {
@@ -99,6 +116,53 @@ type Props = {
   subjectAccountId: string;
   onCompletionChange?: (draft: MarketConditionsDraft | null) => void;
 };
+
+const CLOSE_BOUNDARY_PIXEL_TOLERANCE = 18;
+
+function coordinatesMatch(
+  left: BoundaryCoordinate,
+  right: BoundaryCoordinate,
+): boolean {
+  return left[0] === right[0] && left[1] === right[1];
+}
+
+function normalizeOpenBoundary(
+  coordinates: BoundaryCoordinate[],
+): BoundaryCoordinate[] {
+  const normalized: BoundaryCoordinate[] = [];
+  for (const coordinate of coordinates) {
+    if (
+      !Number.isFinite(coordinate[0]) ||
+      !Number.isFinite(coordinate[1]) ||
+      (normalized.length > 0 &&
+        coordinatesMatch(normalized.at(-1) as BoundaryCoordinate, coordinate))
+    ) {
+      continue;
+    }
+    normalized.push([coordinate[0], coordinate[1]]);
+  }
+  if (
+    normalized.length > 1 &&
+    coordinatesMatch(
+      normalized[0],
+      normalized.at(-1) as BoundaryCoordinate,
+    )
+  ) {
+    normalized.pop();
+  }
+  return normalized;
+}
+
+function boundaryToPolygon(
+  coordinates: BoundaryCoordinate[],
+): GeoJsonPolygon | null {
+  const boundary = normalizeOpenBoundary(coordinates);
+  if (boundary.length < 3) return null;
+  return {
+    type: 'Polygon',
+    coordinates: [[...boundary, [...boundary[0]]]],
+  };
+}
 
 const AREA_OPTIONS: Array<{
   key: MarketConditionsAreaKey;
@@ -772,6 +836,7 @@ export default function MarketConditionsAnalysis({
       (analysis) => analysis.market.key === 'custom',
     )?.market.custom_geometry || null,
   );
+  const [draftBoundaryPointCount, setDraftBoundaryPointCount] = useState(0);
   const [analysisResult, setAnalysisResult] =
     useState<MarketConditionsResponse | null>(savedDraft?.response || null);
   const [reconciliation, setReconciliation] =
@@ -807,6 +872,7 @@ export default function MarketConditionsAnalysis({
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapInstance | null>(null);
   const drawRef = useRef<TerraDrawInstance | null>(null);
+  const draftBoundaryRef = useRef<BoundaryCoordinate[]>([]);
   const initialCustomGeometryRef = useRef(customGeometry);
   const customSelected = selectedAreaKeys.includes('custom');
 
@@ -876,6 +942,109 @@ export default function MarketConditionsAnalysis({
   const studyIsCurrent =
     Boolean(analysisResult?.analyses.length) &&
     runSignature === currentSignature;
+
+  const resetDraftBoundary = useCallback(() => {
+    draftBoundaryRef.current = [];
+    setDraftBoundaryPointCount(0);
+  }, []);
+
+  const setDrawingToolbarMode = useCallback((mode: string | null) => {
+    const container = mapContainerRef.current;
+    container
+      ?.querySelectorAll<HTMLButtonElement>(
+        '.maplibregl-terradraw-add-control.active',
+      )
+      .forEach((button) => button.classList.remove('active'));
+    if (mode) {
+      container
+        ?.querySelector<HTMLButtonElement>(
+          `.maplibregl-terradraw-add-${mode}-button`,
+        )
+        ?.classList.add('active');
+    }
+  }, []);
+
+  const beginCustomBoundary = useCallback(() => {
+    const draw = drawRef.current;
+    if (!draw) return;
+    draw.setMode('default');
+    draw.clear();
+    resetDraftBoundary();
+    initialCustomGeometryRef.current = null;
+    setCustomGeometry(null);
+    setError(null);
+    setNotice(
+      'Boundary drawing started. Click around the area in order, then click the first point or use Close Area.',
+    );
+    draw.setMode('linestring');
+    setDrawingToolbarMode('linestring');
+  }, [resetDraftBoundary, setDrawingToolbarMode]);
+
+  const completeCustomBoundary = useCallback(
+    (method: 'button' | 'starting_point') => {
+      const draw = drawRef.current;
+      if (!draw) return;
+      const snapshot = draw.getSnapshot();
+      const lineFeature = snapshot.find(
+        (feature) => feature.geometry.type === 'LineString',
+      );
+      const lineCoordinates = lineFeature?.geometry.coordinates as
+        | BoundaryCoordinate[]
+        | undefined;
+      const boundaryCoordinates =
+        method === 'starting_point' &&
+        lineCoordinates &&
+        lineCoordinates.length > draftBoundaryRef.current.length
+          ? lineCoordinates.slice(0, draftBoundaryRef.current.length)
+          : lineCoordinates;
+      const polygon = boundaryToPolygon(
+        boundaryCoordinates || draftBoundaryRef.current,
+      );
+      if (!polygon) {
+        setError('Add at least three boundary points before closing the area.');
+        return;
+      }
+      draw.setMode('default');
+      const addResults = draw.addFeatures?.([
+        {
+          type: 'Feature',
+          geometry: polygon,
+          properties: { mode: 'polygon' },
+        },
+      ]);
+      const invalidResult = addResults?.find((result) => !result.valid);
+      if (!addResults?.length || invalidResult) {
+        setError(
+          invalidResult?.reason ||
+            'The completed boundary could not be drawn. Please start a new boundary and try again.',
+        );
+        return;
+      }
+      initialCustomGeometryRef.current = polygon;
+      setCustomGeometry(polygon);
+      resetDraftBoundary();
+      setDrawingToolbarMode(null);
+      setError(null);
+      setNotice(
+        method === 'starting_point'
+          ? 'Custom market area closed at the starting point.'
+          : 'Custom market area closed and ready for analysis.',
+      );
+    },
+    [resetDraftBoundary, setDrawingToolbarMode],
+  );
+
+  const clearCustomBoundary = useCallback(() => {
+    const draw = drawRef.current;
+    if (draw) {
+      draw.setMode('default');
+      draw.clear();
+    }
+    resetDraftBoundary();
+    setDrawingToolbarMode(null);
+    initialCustomGeometryRef.current = null;
+    setCustomGeometry(null);
+  }, [resetDraftBoundary, setDrawingToolbarMode]);
 
   useEffect(() => {
     initialCustomGeometryRef.current = customGeometry;
@@ -986,10 +1155,30 @@ export default function MarketConditionsAnalysis({
           if (!terraDrawGlobal) return;
           const control =
             new terraDrawGlobal.MaplibreTerradrawControl({
-              modes: ['polygon', 'select', 'delete-selection', 'delete'],
+              modes: [
+                'linestring',
+                'polygon',
+                'select',
+                'delete-selection',
+                'delete',
+              ],
               open: true,
             });
           map.addControl(control, 'top-left');
+          const polygonButton = mapContainerRef.current?.querySelector<HTMLElement>(
+            '.maplibregl-terradraw-add-polygon-button',
+          );
+          if (polygonButton) {
+            polygonButton.style.display = 'none';
+            polygonButton.setAttribute('aria-hidden', 'true');
+          }
+          const lineButton = mapContainerRef.current?.querySelector<HTMLElement>(
+            '.maplibregl-terradraw-add-linestring-button',
+          );
+          if (lineButton) {
+            lineButton.style.display = 'none';
+            lineButton.setAttribute('aria-hidden', 'true');
+          }
           const draw = control.getTerraDrawInstance();
           drawRef.current = draw;
           draw.on('change', () => {
@@ -1001,10 +1190,45 @@ export default function MarketConditionsAnalysis({
               setCustomGeometry(null);
               return;
             }
-            setCustomGeometry({
+            const nextGeometry: GeoJsonPolygon = {
               type: 'Polygon',
               coordinates: polygon.geometry.coordinates as number[][][],
-            });
+            };
+            initialCustomGeometryRef.current = nextGeometry;
+            resetDraftBoundary();
+            setCustomGeometry(nextGeometry);
+          });
+          map.on('click', (event) => {
+            if (draw.getMode() !== 'linestring') return;
+            const coordinate: BoundaryCoordinate = [
+              event.lngLat.lng,
+              event.lngLat.lat,
+            ];
+            const current = draftBoundaryRef.current;
+            if (current.length >= 3) {
+              const startPoint = map?.project(current[0]);
+              if (startPoint) {
+                const pixelDistance = Math.hypot(
+                  event.point.x - startPoint.x,
+                  event.point.y - startPoint.y,
+                );
+                if (pixelDistance <= CLOSE_BOUNDARY_PIXEL_TOLERANCE) {
+                  completeCustomBoundary('starting_point');
+                  return;
+                }
+              }
+            }
+            if (
+              current.length === 0 ||
+              !coordinatesMatch(
+                current.at(-1) as BoundaryCoordinate,
+                coordinate,
+              )
+            ) {
+              const next = [...current, coordinate];
+              draftBoundaryRef.current = next;
+              setDraftBoundaryPointCount(next.length);
+            }
           });
           if (initialCustomGeometryRef.current && draw.addFeatures) {
             draw.addFeatures([
@@ -1030,11 +1254,17 @@ export default function MarketConditionsAnalysis({
     return () => {
       cancelled = true;
       setMapReady(false);
+      resetDraftBoundary();
       drawRef.current = null;
       mapRef.current = null;
       map?.remove();
     };
-  }, [customSelected, studyContext]);
+  }, [
+    completeCustomBoundary,
+    customSelected,
+    resetDraftBoundary,
+    studyContext,
+  ]);
 
   const customMapSales = useMemo(
     () =>
@@ -1640,19 +1870,25 @@ export default function MarketConditionsAnalysis({
                   Draw the appraiser-defined market area
                 </h3>
                 <p className="mt-1 text-sm text-slate-600">
-                  Use the polygon tool, click each boundary point, then click the
-                  starting point to finish. Edit or delete the shape before
-                  rerunning the study.
+                  Start the boundary and click around the neighborhood in
+                  order. Only the open boundary line is shown while drawing.
+                  Click near the first point or use Close Area when finished.
                 </p>
               </div>
               <span
                 className={`rounded-full px-3 py-1 text-xs font-semibold ${
                   customGeometry
                     ? 'bg-emerald-100 text-emerald-900'
+                    : draftBoundaryPointCount > 0
+                      ? 'bg-indigo-100 text-indigo-900'
                     : 'bg-amber-100 text-amber-900'
                 }`}
               >
-                {customGeometry ? 'Polygon ready' : 'Polygon required'}
+                {customGeometry
+                  ? 'Area ready'
+                  : draftBoundaryPointCount > 0
+                    ? `${draftBoundaryPointCount} boundary points`
+                    : 'Area required'}
               </span>
             </div>
             {studyContext &&
@@ -1674,18 +1910,56 @@ export default function MarketConditionsAnalysis({
                 {mapError}
               </div>
             )}
+            {studyContext &&
+              studyContext.latitude !== null &&
+              studyContext.longitude !== null && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={beginCustomBoundary}
+                    disabled={!mapReady}
+                    className="rounded-md border border-indigo-300 bg-white px-3 py-2 text-xs font-semibold text-indigo-800 hover:bg-indigo-50 disabled:border-slate-200 disabled:text-slate-400"
+                  >
+                    {customGeometry || draftBoundaryPointCount > 0
+                      ? 'Start new boundary'
+                      : 'Start boundary'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => completeCustomBoundary('button')}
+                    disabled={
+                      !mapReady ||
+                      Boolean(customGeometry) ||
+                      draftBoundaryPointCount < 3
+                    }
+                    className="rounded-md bg-indigo-700 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+                  >
+                    Close Area
+                  </button>
+                  {!customGeometry && draftBoundaryPointCount > 0 && (
+                    <span className="text-xs text-slate-600">
+                      {draftBoundaryPointCount < 3
+                        ? `Add ${3 - draftBoundaryPointCount} more point${
+                            3 - draftBoundaryPointCount === 1 ? '' : 's'
+                          } before closing.`
+                        : 'Ready to close. Click the first point or use the button.'}
+                    </span>
+                  )}
+                </div>
+              )}
             {customGeometry && (
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <span className="text-sm font-medium text-emerald-800">
-                  {customGeometry.coordinates[0]?.length || 0} boundary points
+                  {Math.max(
+                    (customGeometry.coordinates[0]?.length || 1) - 1,
+                    0,
+                  )}{' '}
+                  boundary points
                   recorded.
                 </span>
                 <button
                   type="button"
-                  onClick={() => {
-                    drawRef.current?.clear();
-                    setCustomGeometry(null);
-                  }}
+                  onClick={clearCustomBoundary}
                   className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
                 >
                   Clear custom area

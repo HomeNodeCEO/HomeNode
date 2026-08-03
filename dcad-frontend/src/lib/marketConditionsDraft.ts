@@ -1,4 +1,5 @@
 import type {
+  MarketContextOverride,
   MarketConditionsAreaKey,
   MarketConditionsResponse,
 } from './api';
@@ -23,6 +24,7 @@ export type MarketConditionsDraft = {
   asOfDate: string;
   periodMonths: 12 | 24 | 36;
   selectedAreaKeys: MarketConditionsAreaKey[];
+  contextOverride?: MarketContextOverride | null;
   response: MarketConditionsResponse;
   reconciliation: MarketConditionsReconciliation;
 };

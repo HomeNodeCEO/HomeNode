@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '@/lib/api';
 import type {
   GeoJsonPolygon,
+  MarketContextOverride,
   MarketConditionsAnalysis,
   MarketConditionsAreaKey,
   MarketConditionsMapSale,
   MarketConditionsResponse,
   MarketConditionsSeriesPoint,
   MarketConditionsSubject,
+  RelatedParcel,
+  RelatedParcelsResponse,
 } from '@/lib/api';
 import {
   readMarketConditionsDraft,
@@ -115,7 +118,7 @@ const AREA_OPTIONS: Array<{
   ...[1, 2, 3, 4, 5].map((miles) => ({
     key: `radius_${miles}` as MarketConditionsAreaKey,
     label: `${miles}-mile radius`,
-    description: `A cumulative ${miles}-mile area centered on the subject parcel.`,
+    description: `A cumulative ${miles}-mile area centered on the verified study location.`,
   })),
   {
     key: 'custom',
@@ -260,12 +263,14 @@ function resultFingerprint(
   asOfDate: string,
   periodMonths: number,
   customGeometry: GeoJsonPolygon | null,
+  contextOverride: MarketContextOverride | null,
 ): string {
   return JSON.stringify({
     areaKeys: [...areaKeys].sort(),
     asOfDate,
     periodMonths,
     customGeometry,
+    contextOverride,
   });
 }
 
@@ -458,6 +463,30 @@ export default function MarketConditionsAnalysis({
   const [subject, setSubject] = useState<MarketConditionsSubject | null>(
     savedDraft?.response.subject || null,
   );
+  const [contextOverrideEnabled, setContextOverrideEnabled] = useState(
+    Boolean(savedDraft?.contextOverride),
+  );
+  const [contextOverride, setContextOverride] = useState<MarketContextOverride>(
+    savedDraft?.contextOverride || {
+      source: 'manual',
+      address: null,
+      city: null,
+      county: null,
+      postal_code: null,
+      latitude: null,
+      longitude: null,
+      source_account_id: null,
+      review_note: null,
+    },
+  );
+  const [parcelSearchAddress, setParcelSearchAddress] = useState(
+    savedDraft?.contextOverride?.address ||
+      savedDraft?.response.subject.address ||
+      '',
+  );
+  const [relatedParcels, setRelatedParcels] =
+    useState<RelatedParcelsResponse | null>(null);
+  const [loadingRelatedParcels, setLoadingRelatedParcels] = useState(false);
   const [selectedAreaKeys, setSelectedAreaKeys] = useState<
     MarketConditionsAreaKey[]
   >(savedDraft?.selectedAreaKeys || ['city', 'zip', 'radius_1']);
@@ -491,6 +520,7 @@ export default function MarketConditionsAnalysis({
           savedDraft.response.analyses.find(
             (analysis) => analysis.market.key === 'custom',
           )?.market.custom_geometry || null,
+          savedDraft.contextOverride || null,
         )
       : '',
   );
@@ -509,6 +539,52 @@ export default function MarketConditionsAnalysis({
   const initialCustomGeometryRef = useRef(customGeometry);
   const customSelected = selectedAreaKeys.includes('custom');
 
+  const activeContextOverride = contextOverrideEnabled
+    ? contextOverride
+    : null;
+  const studyContext = useMemo<MarketConditionsSubject | null>(() => {
+    if (!subject || !activeContextOverride) return subject;
+    const hasCoordinates =
+      activeContextOverride.latitude !== null &&
+      activeContextOverride.latitude !== undefined &&
+      activeContextOverride.longitude !== null &&
+      activeContextOverride.longitude !== undefined;
+    return {
+      ...subject,
+      address: activeContextOverride.address?.trim() || subject.address,
+      city: activeContextOverride.city?.trim() || subject.city,
+      county: activeContextOverride.county?.trim() || subject.county,
+      postal_code:
+        activeContextOverride.postal_code?.trim() || subject.postal_code,
+      latitude: hasCoordinates
+        ? Number(activeContextOverride.latitude)
+        : subject.latitude,
+      longitude: hasCoordinates
+        ? Number(activeContextOverride.longitude)
+        : subject.longitude,
+      location_status: hasCoordinates ? 'matched' : subject.location_status,
+      location_source: hasCoordinates
+        ? activeContextOverride.source === 'dcad_related_parcel'
+          ? 'dcad_related_parcel_override'
+          : 'manual_market_context'
+        : subject.location_source,
+      location_precision: hasCoordinates
+        ? 'study_origin'
+        : subject.location_precision,
+      location_confidence: hasCoordinates
+        ? 'medium'
+        : subject.location_confidence,
+      location_review_required: true,
+      location_review_reason: 'market_context_override_active',
+      context_override_active: true,
+      context_override_source: activeContextOverride.source,
+      context_overridden_fields: [],
+      context_source_account_id:
+        activeContextOverride.source_account_id || null,
+      context_review_note: activeContextOverride.review_note || null,
+    };
+  }, [activeContextOverride, subject]);
+
   const currentSignature = useMemo(
     () =>
       resultFingerprint(
@@ -516,8 +592,15 @@ export default function MarketConditionsAnalysis({
         asOfDate,
         periodMonths,
         customGeometry,
+        activeContextOverride,
       ),
-    [asOfDate, customGeometry, periodMonths, selectedAreaKeys],
+    [
+      activeContextOverride,
+      asOfDate,
+      customGeometry,
+      periodMonths,
+      selectedAreaKeys,
+    ],
   );
   const studyIsCurrent =
     Boolean(analysisResult?.analyses.length) &&
@@ -534,7 +617,12 @@ export default function MarketConditionsAnalysis({
     void api
       .getMarketConditionsContext(subjectAccountId)
       .then((response) => {
-        if (!cancelled) setSubject(response.subject);
+        if (!cancelled) {
+          setSubject(response.subject);
+          setParcelSearchAddress((current) =>
+            current || response.subject.address || '',
+          );
+        }
       })
       .catch((loadError: unknown) => {
         if (!cancelled) {
@@ -562,6 +650,7 @@ export default function MarketConditionsAnalysis({
         asOfDate,
         periodMonths,
         selectedAreaKeys,
+        contextOverride: activeContextOverride,
         response: analysisResult,
         reconciliation,
       };
@@ -571,6 +660,7 @@ export default function MarketConditionsAnalysis({
     }
   }, [
     analysisResult,
+    activeContextOverride,
     asOfDate,
     onCompletionChange,
     periodMonths,
@@ -584,9 +674,9 @@ export default function MarketConditionsAnalysis({
     if (
       !customSelected ||
       !mapContainerRef.current ||
-      !subject ||
-      subject.latitude === null ||
-      subject.longitude === null ||
+      !studyContext ||
+      studyContext.latitude === null ||
+      studyContext.longitude === null ||
       mapRef.current
     ) {
       return () => undefined;
@@ -600,15 +690,15 @@ export default function MarketConditionsAnalysis({
           !mapContainerRef.current ||
           !window.maplibregl ||
           !window.MaplibreTerradrawControl ||
-          subject.latitude === null ||
-          subject.longitude === null
+          studyContext.latitude === null ||
+          studyContext.longitude === null
         ) {
           return;
         }
         map = new window.maplibregl.Map({
           container: mapContainerRef.current,
           style: MAP_STYLE_URL,
-          center: [subject.longitude, subject.latitude],
+          center: [studyContext.longitude, studyContext.latitude],
           zoom: 12,
           attributionControl: true,
         });
@@ -616,7 +706,10 @@ export default function MarketConditionsAnalysis({
         map.on('load', () => {
           if (!map || cancelled || !window.maplibregl) return;
           new window.maplibregl.Marker({ color: '#dc2626' })
-            .setLngLat([subject.longitude as number, subject.latitude as number])
+            .setLngLat([
+              studyContext.longitude as number,
+              studyContext.latitude as number,
+            ])
             .addTo(map);
           const terraDrawGlobal = window.MaplibreTerradrawControl;
           if (!terraDrawGlobal) return;
@@ -670,7 +763,7 @@ export default function MarketConditionsAnalysis({
       mapRef.current = null;
       map?.remove();
     };
-  }, [customSelected, subject]);
+  }, [customSelected, studyContext]);
 
   const customMapSales = useMemo(
     () =>
@@ -739,6 +832,75 @@ export default function MarketConditionsAnalysis({
     setNotice(null);
   }
 
+  function toggleContextOverride(): void {
+    setContextOverrideEnabled((current) => {
+      if (!current && subject) {
+        setContextOverride((existing) => ({
+          source: existing.source || 'manual',
+          address: existing.address || subject.address,
+          city: existing.city || subject.city,
+          county: existing.county || subject.county,
+          postal_code: existing.postal_code || subject.postal_code,
+          latitude: existing.latitude ?? subject.latitude,
+          longitude: existing.longitude ?? subject.longitude,
+          source_account_id: existing.source_account_id || null,
+          review_note: existing.review_note || null,
+        }));
+      }
+      return !current;
+    });
+    setNotice(null);
+  }
+
+  async function checkRelatedParcels(): Promise<void> {
+    if (!parcelSearchAddress.trim()) {
+      setError('Enter a complete numbered situs address for the CAD parcel check.');
+      return;
+    }
+    setLoadingRelatedParcels(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await api.getRelatedParcels(
+        subjectAccountId,
+        parcelSearchAddress,
+      );
+      setRelatedParcels(response);
+      setNotice(
+        response.parcels.length > 1
+          ? `${response.parcels.length} same-address CAD parcels were found. Review them separately; no parcels were merged.`
+          : `${response.parcels.length} same-address CAD parcel was found.`,
+      );
+    } catch (lookupError: unknown) {
+      setError(
+        lookupError instanceof Error
+          ? lookupError.message
+          : 'The related CAD parcel check could not be completed.',
+      );
+    } finally {
+      setLoadingRelatedParcels(false);
+    }
+  }
+
+  function selectParcelAsStudyContext(parcel: RelatedParcel): void {
+    setContextOverrideEnabled(true);
+    setContextOverride({
+      source: 'dcad_related_parcel',
+      address: parcel.site_address || parcel.address,
+      city: parcel.city || subject?.city || null,
+      county: parcel.county || subject?.county || null,
+      postal_code: parcel.postal_code || subject?.postal_code || null,
+      latitude: parcel.latitude,
+      longitude: parcel.longitude,
+      source_account_id: parcel.account_id,
+      review_note:
+        'Appraiser selected a same-address official CAD parcel as the market-study context.',
+    });
+    setNotice(
+      `Parcel ${parcel.account_id} is now the flagged study context. The subject account and CAD records were not changed.`,
+    );
+  }
+
   async function runAnalysis(): Promise<void> {
     if (!selectedAreaKeys.length) {
       setError('Select at least one market area before running the study.');
@@ -758,6 +920,7 @@ export default function MarketConditionsAnalysis({
         asOf: asOfDate,
         periodMonths,
         customGeometry,
+        contextOverride: activeContextOverride,
       });
       const nextReconciliation = defaultReconciliation(response);
       const signature = resultFingerprint(
@@ -765,6 +928,7 @@ export default function MarketConditionsAnalysis({
         asOfDate,
         periodMonths,
         customGeometry,
+        activeContextOverride,
       );
       const draft: MarketConditionsDraft = {
         version: 1,
@@ -773,6 +937,7 @@ export default function MarketConditionsAnalysis({
         asOfDate,
         periodMonths,
         selectedAreaKeys,
+        contextOverride: activeContextOverride,
         response,
         reconciliation: nextReconciliation,
       };
@@ -810,6 +975,7 @@ export default function MarketConditionsAnalysis({
       asOfDate,
       periodMonths,
       selectedAreaKeys,
+      contextOverride: activeContextOverride,
       response: analysisResult,
       reconciliation,
     };
@@ -827,6 +993,19 @@ export default function MarketConditionsAnalysis({
     }),
     { eligible: 0, mapped: 0 },
   );
+  const coordinateCoverageIssues =
+    analysisResult?.analyses.filter((analysis) => {
+      if (!['city', 'zip'].includes(analysis.market.scope)) return false;
+      const eligible = analysis.population.eligible_sale_count;
+      return (
+        eligible > 0 &&
+        analysis.population.mapped_sale_count / eligible < 0.9
+      );
+    }) || [];
+  const smallSampleAreas =
+    analysisResult?.analyses.filter(
+      (analysis) => analysis.population.eligible_sale_count < 30,
+    ) || [];
 
   return (
     <section className="mb-4 rounded-2xl border border-emerald-200 bg-white shadow-sm">
@@ -883,15 +1062,243 @@ export default function MarketConditionsAnalysis({
             </select>
           </label>
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            <span className="font-semibold text-slate-900">Subject market context:</span>{' '}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold text-slate-900">Study geography:</span>
+              {contextOverrideEnabled && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                  Flagged override
+                </span>
+              )}
+            </div>
+            <div className="mt-1">
             {loadingContext
               ? 'Loading parcel location...'
-              : subject
-                ? `${subject.address || subject.account_id} · ${
-                    subject.city || 'City unavailable'
-                  } · ${subject.postal_code || 'ZIP unavailable'}`
+              : studyContext
+                ? `${studyContext.address || studyContext.account_id} · ${
+                    studyContext.city || 'City unavailable'
+                  } · ${studyContext.postal_code || 'ZIP unavailable'}`
                 : 'Unavailable'}
+            </div>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-slate-950">
+                Study geography and related CAD parcels
+              </h3>
+              <p className="mt-1 max-w-4xl text-sm text-slate-600">
+                Verify same-address CAD parcels or supply a reviewable city,
+                ZIP, and study center. This does not change or merge stored
+                property records.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={toggleContextOverride}
+                className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-50"
+              >
+                {contextOverrideEnabled ? 'Disable override' : 'Edit study geography'}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+            <label className="grid gap-1 text-sm text-slate-700">
+              <span className="font-medium">Exact CAD situs address</span>
+              <input
+                type="text"
+                value={parcelSearchAddress}
+                onChange={(event) => setParcelSearchAddress(event.target.value)}
+                placeholder="10010 Strait Ln"
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void checkRelatedParcels()}
+              disabled={loadingRelatedParcels || loadingContext || !subject}
+              className="self-end rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300"
+            >
+              {loadingRelatedParcels ? 'Checking CAD...' : 'Check related CAD parcels'}
+            </button>
+          </div>
+
+          {relatedParcels && (
+            <div className="mt-4 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-600">
+                <span>
+                  {relatedParcels.parcels.length} exact same-address parcel
+                  {relatedParcels.parcels.length === 1 ? '' : 's'} found
+                </span>
+                <span>
+                  Live DCAD: {relatedParcels.live_query_status.replace(/_/g, ' ')} · No automatic merge
+                </span>
+              </div>
+              {relatedParcels.parcels.map((parcel) => (
+                <div
+                  key={parcel.account_id}
+                  className="grid gap-3 rounded-lg border border-amber-200 bg-white p-3 md:grid-cols-[1fr_auto]"
+                >
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-slate-950">
+                        {parcel.account_id}
+                      </span>
+                      {parcel.is_subject && (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900">
+                          Current subject parcel
+                        </span>
+                      )}
+                      {!parcel.in_database && (
+                        <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-800">
+                          Not yet in database
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-700">
+                      {parcel.site_address || parcel.address || 'Address unavailable'}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">
+                      {parcel.legal_description || parcel.property_description || 'Legal description unavailable'}
+                      {' · '}
+                      {parcel.living_area_sqft
+                        ? `${parcel.living_area_sqft.toLocaleString()} SF`
+                        : 'No residential area'}
+                      {' · '}
+                      {parcel.total_value !== null
+                        ? money(parcel.total_value)
+                        : 'CAD value unavailable'}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => selectParcelAsStudyContext(parcel)}
+                    disabled={parcel.latitude === null || parcel.longitude === null}
+                    className="self-center rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-900 hover:bg-emerald-100 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                  >
+                    Use as study center
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {contextOverrideEnabled && (
+            <div className="mt-4 rounded-lg border border-amber-300 bg-white p-4">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-sm font-semibold text-slate-950">
+                  Reviewable market-context override
+                </div>
+                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-900">
+                  Saved with appraisal workfile
+                </span>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <label className="grid gap-1 text-sm text-slate-700 md:col-span-2">
+                  <span className="font-medium">Study-center address</span>
+                  <input
+                    type="text"
+                    value={contextOverride.address || ''}
+                    onChange={(event) =>
+                      setContextOverride((current) => ({
+                        ...current,
+                        source: 'manual',
+                        address: event.target.value,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-slate-700">
+                  <span className="font-medium">City</span>
+                  <input
+                    type="text"
+                    value={contextOverride.city || ''}
+                    onChange={(event) =>
+                      setContextOverride((current) => ({
+                        ...current,
+                        source: 'manual',
+                        city: event.target.value,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-slate-700">
+                  <span className="font-medium">ZIP code</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={10}
+                    value={contextOverride.postal_code || ''}
+                    onChange={(event) =>
+                      setContextOverride((current) => ({
+                        ...current,
+                        source: 'manual',
+                        postal_code: event.target.value,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-slate-700">
+                  <span className="font-medium">Latitude</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={contextOverride.latitude ?? ''}
+                    onChange={(event) =>
+                      setContextOverride((current) => ({
+                        ...current,
+                        source: 'manual',
+                        latitude: event.target.value ? Number(event.target.value) : null,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-slate-700">
+                  <span className="font-medium">Longitude</span>
+                  <input
+                    type="number"
+                    step="any"
+                    value={contextOverride.longitude ?? ''}
+                    onChange={(event) =>
+                      setContextOverride((current) => ({
+                        ...current,
+                        source: 'manual',
+                        longitude: event.target.value ? Number(event.target.value) : null,
+                      }))
+                    }
+                    className="rounded-lg border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="grid gap-1 text-sm text-slate-700 md:col-span-2">
+                  <span className="font-medium">Override/review note</span>
+                  <input
+                    type="text"
+                    value={contextOverride.review_note || ''}
+                    onChange={(event) =>
+                      setContextOverride((current) => ({
+                        ...current,
+                        review_note: event.target.value,
+                      }))
+                    }
+                    placeholder="Explain why this geography is being used."
+                    className="rounded-lg border border-slate-300 px-3 py-2"
+                  />
+                </label>
+              </div>
+              <p className="mt-3 text-xs text-amber-900">
+                City controls the city study, ZIP controls the ZIP study, and
+                the coordinates control every radius and custom-map center.
+                Override use remains visibly flagged.
+              </p>
+            </div>
+          )}
         </div>
 
         <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -973,7 +1380,9 @@ export default function MarketConditionsAnalysis({
                 {customGeometry ? 'Polygon ready' : 'Polygon required'}
               </span>
             </div>
-            {subject?.latitude !== null && subject?.longitude !== null ? (
+            {studyContext &&
+            studyContext.latitude !== null &&
+            studyContext.longitude !== null ? (
               <div
                 ref={mapContainerRef}
                 className="mt-4 h-[440px] w-full overflow-hidden rounded-xl border border-slate-300 bg-slate-100"
@@ -981,8 +1390,8 @@ export default function MarketConditionsAnalysis({
               />
             ) : (
               <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                The subject parcel location is unavailable, so a custom area
-                cannot be drawn yet.
+                The study-center location is unavailable. Select a related CAD
+                parcel or enter verified coordinates to draw a custom area.
               </div>
             )}
             {mapError && (
@@ -1054,6 +1463,41 @@ export default function MarketConditionsAnalysis({
 
         {analysisResult && (
           <div className="space-y-6 border-t border-slate-200 pt-5">
+            {analysisResult.subject.context_override_active && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <span className="font-semibold">Flagged study geography:</span>{' '}
+                this result used {analysisResult.subject.context_override_source?.replace(/_/g, ' ')}
+                {analysisResult.subject.context_source_account_id
+                  ? ` from CAD parcel ${analysisResult.subject.context_source_account_id}`
+                  : ''}
+                . The underlying subject account was not changed.
+              </div>
+            )}
+            {coordinateCoverageIssues.length > 0 && (
+              <div className="rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-950">
+                <div className="font-semibold">Incomplete parcel-location coverage</div>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {coordinateCoverageIssues.map((analysis) => (
+                    <li key={analysis.market.key}>
+                      {analysis.market.label}: {analysis.population.mapped_sale_count.toLocaleString()} of{' '}
+                      {analysis.population.eligible_sale_count.toLocaleString()} eligible sales have coordinates.
+                    </li>
+                  ))}
+                </ul>
+                Radius and custom-area results may be materially understated until the location backlog is complete.
+              </div>
+            )}
+            {smallSampleAreas.length > 0 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                <span className="font-semibold">Limited sample:</span>{' '}
+                {smallSampleAreas
+                  .map(
+                    (analysis) =>
+                      `${analysis.market.label} (${analysis.population.eligible_sale_count})`,
+                  )
+                  .join(', ')}. Studies below 30 sales should be reconciled cautiously.
+              </div>
+            )}
             <div>
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -1147,7 +1591,7 @@ export default function MarketConditionsAnalysis({
                 {analysis.market.scope === 'custom' &&
                   analysis.market.includes_subject === false && (
                     <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                      The custom polygon does not include the subject parcel.
+                      The custom polygon does not include the selected study center.
                       The study remains available, but the appraiser should
                       explain why this separate area is relevant.
                     </div>

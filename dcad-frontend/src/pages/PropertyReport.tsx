@@ -2,7 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
-import { getAccountPhotos } from "@/lib/api";
+import {
+  getAccountPhotos,
+  getRelatedParcels,
+  type RelatedParcelsResponse,
+} from "@/lib/api";
 
 type DcadOwner = {
   owner_name?: string;
@@ -248,14 +252,52 @@ function SummaryField({
 
 function AddressHero({ detail, accountId }: { detail: DcadDetail | null; accountId?: string }) {
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [relatedParcelSearchVersion, setRelatedParcelSearchVersion] = useState(0);
+  const [relatedParcels, setRelatedParcels] = useState<RelatedParcelsResponse | null>(null);
+  const [relatedParcelsLoading, setRelatedParcelsLoading] = useState(false);
+  const [relatedParcelsError, setRelatedParcelsError] = useState("");
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
   );
+  const detailLoaded = Boolean(detail);
+  const exactAddress = detail?.property_location?.address?.trim() || "";
 
   useEffect(() => {
     if (photoIndex >= photos.length) setPhotoIndex(0);
   }, [photoIndex, photos.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setRelatedParcels(null);
+    setRelatedParcelsError("");
+    if (!accountId?.trim() || !detailLoaded) {
+      setRelatedParcelsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setRelatedParcelsLoading(true);
+    void getRelatedParcels(accountId, exactAddress || undefined)
+      .then((response) => {
+        if (!cancelled) setRelatedParcels(response);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setRelatedParcelsError(
+            error instanceof Error ? error.message : "The related-parcel check was unavailable.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRelatedParcelsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, detailLoaded, exactAddress, relatedParcelSearchVersion]);
 
   const address = displayValue(detail?.property_location?.address, "Property address unavailable");
   const neighborhood = displayValue(detail?.property_location?.neighborhood);
@@ -394,6 +436,133 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             </span>
           </div>
         </header>
+
+        <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-800">
+                  Same-Address CAD Parcel Check
+                </h2>
+                {relatedParcels?.review_required ? (
+                  <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                    Review related parcels
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-600">
+                HomeNode checks the official DCAD parcel map in the background for other accounts at
+                this exact situs address. Results remain separate and are never merged automatically.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-sm normal-case border-amber-300 bg-white text-slate-800 hover:border-amber-400 hover:bg-amber-100"
+              disabled={relatedParcelsLoading || !accountId}
+              onClick={() => setRelatedParcelSearchVersion((current) => current + 1)}
+            >
+              {relatedParcelsLoading ? "Checking DCAD..." : "Check Again"}
+            </button>
+          </div>
+
+          {relatedParcelsError ? (
+            <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+              The live DCAD parcel check could not be completed: {relatedParcelsError}
+            </div>
+          ) : null}
+
+          {relatedParcels && relatedParcels.live_query_status !== "complete" ? (
+            <div className="mt-3 rounded-xl border border-amber-300 bg-amber-100 p-3 text-sm text-amber-950">
+              The official DCAD live check is {relatedParcels.live_query_status.replace(/_/g, " ")}.
+              Local exact-address matches are shown below, but this item remains flagged for manual
+              parcel review.
+            </div>
+          ) : null}
+
+          {relatedParcels && !relatedParcelsLoading ? (
+            relatedParcels.parcels.length ? (
+              <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                {relatedParcels.parcels.map((parcel) => (
+                  <div
+                    key={parcel.account_id}
+                    className={`rounded-xl border bg-white p-3 ${
+                      parcel.is_subject ? "border-slate-200" : "border-amber-300"
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="font-semibold text-slate-950">
+                          {parcel.site_address || parcel.address || relatedParcels.query_address}
+                        </div>
+                        <div className="mt-0.5 font-mono text-xs text-slate-600">
+                          {parcel.account_id}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {parcel.is_subject ? (
+                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">
+                            Current subject
+                          </span>
+                        ) : (
+                          <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                            Additional parcel
+                          </span>
+                        )}
+                        {!parcel.in_database ? (
+                          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-800">
+                            Not in database
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-600 sm:grid-cols-4">
+                      <div>
+                        <span className="block text-slate-500">Living Area</span>
+                        <strong className="text-slate-800">
+                          {parcel.living_area_sqft
+                            ? `${new Intl.NumberFormat("en-US").format(parcel.living_area_sqft)} sq. ft.`
+                            : "Land / not reported"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="block text-slate-500">Land Value</span>
+                        <strong className="text-slate-800">{formatMoney(parcel.land_value)}</strong>
+                      </div>
+                      <div>
+                        <span className="block text-slate-500">Improvement Value</span>
+                        <strong className="text-slate-800">
+                          {formatMoney(parcel.improvement_value)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="block text-slate-500">Total Value</span>
+                        <strong className="text-slate-800">{formatMoney(parcel.total_value)}</strong>
+                      </div>
+                    </div>
+                    {parcel.legal_description ? (
+                      <p className="mt-3 border-t border-slate-100 pt-2 text-xs text-slate-600">
+                        {parcel.legal_description}
+                      </p>
+                    ) : null}
+                    {!parcel.is_subject && parcel.in_database ? (
+                      <Link
+                        to={`/report/${encodeURIComponent(parcel.account_id)}`}
+                        className="mt-3 inline-flex text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
+                      >
+                        Open this parcel’s report →
+                      </Link>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-slate-600">
+                No same-address parcel was returned by the official DCAD parcel map. Keep this item
+                under manual review if the situs address is missing or incomplete.
+              </p>
+            )
+          ) : null}
+        </section>
 
         <div className="mt-5 space-y-5">
           <SummarySection

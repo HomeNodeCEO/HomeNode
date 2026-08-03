@@ -172,6 +172,18 @@ function percentText(value: number | null): string {
   return `${numberText(value, 1)}%`;
 }
 
+function signedPercentText(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return 'Not available';
+  return `${value > 0 ? '+' : ''}${numberText(value, 1)}%`;
+}
+
+function trendLabel(value: MarketTrendConclusion): string {
+  return (
+    TREND_OPTIONS.find((option) => option.value === value)?.label ||
+    'Insufficient evidence'
+  );
+}
+
 function dateText(value: string | null): string {
   if (!value) return 'Not available';
   const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
@@ -312,14 +324,29 @@ function defaultReconciliation(
         ...populations,
       ).toLocaleString()} sales`
     : 'no eligible sales';
+  const recommendation = response.recommendation;
+  const rankedLabels = recommendation.ranked_studies
+    .slice(0, 3)
+    .map((study) => study.label)
+    .join(', ');
   return {
-    trendConclusion: 'insufficient',
+    trendConclusion: recommendation.conclusion,
     reliedUponAreaKeys: response.analyses.map(
       (analysis) => analysis.market.key,
     ),
     explanation:
       `The appraiser reviewed ${labels.join(', ') || 'the selected market areas'}. ` +
       `The independent study populations range from ${populationText}. ` +
+      (recommendation.recommended_change_percent === null
+        ? 'The automated analysis did not have enough complete monthly observations to recommend a market trend. '
+        : `The automated analysis indicates ${trendLabel(
+            recommendation.conclusion,
+          ).toLowerCase()} conditions based on a ${signedPercentText(
+            recommendation.recommended_change_percent,
+          )} reconciled annualized change. `) +
+      (rankedLabels
+        ? `The highest-ranked study populations are ${rankedLabels}. `
+        : '') +
       'Explain which geography and time interval receive the greatest weight, why that evidence best reflects the subject market, and how the reported trend conclusion was reconciled.',
   };
 }
@@ -488,6 +515,210 @@ function StudyComparisonTable({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function StudyStatistics({
+  analysis,
+}: {
+  analysis: MarketConditionsAnalysis;
+}) {
+  const { statistics, summary } = analysis;
+  const factorRows = [
+    {
+      label: 'Living area',
+      factor: summary.congruency_factors.living_area,
+    },
+    {
+      label: 'Price per SF',
+      factor: summary.congruency_factors.price_per_square_foot,
+    },
+    {
+      label: 'Sale price',
+      factor: summary.congruency_factors.sale_price,
+    },
+    { label: 'Age', factor: summary.congruency_factors.age },
+  ];
+  const changeColor =
+    statistics.annualized_change_percent === null
+      ? 'text-slate-500'
+      : Math.abs(statistics.annualized_change_percent) < 1
+        ? 'text-slate-700'
+        : statistics.annualized_change_percent > 0
+          ? 'text-emerald-700'
+          : 'text-rose-700';
+  return (
+    <div className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-3">
+      <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-3 text-center">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Yearly change
+          </div>
+          <div className={`text-lg font-bold ${changeColor}`}>
+            {signedPercentText(statistics.annualized_change_percent)}
+          </div>
+        </div>
+        <div
+          title="Weighted coefficient of dispersion. Living area is 60%; price/SF, sale price, age, and housing-type mix are 10% each. Lower is more congruent."
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Composite COD
+          </div>
+          <div className="text-lg font-bold text-slate-900">
+            {percentText(statistics.composite_cod)}
+          </div>
+        </div>
+        <div
+          title="Weighted coefficient of variation. Living area is 60%; price/SF, sale price, age, and housing-type mix are 10% each. Lower is more congruent."
+        >
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Composite CV
+          </div>
+          <div className="text-lg font-bold text-slate-900">
+            {percentText(statistics.composite_cv)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Reliability
+          </div>
+          <div className="text-lg font-bold text-indigo-800">
+            {numberText(statistics.reliability_score, 1)}/100
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 text-center text-[11px] text-slate-500">
+        Congruency weights: living area 60%; price/SF, sale price, age, and
+        housing type 10% each. Lower COD and CV indicate a more consistent
+        study population.
+      </div>
+      <details className="mt-2 text-xs text-slate-600">
+        <summary className="cursor-pointer text-center font-semibold text-slate-700">
+          View congruency calculation
+        </summary>
+        <div className="mt-2 overflow-x-auto">
+          <table className="mx-auto min-w-[520px] text-left">
+            <thead className="text-[10px] uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-2 py-1">Factor</th>
+                <th className="px-2 py-1 text-right">Weight</th>
+                <th className="px-2 py-1 text-right">Records</th>
+                <th className="px-2 py-1 text-right">COD</th>
+                <th className="px-2 py-1 text-right">CV</th>
+              </tr>
+            </thead>
+            <tbody>
+              {factorRows.map(({ label, factor }) => (
+                <tr key={label} className="border-t border-slate-100">
+                  <td className="px-2 py-1.5 font-medium">{label}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {percentText(factor.weight * 100)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    {factor.count.toLocaleString()}
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    {percentText(factor.cod)}
+                  </td>
+                  <td className="px-2 py-1.5 text-right">
+                    {percentText(factor.cv)}
+                  </td>
+                </tr>
+              ))}
+              <tr className="border-t border-slate-100">
+                <td className="px-2 py-1.5 font-medium">
+                  Housing type mix
+                  {summary.congruency_factors.housing_type.dominant_type
+                    ? ` (${summary.congruency_factors.housing_type.dominant_type})`
+                    : ''}
+                </td>
+                <td className="px-2 py-1.5 text-right">10.0%</td>
+                <td className="px-2 py-1.5 text-right">
+                  {summary.congruency_factors.housing_type.count.toLocaleString()}
+                </td>
+                <td className="px-2 py-1.5 text-right" colSpan={2}>
+                  {percentText(
+                    summary.congruency_factors.housing_type.dispersion,
+                  )}{' '}
+                  outside dominant type
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function RecommendedDetermination({
+  response,
+}: {
+  response: MarketConditionsResponse;
+}) {
+  const recommendation = response.recommendation;
+  return (
+    <div className="mt-4 rounded-xl border border-indigo-200 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
+            Recommended determination
+          </div>
+          <div className="mt-1 flex flex-wrap items-baseline gap-2">
+            <span className="text-xl font-bold text-slate-950">
+              {trendLabel(recommendation.conclusion)}
+            </span>
+            <span className="text-sm font-semibold text-indigo-800">
+              {signedPercentText(recommendation.recommended_change_percent)}
+              {' '}reconciled annualized change
+            </span>
+          </div>
+        </div>
+        <div className="flex gap-5 text-right text-xs text-slate-500">
+          <div>
+            <div>Study average</div>
+            <div className="font-semibold text-slate-900">
+              {signedPercentText(
+                recommendation.average_annualized_change_percent,
+              )}
+            </div>
+          </div>
+          <div>
+            <div>Study median</div>
+            <div className="font-semibold text-slate-900">
+              {signedPercentText(
+                recommendation.median_annualized_change_percent,
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-slate-600">
+        Studies are ranked by sample sufficiency, monthly coverage, composite
+        COD/CV congruency, and characteristic coverage. A reconciled change
+        within ±{numberText(recommendation.stable_threshold_percent, 1)}% is
+        classified as stable. The appraiser may override this recommendation.
+      </p>
+      {recommendation.ranked_studies.length > 0 && (
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          {recommendation.ranked_studies.slice(0, 3).map((study) => (
+            <div
+              key={study.key}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+            >
+              <div className="font-semibold text-slate-900">
+                #{study.rank} {study.label}
+              </div>
+              <div className="mt-1 text-slate-600">
+                Score {numberText(study.reliability_score, 1)}/100 ·{' '}
+                {study.sale_count.toLocaleString()} sales ·{' '}
+                {signedPercentText(study.annualized_change_percent)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -684,7 +915,7 @@ export default function MarketConditionsAnalysis({
   useEffect(() => {
     if (studyIsCurrent && analysisResult) {
       const draft: MarketConditionsDraft = {
-        version: 2,
+        version: 3,
         accountId: subjectAccountId,
         savedAt: new Date().toISOString(),
         asOfDate,
@@ -971,7 +1202,7 @@ export default function MarketConditionsAnalysis({
         activeContextOverride,
       );
       const draft: MarketConditionsDraft = {
-        version: 2,
+        version: 3,
         accountId: subjectAccountId,
         savedAt: new Date().toISOString(),
         asOfDate,
@@ -1009,7 +1240,7 @@ export default function MarketConditionsAnalysis({
     setSavingNarrative(true);
     setError(null);
     const draft: MarketConditionsDraft = {
-      version: 2,
+      version: 3,
       accountId: subjectAccountId,
       savedAt: new Date().toISOString(),
       asOfDate,
@@ -1641,6 +1872,8 @@ export default function MarketConditionsAnalysis({
                     </div>
                   )}
 
+                <StudyStatistics analysis={analysis} />
+
                 <div className="mt-4">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <h4 className="font-semibold text-slate-900">
@@ -1676,6 +1909,8 @@ export default function MarketConditionsAnalysis({
                   appraisal report.
                 </p>
               </div>
+
+              <RecommendedDetermination response={analysisResult} />
 
               <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
                 <label className="grid gap-1 text-sm text-slate-700">

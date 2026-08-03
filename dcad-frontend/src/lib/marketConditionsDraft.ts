@@ -18,7 +18,7 @@ export type MarketConditionsReconciliation = {
 };
 
 export type MarketConditionsDraft = {
-  version: 2;
+  version: 3;
   accountId: string;
   savedAt: string;
   asOfDate: string;
@@ -44,7 +44,7 @@ export function readMarketConditionsDraft(
     if (!raw) return null;
     const parsed = JSON.parse(raw) as MarketConditionsDraft;
     if (
-      parsed?.version !== 2 ||
+      parsed?.version !== 3 ||
       parsed?.accountId !== accountId.trim() ||
       !Array.isArray(parsed?.response?.analyses)
     ) {

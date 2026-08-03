@@ -548,6 +548,26 @@ const MARKET_ANALYSIS_SQL = `
           )
         ELSE NULL
       END AS price_per_square_foot,
+      COALESCE(
+        NULLIF(sale.mls_living_area, 0),
+        NULLIF(sale.cad_living_area_sqft, 0)
+      )::numeric AS living_area,
+      CASE
+        WHEN COALESCE(
+          NULLIF(sale.mls_year_built, 0),
+          NULLIF(sale.cad_effective_year_built, 0),
+          NULLIF(sale.cad_year_built, 0)
+        ) IS NULL THEN NULL
+        ELSE GREATEST(
+          EXTRACT(YEAR FROM parameters.period_end)::integer - COALESCE(
+            NULLIF(sale.mls_year_built, 0),
+            NULLIF(sale.cad_effective_year_built, 0),
+            NULLIF(sale.cad_year_built, 0)
+          ),
+          0
+        )::numeric
+      END AS age_years,
+      LOWER(NULLIF(BTRIM(sale.housing_type), '')) AS housing_type,
       sale_location.latitude,
       sale_location.longitude,
       sale_location.status AS location_status,
@@ -634,6 +654,63 @@ const MARKET_ANALYSIS_SQL = `
         AND ST_Covers(parameters.custom_geom, base.location_geom)
       )
   ),
+  numeric_medians AS (
+    SELECT
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY living_area)
+        FILTER (WHERE living_area IS NOT NULL) AS living_area_median,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY price_per_square_foot)
+        FILTER (WHERE price_per_square_foot IS NOT NULL) AS ppsf_median,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY sale_price)
+        FILTER (WHERE sale_price IS NOT NULL) AS sale_price_median,
+      PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY age_years)
+        FILTER (WHERE age_years IS NOT NULL) AS age_median
+    FROM eligible
+  ),
+  numeric_dispersion AS (
+    SELECT
+      COUNT(living_area)::integer AS living_area_count,
+      AVG(ABS(living_area - numeric_medians.living_area_median))
+        / NULLIF(ABS(numeric_medians.living_area_median), 0) * 100
+          AS living_area_cod,
+      STDDEV_SAMP(living_area) / NULLIF(ABS(AVG(living_area)), 0) * 100
+          AS living_area_cv,
+      COUNT(price_per_square_foot)::integer AS ppsf_count,
+      AVG(ABS(price_per_square_foot - numeric_medians.ppsf_median))
+        / NULLIF(ABS(numeric_medians.ppsf_median), 0) * 100 AS ppsf_cod,
+      STDDEV_SAMP(price_per_square_foot)
+        / NULLIF(ABS(AVG(price_per_square_foot)), 0) * 100 AS ppsf_cv,
+      COUNT(sale_price)::integer AS sale_price_count,
+      AVG(ABS(sale_price - numeric_medians.sale_price_median))
+        / NULLIF(ABS(numeric_medians.sale_price_median), 0) * 100
+          AS sale_price_cod,
+      STDDEV_SAMP(sale_price) / NULLIF(ABS(AVG(sale_price)), 0) * 100
+          AS sale_price_cv,
+      COUNT(age_years)::integer AS age_count,
+      AVG(ABS(age_years - numeric_medians.age_median))
+        / NULLIF(ABS(numeric_medians.age_median), 0) * 100 AS age_cod,
+      STDDEV_SAMP(age_years) / NULLIF(ABS(AVG(age_years)), 0) * 100 AS age_cv
+    FROM eligible
+    CROSS JOIN numeric_medians
+    GROUP BY
+      numeric_medians.living_area_median,
+      numeric_medians.ppsf_median,
+      numeric_medians.sale_price_median,
+      numeric_medians.age_median
+  ),
+  housing_type_groups AS (
+    SELECT housing_type, COUNT(*)::integer AS type_count
+    FROM eligible
+    WHERE housing_type IS NOT NULL
+    GROUP BY housing_type
+  ),
+  housing_type_stats AS (
+    SELECT
+      COALESCE(SUM(type_count), 0)::integer AS observation_count,
+      COALESCE(MAX(type_count), 0)::integer AS dominant_count,
+      (ARRAY_AGG(housing_type ORDER BY type_count DESC, housing_type))[1]
+        AS dominant_housing_type
+    FROM housing_type_groups
+  ),
   series_rows AS (
     SELECT
       'monthly'::text AS interval_key,
@@ -714,7 +791,42 @@ const MARKET_ANALYSIS_SQL = `
         WHERE price_per_square_foot IS NOT NULL
       ),
       'minimum_sale_price', (SELECT MIN(sale_price) FROM eligible),
-      'maximum_sale_price', (SELECT MAX(sale_price) FROM eligible)
+      'maximum_sale_price', (SELECT MAX(sale_price) FROM eligible),
+      'congruency_factors', JSONB_BUILD_OBJECT(
+        'living_area', JSONB_BUILD_OBJECT(
+          'count', (SELECT living_area_count FROM numeric_dispersion),
+          'cod', (SELECT living_area_cod FROM numeric_dispersion),
+          'cv', (SELECT living_area_cv FROM numeric_dispersion)
+        ),
+        'price_per_square_foot', JSONB_BUILD_OBJECT(
+          'count', (SELECT ppsf_count FROM numeric_dispersion),
+          'cod', (SELECT ppsf_cod FROM numeric_dispersion),
+          'cv', (SELECT ppsf_cv FROM numeric_dispersion)
+        ),
+        'sale_price', JSONB_BUILD_OBJECT(
+          'count', (SELECT sale_price_count FROM numeric_dispersion),
+          'cod', (SELECT sale_price_cod FROM numeric_dispersion),
+          'cv', (SELECT sale_price_cv FROM numeric_dispersion)
+        ),
+        'age', JSONB_BUILD_OBJECT(
+          'count', (SELECT age_count FROM numeric_dispersion),
+          'cod', (SELECT age_cod FROM numeric_dispersion),
+          'cv', (SELECT age_cv FROM numeric_dispersion)
+        ),
+        'housing_type', JSONB_BUILD_OBJECT(
+          'count', (SELECT observation_count FROM housing_type_stats),
+          'dominant_type', (
+            SELECT dominant_housing_type FROM housing_type_stats
+          ),
+          'dispersion', (
+            SELECT CASE
+              WHEN observation_count <= 0 THEN NULL
+              ELSE (1 - dominant_count::numeric / observation_count) * 100
+            END
+            FROM housing_type_stats
+          )
+        )
+      )
     ) AS summary,
     COALESCE(
       (
@@ -779,18 +891,244 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizeAnalysisRow(row) {
+const CONGRUENCY_WEIGHTS = Object.freeze({
+  living_area: 0.6,
+  price_per_square_foot: 0.1,
+  sale_price: 0.1,
+  age: 0.1,
+  housing_type: 0.1,
+});
+
+function rounded(value, digits = 2) {
+  if (!Number.isFinite(value)) return null;
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
+
+export function weightedCompositeDispersion(factors, measure) {
+  let weightedTotal = 0;
+  let availableWeight = 0;
+  for (const [key, weight] of Object.entries(CONGRUENCY_WEIGHTS)) {
+    const factor = factors?.[key];
+    const rawValue =
+      key === "housing_type" ? factor?.dispersion : factor?.[measure];
+    const value = numberOrNull(rawValue);
+    if (value === null || Number(factor?.count || 0) <= 0) continue;
+    weightedTotal += value * weight;
+    availableWeight += weight;
+  }
+  return {
+    value:
+      availableWeight > 0
+        ? rounded(weightedTotal / availableWeight, 2)
+        : null,
+    available_weight: rounded(availableWeight, 2) || 0,
+  };
+}
+
+function normalizeCongruencyFactors(rawFactors) {
+  const numericFactor = (key, weight) => ({
+    count: Number(rawFactors?.[key]?.count || 0),
+    cod: numberOrNull(rawFactors?.[key]?.cod),
+    cv: numberOrNull(rawFactors?.[key]?.cv),
+    weight,
+  });
+  return {
+    living_area: numericFactor("living_area", CONGRUENCY_WEIGHTS.living_area),
+    price_per_square_foot: numericFactor(
+      "price_per_square_foot",
+      CONGRUENCY_WEIGHTS.price_per_square_foot,
+    ),
+    sale_price: numericFactor("sale_price", CONGRUENCY_WEIGHTS.sale_price),
+    age: numericFactor("age", CONGRUENCY_WEIGHTS.age),
+    housing_type: {
+      count: Number(rawFactors?.housing_type?.count || 0),
+      dispersion: numberOrNull(rawFactors?.housing_type?.dispersion),
+      dominant_type: rawFactors?.housing_type?.dominant_type || null,
+      weight: CONGRUENCY_WEIGHTS.housing_type,
+    },
+  };
+}
+
+function calendarMonthIndex(value) {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{4})-(\d{2})/);
+  if (!match) return null;
+  return Number(match[1]) * 12 + Number(match[2]) - 1;
+}
+
+export function calculateMarketStudyStatistics({
+  monthlySeries,
+  eligibleSaleCount,
+  periodMonths,
+  congruencyFactors,
+}) {
+  const validMonthly = [...(monthlySeries || [])]
+    .filter(
+      (point) =>
+        numberOrNull(point?.median_sale_price) !== null &&
+        calendarMonthIndex(point?.period_start) !== null,
+    )
+    .sort(
+      (left, right) =>
+        calendarMonthIndex(left.period_start) -
+        calendarMonthIndex(right.period_start),
+    );
+  const first = validMonthly[0] || null;
+  const last = validMonthly.at(-1) || null;
+  const firstMonth = calendarMonthIndex(first?.period_start);
+  const lastMonth = calendarMonthIndex(last?.period_start);
+  const elapsedMonths =
+    firstMonth !== null && lastMonth !== null ? lastMonth - firstMonth : 0;
+  const firstMedian = numberOrNull(first?.median_sale_price);
+  const lastMedian = numberOrNull(last?.median_sale_price);
+  const annualizedChange =
+    elapsedMonths > 0 &&
+    firstMedian !== null &&
+    lastMedian !== null &&
+    firstMedian > 0 &&
+    lastMedian > 0
+      ? ((lastMedian / firstMedian) ** (12 / elapsedMonths) - 1) * 100
+      : null;
+  const compositeCod = weightedCompositeDispersion(
+    congruencyFactors,
+    "cod",
+  );
+  const compositeCv = weightedCompositeDispersion(
+    congruencyFactors,
+    "cv",
+  );
+  const availableWeight = Math.min(
+    compositeCod.available_weight,
+    compositeCv.available_weight,
+  );
+  const sampleScore = Math.min(Number(eligibleSaleCount || 0) / 100, 1);
+  const coverageScore = Math.min(
+    validMonthly.length / Math.max(Number(periodMonths || 0), 1),
+    1,
+  );
+  const meanDispersion =
+    compositeCod.value !== null && compositeCv.value !== null
+      ? (compositeCod.value + compositeCv.value) / 2
+      : compositeCod.value ?? compositeCv.value;
+  const congruencyScore =
+    meanDispersion === null ? 0 : 1 / (1 + Math.max(meanDispersion, 0) / 100);
+  const reliabilityScore =
+    (sampleScore * 0.35 +
+      coverageScore * 0.2 +
+      congruencyScore * 0.35 +
+      availableWeight * 0.1) *
+    100;
+  return {
+    annualized_change_percent: rounded(annualizedChange, 2),
+    trend_start_period: first?.period_start || null,
+    trend_end_period: last?.period_start || null,
+    trend_start_median_price: firstMedian,
+    trend_end_median_price: lastMedian,
+    monthly_observation_count: validMonthly.length,
+    composite_cod: compositeCod.value,
+    composite_cv: compositeCv.value,
+    characteristic_weight_available: availableWeight,
+    reliability_score: rounded(reliabilityScore, 1),
+    sample_sufficient: Number(eligibleSaleCount || 0) >= 30,
+  };
+}
+
+export function buildMarketTrendRecommendation(analyses) {
+  const rankedStudies = (analyses || [])
+    .filter(
+      (analysis) =>
+        numberOrNull(analysis?.statistics?.annualized_change_percent) !== null,
+    )
+    .sort((left, right) => {
+      if (
+        left.statistics.sample_sufficient !==
+        right.statistics.sample_sufficient
+      ) {
+        return left.statistics.sample_sufficient ? -1 : 1;
+      }
+      return (
+        Number(right.statistics.reliability_score || 0) -
+          Number(left.statistics.reliability_score || 0) ||
+        Number(right.population?.eligible_sale_count || 0) -
+          Number(left.population?.eligible_sale_count || 0)
+      );
+    });
+  const changes = rankedStudies.map((analysis) =>
+    Number(analysis.statistics.annualized_change_percent),
+  );
+  const average = changes.length
+    ? changes.reduce((total, value) => total + value, 0) / changes.length
+    : null;
+  const orderedChanges = [...changes].sort((left, right) => left - right);
+  const middle = Math.floor(orderedChanges.length / 2);
+  const median = orderedChanges.length
+    ? orderedChanges.length % 2
+      ? orderedChanges[middle]
+      : (orderedChanges[middle - 1] + orderedChanges[middle]) / 2
+    : null;
+  const recommendedChange =
+    average !== null && median !== null ? (average + median) / 2 : null;
+  const conclusion =
+    recommendedChange === null
+      ? "insufficient"
+      : Math.abs(recommendedChange) < 1
+        ? "stable"
+        : recommendedChange > 0
+          ? "increasing"
+          : "decreasing";
+  return {
+    methodology_version: 1,
+    stable_threshold_percent: 1,
+    conclusion,
+    average_annualized_change_percent: rounded(average, 2),
+    median_annualized_change_percent: rounded(median, 2),
+    recommended_change_percent: rounded(recommendedChange, 2),
+    ranked_studies: rankedStudies.map((analysis, index) => ({
+      rank: index + 1,
+      key: analysis.market.key,
+      label: analysis.market.label,
+      reliability_score: analysis.statistics.reliability_score,
+      sale_count: analysis.population.eligible_sale_count,
+      sample_sufficient: analysis.statistics.sample_sufficient,
+      annualized_change_percent:
+        analysis.statistics.annualized_change_percent,
+      composite_cod: analysis.statistics.composite_cod,
+      composite_cv: analysis.statistics.composite_cv,
+    })),
+  };
+}
+
+function normalizeAnalysisRow(row, periodMonths) {
   const summary = row?.summary || {};
   const series = Array.isArray(row?.series) ? row.series : [];
+  const normalizedSeries = {
+    monthly: series
+      .filter((item) => item.interval_key === "monthly")
+      .map(normalizeSeriesPoint),
+    quarterly: series
+      .filter((item) => item.interval_key === "quarterly")
+      .map(normalizeSeriesPoint),
+    semiannual: series
+      .filter((item) => item.interval_key === "semiannual")
+      .map(normalizeSeriesPoint),
+    yearly: series
+      .filter((item) => item.interval_key === "yearly")
+      .map(normalizeSeriesPoint),
+  };
+  const congruencyFactors = normalizeCongruencyFactors(
+    summary.congruency_factors,
+  );
+  const population = {
+    eligible_sale_count: Number(summary.eligible_sale_count || 0),
+    mapped_sale_count: Number(summary.mapped_sale_count || 0),
+  };
   return {
     period: {
       start: row?.period_start || null,
       end: row?.period_end || null,
     },
-    population: {
-      eligible_sale_count: Number(summary.eligible_sale_count || 0),
-      mapped_sale_count: Number(summary.mapped_sale_count || 0),
-    },
+    population,
     summary: {
       median_sale_price: numberOrNull(summary.median_sale_price),
       median_days_on_market: numberOrNull(summary.median_days_on_market),
@@ -802,21 +1140,15 @@ function normalizeAnalysisRow(row) {
       ),
       minimum_sale_price: numberOrNull(summary.minimum_sale_price),
       maximum_sale_price: numberOrNull(summary.maximum_sale_price),
+      congruency_factors: congruencyFactors,
     },
-    series: {
-      monthly: series
-        .filter((item) => item.interval_key === "monthly")
-        .map(normalizeSeriesPoint),
-      quarterly: series
-        .filter((item) => item.interval_key === "quarterly")
-        .map(normalizeSeriesPoint),
-      semiannual: series
-        .filter((item) => item.interval_key === "semiannual")
-        .map(normalizeSeriesPoint),
-      yearly: series
-        .filter((item) => item.interval_key === "yearly")
-        .map(normalizeSeriesPoint),
-    },
+    statistics: calculateMarketStudyStatistics({
+      monthlySeries: normalizedSeries.monthly,
+      eligibleSaleCount: population.eligible_sale_count,
+      periodMonths,
+      congruencyFactors,
+    }),
+    series: normalizedSeries,
     map_sales: Array.isArray(row?.map_sales)
       ? row.map_sales.map((sale) => ({
           ...sale,
@@ -950,7 +1282,7 @@ export async function buildMarketConditionsAnalyses(
             ? customValidation?.includesSubject ?? null
             : true,
       },
-      ...normalizeAnalysisRow(rows[0]),
+      ...normalizeAnalysisRow(rows[0], parsedPeriodMonths),
       filters: {
         record_type: "closed_sale",
         minimum_sale_price: null,
@@ -969,6 +1301,7 @@ export async function buildMarketConditionsAnalyses(
   return {
     subject,
     analyses,
+    recommendation: buildMarketTrendRecommendation(analyses),
     unavailable_areas: unavailableAreas,
     independence_notice:
       "Market-study areas do not restrict or alter the comparable-sales inventory.",

@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyMarketContextOverride,
+  buildMarketTrendRecommendation,
+  calculateMarketStudyStatistics,
   completeCalendarMonthWindow,
   parseMarketAreaKeys,
   validateCustomMarketGeometry,
+  weightedCompositeDispersion,
 } from "../src/services/marketConditions.js";
 
 test("market studies use the requested number of complete calendar months", () => {
@@ -153,4 +156,95 @@ test("market context override coordinates must be complete and inside DFW", () =
       }),
     /market_context_coordinates_outside_dfw/,
   );
+});
+
+test("market congruency gives living area 60 percent of the composite", () => {
+  const factors = {
+    living_area: { count: 50, cod: 20, cv: 20 },
+    price_per_square_foot: { count: 50, cod: 30, cv: 30 },
+    sale_price: { count: 50, cod: 40, cv: 40 },
+    age: { count: 50, cod: 50, cv: 50 },
+    housing_type: { count: 50, dispersion: 10 },
+  };
+  assert.deepEqual(weightedCompositeDispersion(factors, "cod"), {
+    value: 25,
+    available_weight: 1,
+  });
+  assert.deepEqual(weightedCompositeDispersion(factors, "cv"), {
+    value: 25,
+    available_weight: 1,
+  });
+});
+
+test("missing congruency factors are omitted and remaining weights renormalize", () => {
+  const factors = {
+    living_area: { count: 50, cod: 20 },
+    price_per_square_foot: { count: 0, cod: null },
+    sale_price: { count: 50, cod: 40 },
+    age: { count: 50, cod: 50 },
+    housing_type: { count: 0, dispersion: null },
+  };
+  assert.deepEqual(weightedCompositeDispersion(factors, "cod"), {
+    value: 26.25,
+    available_weight: 0.8,
+  });
+});
+
+test("market statistics annualize first-to-last complete monthly medians", () => {
+  const statistics = calculateMarketStudyStatistics({
+    monthlySeries: [
+      { period_start: "2024-01-01", median_sale_price: 100 },
+      { period_start: "2025-01-01", median_sale_price: 110 },
+      { period_start: "2026-01-01", median_sale_price: 121 },
+    ],
+    eligibleSaleCount: 75,
+    periodMonths: 25,
+    congruencyFactors: {
+      living_area: { count: 75, cod: 10, cv: 12 },
+      price_per_square_foot: { count: 75, cod: 15, cv: 18 },
+      sale_price: { count: 75, cod: 20, cv: 24 },
+      age: { count: 75, cod: 25, cv: 30 },
+      housing_type: { count: 75, dispersion: 8 },
+    },
+  });
+  assert.equal(statistics.annualized_change_percent, 10);
+  assert.equal(statistics.composite_cod, 12.8);
+  assert.equal(statistics.composite_cv, 15.2);
+  assert.equal(statistics.sample_sufficient, true);
+});
+
+test("market recommendation combines mean and median and applies one-percent threshold", () => {
+  const analysis = (key, change, score, saleCount = 100) => ({
+    market: { key, label: key.toUpperCase() },
+    population: { eligible_sale_count: saleCount },
+    statistics: {
+      annualized_change_percent: change,
+      reliability_score: score,
+      sample_sufficient: saleCount >= 30,
+      composite_cod: 10,
+      composite_cv: 12,
+    },
+  });
+  const increasing = buildMarketTrendRecommendation([
+    analysis("city", 2, 80),
+    analysis("zip", 4, 90),
+    analysis("radius_1", 6, 85),
+  ]);
+  assert.equal(increasing.average_annualized_change_percent, 4);
+  assert.equal(increasing.median_annualized_change_percent, 4);
+  assert.equal(increasing.recommended_change_percent, 4);
+  assert.equal(increasing.conclusion, "increasing");
+  assert.equal(increasing.ranked_studies[0].key, "zip");
+
+  const stable = buildMarketTrendRecommendation([
+    analysis("city", -0.5, 80),
+    analysis("zip", 0.8, 90),
+  ]);
+  assert.equal(stable.conclusion, "stable");
+
+  const decreasing = buildMarketTrendRecommendation([
+    analysis("city", -3, 80),
+    analysis("zip", -2, 90),
+  ]);
+  assert.equal(decreasing.conclusion, "decreasing");
 });

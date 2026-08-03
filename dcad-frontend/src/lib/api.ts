@@ -660,6 +660,9 @@ export interface MarketConditionsAnalysis {
     attached_housing_included: boolean;
     inclusive_start_date: boolean;
     period_months: number;
+    complete_calendar_months: boolean;
+    analysis_as_of: string;
+    partial_as_of_month_excluded: boolean;
   };
 }
 

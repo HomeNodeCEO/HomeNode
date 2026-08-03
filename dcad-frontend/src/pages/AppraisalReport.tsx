@@ -1095,9 +1095,11 @@ export default function AppraisalReport() {
                     {marketAnalyses.length === 1 ? "study" : "studies"}.
                   </strong>{" "}
                   The selected areas were analyzed separately and did not limit
-                  or alter the comparable-sales inventory. The study period is{" "}
-                  {marketDraft.periodMonths} months through{" "}
-                  {dateText(marketDraft.asOfDate)}.
+                  or alter the comparable-sales inventory. The study covers{" "}
+                  {marketDraft.periodMonths} complete calendar months from{" "}
+                  {dateText(marketAnalyses[0]?.period.start)} through{" "}
+                  {dateText(marketAnalyses[0]?.period.end)}. The analysis-as-of
+                  date is {dateText(marketDraft.asOfDate)}.
                 </div>
               </section>
 

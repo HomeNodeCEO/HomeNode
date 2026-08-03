@@ -35,6 +35,69 @@ const DFW_BOUNDS = Object.freeze({
 const MAX_CUSTOM_VERTICES = 500;
 const MAX_CUSTOM_AREA_SQUARE_MILES = 5000;
 
+function centralDateString(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(value);
+  const part = (type) => parts.find((item) => item.type === type)?.value;
+  return `${part("year")}-${part("month")}-${part("day")}`;
+}
+
+function utcDateString(value) {
+  return value.toISOString().slice(0, 10);
+}
+
+export function completeCalendarMonthWindow(
+  asOfDate = "",
+  periodMonths = 24,
+  fallbackNow = new Date(),
+) {
+  const parsedPeriodMonths = Number(periodMonths);
+  if (![12, 24, 36].includes(parsedPeriodMonths)) {
+    throw new Error("invalid_market_period");
+  }
+
+  const analysisAsOf = String(asOfDate || centralDateString(fallbackNow)).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(analysisAsOf)) {
+    throw new Error("invalid_as_of");
+  }
+  const [year, month, day] = analysisAsOf.split("-").map(Number);
+  const requestedDate = new Date(Date.UTC(year, month - 1, day));
+  if (
+    requestedDate.getUTCFullYear() !== year ||
+    requestedDate.getUTCMonth() !== month - 1 ||
+    requestedDate.getUTCDate() !== day
+  ) {
+    throw new Error("invalid_as_of");
+  }
+
+  const lastDayOfRequestedMonth = new Date(
+    Date.UTC(year, month, 0),
+  ).getUTCDate();
+  const partialMonthExcluded = day !== lastDayOfRequestedMonth;
+  const periodEnd = partialMonthExcluded
+    ? new Date(Date.UTC(year, month - 1, 0))
+    : requestedDate;
+  const periodStart = new Date(
+    Date.UTC(
+      periodEnd.getUTCFullYear(),
+      periodEnd.getUTCMonth() - (parsedPeriodMonths - 1),
+      1,
+    ),
+  );
+
+  return {
+    analysisAsOf,
+    start: utcDateString(periodStart),
+    end: utcDateString(periodEnd),
+    periodMonths: parsedPeriodMonths,
+    partialMonthExcluded,
+  };
+}
+
 function normalizePostalCode(value) {
   return (
     String(value || "")
@@ -433,7 +496,11 @@ async function validateCustomAreaInDatabase(pool, geometry, subject) {
 const MARKET_ANALYSIS_SQL = `
   WITH parameters AS (
     SELECT
-      COALESCE(NULLIF($1, '')::date, CURRENT_DATE) AS period_end,
+      NULLIF($1, '')::date AS period_end,
+      (
+        DATE_TRUNC('month', NULLIF($1, '')::date)
+        - (($2::integer - 1) * INTERVAL '1 month')
+      )::date AS period_start,
       $2::integer AS period_months,
       BTRIM($3) AS subject_city,
       NULLIF(BTRIM($4), '') AS subject_county,
@@ -496,8 +563,7 @@ const MARKET_ANALYSIS_SQL = `
       ON sale_location.account_id = sale.primary_account_id
     CROSS JOIN parameters
     WHERE sale.record_type = 'closed_sale'
-      AND sale.closing_date >=
-        (parameters.period_end - (parameters.period_months * INTERVAL '1 month'))::date
+      AND sale.closing_date >= parameters.period_start
       AND sale.closing_date <= parameters.period_end
   ),
   eligible AS (
@@ -704,10 +770,7 @@ const MARKET_ANALYSIS_SQL = `
       '[]'::jsonb
     ) AS map_sales,
     (SELECT period_end FROM parameters) AS period_end,
-    (
-      SELECT (period_end - (period_months * INTERVAL '1 month'))::date
-      FROM parameters
-    ) AS period_start
+    (SELECT period_start FROM parameters) AS period_start
 `;
 
 function numberOrNull(value) {
@@ -793,12 +856,10 @@ export async function buildMarketConditionsAnalyses(
 ) {
   const areas = parseMarketAreaKeys(areaKeys);
   const parsedPeriodMonths = Number(periodMonths);
-  if (![12, 24, 36].includes(parsedPeriodMonths)) {
-    throw new Error("invalid_market_period");
-  }
-  if (asOfDate && !/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
-    throw new Error("invalid_as_of");
-  }
+  const calendarWindow = completeCalendarMonthWindow(
+    asOfDate,
+    parsedPeriodMonths,
+  );
 
   const storedSubject = await getMarketContext(pool, subjectAccountId);
   const subject = applyMarketContextOverride(
@@ -856,7 +917,7 @@ export async function buildMarketConditionsAnalyses(
   const analyses = [];
   for (const area of availableAreas) {
     const { rows } = await pool.query(MARKET_ANALYSIS_SQL, [
-      asOfDate,
+      calendarWindow.end,
       parsedPeriodMonths,
       String(subject.city || ""),
       String(subject.county || ""),
@@ -898,6 +959,9 @@ export async function buildMarketConditionsAnalyses(
         attached_housing_included: true,
         inclusive_start_date: true,
         period_months: parsedPeriodMonths,
+        complete_calendar_months: true,
+        analysis_as_of: calendarWindow.analysisAsOf,
+        partial_as_of_month_excluded: calendarWindow.partialMonthExcluded,
       },
     });
   }

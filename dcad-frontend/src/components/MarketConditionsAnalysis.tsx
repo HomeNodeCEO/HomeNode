@@ -684,7 +684,7 @@ export default function MarketConditionsAnalysis({
   useEffect(() => {
     if (studyIsCurrent && analysisResult) {
       const draft: MarketConditionsDraft = {
-        version: 1,
+        version: 2,
         accountId: subjectAccountId,
         savedAt: new Date().toISOString(),
         asOfDate,
@@ -971,7 +971,7 @@ export default function MarketConditionsAnalysis({
         activeContextOverride,
       );
       const draft: MarketConditionsDraft = {
-        version: 1,
+        version: 2,
         accountId: subjectAccountId,
         savedAt: new Date().toISOString(),
         asOfDate,
@@ -1009,7 +1009,7 @@ export default function MarketConditionsAnalysis({
     setSavingNarrative(true);
     setError(null);
     const draft: MarketConditionsDraft = {
-      version: 1,
+      version: 2,
       accountId: subjectAccountId,
       savedAt: new Date().toISOString(),
       asOfDate,
@@ -1100,6 +1100,10 @@ export default function MarketConditionsAnalysis({
               <option value={24}>24 months</option>
               <option value={36}>36 months</option>
             </select>
+            <span className="text-xs text-slate-500">
+              Uses complete calendar months ending with the latest fully
+              completed month.
+            </span>
           </label>
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
             <div className="flex flex-wrap items-center gap-2">

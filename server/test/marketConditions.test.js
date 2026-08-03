@@ -2,9 +2,37 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyMarketContextOverride,
+  completeCalendarMonthWindow,
   parseMarketAreaKeys,
   validateCustomMarketGeometry,
 } from "../src/services/marketConditions.js";
+
+test("market studies use the requested number of complete calendar months", () => {
+  assert.deepEqual(completeCalendarMonthWindow("2026-08-03", 24), {
+    analysisAsOf: "2026-08-03",
+    start: "2024-08-01",
+    end: "2026-07-31",
+    periodMonths: 24,
+    partialMonthExcluded: true,
+  });
+  assert.deepEqual(completeCalendarMonthWindow("2026-07-31", 12), {
+    analysisAsOf: "2026-07-31",
+    start: "2025-08-01",
+    end: "2026-07-31",
+    periodMonths: 12,
+    partialMonthExcluded: false,
+  });
+});
+
+test("partial first-month dates and invalid calendar dates are handled", () => {
+  const window = completeCalendarMonthWindow("2026-07-30", 24);
+  assert.equal(window.start, "2024-07-01");
+  assert.equal(window.end, "2026-06-30");
+  assert.throws(
+    () => completeCalendarMonthWindow("2026-02-30", 24),
+    /invalid_as_of/,
+  );
+});
 
 test("market areas preserve the requested independent scopes", () => {
   const areas = parseMarketAreaKeys([

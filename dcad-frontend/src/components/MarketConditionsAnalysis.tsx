@@ -324,26 +324,6 @@ function defaultReconciliation(
   };
 }
 
-function MarketMetricCard({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) {
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-        {label}
-      </div>
-      <div className="mt-1 text-xl font-semibold text-slate-950">{value}</div>
-      {detail && <div className="mt-1 text-xs text-slate-500">{detail}</div>}
-    </div>
-  );
-}
-
 function MedianPriceBars({
   points,
   interval,
@@ -360,6 +340,23 @@ function MedianPriceBars({
     ...visible.map((point) => point.median_sale_price || 0),
     1,
   );
+  const plotHeight = 220;
+  const maximumBarHeight = 170;
+  const chartWidth = visible.length * 100;
+  const plottedPoints = visible.map((point, index) => {
+    const value = point.median_sale_price || 0;
+    const height = Math.max(
+      12,
+      Math.round((value / maximum) * maximumBarHeight),
+    );
+    return {
+      point,
+      value,
+      height,
+      x: index * 100 + 50,
+      y: plotHeight - height,
+    };
+  });
   if (!visible.length) {
     return (
       <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-500">
@@ -370,36 +367,79 @@ function MedianPriceBars({
   return (
     <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4">
       <div
-        className="flex min-h-[260px] items-end gap-3"
+        className="relative"
         style={{ minWidth: Math.max(620, visible.length * 74) }}
       >
-        {visible.map((point) => {
-          const value = point.median_sale_price || 0;
-          const height = Math.max(12, Math.round((value / maximum) * 180));
-          return (
+        <div className="relative h-[220px]">
+          <div className="absolute inset-0 flex items-end">
+            {plottedPoints.map(({ point, value, height }) => (
+              <div
+                key={`${interval}:${point.period_start}`}
+                className="relative h-full min-w-[74px] flex-1"
+              >
+                <div
+                  className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-center text-[11px] font-semibold text-slate-700"
+                  style={{ bottom: height + 8 }}
+                >
+                  {money(value)}
+                </div>
+                <div
+                  className="absolute bottom-0 left-1/2 w-full max-w-[54px] -translate-x-1/2 rounded-t-md bg-gradient-to-t from-emerald-700 to-emerald-400"
+                  style={{ height }}
+                  title={`${periodLabel(point.period_start, interval)}: ${money(
+                    value,
+                  )} median from ${point.sale_count} sales`}
+                />
+              </div>
+            ))}
+          </div>
+
+          <svg
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+            preserveAspectRatio="none"
+            viewBox={`0 0 ${chartWidth} ${plotHeight}`}
+          >
+            <polyline
+              fill="none"
+              points={plottedPoints
+                .map(({ x, y }) => `${x},${y}`)
+                .join(' ')}
+              stroke="#0f172a"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth="3"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+
+          {plottedPoints.map(({ point, height }, index) => (
             <div
               key={`${interval}:${point.period_start}`}
-              className="flex min-w-[58px] flex-1 flex-col items-center justify-end"
+              className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 rounded-full border-2 border-white bg-slate-900 shadow-sm"
+              style={{
+                bottom: height - 6,
+                left: `${((index + 0.5) / plottedPoints.length) * 100}%`,
+              }}
+            />
+          ))}
+        </div>
+
+        <div className="flex">
+          {plottedPoints.map(({ point }) => (
+            <div
+              key={`${interval}:${point.period_start}`}
+              className="min-w-[74px] flex-1 px-1 pt-2 text-center"
             >
-              <div className="mb-2 text-center text-[11px] font-semibold text-slate-700">
-                {money(value)}
-              </div>
-              <div
-                className="w-full max-w-[54px] rounded-t-md bg-gradient-to-t from-emerald-700 to-emerald-400"
-                style={{ height }}
-                title={`${periodLabel(point.period_start, interval)}: ${money(
-                  value,
-                )} median from ${point.sale_count} sales`}
-              />
-              <div className="mt-2 text-center text-[11px] font-medium text-slate-600">
+              <div className="text-[11px] font-medium text-slate-600">
                 {periodLabel(point.period_start, interval)}
               </div>
               <div className="text-[10px] text-slate-400">
                 {point.sale_count} sale{point.sale_count === 1 ? '' : 's'}
               </div>
             </div>
-          );
-        })}
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1597,40 +1637,7 @@ export default function MarketConditionsAnalysis({
                     </div>
                   )}
 
-                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <MarketMetricCard
-                    label="Median sale price"
-                    value={money(analysis.summary.median_sale_price)}
-                    detail={`${money(
-                      analysis.summary.minimum_sale_price,
-                    )} to ${money(analysis.summary.maximum_sale_price)}`}
-                  />
-                  <MarketMetricCard
-                    label="Median DOM"
-                    value={
-                      analysis.summary.median_days_on_market === null
-                        ? 'Not available'
-                        : `${numberText(
-                            analysis.summary.median_days_on_market,
-                            1,
-                          )} days`
-                    }
-                  />
-                  <MarketMetricCard
-                    label="Median sale/list ratio"
-                    value={percentText(
-                      analysis.summary.median_sale_to_list_ratio,
-                    )}
-                  />
-                  <MarketMetricCard
-                    label="Median price per SF"
-                    value={money(
-                      analysis.summary.median_price_per_square_foot,
-                    )}
-                  />
-                </div>
-
-                <div className="mt-5">
+                <div className="mt-4">
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <h4 className="font-semibold text-slate-900">
                       {INTERVAL_OPTIONS.find(
@@ -1639,7 +1646,8 @@ export default function MarketConditionsAnalysis({
                       median sale price
                     </h4>
                     <span className="text-xs text-slate-500">
-                      Bar labels show the median and sample size for each period.
+                      Bars and the trend line show each period median; labels
+                      include the median and sample size.
                     </span>
                   </div>
                   <MedianPriceBars

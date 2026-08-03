@@ -277,6 +277,107 @@ export async function getMarketContext(pool, subjectAccountId) {
     location_confidence: subject.location_confidence,
     location_review_required: Boolean(subject.location_review_required),
     location_review_reason: subject.location_review_reason,
+    context_override_active: false,
+    context_override_source: null,
+    context_overridden_fields: [],
+    context_source_account_id: null,
+    context_review_note: null,
+  };
+}
+
+function optionalMarketText(value, maximumLength) {
+  const normalized = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!normalized) return null;
+  if (normalized.length > maximumLength) {
+    throw new Error("market_context_override_too_long");
+  }
+  return normalized;
+}
+
+/**
+ * Overlay reviewable study geography without modifying the subject account.
+ * Every active override is returned with provenance fields so the workfile can
+ * visibly distinguish it from the stored CAD context.
+ */
+export function applyMarketContextOverride(subject, value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return subject;
+  }
+  const source = optionalMarketText(value.source, 40) || "manual";
+  if (!["manual", "dcad_related_parcel"].includes(source)) {
+    throw new Error("invalid_market_context_override_source");
+  }
+  const address = optionalMarketText(value.address, 200);
+  const city = optionalMarketText(value.city, 100);
+  const county = optionalMarketText(value.county, 100);
+  const reviewNote = optionalMarketText(value.review_note, 1000);
+  const postalRaw = optionalMarketText(value.postal_code, 20);
+  const postalCode = postalRaw ? normalizePostalCode(postalRaw) : null;
+  if (postalRaw && (!postalCode || postalCode.length !== 5)) {
+    throw new Error("invalid_market_context_postal_code");
+  }
+  const sourceAccountId = optionalMarketText(value.source_account_id, 50);
+  if (sourceAccountId && !/^[0-9A-Za-z]{17}$/.test(sourceAccountId)) {
+    throw new Error("invalid_market_context_source_account_id");
+  }
+
+  const latitudeProvided =
+    value.latitude !== undefined && value.latitude !== null && value.latitude !== "";
+  const longitudeProvided =
+    value.longitude !== undefined && value.longitude !== null && value.longitude !== "";
+  if (latitudeProvided !== longitudeProvided) {
+    throw new Error("market_context_coordinates_incomplete");
+  }
+  const latitude = latitudeProvided ? Number(value.latitude) : null;
+  const longitude = longitudeProvided ? Number(value.longitude) : null;
+  if (
+    latitudeProvided &&
+    (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      longitude < DFW_BOUNDS.minimumLongitude ||
+      longitude > DFW_BOUNDS.maximumLongitude ||
+      latitude < DFW_BOUNDS.minimumLatitude ||
+      latitude > DFW_BOUNDS.maximumLatitude
+    )
+  ) {
+    throw new Error("market_context_coordinates_outside_dfw");
+  }
+
+  const overriddenFields = [];
+  if (address) overriddenFields.push("address");
+  if (city) overriddenFields.push("city");
+  if (county) overriddenFields.push("county");
+  if (postalRaw) overriddenFields.push("postal_code");
+  if (latitudeProvided) overriddenFields.push("coordinates");
+  if (sourceAccountId) overriddenFields.push("source_account_id");
+  if (!overriddenFields.length) {
+    throw new Error("market_context_override_empty");
+  }
+
+  return {
+    ...subject,
+    address: address || subject.address,
+    city: city || subject.city,
+    county: county || subject.county,
+    postal_code: postalRaw ? postalCode : subject.postal_code,
+    latitude: latitudeProvided ? latitude : subject.latitude,
+    longitude: longitudeProvided ? longitude : subject.longitude,
+    location_status: latitudeProvided ? "matched" : subject.location_status,
+    location_source: latitudeProvided
+      ? source === "dcad_related_parcel"
+        ? "dcad_related_parcel_override"
+        : "manual_market_context"
+      : subject.location_source,
+    location_precision: latitudeProvided ? "study_origin" : subject.location_precision,
+    location_confidence: latitudeProvided ? "medium" : subject.location_confidence,
+    location_review_required: true,
+    location_review_reason: "market_context_override_active",
+    context_override_active: true,
+    context_override_source: source,
+    context_overridden_fields: overriddenFields,
+    context_source_account_id: sourceAccountId,
+    context_review_note: reviewNote,
   };
 }
 
@@ -690,6 +791,7 @@ export async function buildMarketConditionsAnalyses(
     asOfDate = "",
     periodMonths = 24,
     customGeometry = null,
+    marketContextOverride = null,
   },
 ) {
   const areas = parseMarketAreaKeys(areaKeys);
@@ -701,7 +803,11 @@ export async function buildMarketConditionsAnalyses(
     throw new Error("invalid_as_of");
   }
 
-  const subject = await getMarketContext(pool, subjectAccountId);
+  const storedSubject = await getMarketContext(pool, subjectAccountId);
+  const subject = applyMarketContextOverride(
+    storedSubject,
+    marketContextOverride,
+  );
   const customRequested = areas.some((area) => area.scope === "custom");
   let normalizedCustomGeometry = null;
   let customValidation = null;
@@ -818,6 +924,7 @@ export function marketConditionsErrorStatus(message) {
   }
   if (
     String(message || "").startsWith("invalid_") ||
+    String(message || "").startsWith("market_context_") ||
     String(message || "").startsWith("custom_") ||
     message === "market_areas_required"
   ) {

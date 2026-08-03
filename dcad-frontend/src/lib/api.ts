@@ -479,6 +479,18 @@ export type GeoJsonPolygon = {
   coordinates: number[][][];
 };
 
+export interface MarketContextOverride {
+  source: 'manual' | 'dcad_related_parcel';
+  address?: string | null;
+  city?: string | null;
+  county?: string | null;
+  postal_code?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  source_account_id?: string | null;
+  review_note?: string | null;
+}
+
 export interface MarketConditionsSubject {
   account_id: string;
   address: string | null;
@@ -494,6 +506,46 @@ export interface MarketConditionsSubject {
   location_confidence: 'high' | 'medium' | 'low' | null;
   location_review_required: boolean;
   location_review_reason: string | null;
+  context_override_active: boolean;
+  context_override_source: 'manual' | 'dcad_related_parcel' | null;
+  context_overridden_fields: string[];
+  context_source_account_id: string | null;
+  context_review_note: string | null;
+}
+
+export interface RelatedParcel {
+  account_id: string;
+  low_parcel_id: string | null;
+  site_address: string | null;
+  address: string | null;
+  city: string | null;
+  postal_code: string | null;
+  county: string | null;
+  neighborhood_code: string | null;
+  property_description: string | null;
+  legal_description: string | null;
+  use_description: string | null;
+  living_area_sqft: number | null;
+  land_value: number | null;
+  improvement_value: number | null;
+  total_value: number | null;
+  latitude: number | null;
+  longitude: number | null;
+  source_updated_at: string | null;
+  source: string;
+  data_quality_status: string | null;
+  in_database: boolean;
+  is_subject: boolean;
+}
+
+export interface RelatedParcelsResponse {
+  subject_account_id: string;
+  query_address: string;
+  live_query_status: 'complete' | 'unavailable' | 'unsupported_county';
+  live_query_error: string | null;
+  review_required: boolean;
+  merge_performed: false;
+  parcels: RelatedParcel[];
 }
 
 export interface MarketConditionsSeriesPoint {
@@ -579,6 +631,7 @@ export interface MarketConditionsRequest {
   asOf?: string;
   periodMonths: 12 | 24 | 36;
   customGeometry?: GeoJsonPolygon | null;
+  contextOverride?: MarketContextOverride | null;
 }
 
 export type GroupedAdjustmentReliability = 'strong' | 'moderate' | 'limited';
@@ -873,6 +926,17 @@ export async function getMarketConditionsContext(
   });
 }
 
+/** Find exact same-address CAD parcels without merging account records. */
+export async function getRelatedParcels(
+  subjectAccountId: string,
+  address?: string,
+): Promise<RelatedParcelsResponse> {
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(subjectAccountId.trim())}/related-parcels`, {
+    address: address?.trim() || undefined,
+  });
+  return fetchJSON<RelatedParcelsResponse>(url, { timeoutMs: 90000 });
+}
+
 /** Build independent market-condition studies without filtering comparable inventory. */
 export async function runMarketConditionsAnalysis(
   request: MarketConditionsRequest,
@@ -889,6 +953,7 @@ export async function runMarketConditionsAnalysis(
       as_of: request.asOf,
       period_months: request.periodMonths,
       custom_geometry: request.customGeometry || null,
+      context_override: request.contextOverride || null,
     }),
     timeoutMs: 120000,
   });

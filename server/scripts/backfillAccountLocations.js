@@ -17,6 +17,10 @@ const requestedAccountId = option("account-id");
 const requestedLimit = Number(option("limit", "0"));
 const force = process.argv.includes("--force");
 const batchSize = Math.min(Math.max(Number(option("batch-size", "50")) || 50, 1), 100);
+const maximumAttempts = Math.min(
+  Math.max(Number(option("maximum-attempts", "3")) || 3, 1),
+  6,
+);
 
 try {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
@@ -70,9 +74,15 @@ try {
   console.log(`[locations] ${rows.length} account(s) queued`);
   const summary = await refreshAccountLocations(pool, rows, {
     batchSize,
+    maximumAttempts,
+    onRetry: ({ nextAttempt, delayMs, batchStart, batchSize: retryBatchSize, error }) => {
+      console.warn(
+        `[locations] DCAD GIS retry ${nextAttempt}/${maximumAttempts} for rows ${batchStart + 1}-${batchStart + retryBatchSize} in ${delayMs}ms: ${error?.message || error}`,
+      );
+    },
     onBatch: ({ completed, total, summary: progress }) => {
       console.log(
-        `[locations] ${completed}/${total} matched=${progress.matched} not_found=${progress.notFound} invalid=${progress.invalid} skipped_county=${progress.skippedUnsupportedCounty}`,
+        `[locations] ${completed}/${total} matched=${progress.matched} not_found=${progress.notFound} invalid=${progress.invalid} retries=${progress.retries} skipped_county=${progress.skippedUnsupportedCounty}`,
       );
     },
   });

@@ -70,6 +70,129 @@ function normalizeAddress(value) {
     .replace(/[^A-Z0-9]/g, "");
 }
 
+function normalizedSiteAddressLine(value) {
+  return String(value || "")
+    .split(",")[0]
+    .trim()
+    .toUpperCase()
+    .replace(/\bSTREET\b/g, "ST")
+    .replace(/\bROAD\b/g, "RD")
+    .replace(/\bLANE\b/g, "LN")
+    .replace(/\bDRIVE\b/g, "DR")
+    .replace(/\bAVENUE\b/g, "AVE")
+    .replace(/\bCOURT\b/g, "CT")
+    .replace(/\bBOULEVARD\b/g, "BLVD")
+    .replace(/\bCIRCLE\b/g, "CIR")
+    .replace(/\bPARKWAY\b/g, "PKWY")
+    .replace(/\bPLACE\b/g, "PL")
+    .replace(/\bTRAIL\b/g, "TRL")
+    .replace(/\./g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function arcGisSqlLiteral(value) {
+  return String(value || "").replace(/'/g, "''");
+}
+
+/**
+ * Find every official DCAD parcel carrying the same situs-address line.
+ * Results are review-only: callers decide whether parcels are related and no
+ * account records are merged or updated here.
+ */
+export async function findDcadParcelsByAddress(
+  address,
+  { fetchImpl = fetch } = {},
+) {
+  const siteAddress = normalizedSiteAddressLine(address);
+  if (!siteAddress || siteAddress.length > 160 || !/^\d+[A-Z0-9-]*\s+/.test(siteAddress)) {
+    throw new Error("invalid_dcad_site_address");
+  }
+  const body = new URLSearchParams({
+    where: `SITEADDRESS = '${arcGisSqlLiteral(siteAddress)}'`,
+    outFields: [
+      "LOWPARCELID",
+      "PARCELID",
+      "SITEADDRESS",
+      "NGHBRHDCD",
+      "PRPRTYDSCRP",
+      "USEDSCRP",
+      "RESFLRAREA",
+      "LNDVALUE",
+      "IMPVALUE",
+      "CNTASSDVAL",
+      "LASTUPDATE",
+    ].join(","),
+    returnGeometry: "true",
+    outSR: "4326",
+    f: "json",
+  });
+  const response = await fetchImpl(DCAD_PARCEL_QUERY_URL, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!response.ok) {
+    throw new Error(`dcad_parcel_address_query_http_${response.status}`);
+  }
+  const payload = await response.json();
+  if (payload?.error) {
+    throw new Error(
+      `dcad_parcel_address_query_${payload.error.code || "error"}: ${
+        payload.error.message || "unknown error"
+      }`,
+    );
+  }
+
+  const matches = [];
+  const seen = new Set();
+  for (const feature of Array.isArray(payload?.features) ? payload.features : []) {
+    const attributes = feature?.attributes || {};
+    if (normalizeAddress(attributes.SITEADDRESS) !== normalizeAddress(siteAddress)) {
+      continue;
+    }
+    const accountId =
+      normalizeAccountId(attributes.PARCELID) ||
+      normalizeAccountId(attributes.LOWPARCELID);
+    if (!accountId || seen.has(accountId)) continue;
+    seen.add(accountId);
+    const centroid = polygonCentroid(feature?.geometry?.rings);
+    const sourceUpdatedMilliseconds = Number(attributes.LASTUPDATE);
+    matches.push({
+      account_id: accountId,
+      low_parcel_id: normalizeAccountId(attributes.LOWPARCELID),
+      site_address: String(attributes.SITEADDRESS || "").trim() || siteAddress,
+      neighborhood_code: String(attributes.NGHBRHDCD || "").trim() || null,
+      property_description: String(attributes.PRPRTYDSCRP || "").trim() || null,
+      use_description: String(attributes.USEDSCRP || "").trim() || null,
+      living_area_sqft: Number.isFinite(Number(attributes.RESFLRAREA))
+        ? Number(attributes.RESFLRAREA)
+        : null,
+      land_value: Number.isFinite(Number(attributes.LNDVALUE))
+        ? Number(attributes.LNDVALUE)
+        : null,
+      improvement_value: Number.isFinite(Number(attributes.IMPVALUE))
+        ? Number(attributes.IMPVALUE)
+        : null,
+      total_value: Number.isFinite(Number(attributes.CNTASSDVAL))
+        ? Number(attributes.CNTASSDVAL)
+        : null,
+      latitude: centroid?.latitude ?? null,
+      longitude: centroid?.longitude ?? null,
+      source_updated_at:
+        Number.isFinite(sourceUpdatedMilliseconds) && sourceUpdatedMilliseconds > 0
+          ? new Date(sourceUpdatedMilliseconds).toISOString()
+          : null,
+      source: "dcad_parcel_query",
+    });
+  }
+  return {
+    query_address: siteAddress,
+    parcels: matches,
+  };
+}
+
 function addressesAgree(databaseAddress, gisAddress) {
   const databaseNormalized = normalizeAddress(databaseAddress);
   const gisNormalized = normalizeAddress(gisAddress);
@@ -213,6 +336,35 @@ async function queryDcadFeatures(accountIds, fetchImpl) {
   return Array.isArray(payload?.features) ? payload.features : [];
 }
 
+async function queryDcadFeaturesWithRetry(
+  accountIds,
+  fetchImpl,
+  {
+    maximumAttempts = 3,
+    retryDelayMs = 1_000,
+    sleepImpl = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
+    onRetry = null,
+  } = {},
+) {
+  const attemptLimit = Math.max(1, Math.trunc(Number(maximumAttempts) || 1));
+  const baseDelay = Math.max(0, Math.trunc(Number(retryDelayMs) || 0));
+  let lastError;
+  for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
+    try {
+      return await queryDcadFeatures(accountIds, fetchImpl);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attemptLimit) break;
+      const delayMs = baseDelay * 2 ** (attempt - 1);
+      if (typeof onRetry === "function") {
+        onRetry({ attempt, nextAttempt: attempt + 1, delayMs, error });
+      }
+      if (delayMs > 0) await sleepImpl(delayMs);
+    }
+  }
+  throw lastError;
+}
+
 async function upsertLocation(pool, location) {
   await pool.query(
     `
@@ -275,6 +427,10 @@ export async function refreshAccountLocations(
     fetchImpl = fetch,
     batchSize = 50,
     onBatch = null,
+    maximumAttempts = 3,
+    retryDelayMs = 1_000,
+    sleepImpl,
+    onRetry = null,
   } = {},
 ) {
   await ensureAccountLocationsTable(pool);
@@ -300,13 +456,30 @@ export async function refreshAccountLocations(
     matched: 0,
     notFound: 0,
     invalid: 0,
+    retries: 0,
   };
 
   for (let start = 0; start < uniqueAccounts.length; start += batchSize) {
     const batch = uniqueAccounts.slice(start, start + batchSize);
-    const features = await queryDcadFeatures(
+    const features = await queryDcadFeaturesWithRetry(
       batch.map((account) => account.account_id),
       fetchImpl,
+      {
+        maximumAttempts,
+        retryDelayMs,
+        sleepImpl,
+        onRetry: (retry) => {
+          summary.retries += 1;
+          if (typeof onRetry === "function") {
+            onRetry({
+              ...retry,
+              batchStart: start,
+              batchSize: batch.length,
+              accountIds: batch.map((account) => account.account_id),
+            });
+          }
+        },
+      },
     );
 
     const locations = batch.map((account) => {

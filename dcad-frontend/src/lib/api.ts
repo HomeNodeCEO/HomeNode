@@ -292,6 +292,39 @@ export interface HousingProfileUpdate {
   source_record_reference?: string | null;
 }
 
+export interface AppraisalRatingReview {
+  source_record_id: string | number;
+  listing_id: string | null;
+  condition_rating: string | null;
+  quality_rating: string | null;
+  notes: string | null;
+  reviewer: string;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SubjectAppraisalRating {
+  account_id: string;
+  effective_date: string;
+  condition_rating: string | null;
+  quality_rating: string | null;
+  notes: string | null;
+  reviewer: string;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AppraisalRatingUpdate {
+  condition_rating?: string | null;
+  quality_rating?: string | null;
+  notes?: string | null;
+  reviewer?: string | null;
+  expected_revision?: number | null;
+  clear?: boolean;
+}
+
 export interface SalesSearchParams {
   q?: string;
   accountId?: string;
@@ -706,6 +739,65 @@ export async function updateAccountHousingProfile(
     },
     body: JSON.stringify(update),
   });
+}
+
+/** Batch-load saved comparable condition/quality reviews. */
+export async function getSaleAppraisalReviews(
+  sourceRecordIds: Array<string | number>,
+): Promise<AppraisalRatingReview[]> {
+  const ids = [...new Set(sourceRecordIds.map(String).filter(Boolean))];
+  if (!ids.length) return [];
+  const url = makeUrl('/api/sales/reviews', { source_record_ids: ids.join(',') });
+  const response = await fetchJSON<{ reviews: AppraisalRatingReview[] }>(url);
+  return response.reviews || [];
+}
+
+/** Explicit Save Changes for one source MLS sale. */
+export async function updateSaleAppraisalReview(
+  sourceRecordId: string | number,
+  update: AppraisalRatingUpdate,
+  editorKey: string,
+): Promise<AppraisalRatingReview> {
+  const url = makeUrl(`/api/sales/${encodeURIComponent(String(sourceRecordId))}/review`);
+  const response = await fetchJSON<{ ok: true; review: AppraisalRatingReview }>(url, {
+    method: 'PATCH',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify(update),
+  });
+  return response.review;
+}
+
+export async function getSubjectAppraisalRating(
+  accountId: string,
+  effectiveDate: string,
+): Promise<SubjectAppraisalRating | null> {
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/appraisal-rating`, {
+    effective_date: effectiveDate,
+  });
+  const response = await fetchJSON<{ rating: SubjectAppraisalRating | null }>(url);
+  return response.rating;
+}
+
+/** Explicit Save Changes for the subject at one appraisal effective date. */
+export async function updateSubjectAppraisalRating(
+  accountId: string,
+  effectiveDate: string,
+  update: AppraisalRatingUpdate,
+  editorKey: string,
+): Promise<SubjectAppraisalRating> {
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/appraisal-rating`);
+  const response = await fetchJSON<{ ok: true; rating: SubjectAppraisalRating }>(url, {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify({ ...update, effective_date: effectiveDate }),
+  });
+  return response.rating;
 }
 
 /** Market value history for an account */

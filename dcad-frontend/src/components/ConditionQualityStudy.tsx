@@ -179,6 +179,7 @@ export default function ConditionQualityStudy({
   onRemoveAdjustment,
   getImpactPreview,
   onOpenSale,
+  onSalesLoaded,
 }: {
   subjectAccountId: string;
   subjectCondition: string;
@@ -196,6 +197,7 @@ export default function ConditionQualityStudy({
     adjustment: AppliedConditionQualityAdjustment,
   ) => ConditionQualityImpactPreview;
   onOpenSale?: (sale: SaleRow) => void;
+  onSalesLoaded?: (sales: SaleRow[]) => void;
 }) {
   const [active, setActive] = useState(false);
   const [marketKey, setMarketKey] = useState<GroupedAnalysisBreakdownKey | ''>('');
@@ -253,6 +255,7 @@ export default function ConditionQualityStudy({
         marketBreakdown: marketKey,
       });
       setRankedSales(response.sales || []);
+      onSalesLoaded?.(response.sales || []);
       setMarketLabel(
         response.study_market?.label ||
         MARKET_OPTIONS.find((option) => option.key === marketKey)?.label ||

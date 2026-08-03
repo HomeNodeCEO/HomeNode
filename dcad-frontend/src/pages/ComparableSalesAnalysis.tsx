@@ -32,6 +32,7 @@ import {
   readMarketConditionsDraft,
   type MarketConditionsDraft,
 } from '@/lib/marketConditionsDraft';
+import { resolveComparableCharacteristic } from '@/lib/propertySourceResolution';
 
 const COMPARABLE_COUNT = 6;
 type SalesAnalysisPeriodMonths = 12 | 24 | 36;
@@ -382,11 +383,34 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   });
   const [housingEditSaving, setHousingEditSaving] = useState(false);
   const [housingEditError, setHousingEditError] = useState<string | null>(null);
+  const [savedSubjectRating, setSavedSubjectRating] =
+    useState<api.SubjectAppraisalRating | null>(null);
+  const [savedConditionQualityRatings, setSavedConditionQualityRatings] = useState<
+    Record<string, ConditionQualityRatingAssignment>
+  >({});
+  const [saleReviewMetadata, setSaleReviewMetadata] = useState<
+    Record<string, api.AppraisalRatingReview>
+  >({});
+  const [ratingSaleSources, setRatingSaleSources] = useState<Record<string, SaleRow>>({});
+  const [dirtyRatingKeys, setDirtyRatingKeys] = useState<Record<string, true>>({});
+  const [subjectRatingDirty, setSubjectRatingDirty] = useState(false);
+  const [ratingPersistenceLoading, setRatingPersistenceLoading] = useState(false);
+  const [ratingPersistenceSaving, setRatingPersistenceSaving] = useState(false);
+  const [ratingPersistenceError, setRatingPersistenceError] = useState<string | null>(null);
+  const [ratingsSavedAt, setRatingsSavedAt] = useState<string | null>(null);
 
   useEffect(() => {
     setAppliedGroupedAdjustments({});
     setAppliedConditionQualityAdjustments({});
     setConditionQualityRatings({});
+    setSavedConditionQualityRatings({});
+    setSaleReviewMetadata({});
+    setRatingSaleSources({});
+    setDirtyRatingKeys({});
+    setSavedSubjectRating(null);
+    setSubjectRatingDirty(false);
+    setRatingPersistenceError(null);
+    setRatingsSavedAt(null);
   }, [propertyId]);
 
   useEffect(() => {
@@ -402,6 +426,45 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompConditions(Array(COMPARABLE_COUNT).fill(''));
     setCompQualities(Array(COMPARABLE_COUNT).fill(''));
   }, [conditionCode, propertyId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!propertyId || !salesAnalysisAsOf) return () => { cancelled = true; };
+    setRatingPersistenceLoading(true);
+    void api.getSubjectAppraisalRating(propertyId, salesAnalysisAsOf)
+      .then((rating) => {
+        if (cancelled) return;
+        setSavedSubjectRating(rating);
+        setSubjectRatingDirty(false);
+        if (rating) {
+          const condition = rating.condition_rating || '';
+          const quality = rating.quality_rating || '';
+          setSubjectCondition(condition);
+          setSubjectQuality(quality);
+          setDraftSubjectCondition(condition);
+          setDraftSubjectQuality(quality);
+          setRatingsSavedAt(rating.updated_at || null);
+        } else {
+          const condition = normalizeUadConditionRating(conditionCode);
+          setSubjectCondition(condition);
+          setSubjectQuality('');
+          setDraftSubjectCondition(condition);
+          setDraftSubjectQuality('');
+          setRatingsSavedAt(null);
+        }
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setRatingPersistenceError(
+            loadError instanceof Error ? loadError.message : 'Saved subject ratings could not be loaded.',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRatingPersistenceLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [conditionCode, propertyId, salesAnalysisAsOf]);
 
   useEffect(() => {
     let cancelled = false;
@@ -437,6 +500,94 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [gallery]);
+
+  const registerSavedSaleRatings = async (sales: SaleRow[]) => {
+    const reviewable = sales.filter((sale) => sale.source_record_id != null);
+    if (!reviewable.length) return;
+    const saleBySourceId = new Map(
+      reviewable.map((sale) => [String(sale.source_record_id), sale]),
+    );
+    setRatingSaleSources((current) => {
+      const next = { ...current };
+      reviewable.forEach((sale) => {
+        next[conditionQualitySaleKey(sale)] = sale;
+      });
+      return next;
+    });
+    try {
+      const reviews = await api.getSaleAppraisalReviews([...saleBySourceId.keys()]);
+      const assignments: Record<string, ConditionQualityRatingAssignment> = {};
+      const metadata: Record<string, api.AppraisalRatingReview> = {};
+      const reviewBySourceId = new Map<string, api.AppraisalRatingReview>();
+      reviews.forEach((review) => {
+        reviewBySourceId.set(String(review.source_record_id), review);
+        const sale = saleBySourceId.get(String(review.source_record_id));
+        if (!sale) return;
+        const key = conditionQualitySaleKey(sale);
+        assignments[key] = {
+          condition: review.condition_rating || '',
+          quality: review.quality_rating || '',
+        };
+        metadata[key] = review;
+      });
+      setSavedConditionQualityRatings((current) => ({ ...current, ...assignments }));
+      setSaleReviewMetadata((current) => ({ ...current, ...metadata }));
+      setConditionQualityRatings((current) => {
+        const next = { ...current };
+        Object.entries(assignments).forEach(([key, assignment]) => {
+          if (!dirtyRatingKeys[key]) next[key] = assignment;
+        });
+        return next;
+      });
+      setCompConditions((current) => current.map((value, index) => {
+        const sale = selectedSales[index];
+        if (!sale?.source_record_id) return value;
+        const review = reviewBySourceId.get(String(sale.source_record_id));
+        return review && !dirtyRatingKeys[conditionQualitySaleKey(sale)]
+          ? (review.condition_rating || '')
+          : value;
+      }));
+      setCompQualities((current) => current.map((value, index) => {
+        const sale = selectedSales[index];
+        if (!sale?.source_record_id) return value;
+        const review = reviewBySourceId.get(String(sale.source_record_id));
+        return review && !dirtyRatingKeys[conditionQualitySaleKey(sale)]
+          ? (review.quality_rating || '')
+          : value;
+      }));
+    } catch (loadError) {
+      setRatingPersistenceError(
+        loadError instanceof Error ? loadError.message : 'Saved comparable ratings could not be loaded.',
+      );
+    }
+  };
+
+  const reviewableSales = useMemo(() => {
+    const byKey = new Map<string, SaleRow>();
+    [
+      ...salesResults,
+      ...(recommendationSummary?.sales || []),
+      ...(recommendationSummary?.recommended_sales || []),
+      ...(recommendationSummary?.competitive_sales || []),
+      ...selectedSales.filter((sale): sale is SaleRow => Boolean(sale)),
+    ].forEach((sale) => byKey.set(conditionQualitySaleKey(sale), sale));
+    return [...byKey.values()];
+  }, [salesResults, recommendationSummary, selectedSales]);
+
+  const reviewableSourceIdKey = useMemo(
+    () => reviewableSales
+      .flatMap((sale) => sale.source_record_id == null ? [] : [String(sale.source_record_id)])
+      .sort()
+      .join(','),
+    [reviewableSales],
+  );
+
+  useEffect(() => {
+    if (!reviewableSourceIdKey) return;
+    void registerSavedSaleRatings(reviewableSales);
+    // The stable source-id key avoids reloading after unrelated score/display changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reviewableSourceIdKey]);
 
   const openSubjectGallery = () => {
     if (!subjectPhotos.length) return;
@@ -1198,14 +1349,34 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const applySaleToSlot = (sale: SaleRow, slot: number) => {
-    const livingArea = saleNumber(sale.cad_living_area_sqft ?? sale.mls_living_area);
+    const livingArea = saleNumber(resolveComparableCharacteristic({
+      county: sale.county,
+      trestle: sale.mls_living_area,
+      cad: sale.cad_living_area_sqft,
+    }));
     const price = saleNumber(sale.sale_price);
     const concessions = saleNumber(sale.seller_contributions);
     const landSize = mlsLotSizeSqft(sale.mls_lot_size_area);
-    const yearBuilt = saleNumber(sale.cad_year_built ?? sale.mls_year_built);
-    const bedrooms = saleNumber(sale.cad_bedroom_count ?? sale.mls_bedrooms_total);
-    const fullBaths = saleNumber(sale.cad_baths_full ?? sale.mls_bathrooms_full);
-    const halfBaths = saleNumber(sale.cad_baths_half ?? sale.mls_bathrooms_half);
+    const yearBuilt = saleNumber(resolveComparableCharacteristic({
+      county: sale.county,
+      trestle: sale.mls_year_built,
+      cad: sale.cad_year_built,
+    }));
+    const bedrooms = saleNumber(resolveComparableCharacteristic({
+      county: sale.county,
+      trestle: sale.mls_bedrooms_total,
+      cad: sale.cad_bedroom_count,
+    }));
+    const fullBaths = saleNumber(resolveComparableCharacteristic({
+      county: sale.county,
+      trestle: sale.mls_bathrooms_full,
+      cad: sale.cad_baths_full,
+    }));
+    const halfBaths = saleNumber(resolveComparableCharacteristic({
+      county: sale.county,
+      trestle: sale.mls_bathrooms_half,
+      cad: sale.cad_baths_half,
+    }));
     const totalRooms = bedrooms == null ? null : Math.round(bedrooms) + 3;
     const savedRatings = conditionQualityRatings[conditionQualitySaleKey(sale)];
 
@@ -1807,6 +1978,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     value: string,
   ) => {
     const key = conditionQualitySaleKey(sale);
+    setRatingSaleSources((current) => ({ ...current, [key]: sale }));
+    setDirtyRatingKeys((current) => ({ ...current, [key]: true }));
+    setRatingPersistenceError(null);
     setConditionQualityRatings((current) => ({
       ...current,
       [key]: {
@@ -1883,9 +2057,160 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (!condition || !quality) return;
     setSubjectCondition(condition);
     setSubjectQuality(quality);
+    setSubjectRatingDirty(true);
+    setRatingPersistenceError(null);
     setSalesNotice(
       `Applied subject ratings ${condition} / ${quality}. Condition and quality adjustments remain at zero until a study tile is applied.`,
     );
+  };
+
+  const hasUnsavedRatingChanges = subjectRatingDirty || Object.keys(dirtyRatingKeys).length > 0;
+
+  const revertRatingChanges = () => {
+    const savedCondition = savedSubjectRating?.condition_rating || normalizeUadConditionRating(conditionCode);
+    const savedQuality = savedSubjectRating?.quality_rating || '';
+    setSubjectCondition(savedCondition);
+    setSubjectQuality(savedQuality);
+    setDraftSubjectCondition(savedCondition);
+    setDraftSubjectQuality(savedQuality);
+    setConditionQualityRatings((current) => {
+      const next = { ...current };
+      Object.keys(dirtyRatingKeys).forEach((key) => {
+        next[key] = savedConditionQualityRatings[key] || { condition: '', quality: '' };
+      });
+      return next;
+    });
+    setCompConditions((current) => current.map((value, index) => {
+      const sale = selectedSales[index];
+      if (!sale) return value;
+      const key = conditionQualitySaleKey(sale);
+      return dirtyRatingKeys[key]
+        ? (savedConditionQualityRatings[key]?.condition || '')
+        : value;
+    }));
+    setCompQualities((current) => current.map((value, index) => {
+      const sale = selectedSales[index];
+      if (!sale) return value;
+      const key = conditionQualitySaleKey(sale);
+      return dirtyRatingKeys[key]
+        ? (savedConditionQualityRatings[key]?.quality || '')
+        : value;
+    }));
+    setDirtyRatingKeys({});
+    setSubjectRatingDirty(false);
+    setRatingPersistenceError(null);
+    setSalesNotice('Unsaved condition and quality changes were reverted.');
+  };
+
+  const saveRatingChanges = async () => {
+    const editorKey = housingEditorKey.trim();
+    if (!editorKey) {
+      setRatingPersistenceError('Enter your personal editor key before saving ratings.');
+      return;
+    }
+    if (!hasUnsavedRatingChanges) {
+      setSalesNotice('Condition and quality ratings are already saved.');
+      return;
+    }
+    setRatingPersistenceSaving(true);
+    setRatingPersistenceError(null);
+    try {
+      let savedSubject = savedSubjectRating;
+      if (subjectRatingDirty) {
+        savedSubject = await api.updateSubjectAppraisalRating(
+          propertyId,
+          salesAnalysisAsOf,
+          {
+            condition_rating: subjectCondition || null,
+            quality_rating: subjectQuality || null,
+            expected_revision: savedSubjectRating?.revision || 0,
+            clear: !subjectCondition && !subjectQuality,
+          },
+          editorKey,
+        );
+        setSavedSubjectRating(savedSubject);
+        setSubjectRatingDirty(false);
+      }
+
+      const savedReviews: Array<{ key: string; review: api.AppraisalRatingReview }> = [];
+      for (const key of Object.keys(dirtyRatingKeys)) {
+        const sale = ratingSaleSources[key];
+        const assignment = conditionQualityRatings[key];
+        if (!sale?.source_record_id) {
+          throw new Error(
+            `Cannot save ${sale ? saleDisplayAddress(sale) : key} because it has no immutable MLS source record.`,
+          );
+        }
+        const review = await api.updateSaleAppraisalReview(
+          sale.source_record_id,
+          {
+            condition_rating: assignment.condition || null,
+            quality_rating: assignment.quality || null,
+            expected_revision: saleReviewMetadata[key]?.revision || 0,
+            clear: !assignment.condition && !assignment.quality,
+          },
+          editorKey,
+        );
+        savedReviews.push({ key, review });
+        setSavedConditionQualityRatings((current) => ({
+          ...current,
+          [key]: {
+            condition: review.condition_rating || '',
+            quality: review.quality_rating || '',
+          },
+        }));
+        setSaleReviewMetadata((current) => ({ ...current, [key]: review }));
+        setDirtyRatingKeys((current) => {
+          const next = { ...current };
+          delete next[key];
+          return next;
+        });
+      }
+
+      if (savedReviews.length) {
+        setSavedConditionQualityRatings((current) => {
+          const next = { ...current };
+          savedReviews.forEach(({ key, review }) => {
+            next[key] = {
+              condition: review.condition_rating || '',
+              quality: review.quality_rating || '',
+            };
+          });
+          return next;
+        });
+        setSaleReviewMetadata((current) => {
+          const next = { ...current };
+          savedReviews.forEach(({ key, review }) => { next[key] = review; });
+          return next;
+        });
+      }
+      try {
+        window.sessionStorage.setItem('homenode-editor-key', editorKey);
+      } catch {
+        // Saving does not depend on browser storage availability.
+      }
+      const savedAt = savedReviews[savedReviews.length - 1]?.review.updated_at || savedSubject?.updated_at || new Date().toISOString();
+      setRatingsSavedAt(savedAt);
+      setDirtyRatingKeys({});
+      setSubjectRatingDirty(false);
+      setSalesNotice(
+        `Saved ${subjectRatingDirty ? 'the subject rating' : ''}${subjectRatingDirty && savedReviews.length ? ' and ' : ''}` +
+        `${savedReviews.length ? `${savedReviews.length} comparable rating${savedReviews.length === 1 ? '' : 's'}` : ''} to the database.`,
+      );
+    } catch (saveError) {
+      const message = saveError instanceof Error ? saveError.message : 'Condition and quality ratings could not be saved.';
+      if (message.includes('rating_revision_conflict')) {
+        setRatingPersistenceError('These ratings changed in another session. Reload them before saving again.');
+      } else if (message.includes('invalid_editor_key')) {
+        setRatingPersistenceError('The editor key was not accepted. Check it and try again.');
+      } else if (message.includes('editor_not_configured')) {
+        setRatingPersistenceError('Manual database editing has not been enabled on the server yet.');
+      } else {
+        setRatingPersistenceError(message);
+      }
+    } finally {
+      setRatingPersistenceSaving(false);
+    }
   };
 
   return (
@@ -2074,6 +2399,57 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 The grid will show $0 for both adjustments until a separate Condition and Quality Study tile is applied below.
               </div>
             )}
+
+            <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="grid min-w-[220px] flex-1 gap-1 text-sm text-slate-700">
+                  <span>Personal editor key</span>
+                  <input
+                    type="password"
+                    value={housingEditorKey}
+                    autoComplete="off"
+                    onChange={(event) => setHousingEditorKey(event.target.value)}
+                    placeholder="Required only when saving"
+                    className="rounded-md border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void saveRatingChanges()}
+                  disabled={ratingPersistenceSaving || ratingPersistenceLoading || !hasUnsavedRatingChanges}
+                  className="rounded-md border border-emerald-700 bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
+                >
+                  {ratingPersistenceSaving ? 'Saving...' : 'Save Rating Changes'}
+                </button>
+                <button
+                  type="button"
+                  onClick={revertRatingChanges}
+                  disabled={ratingPersistenceSaving || !hasUnsavedRatingChanges}
+                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Cancel / Revert
+                </button>
+                <div className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                  hasUnsavedRatingChanges
+                    ? 'bg-amber-100 text-amber-900'
+                    : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {hasUnsavedRatingChanges
+                    ? `${Object.keys(dirtyRatingKeys).length + (subjectRatingDirty ? 1 : 0)} unsaved change${Object.keys(dirtyRatingKeys).length + (subjectRatingDirty ? 1 : 0) === 1 ? '' : 's'}`
+                    : ratingsSavedAt
+                      ? `Saved ${new Date(ratingsSavedAt).toLocaleString()}`
+                      : 'No unsaved changes'}
+                </div>
+              </div>
+              <div className="mt-2 text-xs text-slate-500">
+                Saving creates an audit revision. It never changes the original MLS row, and later imports cannot overwrite a verified rating.
+              </div>
+              {ratingPersistenceError && (
+                <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {ratingPersistenceError}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
@@ -3107,6 +3483,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               onChange={(value) => {
                                 setSubjectCondition(value);
                                 setDraftSubjectCondition(value);
+                                setSubjectRatingDirty(true);
+                                setRatingPersistenceError(null);
                               }}
                             />
                           ) : label === 'Quality' ? (
@@ -3117,6 +3495,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               onChange={(value) => {
                                 setSubjectQuality(value);
                                 setDraftSubjectQuality(value);
+                                setSubjectRatingDirty(true);
+                                setRatingPersistenceError(null);
                               }}
                             />
                           ) : (
@@ -3476,6 +3856,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           ratingAssignments={conditionQualityRatings}
           appliedAdjustments={appliedConditionQualityAdjustments}
           onRatingChange={updateConditionQualityRating}
+          onSalesLoaded={(sales) => void registerSavedSaleRatings(sales)}
           getImpactPreview={previewConditionQualityAdjustment}
           onOpenSale={(sale) => void openSaleGallery(sale)}
           onApplyAdjustment={(adjustment) =>

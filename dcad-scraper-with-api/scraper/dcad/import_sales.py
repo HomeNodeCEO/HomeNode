@@ -372,6 +372,7 @@ def _migration_sql() -> str:
         root / "migrations" / "009_verified_account_housing_profiles.sql",
         root / "migrations" / "010_sales_media.sql",
         root / "migrations" / "013_sales_listing_identity.sql",
+        root / "migrations" / "014_sales_reconciliation.sql",
     )
     return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
 
@@ -782,13 +783,33 @@ def import_sales(
                         NULLIF(EXCLUDED.listing_id, ''),
                         core.sales_source_records.listing_id
                     ),
-                    primary_account_id = EXCLUDED.primary_account_id,
-                    match_status = EXCLUDED.match_status,
+                    primary_account_id = CASE
+                        WHEN core.sales_source_records.match_status = 'manual_verified'
+                            THEN core.sales_source_records.primary_account_id
+                        ELSE EXCLUDED.primary_account_id
+                    END,
+                    match_status = CASE
+                        WHEN core.sales_source_records.match_status = 'manual_verified'
+                            THEN core.sales_source_records.match_status
+                        ELSE EXCLUDED.match_status
+                    END,
                     has_multiple_parcel_numbers = EXCLUDED.has_multiple_parcel_numbers,
                     multi_parcel_status = EXCLUDED.multi_parcel_status,
-                    has_unresolved_parcel = EXCLUDED.has_unresolved_parcel,
-                    requires_additional_review = EXCLUDED.requires_additional_review,
-                    data_quality_flags = EXCLUDED.data_quality_flags,
+                    has_unresolved_parcel = CASE
+                        WHEN core.sales_source_records.match_status = 'manual_verified'
+                            THEN core.sales_source_records.has_unresolved_parcel
+                        ELSE EXCLUDED.has_unresolved_parcel
+                    END,
+                    requires_additional_review = CASE
+                        WHEN core.sales_source_records.match_status = 'manual_verified'
+                            THEN core.sales_source_records.requires_additional_review
+                        ELSE EXCLUDED.requires_additional_review
+                    END,
+                    data_quality_flags = CASE
+                        WHEN core.sales_source_records.match_status = 'manual_verified'
+                            THEN core.sales_source_records.data_quality_flags
+                        ELSE EXCLUDED.data_quality_flags
+                    END,
                     raw_payload = EXCLUDED.raw_payload,
                     updated_at = now()
                 RETURNING id, source_record_hash
@@ -801,12 +822,30 @@ def import_sales(
             source_record_ids = list(record_ids.values())
 
             cursor.execute(
-                "DELETE FROM core.sale_parcels WHERE source_record_id = ANY(%s)",
+                """
+                SELECT id
+                FROM core.sales_source_records
+                WHERE id = ANY(%s) AND match_status = 'manual_verified'
+                """,
                 (source_record_ids,),
             )
+            manually_verified_ids = {row[0] for row in cursor.fetchall()}
+            replaceable_source_record_ids = [
+                source_record_id
+                for source_record_id in source_record_ids
+                if source_record_id not in manually_verified_ids
+            ]
+
+            if replaceable_source_record_ids:
+                cursor.execute(
+                    "DELETE FROM core.sale_parcels WHERE source_record_id = ANY(%s)",
+                    (replaceable_source_record_ids,),
+                )
             parcel_values = []
             for row in prepared:
                 source_record_id = record_ids[row.source_record_hash]
+                if source_record_id in manually_verified_ids:
+                    continue
                 for link in row.parcel_links:
                     parcel_values.append(
                         (
@@ -821,23 +860,25 @@ def import_sales(
                             bool(link.account_id),
                         )
                     )
-            execute_values(
-                cursor,
-                """
-                INSERT INTO core.sale_parcels (
-                    source_record_id, source_position, parcel_sequence,
-                    parcel_role, parcel_number_raw, parcel_number_normalized,
-                    account_id, match_method, is_resolved
-                ) VALUES %s
-                """,
-                parcel_values,
-                page_size=1000,
-            )
+            if parcel_values:
+                execute_values(
+                    cursor,
+                    """
+                    INSERT INTO core.sale_parcels (
+                        source_record_id, source_position, parcel_sequence,
+                        parcel_role, parcel_number_raw, parcel_number_normalized,
+                        account_id, match_method, is_resolved
+                    ) VALUES %s
+                    """,
+                    parcel_values,
+                    page_size=1000,
+                )
 
             matched_rows = [
                 row
                 for row in prepared
-                if row.primary_account_id
+                if record_ids[row.source_record_hash] not in manually_verified_ids
+                and row.primary_account_id
                 and row.typed["record_type"] == "closed_sale"
                 and row.typed["close_date"] is not None
                 and row.typed["current_price"] is not None

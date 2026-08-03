@@ -54,7 +54,10 @@ CREATE TABLE IF NOT EXISTS core.sales_source_records (
     CONSTRAINT sales_source_records_source_row_unique
         UNIQUE (source_sha256, source_row_number),
     CONSTRAINT sales_source_records_match_status_check
-        CHECK (match_status IN ('exact', 'normalized', 'secondary', 'multiple', 'unmatched')),
+        CHECK (match_status IN (
+            'exact', 'normalized', 'secondary', 'multiple', 'unmatched',
+            'manual_verified'
+        )),
     CONSTRAINT sales_source_records_multi_status_check
         CHECK (multi_parcel_status IN ('single', 'possible', 'confirmed')),
     CONSTRAINT sales_source_records_record_type_check
@@ -289,7 +292,7 @@ CREATE TABLE IF NOT EXISTS core.sale_parcels (
     CONSTRAINT sale_parcels_match_method_check
         CHECK (match_method IN (
             'exact', 'punctuation_normalized', 'embedded_full_id',
-            'concatenated_full_ids', 'unmatched'
+            'concatenated_full_ids', 'unmatched', 'manual_verified'
         )),
     CONSTRAINT sale_parcels_source_unique
         UNIQUE (source_record_id, source_position, parcel_sequence)

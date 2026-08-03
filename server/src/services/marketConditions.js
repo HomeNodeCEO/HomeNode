@@ -496,12 +496,9 @@ const MARKET_ANALYSIS_SQL = `
       ON sale_location.account_id = sale.primary_account_id
     CROSS JOIN parameters
     WHERE sale.record_type = 'closed_sale'
-      AND sale.closing_date >
+      AND sale.closing_date >=
         (parameters.period_end - (parameters.period_months * INTERVAL '1 month'))::date
       AND sale.closing_date <= parameters.period_end
-      AND sale.sale_price >= 10000
-      AND sale.multi_parcel_status = 'single'
-      AND sale.attachment_type NOT IN ('attached', 'mixed')
   ),
   eligible AS (
     SELECT base.*
@@ -895,9 +892,11 @@ export async function buildMarketConditionsAnalyses(
       ...normalizeAnalysisRow(rows[0]),
       filters: {
         record_type: "closed_sale",
-        minimum_sale_price: 10000,
-        multi_parcel_status: "single",
-        attached_housing_excluded: true,
+        minimum_sale_price: null,
+        review_flagged_sales_included: true,
+        multi_parcel_sales_included: true,
+        attached_housing_included: true,
+        inclusive_start_date: true,
         period_months: parsedPeriodMonths,
       },
     });

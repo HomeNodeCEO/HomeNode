@@ -616,6 +616,40 @@ export interface MarketConditionsMapSale {
   longitude: number | null;
 }
 
+export interface MarketCongruencyNumericFactor {
+  count: number;
+  cod: number | null;
+  cv: number | null;
+  weight: number;
+}
+
+export interface MarketCongruencyFactors {
+  living_area: MarketCongruencyNumericFactor;
+  price_per_square_foot: MarketCongruencyNumericFactor;
+  sale_price: MarketCongruencyNumericFactor;
+  age: MarketCongruencyNumericFactor;
+  housing_type: {
+    count: number;
+    dispersion: number | null;
+    dominant_type: string | null;
+    weight: number;
+  };
+}
+
+export interface MarketStudyStatistics {
+  annualized_change_percent: number | null;
+  trend_start_period: string | null;
+  trend_end_period: string | null;
+  trend_start_median_price: number | null;
+  trend_end_median_price: number | null;
+  monthly_observation_count: number;
+  composite_cod: number | null;
+  composite_cv: number | null;
+  characteristic_weight_available: number;
+  reliability_score: number | null;
+  sample_sufficient: boolean;
+}
+
 export interface MarketConditionsAnalysis {
   market: {
     key: MarketConditionsAreaKey;
@@ -644,7 +678,9 @@ export interface MarketConditionsAnalysis {
     median_price_per_square_foot: number | null;
     minimum_sale_price: number | null;
     maximum_sale_price: number | null;
+    congruency_factors: MarketCongruencyFactors;
   };
+  statistics: MarketStudyStatistics;
   series: {
     monthly: MarketConditionsSeriesPoint[];
     quarterly: MarketConditionsSeriesPoint[];
@@ -669,6 +705,29 @@ export interface MarketConditionsAnalysis {
 export interface MarketConditionsResponse {
   subject: MarketConditionsSubject;
   analyses: MarketConditionsAnalysis[];
+  recommendation: {
+    methodology_version: number;
+    stable_threshold_percent: number;
+    conclusion:
+      | 'increasing'
+      | 'stable'
+      | 'decreasing'
+      | 'insufficient';
+    average_annualized_change_percent: number | null;
+    median_annualized_change_percent: number | null;
+    recommended_change_percent: number | null;
+    ranked_studies: Array<{
+      rank: number;
+      key: MarketConditionsAreaKey;
+      label: string;
+      reliability_score: number | null;
+      sale_count: number;
+      sample_sufficient: boolean;
+      annualized_change_percent: number | null;
+      composite_cod: number | null;
+      composite_cv: number | null;
+    }>;
+  };
   unavailable_areas: Array<{
     key: MarketConditionsAreaKey;
     label: string;

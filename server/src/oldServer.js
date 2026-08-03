@@ -35,6 +35,26 @@ import {
   marketConditionsErrorStatus,
 } from "./services/marketConditions.js";
 import { getAccountSalesHistory } from "./services/accountSalesHistory.js";
+import {
+  ensureAppraisalRatingsSchema,
+  SALE_REVIEW_SELECT,
+  SUBJECT_RATING_SELECT,
+} from "./services/appraisalRatings.js";
+import {
+  normalizeAppraisalRatingUpdate,
+  normalizeEffectiveDate,
+} from "./util/appraisalRatings.js";
+import { ensurePropertyEnrichmentSchema } from "./services/propertyEnrichment.js";
+import { TrestleClient } from "./services/trestleClient.js";
+import {
+  countyGisConfiguration,
+  fetchParcelAreaSuggestion,
+} from "./services/parcelGis.js";
+import {
+  assertNonDallasEnrichmentCounty,
+  assertPropertyAttributeKey,
+  NON_DALLAS_ENRICHMENT_COUNTIES,
+} from "./util/nonDallasEnrichment.js";
 
 const app = express();
 app.use(express.json());
@@ -49,6 +69,7 @@ const corsOrigins = !corsEnv
 app.use(cors({ origin: corsOrigins }));
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const trestleClient = new TrestleClient();
 
 // Ensure a simple signups table exists (no external migrations required)
 async function ensureSignupsTable() {
@@ -90,6 +111,24 @@ const accountQualityReady = ensureAccountQualitySchema(pool)
   .catch((error) => {
     console.warn(
       "[init] ensureAccountQualitySchema failed (continuing)",
+      error?.message || error,
+    );
+  });
+
+const appraisalRatingsReady = ensureAppraisalRatingsSchema(pool)
+  .then(() => console.log("[init] appraisal rating review schema ensured"))
+  .catch((error) => {
+    console.warn(
+      "[init] ensureAppraisalRatingsSchema failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+const propertyEnrichmentReady = ensurePropertyEnrichmentSchema(pool)
+  .then(() => console.log("[init] non-Dallas property enrichment schema ensured"))
+  .catch((error) => {
+    console.warn(
+      "[init] ensurePropertyEnrichmentSchema failed (will retry on request)",
       error?.message || error,
     );
   });
@@ -637,6 +676,653 @@ app.patch("/api/accounts/:id/housing-profile", async (req, res) => {
     return res.status(500).json({ error: "housing_profile_update_failed" });
   } finally {
     client.release();
+  }
+});
+
+function requireEditor(req, res) {
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (!configuredEditorKey) {
+    res.status(503).json({ error: "editor_not_configured" });
+    return false;
+  }
+  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    res.status(401).json({ error: "invalid_editor_key" });
+    return false;
+  }
+  return true;
+}
+
+/** Batch-load manually verified condition and quality ratings for MLS source rows. */
+app.get("/api/sales/reviews", async (req, res) => {
+  const rawIds = String(req.query.source_record_ids || "").split(",");
+  const sourceRecordIds = [...new Set(rawIds.map((value) => value.trim()))]
+    .filter((value) => /^\d+$/.test(value))
+    .slice(0, 200);
+  if (!sourceRecordIds.length) return res.json({ reviews: [] });
+  try {
+    await appraisalRatingsReady;
+    const { rows } = await pool.query(
+      `${SALE_REVIEW_SELECT} WHERE source_record_id = ANY($1::bigint[])
+       ORDER BY source_record_id`,
+      [sourceRecordIds],
+    );
+    return res.json({ reviews: rows });
+  } catch (error) {
+    console.error("/api/sales/reviews failed", error);
+    return res.status(500).json({ error: "sale_reviews_failed" });
+  }
+});
+
+/** Explicitly save a reviewed comparable rating without mutating its source MLS row. */
+app.patch("/api/sales/:sourceRecordId/review", async (req, res) => {
+  const sourceRecordId = String(req.params.sourceRecordId || "").trim();
+  if (!/^\d+$/.test(sourceRecordId)) {
+    return res.status(400).json({ error: "invalid_source_record_id" });
+  }
+  if (!requireEditor(req, res)) return;
+
+  let update;
+  try {
+    update = normalizeAppraisalRatingUpdate(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "invalid_appraisal_rating" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await appraisalRatingsReady;
+    await client.query("BEGIN");
+    const { rows: sources } = await client.query(
+      `SELECT id, listing_id FROM core.sales_source_records WHERE id = $1 FOR SHARE`,
+      [sourceRecordId],
+    );
+    if (!sources.length) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "sale_source_record_not_found" });
+    }
+    const { rows: existingRows } = await client.query(
+      `SELECT * FROM app.sale_characteristic_reviews
+       WHERE source_record_id = $1 FOR UPDATE`,
+      [sourceRecordId],
+    );
+    const existing = existingRows[0] || null;
+    const currentRevision = Number(existing?.revision || 0);
+    if (
+      update.expectedRevision != null &&
+      update.expectedRevision !== currentRevision
+    ) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "rating_revision_conflict",
+        current_revision: currentRevision,
+      });
+    }
+    const nextRevision = currentRevision + 1;
+    const { rows } = await client.query(
+      `INSERT INTO app.sale_characteristic_reviews (
+         source_record_id, listing_id, condition_rating, quality_rating,
+         notes, reviewer, revision
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (source_record_id) DO UPDATE SET
+         listing_id = EXCLUDED.listing_id,
+         condition_rating = EXCLUDED.condition_rating,
+         quality_rating = EXCLUDED.quality_rating,
+         notes = EXCLUDED.notes,
+         reviewer = EXCLUDED.reviewer,
+         revision = EXCLUDED.revision,
+         updated_at = now()
+       RETURNING *`,
+      [
+        sourceRecordId,
+        sources[0].listing_id,
+        update.conditionRating,
+        update.qualityRating,
+        update.notes,
+        update.reviewer,
+        nextRevision,
+      ],
+    );
+    const review = rows[0];
+    await client.query(
+      `INSERT INTO app.sale_characteristic_review_history (
+         source_record_id, listing_id, condition_rating, quality_rating,
+         notes, reviewer, revision
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        review.source_record_id,
+        review.listing_id,
+        review.condition_rating,
+        review.quality_rating,
+        review.notes,
+        review.reviewer,
+        review.revision,
+      ],
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, review });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("/api/sales/:sourceRecordId/review failed", error);
+    return res.status(500).json({ error: "sale_review_update_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/sales/:sourceRecordId/review-history", async (req, res) => {
+  const sourceRecordId = String(req.params.sourceRecordId || "").trim();
+  if (!/^\d+$/.test(sourceRecordId)) {
+    return res.status(400).json({ error: "invalid_source_record_id" });
+  }
+  try {
+    await appraisalRatingsReady;
+    const { rows } = await pool.query(
+      `SELECT source_record_id, listing_id, condition_rating, quality_rating,
+              notes, reviewer, revision, changed_at
+       FROM app.sale_characteristic_review_history
+       WHERE source_record_id = $1
+       ORDER BY revision DESC, changed_at DESC`,
+      [sourceRecordId],
+    );
+    return res.json({ history: rows });
+  } catch (error) {
+    console.error("sale review history failed", error);
+    return res.status(500).json({ error: "sale_review_history_failed" });
+  }
+});
+
+/** Load the subject's saved rating for the appraisal effective date. */
+app.get("/api/accounts/:id/appraisal-rating", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  let effectiveDate;
+  try {
+    effectiveDate = normalizeEffectiveDate(req.query.effective_date);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "invalid_effective_date" });
+  }
+  try {
+    await appraisalRatingsReady;
+    const { rows } = await pool.query(
+      `${SUBJECT_RATING_SELECT}
+       WHERE account_id = $1 AND effective_date = $2::date`,
+      [id, effectiveDate],
+    );
+    return res.json({ rating: rows[0] || null });
+  } catch (error) {
+    console.error("subject appraisal rating load failed", error);
+    return res.status(500).json({ error: "subject_rating_failed" });
+  }
+});
+
+/** Explicitly save the subject's condition/quality for one appraisal date. */
+app.put("/api/accounts/:id/appraisal-rating", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+
+  let effectiveDate;
+  let update;
+  try {
+    effectiveDate = normalizeEffectiveDate(req.body?.effective_date);
+    update = normalizeAppraisalRatingUpdate(req.body);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "invalid_appraisal_rating" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await appraisalRatingsReady;
+    await client.query("BEGIN");
+    const accountResult = await client.query(
+      "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR SHARE",
+      [id],
+    );
+    if (!accountResult.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "account_not_found" });
+    }
+    const { rows: existingRows } = await client.query(
+      `SELECT * FROM app.subject_appraisal_ratings
+       WHERE account_id = $1 AND effective_date = $2::date FOR UPDATE`,
+      [id, effectiveDate],
+    );
+    const currentRevision = Number(existingRows[0]?.revision || 0);
+    if (
+      update.expectedRevision != null &&
+      update.expectedRevision !== currentRevision
+    ) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "rating_revision_conflict",
+        current_revision: currentRevision,
+      });
+    }
+    const nextRevision = currentRevision + 1;
+    const { rows } = await client.query(
+      `INSERT INTO app.subject_appraisal_ratings (
+         account_id, effective_date, condition_rating, quality_rating,
+         notes, reviewer, revision
+       ) VALUES ($1,$2::date,$3,$4,$5,$6,$7)
+       ON CONFLICT (account_id, effective_date) DO UPDATE SET
+         condition_rating = EXCLUDED.condition_rating,
+         quality_rating = EXCLUDED.quality_rating,
+         notes = EXCLUDED.notes,
+         reviewer = EXCLUDED.reviewer,
+         revision = EXCLUDED.revision,
+         updated_at = now()
+       RETURNING *`,
+      [
+        id,
+        effectiveDate,
+        update.conditionRating,
+        update.qualityRating,
+        update.notes,
+        update.reviewer,
+        nextRevision,
+      ],
+    );
+    const rating = rows[0];
+    await client.query(
+      `INSERT INTO app.subject_appraisal_rating_history (
+         account_id, effective_date, condition_rating, quality_rating,
+         notes, reviewer, revision
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [
+        rating.account_id,
+        rating.effective_date,
+        rating.condition_rating,
+        rating.quality_rating,
+        rating.notes,
+        rating.reviewer,
+        rating.revision,
+      ],
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, rating });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("subject appraisal rating update failed", error);
+    return res.status(500).json({ error: "subject_rating_update_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/accounts/:id/appraisal-rating-history", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    await appraisalRatingsReady;
+    const { rows } = await pool.query(
+      `SELECT account_id, effective_date, condition_rating, quality_rating,
+              notes, reviewer, revision, changed_at
+       FROM app.subject_appraisal_rating_history
+       WHERE account_id = $1
+       ORDER BY effective_date DESC, revision DESC, changed_at DESC
+       LIMIT 100`,
+      [id],
+    );
+    return res.json({ history: rows });
+  } catch (error) {
+    console.error("subject appraisal rating history failed", error);
+    return res.status(500).json({ error: "subject_rating_history_failed" });
+  }
+});
+
+async function getNonDallasAccount(client, accountId) {
+  const { rows } = await client.query(
+    `SELECT account_id, county FROM core.accounts WHERE account_id = $1`,
+    [accountId],
+  );
+  if (!rows.length) return null;
+  return {
+    ...rows[0],
+    normalized_county: assertNonDallasEnrichmentCounty(rows[0].county),
+  };
+}
+
+/** Non-sensitive activation status for the additive non-Dallas pipeline. */
+app.get("/api/enrichment/status", (_req, res) => {
+  const gis = Object.fromEntries(
+    NON_DALLAS_ENRICHMENT_COUNTIES.map((county) => {
+      const configuration = countyGisConfiguration(county);
+      return [county, { configured: configuration.configured }];
+    }),
+  );
+  return res.json({
+    dallas_county_isolated: true,
+    supported_counties: NON_DALLAS_ENRICHMENT_COUNTIES,
+    trestle: trestleClient.status(),
+    gis,
+    resolution_order: ["manual_verified", "trestle", "cad", "manual_review"],
+  });
+});
+
+/** Load verified overrides, review flags, and pending GIS suggestions for an account. */
+app.get("/api/accounts/:id/enrichment", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    await propertyEnrichmentReady;
+    const account = await getNonDallasAccount(pool, id);
+    if (!account) return res.status(404).json({ error: "account_not_found" });
+    const [manualResult, reviewResult, gisResult] = await Promise.all([
+      pool.query(
+        `SELECT attribute_key, attribute_value, notes, reviewer, revision,
+                created_at, updated_at
+         FROM app.property_attribute_manual_values
+         WHERE account_id = $1 ORDER BY attribute_key`,
+        [id],
+      ),
+      pool.query(
+        `SELECT attribute_key, reason, status, evidence, first_flagged_at,
+                updated_at, resolved_at
+         FROM app.enrichment_review_queue
+         WHERE account_id = $1 ORDER BY status, attribute_key`,
+        [id],
+      ),
+      pool.query(
+        `SELECT id, area_square_feet, area_acres, source_url, status,
+                reviewed_by, reviewed_at, created_at
+         FROM app.parcel_geometry_suggestions
+         WHERE account_id = $1 ORDER BY created_at DESC LIMIT 10`,
+        [id],
+      ),
+    ]);
+    return res.json({
+      account_id: id,
+      county: account.normalized_county,
+      manual_values: manualResult.rows,
+      review_queue: reviewResult.rows,
+      parcel_area_suggestions: gisResult.rows,
+    });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (message === "dallas_enrichment_isolated") {
+      return res.status(409).json({ error: message });
+    }
+    console.error("account enrichment load failed", error);
+    return res.status(500).json({ error: "account_enrichment_failed" });
+  }
+});
+
+/** Save a verified non-Dallas attribute. No autosave and no source-row mutation. */
+app.patch("/api/accounts/:id/verified-attribute", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  let attributeKey;
+  try {
+    attributeKey = assertPropertyAttributeKey(req.body?.attribute_key);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "invalid_attribute" });
+  }
+  if (req.body?.attribute_value === undefined) {
+    return res.status(400).json({ error: "missing_attribute_value" });
+  }
+  const notes = String(req.body?.notes || "").trim().slice(0, 4000) || null;
+  const reviewer = String(req.body?.reviewer || "HomeNode editor").trim().slice(0, 200);
+  const expectedRevision = req.body?.expected_revision == null
+    ? null
+    : Number(req.body.expected_revision);
+  if (expectedRevision != null && (!Number.isInteger(expectedRevision) || expectedRevision < 0)) {
+    return res.status(400).json({ error: "invalid_expected_revision" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await propertyEnrichmentReady;
+    await client.query("BEGIN");
+    const account = await getNonDallasAccount(client, id);
+    if (!account) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "account_not_found" });
+    }
+    const { rows: existingRows } = await client.query(
+      `SELECT revision FROM app.property_attribute_manual_values
+       WHERE account_id = $1 AND attribute_key = $2 FOR UPDATE`,
+      [id, attributeKey],
+    );
+    const currentRevision = Number(existingRows[0]?.revision || 0);
+    if (expectedRevision != null && expectedRevision !== currentRevision) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "attribute_revision_conflict",
+        current_revision: currentRevision,
+      });
+    }
+    const nextRevision = currentRevision + 1;
+    const valueJson = JSON.stringify(req.body.attribute_value);
+    const { rows } = await client.query(
+      `INSERT INTO app.property_attribute_manual_values (
+         account_id, attribute_key, attribute_value, notes, reviewer, revision
+       ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)
+       ON CONFLICT (account_id, attribute_key) DO UPDATE SET
+         attribute_value = EXCLUDED.attribute_value,
+         notes = EXCLUDED.notes,
+         reviewer = EXCLUDED.reviewer,
+         revision = EXCLUDED.revision,
+         updated_at = now()
+       RETURNING *`,
+      [id, attributeKey, valueJson, notes, reviewer, nextRevision],
+    );
+    const manualValue = rows[0];
+    await client.query(
+      `INSERT INTO app.property_attribute_manual_history (
+         account_id, attribute_key, attribute_value, notes, reviewer, revision
+       ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
+      [id, attributeKey, valueJson, notes, reviewer, nextRevision],
+    );
+    await client.query(
+      `UPDATE app.enrichment_review_queue
+       SET status = 'resolved', resolved_at = now(), updated_at = now()
+       WHERE account_id = $1 AND attribute_key = $2`,
+      [id, attributeKey],
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, manual_value: manualValue });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    const message = String(error?.message || "");
+    if (message === "dallas_enrichment_isolated") {
+      return res.status(409).json({ error: message });
+    }
+    console.error("verified attribute update failed", error);
+    return res.status(500).json({ error: "verified_attribute_update_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/** Calculate and store a review-only lot-area suggestion from official county GIS. */
+app.post("/api/accounts/:id/parcel-area-suggestion", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    await propertyEnrichmentReady;
+    const account = await getNonDallasAccount(pool, id);
+    if (!account) return res.status(404).json({ error: "account_not_found" });
+    const suggestion = await fetchParcelAreaSuggestion({
+      county: account.normalized_county,
+      accountId: id,
+    });
+    if (!suggestion) return res.status(404).json({ error: "parcel_geometry_not_found" });
+    const { rows } = await pool.query(
+      `INSERT INTO app.parcel_geometry_suggestions (
+         account_id, county, source_url, geometry, area_square_feet,
+         area_acres, source_attributes, status
+       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,'pending')
+       RETURNING id, account_id, county, source_url, area_square_feet,
+                 area_acres, status, created_at`,
+      [
+        id,
+        suggestion.county,
+        suggestion.source_url,
+        JSON.stringify(suggestion.geometry),
+        suggestion.area_square_feet,
+        suggestion.area_acres,
+        JSON.stringify(suggestion.source_attributes),
+      ],
+    );
+    await pool.query(
+      `INSERT INTO app.enrichment_review_queue (
+         account_id, county, attribute_key, reason, evidence
+       ) VALUES ($1,$2,'site_size_sqft','gis_site_area_requires_approval',$3::jsonb)
+       ON CONFLICT (account_id, attribute_key) DO UPDATE SET
+         county = EXCLUDED.county,
+         reason = EXCLUDED.reason,
+         status = 'pending',
+         evidence = EXCLUDED.evidence,
+         resolved_at = NULL,
+         updated_at = now()`,
+      [id, suggestion.county, JSON.stringify({ suggestion_id: rows[0].id })],
+    );
+    return res.json({ ok: true, suggestion: rows[0] });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (["dallas_enrichment_isolated", "county_gis_not_configured"].includes(message)) {
+      return res.status(409).json({ error: message });
+    }
+    console.error("parcel area suggestion failed", error);
+    return res.status(500).json({ error: message || "parcel_area_suggestion_failed" });
+  }
+});
+
+app.post("/api/accounts/:id/parcel-area-suggestions/:suggestionId/decision", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  const suggestionId = String(req.params.suggestionId || "").trim();
+  const decision = String(req.body?.decision || "").trim().toLowerCase();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(id) || !/^\d+$/.test(suggestionId)) {
+    return res.status(400).json({ error: "invalid_suggestion_target" });
+  }
+  if (!new Set(["approved", "rejected"]).has(decision)) {
+    return res.status(400).json({ error: "invalid_suggestion_decision" });
+  }
+  if (!requireEditor(req, res)) return;
+  const reviewer = String(req.body?.reviewer || "HomeNode editor").trim().slice(0, 200);
+  const client = await pool.connect();
+  try {
+    await propertyEnrichmentReady;
+    await client.query("BEGIN");
+    const account = await getNonDallasAccount(client, id);
+    if (!account) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "account_not_found" });
+    }
+    const { rows } = await client.query(
+      `SELECT * FROM app.parcel_geometry_suggestions
+       WHERE id = $1 AND account_id = $2 FOR UPDATE`,
+      [suggestionId, id],
+    );
+    const suggestion = rows[0];
+    if (!suggestion) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "parcel_suggestion_not_found" });
+    }
+    if (suggestion.status !== "pending") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "parcel_suggestion_already_reviewed" });
+    }
+    await client.query(
+      `UPDATE app.parcel_geometry_suggestions
+       SET status = $3, reviewed_by = $4, reviewed_at = now()
+       WHERE id = $1 AND account_id = $2`,
+      [suggestionId, id, decision, reviewer],
+    );
+    if (decision === "approved") {
+      const valueJson = JSON.stringify(Number(suggestion.area_square_feet));
+      const { rows: existingRows } = await client.query(
+        `SELECT revision FROM app.property_attribute_manual_values
+         WHERE account_id = $1 AND attribute_key = 'site_size_sqft' FOR UPDATE`,
+        [id],
+      );
+      const revision = Number(existingRows[0]?.revision || 0) + 1;
+      const notes = `Approved official county GIS suggestion ${suggestionId}.`;
+      await client.query(
+        `INSERT INTO app.property_attribute_manual_values (
+           account_id, attribute_key, attribute_value, notes, reviewer, revision
+         ) VALUES ($1,'site_size_sqft',$2::jsonb,$3,$4,$5)
+         ON CONFLICT (account_id, attribute_key) DO UPDATE SET
+           attribute_value = EXCLUDED.attribute_value,
+           notes = EXCLUDED.notes,
+           reviewer = EXCLUDED.reviewer,
+           revision = EXCLUDED.revision,
+           updated_at = now()`,
+        [id, valueJson, notes, reviewer, revision],
+      );
+      await client.query(
+        `INSERT INTO app.property_attribute_manual_history (
+           account_id, attribute_key, attribute_value, notes, reviewer, revision
+         ) VALUES ($1,'site_size_sqft',$2::jsonb,$3,$4,$5)`,
+        [id, valueJson, notes, reviewer, revision],
+      );
+    }
+    await client.query(
+      `UPDATE app.enrichment_review_queue
+       SET status = $2, resolved_at = now(), updated_at = now()
+       WHERE account_id = $1 AND attribute_key = 'site_size_sqft'`,
+      [id, decision === "approved" ? "approved" : "rejected"],
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, decision });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    const message = String(error?.message || "");
+    if (message === "dallas_enrichment_isolated") {
+      return res.status(409).json({ error: message });
+    }
+    console.error("parcel suggestion decision failed", error);
+    return res.status(500).json({ error: "parcel_suggestion_decision_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/** Preview licensed Trestle data; activation remains off until credentials exist. */
+app.post("/api/accounts/:id/trestle-preview", async (req, res) => {
+  const id = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(id)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    const account = await getNonDallasAccount(pool, id);
+    if (!account) return res.status(404).json({ error: "account_not_found" });
+    const preview = await trestleClient.findProperty({
+      listingKey: req.body?.listing_key,
+      listingId: req.body?.listing_id,
+      originatingSystemName: req.body?.originating_system_name,
+    });
+    return res.json({ account_id: id, county: account.normalized_county, preview });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (
+      [
+        "dallas_enrichment_isolated",
+        "trestle_disabled",
+        "trestle_credentials_missing",
+        "missing_listing_identifier",
+        "ambiguous_listing_id",
+      ].includes(message)
+    ) {
+      return res.status(409).json({ error: message });
+    }
+    console.error("Trestle preview failed", error);
+    return res.status(502).json({ error: message || "trestle_preview_failed" });
   }
 });
 

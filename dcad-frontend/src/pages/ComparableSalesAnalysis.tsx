@@ -2,7 +2,12 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
-import type { ComparableRecommendationsResponse, SalePhoto, SaleRow } from '@/lib/api';
+import type {
+  ComparableRecommendationsResponse,
+  ComparableSearchProfileKey,
+  SalePhoto,
+  SaleRow,
+} from '@/lib/api';
 import GroupedAdjustmentAnalysis, {
   type AppliedGroupedAdjustment,
   type GroupedAdjustmentImpactPreview,
@@ -42,6 +47,27 @@ import { resolveComparableCharacteristic } from '@/lib/propertySourceResolution'
 const COMPARABLE_COUNT = 6;
 const LISTING_COUNT = 6;
 type SalesAnalysisPeriodMonths = 12 | 24 | 36;
+type ComparableSearchProfileOption = {
+  key: ComparableSearchProfileKey;
+  label: string;
+  geography: 'Urban' | 'Suburban' | 'Semi-Rural' | 'Rural';
+  radiusMiles: number;
+};
+const COMPARABLE_SEARCH_PROFILE_OPTIONS: readonly ComparableSearchProfileOption[] = [
+  { key: 'urban_simple', label: 'Urban - Simple', geography: 'Urban', radiusMiles: 1 },
+  { key: 'urban_moderate', label: 'Urban - Moderate', geography: 'Urban', radiusMiles: 2 },
+  { key: 'urban_complex', label: 'Urban - Complex', geography: 'Urban', radiusMiles: 3 },
+  { key: 'suburban_simple', label: 'Suburban - Simple', geography: 'Suburban', radiusMiles: 2 },
+  { key: 'suburban_moderate', label: 'Suburban - Moderate', geography: 'Suburban', radiusMiles: 5 },
+  { key: 'suburban_complex', label: 'Suburban - Complex', geography: 'Suburban', radiusMiles: 10 },
+  { key: 'semi_rural_simple', label: 'Semi-Rural - Simple', geography: 'Semi-Rural', radiusMiles: 5 },
+  { key: 'semi_rural_moderate', label: 'Semi-Rural - Moderate', geography: 'Semi-Rural', radiusMiles: 10 },
+  { key: 'semi_rural_complex', label: 'Semi-Rural - Complex', geography: 'Semi-Rural', radiusMiles: 20 },
+  { key: 'rural_simple', label: 'Rural - Simple', geography: 'Rural', radiusMiles: 10 },
+  { key: 'rural_moderate', label: 'Rural - Moderate', geography: 'Rural', radiusMiles: 25 },
+  { key: 'rural_complex', label: 'Rural - Complex', geography: 'Rural', radiusMiles: 50 },
+];
+const COMPARABLE_SEARCH_GEOGRAPHIES = ['Urban', 'Suburban', 'Semi-Rural', 'Rural'] as const;
 const DEFAULT_SALES_NOTES =
   "Comparable sales are analyzed based on the subject's condition to provide the best comparisons possible.";
 const DEFAULT_ADJUSTMENT_NOTES =
@@ -357,6 +383,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [salesAnalysisAsOf, setSalesAnalysisAsOf] = useState(() => localDateString());
   const [salesPeriodMonths, setSalesPeriodMonths] =
     useState<SalesAnalysisPeriodMonths>(12);
+  const [comparableSearchProfile, setComparableSearchProfile] =
+    useState<ComparableSearchProfileKey | ''>('');
+  const selectedComparableSearchProfile = useMemo(
+    () => COMPARABLE_SEARCH_PROFILE_OPTIONS.find(
+      (profile) => profile.key === comparableSearchProfile,
+    ) || null,
+    [comparableSearchProfile],
+  );
   const salesDateFrom = useMemo(
     () => monthsBeforeDate(salesAnalysisAsOf, salesPeriodMonths),
     [salesAnalysisAsOf, salesPeriodMonths],
@@ -423,6 +457,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [ratingsSavedAt, setRatingsSavedAt] = useState<string | null>(null);
 
   useEffect(() => {
+    setComparableSearchProfile('');
+    setRecommendationSummary(null);
+    setSalesResults([]);
     setAppliedGroupedAdjustments({});
     setAppliedConditionQualityAdjustments({});
     setConditionQualityRatings({});
@@ -1521,6 +1558,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesError('A subject property is required before comparable sales can be recommended.');
       return;
     }
+    if (!comparableSearchProfile) {
+      setSalesError('Select the comparable-search complexity before recommending sales.');
+      return;
+    }
     setSalesLoading(true);
     setSalesError(null);
     setSalesNotice(null);
@@ -1531,6 +1572,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         periodMonths: salesPeriodMonths,
         limit: 50,
         outlierScoreThreshold,
+        searchProfile: comparableSearchProfile,
       });
       setRecommendationSummary(response);
       setSalesResults(response.sales);
@@ -1565,6 +1607,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesError('Complete the current Market Conditions Analysis before searching comparable sales.');
       return;
     }
+    if (!comparableSearchProfile) {
+      setSalesError('Select the comparable-search complexity before searching sales.');
+      return;
+    }
     setSalesLoading(true);
     setSalesError(null);
     setSalesNotice(null);
@@ -1577,6 +1623,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         dateFrom: salesDateFrom || undefined,
         dateTo: salesAnalysisAsOf || undefined,
         matched: includeUnmatchedSales ? undefined : true,
+        searchProfile: comparableSearchProfile,
         limit: 50,
       });
       setRecommendationSummary(null);
@@ -2784,13 +2831,53 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           </div>
 
+          <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+            <div className="grid gap-3 lg:grid-cols-[minmax(260px,360px)_1fr] lg:items-end">
+              <label className="grid gap-1 text-sm font-medium text-slate-800">
+                <span>Comparable-search complexity (required first)</span>
+                <select
+                  aria-label="Comparable-search complexity"
+                  value={comparableSearchProfile}
+                  disabled={!marketConditionsDraft}
+                  onChange={(event) => {
+                    setComparableSearchProfile(
+                      event.target.value as ComparableSearchProfileKey | '',
+                    );
+                    setSalesError(null);
+                    resetSalesForAnalysisPeriodChange();
+                  }}
+                  className="rounded-md border border-indigo-300 bg-white px-3 py-2 text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100"
+                >
+                  <option value="">Select complexity</option>
+                  {COMPARABLE_SEARCH_GEOGRAPHIES.map((geography) => (
+                    <optgroup key={geography} label={geography}>
+                      {COMPARABLE_SEARCH_PROFILE_OPTIONS
+                        .filter((profile) => profile.geography === geography)
+                        .map((profile) => (
+                          <option key={profile.key} value={profile.key}>
+                            {profile.label} ({profile.radiusMiles} mile{profile.radiusMiles === 1 ? '' : 's'})
+                          </option>
+                        ))}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <div className="text-sm text-slate-700">
+                {selectedComparableSearchProfile
+                  ? `${selectedComparableSearchProfile.label} limits comparable-sale candidates to ${selectedComparableSearchProfile.radiusMiles} mile${selectedComparableSearchProfile.radiusMiles === 1 ? '' : 's'} from the subject before ranking.`
+                  : 'Choose the property environment and assignment complexity to unlock comparable search and ranking.'}
+                {' '}This selection does not change the independent Market Conditions Analysis above.
+              </div>
+            </div>
+          </div>
+
           <div className="mt-4 grid grid-cols-1 gap-3 xl:grid-cols-[minmax(240px,1fr)_150px_150px_140px_auto_auto] xl:items-end">
             <label className="grid gap-1 text-sm text-slate-700">
               <span>Address, city, or parcel/account ID</span>
               <input
                 ref={salesSearchInputRef}
                 value={salesQuery}
-                disabled={!marketConditionsDraft}
+                disabled={!marketConditionsDraft || !comparableSearchProfile}
                 onChange={(event) => setSalesQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void runSalesSearch();
@@ -2804,7 +2891,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <input
                 type="date"
                 value={salesAnalysisAsOf}
-                disabled={!marketConditionsDraft}
+                disabled={!marketConditionsDraft || !comparableSearchProfile}
                 onChange={(event) => {
                   setSalesAnalysisAsOf(event.target.value);
                   resetSalesForAnalysisPeriodChange();
@@ -2816,7 +2903,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <span>Historical period</span>
               <select
                 value={salesPeriodMonths}
-                disabled={!marketConditionsDraft}
+                disabled={!marketConditionsDraft || !comparableSearchProfile}
                 onChange={(event) => {
                   setSalesPeriodMonths(
                     Number(event.target.value) as SalesAnalysisPeriodMonths,
@@ -2838,7 +2925,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 max={100}
                 step={5}
                 value={outlierScoreThreshold}
-                disabled={!marketConditionsDraft}
+                disabled={!marketConditionsDraft || !comparableSearchProfile}
                 onChange={(event) => {
                   const nextValue = Math.min(
                     100,
@@ -2853,7 +2940,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             <button
               type="button"
               onClick={() => void runRecommendedSales()}
-              disabled={salesLoading || !propertyId || !marketConditionsDraft}
+              disabled={salesLoading || !propertyId || !marketConditionsDraft || !comparableSearchProfile}
               className="rounded-md border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
             >
               Recommend Top 6
@@ -2861,7 +2948,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             <button
               type="button"
               onClick={() => void runSalesSearch()}
-              disabled={salesLoading || !marketConditionsDraft}
+              disabled={salesLoading || !marketConditionsDraft || !comparableSearchProfile}
               className="rounded-md border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60"
             >
               {salesLoading ? 'Searching...' : 'Search Sales'}
@@ -2875,6 +2962,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               will remain independent from the comparable-sales inventory.
             </div>
           )}
+          {marketConditionsDraft && !comparableSearchProfile && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+              Select the comparable-search complexity above before entering ratings,
+              searching sales, or generating the recommended top six.
+            </div>
+          )}
 
           <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(180px,220px)_minmax(180px,220px)_auto_1fr] md:items-end">
@@ -2885,6 +2978,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   value={draftSubjectCondition}
                   ratings={UAD_CONDITION_RATINGS}
                   onChange={setDraftSubjectCondition}
+                  disabled={!marketConditionsDraft || !comparableSearchProfile}
                 />
               </label>
               <label className="grid gap-1 text-sm text-slate-700">
@@ -2894,12 +2988,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   value={draftSubjectQuality}
                   ratings={UAD_QUALITY_RATINGS}
                   onChange={setDraftSubjectQuality}
+                  disabled={!marketConditionsDraft || !comparableSearchProfile}
                 />
               </label>
               <button
                 type="button"
                 onClick={applySubjectRatings}
-                disabled={!draftSubjectCondition || !draftSubjectQuality}
+                disabled={!comparableSearchProfile || !draftSubjectCondition || !draftSubjectQuality}
                 className="rounded-md border border-slate-800 bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-300"
               >
                 Apply Subject Ratings
@@ -3081,6 +3176,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
               <span className="font-semibold">{recommendationSummary.coverage.eligible_count.toLocaleString()} scored sales</span>
               {' '}from {recommendationSummary.coverage.candidate_count.toLocaleString()} candidates.
+              {' '}Search profile: {recommendationSummary.search_profile.label} within{' '}
+              {recommendationSummary.search_profile.radius_miles} mile{recommendationSummary.search_profile.radius_miles === 1 ? '' : 's'}.
               {' '}Subject location confidence: {recommendationSummary.subject.location_confidence}.
               {recommendationSummary.coverage.missing_location_count > 0 && (
                 <> {recommendationSummary.coverage.missing_location_count.toLocaleString()} lacked parcel coordinates.</>
@@ -3795,7 +3892,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 <button
                   type="button"
                   onClick={() => void runSalesSearch()}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700"
+                  disabled={salesLoading || !marketConditionsDraft || !comparableSearchProfile}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Refresh Sales
                 </button>

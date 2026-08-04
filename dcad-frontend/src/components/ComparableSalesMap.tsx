@@ -190,7 +190,15 @@ function makeHousePin(
 function makeComparableMarker(
   comparable: MappedComparable,
   onOpenSale?: (sale: SaleRow) => void,
-): HTMLButtonElement {
+): { element: HTMLDivElement; button: HTMLButtonElement } {
+  const wrapper = document.createElement('div');
+  wrapper.style.display = 'grid';
+  wrapper.style.justifyItems = 'center';
+  wrapper.style.width = '142px';
+  wrapper.style.cursor = 'grab';
+  wrapper.style.touchAction = 'none';
+  wrapper.className = 'homenode-comparable-label';
+
   const marker = document.createElement('button');
   marker.type = 'button';
   marker.title = displayAddress(comparable.sale);
@@ -206,9 +214,8 @@ function makeComparableMarker(
   marker.style.boxShadow = '0 3px 10px rgba(15, 23, 42, .28)';
   marker.style.textAlign = 'left';
   marker.style.cursor = 'grab';
-  marker.style.position = 'relative';
   marker.style.touchAction = 'none';
-  marker.className = 'homenode-comparable-label';
+  marker.className = 'homenode-comparable-card';
 
   const image = document.createElement('div');
   image.style.width = '42px';
@@ -256,22 +263,20 @@ function makeComparableMarker(
 
   const pointer = document.createElement('span');
   pointer.setAttribute('aria-hidden', 'true');
-  pointer.style.position = 'absolute';
-  pointer.style.left = '50%';
-  pointer.style.bottom = '-10px';
+  pointer.style.display = 'block';
   pointer.style.width = '0';
   pointer.style.height = '0';
-  pointer.style.transform = 'translateX(-50%)';
+  pointer.style.marginTop = '-1px';
   pointer.style.borderLeft = '9px solid transparent';
   pointer.style.borderRight = '9px solid transparent';
   pointer.style.borderTop = '10px solid #2563eb';
-  marker.appendChild(pointer);
+  wrapper.append(marker, pointer);
   marker.addEventListener('click', (event) => {
     event.stopPropagation();
     if (marker.dataset.dragged === 'true') return;
     if (comparable.sale.primary_photo_url) onOpenSale?.(comparable.sale);
   });
-  return marker;
+  return { element: wrapper, button: marker };
 }
 
 export default function ComparableSalesMap({
@@ -390,9 +395,29 @@ export default function ComparableSalesMap({
             type: 'FeatureCollection' as const,
             features: leaderFeatures,
           };
+          const leaderEndpointFeatures = mappedComparables.map((comparable) => {
+            const labelCoordinate = labelPositionsRef.current[markerIdentity(comparable)] ||
+              defaultLabelCoordinate(comparable);
+            return {
+              type: 'Feature' as const,
+              properties: { id: markerIdentity(comparable) },
+              geometry: {
+                type: 'Point' as const,
+                coordinates: labelCoordinate,
+              },
+            };
+          });
+          const leaderEndpointData = {
+            type: 'FeatureCollection' as const,
+            features: leaderEndpointFeatures,
+          };
           activeMap.addSource('comparable-label-leaders', {
             type: 'geojson',
             data: leaderData,
+          });
+          activeMap.addSource('comparable-label-leader-ends', {
+            type: 'geojson',
+            data: leaderEndpointData,
           });
           activeMap.addLayer({
             id: 'comparable-label-leaders',
@@ -405,6 +430,17 @@ export default function ComparableSalesMap({
               'line-dasharray': [2, 1.5],
             },
           });
+          activeMap.addLayer({
+            id: 'comparable-label-leader-ends',
+            type: 'circle',
+            source: 'comparable-label-leader-ends',
+            paint: {
+              'circle-color': '#1d4ed8',
+              'circle-radius': 3,
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': 1,
+            },
+          });
 
           const updateLeader = (
             comparable: MappedComparable,
@@ -415,24 +451,17 @@ export default function ComparableSalesMap({
             );
             if (!feature) return;
             feature.geometry.coordinates[1] = coordinate;
-            const source = activeMap.getSource('comparable-label-leaders');
-            source?.setData(leaderData);
+            const endpointFeature = leaderEndpointFeatures.find(
+              (item) => item.properties.id === markerIdentity(comparable),
+            );
+            if (endpointFeature) endpointFeature.geometry.coordinates = coordinate;
+            activeMap.getSource('comparable-label-leaders')?.setData(leaderData);
+            activeMap.getSource('comparable-label-leader-ends')?.setData(leaderEndpointData);
           };
 
           mappedComparables.forEach((comparable) => {
             bounds.extend([comparable.longitude, comparable.latitude]);
-            new maplibre.Marker({
-              element: makeHousePin(
-                String(comparable.slot + 1),
-                displayAddress(comparable.sale),
-                '#2563eb',
-              ),
-              anchor: 'bottom',
-            })
-              .setLngLat([comparable.longitude, comparable.latitude])
-              .addTo(activeMap);
-
-            const labelElement = makeComparableMarker(
+            const labelMarkerElement = makeComparableMarker(
               comparable,
               (sale) => openSaleRef.current?.(sale),
             );
@@ -440,15 +469,16 @@ export default function ComparableSalesMap({
             const initialCoordinate = labelPositionsRef.current[identity] ||
               defaultLabelCoordinate(comparable);
             const labelMarker = new maplibre.Marker({
-              element: labelElement,
+              element: labelMarkerElement.element,
               anchor: 'bottom',
               draggable: true,
             })
               .setLngLat(initialCoordinate)
               .addTo(activeMap);
             labelMarker.on('dragstart', () => {
-              labelElement.dataset.dragged = 'true';
-              labelElement.style.cursor = 'grabbing';
+              labelMarkerElement.button.dataset.dragged = 'true';
+              labelMarkerElement.element.style.cursor = 'grabbing';
+              labelMarkerElement.button.style.cursor = 'grabbing';
             });
             labelMarker.on('drag', () => {
               const coordinate = labelMarker.getLngLat();
@@ -458,9 +488,10 @@ export default function ComparableSalesMap({
               const coordinate = labelMarker.getLngLat();
               labelPositionsRef.current[identity] = [coordinate.lng, coordinate.lat];
               updateLeader(comparable, [coordinate.lng, coordinate.lat]);
-              labelElement.style.cursor = 'grab';
+              labelMarkerElement.element.style.cursor = 'grab';
+              labelMarkerElement.button.style.cursor = 'grab';
               window.setTimeout(() => {
-                labelElement.dataset.dragged = 'false';
+                labelMarkerElement.button.dataset.dragged = 'false';
               }, 0);
             });
           });
@@ -500,6 +531,7 @@ export default function ComparableSalesMap({
     <div className="mt-3">
       <style>{`
         .homenode-comparable-label,
+        .homenode-comparable-card,
         .homenode-house-pin {
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
@@ -514,7 +546,7 @@ export default function ComparableSalesMap({
           .comparable-map-print .maplibregl-ctrl-attrib-button {
             display: none !important;
           }
-          .homenode-comparable-label {
+          .homenode-comparable-card {
             box-shadow: none !important;
             border-width: 2px !important;
           }
@@ -541,7 +573,7 @@ export default function ComparableSalesMap({
 
       <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-600">
         <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rotate-45 rounded-sm bg-red-600" /> Subject property</span>
-        <span className="inline-flex items-center gap-2"><span className="h-3 w-3 rotate-45 rounded-sm bg-blue-600" /> Exact comparable location</span>
+        <span className="inline-flex items-center gap-2"><span className="w-5 border-t-2 border-dashed border-blue-700" /> Line begins at exact comparable location</span>
         {mappedComparables.length > 0 && (
           <button
             type="button"
@@ -560,7 +592,7 @@ export default function ComparableSalesMap({
       </div>
       {mappedComparables.length > 0 && (
         <p className="mt-1 text-xs text-slate-500 print:hidden">
-          Drag any Comparable label to prevent overlap. Its numbered house pin stays at the exact property location and the leader line stays attached for printing.
+          Drag any Comparable label to prevent overlap or reveal the house beneath it. The dotted leader begins at the exact property location and remains attached to the label for printing.
         </p>
       )}
 

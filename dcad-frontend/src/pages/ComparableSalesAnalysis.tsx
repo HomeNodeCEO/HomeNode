@@ -416,6 +416,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>(
     () => Array(COMPARABLE_COUNT).fill(null),
   );
+  const [recommendationDetailsExpanded, setRecommendationDetailsExpanded] =
+    useState(false);
   const [listingQuery, setListingQuery] = useState('');
   const [listingResults, setListingResults] = useState<SaleRow[]>([]);
   const [selectedListings, setSelectedListings] = useState<Array<SaleRow | null>>(
@@ -472,6 +474,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   useEffect(() => {
     setComparableSearchProfile('');
+    setRecommendationDetailsExpanded(false);
     setRecommendationSummary(null);
     setSalesResults([]);
     setAppliedGroupedAdjustments({});
@@ -3106,7 +3109,31 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           </div>
 
-          <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
+          <div className="mt-3 overflow-hidden rounded-xl border border-slate-300 bg-white">
+            <button
+              type="button"
+              aria-expanded={recommendationDetailsExpanded}
+              aria-controls="comparable-recommendation-details"
+              onClick={() => setRecommendationDetailsExpanded((current) => !current)}
+              className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-slate-50"
+            >
+              <span>
+                <span className="block font-semibold text-slate-950">
+                  Recommendation scoring details and audit
+                </span>
+                <span className="mt-0.5 block text-xs text-slate-600">
+                  Ranking weights, optional filters, selected-slot review, and outlier diagnostics.
+                  {' '}{selectedSales.filter(Boolean).length} of {COMPARABLE_COUNT} comparable slots are populated.
+                </span>
+              </span>
+              <span className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+                {recommendationDetailsExpanded ? 'Collapse details' : 'Expand details'}
+              </span>
+            </button>
+
+            {recommendationDetailsExpanded && (
+              <div id="comparable-recommendation-details" className="border-t border-slate-200 p-4">
+          <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
             Recommendations use parcel-center distance at 40%, living-area similarity at 37%, year-built similarity at 10%, site-size similarity at 5%, and sale-date recency at 8%.
             The 10% living-area and site-size settings control how quickly those scores decline; they do not exclude larger or smaller properties.
             A 10-year age difference or 10% site-size difference receives half of that factor&apos;s points. Missing year-built or site-size data receives no points for that factor and is flagged for review rather than excluded.
@@ -3290,6 +3317,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               )}
             </div>
           )}
+              </div>
+            )}
+          </div>
 
           {(recommendationSummary ? recommendationSummary.recommended_sales : salesResults).length > 0 && (
             <div className="mt-4">

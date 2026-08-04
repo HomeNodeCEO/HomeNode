@@ -2,12 +2,14 @@ const EARTH_RADIUS_MILES = 3958.7613;
 
 export const DEFAULT_COMPARABLE_SCORING = Object.freeze({
   locationWeight: 0.4,
-  squareFootageWeight: 0.3,
-  yearBuiltWeight: 0.15,
-  salesDateWeight: 0.15,
+  squareFootageWeight: 0.37,
+  yearBuiltWeight: 0.1,
+  siteSizeWeight: 0.05,
+  salesDateWeight: 0.08,
   locationScaleMiles: 1,
   squareFootageScaleRatio: 0.1,
   yearBuiltScaleYears: 10,
+  siteSizeScaleRatio: 0.1,
   salesDateScaleDays: 365,
 });
 
@@ -610,6 +612,8 @@ export function scoreComparable(
     comparableSquareFeet,
     subjectYearBuilt,
     comparableYearBuilt,
+    subjectSiteSize,
+    comparableSiteSize,
     closingDate,
     referenceDate = new Date(),
     subjectHousingType,
@@ -652,6 +656,19 @@ export function scoreComparable(
   const yearBuiltDifference = ageDataAvailable
     ? Math.abs(comparableYear - subjectYear)
     : null;
+  const subjectSite = finiteNumber(subjectSiteSize);
+  const comparableSite = finiteNumber(comparableSiteSize);
+  const siteDataAvailable =
+    subjectSite !== null &&
+    comparableSite !== null &&
+    subjectSite > 0 &&
+    comparableSite > 0;
+  const siteSizeDifference = siteDataAvailable
+    ? Math.abs(comparableSite - subjectSite)
+    : null;
+  const siteSizeDifferenceRatio = siteDataAvailable
+    ? siteSizeDifference / subjectSite
+    : null;
   const locationScore = softSimilarity(distanceMiles, config.locationScaleMiles);
   const squareFootageScore = softSimilarity(
     squareFootageDifferenceRatio,
@@ -667,6 +684,11 @@ export function scoreComparable(
   // missing-data flag for appraiser review.
   const ageScore = ageDataAvailable
     ? softSimilarity(yearBuiltDifference, config.yearBuiltScaleYears)
+    : 0;
+  // Site size follows the same soft-similarity approach as GLA. Missing site
+  // data remains eligible, but it cannot receive the five site-size points.
+  const siteSizeScore = siteDataAvailable
+    ? softSimilarity(siteSizeDifferenceRatio, config.siteSizeScaleRatio)
     : 0;
   const housingComparison = compareHousingTypes(
     {
@@ -684,11 +706,13 @@ export function scoreComparable(
     config.locationWeight +
     config.squareFootageWeight +
     config.yearBuiltWeight +
+    config.siteSizeWeight +
     config.salesDateWeight;
   if (
     locationScore === null ||
     squareFootageScore === null ||
     ageScore === null ||
+    siteSizeScore === null ||
     salesDateScore === null ||
     !Number.isFinite(totalWeight) ||
     totalWeight <= 0
@@ -701,6 +725,7 @@ export function scoreComparable(
         locationScore * config.locationWeight +
         squareFootageScore * config.squareFootageWeight +
         ageScore * config.yearBuiltWeight +
+        siteSizeScore * config.siteSizeWeight +
         salesDateScore * config.salesDateWeight
       ) / totalWeight
     : 0;
@@ -711,6 +736,7 @@ export function scoreComparable(
     locationScore: round(locationScore, 1),
     squareFootageScore: round(squareFootageScore, 1),
     ageScore: round(ageScore, 1),
+    siteSizeScore: round(siteSizeScore, 1),
     salesDateScore: round(salesDateScore, 1),
     ageDataAvailable,
     subjectYearBuilt: ageDataAvailable ? Math.round(subjectYear) : null,
@@ -718,6 +744,18 @@ export function scoreComparable(
     yearBuiltDifference: yearBuiltDifference === null
       ? null
       : round(yearBuiltDifference, 0),
+    siteDataAvailable,
+    subjectSiteSize: siteDataAvailable ? round(subjectSite, 0) : null,
+    comparableSiteSize: siteDataAvailable ? round(comparableSite, 0) : null,
+    siteSizeDifference: siteSizeDifference === null
+      ? null
+      : round(siteSizeDifference, 0),
+    siteSizeDifferenceRatio: siteSizeDifferenceRatio === null
+      ? null
+      : round(siteSizeDifferenceRatio, 4),
+    siteSizeDifferencePercent: siteSizeDifferenceRatio === null
+      ? null
+      : round(siteSizeDifferenceRatio * 100, 1),
     saleAgeDays: saleAge.saleAgeDays,
     soldWithinOneYear: saleAge.soldWithinOneYear,
     soldOverOneYear: saleAge.soldOverOneYear,

@@ -1363,7 +1363,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }));
     const price = saleNumber(sale.sale_price);
     const concessions = saleNumber(sale.seller_contributions);
-    const landSize = mlsLotSizeSqft(sale.mls_lot_size_area);
+    const landSize = saleNumber(sale.comparableSiteSize) ?? mlsLotSizeSqft(sale.mls_lot_size_area);
     const yearBuilt = saleNumber(sale.comparableYearBuilt) ?? saleNumber(
       resolveComparableCharacteristic({
         county: sale.county,
@@ -2497,9 +2497,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
 
           <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
-            Recommendations use parcel-center distance at 40%, living-area similarity at 30%, year-built similarity at 15%, and sale-date recency at 15%.
-            The 10% living-area setting controls how quickly that score declines; it does not exclude larger or smaller properties.
-            A 10-year difference receives half of the age points; missing year-built data receives no age points and is flagged for review rather than excluded.
+            Recommendations use parcel-center distance at 40%, living-area similarity at 37%, year-built similarity at 10%, site-size similarity at 5%, and sale-date recency at 8%.
+            The 10% living-area and site-size settings control how quickly those scores decline; they do not exclude larger or smaller properties.
+            A 10-year age difference or 10% site-size difference receives half of that factor&apos;s points. Missing year-built or site-size data receives no points for that factor and is flagged for review rather than excluded.
             The 12-month period is the default and excludes sales over one year old. Select 24 or 36 months to include older sales as recency-weighted fallback evidence.
             Neighborhood code is shown for review but is not yet scored.
           </div>
@@ -2619,6 +2619,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               )}
               {recommendationSummary.coverage.missing_year_built_count > 0 && (
                 <> {recommendationSummary.coverage.missing_year_built_count.toLocaleString()} lacked usable subject/comparable year-built data and received no age points.</>
+              )}
+              {recommendationSummary.coverage.missing_site_size_count > 0 && (
+                <> {recommendationSummary.coverage.missing_site_size_count.toLocaleString()} lacked usable subject/comparable site-size data and received no site-size points.</>
               )}
               {recommendationSummary.recommendation_policy && (
                 <>
@@ -2754,7 +2757,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 {sale.distanceMiles?.toFixed(2)} mi · {sale.squareFootageDifferencePercent?.toFixed(1)}% size difference
                               </div>
                               <div className="mt-1 text-xs text-slate-500">
-                                Location {sale.locationScore?.toFixed(1)} · GLA {sale.squareFootageScore?.toFixed(1)} · Age {sale.ageDataAvailable ? sale.ageScore?.toFixed(1) : 'Review'} · Date {sale.salesDateScore?.toFixed(1)}
+                                Location {sale.locationScore?.toFixed(1)} · GLA {sale.squareFootageScore?.toFixed(1)} · Age {sale.ageDataAvailable ? sale.ageScore?.toFixed(1) : 'Review'} · Site {sale.siteDataAvailable ? sale.siteSizeScore?.toFixed(1) : 'Review'} · Date {sale.salesDateScore?.toFixed(1)}
                               </div>
                               {sale.recommendationExclusionReason === 'outside_analysis_period' && (
                                 <div className="mt-1 text-xs font-medium text-amber-800">
@@ -2872,7 +2875,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-                  Ranked with the same 40% location · 30% GLA · 15% age · 15% sale-date model
+                  Ranked with the same 40% location · 37% GLA · 10% age · 5% site-size · 8% sale-date model
                 </div>
               </div>
 
@@ -2911,7 +2914,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               #{sale.score_rank ?? '—'} · {sale.comparableScore?.toFixed(1) ?? '—'}
                             </div>
                             <div className="mt-1 text-xs text-slate-500">
-                              Location {sale.locationScore?.toFixed(1) ?? '—'} · GLA {sale.squareFootageScore?.toFixed(1) ?? '—'} · Age {sale.ageDataAvailable ? sale.ageScore?.toFixed(1) ?? '—' : 'Review'} · Date {sale.salesDateScore?.toFixed(1) ?? '—'}
+                              Location {sale.locationScore?.toFixed(1) ?? '—'} · GLA {sale.squareFootageScore?.toFixed(1) ?? '—'} · Age {sale.ageDataAvailable ? sale.ageScore?.toFixed(1) ?? '—' : 'Review'} · Site {sale.siteDataAvailable ? sale.siteSizeScore?.toFixed(1) ?? '—' : 'Review'} · Date {sale.salesDateScore?.toFixed(1) ?? '—'}
                             </div>
                           </td>
                           <td className="px-3 py-3">

@@ -66,13 +66,15 @@ test("a ten-percent living-area difference is a soft score, not a filter", () =>
     comparableSquareFeet: 1650,
     subjectYearBuilt: 1985,
     comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
   assert.equal(score.squareFootageDifferencePercent, 10);
   assert.equal(score.squareFootageScore, 50);
   assert.equal(score.salesDateScore, 100);
-  assert.equal(score.comparableScore, 85);
+  assert.equal(score.comparableScore, 81.5);
 });
 
 test("even a large living-area difference remains scoreable", () => {
@@ -85,6 +87,8 @@ test("even a large living-area difference remains scoreable", () => {
     comparableSquareFeet: 2400,
     subjectYearBuilt: 1985,
     comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
@@ -93,7 +97,7 @@ test("even a large living-area difference remains scoreable", () => {
   assert.ok(score.squareFootageScore > 0);
 });
 
-test("location, living area, year built, and sale date contribute forty, thirty, fifteen, and fifteen percent", () => {
+test("location, living area, year built, site size, and sale date use the approved forty, thirty-seven, ten, five, and eight percent weights", () => {
   const score = scoreComparable({
     subjectLatitude: 32.947,
     subjectLongitude: -96.656,
@@ -103,14 +107,17 @@ test("location, living area, year built, and sale date contribute forty, thirty,
     comparableSquareFeet: 1650,
     subjectYearBuilt: 1985,
     comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
   assert.equal(score.locationScore, 100);
   assert.equal(score.squareFootageScore, 50);
   assert.equal(score.ageScore, 100);
+  assert.equal(score.siteSizeScore, 100);
   assert.equal(score.salesDateScore, 100);
-  assert.equal(score.comparableScore, 85);
+  assert.equal(score.comparableScore, 81.5);
 });
 
 test("a known housing-type mismatch receives zero score and cannot enter the top six", () => {
@@ -123,6 +130,8 @@ test("a known housing-type mismatch receives zero score and cannot enter the top
     comparableSquareFeet: 1500,
     subjectYearBuilt: 1985,
     comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     subjectHousingType: "Single Family Residence",
     subjectAttachmentType: "detached",
     comparableHousingType: "Condominium",
@@ -165,6 +174,8 @@ test("unknown housing classifications remain eligible but explicit matching type
     comparableSquareFeet: 1500,
     subjectYearBuilt: 1985,
     comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     subjectHousingType: "Single Family Detached",
     comparableHousingType: null,
     closingDate: "2026-07-24",
@@ -185,13 +196,15 @@ test("a one-year-old sale receives half of the sale-date component", () => {
     comparableSquareFeet: 1500,
     subjectYearBuilt: 1985,
     comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     closingDate: "2025-07-24",
     referenceDate: "2026-07-24",
   });
   assert.equal(score.locationScore, 100);
   assert.equal(score.squareFootageScore, 100);
   assert.equal(score.salesDateScore, 50);
-  assert.equal(score.comparableScore, 92.5);
+  assert.equal(score.comparableScore, 96);
 });
 
 test("a ten-year year-built difference receives half of the age component", () => {
@@ -204,13 +217,15 @@ test("a ten-year year-built difference receives half of the age component", () =
     comparableSquareFeet: 1500,
     subjectYearBuilt: 1985,
     comparableYearBuilt: 1995,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
   assert.equal(score.ageDataAvailable, true);
   assert.equal(score.yearBuiltDifference, 10);
   assert.equal(score.ageScore, 50);
-  assert.equal(score.comparableScore, 92.5);
+  assert.equal(score.comparableScore, 95);
 });
 
 test("missing year-built data remains eligible but receives no age points", () => {
@@ -223,12 +238,55 @@ test("missing year-built data remains eligible but receives no age points", () =
     comparableSquareFeet: 1500,
     subjectYearBuilt: 1985,
     comparableYearBuilt: null,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 7500,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
   assert.equal(score.ageDataAvailable, false);
   assert.equal(score.ageScore, 0);
-  assert.equal(score.comparableScore, 85);
+  assert.equal(score.comparableScore, 90);
+});
+
+test("a ten-percent site-size difference receives half of the site component", () => {
+  const score = scoreComparable({
+    subjectLatitude: 32.947,
+    subjectLongitude: -96.656,
+    comparableLatitude: 32.947,
+    comparableLongitude: -96.656,
+    subjectSquareFeet: 1500,
+    comparableSquareFeet: 1500,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: 8250,
+    closingDate: "2026-07-24",
+    referenceDate: "2026-07-24",
+  });
+  assert.equal(score.siteDataAvailable, true);
+  assert.equal(score.siteSizeDifferencePercent, 10);
+  assert.equal(score.siteSizeScore, 50);
+  assert.equal(score.comparableScore, 97.5);
+});
+
+test("missing site size remains eligible but receives no site-size points", () => {
+  const score = scoreComparable({
+    subjectLatitude: 32.947,
+    subjectLongitude: -96.656,
+    comparableLatitude: 32.947,
+    comparableLongitude: -96.656,
+    subjectSquareFeet: 1500,
+    comparableSquareFeet: 1500,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
+    subjectSiteSize: 7500,
+    comparableSiteSize: null,
+    closingDate: "2026-07-24",
+    referenceDate: "2026-07-24",
+  });
+  assert.equal(score.siteDataAvailable, false);
+  assert.equal(score.siteSizeScore, 0);
+  assert.equal(score.comparableScore, 95);
 });
 
 test("polygon centroid returns the center of a parcel", () => {

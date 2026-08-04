@@ -14,3 +14,21 @@ html, body, #root {
 img, video, canvas, iframe { max-width: 100%; height: auto; }
 .viewerContainer, .pdfViewer { max-width: 100% !important; overflow-x: auto; }
 
+/* Keep the analysis controls readable while reducing the page's vertical scroll. */
+.sales-comparison-compact .p-6 { padding-block: 1.125rem; }
+.sales-comparison-compact .p-5 { padding-block: 0.9375rem; }
+.sales-comparison-compact .p-4 { padding-block: 0.75rem; }
+.sales-comparison-compact .py-6 { padding-block: 1.125rem; }
+.sales-comparison-compact .py-5 { padding-block: 0.9375rem; }
+.sales-comparison-compact .py-4 { padding-block: 0.75rem; }
+.sales-comparison-compact .py-3 { padding-block: 0.5625rem; }
+.sales-comparison-compact .mt-6 { margin-top: 1.125rem; }
+.sales-comparison-compact .mt-5 { margin-top: 0.9375rem; }
+.sales-comparison-compact .mt-4 { margin-top: 0.75rem; }
+.sales-comparison-compact .mb-6 { margin-bottom: 1.125rem; }
+.sales-comparison-compact .mb-5 { margin-bottom: 0.9375rem; }
+.sales-comparison-compact .mb-4 { margin-bottom: 0.75rem; }
+.sales-comparison-compact .gap-6 { row-gap: 1.125rem; }
+.sales-comparison-compact .gap-5 { row-gap: 0.9375rem; }
+.sales-comparison-compact .gap-4 { row-gap: 0.75rem; }
+

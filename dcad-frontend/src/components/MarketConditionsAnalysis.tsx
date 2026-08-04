@@ -475,7 +475,7 @@ function MedianPriceBars({
         className="relative"
         style={{ minWidth: Math.max(620, visible.length * 74) }}
       >
-        <div className="relative h-[220px]">
+        <div className="relative h-[180px]">
           <div className="absolute inset-0 flex items-end">
             {plottedPoints.map(({ point, value, height }) => (
               <div
@@ -1869,7 +1869,7 @@ export default function MarketConditionsAnalysis({
             studyContext.longitude !== null ? (
               <div
                 ref={mapContainerRef}
-                className="mt-4 h-[440px] w-full overflow-hidden rounded-xl border border-slate-300 bg-slate-100"
+                className="mt-4 h-[340px] w-full overflow-hidden rounded-xl border border-slate-300 bg-slate-100"
                 aria-label="Custom market area drawing map"
               />
             ) : (

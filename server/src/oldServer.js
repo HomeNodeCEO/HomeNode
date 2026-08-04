@@ -1779,7 +1779,8 @@ app.get("/api/search", async (req, res) => {
  * GET /api/sales/recommendations
  *
  * Ranks matched CAD sales using parcel-centroid distance (40%), continuous
- * living-area similarity (30%), and closing-date recency (30%). The default
+ * living-area similarity (30%), year-built similarity (15%), and closing-date
+ * recency (15%). The default
  * 12-month analysis period excludes older sales unless the caller explicitly
  * expands the period to 24 or 36 months. The response also returns lower-ranked
  * one-year challengers and a price-per-square-foot outlier audit for sales at
@@ -1790,6 +1791,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
   try {
     await accountLocationsReady;
     await ensureAccountLocationsTable(pool);
+    await propertyEnrichmentReady;
 
     const subjectAccountId = String(
       req.query.subject_account_id || "",
@@ -1884,6 +1886,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
         0,
         1,
       ),
+      yearBuiltWeight: parseTunableNumber(
+        req.query.year_built_weight,
+        DEFAULT_COMPARABLE_SCORING.yearBuiltWeight,
+        0,
+        1,
+      ),
       salesDateWeight: parseTunableNumber(
         req.query.sales_date_weight,
         DEFAULT_COMPARABLE_SCORING.salesDateWeight,
@@ -1902,6 +1910,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
         0.01,
         1,
       ),
+      yearBuiltScaleYears: parseTunableNumber(
+        req.query.year_built_scale_years,
+        DEFAULT_COMPARABLE_SCORING.yearBuiltScaleYears,
+        1,
+        100,
+      ),
       salesDateScaleDays: parseTunableNumber(
         req.query.sales_date_scale_days,
         DEFAULT_COMPARABLE_SCORING.salesDateScaleDays,
@@ -1918,6 +1932,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
     if (
       scoringConfig.locationWeight +
         scoringConfig.squareFootageWeight +
+        scoringConfig.yearBuiltWeight +
         scoringConfig.salesDateWeight <=
       0
     ) {
@@ -1944,6 +1959,14 @@ app.get("/api/sales/recommendations", async (req, res) => {
             profile.housing_type,
             profile.attachment_type,
             COALESCE(improvement.living_area_sqft, improvement.total_living_area) AS living_area_sqft,
+            COALESCE(
+              CASE
+                WHEN manual_report.attribute_value #>> '{main_improvement,year_built}' ~ '^[0-9]{4}$'
+                  THEN (manual_report.attribute_value #>> '{main_improvement,year_built}')::integer
+                ELSE NULL
+              END,
+              improvement.year_built
+            ) AS year_built,
             location.latitude,
             location.longitude,
             location.status AS location_status,
@@ -1958,6 +1981,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
             ON improvement.account_id = account.account_id
           LEFT JOIN core.v_account_housing_profiles profile
             ON profile.account_id = account.account_id
+          LEFT JOIN app.property_attribute_manual_values manual_report
+            ON manual_report.account_id = account.account_id
+           AND manual_report.attribute_key = 'report.property_characteristics'
           LEFT JOIN core.account_locations location
             ON location.account_id = account.account_id
           WHERE account.account_id = $1
@@ -2125,6 +2151,11 @@ app.get("/api/sales/recommendations", async (req, res) => {
         sale.cad_land_value,
         sale.cad_improvement_value,
         sale.cad_market_value,
+        CASE
+          WHEN manual_report.attribute_value #>> '{main_improvement,year_built}' ~ '^[0-9]{4}$'
+            THEN (manual_report.attribute_value #>> '{main_improvement,year_built}')::integer
+          ELSE NULL
+        END AS manual_year_built,
         media.primary_photo_url,
         COALESCE(media.photo_count, 0) AS photo_count,
         location.latitude,
@@ -2141,6 +2172,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
         ON account.account_id = sale.primary_account_id
       LEFT JOIN core.account_locations location
         ON location.account_id = sale.primary_account_id
+      LEFT JOIN app.property_attribute_manual_values manual_report
+        ON manual_report.account_id = sale.primary_account_id
+       AND manual_report.attribute_key = 'report.property_characteristics'
       LEFT JOIN core.v_sales_media_summary media
         ON media.source_record_id = sale.source_record_id
       WHERE ${candidateWhere.join(" AND ")}
@@ -2157,6 +2191,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
     let missingLocationCount = 0;
     let unsupportedCountyCount = 0;
     let missingSquareFootageCount = 0;
+    let missingYearBuiltCount = 0;
     const scored = [];
     for (const candidate of candidates) {
       if (
@@ -2183,6 +2218,18 @@ app.get("/api/sales/recommendations", async (req, res) => {
         missingSquareFootageCount += 1;
         continue;
       }
+      const comparableYearBuilt =
+        candidate.manual_year_built ??
+        candidate.cad_year_built ??
+        candidate.mls_year_built;
+      if (
+        !Number.isFinite(Number(subject.year_built)) ||
+        Number(subject.year_built) <= 0 ||
+        !Number.isFinite(Number(comparableYearBuilt)) ||
+        Number(comparableYearBuilt) <= 0
+      ) {
+        missingYearBuiltCount += 1;
+      }
       const score = scoreComparable(
         {
           subjectLatitude: subject.latitude,
@@ -2191,6 +2238,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
           comparableLongitude: candidate.longitude,
           subjectSquareFeet: subject.living_area_sqft,
           comparableSquareFeet,
+          subjectYearBuilt: subject.year_built,
+          comparableYearBuilt,
           closingDate: candidate.closing_date,
           referenceDate: effectiveDateTo,
           subjectHousingType: subject.housing_type,
@@ -2209,7 +2258,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
         comparable_square_feet: Number(comparableSquareFeet),
         score_requires_review:
           Boolean(candidate.requires_additional_review) ||
-          Boolean(candidate.location_review_required),
+          Boolean(candidate.location_review_required) ||
+          !score.ageDataAvailable,
       });
     }
 
@@ -2276,6 +2326,9 @@ app.get("/api/sales/recommendations", async (req, res) => {
         housing_type: subject.housing_type,
         attachment_type: subject.attachment_type,
         living_area_sqft: Number(subject.living_area_sqft),
+        year_built: Number.isFinite(Number(subject.year_built))
+          ? Number(subject.year_built)
+          : null,
         latitude: Number(subject.latitude),
         longitude: Number(subject.longitude),
         location_source: subject.location_source,
@@ -2291,12 +2344,16 @@ app.get("/api/sales/recommendations", async (req, res) => {
         squareFootageWeightPercent: Math.round(
           scoringConfig.squareFootageWeight * 100,
         ),
+        yearBuiltWeightPercent: Math.round(
+          scoringConfig.yearBuiltWeight * 100,
+        ),
         salesDateWeightPercent: Math.round(
           scoringConfig.salesDateWeight * 100,
         ),
         squareFootageScalePercent: Math.round(
           scoringConfig.squareFootageScaleRatio * 100,
         ),
+        yearBuiltScaleYears: Math.round(scoringConfig.yearBuiltScaleYears),
         salesDateScaleDays: Math.round(scoringConfig.salesDateScaleDays),
         squareFootageIsHardFilter: false,
       },
@@ -2308,6 +2365,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
         missing_location_count: missingLocationCount,
         unsupported_county_count: unsupportedCountyCount,
         missing_square_footage_count: missingSquareFootageCount,
+        missing_year_built_count: missingYearBuiltCount,
         housing_type_mismatch_count:
           recommendationResult.policy.housingTypeMismatchCount,
         recommended_count: recommendedSales.length,

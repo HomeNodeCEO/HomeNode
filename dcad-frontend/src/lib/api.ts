@@ -262,7 +262,12 @@ export interface SaleRow {
   distanceMiles?: number;
   locationScore?: number;
   squareFootageScore?: number;
+  ageScore?: number;
   salesDateScore?: number;
+  ageDataAvailable?: boolean;
+  subjectYearBuilt?: number | null;
+  comparableYearBuilt?: number | null;
+  yearBuiltDifference?: number | null;
   housingTypeScore?: number;
   subjectHousingType?: string;
   comparableHousingType?: string;
@@ -422,9 +427,11 @@ export interface ComparableRecommendationParams {
   marketBreakdown?: GroupedAnalysisBreakdownKey;
   locationWeight?: number;
   squareFootageWeight?: number;
+  yearBuiltWeight?: number;
   salesDateWeight?: number;
   locationScaleMiles?: number;
   squareFootageScaleRatio?: number;
+  yearBuiltScaleYears?: number;
   salesDateScaleDays?: number;
   outlierScoreThreshold?: number;
 }
@@ -465,6 +472,7 @@ export interface ComparableRecommendationsResponse {
     postal_code: string | null;
     neighborhood_code: string | null;
     living_area_sqft: number;
+    year_built: number | null;
     latitude: number;
     longitude: number;
     location_source: string;
@@ -477,12 +485,15 @@ export interface ComparableRecommendationsResponse {
   scoring: {
     locationWeight: number;
     squareFootageWeight: number;
+    yearBuiltWeight: number;
     salesDateWeight: number;
     locationScaleMiles: number;
     squareFootageScaleRatio: number;
+    yearBuiltScaleYears: number;
     salesDateScaleDays: number;
     locationWeightPercent: number;
     squareFootageWeightPercent: number;
+    yearBuiltWeightPercent: number;
     salesDateWeightPercent: number;
     squareFootageScalePercent: number;
     squareFootageIsHardFilter: false;
@@ -495,6 +506,7 @@ export interface ComparableRecommendationsResponse {
     missing_location_count: number;
     unsupported_county_count: number;
     missing_square_footage_count: number;
+    missing_year_built_count: number;
     recommended_count: number;
     older_than_two_years_count: number;
     older_than_one_year_count: number;
@@ -1087,7 +1099,7 @@ export async function getSalePhotos(
   return fetchJSON<SalePhotosResponse>(url);
 }
 
-/** Rank matched sales by DCAD parcel proximity and continuous living-area similarity. */
+/** Rank matched sales by proximity, living-area, age, and sale-date similarity. */
 export async function getComparableRecommendations(
   params: ComparableRecommendationParams,
 ): Promise<ComparableRecommendationsResponse> {
@@ -1101,9 +1113,11 @@ export async function getComparableRecommendations(
     market_breakdown: params.marketBreakdown,
     location_weight: params.locationWeight,
     square_footage_weight: params.squareFootageWeight,
+    year_built_weight: params.yearBuiltWeight,
     sales_date_weight: params.salesDateWeight,
     location_scale_miles: params.locationScaleMiles,
     square_footage_scale_ratio: params.squareFootageScaleRatio,
+    year_built_scale_years: params.yearBuiltScaleYears,
     sales_date_scale_days: params.salesDateScaleDays,
     outlier_score_threshold: params.outlierScoreThreshold,
   });

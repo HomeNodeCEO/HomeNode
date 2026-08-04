@@ -37,6 +37,12 @@ import { resolveComparableCharacteristic } from '@/lib/propertySourceResolution'
 const COMPARABLE_COUNT = 6;
 type SalesAnalysisPeriodMonths = 12 | 24 | 36;
 
+function swapArrayItems<T>(values: T[], from: number, to: number): T[] {
+  const next = [...values];
+  [next[from], next[to]] = [next[to], next[from]];
+  return next;
+}
+
 function localDateString(date = new Date()): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -268,6 +274,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [photos, setPhotos] = useState<File[]>([]);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const salesSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [subjectPhotos, setSubjectPhotos] = useState<SalePhoto[]>([]);
   const [gallery, setGallery] = useState<GalleryState | null>(null);
   const [summary, setSummary] = useState('');
@@ -1357,11 +1364,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const price = saleNumber(sale.sale_price);
     const concessions = saleNumber(sale.seller_contributions);
     const landSize = mlsLotSizeSqft(sale.mls_lot_size_area);
-    const yearBuilt = saleNumber(resolveComparableCharacteristic({
-      county: sale.county,
-      trestle: sale.mls_year_built,
-      cad: sale.cad_year_built,
-    }));
+    const yearBuilt = saleNumber(sale.comparableYearBuilt) ?? saleNumber(
+      resolveComparableCharacteristic({
+        county: sale.county,
+        trestle: sale.mls_year_built,
+        cad: sale.cad_year_built,
+      }),
+    );
     const bedrooms = saleNumber(resolveComparableCharacteristic({
       county: sale.county,
       trestle: sale.mls_bedrooms_total,
@@ -1453,6 +1462,40 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
     setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
     setCompRooms((current) => current.map((value, index) => index === slot ? { tot: null, bd: null, full: null, half: null } : value));
+  };
+
+  const moveComparable = (from: number, to: number) => {
+    if (
+      from < 0 ||
+      from >= COMPARABLE_COUNT ||
+      to < 0 ||
+      to >= COMPARABLE_COUNT ||
+      !selectedSales[from]
+    ) return;
+    const movedAddress = compAddresses[from] || `Comparable ${from + 1}`;
+    setSelectedSales((current) => swapArrayItems(current, from, to));
+    setCompAddresses((current) => swapArrayItems(current, from, to));
+    setCompGla((current) => swapArrayItems(current, from, to));
+    setCompPrices((current) => swapArrayItems(current, from, to));
+    setCompConcessions((current) => swapArrayItems(current, from, to));
+    setCompTimeAdjustments((current) => swapArrayItems(current, from, to));
+    setCompSaleDates((current) => swapArrayItems(current, from, to));
+    setCompLandSize((current) => swapArrayItems(current, from, to));
+    setCompAges((current) => swapArrayItems(current, from, to));
+    setCompGarage((current) => swapArrayItems(current, from, to));
+    setCompConditions((current) => swapArrayItems(current, from, to));
+    setCompQualities((current) => swapArrayItems(current, from, to));
+    setCompRooms((current) => swapArrayItems(current, from, to));
+    setSalesNotice(`${movedAddress} moved to Comparable ${to + 1}.`);
+  };
+
+  const focusComparableSearch = () => {
+    salesSearchInputRef.current?.focus();
+    salesSearchInputRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    });
+    setSalesNotice('Search or choose an available sale, then select “Use as Comparable” to add it to the next open grid position.');
   };
 
   const clearComparables = () => {
@@ -2271,6 +2314,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             <label className="grid gap-1 text-sm text-slate-700">
               <span>Address, city, or parcel/account ID</span>
               <input
+                ref={salesSearchInputRef}
                 value={salesQuery}
                 disabled={!marketConditionsDraft}
                 onChange={(event) => setSalesQuery(event.target.value)}
@@ -2453,8 +2497,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
 
           <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
-            Recommendations use DCAD parcel-center distance at 40%, living-area similarity at 30%, and sale-date recency at 30%.
+            Recommendations use parcel-center distance at 40%, living-area similarity at 30%, year-built similarity at 15%, and sale-date recency at 15%.
             The 10% living-area setting controls how quickly that score declines; it does not exclude larger or smaller properties.
+            A 10-year difference receives half of the age points; missing year-built data receives no age points and is flagged for review rather than excluded.
             The 12-month period is the default and excludes sales over one year old. Select 24 or 36 months to include older sales as recency-weighted fallback evidence.
             Neighborhood code is shown for review but is not yet scored.
           </div>
@@ -2572,6 +2617,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               {recommendationSummary.coverage.missing_square_footage_count > 0 && (
                 <> {recommendationSummary.coverage.missing_square_footage_count.toLocaleString()} lacked living-area data.</>
               )}
+              {recommendationSummary.coverage.missing_year_built_count > 0 && (
+                <> {recommendationSummary.coverage.missing_year_built_count.toLocaleString()} lacked usable subject/comparable year-built data and received no age points.</>
+              )}
               {recommendationSummary.recommendation_policy && (
                 <>
                   {' '}The {recommendationSummary.recommendation_policy.periodMonths}-month analysis runs from{' '}
@@ -2647,7 +2695,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 </thead>
                 <tbody>
                   {(recommendationSummary ? recommendationSummary.recommended_sales : salesResults).map((sale) => {
-                    const selected = selectedSales.some((item) => item && saleKey(item) === saleKey(sale));
+                    const selectedSlot = selectedSales.findIndex((item) => item && saleKey(item) === saleKey(sale));
+                    const selected = selectedSlot >= 0;
                     const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
                     const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
                     const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
@@ -2705,7 +2754,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 {sale.distanceMiles?.toFixed(2)} mi · {sale.squareFootageDifferencePercent?.toFixed(1)}% size difference
                               </div>
                               <div className="mt-1 text-xs text-slate-500">
-                                Location {sale.locationScore?.toFixed(1)} · GLA {sale.squareFootageScore?.toFixed(1)} · Date {sale.salesDateScore?.toFixed(1)}
+                                Location {sale.locationScore?.toFixed(1)} · GLA {sale.squareFootageScore?.toFixed(1)} · Age {sale.ageDataAvailable ? sale.ageScore?.toFixed(1) : 'Review'} · Date {sale.salesDateScore?.toFixed(1)}
                               </div>
                               {sale.recommendationExclusionReason === 'outside_analysis_period' && (
                                 <div className="mt-1 text-xs font-medium text-amber-800">
@@ -2728,7 +2777,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <div className="mt-1 text-xs text-slate-500">
                             {garageLabel} · Pool {hasPool === null ? 'unavailable' : hasPool ? 'Yes' : 'No'}
                           </div>
-                          <div className="mt-1 text-xs text-slate-500">Built {sale.cad_year_built ?? sale.mls_year_built ?? '—'} · {sale.neighborhood_code || 'No neighborhood code'}</div>
+                          <div className="mt-1 text-xs text-slate-500">Built {sale.comparableYearBuilt ?? sale.cad_year_built ?? sale.mls_year_built ?? '—'} · {sale.neighborhood_code || 'No neighborhood code'}</div>
                           <div className="mt-1 text-xs text-slate-500">
                             {missingHousingType ? (
                               <span className="font-semibold text-amber-900">Housing type unknown — review needed</span>
@@ -2783,11 +2832,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <div className="flex flex-col items-end gap-2">
                             <button
                               type="button"
-                              onClick={() => addSaleAsComparable(sale)}
-                              disabled={selected}
-                              className="rounded-md border border-blue-600 bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
+                              onClick={() => selected ? removeComparable(selectedSlot) : addSaleAsComparable(sale)}
+                              className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                                selected
+                                  ? 'border-red-300 bg-white text-red-700 hover:bg-red-50'
+                                  : 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
+                              }`}
                             >
-                              {selected ? 'Selected' : 'Use as Comparable'}
+                              {selected ? 'Remove from Grid' : 'Use as Comparable'}
                             </button>
                             <button
                               type="button"
@@ -2820,7 +2872,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
-                  Ranked with the same 40% location · 30% GLA · 30% sale-date model
+                  Ranked with the same 40% location · 30% GLA · 15% age · 15% sale-date model
                 </div>
               </div>
 
@@ -2838,9 +2890,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   </thead>
                   <tbody>
                     {recommendationSummary.competitive_sales.map((sale) => {
-                      const selected = selectedSales.some(
+                      const selectedSlot = selectedSales.findIndex(
                         (item) => item && saleKey(item) === saleKey(sale),
                       );
+                      const selected = selectedSlot >= 0;
                       const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
                       const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
                       const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
@@ -2858,7 +2911,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               #{sale.score_rank ?? '—'} · {sale.comparableScore?.toFixed(1) ?? '—'}
                             </div>
                             <div className="mt-1 text-xs text-slate-500">
-                              Location {sale.locationScore?.toFixed(1) ?? '—'} · GLA {sale.squareFootageScore?.toFixed(1) ?? '—'} · Date {sale.salesDateScore?.toFixed(1) ?? '—'}
+                              Location {sale.locationScore?.toFixed(1) ?? '—'} · GLA {sale.squareFootageScore?.toFixed(1) ?? '—'} · Age {sale.ageDataAvailable ? sale.ageScore?.toFixed(1) ?? '—' : 'Review'} · Date {sale.salesDateScore?.toFixed(1) ?? '—'}
                             </div>
                           </td>
                           <td className="px-3 py-3">
@@ -2915,11 +2968,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           <td className="px-3 py-3 text-right">
                             <button
                               type="button"
-                              onClick={() => addCompetitiveSaleToPrimaryGrid(sale)}
-                              disabled={selected}
-                              className="rounded-md border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:border-slate-300 disabled:bg-slate-200 disabled:text-slate-500"
+                              onClick={() => selected ? removeComparable(selectedSlot) : addCompetitiveSaleToPrimaryGrid(sale)}
+                              className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${
+                                selected
+                                  ? 'border-red-300 bg-white text-red-700 hover:bg-red-50'
+                                  : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700'
+                              }`}
                             >
-                              {selected ? 'In Primary Grid' : 'Add To Primary Grid'}
+                              {selected ? 'Remove from Grid' : 'Add To Primary Grid'}
                             </button>
                           </td>
                         </tr>
@@ -3309,7 +3365,51 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     className={`text-left px-4 py-2 border-b border-slate-300 bg-white ${i < COMPARABLE_COUNT - 1 ? 'border-r' : ''}`}
                     style={i < COMPARABLE_COUNT - 1 ? { borderRightColor: '#cad5e2' } : undefined}
                   >
-                    {`Comparable ${i + 1}`}
+                    <div className="flex flex-col gap-1.5">
+                      <span>{`Comparable ${i + 1}`}</span>
+                      {selectedSales[i] ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          <button
+                            type="button"
+                            aria-label={`Move Comparable ${i + 1} left`}
+                            title="Move left"
+                            disabled={i === 0}
+                            onClick={() => moveComparable(i, i - 1)}
+                            className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            ←
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move Comparable ${i + 1} right`}
+                            title="Move right"
+                            disabled={i === COMPARABLE_COUNT - 1}
+                            onClick={() => moveComparable(i, i + 1)}
+                            className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            →
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Remove Comparable ${i + 1}`}
+                            title="Remove comparable"
+                            onClick={() => removeComparable(i)}
+                            className="rounded border border-red-200 bg-white px-1.5 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          aria-label={`Add Comparable ${i + 1}`}
+                          onClick={focusComparableSearch}
+                          className="w-fit rounded border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        >
+                          + Add comparable
+                        </button>
+                      )}
+                    </div>
                   </th>
                 ))}
               </tr>

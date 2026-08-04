@@ -3,9 +3,11 @@ const EARTH_RADIUS_MILES = 3958.7613;
 export const DEFAULT_COMPARABLE_SCORING = Object.freeze({
   locationWeight: 0.4,
   squareFootageWeight: 0.3,
-  salesDateWeight: 0.3,
+  yearBuiltWeight: 0.15,
+  salesDateWeight: 0.15,
   locationScaleMiles: 1,
   squareFootageScaleRatio: 0.1,
+  yearBuiltScaleYears: 10,
   salesDateScaleDays: 365,
 });
 
@@ -606,6 +608,8 @@ export function scoreComparable(
     comparableLongitude,
     subjectSquareFeet,
     comparableSquareFeet,
+    subjectYearBuilt,
+    comparableYearBuilt,
     closingDate,
     referenceDate = new Date(),
     subjectHousingType,
@@ -638,6 +642,16 @@ export function scoreComparable(
 
   const squareFootageDifference = Math.abs(comparableSqft - subjectSqft);
   const squareFootageDifferenceRatio = squareFootageDifference / subjectSqft;
+  const subjectYear = finiteNumber(subjectYearBuilt);
+  const comparableYear = finiteNumber(comparableYearBuilt);
+  const ageDataAvailable =
+    subjectYear !== null &&
+    comparableYear !== null &&
+    subjectYear > 0 &&
+    comparableYear > 0;
+  const yearBuiltDifference = ageDataAvailable
+    ? Math.abs(comparableYear - subjectYear)
+    : null;
   const locationScore = softSimilarity(distanceMiles, config.locationScaleMiles);
   const squareFootageScore = softSimilarity(
     squareFootageDifferenceRatio,
@@ -648,6 +662,12 @@ export function scoreComparable(
     saleAge.saleAgeDays,
     config.salesDateScaleDays,
   );
+  // Missing age data should not receive the same benefit as a verified match.
+  // Keep the sale eligible, but give the age component no points and expose the
+  // missing-data flag for appraiser review.
+  const ageScore = ageDataAvailable
+    ? softSimilarity(yearBuiltDifference, config.yearBuiltScaleYears)
+    : 0;
   const housingComparison = compareHousingTypes(
     {
       housingType: subjectHousingType,
@@ -663,10 +683,12 @@ export function scoreComparable(
   const totalWeight =
     config.locationWeight +
     config.squareFootageWeight +
+    config.yearBuiltWeight +
     config.salesDateWeight;
   if (
     locationScore === null ||
     squareFootageScore === null ||
+    ageScore === null ||
     salesDateScore === null ||
     !Number.isFinite(totalWeight) ||
     totalWeight <= 0
@@ -678,6 +700,7 @@ export function scoreComparable(
     ? (
         locationScore * config.locationWeight +
         squareFootageScore * config.squareFootageWeight +
+        ageScore * config.yearBuiltWeight +
         salesDateScore * config.salesDateWeight
       ) / totalWeight
     : 0;
@@ -687,7 +710,14 @@ export function scoreComparable(
     distanceMiles: round(distanceMiles, 3),
     locationScore: round(locationScore, 1),
     squareFootageScore: round(squareFootageScore, 1),
+    ageScore: round(ageScore, 1),
     salesDateScore: round(salesDateScore, 1),
+    ageDataAvailable,
+    subjectYearBuilt: ageDataAvailable ? Math.round(subjectYear) : null,
+    comparableYearBuilt: ageDataAvailable ? Math.round(comparableYear) : null,
+    yearBuiltDifference: yearBuiltDifference === null
+      ? null
+      : round(yearBuiltDifference, 0),
     saleAgeDays: saleAge.saleAgeDays,
     soldWithinOneYear: saleAge.soldWithinOneYear,
     soldOverOneYear: saleAge.soldOverOneYear,

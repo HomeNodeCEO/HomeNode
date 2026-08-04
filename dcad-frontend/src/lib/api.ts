@@ -52,7 +52,7 @@ export interface AccountRow {
   street_name?: string | null;
   city?: string | null;
   postal_code?: string | null;
-  search_match?: 'exact_account' | 'exact_address' | 'address_prefix' | 'same_street' | 'city_prefix' | 'city_address_prefix' | null;
+  search_match?: 'exact_account' | 'exact_address' | 'address_prefix' | 'same_street' | 'city_prefix' | null;
   county: string | null;
   neighborhood_code: string | null;
   subdivision: string | null;

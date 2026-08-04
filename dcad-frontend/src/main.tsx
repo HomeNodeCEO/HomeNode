@@ -9,6 +9,7 @@ import PropertyReport from './pages/PropertyReport';
 import ComparableSalesAnalysis from './pages/ComparableSalesAnalysis';
 import AppraisalReport from './pages/AppraisalReport';
 import SignUpForm from './pages/SignUpForm';
+import PropertyTaxProtest from './pages/PropertyTaxProtest';
 
 function LegacyDetailRedirect() {
   const { accountId } = useParams();
@@ -25,6 +26,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/report/:accountId" element={<PropertyReport />} />
         <Route path="/ComparableSalesAnalysis" element={<ComparableSalesAnalysis />} />
         <Route path="/AppraisalReport" element={<AppraisalReport />} />
+        <Route path="/PropertyTaxProtest" element={<PropertyTaxProtest />} />
         <Route path="/signup" element={<SignUpForm />} />
       </Routes>
     </BrowserRouter>

@@ -831,12 +831,12 @@ function AddressHero({
     landRows.map((row) => row.zoning).find((value) => hasValue(value)) || "Not reported";
 
   const protestUrl = accountId
-    ? `/signup?accountId=${encodeURIComponent(accountId)}${
+    ? `/PropertyTaxProtest?propertyId=${encodeURIComponent(accountId)}${
         hasValue(detail?.owner?.owner_name)
           ? `&ownerName=${encodeURIComponent(String(detail?.owner?.owner_name))}`
           : ""
-      }`
-    : "/signup";
+        }`
+    : "/PropertyTaxProtest";
 
   const canSlide = photos.length > 1;
   const showPreviousPhoto = () =>

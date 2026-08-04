@@ -64,6 +64,8 @@ test("a ten-percent living-area difference is a soft score, not a filter", () =>
     comparableLongitude: -96.656,
     subjectSquareFeet: 1500,
     comparableSquareFeet: 1650,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
@@ -81,6 +83,8 @@ test("even a large living-area difference remains scoreable", () => {
     comparableLongitude: -96.657,
     subjectSquareFeet: 1500,
     comparableSquareFeet: 2400,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
@@ -89,7 +93,7 @@ test("even a large living-area difference remains scoreable", () => {
   assert.ok(score.squareFootageScore > 0);
 });
 
-test("location, living area, and sale date contribute forty, thirty, and thirty percent", () => {
+test("location, living area, year built, and sale date contribute forty, thirty, fifteen, and fifteen percent", () => {
   const score = scoreComparable({
     subjectLatitude: 32.947,
     subjectLongitude: -96.656,
@@ -97,11 +101,14 @@ test("location, living area, and sale date contribute forty, thirty, and thirty 
     comparableLongitude: -96.656,
     subjectSquareFeet: 1500,
     comparableSquareFeet: 1650,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
     closingDate: "2026-07-24",
     referenceDate: "2026-07-24",
   });
   assert.equal(score.locationScore, 100);
   assert.equal(score.squareFootageScore, 50);
+  assert.equal(score.ageScore, 100);
   assert.equal(score.salesDateScore, 100);
   assert.equal(score.comparableScore, 85);
 });
@@ -114,6 +121,8 @@ test("a known housing-type mismatch receives zero score and cannot enter the top
     comparableLongitude: -96.656,
     subjectSquareFeet: 1500,
     comparableSquareFeet: 1500,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
     subjectHousingType: "Single Family Residence",
     subjectAttachmentType: "detached",
     comparableHousingType: "Condominium",
@@ -154,6 +163,8 @@ test("unknown housing classifications remain eligible but explicit matching type
     comparableLongitude: -96.656,
     subjectSquareFeet: 1500,
     comparableSquareFeet: 1500,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
     subjectHousingType: "Single Family Detached",
     comparableHousingType: null,
     closingDate: "2026-07-24",
@@ -172,12 +183,51 @@ test("a one-year-old sale receives half of the sale-date component", () => {
     comparableLongitude: -96.656,
     subjectSquareFeet: 1500,
     comparableSquareFeet: 1500,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1985,
     closingDate: "2025-07-24",
     referenceDate: "2026-07-24",
   });
   assert.equal(score.locationScore, 100);
   assert.equal(score.squareFootageScore, 100);
   assert.equal(score.salesDateScore, 50);
+  assert.equal(score.comparableScore, 92.5);
+});
+
+test("a ten-year year-built difference receives half of the age component", () => {
+  const score = scoreComparable({
+    subjectLatitude: 32.947,
+    subjectLongitude: -96.656,
+    comparableLatitude: 32.947,
+    comparableLongitude: -96.656,
+    subjectSquareFeet: 1500,
+    comparableSquareFeet: 1500,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: 1995,
+    closingDate: "2026-07-24",
+    referenceDate: "2026-07-24",
+  });
+  assert.equal(score.ageDataAvailable, true);
+  assert.equal(score.yearBuiltDifference, 10);
+  assert.equal(score.ageScore, 50);
+  assert.equal(score.comparableScore, 92.5);
+});
+
+test("missing year-built data remains eligible but receives no age points", () => {
+  const score = scoreComparable({
+    subjectLatitude: 32.947,
+    subjectLongitude: -96.656,
+    comparableLatitude: 32.947,
+    comparableLongitude: -96.656,
+    subjectSquareFeet: 1500,
+    comparableSquareFeet: 1500,
+    subjectYearBuilt: 1985,
+    comparableYearBuilt: null,
+    closingDate: "2026-07-24",
+    referenceDate: "2026-07-24",
+  });
+  assert.equal(score.ageDataAvailable, false);
+  assert.equal(score.ageScore, 0);
   assert.equal(score.comparableScore, 85);
 });
 

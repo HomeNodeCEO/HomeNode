@@ -1,5 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import type { ComparableRecommendationsResponse, SalePhoto, SaleRow } from '@/lib/api';
 import GroupedAdjustmentAnalysis, {
@@ -597,9 +598,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       ...(recommendationSummary?.recommended_sales || []),
       ...(recommendationSummary?.competitive_sales || []),
       ...selectedSales.filter((sale): sale is SaleRow => Boolean(sale)),
+      ...listingResults,
+      ...selectedListings.filter((sale): sale is SaleRow => Boolean(sale)),
     ].forEach((sale) => byKey.set(conditionQualitySaleKey(sale), sale));
     return [...byKey.values()];
-  }, [salesResults, recommendationSummary, selectedSales]);
+  }, [salesResults, recommendationSummary, selectedSales, listingResults, selectedListings]);
 
   const reviewableSourceIdKey = useMemo(
     () => reviewableSales
@@ -1345,13 +1348,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }
   };
 
-  const mlsLotSizeSqft = (value: unknown): number | null => {
+  const mlsLotSizeSqft = useCallback((value: unknown): number | null => {
     const area = saleNumber(value);
     if (area == null || area <= 0) return null;
     // The MLS export omits its unit column: sub-100 values are acreage,
     // while the larger values are already square feet.
     return area < 100 ? area * 43_560 : area;
-  };
+  }, []);
 
   const applySaleToSlot = (sale: SaleRow, slot: number) => {
     const livingArea = saleNumber(resolveComparableCharacteristic({
@@ -1744,6 +1747,196 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       subjectQuality,
       compQualities,
     ],
+  );
+
+  // The listing grid consumes the same market-supported adjustment schedule as
+  // the closed-sale grid. Listing characteristics stay independent, while the
+  // applied bath, GLA, garage, pool, condition, and quality rates are shared.
+  const listingLivingAreas = useMemo(
+    () => selectedListings.map((listing) => listing
+      ? saleNumber(resolveComparableCharacteristic({
+          county: listing.county,
+          trestle: listing.mls_living_area,
+          cad: listing.cad_living_area_sqft,
+        }))
+      : null),
+    [selectedListings],
+  );
+  const listingPrices = useMemo(
+    () => selectedListings.map((listing) => saleNumber(listing?.sale_price)),
+    [selectedListings],
+  );
+  const listingConcessions = useMemo(
+    () => selectedListings.map((listing) => saleNumber(listing?.seller_contributions)),
+    [selectedListings],
+  );
+  const listingLandSizes = useMemo(
+    () => selectedListings.map((listing) => listing
+      ? saleNumber(listing.comparableSiteSize) ?? mlsLotSizeSqft(listing.mls_lot_size_area)
+      : null),
+    [selectedListings, mlsLotSizeSqft],
+  );
+  const listingYearsBuilt = useMemo(
+    () => selectedListings.map((listing) => listing
+      ? saleNumber(listing.comparableYearBuilt) ?? saleNumber(
+          resolveComparableCharacteristic({
+            county: listing.county,
+            trestle: listing.mls_year_built,
+            cad: listing.cad_year_built,
+          }),
+        )
+      : null),
+    [selectedListings],
+  );
+  const listingBathroomGroups = useMemo(
+    () => selectedListings.map((listing) => listing
+      ? bathroomEquivalentValue(
+          listing.mls_bathrooms_total_integer,
+          listing.mls_bathrooms_full ?? listing.cad_baths_full,
+          listing.mls_bathrooms_half ?? listing.cad_baths_half,
+          listing.cad_bath_count,
+        )
+      : null),
+    [selectedListings],
+  );
+  const listingBedroomCounts = useMemo(
+    () => selectedListings.map((listing) => listing
+      ? saleNumber(resolveComparableCharacteristic({
+          county: listing.county,
+          trestle: listing.mls_bedrooms_total,
+          cad: listing.cad_bedroom_count,
+        }))
+      : null),
+    [selectedListings],
+  );
+  const listingGarageGroups = useMemo(
+    () => selectedListings.map((listing) => {
+      const explicitSpaces = finiteNumber(listing?.mls_garage_spaces);
+      if (explicitSpaces !== null && explicitSpaces >= 0) return Math.round(explicitSpaces);
+      if (listing?.mls_garage_yn === false) return 0;
+      return null;
+    }),
+    [selectedListings],
+  );
+  const listingPoolGroups = useMemo(
+    () => selectedListings.map((listing) =>
+      listing ? booleanValue(listing.mls_pool_yn ?? listing.cad_pool) : null),
+    [selectedListings],
+  );
+  const listingRoomAdjustments = useMemo(
+    () => listingBathroomGroups.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'bathrooms',
+        subjectBathroomGroup,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectBathroomGroup, listingBathroomGroups],
+  );
+  const listingGlaAdjustments = useMemo(
+    () => listingLivingAreas.map((comparableValue) =>
+      calculateLivingAreaGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        subjectLivingArea,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectLivingArea, listingLivingAreas],
+  );
+  const listingGarageAdjustments = useMemo(
+    () => listingGarageGroups.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'garage',
+        subjectGarageGroup,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectGarageGroup, listingGarageGroups],
+  );
+  const listingPoolAdjustments = useMemo(
+    () => listingPoolGroups.map((comparableValue) =>
+      calculatePoolGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        subjectPoolGroup,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectPoolGroup, listingPoolGroups],
+  );
+  const listingConditionAdjustments = useMemo(
+    () => selectedListings.map((listing) => {
+      const applied = appliedConditionQualityAdjustments.condition;
+      if (!listing || !applied) return 0;
+      const rating = conditionQualityRatings[conditionQualitySaleKey(listing)]?.condition || '';
+      return calculateRatingAdjustment(
+        applied.amount,
+        subjectCondition,
+        rating,
+        'condition',
+      );
+    }),
+    [selectedListings, appliedConditionQualityAdjustments.condition, conditionQualityRatings, subjectCondition],
+  );
+  const listingQualityAdjustments = useMemo(
+    () => selectedListings.map((listing) => {
+      const applied = appliedConditionQualityAdjustments.quality;
+      if (!listing || !applied) return 0;
+      const rating = conditionQualityRatings[conditionQualitySaleKey(listing)]?.quality || '';
+      return calculateRatingAdjustment(
+        applied.amount,
+        subjectQuality,
+        rating,
+        'quality',
+      );
+    }),
+    [selectedListings, appliedConditionQualityAdjustments.quality, conditionQualityRatings, subjectQuality],
+  );
+  const listingNetAdjustments = useMemo(
+    () => selectedListings.map((listing, index) => {
+      if (!listing) return 0;
+      const concession = listingConcessions[index] || 0;
+      return (concession > 0 ? -concession : 0) +
+        (listingRoomAdjustments[index] || 0) +
+        (listingGlaAdjustments[index] || 0) +
+        (listingGarageAdjustments[index] || 0) +
+        (listingPoolAdjustments[index] || 0) +
+        (listingConditionAdjustments[index] || 0) +
+        (listingQualityAdjustments[index] || 0);
+    }),
+    [
+      selectedListings,
+      listingConcessions,
+      listingRoomAdjustments,
+      listingGlaAdjustments,
+      listingGarageAdjustments,
+      listingPoolAdjustments,
+      listingConditionAdjustments,
+      listingQualityAdjustments,
+    ],
+  );
+  const listingGrossAdjustments = useMemo(
+    () => selectedListings.map((listing, index) => {
+      if (!listing) return 0;
+      return Math.abs(listingConcessions[index] || 0) +
+        Math.abs(listingRoomAdjustments[index] || 0) +
+        Math.abs(listingGlaAdjustments[index] || 0) +
+        Math.abs(listingGarageAdjustments[index] || 0) +
+        Math.abs(listingPoolAdjustments[index] || 0) +
+        Math.abs(listingConditionAdjustments[index] || 0) +
+        Math.abs(listingQualityAdjustments[index] || 0);
+    }),
+    [
+      selectedListings,
+      listingConcessions,
+      listingRoomAdjustments,
+      listingGlaAdjustments,
+      listingGarageAdjustments,
+      listingPoolAdjustments,
+      listingConditionAdjustments,
+      listingQualityAdjustments,
+    ],
+  );
+  const adjustedListingPrices = useMemo(
+    () => listingPrices.map((price, index) => (price || 0) + (listingNetAdjustments[index] || 0)),
+    [listingPrices, listingNetAdjustments],
   );
 
   const netAdjustments = useMemo<number[]>(() => {
@@ -2318,6 +2511,223 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSelectedListings(Array(LISTING_COUNT).fill(null));
     setListingError(null);
     setListingNotice(null);
+  };
+
+  const renderListingAdjustmentGrid = () => {
+    const currentYear = new Date(`${salesAnalysisAsOf}T12:00:00`).getFullYear();
+    const subjectHousing = subject?.structural_style || subject?.housing_type || 'Not available';
+    const adjustmentRows = [
+      {
+        label: 'Concessions',
+        subject: fmtCurrency(0),
+        description: (_listing: SaleRow, slot: number) => fmtCurrency(listingConcessions[slot] ?? 0),
+        adjustment: (_listing: SaleRow, slot: number) => -(Math.abs(listingConcessions[slot] || 0)),
+      },
+      {
+        label: 'NBHD Code',
+        subject: subject?.nbhd_code || '',
+        description: (listing: SaleRow) => listing.neighborhood_code || '',
+      },
+      {
+        label: 'Date of Sale/Time',
+        subject: '—',
+        description: (listing: SaleRow) => `${saleDateDisplay(listing.listing_contract_date)} · ${listing.days_on_market ?? '—'} DOM`,
+        adjustment: () => 0,
+      },
+      {
+        label: 'Land Size',
+        subject: fmtSqftSafe(subject?.land_size_sqft),
+        description: (_listing: SaleRow, slot: number) => fmtSqftSafe(listingLandSizes[slot]),
+        adjustment: () => 0,
+      },
+      { label: 'View', subject: subject?.view || 'Neutral', description: () => 'Neutral' },
+      { label: 'Housing Type', subject: subjectHousing, description: (listing: SaleRow) => housingTypeGridValue(listing) },
+      { label: 'Architectural Style', subject: subject?.architectural_style || 'Not available', description: (listing: SaleRow) => listing.architectural_style || 'Not available' },
+      { label: 'Const Type', subject: normalizeConstType(subject?.stories, subject?.construction_type), description: (listing: SaleRow) => normalizeConstType(listing.cad_stories, listing.structural_style) },
+      {
+        label: 'Age/Effective',
+        subject: subject?.actual_age ?? '',
+        description: (_listing: SaleRow, slot: number) => listingYearsBuilt[slot] == null ? '' : Math.max(0, currentYear - Number(listingYearsBuilt[slot])),
+        adjustment: () => 0,
+      },
+      {
+        label: 'Condition',
+        subject: subjectCondition,
+        description: (listing: SaleRow, slot: number) => (
+          <UadRatingSelect
+            ariaLabel={`Listing ${slot + 1} condition`}
+            value={conditionQualityRatings[conditionQualitySaleKey(listing)]?.condition || ''}
+            ratings={UAD_CONDITION_RATINGS}
+            onChange={(value) => updateConditionQualityRating(listing, 'condition', value)}
+          />
+        ),
+        adjustment: (_listing: SaleRow, slot: number) => listingConditionAdjustments[slot] || 0,
+      },
+      {
+        label: 'Quality',
+        subject: subjectQuality,
+        description: (listing: SaleRow, slot: number) => (
+          <UadRatingSelect
+            ariaLabel={`Listing ${slot + 1} quality`}
+            value={conditionQualityRatings[conditionQualitySaleKey(listing)]?.quality || ''}
+            ratings={UAD_QUALITY_RATINGS}
+            onChange={(value) => updateConditionQualityRating(listing, 'quality', value)}
+          />
+        ),
+        adjustment: (_listing: SaleRow, slot: number) => listingQualityAdjustments[slot] || 0,
+      },
+    ];
+    const featureRows = [
+      { label: 'Basement SF', subject: fmtSqftSafe(subject?.basement_sqft), description: () => 'N/A' },
+      { label: 'Functional Utility', subject: 'Adequate', description: () => 'Adequate' },
+      { label: 'Heating/Cooling', subject: [subject?.heating, subject?.air_conditioning].filter(Boolean).join(' / '), description: () => 'Not available' },
+      { label: 'Solar Panels', subject: 'None', description: () => 'None' },
+      {
+        label: 'Garage/Parking',
+        subject: subjectGarageGroup == null ? 'Not available' : `${subjectGarageGroup} ${subjectGarageGroup === 1 ? 'space' : 'spaces'}`,
+        description: (_listing: SaleRow, slot: number) => listingGarageGroups[slot] == null ? 'Not available' : `${listingGarageGroups[slot]} ${listingGarageGroups[slot] === 1 ? 'space' : 'spaces'}`,
+        adjustment: (_listing: SaleRow, slot: number) => listingGarageAdjustments[slot] || 0,
+      },
+      { label: 'Porches/Decks', subject: 'N/A', description: () => 'N/A' },
+      { label: 'Fencing', subject: 'N/A', description: () => 'N/A' },
+      {
+        label: 'Pool',
+        subject: poolDisplay(subject?.pool),
+        description: (listing: SaleRow) => poolDisplay(listing.mls_pool_yn ?? listing.cad_pool),
+        adjustment: (_listing: SaleRow, slot: number) => listingPoolAdjustments[slot] || 0,
+      },
+      { label: 'Secondary Improvements', subject: 'N/A', description: () => 'N/A' },
+    ];
+    const pairedCells = (
+      keyPrefix: string,
+      description: (listing: SaleRow, slot: number) => ReactNode,
+      adjustment?: (listing: SaleRow, slot: number) => number,
+    ) => selectedListings.flatMap((listing, slot) => [
+      <td key={`${keyPrefix}-description-${slot}`} className="border-b border-slate-200 px-4 py-2">
+        {listing ? description(listing, slot) : ''}
+      </td>,
+      <td key={`${keyPrefix}-adjustment-${slot}`} className="border-b border-r border-slate-200 px-4 py-2" style={{ borderLeft: '2px solid #e2e8f0' }}>
+        {listing && adjustment ? fmtCurrency(adjustment(listing, slot) || 0) : ''}
+      </td>,
+    ]);
+
+    return (
+      <div className="overflow-x-auto p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-900">Selected Comparable Listings Grid</div>
+          <div className="text-xs text-slate-500">Applied study rates are shared with the closed-sale grid.</div>
+        </div>
+        <div style={{ minWidth: '108rem' }}>
+          <table className="tight-grid w-full table-fixed border-separate border-spacing-0 text-sm">
+            <colgroup>
+              <col style={{ width: '8rem' }} />
+              <col style={{ width: '10rem' }} />
+              {Array.from({ length: LISTING_COUNT }).flatMap((_, slot) => [
+                <col key={`listing-description-width-${slot}`} style={{ width: '9rem' }} />,
+                <col key={`listing-adjustment-width-${slot}`} style={{ width: '6rem' }} />,
+              ])}
+            </colgroup>
+            <thead>
+              <tr className="text-slate-700">
+                <th className="border-b border-slate-300 bg-white px-4 py-2 text-left">Feature</th>
+                <th className="border-b border-slate-300 px-4 py-2 text-left" style={{ backgroundColor: '#FEF3C7' }}>Subject</th>
+                {selectedListings.map((listing, slot) => (
+                  <th key={`listing-heading-${slot}`} colSpan={2} className="border-b border-r border-slate-300 bg-white px-4 py-2 text-left align-top">
+                    <div className="flex flex-col gap-1.5">
+                      <span>Listing {slot + 1}</span>
+                      {listing ? (
+                        <div className="flex flex-wrap gap-1">
+                          <button type="button" aria-label={`Move Listing ${slot + 1} left`} disabled={slot === 0} onClick={() => moveListing(slot, slot - 1)} className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs disabled:opacity-30">←</button>
+                          <button type="button" aria-label={`Move Listing ${slot + 1} right`} disabled={slot === LISTING_COUNT - 1} onClick={() => moveListing(slot, slot + 1)} className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs disabled:opacity-30">→</button>
+                          <button type="button" onClick={() => removeListingFromGrid(slot)} className="rounded border border-red-200 bg-white px-1.5 py-0.5 text-xs font-medium text-red-700">Remove</button>
+                        </div>
+                      ) : <span className="text-xs font-normal text-slate-500">Not selected</span>}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="border-b border-slate-200 bg-white px-4 py-2">Photo</td>
+                <td className="border-b border-slate-200 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}><MlsPhoto src={subjectPhotos[0]?.media_url} alt={subject?.address || propertyId || 'Subject property'} photoCount={subjectPhotos.length} onOpen={subjectPhotos.length ? openSubjectGallery : undefined} /></td>
+                {pairedCells('listing-photo', (listing) => <MlsPhoto src={listing.primary_photo_url} alt={saleDisplayAddress(listing)} photoCount={Number(listing.photo_count || 0)} onOpen={listing.primary_photo_url ? () => void openSaleGallery(listing) : undefined} />)}
+              </tr>
+              {[
+                { label: 'Address', subject: subject?.address || '', value: (listing: SaleRow) => saleDisplayAddress(listing) },
+                { label: 'MLS Number', subject: 'Subject', value: (listing: SaleRow) => listing.listing_id || '—' },
+                { label: 'Listing Status', subject: '—', value: (listing: SaleRow) => listing.mls_status || 'Status unavailable' },
+                { label: 'Value vs Listing', subject: fmtCurrency(subject?.market_value ?? ''), value: (_listing: SaleRow, slot: number) => fmtCurrency(listingPrices[slot] ?? '') },
+              ].map((row) => (
+                <tr key={`listing-core-${row.label}`}>
+                  <td className="border-b border-slate-200 bg-white px-4 py-2">{row.label}</td>
+                  <td className="border-b border-slate-200 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}>{row.subject}</td>
+                  {pairedCells(`listing-core-${row.label}`, row.value)}
+                </tr>
+              ))}
+              <tr className="font-semibold">
+                <td className="border-b border-slate-300 bg-slate-100 px-4 py-2">ADJUSTMENTS</td>
+                <td className="border-b border-slate-300 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}>Description</td>
+                {selectedListings.flatMap((_, slot) => [
+                  <td key={`listing-adjustment-description-${slot}`} className="border-b border-slate-300 px-4 py-2">Description</td>,
+                  <td key={`listing-adjustment-heading-${slot}`} className="border-b border-r border-slate-300 px-4 py-2" style={{ borderLeft: '2px solid #e2e8f0' }}>Adjustment</td>,
+                ])}
+              </tr>
+              {adjustmentRows.map((row) => (
+                <tr key={`listing-adjustment-${row.label}`}>
+                  <td className="border-b border-slate-200 bg-white px-4 py-2">{row.label}</td>
+                  <td className="border-b border-slate-200 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}>{row.subject}</td>
+                  {pairedCells(`listing-adjustment-${row.label}`, row.description, row.adjustment)}
+                </tr>
+              ))}
+              <tr>
+                <td className="border-b border-slate-200 bg-white px-4 py-2">Above Grade</td>
+                <td className="border-b border-slate-200 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}><div className="grid grid-cols-3 text-center"><span>Total</span><span className="border-l-2 border-slate-300">Beds</span><span className="border-l-2 border-slate-300">Baths</span></div></td>
+                {pairedCells('listing-above-grade', () => <div className="grid grid-cols-3 text-center"><span>Tot</span><span className="border-l-2 border-slate-300">Bd</span><span className="border-l-2 border-slate-300">Bt</span></div>)}
+              </tr>
+              <tr>
+                <td className="border-b border-slate-200 bg-white px-4 py-2">Room Count</td>
+                <td className="border-b border-slate-200 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}><div className="grid grid-cols-3 text-center"><span>{subjectTotalRooms ?? ''}</span><span className="border-l-2 border-slate-300">{subjectBedrooms ?? ''}</span><span className="border-l-2 border-slate-300">{subjectBathsDisplay}</span></div></td>
+                {pairedCells('listing-room-count', (listing, slot) => {
+                  const bedrooms = listingBedroomCounts[slot];
+                  const full = saleNumber(listing.mls_bathrooms_full ?? listing.cad_baths_full);
+                  const half = saleNumber(listing.mls_bathrooms_half ?? listing.cad_baths_half) || 0;
+                  const bathText = full == null ? (listingBathroomGroups[slot] ?? '') : `${Math.round(full)}.${Math.round(half)}`;
+                  return <div className="grid grid-cols-3 text-center"><span>{bedrooms == null ? '' : Math.round(bedrooms) + 3}</span><span className="border-l-2 border-slate-300">{bedrooms == null ? '' : Math.round(bedrooms)}</span><span className="border-l-2 border-slate-300">{bathText}</span></div>;
+                }, (_listing, slot) => listingRoomAdjustments[slot] || 0)}
+              </tr>
+              <tr>
+                <td className="border-b border-slate-200 bg-white px-4 py-2">Gross Living Area</td>
+                <td className="border-b border-slate-200 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}>{fmtSqftSafe(subject?.total_living_area)}</td>
+                {pairedCells('listing-gla', (_listing, slot) => fmtSqftSafe(listingLivingAreas[slot]), (_listing, slot) => listingGlaAdjustments[slot] || 0)}
+              </tr>
+              {featureRows.map((row) => (
+                <tr key={`listing-feature-${row.label}`}>
+                  <td className="border-b border-slate-200 bg-white px-4 py-2">{row.label}</td>
+                  <td className="border-b border-slate-200 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}>{row.subject}</td>
+                  {pairedCells(`listing-feature-${row.label}`, row.description, row.adjustment)}
+                </tr>
+              ))}
+              {[
+                { label: 'Net Adjustments', values: listingNetAdjustments },
+                { label: 'Gross Adjustments', values: listingGrossAdjustments },
+              ].map((row) => (
+                <tr key={`listing-total-${row.label}`} className="font-medium">
+                  <td className="border-b border-slate-300 bg-white px-4 py-2">{row.label}</td>
+                  <td className="border-b border-slate-300 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}>—</td>
+                  {selectedListings.flatMap((listing, slot) => [<td key={`${row.label}-desc-${slot}`} className="border-b border-slate-300" />, <td key={`${row.label}-adj-${slot}`} className="border-b border-r border-slate-300 px-4 py-2" style={{ borderLeft: '2px solid #e2e8f0' }}>{listing ? fmtCurrency(row.values[slot] || 0) : ''}</td>])}
+                </tr>
+              ))}
+              <tr className="font-semibold">
+                <td className="border-y border-slate-300 bg-sky-200 px-4 py-2">ADJUSTED LIST PRICE</td>
+                <td className="border-y border-slate-300 px-4 py-2" style={{ backgroundColor: '#FEF3C7' }}>—</td>
+                {selectedListings.flatMap((listing, slot) => [<td key={`listing-indication-desc-${slot}`} className="border-y border-slate-300 bg-slate-100" />, <td key={`listing-indication-adj-${slot}`} className="border-y border-r border-slate-300 bg-slate-100 px-4 py-2" style={{ borderLeft: '2px solid #e2e8f0' }}>{listing ? fmtCurrency(adjustedListingPrices[slot] || 0) : ''}</td>])}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -4000,7 +4410,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <div>
                 <div className="text-base font-semibold text-slate-950">Comparable Listings</div>
                 <p className="mt-1 max-w-3xl text-sm text-slate-600">
-                  Select up to six current listing records for a separate listing grid. Listings are sorted by subject proximity when coordinates are available and never enter the closed-sale grid, adjustment calculations, or indicated-value reconciliation.
+                  Select up to six current listings. This grid mirrors the sales-comparison layout and uses the same applied bath, GLA, garage, pool, condition, and quality rates while keeping its listing indication separate from the closed-sale reconciliation.
                 </p>
               </div>
               <button
@@ -4042,123 +4452,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             {listingNotice && <div className="mt-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{listingNotice}</div>}
           </div>
 
-          <div className="overflow-x-auto p-4">
-            <div className="mb-2 text-sm font-semibold text-slate-900">Selected Comparable Listings Grid</div>
-            <table className="w-full min-w-[1040px] table-fixed border-separate border-spacing-0 text-sm">
-              <colgroup>
-                <col style={{ width: '9rem' }} />
-                {Array.from({ length: LISTING_COUNT }).map((_, index) => (
-                  <col key={`listing-column-width-${index}`} style={{ width: '9.5rem' }} />
-                ))}
-              </colgroup>
-              <thead>
-                <tr>
-                  <th className="border-b border-slate-300 bg-slate-100 px-3 py-2 text-left">Feature</th>
-                  {selectedListings.map((listing, slot) => (
-                    <th key={`listing-heading-${slot}`} className="border-b border-l border-slate-300 bg-sky-50 px-3 py-2 text-left align-top">
-                      <div className="font-semibold text-sky-950">Listing {slot + 1}</div>
-                      {listing ? (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          <button
-                            type="button"
-                            aria-label={`Move Listing ${slot + 1} left`}
-                            disabled={slot === 0}
-                            onClick={() => moveListing(slot, slot - 1)}
-                            className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs disabled:opacity-30"
-                          >
-                            ←
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`Move Listing ${slot + 1} right`}
-                            disabled={slot === LISTING_COUNT - 1}
-                            onClick={() => moveListing(slot, slot + 1)}
-                            className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs disabled:opacity-30"
-                          >
-                            →
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeListingFromGrid(slot)}
-                            className="rounded border border-red-200 bg-white px-1.5 py-0.5 text-xs font-medium text-red-700"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="mt-1 text-xs font-normal text-slate-500">Not selected</div>
-                      )}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td className="border-b border-slate-200 bg-white px-3 py-2 font-medium">Photo</td>
-                  {selectedListings.map((listing, slot) => (
-                    <td key={`listing-photo-${slot}`} className="border-b border-l border-slate-200 px-2 py-2">
-                      <MlsPhoto
-                        src={listing?.primary_photo_url}
-                        alt={listing ? saleDisplayAddress(listing) : `Listing ${slot + 1}`}
-                        photoCount={Number(listing?.photo_count || 0)}
-                        onOpen={listing?.primary_photo_url ? () => void openSaleGallery(listing) : undefined}
-                        compact
-                      />
-                    </td>
-                  ))}
-                </tr>
-                {[
-                  {
-                    label: 'Address / MLS',
-                    value: (listing: SaleRow) => (
-                      <><span className="font-medium">{saleDisplayAddress(listing)}</span><span className="mt-1 block text-xs text-slate-500">MLS {listing.listing_id || '—'}</span></>
-                    ),
-                  },
-                  {
-                    label: 'Status',
-                    value: (listing: SaleRow) => listing.mls_status || 'Listing status unavailable',
-                  },
-                  {
-                    label: 'Asking Price',
-                    value: (listing: SaleRow) => fmtCurrency(listing.sale_price) || 'Not available',
-                  },
-                  {
-                    label: 'Listing Date / DOM',
-                    value: (listing: SaleRow) => `${saleDateDisplay(listing.listing_contract_date)} · ${listing.days_on_market ?? '—'} DOM`,
-                  },
-                  {
-                    label: 'Subject Distance',
-                    value: (listing: SaleRow) => listing.distanceMiles == null ? 'Unavailable' : `${Number(listing.distanceMiles).toFixed(2)} mi`,
-                  },
-                  {
-                    label: 'GLA',
-                    value: (listing: SaleRow) => fmtSqftSafe(listing.cad_living_area_sqft ?? listing.mls_living_area),
-                  },
-                  {
-                    label: 'Beds / Baths',
-                    value: (listing: SaleRow) => `${listing.cad_bedroom_count ?? listing.mls_bedrooms_total ?? '—'} bd · ${listing.cad_bath_count ?? listing.mls_bathrooms_total_integer ?? '—'} ba`,
-                  },
-                  {
-                    label: 'Year Built',
-                    value: (listing: SaleRow) => listing.cad_year_built ?? listing.mls_year_built ?? '—',
-                  },
-                  {
-                    label: 'Housing Type',
-                    value: (listing: SaleRow) => listing.housing_type || listing.structural_style || 'Review needed',
-                  },
-                ].map((row) => (
-                  <tr key={`listing-grid-row-${row.label}`}>
-                    <td className="border-b border-slate-200 bg-white px-3 py-2 font-medium text-slate-700">{row.label}</td>
-                    {selectedListings.map((listing, slot) => (
-                      <td key={`${row.label}-${slot}`} className="border-b border-l border-slate-200 px-3 py-2 align-top text-slate-700">
-                        {listing ? row.value(listing) : '—'}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {renderListingAdjustmentGrid()}
 
           {listingResults.length > 0 && (
             <div className="border-t border-sky-100 p-4">

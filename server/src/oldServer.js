@@ -15,6 +15,7 @@ import {
   filterComparablesForMarket,
   scoreComparable,
 } from "./util/comparableScoring.js";
+import { resolveComparableSearchProfile } from "./util/comparableSearchProfiles.js";
 import {
   ensureAccountLocationsTable,
   findDcadParcelsByAddress,
@@ -182,6 +183,23 @@ function mlsLotSizeSquareFeet(value) {
   // NTREIS exports omit the unit column: values below 100 are acreage while
   // larger values are already square feet.
   return area < 100 ? area * 43_560 : area;
+}
+
+function greatCircleDistanceMilesSql({
+  subjectLatitude,
+  subjectLongitude,
+  comparableLatitude,
+  comparableLongitude,
+}) {
+  return `3958.7613 * ACOS(
+    LEAST(1, GREATEST(-1,
+      COS(RADIANS(${subjectLatitude})) *
+      COS(RADIANS(${comparableLatitude})) *
+      COS(RADIANS(${comparableLongitude}) - RADIANS(${subjectLongitude})) +
+      SIN(RADIANS(${subjectLatitude})) *
+      SIN(RADIANS(${comparableLatitude}))
+    ))
+  )`;
 }
 
 const salesReconciliationReady = ensureSalesReconciliationSchema(pool)
@@ -1932,6 +1950,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
       req.query.period_months ||
       DEFAULT_RECOMMENDATION_POLICY.periodMonths,
     );
+    const comparableSearchProfile = resolveComparableSearchProfile(
+      req.query.search_profile,
+    );
+    if (!comparableSearchProfile) {
+      return res.status(400).json({ error: "invalid_comparable_search_profile" });
+    }
     const marketBreakdownValue = String(
       req.query.market_breakdown || "",
     ).trim();
@@ -2195,6 +2219,33 @@ app.get("/api/sales/recommendations", async (req, res) => {
     candidateParams.push(effectiveDateTo);
     candidateWhere.push(
       `sale.closing_date <= $${candidateParams.length}::date`,
+    );
+    const subjectLatitude = Number(subject.latitude);
+    const subjectLongitude = Number(subject.longitude);
+    const radiusMiles = comparableSearchProfile.radiusMiles;
+    const latitudeDelta = radiusMiles / 69;
+    const longitudeDelta = radiusMiles /
+      (69 * Math.max(Math.cos(subjectLatitude * Math.PI / 180), 0.1));
+    const latitudeMinimum = `$${candidateParams.push(subjectLatitude - latitudeDelta)}::double precision`;
+    const latitudeMaximum = `$${candidateParams.push(subjectLatitude + latitudeDelta)}::double precision`;
+    const longitudeMinimum = `$${candidateParams.push(subjectLongitude - longitudeDelta)}::double precision`;
+    const longitudeMaximum = `$${candidateParams.push(subjectLongitude + longitudeDelta)}::double precision`;
+    const subjectLatitudeSql = `$${candidateParams.push(subjectLatitude)}::double precision`;
+    const subjectLongitudeSql = `$${candidateParams.push(subjectLongitude)}::double precision`;
+    const radiusMilesSql = `$${candidateParams.push(radiusMiles)}::double precision`;
+    const candidateDistanceSql = greatCircleDistanceMilesSql({
+      subjectLatitude: subjectLatitudeSql,
+      subjectLongitude: subjectLongitudeSql,
+      comparableLatitude: "location.latitude::double precision",
+      comparableLongitude: "location.longitude::double precision",
+    });
+    candidateWhere.push(
+      "location.status = 'matched'",
+      "location.latitude IS NOT NULL",
+      "location.longitude IS NOT NULL",
+      `location.latitude::double precision BETWEEN ${latitudeMinimum} AND ${latitudeMaximum}`,
+      `location.longitude::double precision BETWEEN ${longitudeMinimum} AND ${longitudeMaximum}`,
+      `(${candidateDistanceSql}) <= ${radiusMilesSql}`,
     );
 
     const candidateSql = `
@@ -2613,6 +2664,13 @@ app.get("/api/sales/recommendations", async (req, res) => {
         date_from: effectiveDateFrom,
         period_months: requestedPeriodMonths,
       },
+      search_profile: {
+        key: comparableSearchProfile.key,
+        label: comparableSearchProfile.label,
+        geography: comparableSearchProfile.geography,
+        complexity: comparableSearchProfile.complexity,
+        radius_miles: comparableSearchProfile.radiusMiles,
+      },
       study_market: {
         key: marketBreakdown?.key || null,
         scope: marketBreakdown?.scope || null,
@@ -2658,6 +2716,14 @@ app.get("/api/sales", async (req, res) => {
     const multiParcel = String(req.query.multi_parcel || "").trim().toLowerCase();
     const limit = Math.min(Math.max(parseInt(String(req.query.limit || "25"), 10) || 25, 1), 200);
     const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
+    const searchProfileRequested = req.query.search_profile !== undefined &&
+      String(req.query.search_profile).trim() !== "";
+    const comparableSearchProfile = searchProfileRequested
+      ? resolveComparableSearchProfile(req.query.search_profile, { useDefault: false })
+      : null;
+    if (searchProfileRequested && !comparableSearchProfile) {
+      return res.status(400).json({ error: "invalid_comparable_search_profile" });
+    }
 
     const parseOptionalBoolean = (value, name) => {
       if (value === undefined || value === null || value === "") return null;
@@ -2685,6 +2751,9 @@ app.get("/api/sales", async (req, res) => {
     }
     if (subjectAccountId && !/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
       return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (comparableSearchProfile && !subjectAccountId) {
+      return res.status(400).json({ error: "search_profile_requires_subject" });
     }
 
     const parsePrice = (value, name) => {
@@ -2773,15 +2842,12 @@ app.get("/api/sales", async (req, res) => {
             OR sale_location.latitude IS NULL
             OR sale_location.longitude IS NULL
           THEN NULL
-          ELSE 3958.7613 * ACOS(
-            LEAST(1, GREATEST(-1,
-              COS(RADIANS(subject_location.latitude)) *
-              COS(RADIANS(sale_location.latitude)) *
-              COS(RADIANS(sale_location.longitude) - RADIANS(subject_location.longitude)) +
-              SIN(RADIANS(subject_location.latitude)) *
-              SIN(RADIANS(sale_location.latitude))
-            ))
-          )
+          ELSE ${greatCircleDistanceMilesSql({
+            subjectLatitude: "subject_location.latitude::double precision",
+            subjectLongitude: "subject_location.longitude::double precision",
+            comparableLatitude: "sale_location.latitude::double precision",
+            comparableLongitude: "sale_location.longitude::double precision",
+          })}
         END
       `
       : `NULL::double precision`;
@@ -2789,6 +2855,13 @@ app.get("/api/sales", async (req, res) => {
       ? `LEFT JOIN core.account_locations subject_location
            ON subject_location.account_id = ${subjectAccountPlaceholder}`
       : "";
+    if (comparableSearchProfile) {
+      where.push(
+        "subject_location.status = 'matched'",
+        "sale_location.status = 'matched'",
+        `(${distanceSql}) <= ${bind(comparableSearchProfile.radiusMiles)}::double precision`,
+      );
+    }
 
     const sql = `
       SELECT

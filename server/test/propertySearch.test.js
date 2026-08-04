@@ -19,6 +19,7 @@ test("parses a full address into house number, street, and city", () => {
     houseNumber: "1909",
     streetName: "SNOWMASS LN",
     city: "GARLAND",
+    cityFirstPrefix: null,
     hasHouseNumber: true,
     isAddressPrefix: true,
   });
@@ -32,6 +33,7 @@ test("keeps a street-only query broad", () => {
     houseNumber: null,
     streetName: "SNOWMASS",
     city: null,
+    cityFirstPrefix: "SNOWMASS",
     hasHouseNumber: false,
     isAddressPrefix: false,
   });
@@ -45,9 +47,31 @@ test("keeps a house-number-only query as an address prefix", () => {
     houseNumber: null,
     streetName: "1909",
     city: null,
+    cityFirstPrefix: "1909",
     hasHouseNumber: false,
     isAddressPrefix: true,
   });
+});
+
+test("supports city-first autocomplete followed by a street", () => {
+  assert.deepEqual(parsePropertySearch("Duncanville Main"), {
+    raw: "Duncanville Main",
+    isAccountId: false,
+    normalizedAddress: "DUNCANVILLE MAIN",
+    houseNumber: null,
+    streetName: "DUNCANVILLE MAIN",
+    city: null,
+    cityFirstPrefix: "DUNCANVILLE MAIN",
+    hasHouseNumber: false,
+    isAddressPrefix: false,
+  });
+});
+
+test("supports city-first autocomplete followed by a house number", () => {
+  assert.equal(
+    parsePropertySearch("Duncanville 123 Main").cityFirstPrefix,
+    "DUNCANVILLE 123 MAIN",
+  );
 });
 
 test("recognizes exact account IDs", () => {

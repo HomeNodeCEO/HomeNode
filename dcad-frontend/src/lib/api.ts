@@ -52,7 +52,7 @@ export interface AccountRow {
   street_name?: string | null;
   city?: string | null;
   postal_code?: string | null;
-  search_match?: 'exact_account' | 'exact_address' | 'address_prefix' | 'same_street' | null;
+  search_match?: 'exact_account' | 'exact_address' | 'address_prefix' | 'same_street' | 'city_prefix' | 'city_address_prefix' | null;
   county: string | null;
   neighborhood_code: string | null;
   subdivision: string | null;
@@ -259,7 +259,7 @@ export interface SaleRow {
   location_geocoded_at?: string | null;
   comparable_square_feet?: number | null;
   comparableScore?: number;
-  distanceMiles?: number;
+  distanceMiles?: number | null;
   locationScore?: number;
   squareFootageScore?: number;
   ageScore?: number;
@@ -408,6 +408,7 @@ export interface AppraisalRatingUpdate {
 
 export interface SalesSearchParams {
   q?: string;
+  subjectAccountId?: string;
   accountId?: string;
   excludeAccountId?: string;
   neighborhoodCode?: string;
@@ -1087,6 +1088,7 @@ export async function getMarketValueHistory(accountId: string): Promise<MarketVa
 export async function searchSales(params: SalesSearchParams = {}): Promise<SaleRow[]> {
   const url = makeUrl('/api/sales', {
     q: params.q?.trim(),
+    subject_account_id: params.subjectAccountId?.trim(),
     account_id: params.accountId?.trim(),
     exclude_account_id: params.excludeAccountId?.trim(),
     neighborhood_code: params.neighborhoodCode?.trim(),

@@ -11,6 +11,7 @@ import ConditionQualityStudy, {
   type ConditionQualityRatingAssignment,
 } from '@/components/ConditionQualityStudy';
 import MarketConditionsAnalysis from '@/components/MarketConditionsAnalysis';
+import ComparableSalesMap from '@/components/ComparableSalesMap';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 import {
@@ -38,6 +39,7 @@ import {
 import { resolveComparableCharacteristic } from '@/lib/propertySourceResolution';
 
 const COMPARABLE_COUNT = 6;
+const LISTING_COUNT = 6;
 type SalesAnalysisPeriodMonths = 12 | 24 | 36;
 const DEFAULT_SALES_NOTES =
   "Comparable sales are analyzed based on the subject's condition to provide the best comparisons possible.";
@@ -365,6 +367,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>(
     () => Array(COMPARABLE_COUNT).fill(null),
   );
+  const [listingQuery, setListingQuery] = useState('');
+  const [listingResults, setListingResults] = useState<SaleRow[]>([]);
+  const [selectedListings, setSelectedListings] = useState<Array<SaleRow | null>>(
+    () => Array(LISTING_COUNT).fill(null),
+  );
+  const [listingLoading, setListingLoading] = useState(false);
+  const [listingError, setListingError] = useState<string | null>(null);
+  const [listingNotice, setListingNotice] = useState<string | null>(null);
   const [appliedGroupedAdjustments, setAppliedGroupedAdjustments] = useState<
     Record<string, AppliedGroupedAdjustment>
   >({});
@@ -423,6 +433,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSubjectRatingDirty(false);
     setRatingPersistenceError(null);
     setRatingsSavedAt(null);
+    setListingQuery('');
+    setListingResults([]);
+    setSelectedListings(Array(LISTING_COUNT).fill(null));
+    setListingError(null);
+    setListingNotice(null);
   }, [propertyId]);
 
   useEffect(() => {
@@ -1553,6 +1568,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     try {
       const rows = await api.searchSales({
         q: salesQuery.trim() || undefined,
+        subjectAccountId: propertyId || undefined,
         excludeAccountId: propertyId || undefined,
         neighborhoodCode: sameNeighborhoodOnly ? (subject?.nbhd_code || undefined) : undefined,
         dateFrom: salesDateFrom || undefined,
@@ -2237,6 +2253,71 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     } finally {
       setRatingPersistenceSaving(false);
     }
+  };
+
+  const runListingSearch = async () => {
+    if (!propertyId) {
+      setListingError('A subject property is required before comparable listings can be loaded.');
+      return;
+    }
+    setListingLoading(true);
+    setListingError(null);
+    setListingNotice(null);
+    try {
+      const rows = await api.searchSales({
+        q: listingQuery.trim() || undefined,
+        subjectAccountId: propertyId,
+        excludeAccountId: propertyId,
+        recordType: 'listing',
+        limit: 100,
+      });
+      setListingResults(rows);
+      if (!rows.length) {
+        setListingError('No listing records matched this search.');
+      }
+    } catch (searchError: any) {
+      setListingResults([]);
+      setListingError(searchError?.message || 'Comparable listing search failed.');
+    } finally {
+      setListingLoading(false);
+    }
+  };
+
+  const addListingToGrid = (listing: SaleRow) => {
+    if (selectedListings.some((item) => item && saleKey(item) === saleKey(listing))) {
+      setListingNotice(`${saleDisplayAddress(listing)} is already in the listing grid.`);
+      return;
+    }
+    const openSlot = selectedListings.findIndex((item) => item === null);
+    if (openSlot < 0) {
+      setListingError('Six comparable listings are already selected. Remove one before adding another.');
+      return;
+    }
+    setSelectedListings((current) => current.map((item, index) => index === openSlot ? listing : item));
+    setListingError(null);
+    setListingNotice(`${saleDisplayAddress(listing)} was added as Listing ${openSlot + 1}.`);
+  };
+
+  const removeListingFromGrid = (slot: number) => {
+    setSelectedListings((current) => current.map((item, index) => index === slot ? null : item));
+    setListingError(null);
+  };
+
+  const moveListing = (from: number, to: number) => {
+    if (
+      from < 0 ||
+      from >= LISTING_COUNT ||
+      to < 0 ||
+      to >= LISTING_COUNT ||
+      !selectedListings[from]
+    ) return;
+    setSelectedListings((current) => swapArrayItems(current, from, to));
+  };
+
+  const clearListings = () => {
+    setSelectedListings(Array(LISTING_COUNT).fill(null));
+    setListingError(null);
+    setListingNotice(null);
   };
 
   return (
@@ -3913,6 +3994,245 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
         </div>
 
+        <section className="mt-4 rounded-2xl border border-sky-200 bg-white shadow-sm">
+          <div className="border-b border-sky-100 bg-sky-50/70 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="text-base font-semibold text-slate-950">Comparable Listings</div>
+                <p className="mt-1 max-w-3xl text-sm text-slate-600">
+                  Select up to six current listing records for a separate listing grid. Listings are sorted by subject proximity when coordinates are available and never enter the closed-sale grid, adjustment calculations, or indicated-value reconciliation.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={clearListings}
+                disabled={!selectedListings.some(Boolean)}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Clear Listings
+              </button>
+            </div>
+
+            <form
+              className="mt-3 flex flex-col gap-2 sm:flex-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void runListingSearch();
+              }}
+            >
+              <label className="flex-1 text-xs font-medium text-slate-600">
+                Optional address or MLS number
+                <input
+                  value={listingQuery}
+                  onChange={(event) => setListingQuery(event.target.value)}
+                  placeholder="Leave blank to load the nearest available listings"
+                  className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={listingLoading}
+                className="self-end rounded-md border border-sky-700 bg-sky-700 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:cursor-wait disabled:opacity-60"
+              >
+                {listingLoading ? 'Loading Listings…' : 'Find Comparable Listings'}
+              </button>
+            </form>
+
+            {listingError && <div className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">{listingError}</div>}
+            {listingNotice && <div className="mt-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{listingNotice}</div>}
+          </div>
+
+          <div className="overflow-x-auto p-4">
+            <div className="mb-2 text-sm font-semibold text-slate-900">Selected Comparable Listings Grid</div>
+            <table className="w-full min-w-[1040px] table-fixed border-separate border-spacing-0 text-sm">
+              <colgroup>
+                <col style={{ width: '9rem' }} />
+                {Array.from({ length: LISTING_COUNT }).map((_, index) => (
+                  <col key={`listing-column-width-${index}`} style={{ width: '9.5rem' }} />
+                ))}
+              </colgroup>
+              <thead>
+                <tr>
+                  <th className="border-b border-slate-300 bg-slate-100 px-3 py-2 text-left">Feature</th>
+                  {selectedListings.map((listing, slot) => (
+                    <th key={`listing-heading-${slot}`} className="border-b border-l border-slate-300 bg-sky-50 px-3 py-2 text-left align-top">
+                      <div className="font-semibold text-sky-950">Listing {slot + 1}</div>
+                      {listing ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            aria-label={`Move Listing ${slot + 1} left`}
+                            disabled={slot === 0}
+                            onClick={() => moveListing(slot, slot - 1)}
+                            className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs disabled:opacity-30"
+                          >
+                            ←
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move Listing ${slot + 1} right`}
+                            disabled={slot === LISTING_COUNT - 1}
+                            onClick={() => moveListing(slot, slot + 1)}
+                            className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs disabled:opacity-30"
+                          >
+                            →
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeListingFromGrid(slot)}
+                            className="rounded border border-red-200 bg-white px-1.5 py-0.5 text-xs font-medium text-red-700"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-xs font-normal text-slate-500">Not selected</div>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="border-b border-slate-200 bg-white px-3 py-2 font-medium">Photo</td>
+                  {selectedListings.map((listing, slot) => (
+                    <td key={`listing-photo-${slot}`} className="border-b border-l border-slate-200 px-2 py-2">
+                      <MlsPhoto
+                        src={listing?.primary_photo_url}
+                        alt={listing ? saleDisplayAddress(listing) : `Listing ${slot + 1}`}
+                        photoCount={Number(listing?.photo_count || 0)}
+                        onOpen={listing?.primary_photo_url ? () => void openSaleGallery(listing) : undefined}
+                        compact
+                      />
+                    </td>
+                  ))}
+                </tr>
+                {[
+                  {
+                    label: 'Address / MLS',
+                    value: (listing: SaleRow) => (
+                      <><span className="font-medium">{saleDisplayAddress(listing)}</span><span className="mt-1 block text-xs text-slate-500">MLS {listing.listing_id || '—'}</span></>
+                    ),
+                  },
+                  {
+                    label: 'Status',
+                    value: (listing: SaleRow) => listing.mls_status || 'Listing status unavailable',
+                  },
+                  {
+                    label: 'Asking Price',
+                    value: (listing: SaleRow) => fmtCurrency(listing.sale_price) || 'Not available',
+                  },
+                  {
+                    label: 'Listing Date / DOM',
+                    value: (listing: SaleRow) => `${saleDateDisplay(listing.listing_contract_date)} · ${listing.days_on_market ?? '—'} DOM`,
+                  },
+                  {
+                    label: 'Subject Distance',
+                    value: (listing: SaleRow) => listing.distanceMiles == null ? 'Unavailable' : `${Number(listing.distanceMiles).toFixed(2)} mi`,
+                  },
+                  {
+                    label: 'GLA',
+                    value: (listing: SaleRow) => fmtSqftSafe(listing.cad_living_area_sqft ?? listing.mls_living_area),
+                  },
+                  {
+                    label: 'Beds / Baths',
+                    value: (listing: SaleRow) => `${listing.cad_bedroom_count ?? listing.mls_bedrooms_total ?? '—'} bd · ${listing.cad_bath_count ?? listing.mls_bathrooms_total_integer ?? '—'} ba`,
+                  },
+                  {
+                    label: 'Year Built',
+                    value: (listing: SaleRow) => listing.cad_year_built ?? listing.mls_year_built ?? '—',
+                  },
+                  {
+                    label: 'Housing Type',
+                    value: (listing: SaleRow) => listing.housing_type || listing.structural_style || 'Review needed',
+                  },
+                ].map((row) => (
+                  <tr key={`listing-grid-row-${row.label}`}>
+                    <td className="border-b border-slate-200 bg-white px-3 py-2 font-medium text-slate-700">{row.label}</td>
+                    {selectedListings.map((listing, slot) => (
+                      <td key={`${row.label}-${slot}`} className="border-b border-l border-slate-200 px-3 py-2 align-top text-slate-700">
+                        {listing ? row.value(listing) : '—'}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {listingResults.length > 0 && (
+            <div className="border-t border-sky-100 p-4">
+              <div className="mb-2 text-sm font-semibold text-slate-900">Available Listing Records</div>
+              <div className="max-h-[340px] overflow-auto rounded-xl border border-slate-200">
+                <table className="w-full min-w-[980px] text-left text-sm">
+                  <thead className="sticky top-0 z-10 bg-slate-100 text-slate-700">
+                    <tr>
+                      <th className="px-3 py-2">Property</th>
+                      <th className="px-3 py-2">Listing</th>
+                      <th className="px-3 py-2">Characteristics</th>
+                      <th className="px-3 py-2">Distance</th>
+                      <th className="px-3 py-2 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listingResults.map((listing) => {
+                      const selectedSlot = selectedListings.findIndex((item) => item && saleKey(item) === saleKey(listing));
+                      const selected = selectedSlot >= 0;
+                      return (
+                        <tr key={`listing-result-${saleKey(listing)}`} className="border-t border-slate-200 align-top">
+                          <td className="px-3 py-3">
+                            <div className="flex min-w-[260px] items-start gap-3">
+                              <MlsPhoto
+                                src={listing.primary_photo_url}
+                                alt={saleDisplayAddress(listing)}
+                                photoCount={Number(listing.photo_count || 0)}
+                                onOpen={listing.primary_photo_url ? () => void openSaleGallery(listing) : undefined}
+                                compact
+                              />
+                              <div>
+                                <div className="font-medium text-slate-950">{saleDisplayAddress(listing)}</div>
+                                <div className="mt-1 text-xs text-slate-500">{listing.primary_account_id || 'Unmatched account'} · MLS {listing.listing_id || '—'}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="font-semibold text-slate-950">{fmtCurrency(listing.sale_price) || 'Price unavailable'}</div>
+                            <div className="mt-1 text-xs text-slate-500">{listing.mls_status || 'Status unavailable'} · {saleDateDisplay(listing.listing_contract_date)} · DOM {listing.days_on_market ?? '—'}</div>
+                          </td>
+                          <td className="px-3 py-3 text-slate-700">
+                            <div>{fmtSqftSafe(listing.cad_living_area_sqft ?? listing.mls_living_area)} · {listing.cad_bedroom_count ?? listing.mls_bedrooms_total ?? '—'} bd · {listing.cad_bath_count ?? listing.mls_bathrooms_total_integer ?? '—'} ba</div>
+                            <div className="mt-1 text-xs text-slate-500">Built {listing.cad_year_built ?? listing.mls_year_built ?? '—'} · {listing.housing_type || listing.structural_style || 'Housing type unavailable'}</div>
+                          </td>
+                          <td className="px-3 py-3 text-slate-700">
+                            {listing.distanceMiles == null ? (
+                              <span className="text-xs text-amber-800">Location unavailable</span>
+                            ) : (
+                              <span className="font-medium">{Number(listing.distanceMiles).toFixed(2)} mi</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            <button
+                              type="button"
+                              onClick={() => selected ? removeListingFromGrid(selectedSlot) : addListingToGrid(listing)}
+                              className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${
+                                selected
+                                  ? 'border-red-300 bg-white text-red-700 hover:bg-red-50'
+                                  : 'border-sky-700 bg-sky-700 text-white hover:bg-sky-800'
+                              }`}
+                            >
+                              {selected ? 'Remove from Listing Grid' : 'Add to Listing Grid'}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </section>
+
         {/* Opinion of Market Value */}
         <div className="mt-4 rounded-2xl border border-slate-200 bg-white">
           <div className="p-6 text-center">
@@ -4565,56 +4885,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 Geographic distribution of the subject property and comparable sales used in our analysis.
               </div>
 
-              {/* Map placeholder */}
-              <div className="mt-4 rounded-xl overflow-hidden border border-slate-200">
-                {/* Use explicit height to avoid collapse in some layouts */}
-                <div className="w-full bg-slate-50 relative" style={{ height: 320 }}>
-                  {/* simple grid to mimic streets */}
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={`h-${i}`} className="absolute left-0 right-0" style={{ top: `${(i+1)*16}%`, height: 4, background: '#94a3b8' }} />
-                  ))}
-                  {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={`v-${i}`} className="absolute top-0 bottom-0" style={{ left: `${(i+1)*16}%`, width: 4, background: '#94a3b8' }} />
-                  ))}
-
-                  {/* Subject marker and radius */}
-                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
-                    <div className="rounded-md bg-red-500 w-6 h-6 mx-auto" />
-                    <div className="text-red-700 font-semibold mt-1">Subject Property</div>
-                    <div className="text-xs text-slate-600">123 Main St</div>
-                  </div>
-                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed" style={{ width: 260, height: 260, borderColor: '#eab308' }} />
-
-                  {/* Example comps markers */}
-                  <div className="absolute" style={{ left: '42%', top: '42%' }}>
-                    <div className="w-4 h-4 bg-blue-500 rounded" />
-                    <div className="text-xs text-slate-700 mt-1">Comp #1</div>
-                  </div>
-                  <div className="absolute" style={{ left: '63%', top: '50%' }}>
-                    <div className="w-4 h-4 bg-blue-500 rounded" />
-                    <div className="text-xs text-slate-700 mt-1">Comp #2</div>
-                  </div>
-                  <div className="absolute" style={{ left: '46%', top: '68%' }}>
-                    <div className="w-4 h-4 bg-blue-500 rounded" />
-                    <div className="text-xs text-slate-700 mt-1">Comp #3</div>
-                  </div>
-                  <div className="absolute" style={{ left: '58%', top: '30%' }}>
-                    <div className="w-4 h-4 bg-blue-500 rounded" />
-                    <div className="text-xs text-slate-700 mt-1">Comp #4</div>
-                  </div>
-                </div>
-                {/* Legend */}
-                <div className="px-4 py-2 flex items-center gap-6 text-sm">
-                  <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-red-600 inline-block" /> Subject Property</span>
-                  <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-blue-600 inline-block" /> Comparable Properties</span>
-                  <span className="inline-flex items-center gap-2"><span className="w-3 h-3 rounded-full border-2 border-dashed border-amber-500 inline-block" /> 0.5 Mile Search Radius</span>
-                </div>
-          </div>
+              <ComparableSalesMap
+                subjectAccountId={propertyId}
+                subjectAddress={subject?.address}
+                sales={selectedSales}
+                onOpenSale={(sale) => void openSaleGallery(sale)}
+              />
           
           {/* Location Analysis callout */}
           <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-slate-800">
             <div className="font-medium mb-1">Location Analysis</div>
-            All comparable properties are located within the same neighborhood code (DAL-012A) and within a 0.5-mile radius of the subject property, ensuring geographic consistency for accurate valuation comparison. This proximity supports the reliability of our comparable sales analysis and adjustment methodology.
+            The map follows the current primary grid. Adding, removing, or reordering a comparable updates its numbered marker, MLS thumbnail, and subject distance automatically. Any sale without usable parcel coordinates remains in the grid and is flagged beneath the map instead of being silently omitted.
           </div>
         </div>
       </div>

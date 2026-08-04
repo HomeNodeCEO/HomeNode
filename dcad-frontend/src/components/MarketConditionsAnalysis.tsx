@@ -445,7 +445,7 @@ function MedianPriceBars({
     ...visible.map((point) => point.median_sale_price || 0),
     1,
   );
-  const plotHeight = 220;
+  const plotHeight = 180;
   const maximumBarHeight = 170;
   const chartWidth = visible.length * 100;
   const plottedPoints = visible.map((point, index) => {
@@ -475,36 +475,44 @@ function MedianPriceBars({
         className="relative"
         style={{ minWidth: Math.max(620, visible.length * 74) }}
       >
-        <div className="relative h-[180px]">
-          <div className="absolute inset-0 flex items-end">
-            {plottedPoints.map(({ point, value, height }) => (
-              <div
-                key={`${interval}:${point.period_start}`}
-                className="relative h-full min-w-[74px] flex-1"
-              >
-                <div
-                  className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap text-center text-[11px] font-semibold text-slate-700"
-                  style={{ bottom: height + 8 }}
-                >
-                  {money(value)}
-                </div>
-                <div
-                  className="absolute bottom-0 left-1/2 w-full max-w-[54px] -translate-x-1/2 rounded-t-md bg-gradient-to-t from-emerald-700 to-emerald-400"
-                  style={{ height }}
-                  title={`${periodLabel(point.period_start, interval)}: ${money(
-                    value,
-                  )} median from ${point.sale_count} sales`}
-                />
-              </div>
-            ))}
-          </div>
-
+        <div className="h-[180px]">
           <svg
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+            aria-label={`${interval} median sale-price chart`}
+            className="block h-full w-full overflow-visible"
             preserveAspectRatio="none"
             viewBox={`0 0 ${chartWidth} ${plotHeight}`}
           >
+            <defs>
+              <linearGradient id={`median-bars-${interval}`} x1="0" y1="1" x2="0" y2="0">
+                <stop offset="0%" stopColor="#047857" />
+                <stop offset="100%" stopColor="#34d399" />
+              </linearGradient>
+            </defs>
+            {plottedPoints.map(({ point, value, height, x, y }) => (
+              <g key={`${interval}:${point.period_start}`}>
+                <title>{`${periodLabel(point.period_start, interval)}: ${money(
+                  value,
+                )} median from ${point.sale_count} sales`}</title>
+                <rect
+                  x={x - 27}
+                  y={y}
+                  width="54"
+                  height={height}
+                  rx="5"
+                  fill={`url(#median-bars-${interval})`}
+                />
+                <text
+                  x={x}
+                  y={Math.max(11, y - 8)}
+                  fill="#334155"
+                  fontSize="11"
+                  fontWeight="600"
+                  textAnchor="middle"
+                >
+                  {money(value)}
+                </text>
+              </g>
+            ))}
             <polyline
               fill="none"
               points={plottedPoints
@@ -516,18 +524,19 @@ function MedianPriceBars({
               strokeWidth="3"
               vectorEffect="non-scaling-stroke"
             />
+            {plottedPoints.map(({ point, x, y }) => (
+              <circle
+                key={`dot:${interval}:${point.period_start}`}
+                cx={x}
+                cy={y}
+                r="5"
+                fill="#0f172a"
+                stroke="#ffffff"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
           </svg>
-
-          {plottedPoints.map(({ point, height }, index) => (
-            <div
-              key={`${interval}:${point.period_start}`}
-              className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 rounded-full border-2 border-white bg-slate-900 shadow-sm"
-              style={{
-                bottom: height - 6,
-                left: `${((index + 0.5) / plottedPoints.length) * 100}%`,
-              }}
-            />
-          ))}
         </div>
 
         <div className="flex">

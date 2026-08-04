@@ -79,6 +79,20 @@ function swapArrayItems<T>(values: T[], from: number, to: number): T[] {
   return next;
 }
 
+function compactComparableSlots<T>(
+  values: T[],
+  retainedSlots: number[],
+  createEmptyValue: () => T,
+): T[] {
+  return [
+    ...retainedSlots.map((slot) => values[slot]),
+    ...Array.from(
+      { length: Math.max(0, COMPARABLE_COUNT - retainedSlots.length) },
+      createEmptyValue,
+    ),
+  ];
+}
+
 function localDateString(date = new Date()): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -1487,19 +1501,46 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const removeComparable = (slot: number) => {
-    setSelectedSales((current) => current.map((item, index) => index === slot ? null : item));
-    setCompAddresses((current) => current.map((value, index) => index === slot ? '' : value));
-    setCompGla((current) => current.map((value, index) => index === slot ? null : value));
-    setCompPrices((current) => current.map((value, index) => index === slot ? null : value));
-    setCompConcessions((current) => current.map((value, index) => index === slot ? null : value));
-    setCompTimeAdjustments((current) => current.map((value, index) => index === slot ? null : value));
-    setCompSaleDates((current) => current.map((value, index) => index === slot ? '' : value));
-    setCompLandSize((current) => current.map((value, index) => index === slot ? null : value));
-    setCompAges((current) => current.map((value, index) => index === slot ? null : value));
-    setCompGarage((current) => current.map((value, index) => index === slot ? null : value));
-    setCompConditions((current) => current.map((value, index) => index === slot ? '' : value));
-    setCompQualities((current) => current.map((value, index) => index === slot ? '' : value));
-    setCompRooms((current) => current.map((value, index) => index === slot ? { tot: null, bd: null, full: null, half: null } : value));
+    const removedSale = selectedSales[slot];
+    if (!removedSale) return;
+
+    const retainedSlots = selectedSales.flatMap((sale, index) =>
+      sale && index !== slot ? [index] : []);
+
+    setSelectedSales((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompAddresses((current) =>
+      compactComparableSlots(current, retainedSlots, () => ''));
+    setCompGla((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompPrices((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompConcessions((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompTimeAdjustments((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompSaleDates((current) =>
+      compactComparableSlots(current, retainedSlots, () => ''));
+    setCompLandSize((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompAges((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompGarage((current) =>
+      compactComparableSlots(current, retainedSlots, () => null));
+    setCompConditions((current) =>
+      compactComparableSlots(current, retainedSlots, () => ''));
+    setCompQualities((current) =>
+      compactComparableSlots(current, retainedSlots, () => ''));
+    setCompRooms((current) =>
+      compactComparableSlots(current, retainedSlots, () => ({
+        tot: null,
+        bd: null,
+        full: null,
+        half: null,
+      })));
+    setSalesNotice(
+      `${saleDisplayAddress(removedSale)} was removed. Remaining comparables shifted left.`,
+    );
   };
 
   const moveComparable = (from: number, to: number) => {

@@ -549,7 +549,7 @@ export default function ConditionQualityStudy({
               Required: choose one market area
             </legend>
             <p className="mt-1 text-sm text-slate-600">
-              The same 40% location, 30% living-area, 15% year-built, and 15% sale-date score orders the one-year sales within the selected area.
+              The same 40% location, 37% living-area, 10% year-built, 5% site-size, and 8% sale-date score orders the one-year sales within the selected area.
             </p>
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {MARKET_OPTIONS.map((option) => (

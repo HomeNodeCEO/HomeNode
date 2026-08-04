@@ -11,7 +11,7 @@ type ApiSearchRow = {
   street_name?: string | null;
   city?: string | null;
   postal_code?: string | null;
-  search_match?: "exact_account" | "exact_address" | "address_prefix" | "same_street" | "city_prefix" | "city_address_prefix" | null;
+  search_match?: "exact_account" | "exact_address" | "address_prefix" | "same_street" | "city_prefix" | null;
   owner: string | null;
   situs_address: string | null;
   latest_market_value?: number | string | null; // <- allow MV from backend if present
@@ -65,7 +65,23 @@ function localToItems(input: unknown): SearchItem[] {
 }
 
 /** Unified DB-backed search with graceful fallbacks */
-async function requestItems(query: string, limit = 25): Promise<SearchItem[]> {
+async function requestItems(query: string, city: string, limit = 25): Promise<SearchItem[]> {
+  const cityFilter = city.trim();
+  if (cityFilter) {
+    const url = api.makeUrl('/api/search', {
+      q: query.trim() || undefined,
+      city: cityFilter,
+      limit,
+    });
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Search HTTP ${response.status}`);
+    const data = await response.json();
+    if (typeof (api as any).toSearchItems === "function") {
+      return (api as any).toSearchItems(data);
+    }
+    return localToItems(data);
+  }
+
   // Prefer helper if available
   try {
     // 1) searchItems -> returns SearchItem[]
@@ -117,6 +133,7 @@ async function requestItems(query: string, limit = 25): Promise<SearchItem[]> {
 export default function PropertySearchPage() {
   const navigate = useNavigate();
   const [q, setQ] = useState("");
+  const [city, setCity] = useState("");
   const [results, setResults] = useState<SearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -133,9 +150,9 @@ export default function PropertySearchPage() {
   }
 
   // Fetch results only (no navigation); returns fetched items
-  async function runSearch(query = q.trim()): Promise<SearchItem[]> {
+  async function runSearch(query = q.trim(), cityQuery = city.trim()): Promise<SearchItem[]> {
     const requestId = ++searchRequestRef.current;
-    if (!query) {
+    if (!query && !cityQuery) {
       setResults([]);
       setErr(null);
       setLoading(false);
@@ -145,7 +162,7 @@ export default function PropertySearchPage() {
     setErr(null);
     let items: SearchItem[] = [];
     try {
-      items = await requestItems(query, 50);
+      items = await requestItems(query, cityQuery, 50);
       if (requestId === searchRequestRef.current) {
         setResults(items);
         if (!items || items.length === 0) {
@@ -171,17 +188,20 @@ export default function PropertySearchPage() {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
 
     const query = q.trim();
-    const items = await runSearch(query);
+    const cityQuery = city.trim();
+    const items = await runSearch(query, cityQuery);
     if (!items.length) return;
 
     const exactFromApi = items.find((item) =>
       item.raw?.search_match === "exact_account" || item.raw?.search_match === "exact_address"
     );
-    const normalizedQueryAddress = normalizeAddress(query.split(",", 1)[0]);
-    const exactByAddress = items.find((item) =>
+    const normalizedQueryAddress = query ? normalizeAddress(query.split(",", 1)[0]) : "";
+    const exactByAddress = query ? items.find((item) =>
       normalizeAddress(item.raw?.address || item.raw?.situs_address || "") === normalizedQueryAddress
-    );
-    const exact = /^[0-9A-Za-z]{17}$/.test(query) ? items[0] : (exactFromApi || exactByAddress);
+    ) : undefined;
+    const exact = query
+      ? (/^[0-9A-Za-z]{17}$/.test(query) ? items[0] : (exactFromApi || exactByAddress))
+      : undefined;
 
     if (exact) {
       navigate(`/report/${encodeURIComponent(exact.id)}`);
@@ -193,12 +213,13 @@ export default function PropertySearchPage() {
   useEffect(() => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     const query = q.trim();
-    debounceTimerRef.current = setTimeout(() => void runSearch(query), 180);
+    const cityQuery = city.trim();
+    debounceTimerRef.current = setTimeout(() => void runSearch(query, cityQuery), 180);
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  }, [q, city]);
 
   return (
     <div style={{ padding: 16, display: "grid", gap: 12 }}>
@@ -224,33 +245,52 @@ export default function PropertySearchPage() {
       <form
         onSubmit={submitSearch}
         style={{
-          display: "grid",
+          display: "flex",
+          flexWrap: "wrap",
           gap: 8,
-          gridTemplateColumns: "1.5fr auto",
           alignItems: "end",
         }}
       >
-        <Labeled label="Address / City / Owner / Account">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            placeholder="e.g. Duncanville Main, 1909 Snowmass Ln, or a 17-character account ID"
-            className="input"
-          />
-        </Labeled>
+        <div style={{ flex: "1 1 320px" }}>
+          <Labeled label="Address / Owner / Account">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder="e.g. 1909 SNOWMASS LN or a 17-character account ID"
+              className="input"
+            />
+          </Labeled>
+        </div>
+
+        <div style={{ flex: "0 1 220px" }}>
+          <Labeled label="City (optional)">
+            <input
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder="e.g. Duncanville"
+              className="input"
+            />
+          </Labeled>
+        </div>
 
         <button type="submit" disabled={loading} className="btn">
           {loading ? "Searching…" : "Search"}
         </button>
       </form>
       <div style={{ fontSize: 12, opacity: 0.68 }}>
-        Results update as you type. You can start with a city and continue with a street or house number, or keep using any existing address, street, owner, or account search; press Enter to open an exact property.
+        Results update as you type. The first field keeps the original address, owner, and account search behavior; the optional City field can be used alone or to narrow those result tiles.
       </div>
 
       {/* Status */}

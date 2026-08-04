@@ -33,13 +33,6 @@ export function parsePropertySearch(value) {
     houseNumber: houseMatch?.[1] || null,
     streetName: houseMatch?.[2] || normalizedAddress,
     city: normalizePropertyCity(cityPart) || null,
-    // When no comma-delimited city is supplied, the database also tests the
-    // normalized query against "CITY STREET" and "CITY FULL ADDRESS". This
-    // supports one-field autocomplete such as "Duncanville Main" without
-    // changing ordinary street and house-number searches.
-    cityFirstPrefix: cityPart || ACCOUNT_ID_PATTERN.test(raw)
-      ? null
-      : normalizedAddress,
     hasHouseNumber: Boolean(houseMatch),
     isAddressPrefix: ADDRESS_PREFIX_PATTERN.test(normalizedAddress),
   };

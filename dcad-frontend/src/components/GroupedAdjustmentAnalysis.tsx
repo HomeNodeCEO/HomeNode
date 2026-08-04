@@ -39,6 +39,51 @@ type SelectedAdjustment = {
   option: GroupedAdjustmentOption;
 };
 
+type AdjustmentMethodologyKey =
+  | 'paired_sales'
+  | 'grouped'
+  | 'regression'
+  | 'depreciated_cost'
+  | 'site_valuation'
+  | 'qualitative';
+
+const METHODOLOGY_OPTIONS: ReadonlyArray<{
+  key: AdjustmentMethodologyKey;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: 'paired_sales',
+    label: 'Paired Sales Analysis',
+    description: 'Compare closely matched sale pairs to isolate a feature’s market contribution.',
+  },
+  {
+    key: 'grouped',
+    label: 'Grouped Analysis',
+    description: 'Compare median results across selected market groups and apply supported adjustments.',
+  },
+  {
+    key: 'regression',
+    label: 'Regression Analysis',
+    description: 'Measure relationships between sale price and multiple property characteristics.',
+  },
+  {
+    key: 'depreciated_cost',
+    label: 'Depreciated Cost',
+    description: 'Estimate contributory value from cost new less observed depreciation.',
+  },
+  {
+    key: 'site_valuation',
+    label: 'Site Valuation',
+    description: 'Analyze land and site evidence separately from the property’s improvements.',
+  },
+  {
+    key: 'qualitative',
+    label: 'Qualitative Analyses',
+    description: 'Reconcile inferior, similar, and superior market evidence without unsupported dollar precision.',
+  },
+];
+
 function localDateString(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -549,7 +594,8 @@ export default function GroupedAdjustmentAnalysis({
   onApplyAdjustment: (adjustment: AppliedGroupedAdjustment) => void;
   onRemoveAdjustment: (adjustmentId: string) => void;
 }) {
-  const [active, setActive] = useState(false);
+  const [activeMethod, setActiveMethod] =
+    useState<AdjustmentMethodologyKey | null>(null);
   const [selectedBreakdowns, setSelectedBreakdowns] = useState<GroupedAnalysisBreakdownKey[]>([]);
   const [analysisResult, setAnalysisResult] = useState<GroupedAnalysesResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -615,25 +661,42 @@ export default function GroupedAdjustmentAnalysis({
         <div className="mt-1 text-sm text-slate-600">
           Run a methodology, review its market evidence, factor it when appropriate, and apply the supported adjustment to the grid.
         </div>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setActive(true)}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-              active
-                ? 'bg-emerald-700 text-white shadow-sm'
-                : 'bg-slate-900 text-white hover:bg-slate-700'
-            }`}
-          >
-            Grouped Analysis
-          </button>
-          <span className="text-xs text-slate-500">
-            Choose one or more required market breakdowns before calculating results.
-          </span>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {METHODOLOGY_OPTIONS.map((method) => (
+            <button
+              key={method.key}
+              type="button"
+              aria-pressed={activeMethod === method.key}
+              onClick={() => setActiveMethod(method.key)}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                activeMethod === method.key
+                  ? 'bg-emerald-700 text-white shadow-sm'
+                  : 'bg-slate-900 text-white hover:bg-slate-700'
+              }`}
+            >
+              {method.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {active && (
+      {activeMethod && activeMethod !== 'grouped' && (
+        <div className="p-5">
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5">
+            <div className="text-lg font-semibold text-indigo-950">
+              {METHODOLOGY_OPTIONS.find((method) => method.key === activeMethod)?.label}
+            </div>
+            <p className="mt-2 text-sm leading-6 text-indigo-900">
+              {METHODOLOGY_OPTIONS.find((method) => method.key === activeMethod)?.description}
+            </p>
+            <div className="mt-3 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-medium text-slate-600">
+              Methodology workspace added. Calculation inputs, evidence rules, and grid-application logic will be configured in a dedicated implementation step.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeMethod === 'grouped' && (
         <div className="p-5">
           <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <legend className="px-1 text-base font-semibold text-slate-900">

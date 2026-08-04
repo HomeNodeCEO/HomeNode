@@ -1757,8 +1757,26 @@ app.get("/api/search", async (req, res) => {
         : `'same_street'`;
       orderSql = cityFirstPlaceholder
         ? `
-          ${citySql},
-          ${streetSql},
+          CASE
+            WHEN ${citySql} LIKE ${cityFirstPlaceholder} THEN 0
+            WHEN ${cityStreetSql} LIKE ${cityFirstPlaceholder}
+              OR ${cityAddressSql} LIKE ${cityFirstPlaceholder} THEN 1
+            ELSE 2
+          END,
+          CASE
+            WHEN ${citySql} LIKE ${cityFirstPlaceholder}
+              OR ${cityStreetSql} LIKE ${cityFirstPlaceholder}
+              OR ${cityAddressSql} LIKE ${cityFirstPlaceholder}
+            THEN ${citySql}
+            ELSE ${streetSql}
+          END,
+          CASE
+            WHEN ${citySql} LIKE ${cityFirstPlaceholder}
+              OR ${cityStreetSql} LIKE ${cityFirstPlaceholder}
+              OR ${cityAddressSql} LIKE ${cityFirstPlaceholder}
+            THEN ${streetSql}
+            ELSE ${citySql}
+          END,
           ${addressLineSql},
           a.account_id
         `

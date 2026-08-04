@@ -21,6 +21,14 @@ import {
   refreshAccountLocations,
 } from "./services/accountLocations.js";
 import {
+  enqueueLocationBackfillAccounts,
+  ensureLocationBackfillQueueSchema,
+  getLocationBackfillStatus,
+  runLocationBackfillBatch,
+  seedLocationBackfillQueue,
+  startLocationBackfillWorker,
+} from "./services/locationBackfillQueue.js";
+import {
   ensureAccountQualitySchema,
   resolveCanonicalAccountId,
 } from "./services/accountQuality.js";
@@ -181,6 +189,40 @@ const salesReconciliationReady = ensureSalesReconciliationSchema(pool)
   .catch((error) => {
     console.warn(
       "[init] ensureSalesReconciliationSchema failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+let locationBackfillWorker = null;
+const locationBackfillReady = Promise.all([
+  accountLocationsReady,
+  salesReconciliationReady,
+])
+  .then(() => ensureLocationBackfillQueueSchema(pool))
+  .then(() => {
+    console.log("[init] location backfill queue ensured");
+    const enabled = String(
+      process.env.LOCATION_BACKFILL_ENABLED ?? "true",
+    ).toLowerCase() !== "false";
+    if (enabled) {
+      locationBackfillWorker = startLocationBackfillWorker(pool, {
+        intervalMs: process.env.LOCATION_BACKFILL_INTERVAL_MS,
+        seedIntervalMs: process.env.LOCATION_BACKFILL_SEED_INTERVAL_MS,
+        initialDelayMs: process.env.LOCATION_BACKFILL_INITIAL_DELAY_MS,
+        batchSize: process.env.LOCATION_BACKFILL_BATCH_SIZE,
+        seedLimit: process.env.LOCATION_BACKFILL_SEED_LIMIT,
+        maximumAttempts: process.env.LOCATION_BACKFILL_MAX_ATTEMPTS,
+      });
+      console.log(
+        `[init] location backfill worker started (${locationBackfillWorker.workerId})`,
+      );
+    } else {
+      console.log("[init] location backfill worker disabled by environment");
+    }
+  })
+  .catch((error) => {
+    console.warn(
+      "[init] location backfill queue failed (will retry on request)",
       error?.message || error,
     );
   });
@@ -906,6 +948,38 @@ function requireEditor(req, res) {
   return true;
 }
 
+/** Coordinate coverage and queue health for mapped sale accounts. */
+app.get("/api/location-backfill/status", async (_req, res) => {
+  try {
+    await locationBackfillReady;
+    await ensureLocationBackfillQueueSchema(pool);
+    return res.json(await getLocationBackfillStatus(pool));
+  } catch (error) {
+    console.error("location backfill status failed", error);
+    return res.status(500).json({ error: "location_backfill_status_failed" });
+  }
+});
+
+/** Explicit maintenance run; ordinary imports and sweeps remain automatic. */
+app.post("/api/location-backfill/run", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await locationBackfillReady;
+    await ensureLocationBackfillQueueSchema(pool);
+    const seed = await seedLocationBackfillQueue(pool, {
+      limit: req.body?.seed_limit,
+    });
+    const result = await runLocationBackfillBatch(pool, {
+      batchSize: req.body?.batch_size,
+      maximumAttempts: process.env.LOCATION_BACKFILL_MAX_ATTEMPTS,
+    });
+    return res.json({ ok: true, seed, result });
+  } catch (error) {
+    console.error("location backfill maintenance run failed", error);
+    return res.status(500).json({ error: "location_backfill_run_failed" });
+  }
+});
+
 /** Unmatched closed sales remain visible until a user verifies their CAD account. */
 app.get("/api/sales/reconciliation-queue", async (req, res) => {
   try {
@@ -932,7 +1006,9 @@ app.patch("/api/sales/:sourceRecordId/reconcile", async (req, res) => {
       req.body,
     );
     try {
-      await refreshAccountLocations(
+      await locationBackfillReady;
+      await ensureLocationBackfillQueueSchema(pool);
+      await enqueueLocationBackfillAccounts(
         pool,
         [
           {
@@ -941,11 +1017,14 @@ app.patch("/api/sales/:sourceRecordId/reconcile", async (req, res) => {
             county: result.account.county,
           },
         ],
-        { batchSize: 1 },
+        {
+          reason: "sales_reconciliation",
+          priority: 200,
+        },
       );
     } catch (locationError) {
       console.warn(
-        "manual sale link saved; location refresh deferred",
+        "manual sale link saved; location queueing deferred",
         locationError?.message || locationError,
       );
     }
@@ -1837,7 +1916,6 @@ app.get("/api/search", async (req, res) => {
 app.get("/api/sales/recommendations", async (req, res) => {
   try {
     await accountLocationsReady;
-    await ensureAccountLocationsTable(pool);
     await propertyEnrichmentReady;
 
     const subjectAccountId = String(
@@ -2119,49 +2197,6 @@ app.get("/api/sales/recommendations", async (req, res) => {
       `sale.closing_date <= $${candidateParams.length}::date`,
     );
 
-    const missingLocations = await pool.query(
-      `
-        SELECT
-          sale.primary_account_id AS account_id,
-          MAX(account.address) AS address,
-          MAX(account.county) AS county,
-          MAX(sale.closing_date) AS latest_sale_date
-        FROM core.v_sales_enriched sale
-        JOIN core.accounts account
-          ON account.account_id = sale.primary_account_id
-        LEFT JOIN core.account_locations location
-          ON location.account_id = sale.primary_account_id
-        WHERE ${candidateWhere.join(" AND ")}
-          AND (
-            account.county IS NULL
-            OR account.county ILIKE '%dallas%'
-          )
-          AND (
-            location.account_id IS NULL
-            OR (
-              location.status <> 'matched'
-              AND location.geocoded_at < now() - interval '7 days'
-            )
-          )
-        GROUP BY sale.primary_account_id
-        ORDER BY MAX(sale.closing_date) DESC NULLS LAST
-        LIMIT 250
-      `,
-      candidateParams,
-    );
-    if (missingLocations.rows.length) {
-      try {
-        await refreshAccountLocations(pool, missingLocations.rows, {
-          batchSize: 50,
-        });
-      } catch (error) {
-        console.warn(
-          "[recommendations] candidate location refresh failed; using cached coverage",
-          error?.message || error,
-        );
-      }
-    }
-
     const candidateSql = `
       SELECT
         sale.sale_id,
@@ -2273,6 +2308,45 @@ app.get("/api/sales/recommendations", async (req, res) => {
       candidateSql,
       candidateParams,
     );
+
+    // Ranking uses only cached coordinates. Missing candidate locations are
+    // prioritized for the background worker without delaying this response.
+    const candidateLocationQueue = [
+      ...new Map(
+        candidates
+          .filter(
+            (candidate) =>
+              candidate.primary_account_id &&
+              (
+                candidate.location_status !== "matched" ||
+                candidate.latitude == null ||
+                candidate.longitude == null
+              ),
+          )
+          .map((candidate) => [
+            candidate.primary_account_id,
+            {
+              account_id: candidate.primary_account_id,
+              address: candidate.address,
+              county: candidate.account_county || candidate.county,
+            },
+          ]),
+      ).values(),
+    ].slice(0, 1000);
+    if (candidateLocationQueue.length) {
+      void (async () => {
+        await locationBackfillReady;
+        await enqueueLocationBackfillAccounts(pool, candidateLocationQueue, {
+          reason: "comparable_recommendation",
+          priority: 100,
+        });
+      })().catch((error) => {
+        console.warn(
+          "[recommendations] candidate location queueing failed",
+          error?.message || error,
+        );
+      });
+    }
 
     const candidateAccountIds = [
       ...new Set(

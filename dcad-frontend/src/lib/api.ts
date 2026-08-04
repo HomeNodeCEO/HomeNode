@@ -344,6 +344,22 @@ export interface SalesReconciliationQueueResponse {
   items: SalesReconciliationQueueItem[];
 }
 
+export interface LocationBackfillStatus {
+  queue: {
+    pending: number;
+    processing: number;
+    retry: number;
+    completed: number;
+    manual_review: number;
+  };
+  coverage: {
+    sale_account_count: number;
+    located_sale_account_count: number;
+    missing_sale_account_count: number;
+    coverage_percent: number;
+  };
+}
+
 export interface SalesReconciliationUpdate {
   account_id: string;
   notes?: string | null;
@@ -979,6 +995,12 @@ export async function updatePropertyReportSections(
     },
     body: JSON.stringify({ sections }),
   });
+}
+
+/** Load background coordinate coverage for matched sale accounts. */
+export async function getLocationBackfillStatus(): Promise<LocationBackfillStatus> {
+  const url = makeUrl('/api/location-backfill/status');
+  return fetchJSON<LocationBackfillStatus>(url, { timeoutMs: 90000 });
 }
 
 /** Load source MLS sales that still need a manually verified CAD account. */

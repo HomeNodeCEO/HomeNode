@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  getLocationBackfillStatus,
   getSalesReconciliationQueue,
   reconcileSalesSourceRecord,
   searchAccounts,
   type AccountRow,
+  type LocationBackfillStatus,
   type SalesReconciliationQueueItem,
   type SalesReconciliationQueueResponse,
 } from "@/lib/api";
@@ -50,6 +52,7 @@ export default function SalesReconciliationQueue() {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [locationStatus, setLocationStatus] = useState<LocationBackfillStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [editorKey, setEditorKey] = useState(() =>
     window.sessionStorage.getItem("homenode-editor-key") || "",
@@ -77,8 +80,17 @@ export default function SalesReconciliationQueue() {
     }
   }, [offset]);
 
+  const loadLocationStatus = useCallback(async () => {
+    try {
+      setLocationStatus(await getLocationBackfillStatus());
+    } catch {
+      // Reconciliation remains usable if the background-health endpoint is unavailable.
+    }
+  }, []);
+
   useEffect(() => {
     void loadQueue(0);
+    void loadLocationStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -147,6 +159,7 @@ export default function SalesReconciliationQueue() {
         return next;
       });
       await loadQueue(offset);
+      void loadLocationStatus();
     } catch (saveError: any) {
       updateDraft(key, {
         saving: false,
@@ -164,13 +177,42 @@ export default function SalesReconciliationQueue() {
         <div>
           <h2>Sales Reconciliation Queue</h2>
           <p>
-            Unmatched MLS sales stay here until their CAD account is manually verified. Saving a match upserts the sale and makes it eligible for mapped market studies and comparable ranking.
+            Unmatched MLS sales stay here until their CAD account is manually verified. Saving a match upserts the sale immediately; any missing Dallas parcel coordinates are completed by the background mapping queue.
           </p>
         </div>
         <div className="sales-reconciliation__count">
           {queue?.total.toLocaleString() ?? "—"} awaiting review
         </div>
       </div>
+
+      {locationStatus && (
+        <div className="sales-reconciliation__location-status">
+          <div>
+            <span>Mapped sales-account coverage</span>
+            <strong>{locationStatus.coverage.coverage_percent.toFixed(2)}%</strong>
+          </div>
+          <div>
+            <span>Located</span>
+            <strong>
+              {locationStatus.coverage.located_sale_account_count.toLocaleString()}
+              {' / '}
+              {locationStatus.coverage.sale_account_count.toLocaleString()}
+            </strong>
+          </div>
+          <div>
+            <span>Background queue</span>
+            <strong>
+              {(locationStatus.queue.pending +
+                locationStatus.queue.processing +
+                locationStatus.queue.retry).toLocaleString()}
+            </strong>
+          </div>
+          <div>
+            <span>Location review</span>
+            <strong>{locationStatus.queue.manual_review.toLocaleString()}</strong>
+          </div>
+        </div>
+      )}
 
       <label className="sales-reconciliation__editor">
         <span>Personal editor key</span>
@@ -302,6 +344,10 @@ export default function SalesReconciliationQueue() {
         .sales-reconciliation__header h2 { margin: 0; font-size: 20px; color: #0f172a; }
         .sales-reconciliation__header p { margin: 6px 0 0; max-width: 820px; color: #475569; font-size: 13px; line-height: 1.5; }
         .sales-reconciliation__count { white-space: nowrap; border-radius: 999px; background: #fef3c7; color: #92400e; padding: 6px 10px; font-size: 12px; font-weight: 700; }
+        .sales-reconciliation__location-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; padding: 10px; }
+        .sales-reconciliation__location-status div { display: grid; gap: 2px; }
+        .sales-reconciliation__location-status span { color: #475569; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+        .sales-reconciliation__location-status strong { color: #1e3a8a; font-size: 15px; }
         .sales-reconciliation__editor { display: grid; gap: 5px; max-width: 360px; font-size: 12px; font-weight: 700; color: #334155; }
         .sales-reconciliation input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; background: white; }
         .sales-reconciliation button { border: 1px solid #2563eb; border-radius: 8px; padding: 8px 11px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; }

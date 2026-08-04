@@ -1724,20 +1724,50 @@ app.get("/api/search", async (req, res) => {
       const addressLineSql = `upper(btrim(split_part(a.address, ',', 1))) COLLATE "C"`;
       const streetPlaceholder = bind(`${parsed.streetName}%`);
       const cityWhere = parsed.city ? `AND upper(a.city) = ${bind(parsed.city)}` : "";
+      const cityFirstPlaceholder = parsed.cityFirstPrefix
+        ? bind(`${parsed.cityFirstPrefix}%`)
+        : null;
+      const cityStreetSql = `upper(concat_ws(' ', NULLIF(btrim(a.city), ''), NULLIF(btrim(a.street_name), ''))) COLLATE "C"`;
+      const cityAddressSql = `upper(concat_ws(' ', NULLIF(btrim(a.city), ''), NULLIF(btrim(split_part(a.address, ',', 1)), ''))) COLLATE "C"`;
+      const cityFirstWhere = cityFirstPlaceholder
+        ? `
+          OR ${citySql} LIKE ${cityFirstPlaceholder}
+          OR ${cityStreetSql} LIKE ${cityFirstPlaceholder}
+          OR ${cityAddressSql} LIKE ${cityFirstPlaceholder}
+        `
+        : "";
 
       where = `
-        a.street_name IS NOT NULL
-        AND a.canonical_account_id IS NULL
-        AND ${streetSql} LIKE ${streetPlaceholder}
+        a.canonical_account_id IS NULL
+        AND (
+          (a.street_name IS NOT NULL AND ${streetSql} LIKE ${streetPlaceholder})
+          ${cityFirstWhere}
+        )
         ${cityWhere}
       `;
-      matchSql = `'same_street'`;
-      orderSql = `
-        ${streetSql},
-        ${citySql},
-        ${addressLineSql},
-        a.account_id
-      `;
+      matchSql = cityFirstPlaceholder
+        ? `
+          CASE
+            WHEN ${citySql} LIKE ${cityFirstPlaceholder} THEN 'city_prefix'
+            WHEN ${cityAddressSql} LIKE ${cityFirstPlaceholder} THEN 'city_address_prefix'
+            WHEN ${cityStreetSql} LIKE ${cityFirstPlaceholder} THEN 'city_prefix'
+            ELSE 'same_street'
+          END
+        `
+        : `'same_street'`;
+      orderSql = cityFirstPlaceholder
+        ? `
+          ${citySql},
+          ${streetSql},
+          ${addressLineSql},
+          a.account_id
+        `
+        : `
+          ${streetSql},
+          ${citySql},
+          ${addressLineSql},
+          a.account_id
+        `;
     }
 
     const sql = `
@@ -2555,6 +2585,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
 app.get("/api/sales", async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
+    const subjectAccountId = String(req.query.subject_account_id || "").trim();
     const accountId = String(req.query.account_id || "").trim();
     const excludeAccountId = String(req.query.exclude_account_id || "").trim();
     const neighborhoodCode = String(req.query.neighborhood_code || "").trim();
@@ -2589,6 +2620,9 @@ app.get("/api/sales", async (req, res) => {
     if (!["closed_sale", "listing", "all"].includes(recordType)) {
       return res.status(400).json({ error: "invalid_record_type" });
     }
+    if (subjectAccountId && !/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
 
     const parsePrice = (value, name) => {
       if (value === undefined || value === null || value === "") return null;
@@ -2605,6 +2639,9 @@ app.get("/api/sales", async (req, res) => {
     const params = [];
     const where = [];
     const bind = (value) => `$${params.push(value)}`;
+    const subjectAccountPlaceholder = subjectAccountId
+      ? bind(subjectAccountId)
+      : null;
     const addAccountFilter = (id) => {
       const placeholder = bind(id);
       where.push(`(
@@ -2664,6 +2701,31 @@ app.get("/api/sales", async (req, res) => {
     if (!includeAttached) {
       where.push("v.attachment_type NOT IN ('attached', 'mixed')");
     }
+
+    const distanceSql = subjectAccountPlaceholder
+      ? `
+        CASE
+          WHEN subject_location.latitude IS NULL
+            OR subject_location.longitude IS NULL
+            OR sale_location.latitude IS NULL
+            OR sale_location.longitude IS NULL
+          THEN NULL
+          ELSE 3958.7613 * ACOS(
+            LEAST(1, GREATEST(-1,
+              COS(RADIANS(subject_location.latitude)) *
+              COS(RADIANS(sale_location.latitude)) *
+              COS(RADIANS(sale_location.longitude) - RADIANS(subject_location.longitude)) +
+              SIN(RADIANS(subject_location.latitude)) *
+              SIN(RADIANS(sale_location.latitude))
+            ))
+          )
+        END
+      `
+      : `NULL::double precision`;
+    const subjectLocationJoin = subjectAccountPlaceholder
+      ? `LEFT JOIN core.account_locations subject_location
+           ON subject_location.account_id = ${subjectAccountPlaceholder}`
+      : "";
 
     const sql = `
       SELECT
@@ -2736,14 +2798,28 @@ app.get("/api/sales", async (req, res) => {
         v.cad_improvement_value,
         v.cad_market_value,
         media.primary_photo_url,
-        COALESCE(media.photo_count, 0) AS photo_count
+        COALESCE(media.photo_count, 0) AS photo_count,
+        sale_location.latitude,
+        sale_location.longitude,
+        sale_location.status AS location_status,
+        sale_location.source AS location_source,
+        sale_location.precision AS location_precision,
+        sale_location.confidence AS location_confidence,
+        sale_location.review_required AS location_review_required,
+        sale_location.review_reason AS location_review_reason,
+        sale_location.geocoded_at AS location_geocoded_at,
+        ${distanceSql} AS "distanceMiles"
       FROM core.v_sales_enriched v
       LEFT JOIN core.accounts sale_account
         ON sale_account.account_id = v.primary_account_id
       LEFT JOIN core.v_sales_media_summary media
         ON media.source_record_id = v.source_record_id
+      LEFT JOIN core.account_locations sale_location
+        ON sale_location.account_id = v.primary_account_id
+      ${subjectLocationJoin}
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY v.closing_date DESC NULLS LAST,
+      ORDER BY ${subjectAccountPlaceholder ? `"distanceMiles" ASC NULLS LAST,` : ""}
+               COALESCE(v.closing_date, v.listing_contract_date) DESC NULLS LAST,
                v.source_record_id DESC NULLS LAST,
                v.sale_id DESC NULLS LAST
       LIMIT ${bind(limit)} OFFSET ${bind(offset)}

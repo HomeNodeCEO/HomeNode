@@ -11,7 +11,7 @@ type ApiSearchRow = {
   street_name?: string | null;
   city?: string | null;
   postal_code?: string | null;
-  search_match?: "exact_account" | "exact_address" | "address_prefix" | "same_street" | null;
+  search_match?: "exact_account" | "exact_address" | "address_prefix" | "same_street" | "city_prefix" | "city_address_prefix" | null;
   owner: string | null;
   situs_address: string | null;
   latest_market_value?: number | string | null; // <- allow MV from backend if present
@@ -230,7 +230,7 @@ export default function PropertySearchPage() {
           alignItems: "end",
         }}
       >
-        <Labeled label="Address / Owner / Account">
+        <Labeled label="Address / City / Owner / Account">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -240,7 +240,7 @@ export default function PropertySearchPage() {
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            placeholder="e.g. 1909 SNOWMASS LN, Garland or a 17-character account ID"
+            placeholder="e.g. Duncanville Main, 1909 Snowmass Ln, or a 17-character account ID"
             className="input"
           />
         </Labeled>
@@ -250,7 +250,7 @@ export default function PropertySearchPage() {
         </button>
       </form>
       <div style={{ fontSize: 12, opacity: 0.68 }}>
-        Results update as you type. House numbers and street letters narrow the address tiles; press Enter to open an exact property.
+        Results update as you type. You can start with a city and continue with a street or house number, or keep using any existing address, street, owner, or account search; press Enter to open an exact property.
       </div>
 
       {/* Status */}

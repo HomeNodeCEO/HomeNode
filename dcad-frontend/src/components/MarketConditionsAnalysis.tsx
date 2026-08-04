@@ -897,6 +897,7 @@ export default function MarketConditionsAnalysis({
   );
   const [chartInterval, setChartInterval] =
     useState<TrendInterval>('monthly');
+  const [studyResultsExpanded, setStudyResultsExpanded] = useState(false);
   const [loadingContext, setLoadingContext] = useState(!subject);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [savingNarrative, setSavingNarrative] = useState(false);
@@ -2037,29 +2038,56 @@ export default function MarketConditionsAnalysis({
                   .join(', ')}. Studies below 30 sales should be reconciled cautiously.
               </div>
             )}
-            <div>
-              <div className="flex flex-wrap items-end justify-between gap-3">
+            <div className="overflow-hidden rounded-2xl border border-slate-300 bg-white">
+              <button
+                type="button"
+                aria-expanded={studyResultsExpanded}
+                aria-controls="market-study-comparison-results"
+                onClick={() => setStudyResultsExpanded((current) => !current)}
+                className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left hover:bg-slate-50 md:px-5"
+              >
                 <div>
                   <h3 className="text-lg font-semibold text-slate-950">
-                    Study comparison
+                    Study comparison and charts
                   </h3>
                   <p className="mt-1 text-sm text-slate-600">
-                    Compare population and median indicators before deciding
-                    which evidence receives the greatest weight.
+                    {analysisResult.analyses.length} independent market{' '}
+                    {analysisResult.analyses.length === 1 ? 'study' : 'studies'} available for review.
                   </p>
                 </div>
-                {mappedCoverage && mappedCoverage.eligible > 0 && (
-                  <span className="text-xs font-medium text-slate-500">
-                    {mappedCoverage.mapped.toLocaleString()} of{' '}
-                    {mappedCoverage.eligible.toLocaleString()} study observations
-                    have parcel coordinates across the independent results.
-                  </span>
-                )}
-              </div>
-              <div className="mt-3">
-                <StudyComparisonTable analyses={analysisResult.analyses} />
-              </div>
-            </div>
+                <span className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+                  {studyResultsExpanded ? 'Collapse results' : 'Expand results'}
+                </span>
+              </button>
+
+              {studyResultsExpanded && (
+                <div
+                  id="market-study-comparison-results"
+                  className="space-y-6 border-t border-slate-200 p-4 md:p-5"
+                >
+                  <div>
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-950">
+                          Study comparison
+                        </h3>
+                        <p className="mt-1 text-sm text-slate-600">
+                          Compare population and median indicators before deciding
+                          which evidence receives the greatest weight.
+                        </p>
+                      </div>
+                      {mappedCoverage && mappedCoverage.eligible > 0 && (
+                        <span className="text-xs font-medium text-slate-500">
+                          {mappedCoverage.mapped.toLocaleString()} of{' '}
+                          {mappedCoverage.eligible.toLocaleString()} study observations
+                          have parcel coordinates across the independent results.
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-3">
+                      <StudyComparisonTable analyses={analysisResult.analyses} />
+                    </div>
+                  </div>
 
             <div className="flex flex-wrap gap-2">
               {INTERVAL_OPTIONS.map((option) => (
@@ -2158,6 +2186,9 @@ export default function MarketConditionsAnalysis({
                 </div>
               </article>
             ))}
+                </div>
+              )}
+            </div>
 
             <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5">
               <div>

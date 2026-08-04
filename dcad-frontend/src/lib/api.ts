@@ -437,8 +437,31 @@ export interface SalesSearchParams {
   multiParcel?: 'single' | 'possible' | 'confirmed';
   recordType?: 'closed_sale' | 'listing' | 'all';
   includeAttached?: boolean;
+  searchProfile?: ComparableSearchProfileKey;
   limit?: number;
   offset?: number;
+}
+
+export type ComparableSearchProfileKey =
+  | 'urban_simple'
+  | 'urban_moderate'
+  | 'urban_complex'
+  | 'suburban_simple'
+  | 'suburban_moderate'
+  | 'suburban_complex'
+  | 'semi_rural_simple'
+  | 'semi_rural_moderate'
+  | 'semi_rural_complex'
+  | 'rural_simple'
+  | 'rural_moderate'
+  | 'rural_complex';
+
+export interface ComparableSearchProfile {
+  key: ComparableSearchProfileKey;
+  label: string;
+  geography: 'urban' | 'suburban' | 'semi_rural' | 'rural';
+  complexity: 'simple' | 'moderate' | 'complex';
+  radius_miles: number;
 }
 
 export interface ComparableRecommendationParams {
@@ -460,6 +483,7 @@ export interface ComparableRecommendationParams {
   siteSizeScaleRatio?: number;
   salesDateScaleDays?: number;
   outlierScoreThreshold?: number;
+  searchProfile?: ComparableSearchProfileKey;
 }
 
 export interface ComparableStatisticalAnalysis {
@@ -566,6 +590,7 @@ export interface ComparableRecommendationsResponse {
     date_from: string;
     period_months: 12 | 24 | 36;
   };
+  search_profile: ComparableSearchProfile;
   study_market?: {
     key: GroupedAnalysisBreakdownKey | null;
     scope: 'city' | 'zip' | 'radius' | null;
@@ -1123,6 +1148,7 @@ export async function searchSales(params: SalesSearchParams = {}): Promise<SaleR
     multi_parcel: params.multiParcel,
     record_type: params.recordType,
     include_attached: params.includeAttached,
+    search_profile: params.searchProfile,
     limit: params.limit ?? 25,
     offset: params.offset ?? 0,
   });
@@ -1161,6 +1187,7 @@ export async function getComparableRecommendations(
     site_size_scale_ratio: params.siteSizeScaleRatio,
     sales_date_scale_days: params.salesDateScaleDays,
     outlier_score_threshold: params.outlierScoreThreshold,
+    search_profile: params.searchProfile,
   });
   return fetchJSON<ComparableRecommendationsResponse>(url, { timeoutMs: 90000 });
 }

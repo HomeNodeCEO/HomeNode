@@ -5,6 +5,8 @@ import { fetchDetail } from "@/lib/dcad";
 import {
   getAccountPhotos,
   getRelatedParcels,
+  updatePropertyReportSections,
+  type ReportManualSectionKey,
   type RelatedParcelsResponse,
 } from "@/lib/api";
 
@@ -108,6 +110,7 @@ type DcadSaleHistoryRow = {
 };
 
 type DcadHousingProfile = {
+  structural_style?: string;
   housing_type?: string;
   attachment_type?: string;
   architectural_style?: string;
@@ -139,6 +142,50 @@ type DcadDetail = {
   sales_history?: DcadSaleHistoryRow[];
   homestead_yes?: boolean;
   photos?: string[];
+  report_manual_values?: Partial<Record<ReportManualSectionKey, unknown>>;
+};
+
+type EditableReportSection = {
+  key: ReportManualSectionKey;
+  title: string;
+};
+
+const EDITABLE_REPORT_SECTIONS: EditableReportSection[] = [
+  { key: "report.subject_identification", title: "Subject Identification" },
+  { key: "report.exemptions", title: "Current Exemptions" },
+  { key: "report.sales_history", title: "Sales History" },
+  { key: "report.property_characteristics", title: "Property Characteristics" },
+  { key: "report.land_details", title: "Land Details and Zoning" },
+  { key: "report.appraisal_values", title: "Appraisal District Values" },
+];
+
+const ARRAY_ROW_TEMPLATES: Record<string, Record<string, unknown>> = {
+  sales_history: {
+    closing_date: "",
+    listing_id: "",
+    sale_price: "",
+    days_on_market: "",
+    buyer_financing: "",
+  },
+  land_detail: {
+    number: "",
+    state_code: "",
+    zoning: "",
+    frontage_ft: "",
+    depth_ft: "",
+    area_sqft: "",
+    pricing_method: "",
+    adjusted_price: "",
+  },
+  additional_improvements: {
+    improvement_type: "",
+    construction: "",
+    floor: "",
+    exterior_wall: "",
+    area_sqft: "",
+    value: "",
+    year_built: "",
+  },
 };
 
 function hasValue(value: unknown): boolean {
@@ -213,18 +260,40 @@ function SummarySection({
   title,
   subtitle,
   children,
+  onEdit,
+  manuallyVerified = false,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
+  onEdit?: () => void;
+  manuallyVerified?: boolean;
 }) {
   return (
     <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
-      <div className="mb-4">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-800">
-          {title}
-        </h2>
-        {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-800">
+              {title}
+            </h2>
+            {manuallyVerified ? (
+              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-blue-800">
+                Manually verified
+              </span>
+            ) : null}
+          </div>
+          {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+        </div>
+        {onEdit ? (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+          >
+            Edit
+          </button>
+        ) : null}
       </div>
       {children}
     </section>
@@ -250,12 +319,294 @@ function SummaryField({
   );
 }
 
-function AddressHero({ detail, accountId }: { detail: DcadDetail | null; accountId?: string }) {
+function editorLabel(key: string): string {
+  const overrides: Record<string, string> = {
+    mls_status: "MLS Status",
+    listing_id: "MLS Number",
+    area_sqft: "Area (Sq. Ft.)",
+    living_area_sqft: "Living Area (Sq. Ft.)",
+    total_area_sqft: "Total Area (Sq. Ft.)",
+    postal_code: "ZIP Code",
+    baths_full: "Full Baths",
+    baths_half: "Half Baths",
+    homestead_yes: "Homestead",
+  };
+  return overrides[key] || key
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function cloneEditorValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value ?? {})) as T;
+}
+
+function editorValueAtPath(
+  root: Record<string, unknown>,
+  path: Array<string | number>,
+): unknown {
+  let cursor: unknown = root;
+  path.forEach((segment) => {
+    if (Array.isArray(cursor) && typeof segment === "number") {
+      cursor = cursor[segment];
+    } else if (cursor && typeof cursor === "object") {
+      cursor = (cursor as Record<string, unknown>)[String(segment)];
+    } else {
+      throw new Error("Invalid report editor field path");
+    }
+  });
+  return cursor;
+}
+
+function ReportSectionEditor({
+  section,
+  initialValue,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  section: EditableReportSection;
+  initialValue: Record<string, unknown>;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (value: Record<string, unknown>) => void;
+}) {
+  const [draft, setDraft] = useState<Record<string, unknown>>(() =>
+    cloneEditorValue(initialValue),
+  );
+
+  useEffect(() => {
+    setDraft(cloneEditorValue(initialValue));
+  }, [initialValue, section.key]);
+
+  const updateAtPath = (path: Array<string | number>, nextValue: unknown) => {
+    setDraft((current) => {
+      const next = cloneEditorValue(current);
+      const parent = editorValueAtPath(next, path.slice(0, -1));
+      const finalSegment = path[path.length - 1];
+      if (Array.isArray(parent) && typeof finalSegment === "number") {
+        parent[finalSegment] = nextValue;
+      } else if (parent && typeof parent === "object") {
+        (parent as Record<string, unknown>)[String(finalSegment)] = nextValue;
+      }
+      return next;
+    });
+  };
+
+  const removeArrayItem = (path: Array<string | number>, index: number) => {
+    setDraft((current) => {
+      const next = cloneEditorValue(current);
+      const cursor = editorValueAtPath(next, path);
+      if (Array.isArray(cursor)) cursor.splice(index, 1);
+      return next;
+    });
+  };
+
+  const addArrayItem = (path: Array<string | number>, key: string) => {
+    setDraft((current) => {
+      const next = cloneEditorValue(current);
+      const cursor = editorValueAtPath(next, path);
+      if (Array.isArray(cursor)) {
+        cursor.push(cloneEditorValue(ARRAY_ROW_TEMPLATES[key] || {}));
+      }
+      return next;
+    });
+  };
+
+  const renderValue = (
+    value: unknown,
+    path: Array<string | number>,
+    key: string,
+  ): ReactNode => {
+    if (Array.isArray(value)) {
+      if (value.every((item) => typeof item === "string")) {
+        return (
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              {editorLabel(key)}
+            </span>
+            <textarea
+              className="textarea textarea-bordered mt-1 min-h-24 w-full bg-white"
+              value={value.join("\n")}
+              onChange={(event) =>
+                updateAtPath(path, event.target.value.split("\n").filter(Boolean))
+              }
+            />
+          </label>
+        );
+      }
+      return (
+        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold text-slate-800">{editorLabel(key)}</div>
+            <button
+              type="button"
+              onClick={() => addArrayItem(path, key)}
+              className="btn btn-xs normal-case border-blue-300 bg-white text-blue-800"
+            >
+              Add record
+            </button>
+          </div>
+          {value.length ? value.map((item, index) => (
+            <div key={index} className="rounded-lg border border-slate-200 bg-white p-3">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-500">Record {index + 1}</span>
+                <button
+                  type="button"
+                  onClick={() => removeArrayItem(path, index)}
+                  className="btn btn-ghost btn-xs normal-case text-rose-700"
+                >
+                  Remove
+                </button>
+              </div>
+              {renderValue(item, [...path, index], `${key}_${index + 1}`)}
+            </div>
+          )) : (
+            <div className="text-xs text-slate-500">No records. Select Add record to create one.</div>
+          )}
+        </div>
+      );
+    }
+    if (value && typeof value === "object") {
+      return (
+        <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
+          <legend className="px-1 text-sm font-semibold text-slate-800">
+            {editorLabel(key)}
+          </legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => (
+              <div
+                key={childKey}
+                className={Array.isArray(childValue) || (childValue && typeof childValue === "object")
+                  ? "sm:col-span-2"
+                  : ""}
+              >
+                {renderValue(childValue, [...path, childKey], childKey)}
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      );
+    }
+    if (typeof value === "boolean") {
+      return (
+        <label className="block">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            {editorLabel(key)}
+          </span>
+          <select
+            className="select select-bordered mt-1 w-full bg-white"
+            value={value ? "true" : "false"}
+            onChange={(event) => updateAtPath(path, event.target.value === "true")}
+          >
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+          </select>
+        </label>
+      );
+    }
+    if (key === "attachment_type") {
+      return (
+        <label className="block">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+            Attachment Type
+          </span>
+          <select
+            className="select select-bordered mt-1 w-full bg-white"
+            value={value == null ? "unknown" : String(value)}
+            onChange={(event) => updateAtPath(path, event.target.value)}
+          >
+            <option value="detached">Detached</option>
+            <option value="attached">Attached</option>
+            <option value="mixed">Mixed</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </label>
+      );
+    }
+    const isLongText = ["legal_text", "mailing_address", "notes"].includes(key);
+    return (
+      <label className="block">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          {editorLabel(key)}
+        </span>
+        {isLongText ? (
+          <textarea
+            className="textarea textarea-bordered mt-1 w-full bg-white"
+            value={value == null ? "" : String(value)}
+            onChange={(event) => updateAtPath(path, event.target.value)}
+          />
+        ) : (
+          <input
+            type={key.includes("date") ? "date" : typeof value === "number" ? "number" : "text"}
+            className="input input-bordered mt-1 w-full bg-white"
+            value={value == null ? "" : String(value)}
+            onChange={(event) =>
+              updateAtPath(
+                path,
+                typeof value === "number" && event.target.value !== ""
+                  ? Number(event.target.value)
+                  : event.target.value,
+              )
+            }
+          />
+        )}
+      </label>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-3 sm:p-6">
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-950">Edit {section.title}</h2>
+            <p className="mt-1 text-xs text-slate-600">
+              Saved values override the report display and are retained with revision history.
+            </p>
+          </div>
+          <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm" disabled={saving}>
+            Close
+          </button>
+        </div>
+        <div className="space-y-4 overflow-y-auto p-5">
+          {Object.entries(draft).map(([key, value]) => (
+            <div key={key}>{renderValue(value, [key], key)}</div>
+          ))}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+          <button type="button" onClick={onCancel} className="btn btn-ghost normal-case" disabled={saving}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onSave(draft)}
+            className="btn normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+            disabled={saving}
+          >
+            {saving ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AddressHero({
+  detail,
+  accountId,
+  onReload,
+}: {
+  detail: DcadDetail | null;
+  accountId?: string;
+  onReload: () => Promise<void>;
+}) {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [relatedParcelSearchVersion, setRelatedParcelSearchVersion] = useState(0);
   const [relatedParcels, setRelatedParcels] = useState<RelatedParcelsResponse | null>(null);
   const [relatedParcelsLoading, setRelatedParcelsLoading] = useState(false);
   const [relatedParcelsError, setRelatedParcelsError] = useState("");
+  const [editingSection, setEditingSection] = useState<EditableReportSection | null>(null);
+  const [savingSection, setSavingSection] = useState(false);
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
@@ -317,6 +668,139 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
   const salesHistory = detail?.sales_history || [];
   const values = detail?.value_summary;
 
+  const editableSectionValue = (sectionKey: ReportManualSectionKey): Record<string, unknown> => {
+    switch (sectionKey) {
+      case "report.subject_identification":
+        return {
+          property_location: {
+            address: detail?.property_location?.address || "",
+            neighborhood: detail?.property_location?.neighborhood || "",
+            city: detail?.property_location?.city || "",
+            postal_code: detail?.property_location?.postal_code || "",
+            county: detail?.property_location?.county || "",
+            subdivision: detail?.property_location?.subdivision || "",
+          },
+          owner: {
+            owner_name: detail?.owner?.owner_name || "",
+            mailing_address: detail?.owner?.mailing_address || "",
+          },
+          legal_description: {
+            lines: detail?.legal_description?.lines || [],
+            deed_transfer_date: detail?.legal_description?.deed_transfer_date || "",
+          },
+        };
+      case "report.exemptions":
+        {
+          const emptyExemption = () => ({
+            taxing_jurisdiction: "",
+            homestead_exemption: "",
+            disabled_vet: "",
+            taxable_value: "",
+          });
+        return {
+          homestead_yes: Boolean(detail?.homestead_yes),
+          exemptions: {
+            city: cloneEditorValue(detail?.exemptions?.city || emptyExemption()),
+            school: cloneEditorValue(detail?.exemptions?.school || emptyExemption()),
+            county: cloneEditorValue(detail?.exemptions?.county || emptyExemption()),
+            college: cloneEditorValue(detail?.exemptions?.college || emptyExemption()),
+            hospital: cloneEditorValue(detail?.exemptions?.hospital || emptyExemption()),
+            special_district: cloneEditorValue(
+              detail?.exemptions?.special_district || emptyExemption(),
+            ),
+          },
+        };
+        }
+      case "report.sales_history":
+        return { sales_history: cloneEditorValue(detail?.sales_history || []) };
+      case "report.property_characteristics":
+        return {
+          main_improvement: {
+            living_area_sqft: detail?.main_improvement?.living_area_sqft || "",
+            total_area_sqft: detail?.main_improvement?.total_area_sqft || "",
+            bedroom_count: detail?.main_improvement?.bedroom_count || "",
+            bath_count: detail?.main_improvement?.bath_count || "",
+            baths_full: detail?.main_improvement?.baths_full || "",
+            baths_half: detail?.main_improvement?.baths_half || "",
+            stories: detail?.main_improvement?.stories || "",
+            year_built: detail?.main_improvement?.year_built || "",
+            effective_year_built: detail?.main_improvement?.effective_year_built || "",
+            actual_age: detail?.main_improvement?.actual_age || "",
+            building_class: detail?.main_improvement?.building_class || "",
+            desirability: detail?.main_improvement?.desirability || "",
+            construction_type: detail?.main_improvement?.construction_type || "",
+            foundation: detail?.main_improvement?.foundation || "",
+            exterior_material: detail?.main_improvement?.exterior_material || "",
+            roof_type: detail?.main_improvement?.roof_type || "",
+            roof_material: detail?.main_improvement?.roof_material || "",
+            heating: detail?.main_improvement?.heating || "",
+            air_conditioning: detail?.main_improvement?.air_conditioning || "",
+            fireplaces: detail?.main_improvement?.fireplaces || "",
+            kitchens: detail?.main_improvement?.kitchens || "",
+            wetbars: detail?.main_improvement?.wetbars || "",
+            pool: detail?.main_improvement?.pool ?? "",
+            sprinkler: detail?.main_improvement?.sprinkler ?? "",
+            fence_type: detail?.main_improvement?.fence_type || "",
+          },
+          housing_profile: {
+            structural_style: detail?.housing_profile?.structural_style || "",
+            housing_type: detail?.housing_profile?.housing_type || "",
+            attachment_type: detail?.housing_profile?.attachment_type || "unknown",
+            architectural_style: detail?.housing_profile?.architectural_style || "",
+          },
+          additional_improvements: cloneEditorValue(detail?.additional_improvements || []),
+        };
+      case "report.land_details":
+        return { land_detail: cloneEditorValue(detail?.land_detail || []) };
+      case "report.appraisal_values":
+        return {
+          value_summary: {
+            certified_year: detail?.value_summary?.certified_year || "",
+            market_value: detail?.value_summary?.market_value || "",
+            capped_value: detail?.value_summary?.capped_value || "",
+            improvement_value: detail?.value_summary?.improvement_value || "",
+            land_value: detail?.value_summary?.land_value || "",
+          },
+        };
+    }
+  };
+
+  const saveEditedSection = async (value: Record<string, unknown>) => {
+    if (!editingSection || !accountId) return;
+    let editorKey = sessionStorage.getItem("homenode-editor-key") || "";
+    if (!editorKey) {
+      editorKey = window.prompt("Enter the HomeNode editor key to save verified changes:") || "";
+      if (!editorKey) return;
+      sessionStorage.setItem("homenode-editor-key", editorKey);
+    }
+    setSavingSection(true);
+    try {
+      await updatePropertyReportSections(
+        accountId,
+        { [editingSection.key]: value },
+        editorKey,
+      );
+      await onReload();
+      setEditingSection(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The report changes could not be saved.";
+      if (/401|invalid_editor_key/i.test(message)) {
+        sessionStorage.removeItem("homenode-editor-key");
+      }
+      window.alert(message);
+    } finally {
+      setSavingSection(false);
+    }
+  };
+
+  const sectionEditProps = (key: ReportManualSectionKey) => ({
+    onEdit: () => {
+      const section = EDITABLE_REPORT_SECTIONS.find((item) => item.key === key);
+      if (section) setEditingSection(section);
+    },
+    manuallyVerified: Boolean(detail?.report_manual_values?.[key]),
+  });
+
   const exemptionOrder: Array<[keyof DcadExemptionsMap, string]> = [
     ["city", "City"],
     ["school", "School"],
@@ -331,7 +815,9 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
       fallbackLabel,
       row: detail?.exemptions?.[key],
     }))
-    .filter(({ row }) => Boolean(row));
+    .filter(({ row }) =>
+      Boolean(row && Object.values(row).some((value) => hasValue(value))),
+    );
   const exemptJurisdictionCount = exemptionRows.filter(
     ({ row }) => (parseNumber(row?.homestead_exemption) || 0) > 0,
   ).length;
@@ -568,6 +1054,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           <SummarySection
             title="Subject Identification"
             subtitle="Parcel, ownership, and recorded legal information"
+            {...sectionEditProps("report.subject_identification")}
           >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <SummaryField label="Parcel / Account Number" value={displayValue(accountId)} />
@@ -592,6 +1079,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             <SummarySection
               title="Current Exemptions"
               subtitle={`Tax year ${displayValue(values?.certified_year || detail?.tax_year)}`}
+              {...sectionEditProps("report.exemptions")}
             >
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <span
@@ -645,6 +1133,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             <SummarySection
               title="Sales History"
               subtitle="Linked closed-sale records and deed-transfer history"
+              {...sectionEditProps("report.sales_history")}
             >
               {salesHistory.length ? (
                 <div className="overflow-x-auto">
@@ -687,6 +1176,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           <SummarySection
             title="Property Characteristics"
             subtitle="Auto-populated appraisal-district and verified MLS characteristics"
+            {...sectionEditProps("report.property_characteristics")}
           >
             <div className="grid grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 lg:grid-cols-5">
               <SummaryField
@@ -795,6 +1285,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           <SummarySection
             title="Land Details and Zoning"
             subtitle={`${landRows.length} land record${landRows.length === 1 ? "" : "s"} returned`}
+            {...sectionEditProps("report.land_details")}
           >
             <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
               <SummaryField label="Primary Zoning" value={primaryZoning} />
@@ -854,6 +1345,7 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
             subtitle={`Certified tax year ${displayValue(
               values?.certified_year || detail?.tax_year,
             )}`}
+            {...sectionEditProps("report.appraisal_values")}
           >
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <SummaryField label="Market Value" value={formatMoney(values?.market_value)} />
@@ -927,6 +1419,15 @@ function AddressHero({ detail, accountId }: { detail: DcadDetail | null; account
           </Link>
         </div>
       </div>
+      {editingSection ? (
+        <ReportSectionEditor
+          section={editingSection}
+          initialValue={editableSectionValue(editingSection.key)}
+          saving={savingSection}
+          onCancel={() => setEditingSection(null)}
+          onSave={saveEditedSection}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1031,7 +1532,7 @@ export default function PropertyReport() {
           </div>
         </div>
 
-        <AddressHero detail={detail} accountId={account} />
+        <AddressHero detail={detail} accountId={account} onReload={importFromDatabase} />
       </main>
     </div>
   );

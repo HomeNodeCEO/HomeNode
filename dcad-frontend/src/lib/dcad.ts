@@ -177,6 +177,64 @@ export async function fetchDetail(accountId: string, countyId = 1) {
     (detail as any).exemptions = obj;
   }
 
+  // Explicit report edits are audited overlays. They never mutate the CAD or
+  // MLS source records, but they become the displayed/reportable values after
+  // a user presses Save.
+  const manualValues = (data as any)?.report_manual_values || {};
+  const manual = (key: string) => manualValues?.[key]?.value;
+  const subjectOverride = manual('report.subject_identification');
+  if (subjectOverride && typeof subjectOverride === 'object') {
+    const value = subjectOverride as any;
+    detail.property_location = {
+      ...detail.property_location,
+      ...(value.property_location || {}),
+    };
+    detail.owner = { ...(detail.owner || {}), ...(value.owner || {}) };
+    detail.legal_description = {
+      ...detail.legal_description,
+      ...(value.legal_description || {}),
+    };
+  }
+  const exemptionOverride = manual('report.exemptions');
+  if (exemptionOverride && typeof exemptionOverride === 'object') {
+    const value = exemptionOverride as any;
+    if (value.exemptions) detail.exemptions = value.exemptions;
+    if (typeof value.homestead_yes === 'boolean') detail.homestead_yes = value.homestead_yes;
+  }
+  const salesOverride = manual('report.sales_history');
+  if (salesOverride && typeof salesOverride === 'object') {
+    const rows = (salesOverride as any).sales_history;
+    if (Array.isArray(rows)) detail.sales_history = rows;
+  }
+  const characteristicsOverride = manual('report.property_characteristics');
+  if (characteristicsOverride && typeof characteristicsOverride === 'object') {
+    const value = characteristicsOverride as any;
+    detail.main_improvement = {
+      ...detail.main_improvement,
+      ...(value.main_improvement || {}),
+    };
+    detail.housing_profile = {
+      ...(detail.housing_profile || {}),
+      ...(value.housing_profile || {}),
+    };
+    if (Array.isArray(value.additional_improvements)) {
+      detail.additional_improvements = value.additional_improvements;
+    }
+  }
+  const landOverride = manual('report.land_details');
+  if (landOverride && typeof landOverride === 'object') {
+    const rows = (landOverride as any).land_detail;
+    if (Array.isArray(rows)) detail.land_detail = rows;
+  }
+  const valuesOverride = manual('report.appraisal_values');
+  if (valuesOverride && typeof valuesOverride === 'object') {
+    detail.value_summary = {
+      ...detail.value_summary,
+      ...((valuesOverride as any).value_summary || {}),
+    };
+  }
+  detail.report_manual_values = manualValues;
+
   return { detail };
 }
 

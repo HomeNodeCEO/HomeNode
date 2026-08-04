@@ -1068,7 +1068,33 @@ export function buildMarketTrendRecommendation(analyses) {
       : (orderedChanges[middle - 1] + orderedChanges[middle]) / 2
     : null;
   const recommendedChange =
-    average !== null && median !== null ? (average + median) / 2 : null;
+    (() => {
+      if (average === null || median === null) return null;
+      const customStudy = rankedStudies.find(
+        (analysis) => analysis.market.key === "custom",
+      );
+      if (!customStudy) return (average + median) / 2;
+      const otherStudies = rankedStudies.filter(
+        (analysis) => analysis.market.key !== "custom",
+      );
+      if (!otherStudies.length) {
+        return Number(customStudy.statistics.annualized_change_percent);
+      }
+      const reliabilityTotal = otherStudies.reduce(
+        (total, analysis) =>
+          total + Math.max(Number(analysis.statistics.reliability_score || 0), 0),
+        0,
+      );
+      const otherWeightedChange = otherStudies.reduce((total, analysis) => {
+        const share = reliabilityTotal > 0
+          ? Math.max(Number(analysis.statistics.reliability_score || 0), 0) /
+            reliabilityTotal
+          : 1 / otherStudies.length;
+        return total + Number(analysis.statistics.annualized_change_percent) * share;
+      }, 0);
+      return Number(customStudy.statistics.annualized_change_percent) * 0.6 +
+        otherWeightedChange * 0.4;
+    })();
   const conclusion =
     recommendedChange === null
       ? "insufficient"
@@ -1078,24 +1104,65 @@ export function buildMarketTrendRecommendation(analyses) {
           ? "increasing"
           : "decreasing";
   return {
-    methodology_version: 1,
+    methodology_version: 2,
+    weighting_method: rankedStudies.some(
+      (analysis) => analysis.market.key === "custom",
+    )
+      ? "appraiser_defined_area_60_percent"
+      : "mean_median_reconciliation",
+    appraiser_defined_area_weight_percent: rankedStudies.some(
+      (analysis) => analysis.market.key === "custom",
+    )
+      ? rankedStudies.length === 1
+        ? 100
+        : 60
+      : 0,
     stable_threshold_percent: 1,
     conclusion,
     average_annualized_change_percent: rounded(average, 2),
     median_annualized_change_percent: rounded(median, 2),
     recommended_change_percent: rounded(recommendedChange, 2),
-    ranked_studies: rankedStudies.map((analysis, index) => ({
-      rank: index + 1,
-      key: analysis.market.key,
-      label: analysis.market.label,
-      reliability_score: analysis.statistics.reliability_score,
-      sale_count: analysis.population.eligible_sale_count,
-      sample_sufficient: analysis.statistics.sample_sufficient,
-      annualized_change_percent:
-        analysis.statistics.annualized_change_percent,
-      composite_cod: analysis.statistics.composite_cod,
-      composite_cv: analysis.statistics.composite_cv,
-    })),
+    ranked_studies: rankedStudies.map((analysis, index) => {
+      const customStudyPresent = rankedStudies.some(
+        (study) => study.market.key === "custom",
+      );
+      const otherStudies = rankedStudies.filter(
+        (study) => study.market.key !== "custom",
+      );
+      const reliabilityTotal = otherStudies.reduce(
+        (total, study) =>
+          total + Math.max(Number(study.statistics.reliability_score || 0), 0),
+        0,
+      );
+      let reconciliationWeight = null;
+      if (customStudyPresent) {
+        if (rankedStudies.length === 1) {
+          reconciliationWeight = 1;
+        } else if (analysis.market.key === "custom") {
+          reconciliationWeight = 0.6;
+        } else {
+          const reliabilityShare = reliabilityTotal > 0
+            ? Math.max(Number(analysis.statistics.reliability_score || 0), 0) /
+              reliabilityTotal
+            : 1 / otherStudies.length;
+          reconciliationWeight = 0.4 * reliabilityShare;
+        }
+      }
+      return {
+        rank: index + 1,
+        key: analysis.market.key,
+        label: analysis.market.label,
+        reliability_score: analysis.statistics.reliability_score,
+        reconciliation_weight_percent:
+          reconciliationWeight === null ? null : rounded(reconciliationWeight * 100, 1),
+        sale_count: analysis.population.eligible_sale_count,
+        sample_sufficient: analysis.statistics.sample_sufficient,
+        annualized_change_percent:
+          analysis.statistics.annualized_change_percent,
+        composite_cod: analysis.statistics.composite_cod,
+        composite_cv: analysis.statistics.composite_cv,
+      };
+    }),
   };
 }
 

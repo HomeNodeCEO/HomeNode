@@ -119,6 +119,165 @@ function appliedId(
   return `paired:${marketKey}:${dimensionKey}:${rangeId}`;
 }
 
+type PairedSaleUse = {
+  sale: PairedSaleSummary;
+  studyUses: string[];
+  pairAppearances: number;
+};
+
+function pairedSaleIdentity(sale: PairedSaleSummary) {
+  return (
+    sale.sourceRecordId ||
+    sale.saleId ||
+    sale.accountId ||
+    [sale.address, sale.closingDate, sale.salePrice].join('|')
+  );
+}
+
+function collectUsedSales(
+  dimensions: PairedAnalysisDimension[],
+): PairedSaleUse[] {
+  const usedSales = new Map<
+    string,
+    { sale: PairedSaleSummary; studyUses: Set<string>; pairAppearances: number }
+  >();
+
+  const addSale = (sale: PairedSaleSummary, studyUse: string) => {
+    const identity = pairedSaleIdentity(sale);
+    const current = usedSales.get(identity) || {
+      sale,
+      studyUses: new Set<string>(),
+      pairAppearances: 0,
+    };
+    current.studyUses.add(studyUse);
+    current.pairAppearances += 1;
+    usedSales.set(identity, current);
+  };
+
+  dimensions.forEach((dimension) => {
+    dimension.ranges.forEach((range) => {
+      const studyUse = `${dimension.label}: ${range.label}`;
+      range.pairs.forEach((pair) => {
+        addSale(pair.inferior, studyUse);
+        addSale(pair.superior, studyUse);
+      });
+    });
+  });
+
+  return Array.from(usedSales.values())
+    .map((entry) => ({
+      ...entry,
+      studyUses: Array.from(entry.studyUses).sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    }))
+    .sort((left, right) => {
+      const dateOrder = String(right.sale.closingDate || '').localeCompare(
+        String(left.sale.closingDate || ''),
+      );
+      if (dateOrder !== 0) return dateOrder;
+      return String(left.sale.address || '').localeCompare(
+        String(right.sale.address || ''),
+      );
+    });
+}
+
+function UsedSalesDropdown({ sales }: { sales: PairedSaleUse[] }) {
+  return (
+    <details
+      data-testid="paired-sales-used-dropdown"
+      className="group rounded-xl border border-slate-200 bg-white shadow-sm"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 marker:content-none">
+        <span>
+          <span className="block text-base font-semibold text-slate-950">
+            Sales Used in Paired Calculations ({sales.length})
+          </span>
+          <span className="mt-0.5 block text-xs leading-5 text-slate-600">
+            These are the unique sales retained in at least one calculation pair. Expand to audit every property and the ranges that used it.
+          </span>
+        </span>
+        <span
+          aria-hidden="true"
+          className="shrink-0 text-xl text-slate-500 transition-transform group-open:rotate-180"
+        >
+          â–¾
+        </span>
+      </summary>
+
+      <div className="border-t border-slate-200 p-4">
+        {sales.length ? (
+          <div className="max-h-[32rem] overflow-auto rounded-lg border border-slate-200">
+            <table className="min-w-[1120px] w-full text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
+                <tr>
+                  <th className="px-3 py-2">Sale</th>
+                  <th className="px-3 py-2">Date and price</th>
+                  <th className="px-3 py-2">Characteristics</th>
+                  <th className="px-3 py-2">Used in study ranges</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {sales.map(({ sale, studyUses, pairAppearances }) => (
+                  <tr key={pairedSaleIdentity(sale)}>
+                    <td className="px-3 py-3 align-top">
+                      <div className="font-semibold text-slate-950">
+                        {sale.address || sale.accountId || 'Address unavailable'}
+                      </div>
+                      <div className="mt-1 text-xs leading-5 text-slate-600">
+                        {sale.accountId ? `Parcel ${sale.accountId}` : 'Parcel not matched'}
+                        {sale.sourceRecordId ? ` Â· Record ${sale.sourceRecordId}` : ''}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 align-top">
+                      <div className="font-semibold text-slate-900">
+                        {formatCurrency(sale.salePrice)}
+                      </div>
+                      <div className="mt-1 text-xs text-slate-600">
+                        {formatDate(sale.closingDate)}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 align-top text-xs leading-5 text-slate-700">
+                      <div>
+                        {formatNumber(sale.livingArea, 0)} SF GLA Â· {formatNumber(sale.bedrooms, 0)} bed Â· {formatNumber(sale.bathrooms, 1)} bath
+                      </div>
+                      <div>
+                        {formatNumber(sale.garageSpaces, 0)} garage Â· {sale.pool == null ? 'Pool unknown' : sale.pool ? 'Pool' : 'No pool'}
+                      </div>
+                      <div>
+                        Built {formatNumber(sale.yearBuilt, 0)} Â· Site {formatNumber(sale.siteSize, 0)} SF
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 align-top">
+                      <div className="flex max-w-xl flex-wrap gap-1.5">
+                        {studyUses.map((studyUse) => (
+                          <span
+                            key={studyUse}
+                            className="rounded-full bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-800"
+                          >
+                            {studyUse}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="mt-2 text-[11px] text-slate-500">
+                        {pairAppearances} pair appearance{pairAppearances === 1 ? '' : 's'}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            No sales met the retained-pair safeguards for this study.
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function PairEvidenceTable({
   dimension,
   range,
@@ -219,6 +378,11 @@ export default function PairedSalesAnalysis({
       adjustment.id.startsWith('paired:'),
     ),
     [appliedAdjustments],
+  );
+
+  const usedSales = useMemo(
+    () => collectUsedSales(analysisResult?.dimensions || []),
+    [analysisResult],
   );
 
   const selectMarket = (nextKey: MarketConditionsAreaKey) => {
@@ -362,6 +526,8 @@ export default function PairedSalesAnalysis({
               Safeguards: within {analysisResult.methodology.maximumPairDistanceMiles} miles and {analysisResult.methodology.maximumClosingDateDifferenceDays} days; when available, within {analysisResult.methodology.maximumYearBuiltDifferenceYears} years of age and {analysisResult.methodology.maximumSiteSizeDifferencePercent}% site-size difference; and within {analysisResult.methodology.maximumControlLivingAreaDifferencePercent}% GLA difference when GLA is not the studied feature.
             </div>
           </div>
+
+          <UsedSalesDropdown sales={usedSales} />
 
           {appliedPairedAdjustments.length > 0 && (
             <div className="rounded-xl border border-emerald-200 bg-white p-4">

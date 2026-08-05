@@ -73,6 +73,26 @@ const DEFAULT_SALES_NOTES =
 const DEFAULT_ADJUSTMENT_NOTES =
   'Applied adjustments for time/date of sale, neighborhood, gross living area, room and bath count, condition, quality, and feature differences based on market-supported evidence.';
 
+type CostToCureLine = {
+  id: string;
+  description: string;
+  cost: string;
+};
+
+let costToCureLineSequence = 0;
+
+function createCostToCureLine(
+  description = '',
+  cost: string | number = '',
+): CostToCureLine {
+  costToCureLineSequence += 1;
+  return {
+    id: `repair-${Date.now()}-${costToCureLineSequence}`,
+    description,
+    cost: cost === '' ? '' : String(cost),
+  };
+}
+
 function swapArrayItems<T>(values: T[], from: number, to: number): T[] {
   const next = [...values];
   [next[from], next[to]] = [next[to], next[from]];
@@ -331,6 +351,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [salesNotes, setSalesNotes] = useState(DEFAULT_SALES_NOTES);
   const [adjustmentNotes, setAdjustmentNotes] = useState(DEFAULT_ADJUSTMENT_NOTES);
   const [ctcNotes, setCtcNotes] = useState('');
+  const [costToCureItems, setCostToCureItems] = useState<CostToCureLine[]>(
+    () => [createCostToCureLine()],
+  );
   // Normalizes the subject's construction/stories into a label for the grid.
   // NOTE: Per request, if Const Type contains "ONE AND ONE HALF STORIES",
   //       we display it as "2 Story".
@@ -738,59 +761,36 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (['no','n','none','0','false'].includes(low)) return 'No';
     return s;
   };
-  // Cost to Cure data (also used for rendering)
-  const costToCure = useMemo(() => ({
-    left: [
-      {
-        title: 'Roof Repairs',
-        items: [
-          { label: 'Replace damaged shingles (approx. 500 sq ft)', cost: 3500 },
-          { label: 'Repair flashing around chimney and vents', cost: 850 },
-          { label: 'Clean and repair gutters', cost: 450 },
-        ],
-      },
-      {
-        title: 'Interior Repairs',
-        items: [
-          { label: 'Replace outdated kitchen appliances', cost: 4500 },
-          { label: 'Update master bathroom fixtures', cost: 3200 },
-          { label: 'Replace worn carpet in bedrooms', cost: 2800 },
-          { label: 'Paint interior walls (full house)', cost: 3500 },
-          { label: 'Replace damaged hardwood flooring (200 sq ft)', cost: 2400 },
-        ],
-      },
-    ],
-    right: [
-      {
-        title: 'Foundation Issues',
-        items: [
-          { label: 'Minor foundation settling repairs', cost: 2200 },
-          { label: 'Seal basement/crawl space moisture issues', cost: 1800 },
-          { label: 'Level sagging floor joists', cost: 3200 },
-        ],
-      },
-      {
-        title: 'HVAC & Electrical',
-        items: [
-          { label: 'Service and repair HVAC system', cost: 1200 },
-          { label: 'Update electrical outlets to GFCI', cost: 800 },
-          { label: 'Replace aging water heater', cost: 1500 },
-        ],
-      },
-    ],
-  }), []);
-
   const costToCureTotal = useMemo(() => {
-    const sum = (arr: { items: { cost: number }[] }[]) =>
-      arr.reduce((acc, cat) => acc + cat.items.reduce((s, i) => s + i.cost, 0), 0);
-    return sum(costToCure.left) + sum(costToCure.right);
-  }, [costToCure]);
+    return costToCureItems.reduce(
+      (total, item) => total + Math.max(0, finiteNumber(item.cost) ?? 0),
+      0,
+    );
+  }, [costToCureItems]);
+
+  const serializedCostToCureItems = useMemo(
+    () => costToCureItems.flatMap((item) => {
+      const description = item.description.trim();
+      const cost = Math.max(0, finiteNumber(item.cost) ?? 0);
+      if (!description && cost === 0) return [];
+      return [{ description, cost }];
+    }),
+    [costToCureItems],
+  );
 
   // Preserve edits made in the dedicated Property Tax Protest workspace.
   useEffect(() => {
     const draft = propertyId ? readAppraisalReportDraft(propertyId) : null;
     setSalesNotes(draft?.salesNotes || DEFAULT_SALES_NOTES);
     setAdjustmentNotes(draft?.adjustmentNotes || DEFAULT_ADJUSTMENT_NOTES);
+    const savedRepairItems = draft?.costToCure?.items || [];
+    setCostToCureItems(
+      savedRepairItems.length
+        ? savedRepairItems.map((item) =>
+            createCostToCureLine(item.description, item.cost),
+          )
+        : [createCostToCureLine()],
+    );
   }, [propertyId]);
 
   async function generateSummary() {
@@ -808,7 +808,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             subject: subjectAddr,
             salesNotes,
             adjustmentNotes,
-            costToCure: { total: costToCureTotal, categories: costToCure },
+            costToCure: { total: costToCureTotal, items: serializedCostToCureItems },
           }),
         });
         if (!res.ok) {
@@ -820,7 +820,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               subject: subjectAddr,
               salesNotes,
               adjustmentNotes,
-              costToCure: { total: costToCureTotal, categories: costToCure },
+              costToCure: { total: costToCureTotal, items: serializedCostToCureItems },
             }),
           });
         }
@@ -835,7 +835,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const local = [
         `Based on a sales comparison approach, we selected nearby transactions within the same neighborhood and within a 0.5ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¹Ã…â€œmile radius of ${subjectAddr}. These properties are similar in age, size, and quality, providing a reliable indication of current market behavior.`,
         `Adjustments were applied for time, neighborhood code, gross living area, and condition, as well as specific features such as bathrooms, parking, and pools. The adjustments reflect observed market premiums/discounts evidenced by grouped analysis and regression where available, resulting in an indicated value that better aligns with market reactions than the district's broad categories.`,
-        `A costÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¹Ã…â€œtoÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¹Ã…â€œcure analysis identified approximately $${costToCureTotal.toLocaleString()} in necessary repairs (roof, interior updates, foundation/leveling, and HVAC/electrical). These items impact both buyer appeal and contributory value and should be reflected in the final reconciliation.`,
+        `A cost-to-cure analysis identified approximately $${costToCureTotal.toLocaleString()} in user-entered repairs. These items impact both buyer appeal and contributory value and should be reflected in the final reconciliation.`,
       ].join(' ');
       setSummary(local);
     } catch (e: any) {
@@ -2108,12 +2108,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return Math.round(median);
   }, [indicatedValues]);
 
-  // OPINION ADJUSTMENT: subtract fixed Cost to Cure ($31,900)
+  // OPINION ADJUSTMENT: subtract the current user-entered Cost to Cure.
   const opinionAfterCtc = useMemo<number | null>(() => {
     if (opinionMedian == null) return null;
-    const adjusted = Math.round(opinionMedian - 31900);
+    const adjusted = Math.round(opinionMedian - costToCureTotal);
     return adjusted > 0 ? adjusted : 0;
-  }, [opinionMedian]);
+  }, [costToCureTotal, opinionMedian]);
 
   // Keep the current sales-comparison workfile available to the printable
   // appraisal report. This remains browser-local until a server-side report
@@ -2161,6 +2161,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       }),
       opinionOfValue: opinionMedian,
       opinionAfterCostToCure: opinionAfterCtc,
+      costToCure: {
+        items: serializedCostToCureItems,
+        total: costToCureTotal,
+      },
       salesNotes,
       adjustmentNotes,
     });
@@ -2183,6 +2187,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     poolAdjustments,
     conditionAdjustments,
     qualityAdjustments,
+    serializedCostToCureItems,
+    costToCureTotal,
     opinionMedian,
     opinionAfterCtc,
     salesNotes,
@@ -4873,473 +4879,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             })}
           </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Card 1: Date/Time of Sale */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Date/Time of Sale</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We take the median sale price of the subjects neighborhood code and school district to find the best
-                  adjustment to make by considering both the local market and broader picture among the whole school
-                  district. The past 6 months median is compared against the previous 6 months before and the difference
-                  in value is used for the adjustment for time.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  The district does not make adjustments for time, despite the fact there is evidence proving an
-                  adjustment is warranted. The district also uses older sales, meaning those sale prices are not
-                  reflective of the most current market trends.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    The market conditions have been factored into our opinion of value, making it more accurate
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Card 2: NBHD Code */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">NBHD Code</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  Comparables in the subjects neighborhood code are prioritized, but when they are not available we use
-                  comparables closest in proximity next. The adjustments used are based on the difference in median sale
-                  price of all properties in that area vs the subjects. This is a much more straight-forward approach to
-                  finding an adjustment.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  The district makes adjustments based on multiple factors. However, they are not consistently applied
-                  to each comparable. This makes their adjustments more subjective.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    The median sale price for each neighborhood code gives a better look at the overall value of that
-                    neighborhood and allows us to apply adjustments that do not change.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Card 3: Land Size */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Land Size</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We only make land adjustments when there is a clear difference for properties that have more land in
-                  a suburban area, this is because land adjustments in non-rural areas are highly subjective and land
-                  sales are usually not available. When adjustments are made, they are based on the difference in
-                  median price per acre for larger land sales and smaller land sales.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  The district makes arbitrary adjustments based on variance from the median size, without proving the
-                  adjustment is actually warranted in the market. Just because a property has more land does not mean it
-                  is more valuable as the market may not prioritize additional land enough to derive an accurate
-                  adjustment.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Adjustments are based on an adjusted grouped analysis, where the median sale price of homes with
-                    land sizes above the median land size are compared against sales below the median land size. Then
-                    the square footage is adjusted out of the analysis in an attempt to isolate the land value, giving
-                    a more accurate picture of the contributory value of the land in the area.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          {/* Second row of breakdown tiles */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Views */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Views</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We evaluate property views based on their actual market impact, analyzing sales data of properties
-                  with similar view premiums including water views, city skylines, golf courses, and open spaces. We
-                  consider view permanence and seasonal variations.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often use generic view categories without considering the specific quality, permanence, or
-                  market desirability of different view types in the local area.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our view analysis is based on actual market premiums paid for specific view types rather than broad
-                    categorical adjustments that may not reflect local buyer preferences.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Const Type */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Const Type</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We evaluate architectural styles based on current market preferences, analyzing recent sales of
-                  similar styles while accounting for regional design trends and buyer demographics.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often have outdated style preferences that don't reflect current market demand or fail to
-                  recognize emerging architectural trends.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our analysis is based on current buyer preferences rather than historical assumptions about
-                    architectural desirability.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Quality */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Quality</div>
-                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  {conditionQualityBreakdownSummary('quality', qualityAdjustments)}
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  District classifications are often based on broad categories that don't capture subtle quality
-                  differences that significantly impact market value.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    {groupedGridImpact(qualityAdjustments)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Third row of breakdown tiles */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Condition */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Condition</div>
-                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  {conditionQualityBreakdownSummary('condition', conditionAdjustments)}
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often fail to properly account for the timing and quality of updates, applying generic
-                  adjustments that don't reflect actual market premiums.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    {groupedGridImpact(conditionAdjustments)}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Bath Count */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Bath Count</div>
-                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  {groupedBreakdownSummary('bathrooms', roomCountBathAdjustments)}
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts typically apply simple per-bathroom adjustments without accounting for bathroom quality,
-                  size, or functionality.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    {groupedGridImpact(roomCountBathAdjustments)}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Gross Living Area */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Gross Living Area</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We use regression analysis to determine the marginal value per square foot, considering diminishing
-                  returns on oversized homes and optimal size ranges for the market.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often use linear per-square-foot adjustments that don't account for optimal home sizes or
-                  the reduced value of excess space.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our methodology recognizes that square footage value varies based on home size and market
-                    preferences.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Fourth row of breakdown tiles */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Basement SF */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Basement SF</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We differentiate between finished and unfinished basement space, analyzing their respective market
-                  values and considering regional preferences for basement space.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often fail to properly distinguish between different types of basement space or don't
-                  reflect regional preferences.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our analysis provides specific values for different basement configurations based on actual market
-                    data.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Heating/Cooling */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Heating/Cooling</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We evaluate HVAC systems based on efficiency ratings, age, type, and maintenance history, analyzing
-                  their impact on buyer preferences and energy costs.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts typically use broad categories that don't reflect the significant value differences between
-                  modern efficient systems and older units.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our method considers the full impact of HVAC efficiency and condition on market value and buyer
-                    appeal.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Solar Panels */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Solar Panels</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We analyze the market premium for green features like solar panels, energy-efficient windows, and
-                  sustainable materials, considering their actual impact on utility costs and buyer preferences.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often fail to properly value green improvements or use outdated assumptions about their
-                  market appeal.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our analysis reflects current market premiums for green features and their actual financial
-                    benefits.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Fifth row of breakdown tiles */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Garages/Parking */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Garages/Parking</div>
-                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  {groupedBreakdownSummary('garage', garageAdjustments)}
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts typically use simple adjustments that don't account for garage quality, attached vs.
-                  detached, or regional parking demand variations.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    {groupedGridImpact(garageAdjustments)}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Porches/Decks */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Porches/Decks</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We assess outdoor living spaces based on size, quality, orientation, and integration with the home,
-                  analyzing their contribution to overall livability and market appeal.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often undervalue or overvalue outdoor spaces without considering their quality, usability,
-                  or integration with the home design.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our analysis provides precise valuations based on the actual utility and appeal of specific outdoor
-                    features.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Fencing */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Fencing</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We evaluate fencing based on material quality, condition, appropriateness for the neighborhood, and
-                  impact on privacy and security.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts typically apply generic fencing adjustments that don't consider material quality, condition,
-                  or neighborhood appropriateness.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our method recognizes that fencing value depends on quality, condition, and neighborhood
-                    compatibility.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Sixth row of breakdown tiles */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Pool */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Pool</div>
-                <div className="text-green-700 font-semibold">Current Applied Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  {groupedBreakdownSummary('pool', poolAdjustments)}
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often use outdated assumptions about pool values that don't reflect current maintenance
-                  concerns or regional preferences.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Current Grid Impact</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    {groupedGridImpact(poolAdjustments)}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Secondary Improvements */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Secondary Improvements</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We evaluate secondary structures based on their functionality, condition, and contribution to property
-                  utility, analyzing similar sales with comparable improvements.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often undervalue or ignore secondary improvements that can significantly contribute to
-                  property functionality and value.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our comprehensive analysis ensures all valuable improvements are properly considered in the
-                    valuation.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Easements */}
-            <div className="rounded-xl bg-white border border-slate-200 shadow-sm p-4 relative">
-              <div className="absolute inset-y-0 left-0 w-1 rounded-l-xl" style={{ backgroundColor: '#f5a524' }} />
-              <div className="pl-2">
-                <div className="text-lg font-semibold mb-2">Easements</div>
-                <div className="text-green-700 font-semibold">Our Methodology</div>
-                <p className="mt-2 text-sm text-slate-700">
-                  We analyze the impact of easements based on their type, location, and actual effect on property use
-                  and marketability, considering buyer reactions to different easement types.
-                </p>
-                <div className="mt-3 text-red-600 font-semibold">District Method</div>
-                <p className="mt-1 text-sm text-slate-700">
-                  Districts often apply generic easement adjustments that don't reflect the specific impact of
-                  different easement types on market value.
-                </p>
-                <div className="mt-3 rounded-lg bg-slate-100 p-3">
-                  <div className="font-semibold text-slate-800 text-sm">Why We're More Accurate</div>
-                  <div className="text-xs text-slate-700 mt-1">
-                    Our analysis provides specific adjustments based on the actual market impact of different easement
-                    configurations.
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
           {/* Property Location Analysis (Comparable Sales Map) */}
           <div className="mt-6 rounded-2xl border border-slate-200 bg-white">
             <div className="p-6">
@@ -5369,21 +4908,99 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       <div className="p-6">
         <div className="text-xl font-semibold text-slate-900">Cost to Cure</div>
         <div className="text-sm text-slate-600 mt-1">
-          Detailed breakdown of necessary repairs and improvements that impact the subject property's market value.
+          Add each necessary repair or improvement and its estimated cost. The total updates the reconciled value automatically.
         </div>
 
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              {costToCure.left.map((cat, i) => (
-                <Category key={`c-l-${i}`} title={cat.title} items={cat.items} />
-              ))}
+        <div className="mt-4 space-y-3">
+          {costToCureItems.map((item, index) => (
+            <div
+              key={item.id}
+              className="grid grid-cols-1 gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 md:grid-cols-[minmax(0,1fr)_13rem_auto] md:items-end"
+            >
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Repair item {index + 1}
+                </span>
+                <input
+                  type="text"
+                  value={item.description}
+                  onChange={(event) =>
+                    setCostToCureItems((current) =>
+                      current.map((currentItem) =>
+                        currentItem.id === item.id
+                          ? { ...currentItem, description: event.target.value }
+                          : currentItem,
+                      ),
+                    )
+                  }
+                  placeholder="Describe the repair or improvement"
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+                  aria-label={`Repair item ${index + 1} description`}
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Estimated cost
+                </span>
+                <div className="flex rounded-lg border border-slate-300 bg-white shadow-sm focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-200">
+                  <span className="flex items-center border-r border-slate-200 px-3 text-sm font-semibold text-slate-500">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="100"
+                    inputMode="decimal"
+                    value={item.cost}
+                    onChange={(event) =>
+                      setCostToCureItems((current) =>
+                        current.map((currentItem) =>
+                          currentItem.id === item.id
+                            ? { ...currentItem, cost: event.target.value }
+                            : currentItem,
+                        ),
+                      )
+                    }
+                    placeholder="0"
+                    className="min-w-0 flex-1 rounded-r-lg border-0 bg-transparent px-3 py-2 text-sm text-slate-900 focus:outline-none"
+                    aria-label={`Repair item ${index + 1} estimated cost`}
+                  />
+                </div>
+              </label>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setCostToCureItems((current) =>
+                    current.filter((currentItem) => currentItem.id !== item.id),
+                  )
+                }
+                className="rounded-lg border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50"
+                aria-label={`Remove repair item ${index + 1}`}
+              >
+                Remove
+              </button>
             </div>
-            <div>
-              {costToCure.right.map((cat, i) => (
-                <Category key={`c-r-${i}`} title={cat.title} items={cat.items} />
-              ))}
+          ))}
+
+          {!costToCureItems.length && (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
+              No repair items have been added.
             </div>
-          </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() =>
+              setCostToCureItems((current) => [
+                ...current,
+                createCostToCureLine(),
+              ])
+            }
+            className="inline-flex items-center rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+          >
+            + Add repair item
+          </button>
+        </div>
 
         {/* Total Cost callout */}
         <div className="mt-5 rounded-xl border border-amber-300 bg-amber-50 p-4 flex items-center justify-between">
@@ -5397,7 +5014,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         {/* Market Impact Analysis */}
         <div className="mt-4 rounded-xl bg-slate-50 border border-slate-200 p-4 text-sm text-slate-800">
           <div className="font-medium mb-1">Market Impact Analysis</div>
-          Based on our analysis, properties requiring similar repairs typically sell for $31,900 to $38,280 less than comparable properties in move-in ready condition. The district's assessment does not adequately account for these condition-related value impacts.
+          {costToCureTotal > 0
+            ? `${serializedCostToCureItems.length} repair item${serializedCostToCureItems.length === 1 ? '' : 's'} currently total ${fmtCurrency(costToCureTotal)}. This amount is deducted from the reconciled sales-comparison value when calculating the opinion after cost to cure.`
+            : 'Add repair items and estimated costs above to calculate the cost-to-cure deduction.'}
         </div>
       </div>
     </div>
@@ -5482,40 +5101,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     </div>
   );
 }
-
-function Category(props: { title: string; items: { label: string; cost: number }[] }) {
-  const { title, items } = props;
-  const total = items.reduce((s, i) => s + i.cost, 0);
-
-  const fmt = (n) =>
-    n.toLocaleString('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits: 0,
-    });
-
-  return (
-    <div className="mb-6">
-      <div className="font-semibold mb-2">{title}</div>
-      <div className="space-y-2">
-        {items.map((it, idx) => (
-          <div
-            key={idx}
-            className="flex items-center justify-between rounded-md bg-slate-50 border border-slate-200 px-3 py-2"
-          >
-            <div className="text-sm text-slate-800">{it.label}</div>
-            <div className="text-sm font-semibold text-rose-600">{fmt(it.cost)}</div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-2 text-sm text-slate-700">
-        Category Total: <span className="font-semibold">{fmt(total)}</span>
-      </div>
-    </div>
-  );
-}
-
-// Removed erroneous placeholder; generateSummary is defined within the component
 
 function DistrictEvidenceAccordion() {
   const [open, setOpen] = useState<number | null>(null);

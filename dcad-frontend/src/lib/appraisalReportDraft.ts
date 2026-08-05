@@ -42,6 +42,13 @@ export type AppraisalReportSalesDraft = {
   comparables: AppraisalReportComparable[];
   opinionOfValue: number | null;
   opinionAfterCostToCure: number | null;
+  costToCure?: {
+    items: Array<{
+      description: string;
+      cost: number;
+    }>;
+    total: number;
+  };
   salesNotes: string;
   adjustmentNotes: string;
 };

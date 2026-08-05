@@ -900,7 +900,8 @@ export type GroupedAnalysisBreakdownKey =
   | 'radius_2'
   | 'radius_3'
   | 'radius_4'
-  | 'radius_5';
+  | 'radius_5'
+  | 'custom';
 
 export interface GroupedAnalysisResponse {
   subject: {
@@ -909,7 +910,7 @@ export interface GroupedAnalysisResponse {
   };
   market: {
     key: GroupedAnalysisBreakdownKey;
-    scope: 'city' | 'zip' | 'radius';
+    scope: 'city' | 'zip' | 'radius' | 'custom';
     city: string | null;
     county: string | null;
     postal_code: string | null;
@@ -936,6 +937,121 @@ export interface GroupedAnalysisResponse {
     period_years: number;
   };
   dimensions: GroupedAnalysisDimension[];
+}
+
+export type PairedAnalysisDimensionKey =
+  | 'bathrooms'
+  | 'garage'
+  | 'pool'
+  | 'living_area';
+
+export type PairedAnalysisUnit =
+  | 'per_bath_equivalent'
+  | 'per_garage_space'
+  | 'per_feature'
+  | 'per_square_foot';
+
+export interface PairedSaleSummary {
+  saleId: string | null;
+  sourceRecordId: string | null;
+  accountId: string | null;
+  address: string | null;
+  city: string | null;
+  closingDate: string | null;
+  salePrice: number;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  garageSpaces: number | null;
+  pool: boolean | null;
+  livingArea: number;
+  siteSize: number | null;
+  yearBuilt: number | null;
+}
+
+export interface PairedSaleEvidence {
+  id: string;
+  inferior: PairedSaleSummary;
+  superior: PairedSaleSummary;
+  featureDifference: number;
+  salePriceDifference: number;
+  unitPriceDifference: number;
+  matchScore: number;
+  controlDifferences: {
+    distanceMiles: number;
+    closingDateDays: number;
+    livingAreaPercent: number;
+    yearBuiltYears: number | null;
+    siteSizePercent: number | null;
+  };
+}
+
+export interface PairedAnalysisStatistics {
+  sampleSize: number;
+  mean: number | null;
+  median: number | null;
+  standardDeviation: number | null;
+  coefficientOfVariation: number | null;
+  coefficientOfDispersion: number | null;
+  recommendedAdjustment: number | null;
+  reliability: GroupedAdjustmentReliability;
+}
+
+export interface PairedAnalysisRange {
+  id: string;
+  label: string;
+  fromValue: number | boolean;
+  toValue: number | boolean;
+  unit: PairedAnalysisUnit;
+  unitLabel: string;
+  statistics: PairedAnalysisStatistics;
+  pairs: PairedSaleEvidence[];
+}
+
+export interface PairedAnalysisDimension {
+  key: PairedAnalysisDimensionKey;
+  label: string;
+  explanation: string;
+  ranges: PairedAnalysisRange[];
+}
+
+export interface PairedSalesAnalysisResponse {
+  subject: {
+    accountId: string;
+    address: string | null;
+    city: string | null;
+    county: string | null;
+    postalCode: string | null;
+  };
+  market: {
+    key: MarketConditionsAreaKey;
+    scope: 'city' | 'zip' | 'radius' | 'custom';
+    radiusMiles: number | null;
+    label: string;
+    customGeometry: GeoJsonPolygon | null;
+  };
+  period: {
+    start: string;
+    end: string;
+    analysisAsOf: string;
+    periodMonths: 12;
+    completeCalendarMonths: true;
+  };
+  population: {
+    eligibleSaleCount: number;
+    pairableSaleCount: number;
+  };
+  methodology: {
+    maximumPairDistanceMiles: number;
+    maximumClosingDateDifferenceDays: number;
+    maximumYearBuiltDifferenceYears: number;
+    maximumSiteSizeDifferencePercent: number;
+    maximumControlLivingAreaDifferencePercent: number;
+    maximumPairsPerRange: number;
+    pairReuseWithinRange: false;
+    negativeDifferencesRetained: true;
+    knownNonTargetControlsRequired: true;
+  };
+  dimensions: PairedAnalysisDimension[];
 }
 
 export interface GroupedAnalysesResponse {
@@ -1261,6 +1377,29 @@ export async function getGroupedAdjustmentAnalyses(
     breakdowns: breakdowns.join(','),
   });
   return fetchJSON<GroupedAnalysesResponse>(url, { timeoutMs: 120000 });
+}
+
+/** Build a paired-sales study inside one selected market area. */
+export async function runPairedSalesAnalysis(request: {
+  subjectAccountId: string;
+  marketKey: MarketConditionsAreaKey;
+  asOf?: string;
+  customGeometry?: GeoJsonPolygon | null;
+}): Promise<PairedSalesAnalysisResponse> {
+  const url = makeUrl('/api/sales/paired-analysis');
+  return fetchJSON<PairedSalesAnalysisResponse>(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      subject_account_id: request.subjectAccountId.trim(),
+      market_key: request.marketKey,
+      as_of: request.asOf,
+      custom_geometry: request.customGeometry || null,
+    }),
+    timeoutMs: 120000,
+  });
 }
 
 /**

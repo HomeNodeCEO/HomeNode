@@ -44,6 +44,10 @@ import {
   getMarketContext,
   marketConditionsErrorStatus,
 } from "./services/marketConditions.js";
+import {
+  buildPairedSalesStudy,
+  pairedSalesErrorStatus,
+} from "./services/pairedSalesAnalysis.js";
 import { getAccountSalesHistory } from "./services/accountSalesHistory.js";
 import {
   ensureAppraisalRatingsSchema,
@@ -3482,6 +3486,33 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
             database_code: error?.code || null,
           }
         : {}),
+    });
+  }
+});
+
+/**
+ * POST /api/sales/paired-analysis
+ *
+ * Finds non-overlapping, closely matched sale pairs within one selected market
+ * area. Negative feature contributions are retained so the mean, median, COD,
+ * coefficient of variation, and standard deviation describe the full evidence.
+ */
+app.post("/api/sales/paired-analysis", async (req, res) => {
+  try {
+    const result = await buildPairedSalesStudy(pool, {
+      subjectAccountId: String(
+        req.body?.subject_account_id || "",
+      ).trim(),
+      marketKey: String(req.body?.market_key || "city").trim(),
+      asOfDate: String(req.body?.as_of || "").trim(),
+      customGeometry: req.body?.custom_geometry || null,
+    });
+    res.json(result);
+  } catch (error) {
+    const message = error?.message || "paired_sales_analysis_failed";
+    console.error("/api/sales/paired-analysis failed", error);
+    res.status(pairedSalesErrorStatus(message)).json({
+      error: message,
     });
   }
 });

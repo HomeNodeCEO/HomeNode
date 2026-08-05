@@ -215,7 +215,7 @@ export function parseMarketAreaKeys(value) {
   return areas;
 }
 
-async function ensureSpatialSupport(pool) {
+export async function ensureSpatialSupport(pool) {
   await ensureAccountLocationsTable(pool);
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS postgis;

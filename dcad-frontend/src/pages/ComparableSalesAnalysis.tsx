@@ -12,6 +12,7 @@ import GroupedAdjustmentAnalysis, {
   type AppliedGroupedAdjustment,
   type GroupedAdjustmentImpactPreview,
 } from '@/components/GroupedAdjustmentAnalysis';
+import type { AppraiserDefinedAdjustmentArea } from '@/components/PairedSalesAnalysis';
 import ConditionQualityStudy, {
   type ConditionQualityImpactPreview,
   type ConditionQualityRatingAssignment,
@@ -521,6 +522,19 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   useEffect(() => {
     setMarketConditionsDraft(readMarketConditionsDraft(propertyId));
   }, [propertyId]);
+
+  const appraiserDefinedAdjustmentArea = useMemo<AppraiserDefinedAdjustmentArea | null>(() => {
+    const customStudy = marketConditionsDraft?.response.analyses.find(
+      (analysis) => analysis.market.key === 'custom',
+    );
+    const geometry = customStudy?.market.custom_geometry;
+    if (!geometry) return null;
+    return {
+      geometry,
+      label: customStudy.market.label || 'Appraiser-defined market area',
+      asOfDate: marketConditionsDraft?.asOfDate,
+    };
+  }, [marketConditionsDraft]);
 
   useEffect(() => {
     const normalizedCondition = normalizeUadConditionRating(conditionCode);
@@ -2221,11 +2235,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   ) => {
     const studies = groupedStudiesFor(dimensionKey);
     if (!studies.length) {
-      return 'No grouped study has been applied yet. Select a supported market difference above, enter any desired factor, and apply it to update the grid.';
+      return 'No market adjustment has been applied yet. Run a supported methodology above, enter any desired factor, and apply its result to update the grid.';
     }
     const study = studies[studies.length - 1];
+    const isPairedStudy = study.id.startsWith('paired:');
     const unitLabel = dimensionKey === 'bathrooms'
-      ? 'full bath'
+      ? 'full-bath equivalent'
       : dimensionKey === 'garage'
         ? 'garage space'
         : dimensionKey === 'living_area'
@@ -2244,9 +2259,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(study.sourceLivingAreaDifference!)} SF = ` +
         `${signedAdjustment(study.baseAmount)} per SF; ${study.factorPercent}% factoring = ` +
         `${signedAdjustment(study.amount)} per SF`
-      : `${study.marketLabel} — ${study.transitionLabel} study selected: ` +
-        `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% = ` +
-        `${signedAdjustment(study.amount)} per ${unitLabel}`;
+      : isPairedStudy
+        ? `${study.marketLabel} — ${study.transitionLabel} ${study.optionLabel}: ` +
+          `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% factoring = ` +
+          `${signedAdjustment(study.amount)} per ${unitLabel}`
+        : `${study.marketLabel} — ${study.transitionLabel} study selected: ` +
+          `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% = ` +
+          `${signedAdjustment(study.amount)} per ${unitLabel}`;
     const selectedCount = selectedSales.filter(Boolean).length;
     const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;
     return `${appliedText}. This universal rate currently adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
@@ -4752,6 +4771,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         <GroupedAdjustmentAnalysis
           key={propertyId}
           subjectAccountId={propertyId}
+          appraiserDefinedArea={appraiserDefinedAdjustmentArea}
           appliedAdjustments={appliedGroupedAdjustments}
           getImpactPreview={previewGroupedAdjustment}
           onApplyAdjustment={(adjustment) =>

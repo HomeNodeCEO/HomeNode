@@ -7,6 +7,9 @@ import type {
   GroupedAnalysisDimension,
   GroupedAnalysisTransition,
 } from '@/lib/api';
+import PairedSalesAnalysis, {
+  type AppraiserDefinedAdjustmentArea,
+} from '@/components/PairedSalesAnalysis';
 
 export type AppliedGroupedAdjustment = {
   id: string;
@@ -583,12 +586,14 @@ const BREAKDOWN_OPTIONS: Array<{
 
 export default function GroupedAdjustmentAnalysis({
   subjectAccountId,
+  appraiserDefinedArea,
   appliedAdjustments,
   getImpactPreview,
   onApplyAdjustment,
   onRemoveAdjustment,
 }: {
   subjectAccountId: string;
+  appraiserDefinedArea?: AppraiserDefinedAdjustmentArea | null;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
   getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
   onApplyAdjustment: (adjustment: AppliedGroupedAdjustment) => void;
@@ -661,6 +666,15 @@ export default function GroupedAdjustmentAnalysis({
         <div className="mt-1 text-sm text-slate-600">
           Run a methodology, review its market evidence, factor it when appropriate, and apply the supported adjustment to the grid.
         </div>
+        <div className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+          appraiserDefinedArea
+            ? 'bg-emerald-100 text-emerald-800'
+            : 'bg-slate-100 text-slate-600'
+        }`}>
+          {appraiserDefinedArea
+            ? 'Saved appraiser-defined area is available to adjustment studies'
+            : 'Save an appraiser-defined market area above to reuse it here'}
+        </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {METHODOLOGY_OPTIONS.map((method) => (
             <button
@@ -680,7 +694,7 @@ export default function GroupedAdjustmentAnalysis({
         </div>
       </div>
 
-      {activeMethod && activeMethod !== 'grouped' && (
+      {activeMethod && activeMethod !== 'grouped' && activeMethod !== 'paired_sales' && (
         <div className="p-5">
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5">
             <div className="text-lg font-semibold text-indigo-950">
@@ -694,6 +708,17 @@ export default function GroupedAdjustmentAnalysis({
             </div>
           </div>
         </div>
+      )}
+
+      {activeMethod === 'paired_sales' && (
+        <PairedSalesAnalysis
+          subjectAccountId={subjectAccountId}
+          appraiserDefinedArea={appraiserDefinedArea}
+          appliedAdjustments={appliedAdjustments}
+          getImpactPreview={getImpactPreview}
+          onApplyAdjustment={onApplyAdjustment}
+          onRemoveAdjustment={onRemoveAdjustment}
+        />
       )}
 
       {activeMethod === 'grouped' && (
@@ -863,7 +888,7 @@ export default function GroupedAdjustmentAnalysis({
                         <div className="mt-1 text-xl font-semibold text-slate-900">
                           {appliedEntries.length}
                           <span className="ml-1 text-sm font-medium text-slate-500">
-                            across {appliedDimensionCount}/3 sections
+                            across {appliedDimensionCount}/4 sections
                           </span>
                         </div>
                       </div>

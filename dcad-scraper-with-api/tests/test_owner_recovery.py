@@ -64,3 +64,35 @@ def test_repairs_coowner_misread_as_an_address_line():
             }
         ],
     }
+
+def test_recovers_from_history_when_current_mailing_address_changed():
+    detail = {
+        "owner": {
+            "owner_name": "PEREZ JOSE RICARDO VILLALOBOS &",
+            "mailing_address": "3515 PACKARD ST, DALLAS, TEXAS 752153446",
+            "multi_owner": [
+                {
+                    "owner_name": "PEREZ JOSE RICARDO VILLALOBOS &",
+                    "ownership_pct": "100%",
+                }
+            ],
+        }
+    }
+    history = {
+        "owner_history": [
+            {
+                "owner_lines": [
+                    "PEREZ JOSE RICARDO VILLALOBOS & VILLALOBOS MARTHA "
+                    "2146 CEDAR VALLEY LN DALLAS, TEXAS 752322308"
+                ]
+            }
+        ]
+    }
+
+    assert repair_owner_from_history(detail, history)
+    assert detail["owner"]["owner_name"] == (
+        "PEREZ JOSE RICARDO VILLALOBOS & VILLALOBOS MARTHA"
+    )
+    assert detail["owner"]["mailing_address"] == (
+        "3515 PACKARD ST, DALLAS, TEXAS 752153446"
+    )

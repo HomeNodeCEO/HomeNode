@@ -51,6 +51,7 @@ export interface AccountRow {
   address: string | null;
   street_name?: string | null;
   city?: string | null;
+  state?: string | null;
   postal_code?: string | null;
   search_match?: 'exact_account' | 'exact_address' | 'address_prefix' | 'same_street' | 'city_prefix' | null;
   county: string | null;
@@ -140,7 +141,8 @@ export type ReportManualSectionKey =
   | 'report.sales_history'
   | 'report.property_characteristics'
   | 'report.land_details'
-  | 'report.appraisal_values';
+  | 'report.appraisal_values'
+  | 'report.assignment_details';
 
 export interface ReportManualValue {
   value: unknown;
@@ -674,6 +676,8 @@ export interface RelatedParcel {
   data_quality_status: string | null;
   in_database: boolean;
   is_subject: boolean;
+  materially_different?: boolean;
+  difference_fields?: string[];
 }
 
 export interface RelatedParcelsResponse {
@@ -682,6 +686,7 @@ export interface RelatedParcelsResponse {
   live_query_status: 'complete' | 'unavailable' | 'unsupported_county';
   live_query_error: string | null;
   review_required: boolean;
+  material_difference_found?: boolean;
   merge_performed: false;
   parcels: RelatedParcel[];
 }

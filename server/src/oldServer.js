@@ -74,6 +74,8 @@ import {
   assertPropertyAttributeKey,
   NON_DALLAS_ENRICHMENT_COUNTIES,
 } from "./util/nonDallasEnrichment.js";
+import { validateReportManualSection } from "./util/reportManualValues.js";
+import { markMaterialParcelDifferences } from "./util/relatedParcelDifferences.js";
 
 const app = express();
 app.use(express.json());
@@ -159,6 +161,7 @@ const REPORT_MANUAL_SECTION_KEYS = new Set([
   "report.property_characteristics",
   "report.land_details",
   "report.appraisal_values",
+  "report.assignment_details",
 ]);
 
 function positiveSiteSize(value) {
@@ -376,6 +379,8 @@ app.get("/api/accounts/:id", async (req, res) => {
       SELECT
         a.account_id,
         COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) AS address,
+        COALESCE(NULLIF(BTRIM(a.city), ''), raw_loc.city) AS city,
+        COALESCE(NULLIF(BTRIM(a.postal_code), ''), raw_loc.postal_code) AS postal_code,
         a.county,
         a.neighborhood_code,
         a.subdivision,
@@ -400,7 +405,15 @@ app.get("/api/accounts/:id", async (req, res) => {
         SELECT COALESCE(
                  NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
                  NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
-               ) AS address
+               ) AS address,
+               COALESCE(
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,city}'), ''),
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,situs_city}'), '')
+               ) AS city,
+               COALESCE(
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,postal_code}'), ''),
+                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,zip_code}'), '')
+               ) AS postal_code
         FROM core.dcad_json_raw r
         WHERE r.account_id = a.account_id
           AND COALESCE(
@@ -409,7 +422,7 @@ app.get("/api/accounts/:id", async (req, res) => {
               ) IS NOT NULL
         ORDER BY r.tax_year DESC, r.fetched_at DESC
         LIMIT 1
-      ) raw_loc ON NULLIF(BTRIM(a.address), '') IS NULL
+      ) raw_loc ON TRUE
       WHERE a.account_id = $1
     `;
     const { rows: accRows } = await pool.query(accountSql, [canonicalId]);
@@ -844,6 +857,13 @@ app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
   const serializedSize = Buffer.byteLength(JSON.stringify(sections), "utf8");
   if (serializedSize > 250_000) {
     return res.status(413).json({ error: "report_sections_too_large" });
+  }
+  try {
+    for (const [key, value] of entries) validateReportManualSection(key, value);
+  } catch (error) {
+    return res.status(400).json({
+      error: error?.message || "invalid_report_section_value",
+    });
   }
 
   const reviewer = String(req.body?.reviewer || "HomeNode editor")
@@ -3594,11 +3614,23 @@ app.get("/api/accounts/:id/related-parcels", async (req, res) => {
          account.neighborhood_code,
          account.legal_description,
          account.data_quality_status,
+         COALESCE(improvement.living_area_sqft, improvement.total_living_area) AS living_area_sqft,
+         values.land_value,
+         values.improvement_value,
+         values.market_value AS total_value,
          location.latitude,
          location.longitude
        FROM core.accounts account
        LEFT JOIN core.account_locations location
          ON location.account_id = account.account_id
+       LEFT JOIN core.value_summary_current values
+         ON values.account_id = account.account_id
+       LEFT JOIN LATERAL (
+         SELECT living_area_sqft, total_living_area
+         FROM core.primary_improvements
+         WHERE account_id = account.account_id
+         LIMIT 1
+       ) improvement ON TRUE
        WHERE account.account_id = ANY($1::text[])
           OR UPPER(BTRIM(SPLIT_PART(COALESCE(account.address, ''), ',', 1))) = $2
        ORDER BY account.account_id`,
@@ -3615,6 +3647,16 @@ app.get("/api/accounts/:id/related-parcels", async (req, res) => {
         postal_code: local?.postal_code || null,
         county: local?.county || account.county || "DALLAS COUNTY",
         legal_description: local?.legal_description || parcel.property_description,
+        living_area_sqft:
+          parcel.living_area_sqft ??
+          (local?.living_area_sqft == null ? null : Number(local.living_area_sqft)),
+        land_value:
+          parcel.land_value ?? (local?.land_value == null ? null : Number(local.land_value)),
+        improvement_value:
+          parcel.improvement_value ??
+          (local?.improvement_value == null ? null : Number(local.improvement_value)),
+        total_value:
+          parcel.total_value ?? (local?.total_value == null ? null : Number(local.total_value)),
         data_quality_status: local?.data_quality_status || null,
         in_database: Boolean(local),
         is_subject: parcel.account_id === accountId,
@@ -3634,10 +3676,12 @@ app.get("/api/accounts/:id/related-parcels", async (req, res) => {
         property_description: local.legal_description,
         legal_description: local.legal_description,
         use_description: null,
-        living_area_sqft: null,
-        land_value: null,
-        improvement_value: null,
-        total_value: null,
+        living_area_sqft:
+          local.living_area_sqft == null ? null : Number(local.living_area_sqft),
+        land_value: local.land_value == null ? null : Number(local.land_value),
+        improvement_value:
+          local.improvement_value == null ? null : Number(local.improvement_value),
+        total_value: local.total_value == null ? null : Number(local.total_value),
         latitude: local.latitude == null ? null : Number(local.latitude),
         longitude: local.longitude == null ? null : Number(local.longitude),
         source_updated_at: null,
@@ -3647,16 +3691,18 @@ app.get("/api/accounts/:id/related-parcels", async (req, res) => {
         is_subject: local.account_id === accountId,
       });
     }
-    const parcels = [...combined.values()].sort((left, right) => {
+    const parcels = markMaterialParcelDifferences([...combined.values()], accountId).sort((left, right) => {
       if (left.is_subject !== right.is_subject) return left.is_subject ? -1 : 1;
       return String(left.account_id).localeCompare(String(right.account_id));
     });
+    const materialDifferenceFound = parcels.some((parcel) => parcel.materially_different);
     return res.json({
       subject_account_id: accountId,
       query_address: liveResult.query_address || requestedAddress,
       live_query_status: liveQueryStatus,
       live_query_error: liveQueryError,
-      review_required: parcels.length > 1 || liveQueryStatus !== "complete",
+      review_required: materialDifferenceFound,
+      material_difference_found: materialDifferenceFound,
       merge_performed: false,
       parcels,
     });

@@ -35,6 +35,11 @@ JOIN party_sets ps USING (account_id, tax_year)
 WHERE l.owner_name ~ '&\\s*$'
   AND ps.party_count = 1
   AND abs(ps.total_pct - 100) < 0.01
+  AND EXISTS (
+      SELECT 1
+      FROM app.dcad_residential_targets target
+      WHERE target.account_id = l.account_id
+  )
 """
 
 

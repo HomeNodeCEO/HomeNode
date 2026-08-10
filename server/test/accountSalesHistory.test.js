@@ -26,6 +26,7 @@ test("account activity history uses indexed source tables and includes CAD trans
   assert.match(capturedSql, /sale_parcels/);
   assert.match(capturedSql, /sale\.account_id = \$1/);
   assert.match(capturedSql, /legal_description_current/);
+  assert.match(capturedSql, /deed_transfer_date > DATE '1900-01-01'/);
   assert.match(capturedSql, /record_type = 'closed_sale'/);
   assert.doesNotMatch(capturedSql, /v_sales_enriched/);
 });

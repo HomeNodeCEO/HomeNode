@@ -162,6 +162,37 @@ export interface ReportManualValue {
   updated_at: string;
 }
 
+export interface AssignmentDetailsPayload {
+  pud?: boolean;
+  hoa_dues_amount?: string | number;
+  hoa_frequency?: string;
+  hoa_explanation?: string;
+  occupancy?: string;
+  occupancy_explanation?: string;
+  assignment_types?: string[];
+  assignment_explanation?: string;
+}
+
+export interface AppraisalAssignmentFile {
+  id: number;
+  account_id: string;
+  file_number: string;
+  assignment_details: AssignmentDetailsPayload;
+  inherited_from_file_id: number | null;
+  inherited_from_file_number: string | null;
+  reviewer: string | null;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssignmentFilesResponse {
+  account_id: string;
+  files: AppraisalAssignmentFile[];
+  latest_file: AppraisalAssignmentFile | null;
+  legacy_assignment_details: AssignmentDetailsPayload | null;
+}
+
 export interface SalePhoto {
   id: string | number;
   source_record_id: string | number;
@@ -1151,6 +1182,61 @@ export async function updatePropertyReportSections(
     },
     body: JSON.stringify({ sections }),
   });
+}
+
+/** Load the immutable assignment-file log and the latest values available to inherit. */
+export async function getAssignmentFiles(accountId: string): Promise<AssignmentFilesResponse> {
+  const id = (accountId || '').trim();
+  return fetchJSON<AssignmentFilesResponse>(
+    makeUrl(`/api/accounts/${encodeURIComponent(id)}/assignment-files`),
+  );
+}
+
+/** Create a distinct appraisal file. Earlier file snapshots are never overwritten. */
+export async function createAssignmentFile(
+  accountId: string,
+  input: {
+    file_number: string;
+    assignment_details: AssignmentDetailsPayload;
+    inherited_from_file_id?: number | null;
+  },
+  editorKey: string,
+): Promise<{ ok: true; assignment_file: AppraisalAssignmentFile }> {
+  const id = (accountId || '').trim();
+  return fetchJSON(makeUrl(`/api/accounts/${encodeURIComponent(id)}/assignment-files`), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify(input),
+  });
+}
+
+/** Save a revision to the currently active assignment file. */
+export async function updateAssignmentFile(
+  accountId: string,
+  assignmentFileId: number,
+  input: {
+    assignment_details: AssignmentDetailsPayload;
+    expected_revision: number;
+  },
+  editorKey: string,
+): Promise<{ ok: true; assignment_file: AppraisalAssignmentFile }> {
+  const id = (accountId || '').trim();
+  return fetchJSON(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}`,
+    ),
+    {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'x-homenode-editor-key': editorKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 /** Load background coordinate coverage for matched sale accounts. */

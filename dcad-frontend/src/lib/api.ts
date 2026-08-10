@@ -73,6 +73,16 @@ export interface AccountRow {
 
 export interface AccountDetail {
   account: AccountRow;
+  owner_summary?: {
+    owner_name: string | null;
+    mailing_address: string | null;
+    tax_year: number | null;
+  } | null;
+  owner_parties?: Array<{
+    owner_name: string | null;
+    ownership_pct: string | number | null;
+    tax_year: number | null;
+  }>;
   report_manual_values?: Partial<Record<ReportManualSectionKey, ReportManualValue>>;
   sales_history?: Array<{
     sale_id: string | number | null;

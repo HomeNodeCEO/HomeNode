@@ -117,6 +117,17 @@ type DcadHousingProfile = {
   profile_source?: string;
 };
 
+type AssignmentDetails = {
+  pud?: boolean;
+  hoa_dues_amount?: string | number;
+  hoa_frequency?: string;
+  hoa_explanation?: string;
+  occupancy?: string;
+  occupancy_explanation?: string;
+  assignment_types?: string[];
+  assignment_explanation?: string;
+};
+
 type DcadDetail = {
   tax_year?: number;
   property_location?: {
@@ -124,6 +135,7 @@ type DcadDetail = {
     neighborhood?: string;
     mapsco?: string;
     city?: string;
+    state?: string;
     postal_code?: string;
     county?: string;
     subdivision?: string;
@@ -141,6 +153,7 @@ type DcadDetail = {
   };
   sales_history?: DcadSaleHistoryRow[];
   homestead_yes?: boolean;
+  assignment_details?: AssignmentDetails;
   photos?: string[];
   report_manual_values?: Partial<Record<ReportManualSectionKey, unknown>>;
 };
@@ -157,7 +170,41 @@ const EDITABLE_REPORT_SECTIONS: EditableReportSection[] = [
   { key: "report.property_characteristics", title: "Property Characteristics" },
   { key: "report.land_details", title: "Land Details and Zoning" },
   { key: "report.appraisal_values", title: "Appraisal District Values" },
+  { key: "report.assignment_details", title: "Assignment, Occupancy, and HOA" },
 ];
+
+const HOA_FREQUENCY_OPTIONS = [
+  ["per_year", "Per Year"],
+  ["per_quarter", "Per Quarter"],
+  ["per_month", "Per Month"],
+  ["other", "Other"],
+] as const;
+
+const OCCUPANCY_OPTIONS = [
+  ["owner", "Owner"],
+  ["tenant", "Tenant"],
+  ["vacant", "Vacant"],
+  ["unknown", "Unknown"],
+] as const;
+
+const ASSIGNMENT_TYPE_OPTIONS = [
+  ["purchase_transaction", "Purchase Transaction"],
+  ["refinance", "Refinance"],
+  ["heloc", "HELOC"],
+  ["rtl", "RTL"],
+  ["bridge_loan", "Bridge Loan"],
+  ["new_construction", "New Construction"],
+  ["rehab", "Rehab"],
+  ["dscr", "DSCR"],
+  ["other", "Other"],
+] as const;
+
+function optionLabel(
+  value: string | undefined,
+  options: ReadonlyArray<readonly [string, string]>,
+): string {
+  return options.find(([key]) => key === value)?.[1] || "Not selected";
+}
 
 const ARRAY_ROW_TEMPLATES: Record<string, Record<string, unknown>> = {
   sales_history: {
@@ -261,12 +308,14 @@ function SummarySection({
   subtitle,
   children,
   onEdit,
+  actions,
   manuallyVerified = false,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   onEdit?: () => void;
+  actions?: ReactNode;
   manuallyVerified?: boolean;
 }) {
   return (
@@ -285,7 +334,7 @@ function SummarySection({
           </div>
           {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
         </div>
-        {onEdit ? (
+        {actions || (onEdit ? (
           <button
             type="button"
             onClick={onEdit}
@@ -293,7 +342,7 @@ function SummarySection({
           >
             Edit
           </button>
-        ) : null}
+        ) : null)}
       </div>
       {children}
     </section>
@@ -411,6 +460,181 @@ function ReportSectionEditor({
       return next;
     });
   };
+
+  const assignment = draft as AssignmentDetails;
+  const assignmentTypes = Array.isArray(assignment.assignment_types)
+    ? assignment.assignment_types
+    : [];
+  const assignmentErrors: string[] = [];
+  const hoaAmount = parseNumber(assignment.hoa_dues_amount);
+  const hoaExplanation = String(assignment.hoa_explanation || "").trim();
+  if (
+    section.key === "report.assignment_details" &&
+    assignment.pud &&
+    !((hoaAmount !== null && hoaAmount > 0 && assignment.hoa_frequency) || hoaExplanation)
+  ) {
+    assignmentErrors.push("Enter HOA dues and a frequency, or explain why they are unavailable.");
+  }
+  if (
+    section.key === "report.assignment_details" &&
+    assignment.pud &&
+    assignment.hoa_frequency === "other" &&
+    !hoaExplanation
+  ) {
+    assignmentErrors.push("Explain the Other HOA dues frequency.");
+  }
+  if (
+    section.key === "report.assignment_details" &&
+    assignment.occupancy === "unknown" &&
+    !String(assignment.occupancy_explanation || "").trim()
+  ) {
+    assignmentErrors.push("Explain why occupancy is unknown.");
+  }
+  if (
+    section.key === "report.assignment_details" &&
+    assignmentTypes.includes("other") &&
+    !String(assignment.assignment_explanation || "").trim()
+  ) {
+    assignmentErrors.push("Explain the Other assignment type.");
+  }
+
+  const checkboxOption = (
+    checked: boolean,
+    label: string,
+    onChange: (checked: boolean) => void,
+  ) => (
+    <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
+      checked
+        ? "border-blue-400 bg-blue-50 text-blue-900"
+        : "border-slate-200 bg-white text-slate-700"
+    }`}>
+      <input
+        type="checkbox"
+        className="checkbox checkbox-sm checkbox-primary"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {label}
+    </label>
+  );
+
+  const assignmentEditor = section.key === "report.assignment_details" ? (
+    <div className="space-y-5">
+      <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <legend className="px-1 text-sm font-semibold text-slate-900">Planned Unit Development</legend>
+        <div className="mt-1 max-w-xs">
+          {checkboxOption(Boolean(assignment.pud), "PUD", (checked) =>
+            updateAtPath(["pud"], checked),
+          )}
+        </div>
+        {assignment.pud ? (
+          <div className="mt-4 space-y-4">
+            <label className="block max-w-sm">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                HOA Dues Amount
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                className="input input-bordered mt-1 w-full bg-white"
+                value={assignment.hoa_dues_amount ?? ""}
+                onChange={(event) => updateAtPath(["hoa_dues_amount"], event.target.value)}
+                placeholder="Dollar amount"
+              />
+            </label>
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                HOA Dues Frequency
+              </div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {HOA_FREQUENCY_OPTIONS.map(([value, label]) =>
+                  <div key={value}>
+                    {checkboxOption(assignment.hoa_frequency === value, label, (checked) =>
+                      updateAtPath(["hoa_frequency"], checked ? value : ""),
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                HOA Explanation
+              </span>
+              <textarea
+                className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                value={assignment.hoa_explanation || ""}
+                onChange={(event) => updateAtPath(["hoa_explanation"], event.target.value)}
+                placeholder="Required when dues are unavailable or the frequency is Other"
+              />
+            </label>
+          </div>
+        ) : null}
+      </fieldset>
+
+      <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <legend className="px-1 text-sm font-semibold text-slate-900">Occupancy</legend>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {OCCUPANCY_OPTIONS.map(([value, label]) =>
+            <div key={value}>
+              {checkboxOption(assignment.occupancy === value, label, (checked) =>
+                updateAtPath(["occupancy"], checked ? value : ""),
+              )}
+            </div>
+          )}
+        </div>
+        {assignment.occupancy === "unknown" ? (
+          <label className="mt-4 block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Unknown Occupancy Explanation
+            </span>
+            <textarea
+              className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+              value={assignment.occupancy_explanation || ""}
+              onChange={(event) => updateAtPath(["occupancy_explanation"], event.target.value)}
+            />
+          </label>
+        ) : null}
+      </fieldset>
+
+      <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <legend className="px-1 text-sm font-semibold text-slate-900">Assignment Type</legend>
+        <p className="mb-3 text-xs text-slate-600">Select every type that applies to the assignment.</p>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {ASSIGNMENT_TYPE_OPTIONS.map(([value, label]) =>
+            <div key={value}>
+              {checkboxOption(assignmentTypes.includes(value), label, (checked) => {
+                const next = checked
+                  ? [...new Set([...assignmentTypes, value])]
+                  : assignmentTypes.filter((item) => item !== value);
+                updateAtPath(["assignment_types"], next);
+              })}
+            </div>
+          )}
+        </div>
+        {assignmentTypes.includes("other") ? (
+          <label className="mt-4 block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Other Assignment Explanation
+            </span>
+            <textarea
+              className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+              value={assignment.assignment_explanation || ""}
+              onChange={(event) => updateAtPath(["assignment_explanation"], event.target.value)}
+            />
+          </label>
+        ) : null}
+      </fieldset>
+
+      {assignmentErrors.length ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+          <ul className="list-disc space-y-1 pl-5">
+            {assignmentErrors.map((error) => <li key={error}>{error}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  ) : null;
 
   const renderValue = (
     value: unknown,
@@ -569,7 +793,7 @@ function ReportSectionEditor({
           </button>
         </div>
         <div className="space-y-4 overflow-y-auto p-5">
-          {Object.entries(draft).map(([key, value]) => (
+          {assignmentEditor || Object.entries(draft).map(([key, value]) => (
             <div key={key}>{renderValue(value, [key], key)}</div>
           ))}
         </div>
@@ -581,7 +805,7 @@ function ReportSectionEditor({
             type="button"
             onClick={() => onSave(draft)}
             className="btn normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
-            disabled={saving}
+            disabled={saving || assignmentErrors.length > 0}
           >
             {saving ? "Saving…" : "Save Changes"}
           </button>
@@ -651,6 +875,10 @@ function AddressHero({
   }, [accountId, detailLoaded, exactAddress, relatedParcelSearchVersion]);
 
   const address = displayValue(detail?.property_location?.address, "Property address unavailable");
+  const streetAddress = address.split(",")[0].trim() || address;
+  const city = displayValue(detail?.property_location?.city);
+  const state = displayValue(detail?.property_location?.state, "TX");
+  const postalCode = displayValue(detail?.property_location?.postal_code);
   const neighborhood = displayValue(detail?.property_location?.neighborhood);
   const subdivision = displayValue(detail?.property_location?.subdivision);
   const county = displayValue(detail?.property_location?.county);
@@ -676,6 +904,7 @@ function AddressHero({
             address: detail?.property_location?.address || "",
             neighborhood: detail?.property_location?.neighborhood || "",
             city: detail?.property_location?.city || "",
+            state: detail?.property_location?.state || "TX",
             postal_code: detail?.property_location?.postal_code || "",
             county: detail?.property_location?.county || "",
             subdivision: detail?.property_location?.subdivision || "",
@@ -762,6 +991,17 @@ function AddressHero({
             land_value: detail?.value_summary?.land_value || "",
           },
         };
+      case "report.assignment_details":
+        return {
+          pud: Boolean(detail?.assignment_details?.pud),
+          hoa_dues_amount: detail?.assignment_details?.hoa_dues_amount || "",
+          hoa_frequency: detail?.assignment_details?.hoa_frequency || "",
+          hoa_explanation: detail?.assignment_details?.hoa_explanation || "",
+          occupancy: detail?.assignment_details?.occupancy || "",
+          occupancy_explanation: detail?.assignment_details?.occupancy_explanation || "",
+          assignment_types: cloneEditorValue(detail?.assignment_details?.assignment_types || []),
+          assignment_explanation: detail?.assignment_details?.assignment_explanation || "",
+        };
     }
   };
 
@@ -793,11 +1033,12 @@ function AddressHero({
     }
   };
 
+  const editSection = (key: ReportManualSectionKey) => {
+    const section = EDITABLE_REPORT_SECTIONS.find((item) => item.key === key);
+    if (section) setEditingSection(section);
+  };
   const sectionEditProps = (key: ReportManualSectionKey) => ({
-    onEdit: () => {
-      const section = EDITABLE_REPORT_SECTIONS.find((item) => item.key === key);
-      if (section) setEditingSection(section);
-    },
+    onEdit: () => editSection(key),
     manuallyVerified: Boolean(detail?.report_manual_values?.[key]),
   });
 
@@ -822,6 +1063,16 @@ function AddressHero({
     ({ row }) => (parseNumber(row?.homestead_exemption) || 0) > 0,
   ).length;
   const homestead = detail?.homestead_yes || exemptJurisdictionCount > 0;
+  const assignmentDetails = detail?.assignment_details || {};
+  const assignmentTypeLabels = (assignmentDetails.assignment_types || []).map(
+    (value) => optionLabel(value, ASSIGNMENT_TYPE_OPTIONS),
+  );
+  const relatedParcelsToShow = (relatedParcels?.parcels || []).filter(
+    (parcel) => parcel.is_subject || parcel.materially_different,
+  );
+  const showRelatedParcelCheck = Boolean(
+    relatedParcels?.material_difference_found,
+  );
 
   const totalLandArea = landRows.reduce(
     (sum, row) => sum + (parseNumber(row.area_sqft) || 0),
@@ -912,7 +1163,10 @@ function AddressHero({
 
       <div className="card-body bg-white p-4 sm:p-6" style={{ backgroundColor: "#ffffff" }}>
         <header className="border-b border-slate-200 pb-5">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{address}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{streetAddress}</h1>
+          <p className="mt-1 text-sm font-medium text-slate-700">
+            {city}, {state} {postalCode} <span className="text-slate-400">&middot;</span> {county}
+          </p>
           <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
             <span>
               Neighborhood Code: <strong className="text-slate-800">{neighborhood}</strong>
@@ -923,6 +1177,7 @@ function AddressHero({
           </div>
         </header>
 
+        {showRelatedParcelCheck ? (
         <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
@@ -968,7 +1223,7 @@ function AddressHero({
           {relatedParcels && !relatedParcelsLoading ? (
             relatedParcels.parcels.length ? (
               <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                {relatedParcels.parcels.map((parcel) => (
+                {relatedParcelsToShow.map((parcel) => (
                   <div
                     key={parcel.account_id}
                     className={`rounded-xl border bg-white p-3 ${
@@ -1001,6 +1256,18 @@ function AddressHero({
                         ) : null}
                       </div>
                     </div>
+                    {!parcel.is_subject && (parcel.difference_fields || []).length ? (
+                      <div className="mt-3 flex flex-wrap gap-1.5">
+                        {(parcel.difference_fields || []).map((field) => (
+                          <span
+                            key={field}
+                            className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-900"
+                          >
+                            Differs: {field}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-600 sm:grid-cols-4">
                       <div>
                         <span className="block text-slate-500">Living Area</span>
@@ -1049,6 +1316,7 @@ function AddressHero({
             )
           ) : null}
         </section>
+        ) : null}
 
         <div className="mt-5 space-y-5">
           <SummarySection
@@ -1075,61 +1343,62 @@ function AddressHero({
             </div>
           </SummarySection>
 
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-            <SummarySection
-              title="Current Exemptions"
-              subtitle={`Tax year ${displayValue(values?.certified_year || detail?.tax_year)}`}
-              {...sectionEditProps("report.exemptions")}
-            >
-              <div className="mb-4 flex flex-wrap items-center gap-3">
-                <span
-                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                    homestead
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-slate-200 text-slate-700"
-                  }`}
-                >
-                  Homestead: {homestead ? "Yes" : "No"}
-                </span>
-                {exemptJurisdictionCount > 0 ? (
-                  <span className="text-sm text-slate-600">
-                    Exemption recorded in{" "}
-                    <strong className="text-slate-900">{exemptJurisdictionCount}</strong>{" "}
-                    taxing unit{exemptJurisdictionCount === 1 ? "" : "s"}.
-                  </span>
-                ) : null}
-              </div>
+          <SummarySection
+            title="Assignment, Occupancy, and HOA"
+            subtitle="Appraiser-entered assignment details retained with revision history"
+            {...sectionEditProps("report.assignment_details")}
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <SummaryField
+                label="PUD"
+                value={assignmentDetails.pud ? "Yes" : "No"}
+              />
+              <SummaryField
+                label="HOA Dues"
+                value={
+                  assignmentDetails.pud
+                    ? parseNumber(assignmentDetails.hoa_dues_amount) !== null
+                      ? `${formatMoney(assignmentDetails.hoa_dues_amount)} ${optionLabel(
+                          assignmentDetails.hoa_frequency,
+                          HOA_FREQUENCY_OPTIONS,
+                        ).toLowerCase()}`
+                      : displayValue(assignmentDetails.hoa_explanation)
+                    : "Not applicable"
+                }
+              />
+              <SummaryField
+                label="Occupancy"
+                value={optionLabel(assignmentDetails.occupancy, OCCUPANCY_OPTIONS)}
+              />
+              <SummaryField
+                label="Assignment Type"
+                value={assignmentTypeLabels.length ? assignmentTypeLabels.join(" / ") : "Not selected"}
+              />
+              {assignmentDetails.pud && hasValue(assignmentDetails.hoa_explanation) ? (
+                <SummaryField
+                  label="HOA Explanation"
+                  value={displayValue(assignmentDetails.hoa_explanation)}
+                  className="sm:col-span-2"
+                />
+              ) : null}
+              {assignmentDetails.occupancy === "unknown" ? (
+                <SummaryField
+                  label="Occupancy Explanation"
+                  value={displayValue(assignmentDetails.occupancy_explanation)}
+                  className="sm:col-span-2"
+                />
+              ) : null}
+              {assignmentDetails.assignment_types?.includes("other") ? (
+                <SummaryField
+                  label="Other Assignment Explanation"
+                  value={displayValue(assignmentDetails.assignment_explanation)}
+                  className="sm:col-span-2"
+                />
+              ) : null}
+            </div>
+          </SummarySection>
 
-              {exemptionRows.length ? (
-                <div className="overflow-x-auto">
-                  <table className="table table-sm w-full">
-                    <thead>
-                      <tr>
-                        <th>Taxing Unit</th>
-                        <th className="text-right">Homestead</th>
-                        <th className="text-right">Taxable Value</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {exemptionRows.map(({ key, fallbackLabel, row }) => (
-                        <tr key={key}>
-                          <td>{displayValue(row?.taxing_jurisdiction, fallbackLabel)}</td>
-                          <td className="text-right">
-                            {formatMoney(row?.homestead_exemption)}
-                          </td>
-                          <td className="text-right">{formatMoney(row?.taxable_value)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p className="text-sm text-slate-600">
-                  No current exemption records were returned for this parcel.
-                </p>
-              )}
-            </SummarySection>
-
+          <div className="grid grid-cols-1 gap-5">
             <SummarySection
               title="Sales History"
               subtitle="Linked closed-sale records and deed-transfer history"
@@ -1341,11 +1610,32 @@ function AddressHero({
           </SummarySection>
 
           <SummarySection
-            title="Appraisal District Values"
+            title="CAD Values, Taxes, and Exemptions"
             subtitle={`Certified tax year ${displayValue(
               values?.certified_year || detail?.tax_year,
             )}`}
-            {...sectionEditProps("report.appraisal_values")}
+            actions={(
+              <div className="flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => editSection("report.appraisal_values")}
+                  className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+                >
+                  Edit Values
+                </button>
+                <button
+                  type="button"
+                  onClick={() => editSection("report.exemptions")}
+                  className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+                >
+                  Edit Taxes &amp; Exemptions
+                </button>
+              </div>
+            )}
+            manuallyVerified={Boolean(
+              detail?.report_manual_values?.["report.appraisal_values"] ||
+              detail?.report_manual_values?.["report.exemptions"],
+            )}
           >
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <SummaryField label="Market Value" value={formatMoney(values?.market_value)} />
@@ -1355,6 +1645,54 @@ function AddressHero({
               />
               <SummaryField label="Improvement Value" value={formatMoney(values?.improvement_value)} />
               <SummaryField label="Land Value" value={formatMoney(values?.land_value)} />
+            </div>
+
+            <div className="mt-5 border-t border-slate-200 pt-4">
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <span
+                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                    homestead
+                      ? "bg-emerald-100 text-emerald-800"
+                      : "bg-slate-200 text-slate-700"
+                  }`}
+                >
+                  Homestead: {homestead ? "Yes" : "No"}
+                </span>
+                {exemptJurisdictionCount > 0 ? (
+                  <span className="text-sm text-slate-600">
+                    Exemption recorded in{" "}
+                    <strong className="text-slate-900">{exemptJurisdictionCount}</strong>{" "}
+                    taxing unit{exemptJurisdictionCount === 1 ? "" : "s"}.
+                  </span>
+                ) : null}
+              </div>
+
+              {exemptionRows.length ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                  <table className="table table-sm w-full">
+                    <thead>
+                      <tr>
+                        <th>Taxing Unit</th>
+                        <th className="text-right">Homestead Exemption</th>
+                        <th className="text-right">Taxable Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {exemptionRows.map(({ key, fallbackLabel, row }) => (
+                        <tr key={key}>
+                          <td>{displayValue(row?.taxing_jurisdiction, fallbackLabel)}</td>
+                          <td className="text-right">{formatMoney(row?.homestead_exemption)}</td>
+                          <td className="text-right">{formatMoney(row?.taxable_value)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600">
+                  No current exemption or taxable-value records were returned for this parcel.
+                </p>
+              )}
             </div>
           </SummarySection>
         </div>

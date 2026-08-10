@@ -53,6 +53,9 @@ export async function fetchDetail(accountId: string, countyId = 1) {
   const imp = (data?.primary_improvements as any) || {};
   const housingProfile = (data as any)?.housing_profile || null;
   const os = (data as any)?.owner_summary || null;
+  const ownerParties = Array.isArray((data as any)?.owner_parties)
+    ? (data as any).owner_parties
+    : [];
   const lc = (data as any)?.legal_current || null;
   const lh = (data as any)?.legal_history || null;
   const exRows: Array<any> = (data as any)?.exemptions_summary || [];
@@ -74,7 +77,16 @@ export async function fetchDetail(accountId: string, countyId = 1) {
       county: acc?.county ?? undefined,
       subdivision: acc?.subdivision ?? undefined,
     },
-    owner: os ? { owner_name: os.owner_name, mailing_address: os.mailing_address } : undefined,
+    owner: os || ownerParties.length
+      ? {
+          owner_name: os?.owner_name,
+          mailing_address: os?.mailing_address,
+          parties: ownerParties.map((party: any) => ({
+            owner_name: party?.owner_name,
+            ownership_pct: party?.ownership_pct,
+          })),
+        }
+      : undefined,
     value_summary: {
       certified_year: acc?.latest_tax_year ?? undefined,
       improvement_value: acc?.latest_improvement_value ?? undefined,

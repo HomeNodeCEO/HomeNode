@@ -511,12 +511,34 @@ app.get("/api/accounts/:id", async (req, res) => {
     `;
     const { rows: housingRows } = await pool.query(housingSql, [canonicalId]);
 
-    // Latest owner summary (mailing + name)
+    // Latest owner summary plus every party and recorded ownership share. The
+    // party rows were already being scraped, but older clients only received
+    // the one-line summary and therefore hid fractional/co-owner records.
     const ownerSql = `
-      SELECT owner_name, mailing_address, tax_year
-      FROM core.owner_summary
-      WHERE account_id = $1
-      ORDER BY tax_year DESC
+      SELECT
+        os.owner_name,
+        os.mailing_address,
+        os.tax_year,
+        COALESCE((
+          SELECT json_agg(
+            json_build_object(
+              'owner_name', op.owner_name,
+              'ownership_pct', op.ownership_pct,
+              'tax_year', op.tax_year
+            )
+            ORDER BY op.id
+          )
+          FROM core.owner_parties op
+          WHERE op.account_id = os.account_id
+            AND op.tax_year = (
+              SELECT MAX(latest.tax_year)
+              FROM core.owner_parties latest
+              WHERE latest.account_id = os.account_id
+            )
+        ), '[]'::json) AS owner_parties
+      FROM core.owner_summary os
+      WHERE os.account_id = $1
+      ORDER BY os.tax_year DESC
       LIMIT 1
     `;
     const { rows: ownerRows } = await pool.query(ownerSql, [canonicalId]);
@@ -592,7 +614,14 @@ app.get("/api/accounts/:id", async (req, res) => {
       },
       primary_improvements: impRows[0] || null,
       housing_profile: housingRows[0] || null,
-      owner_summary: ownerRows[0] || null,
+      owner_summary: ownerRows[0]
+        ? {
+            owner_name: ownerRows[0].owner_name,
+            mailing_address: ownerRows[0].mailing_address,
+            tax_year: ownerRows[0].tax_year,
+          }
+        : null,
+      owner_parties: ownerRows[0]?.owner_parties || [],
       legal_current: legalRows[0] || null,
       legal_history: legalHistRows[0] || null,
       exemptions_summary_year: exYear,

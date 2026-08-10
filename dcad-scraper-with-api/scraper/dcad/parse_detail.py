@@ -963,6 +963,23 @@ def parse_owner(soup: BeautifulSoup) -> Dict[str, Any]:
             if len(tds) >= 2:
                 multi_owner.append({"owner_name": tds[0] or "N/A", "ownership_pct": tds[1] or "N/A"})
 
+    # DCAD occasionally truncates a sole 100% owner in the Multi-Owner grid
+    # even though the complete name is present directly under the Owner
+    # heading. Prefer that complete heading value for this narrow case. Do not
+    # apply the rule to true multi-party ownership because each grid row and
+    # its percentage must remain distinct.
+    if len(multi_owner) == 1 and owner_name and owner_name != "N/A":
+        grid_name = clean_text(str(multi_owner[0].get("owner_name") or ""))
+        ownership_pct = clean_text(str(multi_owner[0].get("ownership_pct") or ""))
+        is_full_interest = bool(re.fullmatch(r"100(?:\.0+)?%?", ownership_pct))
+        grid_looks_truncated = bool(
+            grid_name
+            and owner_name != grid_name
+            and owner_name.startswith(grid_name)
+        )
+        if is_full_interest and grid_looks_truncated:
+            multi_owner[0]["owner_name"] = owner_name
+
     out = {"owner_name": owner_name or "N/A", "multi_owner": multi_owner}
     # Always include mailing_address key for downstream consistency (may be None)
     out["mailing_address"] = mailing_address if mailing_address else None

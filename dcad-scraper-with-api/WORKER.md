@@ -35,6 +35,10 @@ both processes and stops the service if either process exits unexpectedly.
     an active protest) completes the main campaign but enters a separate
     market-value recovery lane. One value recheck runs per 100 normal accounts
     by default, and a still-missing value is checked again after seven days.
+11. Previously completed accounts with a truncated sole-owner name use a
+    separate verified owner-recovery queue. One owner repair runs per 25 normal
+    accounts by default. The queue records success only after the refreshed
+    current owner name passes the completeness check.
 
 The residential target table—not `core.accounts.county`—controls selection.
 
@@ -48,6 +52,10 @@ python tools/backfill_account_search_fields.py "C:\path\to\DCAD Accounts.csv"
 python tools/backfill_account_search_fields.py "C:\path\to\DCAD Accounts.csv" --apply
 python tools/requeue_incomplete_dcad_accounts.py
 python tools/requeue_incomplete_dcad_accounts.py --apply
+python tools/backfill_owner_names.py
+python tools/backfill_owner_names.py --apply
+python tools/queue_owner_rescrapes.py
+python tools/queue_owner_rescrapes.py --apply
 ```
 
 The requeue tool performs the one-time historical scan outside worker startup.
@@ -63,6 +71,7 @@ Relevant optional worker settings are:
 - `SCRAPE_HEALTH_ACCOUNT_ID` (default `26272500060150000`)
 - `SCRAPE_MARKET_VALUE_RECHECK_DAYS` (default `7`)
 - `SCRAPE_MARKET_VALUE_RECHECK_EVERY_ACCOUNTS` (default `100`)
+- `SCRAPE_OWNER_RECOVERY_EVERY_ACCOUNTS` (default `25`)
 
 ## Property-search metadata
 
@@ -177,4 +186,9 @@ SELECT market_value_status, count(*)
 FROM app.dcad_scrape_state
 GROUP BY market_value_status
 ORDER BY market_value_status;
+
+SELECT status, count(*)
+FROM app.dcad_owner_recovery_queue
+GROUP BY status
+ORDER BY status;
 ```

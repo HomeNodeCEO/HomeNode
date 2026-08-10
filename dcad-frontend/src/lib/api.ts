@@ -95,6 +95,20 @@ export interface AccountDetail {
     mls_status: string | null;
     record_type: 'closed_sale';
   }>;
+  property_activity_history?: PropertyActivityHistoryRow[];
+  census_geography?: {
+    tract_geoid: string | null;
+    tract_code: string | null;
+    state_fips: string | null;
+    county_fips: string | null;
+    block_code: string | null;
+    benchmark: string;
+    vintage: string;
+    status: 'pending' | 'processing' | 'retry' | 'matched' | 'review_required' | 'failed';
+    response_status: string | null;
+    review_reason: string | null;
+    looked_up_at: string | null;
+  } | null;
   housing_profile: HousingProfile | null;
   primary_improvements: {
     construction_type?: string | null;
@@ -171,6 +185,29 @@ export interface AssignmentDetailsPayload {
   occupancy_explanation?: string;
   assignment_types?: string[];
   assignment_explanation?: string;
+  lender_client_name?: string;
+  lender_client_address?: string;
+}
+
+export interface PropertyActivityHistoryRow {
+  sale_id: string | number | null;
+  source_record_id: string | number | null;
+  listing_key: string | null;
+  listing_id: string | null;
+  source: string | null;
+  record_type: 'listing' | 'contract' | 'closed_sale' | 'cad_transfer';
+  activity_date: string | null;
+  listing_date: string | null;
+  contract_date: string | null;
+  closing_date: string | null;
+  list_price: string | number | null;
+  sale_price: string | number | null;
+  days_on_market: number | null;
+  buyer_financing: string | null;
+  concessions: string | number | null;
+  mls_status: string | null;
+  requires_additional_review: boolean;
+  data_quality_flags: string[] | null;
 }
 
 export interface AppraisalAssignmentFile {

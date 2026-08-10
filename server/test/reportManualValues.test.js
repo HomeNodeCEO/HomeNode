@@ -13,6 +13,8 @@ test("assignment details allow a PUD with complete dues", () => {
     occupancy_explanation: "",
     assignment_types: ["purchase_transaction", "rehab"],
     assignment_explanation: "",
+    lender_client_name: "Example National Bank",
+    lender_client_address: "100 Main Street, Dallas, TX 75201",
   }), true);
 });
 
@@ -39,5 +41,13 @@ test("assignment details enforce conditional explanations", () => {
   assert.throws(
     () => validateAssignmentDetails({ assignment_types: ["other"] }),
     /other_assignment_type_requires_explanation/,
+  );
+  assert.throws(
+    () => validateAssignmentDetails({ lender_client_name: 42 }),
+    /invalid_lender_client_name/,
+  );
+  assert.throws(
+    () => validateAssignmentDetails({ lender_client_address: "x".repeat(2001) }),
+    /lender_client_address_too_long/,
   );
 });

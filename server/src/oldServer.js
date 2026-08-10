@@ -48,7 +48,14 @@ import {
   buildPairedSalesStudy,
   pairedSalesErrorStatus,
 } from "./services/pairedSalesAnalysis.js";
-import { getAccountSalesHistory } from "./services/accountSalesHistory.js";
+import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
+import {
+  ensureCensusGeographySchema,
+  getCensusGeographyStatus,
+  runCensusGeographyBatch,
+  seedCensusGeographyQueue,
+  startCensusGeographyWorker,
+} from "./services/censusGeography.js";
 import {
   ensureAppraisalRatingsSchema,
   SALE_REVIEW_SELECT,
@@ -317,6 +324,37 @@ const locationBackfillReady = Promise.all([
     );
   });
 
+let censusGeographyWorker = null;
+const censusGeographyReady = accountLocationsReady
+  .then(() => ensureCensusGeographySchema(pool))
+  .then(() => {
+    console.log("[init] census geography schema ensured");
+    const enabled = String(
+      process.env.CENSUS_GEOGRAPHY_ENABLED ?? "true",
+    ).toLowerCase() !== "false";
+    if (enabled) {
+      censusGeographyWorker = startCensusGeographyWorker(pool, {
+        intervalMs: process.env.CENSUS_GEOGRAPHY_INTERVAL_MS,
+        seedIntervalMs: process.env.CENSUS_GEOGRAPHY_SEED_INTERVAL_MS,
+        initialDelayMs: process.env.CENSUS_GEOGRAPHY_INITIAL_DELAY_MS,
+        batchSize: process.env.CENSUS_GEOGRAPHY_BATCH_SIZE,
+        seedLimit: process.env.CENSUS_GEOGRAPHY_SEED_LIMIT,
+        maximumAttempts: process.env.CENSUS_GEOGRAPHY_MAX_ATTEMPTS,
+      });
+      console.log(
+        `[init] census geography worker started (${censusGeographyWorker.workerId})`,
+      );
+    } else {
+      console.log("[init] census geography worker disabled by environment");
+    }
+  })
+  .catch((error) => {
+    console.warn(
+      "[init] census geography initialization failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
 // simple health
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
@@ -496,7 +534,23 @@ app.get("/api/accounts/:id", async (req, res) => {
     // Sales history is core account data. Start its indexed lookup immediately
     // and include it in this response instead of making the frontend wait on
     // the general-purpose /api/sales view.
-    const salesHistoryPromise = getAccountSalesHistory(pool, canonicalId);
+    const propertyActivityHistoryPromise = getAccountPropertyActivityHistory(pool, canonicalId);
+    const censusGeographyPromise = (async () => {
+      await censusGeographyReady;
+      await ensureCensusGeographySchema(pool);
+      const { rows } = await pool.query(
+        `SELECT tract_geoid, tract_code, state_fips, county_fips, block_code,
+                benchmark, vintage, status, response_status, review_reason,
+                source_latitude, source_longitude, looked_up_at, updated_at
+         FROM core.account_census_geographies
+         WHERE account_id = $1`,
+        [canonicalId],
+      );
+      return rows[0] || null;
+    })().catch((error) => {
+      console.warn("census geography lookup failed", error?.message || error);
+      return null;
+    });
     const reportManualValuesPromise = (async () => {
       await propertyEnrichmentReady;
       const { rows } = await pool.query(
@@ -693,11 +747,15 @@ app.get("/api/accounts/:id", async (req, res) => {
       exemptions_summary: exRows,
       homestead_yes: homesteadYes,
       land_detail: landRows,
-      sales_history: await salesHistoryPromise,
+      property_activity_history: await propertyActivityHistoryPromise,
+      census_geography: await censusGeographyPromise,
       report_manual_values: await reportManualValuesPromise,
       // Secondary improvements (all rows for account)
       additional_improvements: []
     };
+    resp.sales_history = resp.property_activity_history.filter(
+      (row) => row.record_type === "closed_sale",
+    );
 
     // Fetch secondary improvements
     try {
@@ -1232,6 +1290,10 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
       "other_hoa_frequency_requires_explanation",
       "unknown_occupancy_requires_explanation",
       "other_assignment_type_requires_explanation",
+      "invalid_lender_client_name",
+      "invalid_lender_client_address",
+      "lender_client_name_too_long",
+      "lender_client_address_too_long",
     ]);
     if (validationErrors.has(error?.message)) {
       return res.status(400).json({ error: error.message });
@@ -1373,6 +1435,38 @@ app.post("/api/location-backfill/run", async (req, res) => {
   } catch (error) {
     console.error("location backfill maintenance run failed", error);
     return res.status(500).json({ error: "location_backfill_run_failed" });
+  }
+});
+
+/** Census tract coverage for every property with a cached parcel coordinate. */
+app.get("/api/census-geography/status", async (_req, res) => {
+  try {
+    await censusGeographyReady;
+    await ensureCensusGeographySchema(pool);
+    return res.json(await getCensusGeographyStatus(pool));
+  } catch (error) {
+    console.error("census geography status failed", error);
+    return res.status(500).json({ error: "census_geography_status_failed" });
+  }
+});
+
+/** Explicit maintenance run; the normal low-impact worker remains automatic. */
+app.post("/api/census-geography/run", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await censusGeographyReady;
+    await ensureCensusGeographySchema(pool);
+    const seed = await seedCensusGeographyQueue(pool, {
+      limit: req.body?.seed_limit,
+    });
+    const result = await runCensusGeographyBatch(pool, {
+      batchSize: req.body?.batch_size,
+      maximumAttempts: process.env.CENSUS_GEOGRAPHY_MAX_ATTEMPTS,
+    });
+    return res.json({ ok: true, seed, result });
+  } catch (error) {
+    console.error("census geography maintenance run failed", error);
+    return res.status(500).json({ error: "census_geography_run_failed" });
   }
 });
 

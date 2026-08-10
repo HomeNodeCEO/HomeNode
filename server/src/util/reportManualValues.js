@@ -47,12 +47,25 @@ export function validateAssignmentDetails(value) {
     ? [...new Set(value.assignment_types.map((item) => text(item).toLowerCase()).filter(Boolean))]
     : [];
   const assignmentExplanation = text(value.assignment_explanation);
+  const lenderClientName = text(value.lender_client_name);
+  const lenderClientAddress = text(value.lender_client_address);
 
   if (!HOA_FREQUENCIES.has(hoaFrequency)) throw new Error("invalid_hoa_frequency");
   if (!OCCUPANCIES.has(occupancy)) throw new Error("invalid_occupancy");
   if (assignmentTypes.some((item) => !ASSIGNMENT_TYPES.has(item))) {
     throw new Error("invalid_assignment_type");
   }
+  if (value.lender_client_name !== undefined && typeof value.lender_client_name !== "string") {
+    throw new Error("invalid_lender_client_name");
+  }
+  if (
+    value.lender_client_address !== undefined &&
+    typeof value.lender_client_address !== "string"
+  ) {
+    throw new Error("invalid_lender_client_address");
+  }
+  if (lenderClientName.length > 500) throw new Error("lender_client_name_too_long");
+  if (lenderClientAddress.length > 2000) throw new Error("lender_client_address_too_long");
   if (pud && !((positiveAmount(value.hoa_dues_amount) && hoaFrequency) || hoaExplanation)) {
     throw new Error("pud_requires_hoa_dues_or_explanation");
   }

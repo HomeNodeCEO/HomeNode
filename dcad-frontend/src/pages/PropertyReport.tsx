@@ -110,14 +110,24 @@ type DcadExemptionsMap = {
 };
 
 type DcadSaleHistoryRow = {
+  sale_id?: string | number;
   source_record_id?: string | number;
+  listing_key?: string;
   listing_id?: string;
+  source?: string;
+  activity_date?: string;
+  listing_date?: string;
+  contract_date?: string;
   closing_date?: string;
+  list_price?: string | number;
   sale_price?: string | number;
   days_on_market?: string | number;
   buyer_financing?: string;
+  concessions?: string | number;
   mls_status?: string;
   record_type?: string;
+  requires_additional_review?: boolean;
+  data_quality_flags?: string[];
 };
 
 type DcadHousingProfile = {
@@ -141,6 +151,10 @@ type DcadDetail = {
     postal_code?: string;
     county?: string;
     subdivision?: string;
+    census_tract?: string;
+    census_tract_geoid?: string;
+    census_tract_status?: string;
+    census_vintage?: string;
   };
   owner?: DcadOwner;
   value_summary?: DcadValueSummary;
@@ -154,6 +168,14 @@ type DcadDetail = {
     deed_transfer_date?: string;
   };
   sales_history?: DcadSaleHistoryRow[];
+  property_activity_history?: DcadSaleHistoryRow[];
+  census_geography?: {
+    tract_geoid?: string;
+    tract_code?: string;
+    status?: string;
+    vintage?: string;
+    review_reason?: string;
+  } | null;
   homestead_yes?: boolean;
   assignment_details?: AssignmentDetails;
   photos?: string[];
@@ -168,7 +190,7 @@ type EditableReportSection = {
 const EDITABLE_REPORT_SECTIONS: EditableReportSection[] = [
   { key: "report.subject_identification", title: "Subject Identification" },
   { key: "report.exemptions", title: "Current Exemptions" },
-  { key: "report.sales_history", title: "Sales History" },
+  { key: "report.sales_history", title: "Listings, Contracts, and Sales History" },
   { key: "report.property_characteristics", title: "Property Characteristics" },
   { key: "report.land_details", title: "Land Details and Zoning" },
   { key: "report.appraisal_values", title: "Appraisal District Values" },
@@ -210,6 +232,8 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     occupancy_explanation: value?.occupancy_explanation || "",
     assignment_types: cloneEditorValue(value?.assignment_types || []),
     assignment_explanation: value?.assignment_explanation || "",
+    lender_client_name: value?.lender_client_name || "",
+    lender_client_address: value?.lender_client_address || "",
   };
 }
 
@@ -271,6 +295,18 @@ function CheckboxChoice({
 }
 
 const ARRAY_ROW_TEMPLATES: Record<string, Record<string, unknown>> = {
+  property_activity_history: {
+    record_type: "listing",
+    activity_date: "",
+    listing_id: "",
+    mls_status: "",
+    list_price: "",
+    sale_price: "",
+    days_on_market: "",
+    buyer_financing: "",
+    concessions: "",
+    source: "Manual appraisal-file entry",
+  },
   sales_history: {
     closing_date: "",
     listing_id: "",
@@ -358,6 +394,33 @@ function formatDate(value: unknown): string {
     year: "numeric",
     timeZone: "UTC",
   }).format(date);
+}
+
+function formatCensusTract(value: unknown): string {
+  const code = String(value || "").trim();
+  if (!/^\d{6}$/.test(code)) return displayValue(value, "Pending coordinate lookup");
+  const whole = Number.parseInt(code.slice(0, 4), 10);
+  const decimal = code.slice(4);
+  return decimal === "00" ? String(whole) : `${whole}.${decimal}`;
+}
+
+function activityTypeLabel(value: unknown): string {
+  const labels: Record<string, string> = {
+    listing: "Listing",
+    contract: "Contract",
+    closed_sale: "Closed Sale",
+    cad_transfer: "CAD Transfer",
+  };
+  return labels[String(value || "")] || displayValue(value, "Activity");
+}
+
+function activityTypeClass(value: unknown): string {
+  switch (String(value || "")) {
+    case "closed_sale": return "bg-emerald-100 text-emerald-800";
+    case "contract": return "bg-amber-100 text-amber-900";
+    case "listing": return "bg-blue-100 text-blue-800";
+    default: return "bg-slate-200 text-slate-700";
+  }
 }
 
 function formatReportedBoolean(value: unknown): string {
@@ -578,6 +641,35 @@ function ReportSectionEditor({
 
   const assignmentEditor = section.key === "report.assignment_details" ? (
     <div className="space-y-5">
+      <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+        <legend className="px-1 text-sm font-semibold text-slate-900">Lender / Client</legend>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Lender / Client
+            </span>
+            <input
+              type="text"
+              maxLength={500}
+              className="input input-bordered mt-1 w-full bg-white"
+              value={assignment.lender_client_name || ""}
+              onChange={(event) => updateAtPath(["lender_client_name"], event.target.value)}
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+              Lender / Client Address
+            </span>
+            <textarea
+              maxLength={2000}
+              className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+              value={assignment.lender_client_address || ""}
+              onChange={(event) => updateAtPath(["lender_client_address"], event.target.value)}
+            />
+          </label>
+        </div>
+      </fieldset>
+
       <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
         <legend className="px-1 text-sm font-semibold text-slate-900">Planned Unit Development</legend>
         <div className="mt-1 max-w-xs">
@@ -1020,6 +1112,7 @@ function AddressHero({
   const landRows = detail?.land_detail || [];
   const additionalImprovements = detail?.additional_improvements || [];
   const salesHistory = detail?.sales_history || [];
+  const propertyActivityHistory = detail?.property_activity_history || salesHistory;
   const values = detail?.value_summary;
 
   const editableSectionValue = (sectionKey: ReportManualSectionKey): Record<string, unknown> => {
@@ -1034,6 +1127,7 @@ function AddressHero({
             postal_code: detail?.property_location?.postal_code || "",
             county: detail?.property_location?.county || "",
             subdivision: detail?.property_location?.subdivision || "",
+            census_tract: detail?.property_location?.census_tract || "",
           },
           owner: {
             owner_name: detail?.owner?.owner_name || "",
@@ -1068,7 +1162,11 @@ function AddressHero({
         };
         }
       case "report.sales_history":
-        return { sales_history: cloneEditorValue(detail?.sales_history || []) };
+        return {
+          property_activity_history: cloneEditorValue(
+            detail?.property_activity_history || detail?.sales_history || [],
+          ),
+        };
       case "report.property_characteristics":
         return {
           main_improvement: {
@@ -1128,6 +1226,8 @@ function AddressHero({
           occupancy_explanation: detail?.assignment_details?.occupancy_explanation || "",
           assignment_types: cloneEditorValue(detail?.assignment_details?.assignment_types || []),
           assignment_explanation: detail?.assignment_details?.assignment_explanation || "",
+          lender_client_name: detail?.assignment_details?.lender_client_name || "",
+          lender_client_address: detail?.assignment_details?.lender_client_address || "",
         };
     }
   };
@@ -1685,6 +1785,24 @@ function AddressHero({
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <SummaryField label="Parcel / Account Number" value={displayValue(accountId)} />
               <SummaryField label="County" value={county} />
+              <SummaryField
+                label="Census Tract"
+                value={
+                  <div>
+                    <span>{formatCensusTract(detail?.property_location?.census_tract)}</span>
+                    {detail?.property_location?.census_tract_geoid ? (
+                      <span className="mt-0.5 block font-mono text-[11px] font-normal text-slate-500">
+                        GEOID {detail.property_location.census_tract_geoid}
+                      </span>
+                    ) : null}
+                    {detail?.property_location?.census_tract_status === "review_required" ? (
+                      <span className="mt-1 block text-[11px] font-medium text-amber-700">
+                        Coordinate/county match needs review
+                      </span>
+                    ) : null}
+                  </div>
+                }
+              />
               <SummaryField label="Subdivision" value={subdivision} />
               <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
               <SummaryField
@@ -1822,6 +1940,38 @@ function AddressHero({
             inherited={assignmentFromPrevious}
             compact
           >
+            <div className="mb-3 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Lender / Client
+                </span>
+                <input
+                  type="text"
+                  maxLength={500}
+                  className="input input-bordered input-sm mt-1 w-full bg-white"
+                  value={assignmentDraft.lender_client_name || ""}
+                  onChange={(event) =>
+                    updateAssignment("lender_client_name", event.target.value)
+                  }
+                  placeholder="Name of lender or client"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Lender / Client Address
+                </span>
+                <textarea
+                  maxLength={2000}
+                  className="textarea textarea-bordered textarea-sm mt-1 min-h-16 w-full bg-white"
+                  value={assignmentDraft.lender_client_address || ""}
+                  onChange={(event) =>
+                    updateAssignment("lender_client_address", event.target.value)
+                  }
+                  placeholder="Mailing address"
+                />
+              </label>
+            </div>
+
             <div className="grid gap-3 lg:grid-cols-[0.8fr_2.2fr]">
               <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
                 <legend className="px-1 text-sm font-semibold text-slate-900">Occupancy</legend>
@@ -1914,29 +2064,78 @@ function AddressHero({
 
           <div className="grid grid-cols-1 gap-5">
             <SummarySection
-              title="Sales History"
-              subtitle="Linked closed-sale records and deed-transfer history"
+              title="Listings, Contracts, and Sales History"
+              subtitle="MLS listing activity, contracts, closed sales, and CAD deed-transfer records"
               {...sectionEditProps("report.sales_history")}
             >
-              {salesHistory.length ? (
+              {propertyActivityHistory.length ? (
                 <div className="overflow-x-auto">
                   <table className="table table-sm w-full">
                     <thead>
                       <tr>
-                        <th>Sale Date</th>
+                        <th>Activity</th>
+                        <th>Date</th>
                         <th>MLS</th>
+                        <th>Status / Source</th>
+                        <th className="text-right">List Price</th>
                         <th className="text-right">Sale Price</th>
                         <th className="text-right">DOM</th>
+                        <th>Financing / Concessions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {salesHistory.slice(0, 8).map((sale, index) => (
-                        <tr key={sale.source_record_id || `${sale.listing_id}-${index}`}>
-                          <td>{formatDate(sale.closing_date)}</td>
-                          <td>{displayValue(sale.listing_id, "—")}</td>
-                          <td className="text-right">{formatMoney(sale.sale_price)}</td>
+                      {propertyActivityHistory.slice(0, 20).map((event, index) => (
+                        <tr
+                          key={event.source_record_id || event.sale_id ||
+                            `${event.record_type}-${event.activity_date}-${index}`}
+                        >
+                          <td>
+                            <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${activityTypeClass(event.record_type)}`}>
+                              {activityTypeLabel(event.record_type)}
+                            </span>
+                            {event.requires_additional_review ? (
+                              <span
+                                className="ml-1 text-xs font-semibold text-amber-700"
+                                title="Source record needs review"
+                              >
+                                !
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="whitespace-nowrap">
+                            {formatDate(event.activity_date || event.closing_date || event.listing_date)}
+                          </td>
+                          <td>{displayValue(event.listing_id, "—")}</td>
+                          <td>
+                            <div className="min-w-32">
+                              <div className="font-medium text-slate-800">
+                                {displayValue(event.mls_status, activityTypeLabel(event.record_type))}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {displayValue(event.source, "Source not reported")}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="whitespace-nowrap text-right">
+                            {formatMoney(event.list_price)}
+                          </td>
+                          <td className="whitespace-nowrap text-right">
+                            {formatMoney(event.sale_price)}
+                          </td>
                           <td className="text-right">
-                            {displayValue(sale.days_on_market, "—")}
+                            {displayValue(event.days_on_market, "—")}
+                          </td>
+                          <td>
+                            <div className="min-w-36 text-xs">
+                              <div>
+                                {displayValue(event.buyer_financing, "Financing not reported")}
+                              </div>
+                              {hasValue(event.concessions) ? (
+                                <div className="mt-0.5 text-slate-500">
+                                  Concessions: {displayValue(event.concessions)}
+                                </div>
+                              ) : null}
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -1946,10 +2145,10 @@ function AddressHero({
               ) : (
                 <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4">
                   <div className="text-sm font-semibold text-slate-800">
-                    No linked MLS sale records
+                    No linked listing, contract, or sale records
                   </div>
                   <p className="mt-1 text-sm text-slate-600">
-                    The latest recorded deed transfer is {formatDate(deedTransferDate)}.
+                    No MLS or CAD deed-transfer activity is currently linked to this parcel.
                   </p>
                 </div>
               )}

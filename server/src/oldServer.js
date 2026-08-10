@@ -76,6 +76,12 @@ import {
 } from "./util/nonDallasEnrichment.js";
 import { validateReportManualSection } from "./util/reportManualValues.js";
 import { markMaterialParcelDifferences } from "./util/relatedParcelDifferences.js";
+import {
+  assignmentFileResponse,
+  ensureAssignmentFilesSchema,
+  normalizeAssignmentFileId,
+  normalizeAssignmentFileNumber,
+} from "./services/assignmentFiles.js";
 
 const app = express();
 app.use(express.json());
@@ -154,6 +160,27 @@ const propertyEnrichmentReady = ensurePropertyEnrichmentSchema(pool)
     );
   });
 
+let assignmentFilesSchemaReady = false;
+const assignmentFilesReady = ensureAssignmentFilesSchema(pool)
+  .then(() => {
+    assignmentFilesSchemaReady = true;
+    console.log("[init] appraisal assignment file schema ensured");
+  })
+  .catch((error) => {
+    console.warn(
+      "[init] ensureAssignmentFilesSchema failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+async function ensureAssignmentFilesAvailable() {
+  await assignmentFilesReady;
+  if (!assignmentFilesSchemaReady) {
+    await ensureAssignmentFilesSchema(pool);
+    assignmentFilesSchemaReady = true;
+  }
+}
+
 const REPORT_MANUAL_SECTION_KEYS = new Set([
   "report.subject_identification",
   "report.exemptions",
@@ -163,6 +190,44 @@ const REPORT_MANUAL_SECTION_KEYS = new Set([
   "report.appraisal_values",
   "report.assignment_details",
 ]);
+
+const ASSIGNMENT_FILE_SELECT = `
+  SELECT f.id, f.account_id, f.file_number, f.assignment_details,
+         f.inherited_from_file_id, parent.file_number AS inherited_from_file_number,
+         f.reviewer, f.revision, f.created_at, f.updated_at
+  FROM app.assignment_files f
+  LEFT JOIN app.assignment_files parent ON parent.id = f.inherited_from_file_id
+`;
+
+async function mirrorLatestAssignmentDetails(client, accountId, assignmentDetails, reviewer, fileNumber) {
+  const attributeKey = "report.assignment_details";
+  const { rows: currentRows } = await client.query(
+    `SELECT revision FROM app.property_attribute_manual_values
+     WHERE account_id = $1 AND attribute_key = $2 FOR UPDATE`,
+    [accountId, attributeKey],
+  );
+  const revision = Number(currentRows[0]?.revision || 0) + 1;
+  const valueJson = JSON.stringify(assignmentDetails);
+  const notes = `Current assignment file ${fileNumber}`;
+  await client.query(
+    `INSERT INTO app.property_attribute_manual_values (
+       account_id, attribute_key, attribute_value, notes, reviewer, revision
+     ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)
+     ON CONFLICT (account_id, attribute_key) DO UPDATE SET
+       attribute_value = EXCLUDED.attribute_value,
+       notes = EXCLUDED.notes,
+       reviewer = EXCLUDED.reviewer,
+       revision = EXCLUDED.revision,
+       updated_at = now()`,
+    [accountId, attributeKey, valueJson, notes, reviewer, revision],
+  );
+  await client.query(
+    `INSERT INTO app.property_attribute_manual_history (
+       account_id, attribute_key, attribute_value, notes, reviewer, revision
+     ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
+    [accountId, attributeKey, valueJson, notes, reviewer, revision],
+  );
+}
 
 function positiveSiteSize(value) {
   const parsed = typeof value === "string"
@@ -1001,6 +1066,266 @@ app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
     await client.query("ROLLBACK").catch(() => {});
     console.error("/api/accounts/:id/report-manual-values failed", error);
     return res.status(500).json({ error: "report_manual_values_update_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/** List the independently versioned appraisal files for one property. */
+app.get("/api/accounts/:id/assignment-files", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const accountResult = await pool.query(
+      "SELECT 1 FROM core.accounts WHERE account_id = $1",
+      [canonicalId],
+    );
+    if (!accountResult.rowCount) {
+      return res.status(404).json({ error: "account_not_found" });
+    }
+    const [{ rows }, legacyResult] = await Promise.all([
+      pool.query(
+        `${ASSIGNMENT_FILE_SELECT}
+         WHERE f.account_id = $1
+         ORDER BY f.created_at DESC, f.id DESC`,
+        [canonicalId],
+      ),
+      pool.query(
+        `SELECT attribute_value
+         FROM app.property_attribute_manual_values
+         WHERE account_id = $1 AND attribute_key = 'report.assignment_details'`,
+        [canonicalId],
+      ),
+    ]);
+    const files = rows.map(assignmentFileResponse);
+    return res.json({
+      account_id: canonicalId,
+      files,
+      latest_file: files[0] || null,
+      legacy_assignment_details: legacyResult.rows[0]?.attribute_value || null,
+    });
+  } catch (error) {
+    console.error("assignment file list failed", error);
+    return res.status(500).json({ error: "assignment_file_list_failed" });
+  }
+});
+
+/** Create a new appraisal file without changing any earlier assignment file. */
+app.post("/api/accounts/:id/assignment-files", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  let fileNumber;
+  let inheritedFromFileId;
+  try {
+    fileNumber = normalizeAssignmentFileNumber(req.body?.file_number);
+    inheritedFromFileId = normalizeAssignmentFileId(req.body?.inherited_from_file_id);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "invalid_assignment_file" });
+  }
+  const reviewer = String(req.body?.reviewer || "HomeNode editor")
+    .trim()
+    .slice(0, 200) || "HomeNode editor";
+  const client = await pool.connect();
+  try {
+    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    await client.query("BEGIN");
+    const canonicalId = await resolveCanonicalAccountId(client, requestedId);
+    const accountResult = await client.query(
+      "SELECT 1 FROM core.accounts WHERE account_id = $1",
+      [canonicalId],
+    );
+    if (!accountResult.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "account_not_found" });
+    }
+
+    let sourceFile = null;
+    if (inheritedFromFileId) {
+      const sourceResult = await client.query(
+        `SELECT id, assignment_details
+         FROM app.assignment_files
+         WHERE id = $1 AND account_id = $2`,
+        [inheritedFromFileId, canonicalId],
+      );
+      sourceFile = sourceResult.rows[0] || null;
+      if (!sourceFile) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({ error: "invalid_inherited_assignment_file" });
+      }
+    }
+
+    let assignmentDetails = req.body?.assignment_details;
+    if (assignmentDetails === undefined) {
+      if (sourceFile) {
+        assignmentDetails = sourceFile.assignment_details;
+      } else {
+        const latestResult = await client.query(
+          `SELECT id, assignment_details
+           FROM app.assignment_files
+           WHERE account_id = $1
+           ORDER BY created_at DESC, id DESC
+           LIMIT 1`,
+          [canonicalId],
+        );
+        sourceFile = latestResult.rows[0] || null;
+        if (sourceFile) inheritedFromFileId = Number(sourceFile.id);
+        assignmentDetails = sourceFile?.assignment_details;
+      }
+      if (assignmentDetails === undefined) {
+        const legacyResult = await client.query(
+          `SELECT attribute_value
+           FROM app.property_attribute_manual_values
+           WHERE account_id = $1 AND attribute_key = 'report.assignment_details'`,
+          [canonicalId],
+        );
+        assignmentDetails = legacyResult.rows[0]?.attribute_value || {};
+      }
+    }
+    validateReportManualSection("report.assignment_details", assignmentDetails);
+
+    const inserted = await client.query(
+      `INSERT INTO app.assignment_files (
+         account_id, file_number, assignment_details, inherited_from_file_id, reviewer
+       ) VALUES ($1,$2,$3::jsonb,$4,$5)
+       RETURNING id`,
+      [canonicalId, fileNumber, JSON.stringify(assignmentDetails), inheritedFromFileId, reviewer],
+    );
+    const assignmentFileId = Number(inserted.rows[0].id);
+    await client.query(
+      `INSERT INTO app.assignment_file_history (
+         assignment_file_id, account_id, file_number, assignment_details, reviewer, revision
+       ) VALUES ($1,$2,$3,$4::jsonb,$5,1)`,
+      [assignmentFileId, canonicalId, fileNumber, JSON.stringify(assignmentDetails), reviewer],
+    );
+    await mirrorLatestAssignmentDetails(
+      client,
+      canonicalId,
+      assignmentDetails,
+      reviewer,
+      fileNumber,
+    );
+    const { rows } = await client.query(
+      `${ASSIGNMENT_FILE_SELECT} WHERE f.id = $1`,
+      [assignmentFileId],
+    );
+    await client.query("COMMIT");
+    return res.status(201).json({ ok: true, assignment_file: assignmentFileResponse(rows[0]) });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    if (error?.code === "23505") {
+      return res.status(409).json({ error: "assignment_file_number_exists" });
+    }
+    const validationErrors = new Set([
+      "invalid_assignment_details",
+      "invalid_pud_value",
+      "invalid_assignment_type",
+      "invalid_hoa_frequency",
+      "invalid_occupancy",
+      "pud_requires_hoa_dues_or_explanation",
+      "other_hoa_frequency_requires_explanation",
+      "unknown_occupancy_requires_explanation",
+      "other_assignment_type_requires_explanation",
+    ]);
+    if (validationErrors.has(error?.message)) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("assignment file create failed", error);
+    return res.status(500).json({ error: "assignment_file_create_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+/** Save additional work to the active file while retaining its audit revisions. */
+app.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  let assignmentFileId;
+  try {
+    assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    validateReportManualSection("report.assignment_details", req.body?.assignment_details);
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "invalid_assignment_file" });
+  }
+  const expectedRevision = Number(req.body?.expected_revision);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+    return res.status(400).json({ error: "invalid_expected_revision" });
+  }
+  const reviewer = String(req.body?.reviewer || "HomeNode editor")
+    .trim()
+    .slice(0, 200) || "HomeNode editor";
+  const assignmentDetails = req.body.assignment_details;
+  const client = await pool.connect();
+  try {
+    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    await client.query("BEGIN");
+    const canonicalId = await resolveCanonicalAccountId(client, requestedId);
+    const existingResult = await client.query(
+      `SELECT id, file_number, revision
+       FROM app.assignment_files
+       WHERE id = $1 AND account_id = $2
+       FOR UPDATE`,
+      [assignmentFileId, canonicalId],
+    );
+    const existing = existingResult.rows[0];
+    if (!existing) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "assignment_file_not_found" });
+    }
+    if (Number(existing.revision) !== expectedRevision) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        error: "assignment_file_revision_conflict",
+        current_revision: Number(existing.revision),
+      });
+    }
+    const revision = expectedRevision + 1;
+    await client.query(
+      `UPDATE app.assignment_files
+       SET assignment_details = $1::jsonb, reviewer = $2, revision = $3, updated_at = now()
+       WHERE id = $4`,
+      [JSON.stringify(assignmentDetails), reviewer, revision, assignmentFileId],
+    );
+    await client.query(
+      `INSERT INTO app.assignment_file_history (
+         assignment_file_id, account_id, file_number, assignment_details, reviewer, revision
+       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6)`,
+      [
+        assignmentFileId,
+        canonicalId,
+        existing.file_number,
+        JSON.stringify(assignmentDetails),
+        reviewer,
+        revision,
+      ],
+    );
+    await mirrorLatestAssignmentDetails(
+      client,
+      canonicalId,
+      assignmentDetails,
+      reviewer,
+      existing.file_number,
+    );
+    const { rows } = await client.query(
+      `${ASSIGNMENT_FILE_SELECT} WHERE f.id = $1`,
+      [assignmentFileId],
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, assignment_file: assignmentFileResponse(rows[0]) });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error("assignment file update failed", error);
+    return res.status(500).json({ error: "assignment_file_update_failed" });
   } finally {
     client.release();
   }

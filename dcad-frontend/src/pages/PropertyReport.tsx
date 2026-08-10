@@ -13,6 +13,12 @@ import {
 type DcadOwner = {
   owner_name?: string;
   mailing_address?: string;
+  parties?: DcadOwnerParty[];
+};
+
+type DcadOwnerParty = {
+  owner_name?: string;
+  ownership_pct?: string | number;
 };
 
 type DcadValueSummary = {
@@ -170,7 +176,6 @@ const EDITABLE_REPORT_SECTIONS: EditableReportSection[] = [
   { key: "report.property_characteristics", title: "Property Characteristics" },
   { key: "report.land_details", title: "Land Details and Zoning" },
   { key: "report.appraisal_values", title: "Appraisal District Values" },
-  { key: "report.assignment_details", title: "Assignment, Occupancy, and HOA" },
 ];
 
 const HOA_FREQUENCY_OPTIONS = [
@@ -199,11 +204,74 @@ const ASSIGNMENT_TYPE_OPTIONS = [
   ["other", "Other"],
 ] as const;
 
-function optionLabel(
-  value: string | undefined,
-  options: ReadonlyArray<readonly [string, string]>,
-): string {
-  return options.find(([key]) => key === value)?.[1] || "Not selected";
+function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails {
+  return {
+    pud: Boolean(value?.pud),
+    hoa_dues_amount: value?.hoa_dues_amount || "",
+    hoa_frequency: value?.hoa_frequency || "",
+    hoa_explanation: value?.hoa_explanation || "",
+    occupancy: value?.occupancy || "",
+    occupancy_explanation: value?.occupancy_explanation || "",
+    assignment_types: cloneEditorValue(value?.assignment_types || []),
+    assignment_explanation: value?.assignment_explanation || "",
+  };
+}
+
+function assignmentValidationErrors(assignment: AssignmentDetails): string[] {
+  const errors: string[] = [];
+  const hoaAmount = parseNumber(assignment.hoa_dues_amount);
+  const hoaExplanation = String(assignment.hoa_explanation || "").trim();
+  const assignmentTypes = Array.isArray(assignment.assignment_types)
+    ? assignment.assignment_types
+    : [];
+  if (
+    assignment.pud &&
+    !((hoaAmount !== null && hoaAmount > 0 && assignment.hoa_frequency) || hoaExplanation)
+  ) {
+    errors.push("Enter HOA dues and a frequency, or explain why they are unavailable.");
+  }
+  if (assignment.pud && assignment.hoa_frequency === "other" && !hoaExplanation) {
+    errors.push("Explain the Other HOA dues frequency.");
+  }
+  if (
+    assignment.occupancy === "unknown" &&
+    !String(assignment.occupancy_explanation || "").trim()
+  ) {
+    errors.push("Explain why occupancy is unknown.");
+  }
+  if (
+    assignmentTypes.includes("other") &&
+    !String(assignment.assignment_explanation || "").trim()
+  ) {
+    errors.push("Explain the Other assignment type.");
+  }
+  return errors;
+}
+
+function CheckboxChoice({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
+      checked
+        ? "border-blue-400 bg-blue-50 text-blue-900"
+        : "border-slate-200 bg-white text-slate-700"
+    }`}>
+      <input
+        type="checkbox"
+        className="checkbox checkbox-sm checkbox-primary"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {label}
+    </label>
+  );
 }
 
 const ARRAY_ROW_TEMPLATES: Record<string, Record<string, unknown>> = {
@@ -232,6 +300,10 @@ const ARRAY_ROW_TEMPLATES: Record<string, Record<string, unknown>> = {
     area_sqft: "",
     value: "",
     year_built: "",
+  },
+  parties: {
+    owner_name: "",
+    ownership_pct: "",
   },
 };
 
@@ -270,6 +342,14 @@ function formatNumber(value: unknown, suffix = ""): string {
   return `${new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
   }).format(parsed)}${suffix}`;
+}
+
+function formatOwnershipPercent(value: unknown): string {
+  const parsed = parseNumber(value);
+  if (parsed === null) return "Share not reported";
+  return `${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 3,
+  }).format(parsed)}%`;
 }
 
 function formatDate(value: unknown): string {
@@ -465,38 +545,9 @@ function ReportSectionEditor({
   const assignmentTypes = Array.isArray(assignment.assignment_types)
     ? assignment.assignment_types
     : [];
-  const assignmentErrors: string[] = [];
-  const hoaAmount = parseNumber(assignment.hoa_dues_amount);
-  const hoaExplanation = String(assignment.hoa_explanation || "").trim();
-  if (
-    section.key === "report.assignment_details" &&
-    assignment.pud &&
-    !((hoaAmount !== null && hoaAmount > 0 && assignment.hoa_frequency) || hoaExplanation)
-  ) {
-    assignmentErrors.push("Enter HOA dues and a frequency, or explain why they are unavailable.");
-  }
-  if (
-    section.key === "report.assignment_details" &&
-    assignment.pud &&
-    assignment.hoa_frequency === "other" &&
-    !hoaExplanation
-  ) {
-    assignmentErrors.push("Explain the Other HOA dues frequency.");
-  }
-  if (
-    section.key === "report.assignment_details" &&
-    assignment.occupancy === "unknown" &&
-    !String(assignment.occupancy_explanation || "").trim()
-  ) {
-    assignmentErrors.push("Explain why occupancy is unknown.");
-  }
-  if (
-    section.key === "report.assignment_details" &&
-    assignmentTypes.includes("other") &&
-    !String(assignment.assignment_explanation || "").trim()
-  ) {
-    assignmentErrors.push("Explain the Other assignment type.");
-  }
+  const assignmentErrors = section.key === "report.assignment_details"
+    ? assignmentValidationErrors(assignment)
+    : [];
 
   const checkboxOption = (
     checked: boolean,
@@ -831,6 +882,11 @@ function AddressHero({
   const [relatedParcelsError, setRelatedParcelsError] = useState("");
   const [editingSection, setEditingSection] = useState<EditableReportSection | null>(null);
   const [savingSection, setSavingSection] = useState(false);
+  const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDetails>(() =>
+    assignmentDraftFromDetail(detail?.assignment_details),
+  );
+  const [assignmentDirty, setAssignmentDirty] = useState(false);
+  const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
@@ -841,6 +897,11 @@ function AddressHero({
   useEffect(() => {
     if (photoIndex >= photos.length) setPhotoIndex(0);
   }, [photoIndex, photos.length]);
+
+  useEffect(() => {
+    setAssignmentDraft(assignmentDraftFromDetail(detail?.assignment_details));
+    setAssignmentDirty(false);
+  }, [detail?.assignment_details]);
 
   useEffect(() => {
     let cancelled = false;
@@ -882,7 +943,14 @@ function AddressHero({
   const neighborhood = displayValue(detail?.property_location?.neighborhood);
   const subdivision = displayValue(detail?.property_location?.subdivision);
   const county = displayValue(detail?.property_location?.county);
-  const ownerName = displayValue(detail?.owner?.owner_name);
+  const ownerParties = (detail?.owner?.parties || []).filter((party) =>
+    hasValue(party.owner_name),
+  );
+  const ownerName = displayValue(
+    ownerParties.length
+      ? ownerParties.map((party) => party.owner_name).join(" / ")
+      : detail?.owner?.owner_name,
+  );
   const ownerMailing = displayValue(detail?.owner?.mailing_address);
   const legalLines = detail?.legal_description?.lines?.filter((line) => Boolean(line?.trim())) || [];
   const legalDescription = legalLines.length
@@ -912,6 +980,7 @@ function AddressHero({
           owner: {
             owner_name: detail?.owner?.owner_name || "",
             mailing_address: detail?.owner?.mailing_address || "",
+            parties: cloneEditorValue(detail?.owner?.parties || []),
           },
           legal_description: {
             lines: detail?.legal_description?.lines || [],
@@ -1005,31 +1074,63 @@ function AddressHero({
     }
   };
 
-  const saveEditedSection = async (value: Record<string, unknown>) => {
-    if (!editingSection || !accountId) return;
+  const saveManualSection = async (
+    sectionKey: ReportManualSectionKey,
+    value: Record<string, unknown>,
+  ): Promise<boolean> => {
+    if (!accountId) return false;
     let editorKey = sessionStorage.getItem("homenode-editor-key") || "";
     if (!editorKey) {
       editorKey = window.prompt("Enter the HomeNode editor key to save verified changes:") || "";
-      if (!editorKey) return;
+      if (!editorKey) return false;
       sessionStorage.setItem("homenode-editor-key", editorKey);
     }
     setSavingSection(true);
     try {
       await updatePropertyReportSections(
         accountId,
-        { [editingSection.key]: value },
+        { [sectionKey]: value },
         editorKey,
       );
       await onReload();
-      setEditingSection(null);
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "The report changes could not be saved.";
       if (/401|invalid_editor_key/i.test(message)) {
         sessionStorage.removeItem("homenode-editor-key");
       }
       window.alert(message);
+      return false;
     } finally {
       setSavingSection(false);
+    }
+  };
+
+  const saveEditedSection = async (value: Record<string, unknown>) => {
+    if (!editingSection) return;
+    if (await saveManualSection(editingSection.key, value)) {
+      setEditingSection(null);
+    }
+  };
+
+  const updateAssignment = <K extends keyof AssignmentDetails,>(
+    key: K,
+    value: AssignmentDetails[K],
+  ) => {
+    setAssignmentDraft((current) => ({ ...current, [key]: value }));
+    setAssignmentDirty(true);
+    setAssignmentSaveMessage("");
+  };
+
+  const saveAssignmentDetails = async () => {
+    if (assignmentValidationErrors(assignmentDraft).length) return;
+    const saved = await saveManualSection(
+      "report.assignment_details",
+      cloneEditorValue(assignmentDraft) as Record<string, unknown>,
+    );
+    if (saved) {
+      setAssignmentDirty(false);
+      setAssignmentSaveMessage("Assignment details saved with revision history.");
     }
   };
 
@@ -1063,10 +1164,8 @@ function AddressHero({
     ({ row }) => (parseNumber(row?.homestead_exemption) || 0) > 0,
   ).length;
   const homestead = detail?.homestead_yes || exemptJurisdictionCount > 0;
-  const assignmentDetails = detail?.assignment_details || {};
-  const assignmentTypeLabels = (assignmentDetails.assignment_types || []).map(
-    (value) => optionLabel(value, ASSIGNMENT_TYPE_OPTIONS),
-  );
+  const assignmentTypes = assignmentDraft.assignment_types || [];
+  const assignmentErrors = assignmentValidationErrors(assignmentDraft);
   const relatedParcelsToShow = (relatedParcels?.parcels || []).filter(
     (parcel) => parcel.is_subject || parcel.materially_different,
   );
@@ -1329,7 +1428,27 @@ function AddressHero({
               <SummaryField label="County" value={county} />
               <SummaryField label="Subdivision" value={subdivision} />
               <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
-              <SummaryField label="Owner Name" value={ownerName} className="sm:col-span-2" />
+              <SummaryField
+                label={ownerParties.length > 1 ? "Owners and Ownership Shares" : "Owner Name"}
+                value={
+                  ownerParties.length ? (
+                    <div className="space-y-1.5">
+                      {ownerParties.map((party, index) => (
+                        <div
+                          key={`${party.owner_name}-${index}`}
+                          className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"
+                        >
+                          <span>{displayValue(party.owner_name)}</span>
+                          <span className="text-xs font-medium text-slate-500">
+                            {formatOwnershipPercent(party.ownership_pct)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : ownerName
+                }
+                className="sm:col-span-2"
+              />
               <SummaryField
                 label="Owner Mailing Address"
                 value={ownerMailing}
@@ -1341,60 +1460,180 @@ function AddressHero({
                 className="sm:col-span-2 lg:col-span-4"
               />
             </div>
+
+            <div className="mt-5 border-t border-slate-200 pt-4">
+              <div className="mb-3">
+                <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  These appraiser-entered fields are retained with the report revision history.
+                </p>
+              </div>
+              <div className="max-w-xs">
+                <CheckboxChoice
+                  checked={Boolean(assignmentDraft.pud)}
+                  label="PUD"
+                  onChange={(checked) => updateAssignment("pud", checked)}
+                />
+              </div>
+              {assignmentDraft.pud ? (
+                <div className="mt-4 space-y-4">
+                  <label className="block max-w-sm">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      HOA Dues Amount
+                    </span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      className="input input-bordered mt-1 w-full bg-white"
+                      value={assignmentDraft.hoa_dues_amount ?? ""}
+                      onChange={(event) =>
+                        updateAssignment("hoa_dues_amount", event.target.value)
+                      }
+                      placeholder="Dollar amount"
+                    />
+                  </label>
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      HOA Dues Frequency
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                      {HOA_FREQUENCY_OPTIONS.map(([value, label]) => (
+                        <CheckboxChoice
+                          key={value}
+                          checked={assignmentDraft.hoa_frequency === value}
+                          label={label}
+                          onChange={(checked) =>
+                            updateAssignment("hoa_frequency", checked ? value : "")
+                          }
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      HOA Explanation
+                    </span>
+                    <textarea
+                      className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                      value={assignmentDraft.hoa_explanation || ""}
+                      onChange={(event) =>
+                        updateAssignment("hoa_explanation", event.target.value)
+                      }
+                      placeholder="Required when dues are unavailable or the frequency is Other"
+                    />
+                  </label>
+                </div>
+              ) : null}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-slate-500">
+                  {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void saveAssignmentDetails()}
+                  className="btn btn-sm normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+                  disabled={savingSection || !assignmentDirty || assignmentErrors.length > 0}
+                >
+                  {savingSection ? "Saving..." : "Save PUD / HOA"}
+                </button>
+              </div>
+            </div>
           </SummarySection>
 
           <SummarySection
-            title="Assignment, Occupancy, and HOA"
-            subtitle="Appraiser-entered assignment details retained with revision history"
-            {...sectionEditProps("report.assignment_details")}
+            title="Assignment Details"
+            subtitle="Occupancy and assignment type are available directly on the report"
+            manuallyVerified={Boolean(detail?.report_manual_values?.["report.assignment_details"])}
           >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <SummaryField
-                label="PUD"
-                value={assignmentDetails.pud ? "Yes" : "No"}
-              />
-              <SummaryField
-                label="HOA Dues"
-                value={
-                  assignmentDetails.pud
-                    ? parseNumber(assignmentDetails.hoa_dues_amount) !== null
-                      ? `${formatMoney(assignmentDetails.hoa_dues_amount)} ${optionLabel(
-                          assignmentDetails.hoa_frequency,
-                          HOA_FREQUENCY_OPTIONS,
-                        ).toLowerCase()}`
-                      : displayValue(assignmentDetails.hoa_explanation)
-                    : "Not applicable"
-                }
-              />
-              <SummaryField
-                label="Occupancy"
-                value={optionLabel(assignmentDetails.occupancy, OCCUPANCY_OPTIONS)}
-              />
-              <SummaryField
-                label="Assignment Type"
-                value={assignmentTypeLabels.length ? assignmentTypeLabels.join(" / ") : "Not selected"}
-              />
-              {assignmentDetails.pud && hasValue(assignmentDetails.hoa_explanation) ? (
-                <SummaryField
-                  label="HOA Explanation"
-                  value={displayValue(assignmentDetails.hoa_explanation)}
-                  className="sm:col-span-2"
-                />
-              ) : null}
-              {assignmentDetails.occupancy === "unknown" ? (
-                <SummaryField
-                  label="Occupancy Explanation"
-                  value={displayValue(assignmentDetails.occupancy_explanation)}
-                  className="sm:col-span-2"
-                />
-              ) : null}
-              {assignmentDetails.assignment_types?.includes("other") ? (
-                <SummaryField
-                  label="Other Assignment Explanation"
-                  value={displayValue(assignmentDetails.assignment_explanation)}
-                  className="sm:col-span-2"
-                />
-              ) : null}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <fieldset className="rounded-xl border border-slate-200 bg-white p-4">
+                <legend className="px-1 text-sm font-semibold text-slate-900">Occupancy</legend>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {OCCUPANCY_OPTIONS.map(([value, label]) => (
+                    <CheckboxChoice
+                      key={value}
+                      checked={assignmentDraft.occupancy === value}
+                      label={label}
+                      onChange={(checked) =>
+                        updateAssignment("occupancy", checked ? value : "")
+                      }
+                    />
+                  ))}
+                </div>
+                {assignmentDraft.occupancy === "unknown" ? (
+                  <label className="mt-4 block">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      Unknown Occupancy Explanation
+                    </span>
+                    <textarea
+                      className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                      value={assignmentDraft.occupancy_explanation || ""}
+                      onChange={(event) =>
+                        updateAssignment("occupancy_explanation", event.target.value)
+                      }
+                    />
+                  </label>
+                ) : null}
+              </fieldset>
+
+              <fieldset className="rounded-xl border border-slate-200 bg-white p-4">
+                <legend className="px-1 text-sm font-semibold text-slate-900">Assignment Type</legend>
+                <p className="mb-3 text-xs text-slate-600">Select every type that applies.</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {ASSIGNMENT_TYPE_OPTIONS.map(([value, label]) => (
+                    <CheckboxChoice
+                      key={value}
+                      checked={assignmentTypes.includes(value)}
+                      label={label}
+                      onChange={(checked) =>
+                        updateAssignment(
+                          "assignment_types",
+                          checked
+                            ? [...new Set([...assignmentTypes, value])]
+                            : assignmentTypes.filter((item) => item !== value),
+                        )
+                      }
+                    />
+                  ))}
+                </div>
+                {assignmentTypes.includes("other") ? (
+                  <label className="mt-4 block">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      Other Assignment Explanation
+                    </span>
+                    <textarea
+                      className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                      value={assignmentDraft.assignment_explanation || ""}
+                      onChange={(event) =>
+                        updateAssignment("assignment_explanation", event.target.value)
+                      }
+                    />
+                  </label>
+                ) : null}
+              </fieldset>
+            </div>
+
+            {assignmentErrors.length ? (
+              <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                <ul className="list-disc space-y-1 pl-5">
+                  {assignmentErrors.map((error) => <li key={error}>{error}</li>)}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs text-slate-500">
+                {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
+              </span>
+              <button
+                type="button"
+                onClick={() => void saveAssignmentDetails()}
+                className="btn btn-sm normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+                disabled={savingSection || !assignmentDirty || assignmentErrors.length > 0}
+              >
+                {savingSection ? "Saving..." : "Save Assignment Details"}
+              </button>
             </div>
           </SummarySection>
 

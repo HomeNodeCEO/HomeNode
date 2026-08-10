@@ -24,4 +24,5 @@ __pycache__/
 .idea/
 venv/
 .venv/
+.testdeps/
 .DS_Store

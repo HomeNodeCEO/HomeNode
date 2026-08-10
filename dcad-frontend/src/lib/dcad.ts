@@ -49,6 +49,7 @@ export async function fetchDetail(accountId: string, countyId = 1) {
   const normalizedAccountId = (accountId || '').trim();
   const data = await getAccountDb(normalizedAccountId);
   const sales = data?.sales_history || [];
+  const propertyActivity = data?.property_activity_history || sales;
   const acc = data?.account || ({} as any);
   const imp = (data?.primary_improvements as any) || {};
   const housingProfile = (data as any)?.housing_profile || null;
@@ -76,6 +77,10 @@ export async function fetchDetail(accountId: string, countyId = 1) {
       postal_code: acc?.postal_code ?? undefined,
       county: acc?.county ?? undefined,
       subdivision: acc?.subdivision ?? undefined,
+      census_tract: data?.census_geography?.tract_code ?? undefined,
+      census_tract_geoid: data?.census_geography?.tract_geoid ?? undefined,
+      census_tract_status: data?.census_geography?.status ?? 'pending',
+      census_vintage: data?.census_geography?.vintage ?? undefined,
     },
     owner: os || ownerParties.length
       ? {
@@ -163,6 +168,29 @@ export async function fetchDetail(accountId: string, countyId = 1) {
         mls_status: sale?.mls_status ?? undefined,
         record_type: sale?.record_type ?? undefined,
       })),
+    property_activity_history: propertyActivity.map((event) => ({
+      sale_id: (event as any)?.sale_id ?? undefined,
+      source_record_id: (event as any)?.source_record_id ?? undefined,
+      listing_key: (event as any)?.listing_key ?? undefined,
+      listing_id: (event as any)?.listing_id ?? undefined,
+      source: (event as any)?.source ?? undefined,
+      record_type: (event as any)?.record_type ?? undefined,
+      activity_date: (event as any)?.activity_date ?? undefined,
+      listing_date: (event as any)?.listing_date ?? undefined,
+      contract_date: (event as any)?.contract_date ?? undefined,
+      closing_date: (event as any)?.closing_date ?? undefined,
+      list_price: (event as any)?.list_price ?? undefined,
+      sale_price: (event as any)?.sale_price ?? undefined,
+      days_on_market: (event as any)?.days_on_market ?? undefined,
+      buyer_financing: (event as any)?.buyer_financing ?? undefined,
+      concessions: (event as any)?.concessions ?? undefined,
+      mls_status: (event as any)?.mls_status ?? undefined,
+      requires_additional_review: Boolean((event as any)?.requires_additional_review),
+      data_quality_flags: Array.isArray((event as any)?.data_quality_flags)
+        ? (event as any).data_quality_flags
+        : [],
+    })),
+    census_geography: data?.census_geography || null,
     // Photos are loaded independently by the report page and never delay the
     // core property response.
     photos: [],
@@ -220,6 +248,13 @@ export async function fetchDetail(accountId: string, countyId = 1) {
   }
   const salesOverride = manual('report.sales_history');
   if (salesOverride && typeof salesOverride === 'object') {
+    const activityRows = (salesOverride as any).property_activity_history;
+    if (Array.isArray(activityRows)) {
+      detail.property_activity_history = activityRows;
+      detail.sales_history = activityRows.filter(
+        (row: any) => row?.record_type === 'closed_sale',
+      );
+    }
     const rows = (salesOverride as any).sales_history;
     if (Array.isArray(rows)) detail.sales_history = rows;
   }

@@ -4,6 +4,8 @@ export const CENSUS_BENCHMARK = "Public_AR_Current";
 export const CENSUS_VINTAGE = "Current_Current";
 export const CENSUS_COORDINATES_BATCH_URL =
   "https://geocoding.geo.census.gov/geocoder/geographies/coordinatesbatch";
+export const CENSUS_ADDRESS_BATCH_URL =
+  "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch";
 
 const COUNTY_FIPS = new Map([
   ["collin", "085"],
@@ -81,6 +83,55 @@ export function parseCensusCoordinatesBatchResponse(body) {
     .filter((row) => row.account_id);
 }
 
+export function parseCensusAddressBatchResponse(body) {
+  return String(body || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [
+        accountId,
+        inputAddress,
+        match,
+        matchType,
+        matchedAddress,
+        coordinates,
+        tigerLineId,
+        tigerLineSide,
+        stateFips,
+        countyFips,
+        tractCode,
+        blockCode,
+      ] = parseCsvRow(line);
+      const [longitudeText, latitudeText] = String(coordinates || "").split(",");
+      const longitude = Number(longitudeText);
+      const latitude = Number(latitudeText);
+      const matched = String(match || "").trim().toLowerCase() === "match";
+      const validCodes =
+        /^\d{2}$/.test(stateFips || "") &&
+        /^\d{3}$/.test(countyFips || "") &&
+        /^\d{6}$/.test(tractCode || "");
+      return {
+        account_id: String(accountId || "").trim(),
+        longitude: Number.isFinite(longitude) ? longitude : null,
+        latitude: Number.isFinite(latitude) ? latitude : null,
+        matched: matched && validCodes,
+        state_fips: validCodes ? stateFips : null,
+        county_fips: validCodes ? countyFips : null,
+        tract_code: validCodes ? tractCode : null,
+        tract_geoid: validCodes ? `${stateFips}${countyFips}${tractCode}` : null,
+        block_code: /^\d{4}$/.test(blockCode || "") ? blockCode : null,
+        response_status: String(match || "").trim() || "No_Match",
+        input_address: String(inputAddress || "").trim() || null,
+        matched_address: String(matchedAddress || "").trim() || null,
+        match_type: String(matchType || "").trim() || null,
+        tiger_line_id: String(tigerLineId || "").trim() || null,
+        tiger_line_side: String(tigerLineSide || "").trim() || null,
+      };
+    })
+    .filter((row) => row.account_id);
+}
+
 export function expectedCountyFips(county) {
   const normalized = String(county || "")
     .toLowerCase()
@@ -122,8 +173,14 @@ export async function ensureCensusGeographySchema(pool) {
       block_code          varchar(4),
       benchmark           text NOT NULL DEFAULT '${CENSUS_BENCHMARK}',
       vintage             text NOT NULL DEFAULT '${CENSUS_VINTAGE}',
-      source_latitude     double precision NOT NULL,
-      source_longitude    double precision NOT NULL,
+      source_latitude     double precision,
+      source_longitude    double precision,
+      source_address      text,
+      source_city         text,
+      source_state        text,
+      source_postal_code  text,
+      source_method       text NOT NULL DEFAULT 'coordinate'
+                          CHECK (source_method IN ('coordinate', 'address')),
       status              text NOT NULL DEFAULT 'pending'
                           CHECK (status IN (
                             'pending', 'processing', 'retry', 'matched',
@@ -138,11 +195,33 @@ export async function ensureCensusGeographySchema(pool) {
       looked_up_at        timestamptz,
       created_at          timestamptz NOT NULL DEFAULT now(),
       updated_at          timestamptz NOT NULL DEFAULT now(),
-      CHECK (source_latitude BETWEEN -90 AND 90),
-      CHECK (source_longitude BETWEEN -180 AND 180),
+      CHECK (source_latitude IS NULL OR source_latitude BETWEEN -90 AND 90),
+      CHECK (source_longitude IS NULL OR source_longitude BETWEEN -180 AND 180),
       CHECK (tract_geoid IS NULL OR tract_geoid ~ '^[0-9]{11}$'),
       CHECK (tract_code IS NULL OR tract_code ~ '^[0-9]{6}$')
     );
+
+    ALTER TABLE core.account_census_geographies
+      ALTER COLUMN source_latitude DROP NOT NULL,
+      ALTER COLUMN source_longitude DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS source_address text,
+      ADD COLUMN IF NOT EXISTS source_city text,
+      ADD COLUMN IF NOT EXISTS source_state text,
+      ADD COLUMN IF NOT EXISTS source_postal_code text,
+      ADD COLUMN IF NOT EXISTS source_method text NOT NULL DEFAULT 'coordinate';
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'account_census_geographies_source_method_check'
+          AND conrelid = 'core.account_census_geographies'::regclass
+      ) THEN
+        ALTER TABLE core.account_census_geographies
+          ADD CONSTRAINT account_census_geographies_source_method_check
+          CHECK (source_method IN ('coordinate', 'address'));
+      END IF;
+    END $$;
 
     CREATE INDEX IF NOT EXISTS account_census_geographies_work_idx
       ON core.account_census_geographies (status, next_attempt_at, updated_at)
@@ -155,9 +234,9 @@ export async function ensureCensusGeographySchema(pool) {
 }
 
 /**
- * Queue only accounts that already have cached coordinates. Accounts without
- * coordinates are discovered automatically after the independent location
- * backfill writes them, without coupling this worker to the Dallas scraper.
+ * Prefer cached parcel coordinates. If they are unavailable, queue the situs
+ * address for the Census address-batch service so tract coverage is not held
+ * hostage by a county-specific mapping backlog.
  */
 export async function seedCensusGeographyQueue(
   pool,
@@ -170,36 +249,89 @@ export async function seedCensusGeographyQueue(
         SELECT
           account.account_id,
           account.county,
-          location.latitude,
-          location.longitude
+          CASE WHEN location.status = 'matched' THEN location.latitude END AS latitude,
+          CASE WHEN location.status = 'matched' THEN location.longitude END AS longitude,
+          NULLIF(BTRIM(account.address), '') AS address,
+          NULLIF(BTRIM(account.city), '') AS city,
+          'TX'::text AS state,
+          NULLIF(BTRIM(account.postal_code), '') AS postal_code,
+          CASE
+            WHEN location.status = 'matched'
+              AND location.latitude IS NOT NULL
+              AND location.longitude IS NOT NULL
+              THEN 'coordinate'
+            ELSE 'address'
+          END AS source_method
         FROM core.accounts account
-        JOIN core.account_locations location
+        LEFT JOIN core.account_locations location
           ON location.account_id = account.account_id
-         AND location.status = 'matched'
-         AND location.latitude IS NOT NULL
-         AND location.longitude IS NOT NULL
         LEFT JOIN core.account_census_geographies geography
           ON geography.account_id = account.account_id
-        WHERE geography.account_id IS NULL
-           OR geography.source_latitude IS DISTINCT FROM location.latitude
-           OR geography.source_longitude IS DISTINCT FROM location.longitude
-           OR geography.benchmark IS DISTINCT FROM $2
-           OR geography.vintage IS DISTINCT FROM $3
+        WHERE (
+          (
+            location.status = 'matched'
+            AND location.latitude IS NOT NULL
+            AND location.longitude IS NOT NULL
+          )
+          OR (
+            NULLIF(BTRIM(account.address), '') IS NOT NULL
+            AND (
+              NULLIF(BTRIM(account.city), '') IS NOT NULL
+              OR NULLIF(BTRIM(account.postal_code), '') IS NOT NULL
+            )
+          )
+        )
+          AND (
+            geography.account_id IS NULL
+            OR geography.benchmark IS DISTINCT FROM $2
+            OR geography.vintage IS DISTINCT FROM $3
+            OR (
+              location.status = 'matched'
+              AND location.latitude IS NOT NULL
+              AND location.longitude IS NOT NULL
+              AND (
+                geography.source_method IS DISTINCT FROM 'coordinate'
+                OR geography.source_latitude IS DISTINCT FROM location.latitude
+                OR geography.source_longitude IS DISTINCT FROM location.longitude
+              )
+            )
+            OR (
+              NOT COALESCE((
+                location.status = 'matched'
+                AND location.latitude IS NOT NULL
+                AND location.longitude IS NOT NULL
+              ), false)
+              AND (
+                geography.source_method IS DISTINCT FROM 'address'
+                OR geography.source_address IS DISTINCT FROM NULLIF(BTRIM(account.address), '')
+                OR geography.source_city IS DISTINCT FROM NULLIF(BTRIM(account.city), '')
+                OR geography.source_postal_code IS DISTINCT FROM NULLIF(BTRIM(account.postal_code), '')
+              )
+            )
+          )
         ORDER BY account.account_id
         LIMIT $1
       )
       INSERT INTO core.account_census_geographies (
-        account_id, source_latitude, source_longitude, benchmark, vintage,
+        account_id, source_latitude, source_longitude,
+        source_address, source_city, source_state, source_postal_code,
+        source_method, benchmark, vintage,
         status, attempts, next_attempt_at, leased_at, worker_id,
         response_status, review_reason, looked_up_at, updated_at
       )
       SELECT
-        account_id, latitude, longitude, $2, $3,
+        account_id, latitude, longitude,
+        address, city, state, postal_code, source_method, $2, $3,
         'pending', 0, now(), NULL, NULL, NULL, NULL, NULL, now()
       FROM candidates
       ON CONFLICT (account_id) DO UPDATE SET
         source_latitude = EXCLUDED.source_latitude,
         source_longitude = EXCLUDED.source_longitude,
+        source_address = EXCLUDED.source_address,
+        source_city = EXCLUDED.source_city,
+        source_state = EXCLUDED.source_state,
+        source_postal_code = EXCLUDED.source_postal_code,
+        source_method = EXCLUDED.source_method,
         benchmark = EXCLUDED.benchmark,
         vintage = EXCLUDED.vintage,
         tract_geoid = NULL,
@@ -258,7 +390,10 @@ async function claimCensusGeographyBatch(
         JOIN core.accounts account ON account.account_id = next_items.account_id
         WHERE geography.account_id = next_items.account_id
         RETURNING geography.account_id, geography.source_latitude,
-                  geography.source_longitude, geography.attempts,
+                  geography.source_longitude, geography.source_address,
+                  geography.source_city, geography.source_state,
+                  geography.source_postal_code, geography.source_method,
+                  geography.attempts,
                   geography.benchmark, geography.vintage,
                   geography.worker_id, account.county
       `,
@@ -302,6 +437,40 @@ export async function fetchCensusCoordinatesBatch(
   }
 }
 
+export async function fetchCensusAddressBatch(
+  rows,
+  { fetchImpl = fetch, benchmark = CENSUS_BENCHMARK, vintage = CENSUS_VINTAGE } = {},
+) {
+  const csv = rows
+    .map((row) => [
+      row.account_id,
+      row.source_address,
+      row.source_city,
+      row.source_state || "TX",
+      row.source_postal_code,
+    ].map(csvCell).join(","))
+    .join("\n");
+  const form = new FormData();
+  form.append("addressFile", new Blob([`${csv}\n`], { type: "text/csv" }), "addresses.csv");
+  form.append("benchmark", benchmark);
+  form.append("vintage", vintage);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000);
+  timeout.unref?.();
+  try {
+    const response = await fetchImpl(CENSUS_ADDRESS_BATCH_URL, {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+      headers: { "user-agent": "HomeNode census-tract backfill/1.0" },
+    });
+    if (!response.ok) throw new Error(`census_address_batch_http_${response.status}`);
+    return parseCensusAddressBatchResponse(await response.text());
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function retryDelaySeconds(attempt) {
   return Math.min(3600, 30 * 2 ** Math.max(0, Number(attempt || 1) - 1));
 }
@@ -327,6 +496,8 @@ async function finishCensusBatch(pool, claimed, results, { maximumAttempts = 5 }
       state_fips: result?.state_fips || null,
       county_fips: result?.county_fips || null,
       block_code: result?.block_code || null,
+      source_latitude: result?.latitude ?? item.source_latitude ?? null,
+      source_longitude: result?.longitude ?? item.source_longitude ?? null,
       response_status: result?.response_status || "Missing_Response",
       review_reason: validation.reason,
       retry_delay_seconds: retryDelaySeconds(item.attempts),
@@ -339,7 +510,9 @@ async function finishCensusBatch(pool, claimed, results, { maximumAttempts = 5 }
         FROM JSONB_TO_RECORDSET($1::jsonb) AS item(
           account_id text, worker_id text, status text,
           tract_geoid text, tract_code text, state_fips text,
-          county_fips text, block_code text, response_status text,
+          county_fips text, block_code text,
+          source_latitude double precision, source_longitude double precision,
+          response_status text,
           review_reason text, retry_delay_seconds integer
         )
       )
@@ -349,6 +522,8 @@ async function finishCensusBatch(pool, claimed, results, { maximumAttempts = 5 }
           state_fips = outcome.state_fips,
           county_fips = outcome.county_fips,
           block_code = outcome.block_code,
+          source_latitude = outcome.source_latitude,
+          source_longitude = outcome.source_longitude,
           status = outcome.status,
           response_status = outcome.response_status,
           review_reason = outcome.review_reason,
@@ -428,11 +603,22 @@ export async function runCensusGeographyBatch(
     return { claimed: 0, matched: 0, retry: 0, reviewRequired: 0 };
   }
   try {
-    const results = await fetchCensusCoordinatesBatch(claimed, {
+    const coordinateRows = claimed.filter((row) => row.source_method === "coordinate");
+    const addressRows = claimed.filter((row) => row.source_method === "address");
+    const lookupOptions = {
       fetchImpl,
       benchmark: claimed[0].benchmark,
       vintage: claimed[0].vintage,
-    });
+    };
+    const [coordinateResults, addressResults] = await Promise.all([
+      coordinateRows.length
+        ? fetchCensusCoordinatesBatch(coordinateRows, lookupOptions)
+        : [],
+      addressRows.length
+        ? fetchCensusAddressBatch(addressRows, lookupOptions)
+        : [],
+    ]);
+    const results = [...coordinateResults, ...addressResults];
     return await finishCensusBatch(pool, claimed, results, { maximumAttempts });
   } catch (error) {
     return releaseFailedCensusBatch(pool, claimed, error, maximumAttempts);
@@ -454,6 +640,26 @@ export async function getCensusGeographyStatus(pool) {
             AND location.latitude IS NOT NULL
             AND location.longitude IS NOT NULL
         )::integer AS coordinate_ready_count,
+        COUNT(*) FILTER (
+          WHERE NULLIF(BTRIM(account.address), '') IS NOT NULL
+            AND (
+              NULLIF(BTRIM(account.city), '') IS NOT NULL
+              OR NULLIF(BTRIM(account.postal_code), '') IS NOT NULL
+            )
+        )::integer AS address_ready_count,
+        COUNT(*) FILTER (
+          WHERE (
+            location.status = 'matched'
+            AND location.latitude IS NOT NULL
+            AND location.longitude IS NOT NULL
+          ) OR (
+            NULLIF(BTRIM(account.address), '') IS NOT NULL
+            AND (
+              NULLIF(BTRIM(account.city), '') IS NOT NULL
+              OR NULLIF(BTRIM(account.postal_code), '') IS NOT NULL
+            )
+          )
+        )::integer AS lookup_ready_count,
         COUNT(*) FILTER (WHERE geography.status = 'matched')::integer AS matched_tract_count,
         COUNT(*) FILTER (WHERE geography.status = 'review_required')::integer AS review_required_count
       FROM core.accounts account
@@ -476,10 +682,12 @@ export async function getCensusGeographyStatus(pool) {
     coverage: {
       account_count: total,
       coordinate_ready_count: Number(coverage.coordinate_ready_count || 0),
+      address_ready_count: Number(coverage.address_ready_count || 0),
+      lookup_ready_count: Number(coverage.lookup_ready_count || 0),
       matched_tract_count: matched,
       review_required_count: Number(coverage.review_required_count || 0),
-      pending_coordinates_count:
-        Math.max(0, total - Number(coverage.coordinate_ready_count || 0)),
+      missing_lookup_input_count:
+        Math.max(0, total - Number(coverage.lookup_ready_count || 0)),
       coverage_percent: total ? Math.round((matched / total) * 10_000) / 100 : 100,
     },
   };

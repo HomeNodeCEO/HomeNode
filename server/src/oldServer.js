@@ -541,7 +541,8 @@ app.get("/api/accounts/:id", async (req, res) => {
       const { rows } = await pool.query(
         `SELECT tract_geoid, tract_code, state_fips, county_fips, block_code,
                 benchmark, vintage, status, response_status, review_reason,
-                source_latitude, source_longitude, looked_up_at, updated_at
+                source_method, source_latitude, source_longitude,
+                looked_up_at, updated_at
          FROM core.account_census_geographies
          WHERE account_id = $1`,
         [canonicalId],

@@ -223,22 +223,6 @@ export default function PropertySearchPage() {
 
   return (
     <div style={{ padding: 16, display: "grid", gap: 12 }}>
-      {/* Signup CTA */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Link
-          to="/signup"
-          style={{
-            textDecoration: 'none',
-            padding: '8px 12px',
-            borderRadius: 10,
-            border: '1px solid #059669',
-            background: '#059669',
-            color: 'white',
-          }}
-        >
-          Sign Up Here (No Upfront Cost)
-        </Link>
-      </div>
       <h1 style={{ margin: 0 }}>Property Search</h1>
 
       {/* Query + Filters */}

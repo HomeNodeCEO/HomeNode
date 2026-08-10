@@ -7,6 +7,7 @@ import {
   getAssignmentFiles,
   getAccountPhotos,
   getRelatedParcels,
+  lookupAccountCensusGeography,
   updateAssignmentFile,
   updatePropertyReportSections,
   type AppraisalAssignmentFile,
@@ -192,7 +193,7 @@ const EDITABLE_REPORT_SECTIONS: EditableReportSection[] = [
   { key: "report.exemptions", title: "Current Exemptions" },
   { key: "report.sales_history", title: "Listings, Contracts, and Sales History" },
   { key: "report.property_characteristics", title: "Property Characteristics" },
-  { key: "report.land_details", title: "Land Details and Zoning" },
+  { key: "report.land_details", title: "Land Details" },
   { key: "report.appraisal_values", title: "Appraisal District Values" },
 ];
 
@@ -994,6 +995,8 @@ function AddressHero({
   const [inheritedLegacyAssignment, setInheritedLegacyAssignment] = useState(false);
   const [assignmentFileNumber, setAssignmentFileNumber] = useState("");
   const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
+  const [censusLookupLoading, setCensusLookupLoading] = useState(false);
+  const [censusLookupMessage, setCensusLookupMessage] = useState("");
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
@@ -1017,6 +1020,7 @@ function AddressHero({
     setInheritedLegacyAssignment(false);
     setAssignmentFileNumber("");
     setAssignmentFilesError("");
+    setCensusLookupMessage("");
     if (!accountId?.trim() || !detailLoaded) {
       setAssignmentFilesLoading(false);
       return () => {
@@ -1270,6 +1274,38 @@ function AddressHero({
     }
   };
 
+  const lookUpCensusTractNow = async () => {
+    if (!accountId || censusLookupLoading) return;
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    setCensusLookupLoading(true);
+    setCensusLookupMessage("");
+    try {
+      const response = await lookupAccountCensusGeography(accountId, editorKey);
+      const tract = response.census_geography?.tract_code;
+      setCensusLookupMessage(
+        response.census_geography?.status === "matched"
+          ? `Census tract ${formatCensusTract(tract)} added.`
+          : "The Census response needs review before it can be treated as a verified tract.",
+      );
+      await onReload();
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "The Census tract could not be looked up.";
+      if (/401|invalid_editor_key/i.test(message)) {
+        sessionStorage.removeItem("homenode-editor-key");
+      }
+      setCensusLookupMessage(
+        message === "census_lookup_input_missing"
+          ? "This property needs a usable address or coordinate before Census lookup."
+          : message,
+      );
+    } finally {
+      setCensusLookupLoading(false);
+    }
+  };
+
   const saveEditedSection = async (value: Record<string, unknown>) => {
     if (!editingSection) return;
     if (await saveManualSection(editingSection.key, value)) {
@@ -1453,28 +1489,17 @@ function AddressHero({
       style={{ backgroundColor: "#ffffff" }}
     >
       <section className="border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-6">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-          <div className="min-w-0">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-              Property Account
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <span className="font-mono text-sm font-semibold text-slate-900">
-                {displayValue(accountId)}
-              </span>
-              {activeAssignmentFile ? (
-                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-                  Active file {activeAssignmentFile.file_number}
-                </span>
-              ) : assignmentFromPrevious ? (
-                <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-950">
-                  From Previous Assignment
-                </span>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-end xl:w-auto">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-end">
+          {activeAssignmentFile ? (
+            <span className="mb-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+              Active file {activeAssignmentFile.file_number}
+            </span>
+          ) : assignmentFromPrevious ? (
+            <span className="mb-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-950">
+              From Previous Assignment
+            </span>
+          ) : null}
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
             <label className="block min-w-0 flex-1 xl:w-64 xl:flex-none">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
                 File Number
@@ -1628,9 +1653,6 @@ function AddressHero({
           <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
             <span>
               Neighborhood Code: <strong className="text-slate-800">{neighborhood}</strong>
-            </span>
-            <span>
-              Zoning: <strong className="text-slate-800">{primaryZoning}</strong>
             </span>
           </div>
         </header>
@@ -1800,31 +1822,58 @@ function AddressHero({
                         Coordinate/county match needs review
                       </span>
                     ) : null}
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs -ml-2 mt-1 normal-case text-blue-700"
+                      onClick={() => void lookUpCensusTractNow()}
+                      disabled={censusLookupLoading || !accountId}
+                    >
+                      {censusLookupLoading
+                        ? "Looking up..."
+                        : detail?.property_location?.census_tract
+                          ? "Refresh tract"
+                          : "Look Up Now"}
+                    </button>
+                    {censusLookupMessage ? (
+                      <span className={`mt-1 block text-[11px] font-medium ${
+                        /added/i.test(censusLookupMessage) ? "text-emerald-700" : "text-amber-700"
+                      }`}>
+                        {censusLookupMessage}
+                      </span>
+                    ) : null}
                   </div>
                 }
               />
               <SummaryField label="Subdivision" value={subdivision} />
+              <SummaryField label="Zoning" value={primaryZoning} />
               <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
               <SummaryField
-                label={ownerParties.length > 1 ? "Owners and Ownership Shares" : "Owner Name"}
+                label={ownerParties.length > 1 ? "Owner Names" : "Owner Name"}
                 value={
                   ownerParties.length ? (
                     <div className="space-y-1.5">
                       {ownerParties.map((party, index) => (
-                        <div
-                          key={`${party.owner_name}-${index}`}
-                          className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1"
-                        >
-                          <span>{displayValue(party.owner_name)}</span>
-                          <span className="text-xs font-medium text-slate-500">
-                            {formatOwnershipPercent(party.ownership_pct)}
-                          </span>
+                        <div key={`${party.owner_name}-${index}`}>
+                          {displayValue(party.owner_name)}
                         </div>
                       ))}
                     </div>
                   ) : ownerName
                 }
-                className="sm:col-span-2"
+              />
+              <SummaryField
+                label="Ownership Percentage"
+                value={
+                  ownerParties.length ? (
+                    <div className="space-y-1.5">
+                      {ownerParties.map((party, index) => (
+                        <div key={`${party.owner_name}-share-${index}`}>
+                          {formatOwnershipPercent(party.ownership_pct)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : "Share not reported"
+                }
               />
               <SummaryField
                 label="Owner Mailing Address"
@@ -2235,6 +2284,82 @@ function AddressHero({
               <SummaryField label="Fence" value={displayValue(improvement?.fence_type)} />
             </div>
 
+            <div className="mt-5 border-t border-slate-200 pt-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold text-slate-800">Land Details</h3>
+                    {detail?.report_manual_values?.["report.land_details"] ? (
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800">
+                        Manually verified
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {landRows.length} land record{landRows.length === 1 ? "" : "s"} returned
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => editSection("report.land_details")}
+                  className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+                >
+                  Edit Land Details
+                </button>
+              </div>
+
+              <div className="my-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <SummaryField
+                  label="Total Land Area"
+                  value={totalLandArea ? formatNumber(totalLandArea, " sq. ft.") : "Not reported"}
+                />
+                <SummaryField label="Land Value" value={formatMoney(values?.land_value)} />
+              </div>
+
+              {landRows.length ? (
+                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                  <table className="table table-sm w-full">
+                    <thead>
+                      <tr>
+                        <th>Use / State Code</th>
+                        <th>Zoning</th>
+                        <th className="text-right">Area</th>
+                        <th className="text-right">Frontage × Depth</th>
+                        <th>Pricing</th>
+                        <th className="text-right">Adjusted Price</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {landRows.map((row, index) => (
+                        <tr key={row.number || index}>
+                          <td>{displayValue(row.state_code)}</td>
+                          <td>{displayValue(row.zoning)}</td>
+                          <td className="text-right">
+                            {formatNumber(row.area_sqft, " sq. ft.")}
+                          </td>
+                          <td className="text-right">
+                            {parseNumber(row.frontage_ft) !== null ||
+                            parseNumber(row.depth_ft) !== null
+                              ? `${formatNumber(row.frontage_ft, " ft.")} × ${formatNumber(
+                                  row.depth_ft,
+                                  " ft.",
+                                )}`
+                              : "Not reported"}
+                          </td>
+                          <td>{displayValue(row.pricing_method)}</td>
+                          <td className="text-right">{formatMoney(row.adjusted_price)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+                  No land detail records were returned for this parcel.
+                </p>
+              )}
+            </div>
+
             {additionalImprovements.length ? (
               <div className="mt-5 border-t border-slate-200 pt-4">
                 <h3 className="text-sm font-semibold text-slate-800">Additional Improvements</h3>
@@ -2262,64 +2387,6 @@ function AddressHero({
                 </div>
               </div>
             ) : null}
-          </SummarySection>
-
-          <SummarySection
-            title="Land Details and Zoning"
-            subtitle={`${landRows.length} land record${landRows.length === 1 ? "" : "s"} returned`}
-            {...sectionEditProps("report.land_details")}
-          >
-            <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <SummaryField label="Primary Zoning" value={primaryZoning} />
-              <SummaryField
-                label="Total Land Area"
-                value={totalLandArea ? formatNumber(totalLandArea, " sq. ft.") : "Not reported"}
-              />
-              <SummaryField label="Land Value" value={formatMoney(values?.land_value)} />
-            </div>
-
-            {landRows.length ? (
-              <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                <table className="table table-sm w-full">
-                  <thead>
-                    <tr>
-                      <th>Use / State Code</th>
-                      <th>Zoning</th>
-                      <th className="text-right">Area</th>
-                      <th className="text-right">Frontage × Depth</th>
-                      <th>Pricing</th>
-                      <th className="text-right">Adjusted Price</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {landRows.map((row, index) => (
-                      <tr key={row.number || index}>
-                        <td>{displayValue(row.state_code)}</td>
-                        <td>{displayValue(row.zoning)}</td>
-                        <td className="text-right">
-                          {formatNumber(row.area_sqft, " sq. ft.")}
-                        </td>
-                        <td className="text-right">
-                          {parseNumber(row.frontage_ft) !== null ||
-                          parseNumber(row.depth_ft) !== null
-                            ? `${formatNumber(row.frontage_ft, " ft.")} × ${formatNumber(
-                                row.depth_ft,
-                                " ft.",
-                              )}`
-                            : "Not reported"}
-                        </td>
-                        <td>{displayValue(row.pricing_method)}</td>
-                        <td className="text-right">{formatMoney(row.adjusted_price)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="text-sm text-slate-600">
-                No land detail records were returned for this parcel.
-              </p>
-            )}
           </SummarySection>
 
           <SummarySection
@@ -2493,9 +2560,8 @@ export default function PropertyReport() {
     return params.get("account_id") || params.get("account") || "";
   }, [location.search, routeAccountId]);
 
-  const [account, setAccount] = useState(presetAccount);
+  const account = presetAccount;
   const [detail, setDetail] = useState<DcadDetail | null>(null);
-  const [loading, setLoading] = useState(false);
   const hasAutoImported = useRef(false);
   const loadRequestId = useRef(0);
 
@@ -2506,7 +2572,6 @@ export default function PropertyReport() {
     }
     const requestedAccount = account.trim();
     const requestId = ++loadRequestId.current;
-    setLoading(true);
     try {
       const response = await fetchDetail(requestedAccount);
       if (requestId !== loadRequestId.current) return;
@@ -2530,8 +2595,6 @@ export default function PropertyReport() {
       if (requestId !== loadRequestId.current) return;
       console.error(error);
       window.alert(error instanceof Error ? error.message : "Import failed");
-    } finally {
-      if (requestId === loadRequestId.current) setLoading(false);
     }
   }
 
@@ -2558,31 +2621,6 @@ export default function PropertyReport() {
       </div>
 
       <main className="container mx-auto space-y-4 px-4 py-4">
-        <div className="card rounded-2xl bg-base-100 shadow-sm">
-          <div className="card-body p-4">
-            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
-              <label htmlFor="property-account-id" className="text-sm font-medium opacity-70">
-                Account ID
-              </label>
-              <input
-                id="property-account-id"
-                className="input input-bordered w-full sm:w-64"
-                placeholder="e.g. 26272500060150000"
-                value={account}
-                onChange={(event) => setAccount(event.target.value)}
-              />
-              <button
-                type="button"
-                className="btn btn-primary normal-case"
-                onClick={() => void importFromDatabase()}
-                disabled={loading || !account}
-              >
-                {loading ? "Loading..." : "Load Report"}
-              </button>
-            </div>
-          </div>
-        </div>
-
         <AddressHero detail={detail} accountId={account} onReload={importFromDatabase} />
       </main>
     </div>

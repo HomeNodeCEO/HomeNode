@@ -471,6 +471,166 @@ export async function fetchCensusAddressBatch(
   }
 }
 
+/**
+ * Resolve and persist one account immediately without waiting for the background queue.
+ * A direct lookup also clears any worker lease so an older batch cannot overwrite it.
+ */
+export async function lookupAccountCensusGeographyNow(
+  pool,
+  accountId,
+  {
+    fetchImpl = fetch,
+    benchmark = CENSUS_BENCHMARK,
+    vintage = CENSUS_VINTAGE,
+  } = {},
+) {
+  await ensureCensusGeographySchema(pool);
+  const { rows } = await pool.query(
+    `
+      SELECT
+        account.account_id,
+        account.county,
+        CASE WHEN location.status = 'matched' THEN location.latitude END AS source_latitude,
+        CASE WHEN location.status = 'matched' THEN location.longitude END AS source_longitude,
+        COALESCE(NULLIF(BTRIM(account.address), ''), raw_location.address) AS source_address,
+        COALESCE(NULLIF(BTRIM(account.city), ''), raw_location.city) AS source_city,
+        'TX'::text AS source_state,
+        COALESCE(NULLIF(BTRIM(account.postal_code), ''), raw_location.postal_code)
+          AS source_postal_code
+      FROM core.accounts account
+      LEFT JOIN core.account_locations location
+        ON location.account_id = account.account_id
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(
+            NULLIF(BTRIM(raw.raw #>> '{detail,property_location,address}'), ''),
+            NULLIF(BTRIM(raw.raw #>> '{detail,property_location,subject_address}'), '')
+          ) AS address,
+          COALESCE(
+            NULLIF(BTRIM(raw.raw #>> '{detail,property_location,city}'), ''),
+            NULLIF(BTRIM(raw.raw #>> '{detail,property_location,situs_city}'), '')
+          ) AS city,
+          COALESCE(
+            NULLIF(BTRIM(raw.raw #>> '{detail,property_location,postal_code}'), ''),
+            NULLIF(BTRIM(raw.raw #>> '{detail,property_location,zip_code}'), '')
+          ) AS postal_code
+        FROM core.dcad_json_raw raw
+        WHERE raw.account_id = account.account_id
+        ORDER BY raw.tax_year DESC, raw.fetched_at DESC
+        LIMIT 1
+      ) raw_location ON TRUE
+      WHERE account.account_id = $1
+    `,
+    [accountId],
+  );
+  const account = rows[0];
+  if (!account) {
+    const error = new Error("account_not_found");
+    error.code = "account_not_found";
+    throw error;
+  }
+
+  const hasCoordinates =
+    account.source_latitude !== null && account.source_latitude !== undefined &&
+    account.source_longitude !== null && account.source_longitude !== undefined &&
+    Number.isFinite(Number(account.source_latitude)) &&
+    Number.isFinite(Number(account.source_longitude));
+  const hasAddress = Boolean(
+    String(account.source_address || "").trim() &&
+    (String(account.source_city || "").trim() || String(account.source_postal_code || "").trim()),
+  );
+  if (!hasCoordinates && !hasAddress) {
+    const error = new Error("census_lookup_input_missing");
+    error.code = "census_lookup_input_missing";
+    throw error;
+  }
+
+  const sourceMethod = hasCoordinates ? "coordinate" : "address";
+  const lookupRow = {
+    account_id: account.account_id,
+    source_latitude: hasCoordinates ? Number(account.source_latitude) : null,
+    source_longitude: hasCoordinates ? Number(account.source_longitude) : null,
+    source_address: account.source_address || null,
+    source_city: account.source_city || null,
+    source_state: account.source_state || "TX",
+    source_postal_code: account.source_postal_code || null,
+  };
+  const lookupOptions = { fetchImpl, benchmark, vintage };
+  const results = sourceMethod === "coordinate"
+    ? await fetchCensusCoordinatesBatch([lookupRow], lookupOptions)
+    : await fetchCensusAddressBatch([lookupRow], lookupOptions);
+  const result = results.find((item) => item.account_id === account.account_id) || null;
+  const validation = validateCensusGeography(result, account.county);
+  const status = validation.valid ? "matched" : "review_required";
+
+  const { rows: savedRows } = await pool.query(
+    `
+      INSERT INTO core.account_census_geographies (
+        account_id, tract_geoid, tract_code, state_fips, county_fips, block_code,
+        benchmark, vintage, source_latitude, source_longitude,
+        source_address, source_city, source_state, source_postal_code,
+        source_method, status, attempts, next_attempt_at, leased_at, worker_id,
+        response_status, review_reason, looked_up_at, updated_at
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10,
+        $11, $12, $13, $14,
+        $15, $16, 1, now(), NULL, NULL,
+        $17, $18, now(), now()
+      )
+      ON CONFLICT (account_id) DO UPDATE SET
+        tract_geoid = EXCLUDED.tract_geoid,
+        tract_code = EXCLUDED.tract_code,
+        state_fips = EXCLUDED.state_fips,
+        county_fips = EXCLUDED.county_fips,
+        block_code = EXCLUDED.block_code,
+        benchmark = EXCLUDED.benchmark,
+        vintage = EXCLUDED.vintage,
+        source_latitude = EXCLUDED.source_latitude,
+        source_longitude = EXCLUDED.source_longitude,
+        source_address = EXCLUDED.source_address,
+        source_city = EXCLUDED.source_city,
+        source_state = EXCLUDED.source_state,
+        source_postal_code = EXCLUDED.source_postal_code,
+        source_method = EXCLUDED.source_method,
+        status = EXCLUDED.status,
+        attempts = core.account_census_geographies.attempts + 1,
+        next_attempt_at = now(),
+        leased_at = NULL,
+        worker_id = NULL,
+        response_status = EXCLUDED.response_status,
+        review_reason = EXCLUDED.review_reason,
+        looked_up_at = now(),
+        updated_at = now()
+      RETURNING tract_geoid, tract_code, state_fips, county_fips, block_code,
+                benchmark, vintage, status, response_status, review_reason,
+                source_method, source_latitude, source_longitude,
+                looked_up_at, updated_at
+    `,
+    [
+      account.account_id,
+      result?.tract_geoid || null,
+      result?.tract_code || null,
+      result?.state_fips || null,
+      result?.county_fips || null,
+      result?.block_code || null,
+      benchmark,
+      vintage,
+      result?.latitude ?? lookupRow.source_latitude,
+      result?.longitude ?? lookupRow.source_longitude,
+      lookupRow.source_address,
+      lookupRow.source_city,
+      lookupRow.source_state,
+      lookupRow.source_postal_code,
+      sourceMethod,
+      status,
+      result?.response_status || "Missing_Response",
+      validation.reason,
+    ],
+  );
+  return savedRows[0];
+}
+
 function retryDelaySeconds(attempt) {
   return Math.min(3600, 30 * 2 ** Math.max(0, Number(attempt || 1) - 1));
 }

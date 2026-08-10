@@ -52,6 +52,7 @@ import { getAccountPropertyActivityHistory } from "./services/accountSalesHistor
 import {
   ensureCensusGeographySchema,
   getCensusGeographyStatus,
+  lookupAccountCensusGeographyNow,
   runCensusGeographyBatch,
   seedCensusGeographyQueue,
   startCensusGeographyWorker,
@@ -1448,6 +1449,28 @@ app.get("/api/census-geography/status", async (_req, res) => {
   } catch (error) {
     console.error("census geography status failed", error);
     return res.status(500).json({ error: "census_geography_status_failed" });
+  }
+});
+
+/** Give a report user one validated tract immediately without waiting for the queue. */
+app.post("/api/accounts/:id/census-geography/lookup", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    await accountQualityReady;
+    await censusGeographyReady;
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const censusGeography = await lookupAccountCensusGeographyNow(pool, canonicalId);
+    return res.json({ ok: true, account_id: canonicalId, census_geography: censusGeography });
+  } catch (error) {
+    const code = String(error?.code || error?.message || "");
+    if (code === "account_not_found") return res.status(404).json({ error: code });
+    if (code === "census_lookup_input_missing") return res.status(422).json({ error: code });
+    console.error("on-demand census geography lookup failed", error);
+    return res.status(502).json({ error: "census_geography_lookup_failed" });
   }
 });
 

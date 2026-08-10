@@ -3,9 +3,14 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
 import {
+  createAssignmentFile,
+  getAssignmentFiles,
   getAccountPhotos,
   getRelatedParcels,
+  updateAssignmentFile,
   updatePropertyReportSections,
+  type AppraisalAssignmentFile,
+  type AssignmentDetailsPayload,
   type ReportManualSectionKey,
   type RelatedParcelsResponse,
 } from "@/lib/api";
@@ -123,16 +128,7 @@ type DcadHousingProfile = {
   profile_source?: string;
 };
 
-type AssignmentDetails = {
-  pud?: boolean;
-  hoa_dues_amount?: string | number;
-  hoa_frequency?: string;
-  hoa_explanation?: string;
-  occupancy?: string;
-  occupancy_explanation?: string;
-  assignment_types?: string[];
-  assignment_explanation?: string;
-};
+type AssignmentDetails = AssignmentDetailsPayload;
 
 type DcadDetail = {
   tax_year?: number;
@@ -390,6 +386,8 @@ function SummarySection({
   onEdit,
   actions,
   manuallyVerified = false,
+  inherited = false,
+  compact = false,
 }: {
   title: string;
   subtitle?: string;
@@ -397,10 +395,14 @@ function SummarySection({
   onEdit?: () => void;
   actions?: ReactNode;
   manuallyVerified?: boolean;
+  inherited?: boolean;
+  compact?: boolean;
 }) {
   return (
-    <section className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
-      <div className="mb-4 flex items-start justify-between gap-3">
+    <section className={`rounded-2xl border ${
+      inherited ? "border-amber-300 bg-amber-50/80" : "border-slate-200 bg-slate-50/70"
+    } ${compact ? "p-3 sm:p-4" : "p-4 sm:p-5"}`}>
+      <div className={`${compact ? "mb-3" : "mb-4"} flex items-start justify-between gap-3`}>
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-800">
@@ -409,6 +411,11 @@ function SummarySection({
             {manuallyVerified ? (
               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-blue-800">
                 Manually verified
+              </span>
+            ) : null}
+            {inherited ? (
+              <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-amber-950">
+                From Previous Assignment
               </span>
             ) : null}
           </div>
@@ -887,6 +894,14 @@ function AddressHero({
   );
   const [assignmentDirty, setAssignmentDirty] = useState(false);
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
+  const [assignmentFiles, setAssignmentFiles] = useState<AppraisalAssignmentFile[]>([]);
+  const [assignmentFilesLoading, setAssignmentFilesLoading] = useState(false);
+  const [assignmentFilesError, setAssignmentFilesError] = useState("");
+  const [activeAssignmentFile, setActiveAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
+  const [inheritedAssignmentFile, setInheritedAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
+  const [inheritedLegacyAssignment, setInheritedLegacyAssignment] = useState(false);
+  const [assignmentFileNumber, setAssignmentFileNumber] = useState("");
+  const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
@@ -899,9 +914,52 @@ function AddressHero({
   }, [photoIndex, photos.length]);
 
   useEffect(() => {
-    setAssignmentDraft(assignmentDraftFromDetail(detail?.assignment_details));
+    let cancelled = false;
+    const fallback = assignmentDraftFromDetail(detail?.assignment_details);
+    setAssignmentDraft(fallback);
     setAssignmentDirty(false);
-  }, [detail?.assignment_details]);
+    setAssignmentSaveMessage("");
+    setAssignmentFiles([]);
+    setActiveAssignmentFile(null);
+    setInheritedAssignmentFile(null);
+    setInheritedLegacyAssignment(false);
+    setAssignmentFileNumber("");
+    setAssignmentFilesError("");
+    if (!accountId?.trim() || !detailLoaded) {
+      setAssignmentFilesLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setAssignmentFilesLoading(true);
+    void getAssignmentFiles(accountId)
+      .then((response) => {
+        if (cancelled) return;
+        setAssignmentFiles(response.files || []);
+        if (response.latest_file) {
+          setAssignmentDraft(assignmentDraftFromDetail(response.latest_file.assignment_details));
+          setInheritedAssignmentFile(response.latest_file);
+        } else if (response.legacy_assignment_details) {
+          setAssignmentDraft(assignmentDraftFromDetail(response.legacy_assignment_details));
+          setInheritedLegacyAssignment(true);
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setAssignmentFilesError(
+            error instanceof Error ? error.message : "The assignment log could not be loaded.",
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAssignmentFilesLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, detail?.assignment_details, detailLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1074,17 +1132,23 @@ function AddressHero({
     }
   };
 
+  const editorKeyForSave = (): string => {
+    let editorKey = sessionStorage.getItem("homenode-editor-key") || "";
+    if (!editorKey) {
+      editorKey = window.prompt("Enter the HomeNode editor key to save verified changes:") || "";
+      if (!editorKey) return "";
+      sessionStorage.setItem("homenode-editor-key", editorKey);
+    }
+    return editorKey;
+  };
+
   const saveManualSection = async (
     sectionKey: ReportManualSectionKey,
     value: Record<string, unknown>,
   ): Promise<boolean> => {
     if (!accountId) return false;
-    let editorKey = sessionStorage.getItem("homenode-editor-key") || "";
-    if (!editorKey) {
-      editorKey = window.prompt("Enter the HomeNode editor key to save verified changes:") || "";
-      if (!editorKey) return false;
-      sessionStorage.setItem("homenode-editor-key", editorKey);
-    }
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return false;
     setSavingSection(true);
     try {
       await updatePropertyReportSections(
@@ -1124,14 +1188,96 @@ function AddressHero({
 
   const saveAssignmentDetails = async () => {
     if (assignmentValidationErrors(assignmentDraft).length) return;
-    const saved = await saveManualSection(
-      "report.assignment_details",
-      cloneEditorValue(assignmentDraft) as Record<string, unknown>,
-    );
-    if (saved) {
-      setAssignmentDirty(false);
-      setAssignmentSaveMessage("Assignment details saved with revision history.");
+    if (!accountId || !activeAssignmentFile) {
+      setAssignmentSaveMessage("Enter a file number and choose Save New File first.");
+      return;
     }
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    setSavingAssignmentFile(true);
+    try {
+      const response = await updateAssignmentFile(
+        accountId,
+        activeAssignmentFile.id,
+        {
+          assignment_details: cloneEditorValue(assignmentDraft),
+          expected_revision: activeAssignmentFile.revision,
+        },
+        editorKey,
+      );
+      setActiveAssignmentFile(response.assignment_file);
+      setAssignmentFiles((current) => current.map((file) =>
+        file.id === response.assignment_file.id ? response.assignment_file : file
+      ));
+      setAssignmentDirty(false);
+      setAssignmentSaveMessage(`Saved to file ${response.assignment_file.file_number}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The assignment file could not be saved.";
+      if (/401|invalid_editor_key/i.test(message)) {
+        sessionStorage.removeItem("homenode-editor-key");
+      }
+      setAssignmentSaveMessage(
+        message === "assignment_file_revision_conflict"
+          ? "This file changed elsewhere. Reload the report before saving again."
+          : message,
+      );
+    } finally {
+      setSavingAssignmentFile(false);
+    }
+  };
+
+  const saveNewAssignmentFile = async () => {
+    if (!accountId || assignmentValidationErrors(assignmentDraft).length) return;
+    const fileNumber = assignmentFileNumber.trim();
+    if (!fileNumber) {
+      setAssignmentSaveMessage("Enter a file number before saving a new appraisal file.");
+      return;
+    }
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    setSavingAssignmentFile(true);
+    setAssignmentSaveMessage("");
+    try {
+      const response = await createAssignmentFile(
+        accountId,
+        {
+          file_number: fileNumber,
+          assignment_details: cloneEditorValue(assignmentDraft),
+          inherited_from_file_id: inheritedAssignmentFile?.id || null,
+        },
+        editorKey,
+      );
+      const created = response.assignment_file;
+      setAssignmentFiles((current) => [created, ...current.filter((file) => file.id !== created.id)]);
+      setActiveAssignmentFile(created);
+      setInheritedAssignmentFile(null);
+      setInheritedLegacyAssignment(false);
+      setAssignmentFileNumber(created.file_number);
+      setAssignmentDirty(false);
+      setAssignmentSaveMessage(`New appraisal file ${created.file_number} saved.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The appraisal file could not be created.";
+      if (/401|invalid_editor_key/i.test(message)) {
+        sessionStorage.removeItem("homenode-editor-key");
+      }
+      setAssignmentSaveMessage(
+        message === "assignment_file_number_exists"
+          ? "That file number already exists for this property. Enter a different file number."
+          : message,
+      );
+    } finally {
+      setSavingAssignmentFile(false);
+    }
+  };
+
+  const inheritAssignmentFile = (source: AppraisalAssignmentFile) => {
+    setAssignmentDraft(assignmentDraftFromDetail(source.assignment_details));
+    setInheritedAssignmentFile(source);
+    setInheritedLegacyAssignment(false);
+    setActiveAssignmentFile(null);
+    setAssignmentFileNumber("");
+    setAssignmentDirty(false);
+    setAssignmentSaveMessage(`Values copied from file ${source.file_number}. Enter a new file number to save.`);
   };
 
   const editSection = (key: ReportManualSectionKey) => {
@@ -1166,6 +1312,13 @@ function AddressHero({
   const homestead = detail?.homestead_yes || exemptJurisdictionCount > 0;
   const assignmentTypes = assignmentDraft.assignment_types || [];
   const assignmentErrors = assignmentValidationErrors(assignmentDraft);
+  const assignmentFromPrevious = Boolean(
+    !activeAssignmentFile && (inheritedAssignmentFile || inheritedLegacyAssignment),
+  );
+  const assignmentSaveDisabled = Boolean(
+    assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
+      assignmentErrors.length > 0 || !activeAssignmentFile,
+  );
   const relatedParcelsToShow = (relatedParcels?.parcels || []).filter(
     (parcel) => parcel.is_subject || parcel.materially_different,
   );
@@ -1199,6 +1352,112 @@ function AddressHero({
       className="card overflow-hidden rounded-2xl bg-white shadow-lg"
       style={{ backgroundColor: "#ffffff" }}
     >
+      <section className="border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-6">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+              Property Account
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              <span className="font-mono text-sm font-semibold text-slate-900">
+                {displayValue(accountId)}
+              </span>
+              {activeAssignmentFile ? (
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
+                  Active file {activeAssignmentFile.file_number}
+                </span>
+              ) : assignmentFromPrevious ? (
+                <span className="rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-950">
+                  From Previous Assignment
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-end xl:w-auto">
+            <label className="block min-w-0 flex-1 xl:w-64 xl:flex-none">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                File Number
+              </span>
+              <input
+                type="text"
+                maxLength={100}
+                className="input input-bordered input-sm mt-1 w-full bg-white font-medium"
+                placeholder="Enter assignment number"
+                value={assignmentFileNumber}
+                readOnly={Boolean(activeAssignmentFile)}
+                onChange={(event) => {
+                  setAssignmentFileNumber(event.target.value);
+                  setAssignmentSaveMessage("");
+                }}
+              />
+            </label>
+            {activeAssignmentFile ? (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm normal-case rounded-lg border-slate-300 bg-white shadow-sm"
+                onClick={() => inheritAssignmentFile(activeAssignmentFile)}
+                disabled={savingAssignmentFile}
+              >
+                Start Another File
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                onClick={() => void saveNewAssignmentFile()}
+                disabled={
+                  assignmentFilesLoading || savingAssignmentFile ||
+                  !assignmentFileNumber.trim() || assignmentErrors.length > 0
+                }
+              >
+                {savingAssignmentFile ? "Saving..." : "Save New File"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <details className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+            Assignment Log ({assignmentFiles.length})
+          </summary>
+          <div className="mt-2 max-h-52 space-y-2 overflow-y-auto border-t border-slate-100 pt-2">
+            {assignmentFilesLoading ? (
+              <p className="text-xs text-slate-500">Loading prior assignment files...</p>
+            ) : assignmentFilesError ? (
+              <p className="text-xs text-rose-700">{assignmentFilesError}</p>
+            ) : assignmentFiles.length ? (
+              assignmentFiles.map((file) => (
+                <div
+                  key={file.id}
+                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0 text-xs text-slate-600">
+                    <span className="font-semibold text-slate-900">{file.file_number}</span>
+                    <span className="mx-2 text-slate-300">|</span>
+                    Saved {formatDate(file.created_at)}
+                    <span className="mx-2 text-slate-300">|</span>
+                    Revision {file.revision}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-xs normal-case text-blue-700"
+                    onClick={() => inheritAssignmentFile(file)}
+                    disabled={savingAssignmentFile}
+                  >
+                    Use for New File
+                  </button>
+                </div>
+              ))
+            ) : (
+              <p className="text-xs text-slate-500">
+                No appraisal files have been saved for this property yet.
+              </p>
+            )}
+          </div>
+        </details>
+      </section>
+
       <figure className="relative h-64 bg-slate-100 sm:h-72">
         {photos.length ? (
           <img
@@ -1461,11 +1720,24 @@ function AddressHero({
               />
             </div>
 
-            <div className="mt-5 border-t border-slate-200 pt-4">
+            <div className={`mt-5 rounded-xl border p-4 ${
+              assignmentFromPrevious
+                ? "border-amber-300 bg-amber-50"
+                : "border-slate-200 bg-white/70"
+            }`}>
               <div className="mb-3">
-                <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
+                  {assignmentFromPrevious ? (
+                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-950">
+                      From Previous Assignment
+                    </span>
+                  ) : null}
+                </div>
                 <p className="mt-1 text-xs text-slate-500">
-                  These appraiser-entered fields are retained with the report revision history.
+                  {activeAssignmentFile
+                    ? `Saving to appraisal file ${activeAssignmentFile.file_number}.`
+                    : "Enter a new file number above before saving changes."}
                 </p>
               </div>
               <div className="max-w-xs">
@@ -1532,10 +1804,10 @@ function AddressHero({
                 <button
                   type="button"
                   onClick={() => void saveAssignmentDetails()}
-                  className="btn btn-sm normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
-                  disabled={savingSection || !assignmentDirty || assignmentErrors.length > 0}
+                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                  disabled={assignmentSaveDisabled}
                 >
-                  {savingSection ? "Saving..." : "Save PUD / HOA"}
+                  {savingAssignmentFile ? "Saving..." : "Save PUD / HOA"}
                 </button>
               </div>
             </div>
@@ -1543,13 +1815,17 @@ function AddressHero({
 
           <SummarySection
             title="Assignment Details"
-            subtitle="Occupancy and assignment type are available directly on the report"
-            manuallyVerified={Boolean(detail?.report_manual_values?.["report.assignment_details"])}
+            subtitle={activeAssignmentFile
+              ? `Saving to appraisal file ${activeAssignmentFile.file_number}`
+              : "Choose a file number above to preserve these values as a new assignment"}
+            manuallyVerified={Boolean(activeAssignmentFile || detail?.report_manual_values?.["report.assignment_details"])}
+            inherited={assignmentFromPrevious}
+            compact
           >
-            <div className="grid gap-4 lg:grid-cols-2">
-              <fieldset className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="grid gap-3 lg:grid-cols-[0.8fr_2.2fr]">
+              <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
                 <legend className="px-1 text-sm font-semibold text-slate-900">Occupancy</legend>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-1.5 sm:grid-cols-2">
                   {OCCUPANCY_OPTIONS.map(([value, label]) => (
                     <CheckboxChoice
                       key={value}
@@ -1577,10 +1853,10 @@ function AddressHero({
                 ) : null}
               </fieldset>
 
-              <fieldset className="rounded-xl border border-slate-200 bg-white p-4">
+              <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
                 <legend className="px-1 text-sm font-semibold text-slate-900">Assignment Type</legend>
-                <p className="mb-3 text-xs text-slate-600">Select every type that applies.</p>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <p className="mb-2 text-xs text-slate-600">Select every type that applies.</p>
+                <div className="grid gap-1.5 sm:grid-cols-3 xl:grid-cols-5">
                   {ASSIGNMENT_TYPE_OPTIONS.map(([value, label]) => (
                     <CheckboxChoice
                       key={value}
@@ -1621,7 +1897,6 @@ function AddressHero({
                 </ul>
               </div>
             ) : null}
-
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <span className="text-xs text-slate-500">
                 {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
@@ -1629,10 +1904,10 @@ function AddressHero({
               <button
                 type="button"
                 onClick={() => void saveAssignmentDetails()}
-                className="btn btn-sm normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
-                disabled={savingSection || !assignmentDirty || assignmentErrors.length > 0}
+                className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                disabled={assignmentSaveDisabled}
               >
-                {savingSection ? "Saving..." : "Save Assignment Details"}
+                {savingAssignmentFile ? "Saving..." : "Save Assignment Details"}
               </button>
             </div>
           </SummarySection>

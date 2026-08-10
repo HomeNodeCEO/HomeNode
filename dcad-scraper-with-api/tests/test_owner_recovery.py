@@ -1,4 +1,7 @@
-from scraper.dcad.owner_recovery import recover_complete_owner_name
+from scraper.dcad.owner_recovery import (
+    recover_complete_owner_name,
+    repair_owner_from_history,
+)
 
 
 def test_recovers_name_before_matching_mailing_address():
@@ -28,3 +31,36 @@ def test_rejects_unchanged_or_non_ampersand_summary():
         "1909 SNOWMASS LN, GARLAND, TEXAS 750446751",
         "PATTERSON GREGORY SCOTT GINA R 1909 SNOWMASS LN GARLAND TEXAS 75044",
     ) is None
+
+
+def test_repairs_coowner_misread_as_an_address_line():
+    detail = {
+        "owner": {
+            "owner_name": "LOWE ALEXANDER &",
+            "mailing_address": "ROBBINS LANE, 3236 BASIL CT, DALLAS, TEXAS 752045543",
+            "multi_owner": [
+                {"owner_name": "LOWE ALEXANDER &", "ownership_pct": "100%"}
+            ],
+        }
+    }
+    history = {
+        "owner_history": [
+            {
+                "owner_lines": [
+                    "LOWE ALEXANDER & ROBBINS LANE 3236 BASIL CT DALLAS, TEXAS 752045543"
+                ]
+            }
+        ]
+    }
+
+    assert repair_owner_from_history(detail, history)
+    assert detail["owner"] == {
+        "owner_name": "LOWE ALEXANDER & ROBBINS LANE",
+        "mailing_address": "3236 BASIL CT, DALLAS, TEXAS 752045543",
+        "multi_owner": [
+            {
+                "owner_name": "LOWE ALEXANDER & ROBBINS LANE",
+                "ownership_pct": "100%",
+            }
+        ],
+    }

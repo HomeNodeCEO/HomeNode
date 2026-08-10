@@ -27,6 +27,7 @@ from dcad.data_quality import CompletenessAssessment, require_complete_detail
 # Parsers for "Main Improvement" (primary) and "Additional Improvements" (secondary/history)
 from dcad.parse_detail import parse_detail_html
 from dcad.parse_history import parse_history_html
+from dcad.owner_recovery import repair_owner_from_history
 # Upsert into Postgres
 from dcad.upsert import get_engine, upsert_parsed
 
@@ -152,6 +153,7 @@ def run_for_account(account_id: str) -> CompletenessAssessment:
     except Exception:
         pass
     history = parse_history_html(history_html) if history_html else {}
+    repair_owner_from_history(detail, history)
 
     # Choose a tax_year to label the snapshot. Prefer parsed value; else current year.
     tax_year = None

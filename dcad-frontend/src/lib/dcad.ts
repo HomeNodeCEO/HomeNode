@@ -65,6 +65,11 @@ export async function fetchDetail(accountId: string, countyId = 1) {
       neighborhood: acc?.neighborhood_code ?? undefined,
       mapsco: undefined,
       city: acc?.city ?? undefined,
+      state:
+        acc?.state ??
+        (/dallas|collin|tarrant|denton|rockwall/i.test(String(acc?.county || ''))
+          ? 'TX'
+          : undefined),
       postal_code: acc?.postal_code ?? undefined,
       county: acc?.county ?? undefined,
       subdivision: acc?.subdivision ?? undefined,
@@ -233,6 +238,11 @@ export async function fetchDetail(accountId: string, countyId = 1) {
       ...((valuesOverride as any).value_summary || {}),
     };
   }
+  const assignmentOverride = manual('report.assignment_details');
+  detail.assignment_details =
+    assignmentOverride && typeof assignmentOverride === 'object'
+      ? assignmentOverride
+      : {};
   detail.report_manual_values = manualValues;
 
   return { detail };

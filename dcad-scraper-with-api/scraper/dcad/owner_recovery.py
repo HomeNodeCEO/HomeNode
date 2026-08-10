@@ -8,6 +8,15 @@ from typing import Any, Optional
 
 
 TOKEN_RE = re.compile(r"[A-Z0-9&'-]+")
+HISTORY_ADDRESS_RE = re.compile(
+    r"\b\d{1,6}\s+"
+    r"[A-Z0-9][A-Z0-9.'-]*"
+    r"(?:\s+[A-Z0-9][A-Z0-9.'-]*){0,5}\s+"
+    r"(?:ST|STREET|AVE|AVENUE|RD|ROAD|DR|DRIVE|LN|LANE|CT|COURT|"
+    r"BLVD|BOULEVARD|CIR|CIRCLE|TRL|TRAIL|WAY|PKWY|PARKWAY|"
+    r"PL|PLACE|TER|TERRACE|HWY|HIGHWAY)\b",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,24 @@ def recover_complete_owner_name(
             address_start = index
             break
     if address_start is None:
+        history_address = HISTORY_ADDRESS_RE.search(history_line)
+        if history_address:
+            candidate = re.sub(
+                r"\s+", " ", history_line[: history_address.start()]
+            ).strip(" ,;-")
+            normalized_summary = " ".join(
+                token.value for token in summary_tokens
+            )
+            normalized_candidate = " ".join(
+                token.value for token in _tokens(candidate)
+            )
+            if (
+                normalized_summary
+                and normalized_candidate.startswith(f"{normalized_summary} ")
+                and len(_tokens(candidate)) > len(summary_tokens)
+                and len(candidate) <= 220
+            ):
+                return candidate
         return None
 
     candidate = history_line[: history_tokens[address_start].start]

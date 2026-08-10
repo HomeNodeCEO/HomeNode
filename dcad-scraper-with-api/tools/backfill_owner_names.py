@@ -14,7 +14,7 @@ import os
 import psycopg2
 from psycopg2.extras import execute_values
 
-from scraper.dcad.owner_recovery import recover_complete_owner_name
+from scraper.dcad.owner_recovery import repair_owner_from_history
 
 
 CANDIDATES_SQL = """
@@ -63,20 +63,44 @@ def run(*, apply: bool = False) -> dict[str, object]:
             cursor.execute(CANDIDATES_SQL)
             rows = cursor.fetchall()
 
-            recoveries: list[tuple[str, int, str, str]] = []
+            recoveries: list[
+                tuple[str, int, str, str | None, str, str | None]
+            ] = []
             no_history_line = 0
             ambiguous = 0
             for account_id, tax_year, owner_name, mailing_address, owner_line in rows:
                 if not owner_line:
                     no_history_line += 1
                     continue
-                recovered = recover_complete_owner_name(
-                    owner_name, mailing_address, owner_line
-                )
-                if not recovered:
+                detail = {
+                    "owner": {
+                        "owner_name": owner_name,
+                        "mailing_address": mailing_address,
+                        "multi_owner": [
+                            {
+                                "owner_name": owner_name,
+                                "ownership_pct": "100%",
+                            }
+                        ],
+                    }
+                }
+                history = {
+                    "owner_history": [{"owner_lines": [owner_line]}]
+                }
+                if not repair_owner_from_history(detail, history):
                     ambiguous += 1
                     continue
-                recoveries.append((account_id, tax_year, owner_name, recovered))
+                repaired_owner = detail["owner"]
+                recoveries.append(
+                    (
+                        account_id,
+                        tax_year,
+                        owner_name,
+                        mailing_address,
+                        repaired_owner["owner_name"],
+                        repaired_owner.get("mailing_address"),
+                    )
+                )
 
             cursor.execute(
                 """
@@ -84,7 +108,9 @@ def run(*, apply: bool = False) -> dict[str, object]:
                     account_id text NOT NULL,
                     tax_year integer NOT NULL,
                     expected_name text NOT NULL,
+                    expected_mailing_address text,
                     recovered_name text NOT NULL,
+                    recovered_mailing_address text,
                     PRIMARY KEY (account_id, tax_year)
                 ) ON COMMIT DROP
                 """
@@ -94,7 +120,9 @@ def run(*, apply: bool = False) -> dict[str, object]:
                     cursor,
                     """
                     INSERT INTO owner_name_recoveries (
-                        account_id, tax_year, expected_name, recovered_name
+                        account_id, tax_year, expected_name,
+                        expected_mailing_address, recovered_name,
+                        recovered_mailing_address
                     ) VALUES %s
                     """,
                     recoveries,
@@ -104,11 +132,17 @@ def run(*, apply: bool = False) -> dict[str, object]:
             cursor.execute(
                 """
                 UPDATE core.owner_summary summary
-                SET owner_name = recovery.recovered_name
+                SET owner_name = recovery.recovered_name,
+                    mailing_address = COALESCE(
+                        recovery.recovered_mailing_address,
+                        summary.mailing_address
+                    )
                 FROM owner_name_recoveries recovery
                 WHERE summary.account_id = recovery.account_id
                   AND summary.tax_year = recovery.tax_year
                   AND summary.owner_name = recovery.expected_name
+                  AND summary.mailing_address IS NOT DISTINCT FROM
+                      recovery.expected_mailing_address
                 """
             )
             summaries_updated = int(cursor.rowcount or 0)

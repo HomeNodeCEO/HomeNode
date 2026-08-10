@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   expectedCountyFips,
+  parseCensusAddressBatchResponse,
   parseCensusCoordinatesBatchResponse,
   validateCensusGeography,
 } from "../src/services/censusGeography.js";
@@ -24,6 +25,17 @@ test("parses Census coordinate batch tract results", () => {
     block_code: "1001",
     response_status: "Match",
   });
+});
+
+test("parses Census address batch results and the returned coordinate", () => {
+  const rows = parseCensusAddressBatchResponse(
+    '"26272500060150000","1909 SNOWMASS LN, GARLAND, TX, 75044","Match","Exact","1909 SNOWMASS LN, GARLAND, TX, 75044","-96.656200410661,32.946676823261","102925595","R","48","113","019029","3017"\n',
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].tract_geoid, "48113019029");
+  assert.equal(rows[0].longitude, -96.656200410661);
+  assert.equal(rows[0].latitude, 32.946676823261);
+  assert.equal(rows[0].match_type, "Exact");
 });
 
 test("validates Texas county FIPS without accepting a cross-county point", () => {

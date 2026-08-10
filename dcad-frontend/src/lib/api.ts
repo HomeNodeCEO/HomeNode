@@ -107,6 +107,7 @@ export interface AccountDetail {
     status: 'pending' | 'processing' | 'retry' | 'matched' | 'review_required' | 'failed';
     response_status: string | null;
     review_reason: string | null;
+    source_method: 'coordinate' | 'address';
     looked_up_at: string | null;
   } | null;
   housing_profile: HousingProfile | null;

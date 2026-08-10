@@ -1182,6 +1182,27 @@ export async function getAccountPhotos(accountId: string): Promise<AccountPhotos
   return fetchJSON<AccountPhotosResponse>(url);
 }
 
+/** Resolve one property's Census tract immediately, ahead of the background queue. */
+export async function lookupAccountCensusGeography(
+  accountId: string,
+  editorKey: string,
+): Promise<{
+  ok: true;
+  account_id: string;
+  census_geography: NonNullable<AccountDetail['census_geography']>;
+}> {
+  const id = (accountId || '').trim();
+  return fetchJSON(makeUrl(`/api/accounts/${encodeURIComponent(id)}/census-geography/lookup`), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify({}),
+    timeoutMs: 135000,
+  });
+}
+
 /** Save a source-attributed manual housing classification for an account. */
 export async function updateAccountHousingProfile(
   accountId: string,

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   expectedCountyFips,
+  lookupAccountCensusGeographyNow,
   parseCensusAddressBatchResponse,
   parseCensusCoordinatesBatchResponse,
   validateCensusGeography,
@@ -59,4 +60,58 @@ test("validates Texas county FIPS without accepting a cross-county point", () =>
     }, "Dallas County").reason,
     /county_fips_mismatch/,
   );
+});
+
+test("looks up and persists one account immediately using its address fallback", async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, values = []) {
+      calls.push({ sql, values });
+      if (sql.includes("CREATE TABLE IF NOT EXISTS core.account_census_geographies")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM core.accounts account")) {
+        return {
+          rows: [{
+            account_id: "26272500060150000",
+            county: "Dallas",
+            source_latitude: null,
+            source_longitude: null,
+            source_address: "1909 SNOWMASS LN",
+            source_city: "GARLAND",
+            source_state: "TX",
+            source_postal_code: "75044",
+          }],
+        };
+      }
+      if (sql.includes("INSERT INTO core.account_census_geographies")) {
+        return {
+          rows: [{
+            tract_geoid: values[1],
+            tract_code: values[2],
+            state_fips: values[3],
+            county_fips: values[4],
+            status: values[15],
+            source_method: values[14],
+          }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
+    },
+  };
+  const fetchImpl = async () => new Response(
+    '"26272500060150000","1909 SNOWMASS LN, GARLAND, TX, 75044","Match","Exact","1909 SNOWMASS LN, GARLAND, TX, 75044","-96.656200410661,32.946676823261","102925595","R","48","113","019029","3017"\n',
+    { status: 200 },
+  );
+
+  const result = await lookupAccountCensusGeographyNow(
+    pool,
+    "26272500060150000",
+    { fetchImpl },
+  );
+
+  assert.equal(result.tract_geoid, "48113019029");
+  assert.equal(result.status, "matched");
+  assert.equal(result.source_method, "address");
+  assert.equal(calls.filter((call) => call.sql.includes("INSERT INTO core.account_census_geographies")).length, 1);
 });

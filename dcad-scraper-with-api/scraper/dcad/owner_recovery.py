@@ -6,6 +6,17 @@ import re
 from typing import Any, Optional
 
 
+HISTORY_ADDRESS_RE = re.compile(
+    r"\b\d{1,6}\s+"
+    r"[A-Z0-9][A-Z0-9.'-]*"
+    r"(?:\s+[A-Z0-9][A-Z0-9.'-]*){0,5}\s+"
+    r"(?:ST|STREET|AVE|AVENUE|RD|ROAD|DR|DRIVE|LN|LANE|CT|COURT|"
+    r"BLVD|BOULEVARD|CIR|CIRCLE|TRL|TRAIL|WAY|PKWY|PARKWAY|"
+    r"PL|PLACE|TER|TERRACE|HWY|HIGHWAY)\b",
+    flags=re.IGNORECASE,
+)
+
+
 def _tokens(value: str | None) -> list[str]:
     return re.findall(r"[A-Z0-9]+", str(value or "").upper())
 
@@ -46,6 +57,18 @@ def recover_complete_owner_name(
         if boundary is not None:
             break
     if boundary is None:
+        raw_line = str(ownership_history_line or "")
+        history_address = HISTORY_ADDRESS_RE.search(raw_line)
+        if history_address:
+            candidate = re.sub(
+                r"\s+", " ", raw_line[: history_address.start()]
+            ).strip(" ,;-")
+            if (
+                len(_tokens(candidate)) > len(_tokens(summary))
+                and _normalized(candidate).startswith(_normalized(summary) + " ")
+                and len(candidate) <= 220
+            ):
+                return candidate
         return None
 
     candidate_tokens = history_tokens[:boundary]

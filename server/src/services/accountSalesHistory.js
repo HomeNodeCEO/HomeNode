@@ -122,11 +122,13 @@ export async function getAccountPropertyActivityHistory(pool, accountId, request
       FROM (
         SELECT deed_transfer_date
         FROM core.legal_description_current
-        WHERE account_id = $1 AND deed_transfer_date IS NOT NULL
+        WHERE account_id = $1
+          AND deed_transfer_date > DATE '1900-01-01'
         UNION ALL
         SELECT deed_transfer_date
         FROM core.legal_description_history
-        WHERE account_id = $1 AND deed_transfer_date IS NOT NULL
+        WHERE account_id = $1
+          AND deed_transfer_date > DATE '1900-01-01'
       ) transfers
       ORDER BY deed_transfer_date DESC
     )

@@ -4,6 +4,7 @@ import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
 import {
   createAssignmentFile,
+  getCensusCityProfile,
   getCensusZipProfile,
   getNeighborhoodProfile,
   getAssignmentFiles,
@@ -324,6 +325,14 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_unemployment_dataset_year:
       value?.neighborhood_unemployment_dataset_year ?? "",
     neighborhood_unemployment_variable: value?.neighborhood_unemployment_variable || "",
+    neighborhood_city_unemployment_pct: value?.neighborhood_city_unemployment_pct ?? "",
+    neighborhood_city_unemployment_name: value?.neighborhood_city_unemployment_name || "",
+    neighborhood_city_unemployment_source:
+      value?.neighborhood_city_unemployment_source || "",
+    neighborhood_city_unemployment_dataset_year:
+      value?.neighborhood_city_unemployment_dataset_year ?? "",
+    neighborhood_city_unemployment_variable:
+      value?.neighborhood_city_unemployment_variable || "",
     neighborhood_market_trend: value?.neighborhood_market_trend || "",
     neighborhood_demand_supply: value?.neighborhood_demand_supply || "",
     neighborhood_marketing_time: value?.neighborhood_marketing_time || "",
@@ -692,6 +701,11 @@ function NeighborhoodCharacteristicsContent({
   const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
+  const zipUnemployment = parseNumber(assignmentDraft.neighborhood_unemployment_pct);
+  const cityUnemployment = parseNumber(assignmentDraft.neighborhood_city_unemployment_pct);
+  const unemploymentDifference = zipUnemployment !== null && cityUnemployment !== null
+    ? zipUnemployment - cityUnemployment
+    : null;
   const updateBoundarySide = (
     field: "neighborhood_boundary_north" | "neighborhood_boundary_east" |
       "neighborhood_boundary_south" | "neighborhood_boundary_west",
@@ -770,44 +784,77 @@ function NeighborhoodCharacteristicsContent({
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-900">Unemployment</h3>
-              <p className="mt-0.5 text-xs text-slate-500">ZIP-level ACS 5-year unemployment rate.</p>
+              <h3 className="text-sm font-semibold text-slate-900">Unemployment Comparison</h3>
+              <p className="mt-0.5 text-xs text-slate-500">Official ACS 5-year rates for the subject ZIP and its city.</p>
             </div>
             <button
               type="button"
               className="btn btn-ghost btn-xs normal-case text-blue-700"
               onClick={onRefreshUnemployment}
-              disabled={unemploymentLoading || !postalCode}
+              disabled={unemploymentLoading}
             >
               {unemploymentLoading ? "Loading..." : "Refresh Census"}
             </button>
           </div>
-          <label className="mt-3 block max-w-[180px]">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Unemployment %</span>
-            <div className="relative mt-1">
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.1"
-                className="input input-bordered input-sm w-full bg-white pr-8"
-                value={assignmentDraft.neighborhood_unemployment_pct ?? ""}
-                onChange={(event) => onAssignmentChange("neighborhood_unemployment_pct", event.target.value)}
-              />
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">%</span>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block rounded-lg bg-slate-50 p-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                ZIP {assignmentDraft.neighborhood_unemployment_zip || postalCode || "Not reported"}
+              </span>
+              <div className="relative mt-1">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  className="input input-bordered input-sm w-full bg-white pr-8"
+                  value={assignmentDraft.neighborhood_unemployment_pct ?? ""}
+                  onChange={(event) => onAssignmentChange("neighborhood_unemployment_pct", event.target.value)}
+                />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">%</span>
+              </div>
+            </label>
+            <label className="block rounded-lg bg-slate-50 p-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                {assignmentDraft.neighborhood_city_unemployment_name || "Subject City"}
+              </span>
+              <div className="relative mt-1">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  className="input input-bordered input-sm w-full bg-white pr-8"
+                  value={assignmentDraft.neighborhood_city_unemployment_pct ?? ""}
+                  onChange={(event) => onAssignmentChange("neighborhood_city_unemployment_pct", event.target.value)}
+                />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">%</span>
+              </div>
+            </label>
+          </div>
+          {unemploymentDifference !== null ? (
+            <div className={`mt-3 rounded-lg px-3 py-2 text-xs font-semibold ${
+              Math.abs(unemploymentDifference) < 0.05
+                ? "bg-slate-100 text-slate-700"
+                : unemploymentDifference > 0
+                  ? "bg-amber-50 text-amber-900"
+                  : "bg-emerald-50 text-emerald-800"
+            }`}>
+              Subject ZIP is {Math.abs(unemploymentDifference).toFixed(1)} percentage point{Math.abs(unemploymentDifference) === 1 ? "" : "s"} {unemploymentDifference >= 0 ? "above" : "below"} the city rate.
             </div>
-          </label>
+          ) : null}
           <div className="mt-2 text-[11px] leading-5 text-slate-500">
             {assignmentDraft.neighborhood_unemployment_source ? (
               <>
-                {assignmentDraft.neighborhood_unemployment_source}, {assignmentDraft.neighborhood_unemployment_dataset_year} ACS 5-Year<br />
-                ZIP {assignmentDraft.neighborhood_unemployment_zip || postalCode} ? {assignmentDraft.neighborhood_unemployment_variable}
+                {assignmentDraft.neighborhood_unemployment_source}, {assignmentDraft.neighborhood_unemployment_dataset_year} ACS 5-Year, variable {assignmentDraft.neighborhood_unemployment_variable}
               </>
-            ) : `Awaiting Census lookup for ZIP ${postalCode || "not reported"}.`}
+            ) : `Awaiting Census lookup for ZIP ${postalCode || "not reported"} and the subject city.`}
           </div>
           {unemploymentMessage ? (
             <div className={`mt-2 text-xs font-medium ${
-              /loaded|updated/i.test(unemploymentMessage) ? "text-emerald-700" : "text-amber-800"
+              /needs review|failed|not reported|must be configured/i.test(unemploymentMessage)
+                ? "text-amber-800"
+                : "text-emerald-700"
             }`}>{unemploymentMessage}</div>
           ) : null}
         </div>
@@ -1915,7 +1962,7 @@ function AddressHero({
   const [censusLookupMessage, setCensusLookupMessage] = useState("");
   const [unemploymentLookupLoading, setUnemploymentLookupLoading] = useState(false);
   const [unemploymentLookupMessage, setUnemploymentLookupMessage] = useState("");
-  const [unemploymentAutoAttemptedZip, setUnemploymentAutoAttemptedZip] = useState("");
+  const [unemploymentAutoAttemptedSignature, setUnemploymentAutoAttemptedSignature] = useState("");
   const [neighborhoodProfileLoading, setNeighborhoodProfileLoading] = useState(false);
   const [neighborhoodProfileMessage, setNeighborhoodProfileMessage] = useState("");
   const [neighborhoodBoundarySuggestions, setNeighborhoodBoundarySuggestions] = useState<
@@ -1959,7 +2006,7 @@ function AddressHero({
     setAssignmentFilesError("");
     setCensusLookupMessage("");
     setUnemploymentLookupMessage("");
-    setUnemploymentAutoAttemptedZip("");
+    setUnemploymentAutoAttemptedSignature("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     if (!accountId?.trim() || !detailLoaded) {
       setAssignmentFilesLoading(false);
@@ -2476,34 +2523,56 @@ function AddressHero({
     setAssignmentSaveMessage("");
   };
 
-  const lookupZipUnemployment = useCallback(async () => {
-    if (!censusZip || unemploymentLookupLoading) return;
-    setUnemploymentAutoAttemptedZip(censusZip);
+  const lookupUnemploymentComparison = useCallback(async () => {
+    if ((!censusZip && !city) || unemploymentLookupLoading) return;
+    const lookupSignature = `${censusZip}:${city}:${state}`;
+    setUnemploymentAutoAttemptedSignature(lookupSignature);
     setUnemploymentLookupLoading(true);
     setUnemploymentLookupMessage("");
-    try {
-      const profile = await getCensusZipProfile(censusZip);
+    const [zipResult, cityResult] = await Promise.allSettled([
+      censusZip ? getCensusZipProfile(censusZip) : Promise.reject(new Error("ZIP not reported")),
+      city && city !== "Not reported"
+        ? getCensusCityProfile(city, state)
+        : Promise.reject(new Error("City not reported")),
+    ]);
+    if (zipResult.status === "fulfilled" || cityResult.status === "fulfilled") {
       setAssignmentDraft((current) => ({
         ...current,
-        neighborhood_unemployment_pct: profile.unemployment_percent,
-        neighborhood_unemployment_zip: profile.postal_code,
-        neighborhood_unemployment_source: profile.source,
-        neighborhood_unemployment_dataset_year: profile.dataset_year,
-        neighborhood_unemployment_variable: profile.variable,
+        ...(zipResult.status === "fulfilled" ? {
+          neighborhood_unemployment_pct: zipResult.value.unemployment_percent,
+          neighborhood_unemployment_zip: zipResult.value.postal_code,
+          neighborhood_unemployment_source: zipResult.value.source,
+          neighborhood_unemployment_dataset_year: zipResult.value.dataset_year,
+          neighborhood_unemployment_variable: zipResult.value.variable,
+        } : {}),
+        ...(cityResult.status === "fulfilled" ? {
+          neighborhood_city_unemployment_pct: cityResult.value.unemployment_percent,
+          neighborhood_city_unemployment_name:
+            cityResult.value.geography_name || `${cityResult.value.city}, ${cityResult.value.state}`,
+          neighborhood_city_unemployment_source: cityResult.value.source,
+          neighborhood_city_unemployment_dataset_year: cityResult.value.dataset_year,
+          neighborhood_city_unemployment_variable: cityResult.value.variable,
+        } : {}),
       }));
       setAssignmentDirty(true);
-      setUnemploymentLookupMessage(`Census unemployment updated for ZIP ${profile.postal_code}.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Census unemployment lookup failed.";
+    }
+    const failures = [zipResult, cityResult]
+      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+      .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
+    if (!failures.length) {
+      setUnemploymentLookupMessage(`Census unemployment updated for ZIP ${censusZip} and ${city}.`);
+    } else if (zipResult.status === "fulfilled" || cityResult.status === "fulfilled") {
+      setUnemploymentLookupMessage(`One Census geography updated; the other lookup needs review (${failures.join(", ")}).`);
+    } else {
+      const message = failures.join(", ") || "Census unemployment lookup failed.";
       setUnemploymentLookupMessage(
         /census_api_key_not_configured/i.test(message)
-          ? "A free Census API key must be added to Render before automatic lookup can run; manual entry remains available."
+          ? "A Census API key must be configured before automatic lookup can run; manual entry remains available."
           : message,
       );
-    } finally {
-      setUnemploymentLookupLoading(false);
     }
-  }, [censusZip, unemploymentLookupLoading]);
+    setUnemploymentLookupLoading(false);
+  }, [censusZip, city, state, unemploymentLookupLoading]);
 
   useEffect(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
@@ -2558,17 +2627,23 @@ function AddressHero({
   useEffect(() => {
     if (
       assignmentFilesLoading ||
-      !/^\d{5}$/.test(censusZip) ||
-      unemploymentAutoAttemptedZip === censusZip ||
-      hasValue(assignmentDraft.neighborhood_unemployment_pct)
+      (!/^\d{5}$/.test(censusZip) && (!city || city === "Not reported")) ||
+      unemploymentAutoAttemptedSignature === `${censusZip}:${city}:${state}` ||
+      (
+        hasValue(assignmentDraft.neighborhood_unemployment_pct) &&
+        hasValue(assignmentDraft.neighborhood_city_unemployment_pct)
+      )
     ) return;
-    void lookupZipUnemployment();
+    void lookupUnemploymentComparison();
   }, [
+    assignmentDraft.neighborhood_city_unemployment_pct,
     assignmentDraft.neighborhood_unemployment_pct,
     assignmentFilesLoading,
     censusZip,
-    lookupZipUnemployment,
-    unemploymentAutoAttemptedZip,
+    city,
+    lookupUnemploymentComparison,
+    state,
+    unemploymentAutoAttemptedSignature,
   ]);
 
   const saveAssignmentDetails = async () => {
@@ -2700,6 +2775,10 @@ function AddressHero({
   ).length;
   const homestead = detail?.homestead_yes || exemptJurisdictionCount > 0;
   const assignmentTypes = assignmentDraft.assignment_types || [];
+  const assignmentTypeLabels = assignmentTypes.map((value) =>
+    ASSIGNMENT_TYPE_OPTIONS.find(([option]) => option === value)?.[1] ||
+      value.replaceAll("_", " "),
+  );
   const purchaseTransactionSelected = assignmentTypes.includes("purchase_transaction");
   const assignmentErrors = assignmentValidationErrors(assignmentDraft);
   const listingRows = listingTimelineRows(propertyActivityHistory);
@@ -2915,15 +2994,78 @@ function AddressHero({
       </figure>
 
       <div className="card-body bg-white p-4 sm:p-6" style={{ backgroundColor: "#ffffff" }}>
-        <header className="border-b border-slate-200 pb-5">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{streetAddress}</h1>
-          <p className="mt-1 text-sm font-medium text-slate-700">
-            {city}, {state} {postalCode} <span className="text-slate-400">&middot;</span> {county}
-          </p>
-          <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
-            <span>
-              Neighborhood Code: <strong className="text-slate-800">{neighborhood}</strong>
-            </span>
+        <header className="grid gap-5 border-b border-slate-200 pb-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(260px,1fr)_minmax(220px,0.75fr)] lg:items-start">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{streetAddress}</h1>
+            <p className="mt-1 text-sm font-medium text-slate-700">
+              {city}, {state} {postalCode} <span className="text-slate-400">&middot;</span> {county}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-slate-600">
+              <span>
+                Neighborhood Code: <strong className="text-slate-800">{neighborhood}</strong>
+              </span>
+            </div>
+          </div>
+
+          <div className={`rounded-xl border p-3 ${
+            assignmentFromPrevious
+              ? "border-amber-300 bg-amber-50"
+              : "border-slate-200 bg-slate-50/80"
+          }`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Prepare For</h2>
+              {assignmentFromPrevious ? (
+                <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-950">
+                  From Previous Assignment
+                </span>
+              ) : null}
+            </div>
+            <input
+              type="text"
+              maxLength={500}
+              className="input input-bordered input-sm mt-2 w-full bg-white"
+              value={assignmentDraft.lender_client_name || ""}
+              onChange={(event) => updateAssignment("lender_client_name", event.target.value)}
+              placeholder="Lender / client name"
+              aria-label="Prepared for lender or client"
+            />
+            <textarea
+              maxLength={2000}
+              className="textarea textarea-bordered textarea-sm mt-2 min-h-14 w-full bg-white"
+              value={assignmentDraft.lender_client_address || ""}
+              onChange={(event) => updateAssignment("lender_client_address", event.target.value)}
+              placeholder="Lender / client address"
+              aria-label="Lender or client address"
+            />
+            <button
+              type="button"
+              onClick={() => void saveAssignmentDetails()}
+              className="btn btn-primary btn-xs mt-2 normal-case rounded-lg"
+              disabled={assignmentSaveDisabled}
+            >
+              {savingAssignmentFile ? "Saving..." : "Save Prepared For"}
+            </button>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+            <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Assignment Type</h2>
+            {assignmentTypeLabels.length ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {assignmentTypeLabels.map((label) => (
+                  <span key={label} className="rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-900">
+                    {label}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-slate-500">Not selected</p>
+            )}
+            {assignmentTypes.includes("other") && assignmentDraft.assignment_explanation ? (
+              <p className="mt-2 text-xs leading-5 text-slate-600">{assignmentDraft.assignment_explanation}</p>
+            ) : null}
+            <p className="mt-2 text-[11px] leading-4 text-slate-500">
+              Reflects the manual selection below and future engagement-letter imports.
+            </p>
           </div>
         </header>
 
@@ -3164,6 +3306,57 @@ function AddressHero({
                 ? "border-amber-300 bg-amber-50"
                 : "border-slate-200 bg-white/70"
             }`}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold text-slate-900">Occupancy</h3>
+                    {assignmentFromPrevious ? (
+                      <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-950">
+                        From Previous Assignment
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Assignment-specific occupancy of the subject.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void saveAssignmentDetails()}
+                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                  disabled={assignmentSaveDisabled}
+                >
+                  {savingAssignmentFile ? "Saving..." : "Save Occupancy"}
+                </button>
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                {OCCUPANCY_OPTIONS.map(([value, label]) => (
+                  <CheckboxChoice
+                    key={value}
+                    checked={assignmentDraft.occupancy === value}
+                    label={label}
+                    onChange={(checked) => updateAssignment("occupancy", checked ? value : "")}
+                  />
+                ))}
+              </div>
+              {assignmentDraft.occupancy === "unknown" ? (
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Unknown Occupancy Explanation
+                  </span>
+                  <textarea
+                    className="textarea textarea-bordered textarea-sm mt-1 min-h-16 w-full bg-white"
+                    value={assignmentDraft.occupancy_explanation || ""}
+                    onChange={(event) => updateAssignment("occupancy_explanation", event.target.value)}
+                    placeholder="Explain why occupancy could not be confirmed"
+                  />
+                </label>
+              ) : null}
+            </div>
+
+            <div className={`mt-5 rounded-xl border p-4 ${
+              assignmentFromPrevious
+                ? "border-amber-300 bg-amber-50"
+                : "border-slate-200 bg-white/70"
+            }`}>
               <div className="mb-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
@@ -3262,69 +3455,7 @@ function AddressHero({
             compact
             className="order-5"
           >
-            <div className="mb-3 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-2">
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Lender / Client
-                </span>
-                <input
-                  type="text"
-                  maxLength={500}
-                  className="input input-bordered input-sm mt-1 w-full bg-white"
-                  value={assignmentDraft.lender_client_name || ""}
-                  onChange={(event) =>
-                    updateAssignment("lender_client_name", event.target.value)
-                  }
-                  placeholder="Name of lender or client"
-                />
-              </label>
-              <label className="block">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                  Lender / Client Address
-                </span>
-                <textarea
-                  maxLength={2000}
-                  className="textarea textarea-bordered textarea-sm mt-1 min-h-16 w-full bg-white"
-                  value={assignmentDraft.lender_client_address || ""}
-                  onChange={(event) =>
-                    updateAssignment("lender_client_address", event.target.value)
-                  }
-                  placeholder="Mailing address"
-                />
-              </label>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-[0.8fr_2.2fr]">
-              <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
-                <legend className="px-1 text-sm font-semibold text-slate-900">Occupancy</legend>
-                <div className="grid gap-1.5 sm:grid-cols-2">
-                  {OCCUPANCY_OPTIONS.map(([value, label]) => (
-                    <CheckboxChoice
-                      key={value}
-                      checked={assignmentDraft.occupancy === value}
-                      label={label}
-                      onChange={(checked) =>
-                        updateAssignment("occupancy", checked ? value : "")
-                      }
-                    />
-                  ))}
-                </div>
-                {assignmentDraft.occupancy === "unknown" ? (
-                  <label className="mt-4 block">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Unknown Occupancy Explanation
-                    </span>
-                    <textarea
-                      className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
-                      value={assignmentDraft.occupancy_explanation || ""}
-                      onChange={(event) =>
-                        updateAssignment("occupancy_explanation", event.target.value)
-                      }
-                    />
-                  </label>
-                ) : null}
-              </fieldset>
-
+            <div>
               <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
                 <legend className="px-1 text-sm font-semibold text-slate-900">Assignment Type</legend>
                 <p className="mb-2 text-xs text-slate-600">Select every type that applies.</p>
@@ -3599,7 +3730,7 @@ function AddressHero({
               assignmentSaveDisabled={assignmentSaveDisabled}
               savingAssignmentFile={savingAssignmentFile}
               onAssignmentChange={updateAssignment}
-              onRefreshUnemployment={() => void lookupZipUnemployment()}
+              onRefreshUnemployment={() => void lookupUnemploymentComparison()}
               onRefreshBoundary={() => void refreshNeighborhoodProfile()}
               onConfirmBoundary={confirmNeighborhoodBoundary}
               onMarketConditionsChange={setMarketConditionsDraft}

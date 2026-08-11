@@ -57,7 +57,10 @@ import {
   seedCensusGeographyQueue,
   startCensusGeographyWorker,
 } from "./services/censusGeography.js";
-import { fetchCensusZipProfile } from "./services/censusZipProfile.js";
+import {
+  fetchCensusCityProfile,
+  fetchCensusZipProfile,
+} from "./services/censusZipProfile.js";
 import { fetchBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
   ensureAppraisalRatingsSchema,
@@ -1501,6 +1504,18 @@ app.get("/api/census/zip-profile/:postalCode", async (req, res) => {
     const code = String(error?.code || error?.message || "census_zip_profile_failed");
     const status = Number(error?.status) || 502;
     if (status >= 500) console.error("Census ZIP profile lookup failed", code);
+    return res.status(status).json({ error: code });
+  }
+});
+
+/** Latest configured ACS 5-year unemployment estimate for a city/place. */
+app.get("/api/census/city-profile", async (req, res) => {
+  try {
+    return res.json(await fetchCensusCityProfile(req.query.city, req.query.state));
+  } catch (error) {
+    const code = String(error?.code || error?.message || "census_city_profile_failed");
+    const status = Number(error?.status) || 502;
+    if (status >= 500) console.error("Census city profile lookup failed", code);
     return res.status(status).json({ error: code });
   }
 });

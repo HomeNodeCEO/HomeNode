@@ -103,6 +103,11 @@ test("assignment details accept a complete neighborhood profile", () => {
     neighborhood_growth: "stable",
     neighborhood_unemployment_pct: 4.2,
     neighborhood_unemployment_zip: "75044",
+    neighborhood_city_unemployment_pct: 4.1,
+    neighborhood_city_unemployment_name: "Garland city, Texas",
+    neighborhood_city_unemployment_source: "U.S. Census Bureau",
+    neighborhood_city_unemployment_dataset_year: 2024,
+    neighborhood_city_unemployment_variable: "DP03_0009PE",
     neighborhood_market_trend: "increasing",
     neighborhood_demand_supply: "in_balance",
     neighborhood_marketing_time: "under_3_months",
@@ -139,4 +144,7 @@ test("assignment details enforce neighborhood totals and boundary confirmation",
   assert.throws(() => validateAssignmentDetails({
     neighborhood_city_average_gla: -1,
   }), /invalid_neighborhood_city_comparison/);
+  assert.throws(() => validateAssignmentDetails({
+    neighborhood_city_unemployment_pct: 101,
+  }), /invalid_neighborhood_city_unemployment_percentage/);
 });

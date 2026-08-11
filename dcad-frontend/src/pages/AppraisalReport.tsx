@@ -494,6 +494,9 @@ export default function AppraisalReport() {
     )
     .map((analysis) => analysis.market.label);
   const neighborhoodDetails: AssignmentDetailsPayload = assignmentFile?.assignment_details || {};
+  const assignmentTypeText = (neighborhoodDetails.assignment_types || [])
+    .map((value) => value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase()))
+    .join(", ");
   const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(neighborhoodDetails);
   const landUseTotal = neighborhoodLandUseTotal(neighborhoodDetails);
 
@@ -941,6 +944,13 @@ export default function AppraisalReport() {
                 Parcel / Account: {propertyId}
                 <br />
                 Neighborhood: {text(detail.property_location?.neighborhood)}
+                <br />
+                Prepare For: {text(neighborhoodDetails.lender_client_name)}
+                {hasValue(neighborhoodDetails.lender_client_address) ? (
+                  <><br />{text(neighborhoodDetails.lender_client_address)}</>
+                ) : null}
+                <br />
+                Assignment Type: {text(assignmentTypeText)}
               </div>
             </div>
             <div className="report-cover-photo">
@@ -965,6 +975,7 @@ export default function AppraisalReport() {
                 value={legalLines.length ? legalLines.join(" ") : "Not reported"}
                 wide
               />
+              <Fact label="Occupancy" value={neighborhoodChoiceLabel(neighborhoodDetails.occupancy)} />
               <Fact label="Primary Zoning" value={primaryZoning} wide />
             </div>
           </section>
@@ -1219,11 +1230,18 @@ export default function AppraisalReport() {
               <Fact label="Market Trend" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_market_trend)} />
               <Fact label="Demand / Supply" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_demand_supply)} />
               <Fact label="Marketing Time" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_marketing_time)} />
-              <Fact label="Unemployment" value={percent(neighborhoodDetails.neighborhood_unemployment_pct)} />
+              <Fact
+                label={`ZIP ${text(neighborhoodDetails.neighborhood_unemployment_zip)} Unemployment`}
+                value={percent(neighborhoodDetails.neighborhood_unemployment_pct)}
+              />
+              <Fact
+                label={`${text(neighborhoodDetails.neighborhood_city_unemployment_name, "City")} Unemployment`}
+                value={percent(neighborhoodDetails.neighborhood_city_unemployment_pct)}
+              />
               <Fact
                 label="Unemployment Source"
                 value={neighborhoodDetails.neighborhood_unemployment_source
-                  ? `${neighborhoodDetails.neighborhood_unemployment_source}, ${text(neighborhoodDetails.neighborhood_unemployment_dataset_year)} ACS 5-Year, ZIP ${text(neighborhoodDetails.neighborhood_unemployment_zip)}`
+                  ? `${neighborhoodDetails.neighborhood_unemployment_source}, ${text(neighborhoodDetails.neighborhood_unemployment_dataset_year)} ACS 5-Year, variable ${text(neighborhoodDetails.neighborhood_unemployment_variable)}. ZIP and city/place geographies.`
                   : null}
                 wide
               />

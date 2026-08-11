@@ -109,6 +109,14 @@ test("assignment details accept a complete neighborhood profile", () => {
     neighborhood_house_price_low: 200000,
     neighborhood_house_price_predominant: 300000,
     neighborhood_house_price_high: 500000,
+    neighborhood_city_name: "Garland",
+    neighborhood_city_sale_count: 1250,
+    neighborhood_city_average_sale_price: 342500,
+    neighborhood_city_average_ppsf: 181.5,
+    neighborhood_city_average_age: 38.2,
+    neighborhood_city_average_gla: 1884,
+    neighborhood_boundary_streets: "Snowmass Ln; Vail Dr",
+    neighborhood_boundary_streets_source: "U.S. Census Bureau TIGERweb Transportation",
     neighborhood_boundary_geometry: {
       type: "Polygon",
       coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
@@ -128,4 +136,7 @@ test("assignment details enforce neighborhood totals and boundary confirmation",
   assert.throws(() => validateAssignmentDetails({
     neighborhood_boundary_confirmed: true,
   }), /neighborhood_boundary_confirmation_requires_geometry/);
+  assert.throws(() => validateAssignmentDetails({
+    neighborhood_city_average_gla: -1,
+  }), /invalid_neighborhood_city_comparison/);
 });

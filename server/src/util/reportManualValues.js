@@ -38,6 +38,13 @@ const NEIGHBORHOOD_RANGE_GROUPS = [
   ["neighborhood_age_low", "neighborhood_age_predominant", "neighborhood_age_high"],
   ["neighborhood_gla_low", "neighborhood_gla_predominant", "neighborhood_gla_high"],
 ];
+const NEIGHBORHOOD_CITY_NUMERIC_FIELDS = [
+  "neighborhood_city_sale_count",
+  "neighborhood_city_average_sale_price",
+  "neighborhood_city_average_ppsf",
+  "neighborhood_city_average_age",
+  "neighborhood_city_average_gla",
+];
 
 function text(value) {
   return String(value ?? "").trim();
@@ -106,9 +113,14 @@ export function validateAssignmentDetails(value) {
     ["neighborhood_unemployment_zip", 10],
     ["neighborhood_unemployment_source", 500],
     ["neighborhood_unemployment_variable", 100],
+    ["neighborhood_city_name", 200],
+    ["neighborhood_city_comparison_as_of", 100],
     ["neighborhood_boundary_label", 1000],
     ["neighborhood_boundary_source", 200],
     ["neighborhood_boundary_saved_at", 100],
+    ["neighborhood_boundary_streets", 4000],
+    ["neighborhood_boundary_streets_source", 500],
+    ["neighborhood_boundary_streets_retrieved_at", 100],
     ["neighborhood_boundary_confirmed_at", 100],
   ];
 
@@ -164,6 +176,10 @@ export function validateAssignmentDetails(value) {
       const [low, predominant, high] = numbers;
       if (low > predominant || predominant > high) throw new Error("invalid_neighborhood_range_order");
     }
+  }
+  const cityValues = NEIGHBORHOOD_CITY_NUMERIC_FIELDS.map((field) => optionalNumber(value[field]));
+  if (cityValues.some((item) => Number.isNaN(item) || (item !== null && item < 0))) {
+    throw new Error("invalid_neighborhood_city_comparison");
   }
   if (
     value.neighborhood_boundary_geometry !== undefined &&

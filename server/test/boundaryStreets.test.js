@@ -57,6 +57,23 @@ test("selects one dominant road for each cardinal side", () => {
   assert.equal(result.north.candidates[1].name, "Short Local St");
 });
 
+test("prefers a continuous perimeter road over a shorter internal road", () => {
+  const features = [
+    {
+      attributes: { NAME: "N Garland Ave" },
+      road_layer: 2,
+      geometry: { paths: [[[-96.6404, 32.90], [-96.6404, 33.05]]] },
+    },
+    {
+      attributes: { NAME: "Wagon Wheel Rd" },
+      road_layer: 2,
+      geometry: { paths: [[[-96.6401, 32.961], [-96.6401, 32.979]]] },
+    },
+  ];
+  const result = summarizeCardinalBoundaries(features, geometry.coordinates[0]);
+  assert.equal(result.east.primary_street, "N Garland Ave");
+});
+
 test("queries all TIGERweb road layers along the drawn boundary", async () => {
   const requestedLayers = [];
   const result = await fetchBoundaryStreetNames(geometry, {

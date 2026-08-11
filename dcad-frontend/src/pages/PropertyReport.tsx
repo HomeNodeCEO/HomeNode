@@ -1963,6 +1963,8 @@ function AddressHero({
   const [unemploymentLookupLoading, setUnemploymentLookupLoading] = useState(false);
   const [unemploymentLookupMessage, setUnemploymentLookupMessage] = useState("");
   const [unemploymentAutoAttemptedSignature, setUnemploymentAutoAttemptedSignature] = useState("");
+  const unemploymentLookupSucceeded = useRef(false);
+  const unemploymentHydrationAccount = useRef("");
   const [neighborhoodProfileLoading, setNeighborhoodProfileLoading] = useState(false);
   const [neighborhoodProfileMessage, setNeighborhoodProfileMessage] = useState("");
   const [neighborhoodBoundarySuggestions, setNeighborhoodBoundarySuggestions] = useState<
@@ -1992,7 +1994,36 @@ function AddressHero({
   useEffect(() => {
     let cancelled = false;
     const fallback = assignmentDraftFromDetail(detail?.assignment_details);
-    setAssignmentDraft(fallback);
+    if (unemploymentHydrationAccount.current !== (accountId || "")) {
+      unemploymentHydrationAccount.current = accountId || "";
+      unemploymentLookupSucceeded.current = false;
+    }
+    const hydrateAssignmentDraft = (value: AssignmentDetails) => {
+      const next = assignmentDraftFromDetail(value);
+      setAssignmentDraft((current) => {
+        if (!unemploymentLookupSucceeded.current) return next;
+        const zipComparison = hasValue(current.neighborhood_unemployment_pct) ? {
+          neighborhood_unemployment_pct: current.neighborhood_unemployment_pct,
+          neighborhood_unemployment_zip: current.neighborhood_unemployment_zip,
+          neighborhood_unemployment_source: current.neighborhood_unemployment_source,
+          neighborhood_unemployment_dataset_year:
+            current.neighborhood_unemployment_dataset_year,
+          neighborhood_unemployment_variable: current.neighborhood_unemployment_variable,
+        } : {};
+        const cityComparison = hasValue(current.neighborhood_city_unemployment_pct) ? {
+          neighborhood_city_unemployment_pct: current.neighborhood_city_unemployment_pct,
+          neighborhood_city_unemployment_name: current.neighborhood_city_unemployment_name,
+          neighborhood_city_unemployment_source:
+            current.neighborhood_city_unemployment_source,
+          neighborhood_city_unemployment_dataset_year:
+            current.neighborhood_city_unemployment_dataset_year,
+          neighborhood_city_unemployment_variable:
+            current.neighborhood_city_unemployment_variable,
+        } : {};
+        return { ...next, ...zipComparison, ...cityComparison };
+      });
+    };
+    hydrateAssignmentDraft(fallback);
     setAssignmentDirty(false);
     setAssignmentSaveMessage("");
     setNeighborhoodProfileMessage("");
@@ -2022,10 +2053,10 @@ function AddressHero({
         if (cancelled) return;
         setAssignmentFiles(response.files || []);
         if (response.latest_file) {
-          setAssignmentDraft(assignmentDraftFromDetail(response.latest_file.assignment_details));
+          hydrateAssignmentDraft(response.latest_file.assignment_details);
           setInheritedAssignmentFile(response.latest_file);
         } else if (response.legacy_assignment_details) {
-          setAssignmentDraft(assignmentDraftFromDetail(response.legacy_assignment_details));
+          hydrateAssignmentDraft(response.legacy_assignment_details);
           setInheritedLegacyAssignment(true);
         }
       })
@@ -2536,6 +2567,7 @@ function AddressHero({
         : Promise.reject(new Error("City not reported")),
     ]);
     if (zipResult.status === "fulfilled" || cityResult.status === "fulfilled") {
+      unemploymentLookupSucceeded.current = true;
       setAssignmentDraft((current) => ({
         ...current,
         ...(zipResult.status === "fulfilled" ? {

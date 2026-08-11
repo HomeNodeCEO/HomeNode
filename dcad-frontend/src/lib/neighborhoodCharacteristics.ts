@@ -94,7 +94,7 @@ export function neighborhoodBoundaryReadinessErrors(
 ): string[] {
   const errors: string[] = [];
   if (!isNeighborhoodBoundary(details?.neighborhood_boundary_geometry)) {
-    errors.push('Draw and save an Appraiser-Defined Area in Market Conditions Analysis.');
+    errors.push('Draw and save an Appraiser-Defined Area in the Property Report Market Conditions Analysis.');
   } else {
     const missingSides = [
       ['North', details?.neighborhood_boundary_north],

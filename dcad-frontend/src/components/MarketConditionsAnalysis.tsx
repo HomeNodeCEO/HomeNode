@@ -88,6 +88,7 @@ type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
 type Props = {
   subjectAccountId: string;
   onCompletionChange?: (draft: MarketConditionsDraft | null) => void;
+  embedded?: boolean;
 };
 
 const CLOSE_BOUNDARY_PIXEL_TOLERANCE = 18;
@@ -825,6 +826,7 @@ function RecommendedDetermination({
 export default function MarketConditionsAnalysis({
   subjectAccountId,
   onCompletionChange,
+  embedded = false,
 }: Props) {
   const savedDraft = useMemo(
     () => readMarketConditionsDraft(subjectAccountId),
@@ -1490,7 +1492,13 @@ export default function MarketConditionsAnalysis({
     ) || [];
 
   return (
-    <section className="mb-4 rounded-2xl border border-emerald-200 bg-white shadow-sm">
+    <section
+      className={
+        embedded
+          ? 'rounded-xl border border-emerald-200 bg-white shadow-sm'
+          : 'mb-4 rounded-2xl border border-emerald-200 bg-white shadow-sm'
+      }
+    >
       <div className="border-b border-emerald-100 bg-emerald-50/60 p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

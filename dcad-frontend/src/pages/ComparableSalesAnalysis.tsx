@@ -334,6 +334,9 @@ export default function ComparableSalesAnalysis() {
     const p = new URLSearchParams(location.search);
     return p.get('propertyId') || '';
   }, [location.search]);
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [propertyId]);
   // Read the property-report condition choice and normalize it to a valid UAD C1-C6 rating.
   const conditionCode = useMemo(() => {
     const p = new URLSearchParams(location.search);

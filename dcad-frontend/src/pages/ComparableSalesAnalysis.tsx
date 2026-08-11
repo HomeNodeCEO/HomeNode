@@ -17,7 +17,6 @@ import ConditionQualityStudy, {
   type ConditionQualityImpactPreview,
   type ConditionQualityRatingAssignment,
 } from '@/components/ConditionQualityStudy';
-import MarketConditionsAnalysis from '@/components/MarketConditionsAnalysis';
 import ComparableSalesMap from '@/components/ComparableSalesMap';
 import { fetchDetail } from '@/lib/dcad';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
@@ -1483,7 +1482,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   const addSaleAsComparable = (sale: SaleRow) => {
     if (!marketConditionsDraft) {
-      setSalesError('Complete the current Market Conditions Analysis before selecting comparable sales.');
+      setSalesError('Complete the Market Conditions Analysis on the Property Report before selecting comparable sales.');
       return;
     }
     if (selectedSales.some((item) => item && saleKey(item) === saleKey(sale))) return;
@@ -1609,7 +1608,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   const runRecommendedSales = async () => {
     if (!marketConditionsDraft) {
-      setSalesError('Complete the current Market Conditions Analysis before recommending comparable sales.');
+      setSalesError('Complete the Market Conditions Analysis on the Property Report before recommending comparable sales.');
       return;
     }
     if (!propertyId) {
@@ -1662,7 +1661,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   const runSalesSearch = async () => {
     if (!marketConditionsDraft) {
-      setSalesError('Complete the current Market Conditions Analysis before searching comparable sales.');
+      setSalesError('Complete the Market Conditions Analysis on the Property Report before searching comparable sales.');
       return;
     }
     if (!comparableSearchProfile) {
@@ -2886,11 +2885,30 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
         </div>
 
-        <MarketConditionsAnalysis
-          key={`market-conditions-${propertyId}`}
-          subjectAccountId={propertyId}
-          onCompletionChange={setMarketConditionsDraft}
-        />
+        <div className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
+          marketConditionsDraft
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+            : 'border-amber-200 bg-amber-50 text-amber-950'
+        }`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-semibold">
+                {marketConditionsDraft
+                  ? 'Market Conditions Analysis complete'
+                  : 'Market Conditions Analysis required'}
+              </div>
+              <div className="mt-0.5 text-xs opacity-80">
+                Market studies and the appraiser-defined neighborhood area are now completed in Neighborhood Characteristics on the Property Report page.
+              </div>
+            </div>
+            <Link
+              to={`/report/${encodeURIComponent(propertyId)}`}
+              className="rounded-md border border-current bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+            >
+              {marketConditionsDraft ? 'Review Market Analysis' : 'Complete Market Analysis'}
+            </Link>
+          </div>
+        </div>
 
         <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-1">
@@ -2935,7 +2953,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 {selectedComparableSearchProfile
                   ? `${selectedComparableSearchProfile.label} limits comparable-sale candidates to ${selectedComparableSearchProfile.radiusMiles} mile${selectedComparableSearchProfile.radiusMiles === 1 ? '' : 's'} from the subject before ranking.`
                   : 'Choose the property environment and assignment complexity to unlock comparable search and ranking.'}
-                {' '}This selection does not change the independent Market Conditions Analysis above.
+                {' '}This selection does not change the independent Market Conditions Analysis saved on the Property Report.
               </div>
             </div>
           </div>
@@ -3026,7 +3044,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
           {!marketConditionsDraft && (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
-              Complete the current Market Conditions Analysis above to unlock
+              Complete the current Market Conditions Analysis on the Property Report to unlock
               comparable search and recommendations. The selected study areas
               will remain independent from the comparable-sales inventory.
             </div>

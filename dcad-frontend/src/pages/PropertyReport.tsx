@@ -30,6 +30,7 @@ import {
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
+import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 
 type DcadOwner = {
   owner_name?: string;
@@ -662,6 +663,7 @@ function NeighborhoodCharacteristicsContent({
   onRefreshUnemployment,
   onRefreshBoundary,
   onConfirmBoundary,
+  onMarketConditionsChange,
   onSave,
 }: {
   accountId?: string;
@@ -684,6 +686,7 @@ function NeighborhoodCharacteristicsContent({
   onRefreshUnemployment: () => void;
   onRefreshBoundary: () => void;
   onConfirmBoundary: (checked: boolean) => void;
+  onMarketConditionsChange: (draft: MarketConditionsDraft | null) => void;
   onSave: () => void;
 }) {
   const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
@@ -882,14 +885,6 @@ function NeighborhoodCharacteristicsContent({
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link
-              to={accountId
-                ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`
-                : "/ComparableSalesAnalysis"}
-              className="btn btn-ghost btn-sm normal-case text-blue-700"
-            >
-              Open Market Conditions
-            </Link>
             <button
               type="button"
               className="btn btn-outline btn-sm normal-case"
@@ -970,6 +965,21 @@ function NeighborhoodCharacteristicsContent({
           <div className="mt-3 text-sm font-medium text-emerald-900">Boundary is confirmed and ready for the appraisal PDF.</div>
         )}
       </section>
+
+      {accountId ? (
+        <section className="border-t border-slate-200 pt-5">
+          <MarketConditionsAnalysis
+            key={`property-report-market-conditions-${accountId}`}
+            subjectAccountId={accountId}
+            onCompletionChange={onMarketConditionsChange}
+            embedded
+          />
+        </section>
+      ) : (
+        <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900">
+          A property account is required before the market conditions analysis can be run.
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-xs text-slate-500">
@@ -2291,7 +2301,7 @@ function AddressHero({
   const importCustomMarketArea = useCallback(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
     if (!geometry) {
-      setAssignmentSaveMessage("Run and save an Appraiser-Defined Area in Market Conditions Analysis first.");
+      setAssignmentSaveMessage("Run and save an Appraiser-Defined Area in the Market Conditions Analysis below first.");
       return;
     }
     const summary = customMarketStudy.summary;
@@ -2337,7 +2347,7 @@ function AddressHero({
     const geometry = customMarketStudy?.market.custom_geometry;
     if (!accountId || !geometry || !marketConditionsDraft || neighborhoodProfileLoading) {
       if (!geometry) {
-        setNeighborhoodProfileMessage("Run and save an Appraiser-Defined Area in Market Conditions Analysis first.");
+        setNeighborhoodProfileMessage("Run and save an Appraiser-Defined Area in the Market Conditions Analysis below first.");
       }
       return;
     }
@@ -3592,6 +3602,7 @@ function AddressHero({
               onRefreshUnemployment={() => void lookupZipUnemployment()}
               onRefreshBoundary={() => void refreshNeighborhoodProfile()}
               onConfirmBoundary={confirmNeighborhoodBoundary}
+              onMarketConditionsChange={setMarketConditionsDraft}
               onSave={() => void saveAssignmentDetails()}
             />
           </SummarySection>

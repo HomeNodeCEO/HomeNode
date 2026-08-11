@@ -27,7 +27,7 @@ const AREA_OPTIONS: ReadonlyArray<{
   {
     key: 'custom',
     label: 'Appraiser-defined area',
-    description: 'Reuse the exact polygon saved in Market Conditions Analysis.',
+    description: 'Reuse the exact polygon saved in the Property Report Market Conditions Analysis.',
   },
   {
     key: 'city',
@@ -398,7 +398,7 @@ export default function PairedSalesAnalysis({
       return;
     }
     if (marketKey === 'custom' && !appraiserDefinedArea?.geometry) {
-      setError('Draw and save an appraiser-defined area in Market Conditions Analysis first.');
+      setError('Draw and save an appraiser-defined area in the Property Report Market Conditions Analysis first.');
       return;
     }
     setLoading(true);
@@ -441,7 +441,7 @@ export default function PairedSalesAnalysis({
           Required: choose the paired-sales market area
         </legend>
         <div className="mt-1 text-sm text-slate-600">
-          The appraiser-defined option reuses the exact completed polygon from Market Conditions Analysis.
+          The appraiser-defined option reuses the exact completed polygon from the Property Report Market Conditions Analysis.
         </div>
         <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {AREA_OPTIONS.map((option) => {

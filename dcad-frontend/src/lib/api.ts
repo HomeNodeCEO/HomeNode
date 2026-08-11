@@ -253,6 +253,9 @@ export interface AssignmentDetailsPayload {
   neighborhood_boundary_streets_retrieved_at?: string;
   neighborhood_boundary_confirmed?: boolean;
   neighborhood_boundary_confirmed_at?: string;
+  lender_revision_count?: string | number;
+  lender_revision_last_requested_at?: string;
+  lender_revision_note?: string;
 }
 
 export interface PropertyActivityHistoryRow {
@@ -1408,7 +1411,7 @@ export async function createAssignmentFile(
   });
 }
 
-/** Save a revision to the currently active assignment file. */
+/** Save work to the current assignment file using its internal concurrency version. */
 export async function updateAssignmentFile(
   accountId: string,
   assignmentFileId: number,

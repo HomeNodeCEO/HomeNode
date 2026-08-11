@@ -2681,7 +2681,11 @@ function AddressHero({
   ]);
 
   const saveAssignmentDetails = async () => {
-    if (assignmentValidationErrors(assignmentDraft).length) return;
+    const validationErrors = assignmentValidationErrors(assignmentDraft);
+    if (validationErrors.length) {
+      setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
+      return;
+    }
     if (!accountId || !activeAssignmentFile) {
       setAssignmentSaveMessage("Enter a file number and choose Save New File first.");
       return;
@@ -2721,7 +2725,12 @@ function AddressHero({
   };
 
   const saveNewAssignmentFile = async () => {
-    if (!accountId || assignmentValidationErrors(assignmentDraft).length) return;
+    if (!accountId) return;
+    const validationErrors = assignmentValidationErrors(assignmentDraft);
+    if (validationErrors.length) {
+      setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
+      return;
+    }
     const fileNumber = assignmentFileNumber.trim();
     if (!fileNumber) {
       setAssignmentSaveMessage("Enter a file number before saving a new appraisal file.");
@@ -2762,6 +2771,25 @@ function AddressHero({
     } finally {
       setSavingAssignmentFile(false);
     }
+  };
+
+  const saveAssignmentFromSection = async () => {
+    const validationErrors = assignmentValidationErrors(assignmentDraft);
+    if (validationErrors.length) {
+      setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
+      return;
+    }
+    if (!activeAssignmentFile) {
+      if (!assignmentFileNumber.trim()) {
+        setAssignmentSaveMessage(
+          "Enter a File Number at the top of the report, then select Save again to create the new appraisal file.",
+        );
+        return;
+      }
+      await saveNewAssignmentFile();
+      return;
+    }
+    await saveAssignmentDetails();
   };
 
   const inheritAssignmentFile = (source: AppraisalAssignmentFile) => {
@@ -2829,8 +2857,7 @@ function AddressHero({
     !activeAssignmentFile && (inheritedAssignmentFile || inheritedLegacyAssignment),
   );
   const assignmentSaveDisabled = Boolean(
-    assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
-      assignmentErrors.length > 0 || !activeAssignmentFile,
+    assignmentFilesLoading || savingAssignmentFile || !assignmentDirty,
   );
   const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const appraisalReportAssignmentFile = activeAssignmentFile || inheritedAssignmentFile;
@@ -3028,7 +3055,7 @@ function AddressHero({
       </figure>
 
       <div className="card-body bg-white p-4 sm:p-6" style={{ backgroundColor: "#ffffff" }}>
-        <header className="grid gap-5 border-b border-slate-200 pb-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(260px,1fr)_minmax(220px,0.75fr)] lg:items-start">
+        <header className="grid gap-5 border-b border-slate-200 pb-5 lg:grid-cols-3 lg:items-start">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-950">{streetAddress}</h1>
             <p className="mt-1 text-sm font-medium text-slate-700">
@@ -3073,12 +3100,15 @@ function AddressHero({
             />
             <button
               type="button"
-              onClick={() => void saveAssignmentDetails()}
+              onClick={() => void saveAssignmentFromSection()}
               className="btn btn-primary btn-xs mt-2 normal-case rounded-lg"
               disabled={assignmentSaveDisabled}
             >
               {savingAssignmentFile ? "Saving..." : "Save Prepared For"}
             </button>
+            {assignmentSaveMessage ? (
+              <p className="mt-2 text-xs leading-5 text-slate-600">{assignmentSaveMessage}</p>
+            ) : null}
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
@@ -3354,13 +3384,16 @@ function AddressHero({
                 </div>
                 <button
                   type="button"
-                  onClick={() => void saveAssignmentDetails()}
+                  onClick={() => void saveAssignmentFromSection()}
                   className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                   disabled={assignmentSaveDisabled}
                 >
                   {savingAssignmentFile ? "Saving..." : "Save Occupancy"}
                 </button>
               </div>
+              {assignmentSaveMessage ? (
+                <p className="mt-2 text-xs leading-5 text-slate-600">{assignmentSaveMessage}</p>
+              ) : null}
               <div className="mt-3 grid gap-2 sm:grid-cols-4">
                 {OCCUPANCY_OPTIONS.map(([value, label]) => (
                   <CheckboxChoice
@@ -3469,7 +3502,7 @@ function AddressHero({
                 </span>
                 <button
                   type="button"
-                  onClick={() => void saveAssignmentDetails()}
+                  onClick={() => void saveAssignmentFromSection()}
                   className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                   disabled={assignmentSaveDisabled}
                 >
@@ -3537,7 +3570,7 @@ function AddressHero({
               </span>
               <button
                 type="button"
-                onClick={() => void saveAssignmentDetails()}
+                onClick={() => void saveAssignmentFromSection()}
                 className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                 disabled={assignmentSaveDisabled}
               >
@@ -3564,7 +3597,7 @@ function AddressHero({
                 savingAssignmentFile={savingAssignmentFile}
                 contractSellerComparison={contractSellerComparison}
                 onAssignmentChange={updateAssignment}
-                onSave={() => void saveAssignmentDetails()}
+                onSave={() => void saveAssignmentFromSection()}
               />
             </SummarySection>
           </div>
@@ -3768,7 +3801,7 @@ function AddressHero({
               onRefreshBoundary={() => void refreshNeighborhoodProfile()}
               onConfirmBoundary={confirmNeighborhoodBoundary}
               onMarketConditionsChange={setMarketConditionsDraft}
-              onSave={() => void saveAssignmentDetails()}
+              onSave={() => void saveAssignmentFromSection()}
             />
           </SummarySection>
 

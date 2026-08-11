@@ -2627,6 +2627,7 @@ function AddressHero({
   useEffect(() => {
     if (
       assignmentFilesLoading ||
+      !assignmentFilesLoaded ||
       (!/^\d{5}$/.test(censusZip) && (!city || city === "Not reported")) ||
       unemploymentAutoAttemptedSignature === `${censusZip}:${city}:${state}` ||
       (
@@ -2638,6 +2639,7 @@ function AddressHero({
   }, [
     assignmentDraft.neighborhood_city_unemployment_pct,
     assignmentDraft.neighborhood_unemployment_pct,
+    assignmentFilesLoaded,
     assignmentFilesLoading,
     censusZip,
     city,

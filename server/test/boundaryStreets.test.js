@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   fetchBoundaryStreetNames,
   normalizeBoundaryStreetNames,
+  rankBoundaryStreetNames,
 } from "../src/services/boundaryStreets.js";
 
 const geometry = {
@@ -25,6 +26,20 @@ test("normalizes and deduplicates TIGERweb boundary street names", () => {
   ]), ["Snowmass Ln", "Vail"]);
 });
 
+test("prioritizes streets running along the boundary over crossing streets", () => {
+  const features = [
+    {
+      attributes: { NAME: "Boundary Rd" },
+      geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] },
+    },
+    {
+      attributes: { NAME: "Crossing Rd" },
+      geometry: { paths: [[[-96.65, 32.95], [-96.65, 32.97]]] },
+    },
+  ];
+  assert.deepEqual(rankBoundaryStreetNames(features, geometry.coordinates[0]), ["Boundary Rd"]);
+});
+
 test("queries all TIGERweb road layers along the drawn boundary", async () => {
   const requestedLayers = [];
   const result = await fetchBoundaryStreetNames(geometry, {
@@ -43,7 +58,7 @@ test("queries all TIGERweb road layers along the drawn boundary", async () => {
   assert.deepEqual(requestedLayers, [0, 1, 2]);
   assert.deepEqual(result.street_names, ["Road 1", "Road 2", "Road 3"]);
   assert.equal(result.review_required, true);
-  assert.equal(result.boundary_buffer_meters, 45);
+  assert.equal(result.boundary_buffer_meters, 75);
 });
 
 test("rejects an open boundary polygon", async () => {

@@ -773,7 +773,7 @@ function NeighborhoodCharacteristicsContent({
           {NEIGHBORHOOD_CHOICE_GROUPS.map((group) => (
             <fieldset key={group.field} className="rounded-lg border border-slate-200 bg-white p-2">
               <legend className="px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">{group.label}</legend>
-              <div className="grid grid-cols-3 gap-1">
+              <div className="flex flex-wrap gap-1">
                 {group.options.map(([value, label]) => (
                   <CheckboxChoice
                     key={value}

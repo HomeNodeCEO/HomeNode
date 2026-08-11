@@ -155,7 +155,7 @@ export function summarizeCardinalBoundaries(features = [], ring = []) {
         if (best.side && best.distance <= BOUNDARY_BUFFER_METERS && best.alignment >= 0.78) {
           const proximity = 1 - best.distance / BOUNDARY_BUFFER_METERS;
           const layerWeight = LAYER_WEIGHTS.get(Number(feature.road_layer)) || 1;
-          const networkLength = Math.min(Math.max(networkLengthByName.get(name) || roadLength, 100), 5000);
+          const networkLength = Math.min(Math.max(networkLengthByName.get(name) || roadLength, 100), 15000);
           const continuityWeight = (networkLength / 100) ** 0.55;
           const score = roadLength * best.alignment * proximity * layerWeight * continuityWeight;
           const sideScores = scoresBySide.get(best.side);

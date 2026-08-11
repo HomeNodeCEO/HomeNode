@@ -4,6 +4,7 @@ import {
   fetchBoundaryStreetNames,
   normalizeBoundaryStreetNames,
   rankBoundaryStreetNames,
+  summarizeCardinalBoundaries,
 } from "../src/services/boundaryStreets.js";
 
 const geometry = {
@@ -40,6 +41,22 @@ test("prioritizes streets running along the boundary over crossing streets", () 
   assert.deepEqual(rankBoundaryStreetNames(features, geometry.coordinates[0]), ["Boundary Rd"]);
 });
 
+test("selects one dominant road for each cardinal side", () => {
+  const features = [
+    { attributes: { NAME: "Apollo Rd" }, road_layer: 1, geometry: { paths: [[[-96.659, 32.9799], [-96.641, 32.9799]]] } },
+    { attributes: { NAME: "N Garland Ave" }, road_layer: 1, geometry: { paths: [[[-96.6401, 32.961], [-96.6401, 32.979]]] } },
+    { attributes: { NAME: "W Buckingham Rd" }, road_layer: 1, geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] } },
+    { attributes: { NAME: "N Jupiter Rd" }, road_layer: 1, geometry: { paths: [[[-96.6599, 32.961], [-96.6599, 32.979]]] } },
+    { attributes: { NAME: "Short Local St" }, road_layer: 2, geometry: { paths: [[[-96.651, 32.9798], [-96.649, 32.9798]]] } },
+  ];
+  const result = summarizeCardinalBoundaries(features, geometry.coordinates[0]);
+  assert.equal(result.north.primary_street, "Apollo Rd");
+  assert.equal(result.east.primary_street, "N Garland Ave");
+  assert.equal(result.south.primary_street, "W Buckingham Rd");
+  assert.equal(result.west.primary_street, "N Jupiter Rd");
+  assert.equal(result.north.candidates[1].name, "Short Local St");
+});
+
 test("queries all TIGERweb road layers along the drawn boundary", async () => {
   const requestedLayers = [];
   const result = await fetchBoundaryStreetNames(geometry, {
@@ -49,14 +66,21 @@ test("queries all TIGERweb road layers along the drawn boundary", async () => {
       return {
         ok: true,
         async json() {
-          return { features: [{ attributes: { NAME: `Road ${layer + 1}` } }] };
+          return {
+            features: [{
+              attributes: { NAME: `Road ${layer + 1}` },
+              geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] },
+            }],
+          };
         },
       };
     },
     now: () => new Date("2026-08-11T14:00:00.000Z"),
   });
   assert.deepEqual(requestedLayers, [0, 1, 2]);
-  assert.deepEqual(result.street_names, ["Road 1", "Road 2", "Road 3"]);
+  assert.deepEqual(result.street_names, ["Road 1"]);
+  assert.equal(result.cardinal_boundaries.south.primary_street, "Road 1");
+  assert.equal(result.summary, "South: Road 1");
   assert.equal(result.review_required, true);
   assert.equal(result.boundary_buffer_meters, 75);
 });

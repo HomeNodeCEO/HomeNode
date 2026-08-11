@@ -792,6 +792,14 @@ const MARKET_ANALYSIS_SQL = `
       ),
       'minimum_sale_price', (SELECT MIN(sale_price) FROM eligible),
       'maximum_sale_price', (SELECT MAX(sale_price) FROM eligible),
+      'minimum_price_per_square_foot', (SELECT MIN(price_per_square_foot) FROM eligible),
+      'maximum_price_per_square_foot', (SELECT MAX(price_per_square_foot) FROM eligible),
+      'minimum_age', (SELECT MIN(age_years) FROM eligible),
+      'maximum_age', (SELECT MAX(age_years) FROM eligible),
+      'median_age', (SELECT age_median FROM numeric_medians),
+      'minimum_living_area', (SELECT MIN(living_area) FROM eligible),
+      'maximum_living_area', (SELECT MAX(living_area) FROM eligible),
+      'median_living_area', (SELECT living_area_median FROM numeric_medians),
       'congruency_factors', JSONB_BUILD_OBJECT(
         'living_area', JSONB_BUILD_OBJECT(
           'count', (SELECT living_area_count FROM numeric_dispersion),
@@ -1207,6 +1215,18 @@ function normalizeAnalysisRow(row, periodMonths) {
       ),
       minimum_sale_price: numberOrNull(summary.minimum_sale_price),
       maximum_sale_price: numberOrNull(summary.maximum_sale_price),
+      minimum_price_per_square_foot: numberOrNull(
+        summary.minimum_price_per_square_foot,
+      ),
+      maximum_price_per_square_foot: numberOrNull(
+        summary.maximum_price_per_square_foot,
+      ),
+      minimum_age: numberOrNull(summary.minimum_age),
+      maximum_age: numberOrNull(summary.maximum_age),
+      median_age: numberOrNull(summary.median_age),
+      minimum_living_area: numberOrNull(summary.minimum_living_area),
+      maximum_living_area: numberOrNull(summary.maximum_living_area),
+      median_living_area: numberOrNull(summary.median_living_area),
       congruency_factors: congruencyFactors,
     },
     statistics: calculateMarketStudyStatistics({

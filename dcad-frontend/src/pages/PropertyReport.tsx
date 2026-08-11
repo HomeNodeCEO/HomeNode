@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
 import {
   createAssignmentFile,
+  getCensusZipProfile,
   getAssignmentFiles,
   getAccountPhotos,
   getRelatedParcels,
@@ -15,6 +16,17 @@ import {
   type ReportManualSectionKey,
   type RelatedParcelsResponse,
 } from "@/lib/api";
+import {
+  readMarketConditionsDraft,
+  type MarketConditionsDraft,
+} from "@/lib/marketConditionsDraft";
+import {
+  marketTrendFromChange,
+  neighborhoodBoundaryReadinessErrors,
+  neighborhoodLandUseTotal,
+  NEIGHBORHOOD_LAND_USE_FIELDS,
+  NEIGHBORHOOD_RANGE_ROWS,
+} from "@/lib/neighborhoodCharacteristics";
 
 type DcadOwner = {
   owner_name?: string;
@@ -231,6 +243,39 @@ const CONTRACT_AMOUNT_FIELDS = [
   ["seller_concessions", "Seller Concessions"],
 ] as const;
 
+const NEIGHBORHOOD_CHOICE_GROUPS = [
+  {
+    label: "Location Type",
+    field: "neighborhood_location_type",
+    options: [["urban", "Urban"], ["suburban", "Suburban"], ["rural", "Rural"]],
+  },
+  {
+    label: "% Built-Up",
+    field: "neighborhood_built_up",
+    options: [["over_75", "Over 75%"], ["25_to_75", "25-75%"], ["under_25", "Under 25%"]],
+  },
+  {
+    label: "Overall Growth",
+    field: "neighborhood_growth",
+    options: [["rapid", "Rapid"], ["stable", "Stable"], ["slow", "Slow"]],
+  },
+  {
+    label: "Market Trends",
+    field: "neighborhood_market_trend",
+    options: [["increasing", "Increasing"], ["stable", "Stable"], ["declining", "Declining"]],
+  },
+  {
+    label: "Demand / Supply",
+    field: "neighborhood_demand_supply",
+    options: [["shortage", "Shortage"], ["in_balance", "In Balance"], ["over_supply", "Over Supply"]],
+  },
+  {
+    label: "Marketing Time",
+    field: "neighborhood_marketing_time",
+    options: [["under_3_months", "Under 3 Months"], ["3_to_6_months", "3-6 Months"], ["over_6_months", "Over 6 Months"]],
+  },
+] as const;
+
 function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails {
   return {
     pud: Boolean(value?.pud),
@@ -259,6 +304,43 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
         ? value.seller_matches_public_records
         : null,
     seller_mismatch_explanation: value?.seller_mismatch_explanation || "",
+    neighborhood_land_use_one_unit_pct: value?.neighborhood_land_use_one_unit_pct ?? "",
+    neighborhood_land_use_two_to_four_unit_pct:
+      value?.neighborhood_land_use_two_to_four_unit_pct ?? "",
+    neighborhood_land_use_multifamily_pct: value?.neighborhood_land_use_multifamily_pct ?? "",
+    neighborhood_land_use_commercial_pct: value?.neighborhood_land_use_commercial_pct ?? "",
+    neighborhood_land_use_other_vacant_pct:
+      value?.neighborhood_land_use_other_vacant_pct ?? "",
+    neighborhood_location_type: value?.neighborhood_location_type || "",
+    neighborhood_built_up: value?.neighborhood_built_up || "",
+    neighborhood_growth: value?.neighborhood_growth || "",
+    neighborhood_unemployment_pct: value?.neighborhood_unemployment_pct ?? "",
+    neighborhood_unemployment_zip: value?.neighborhood_unemployment_zip || "",
+    neighborhood_unemployment_source: value?.neighborhood_unemployment_source || "",
+    neighborhood_unemployment_dataset_year:
+      value?.neighborhood_unemployment_dataset_year ?? "",
+    neighborhood_unemployment_variable: value?.neighborhood_unemployment_variable || "",
+    neighborhood_market_trend: value?.neighborhood_market_trend || "",
+    neighborhood_demand_supply: value?.neighborhood_demand_supply || "",
+    neighborhood_marketing_time: value?.neighborhood_marketing_time || "",
+    neighborhood_house_price_low: value?.neighborhood_house_price_low ?? "",
+    neighborhood_house_price_high: value?.neighborhood_house_price_high ?? "",
+    neighborhood_house_price_predominant: value?.neighborhood_house_price_predominant ?? "",
+    neighborhood_ppsf_low: value?.neighborhood_ppsf_low ?? "",
+    neighborhood_ppsf_high: value?.neighborhood_ppsf_high ?? "",
+    neighborhood_ppsf_predominant: value?.neighborhood_ppsf_predominant ?? "",
+    neighborhood_age_low: value?.neighborhood_age_low ?? "",
+    neighborhood_age_high: value?.neighborhood_age_high ?? "",
+    neighborhood_age_predominant: value?.neighborhood_age_predominant ?? "",
+    neighborhood_gla_low: value?.neighborhood_gla_low ?? "",
+    neighborhood_gla_high: value?.neighborhood_gla_high ?? "",
+    neighborhood_gla_predominant: value?.neighborhood_gla_predominant ?? "",
+    neighborhood_boundary_geometry: value?.neighborhood_boundary_geometry || null,
+    neighborhood_boundary_label: value?.neighborhood_boundary_label || "",
+    neighborhood_boundary_source: value?.neighborhood_boundary_source || "",
+    neighborhood_boundary_saved_at: value?.neighborhood_boundary_saved_at || "",
+    neighborhood_boundary_confirmed: Boolean(value?.neighborhood_boundary_confirmed),
+    neighborhood_boundary_confirmed_at: value?.neighborhood_boundary_confirmed_at || "",
   };
 }
 
@@ -308,6 +390,10 @@ function assignmentValidationErrors(assignment: AssignmentDetails): string[] {
     !String(assignment.seller_mismatch_explanation || "").trim()
   ) {
     errors.push("Explain the difference between the contract seller and public records.");
+  }
+  const landUseTotal = neighborhoodLandUseTotal(assignment);
+  if (landUseTotal !== null && Math.abs(landUseTotal - 100) > 0.1) {
+    errors.push("Present land use percentages must total 100%.");
   }
   return errors;
 }
@@ -539,6 +625,244 @@ function sellerComparisonSummary(contractSeller: unknown, publicOwner: unknown):
       };
 }
 
+function NeighborhoodCharacteristicsContent({
+  accountId,
+  assignmentDraft,
+  postalCode,
+  unemploymentLoading,
+  unemploymentMessage,
+  customAreaAvailable,
+  assignmentDirty,
+  assignmentSaveMessage,
+  assignmentSaveDisabled,
+  savingAssignmentFile,
+  onAssignmentChange,
+  onRefreshUnemployment,
+  onRefreshBoundary,
+  onConfirmBoundary,
+  onSave,
+}: {
+  accountId?: string;
+  assignmentDraft: AssignmentDetails;
+  postalCode: string;
+  unemploymentLoading: boolean;
+  unemploymentMessage: string;
+  customAreaAvailable: boolean;
+  assignmentDirty: boolean;
+  assignmentSaveMessage: string;
+  assignmentSaveDisabled: boolean;
+  savingAssignmentFile: boolean;
+  onAssignmentChange: <K extends keyof AssignmentDetails>(
+    key: K,
+    value: AssignmentDetails[K],
+  ) => void;
+  onRefreshUnemployment: () => void;
+  onRefreshBoundary: () => void;
+  onConfirmBoundary: (checked: boolean) => void;
+  onSave: () => void;
+}) {
+  const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
+  const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
+  const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
+
+  return (
+    <div className="space-y-5">
+      <section>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Present Land Use</h3>
+            <p className="mt-0.5 text-xs text-slate-500">Enter the current neighborhood allocation; all categories must total 100%.</p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            landUseTotal !== null && Math.abs(landUseTotal - 100) <= 0.1
+              ? "bg-emerald-100 text-emerald-800"
+              : "bg-amber-100 text-amber-900"
+          }`}>
+            Total {landUseTotal === null ? "0" : landUseTotal.toFixed(1)}%
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {NEIGHBORHOOD_LAND_USE_FIELDS.map(([field, label]) => (
+            <label key={field} className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">{label}</span>
+              <div className="relative mt-1">
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  className="input input-bordered input-sm w-full bg-white pr-8"
+                  value={assignmentDraft[field] ?? ""}
+                  onChange={(event) => onAssignmentChange(field, event.target.value)}
+                />
+                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">%</span>
+              </div>
+            </label>
+          ))}
+        </div>
+      </section>
+
+      <section className="border-t border-slate-200 pt-5">
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+          {NEIGHBORHOOD_CHOICE_GROUPS.map((group) => (
+            <fieldset key={group.field} className="rounded-xl border border-slate-200 bg-white p-3">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">{group.label}</legend>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {group.options.map(([value, label]) => (
+                  <CheckboxChoice
+                    key={value}
+                    checked={assignmentDraft[group.field] === value}
+                    label={label}
+                    onChange={(checked) => onAssignmentChange(group.field, checked ? value : "")}
+                  />
+                ))}
+              </div>
+            </fieldset>
+          ))}
+        </div>
+      </section>
+
+      <section className="grid gap-4 border-t border-slate-200 pt-5 lg:grid-cols-[1fr_2fr]">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">Unemployment</h3>
+              <p className="mt-0.5 text-xs text-slate-500">ZIP-level ACS 5-year unemployment rate.</p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs normal-case text-blue-700"
+              onClick={onRefreshUnemployment}
+              disabled={unemploymentLoading || !postalCode}
+            >
+              {unemploymentLoading ? "Loading..." : "Refresh Census"}
+            </button>
+          </div>
+          <label className="mt-3 block max-w-[180px]">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Unemployment %</span>
+            <div className="relative mt-1">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.1"
+                className="input input-bordered input-sm w-full bg-white pr-8"
+                value={assignmentDraft.neighborhood_unemployment_pct ?? ""}
+                onChange={(event) => onAssignmentChange("neighborhood_unemployment_pct", event.target.value)}
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">%</span>
+            </div>
+          </label>
+          <div className="mt-2 text-[11px] leading-5 text-slate-500">
+            {assignmentDraft.neighborhood_unemployment_source ? (
+              <>
+                {assignmentDraft.neighborhood_unemployment_source}, {assignmentDraft.neighborhood_unemployment_dataset_year} ACS 5-Year<br />
+                ZIP {assignmentDraft.neighborhood_unemployment_zip || postalCode} ? {assignmentDraft.neighborhood_unemployment_variable}
+              </>
+            ) : `Awaiting Census lookup for ZIP ${postalCode || "not reported"}.`}
+          </div>
+          {unemploymentMessage ? (
+            <div className={`mt-2 text-xs font-medium ${
+              /loaded|updated/i.test(unemploymentMessage) ? "text-emerald-700" : "text-amber-800"
+            }`}>{unemploymentMessage}</div>
+          ) : null}
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-4">
+          <h3 className="text-sm font-semibold text-slate-900">Neighborhood Property Ranges</h3>
+          <p className="mt-0.5 text-xs text-slate-500">Low, high, and predominant (median) values from the defined market area.</p>
+          <div className="mt-3 min-w-[620px]">
+            <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-3 border-b border-slate-300 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+              <div>Measure</div><div>Low</div><div>High</div><div>Predominant</div>
+            </div>
+            {NEIGHBORHOOD_RANGE_ROWS.map((row) => (
+              <div key={row.label} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] items-center gap-3 border-b border-slate-100 py-2.5 last:border-0">
+                <div className="text-sm font-medium text-slate-800">{row.label}</div>
+                {[row.low, row.high, row.predominant].map((field) => (
+                  <input
+                    key={field}
+                    type="number"
+                    min="0"
+                    step={row.label === "Age" ? "1" : "0.01"}
+                    className="input input-bordered input-sm w-full bg-white"
+                    value={assignmentDraft[field] ?? ""}
+                    onChange={(event) => onAssignmentChange(field, event.target.value)}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className={`rounded-xl border p-4 ${
+        boundaryErrors.length ? "border-amber-300 bg-amber-50" : "border-emerald-300 bg-emerald-50"
+      }`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Neighborhood Boundaries</h3>
+            <p className="mt-1 text-xs text-slate-600">
+              {assignmentDraft.neighborhood_boundary_geometry
+                ? `${assignmentDraft.neighborhood_boundary_label || "Appraiser-defined market area"} ? ${Math.max(boundaryRing.length - 1, 0)} boundary vertices`
+                : "No appraiser-defined boundary has been imported."}
+            </p>
+            {assignmentDraft.neighborhood_boundary_saved_at ? (
+              <p className="mt-1 text-[11px] text-slate-500">Market study saved {formatDate(assignmentDraft.neighborhood_boundary_saved_at)}</p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              to={accountId
+                ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`
+                : "/ComparableSalesAnalysis"}
+              className="btn btn-ghost btn-sm normal-case text-blue-700"
+            >
+              Open Market Conditions
+            </Link>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm normal-case"
+              onClick={onRefreshBoundary}
+              disabled={!customAreaAvailable}
+            >
+              Import Saved Area
+            </button>
+          </div>
+        </div>
+        <div className="mt-3 max-w-xl">
+          <CheckboxChoice
+            checked={Boolean(assignmentDraft.neighborhood_boundary_confirmed)}
+            disabled={!assignmentDraft.neighborhood_boundary_geometry}
+            label="I reviewed this boundary for the current appraisal file"
+            onChange={onConfirmBoundary}
+          />
+        </div>
+        {boundaryErrors.length ? (
+          <div className="mt-3 text-sm font-medium text-amber-950">
+            PDF E&amp;O blocker: {boundaryErrors.join(" ")}
+          </div>
+        ) : (
+          <div className="mt-3 text-sm font-medium text-emerald-900">Boundary is confirmed and ready for the appraisal PDF.</div>
+        )}
+      </section>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-xs text-slate-500">
+          {assignmentSaveMessage || (assignmentDirty ? "Unsaved neighborhood changes" : "No unsaved changes")}
+        </span>
+        <button
+          type="button"
+          onClick={onSave}
+          className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+          disabled={assignmentSaveDisabled}
+        >
+          {savingAssignmentFile ? "Saving..." : "Save Neighborhood Characteristics"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ListingsContractsSalesContent({
   listingRows,
   salesHistoryRows,
@@ -607,7 +931,7 @@ function ListingsContractsSalesContent({
                     <div className="font-medium text-slate-800">
                       {displayValue(
                         event.listing_id || event.listing_key || event.source_record_id,
-                        "—",
+                        "?",
                       )}
                     </div>
                     <div className="text-[11px] text-slate-500">
@@ -846,7 +1170,7 @@ function ListingsContractsSalesContent({
                   <div className="whitespace-nowrap">
                     {formatDate(event.activity_date || event.closing_date || event.listing_date)}
                   </div>
-                  <div>{displayValue(event.listing_id, "—")}</div>
+                  <div>{displayValue(event.listing_id, "?")}</div>
                   <div>
                     <div className="font-medium text-slate-800">
                       {displayValue(event.mls_status, activityTypeLabel(event.record_type))}
@@ -857,7 +1181,7 @@ function ListingsContractsSalesContent({
                   </div>
                   <div className="whitespace-nowrap text-right">{formatMoney(event.list_price)}</div>
                   <div className="whitespace-nowrap text-right">{formatMoney(event.sale_price)}</div>
-                  <div className="text-right">{displayValue(event.days_on_market, "—")}</div>
+                  <div className="text-right">{displayValue(event.days_on_market, "?")}</div>
                   <div className="text-xs leading-5">
                     <div>{displayValue(event.buyer_financing, "Financing not reported")}</div>
                     {hasValue(event.concessions) ? (
@@ -1414,7 +1738,7 @@ function ReportSectionEditor({
             className="btn normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
             disabled={saving || assignmentErrors.length > 0}
           >
-            {saving ? "Saving…" : "Save Changes"}
+            {saving ? "Saving?" : "Save Changes"}
           </button>
         </div>
       </div>
@@ -1453,9 +1777,21 @@ function AddressHero({
   const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
   const [censusLookupLoading, setCensusLookupLoading] = useState(false);
   const [censusLookupMessage, setCensusLookupMessage] = useState("");
+  const [unemploymentLookupLoading, setUnemploymentLookupLoading] = useState(false);
+  const [unemploymentLookupMessage, setUnemploymentLookupMessage] = useState("");
+  const [unemploymentAutoAttemptedZip, setUnemploymentAutoAttemptedZip] = useState("");
+  const [marketConditionsDraft, setMarketConditionsDraft] = useState<MarketConditionsDraft | null>(
+    () => readMarketConditionsDraft(accountId || ""),
+  );
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
+  );
+  const customMarketStudy = useMemo(
+    () => marketConditionsDraft?.response.analyses.find(
+      (analysis) => analysis.market.key === "custom" && Boolean(analysis.market.custom_geometry),
+    ) || null,
+    [marketConditionsDraft],
   );
   const detailLoaded = Boolean(detail);
   const exactAddress = detail?.property_location?.address?.trim() || "";
@@ -1477,6 +1813,9 @@ function AddressHero({
     setAssignmentFileNumber("");
     setAssignmentFilesError("");
     setCensusLookupMessage("");
+    setUnemploymentLookupMessage("");
+    setUnemploymentAutoAttemptedZip("");
+    setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     if (!accountId?.trim() || !detailLoaded) {
       setAssignmentFilesLoading(false);
       return () => {
@@ -1550,6 +1889,9 @@ function AddressHero({
   const city = displayValue(detail?.property_location?.city);
   const state = displayValue(detail?.property_location?.state, "TX");
   const postalCode = displayValue(detail?.property_location?.postal_code);
+  const censusZip = String(detail?.property_location?.postal_code || "")
+    .replace(/\D/g, "")
+    .slice(0, 5);
   const neighborhood = displayValue(detail?.property_location?.neighborhood);
   const subdivision = displayValue(detail?.property_location?.subdivision);
   const county = displayValue(detail?.property_location?.county);
@@ -1807,6 +2149,109 @@ function AddressHero({
     setAssignmentSaveMessage("");
   };
 
+  const importCustomMarketArea = useCallback(() => {
+    const geometry = customMarketStudy?.market.custom_geometry;
+    if (!geometry) {
+      setAssignmentSaveMessage("Run and save an Appraiser-Defined Area in Market Conditions Analysis first.");
+      return;
+    }
+    const summary = customMarketStudy.summary;
+    setAssignmentDraft((current) => ({
+      ...current,
+      neighborhood_boundary_geometry: cloneEditorValue(geometry),
+      neighborhood_boundary_label:
+        customMarketStudy.market.label || "Appraiser-defined market area",
+      neighborhood_boundary_source: "sales_comparison_market_conditions",
+      neighborhood_boundary_saved_at: marketConditionsDraft?.savedAt || new Date().toISOString(),
+      neighborhood_boundary_confirmed: false,
+      neighborhood_boundary_confirmed_at: "",
+      neighborhood_house_price_low: summary.minimum_sale_price ?? "",
+      neighborhood_house_price_high: summary.maximum_sale_price ?? "",
+      neighborhood_house_price_predominant: summary.median_sale_price ?? "",
+      neighborhood_ppsf_low: summary.minimum_price_per_square_foot ?? "",
+      neighborhood_ppsf_high: summary.maximum_price_per_square_foot ?? "",
+      neighborhood_ppsf_predominant: summary.median_price_per_square_foot ?? "",
+      neighborhood_age_low: summary.minimum_age ?? "",
+      neighborhood_age_high: summary.maximum_age ?? "",
+      neighborhood_age_predominant: summary.median_age ?? "",
+      neighborhood_gla_low: summary.minimum_living_area ?? "",
+      neighborhood_gla_high: summary.maximum_living_area ?? "",
+      neighborhood_gla_predominant: summary.median_living_area ?? "",
+      neighborhood_market_trend:
+        marketTrendFromChange(customMarketStudy.statistics.annualized_change_percent) ||
+        current.neighborhood_market_trend || "",
+    }));
+    setAssignmentDirty(true);
+    setAssignmentSaveMessage("Appraiser-defined area imported. Review and confirm it for this file.");
+  }, [customMarketStudy, marketConditionsDraft?.savedAt]);
+
+  const confirmNeighborhoodBoundary = (checked: boolean) => {
+    setAssignmentDraft((current) => ({
+      ...current,
+      neighborhood_boundary_confirmed: checked,
+      neighborhood_boundary_confirmed_at: checked ? new Date().toISOString() : "",
+    }));
+    setAssignmentDirty(true);
+    setAssignmentSaveMessage("");
+  };
+
+  const lookupZipUnemployment = useCallback(async () => {
+    if (!censusZip || unemploymentLookupLoading) return;
+    setUnemploymentAutoAttemptedZip(censusZip);
+    setUnemploymentLookupLoading(true);
+    setUnemploymentLookupMessage("");
+    try {
+      const profile = await getCensusZipProfile(censusZip);
+      setAssignmentDraft((current) => ({
+        ...current,
+        neighborhood_unemployment_pct: profile.unemployment_percent,
+        neighborhood_unemployment_zip: profile.postal_code,
+        neighborhood_unemployment_source: profile.source,
+        neighborhood_unemployment_dataset_year: profile.dataset_year,
+        neighborhood_unemployment_variable: profile.variable,
+      }));
+      setAssignmentDirty(true);
+      setUnemploymentLookupMessage(`Census unemployment updated for ZIP ${profile.postal_code}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Census unemployment lookup failed.";
+      setUnemploymentLookupMessage(
+        /census_api_key_not_configured/i.test(message)
+          ? "A free Census API key must be added to Render before automatic lookup can run; manual entry remains available."
+          : message,
+      );
+    } finally {
+      setUnemploymentLookupLoading(false);
+    }
+  }, [censusZip, unemploymentLookupLoading]);
+
+  useEffect(() => {
+    const geometry = customMarketStudy?.market.custom_geometry;
+    if (!geometry || assignmentFilesLoading) return;
+    if (JSON.stringify(assignmentDraft.neighborhood_boundary_geometry) === JSON.stringify(geometry)) return;
+    importCustomMarketArea();
+  }, [
+    assignmentDraft.neighborhood_boundary_geometry,
+    assignmentFilesLoading,
+    customMarketStudy,
+    importCustomMarketArea,
+  ]);
+
+  useEffect(() => {
+    if (
+      assignmentFilesLoading ||
+      !/^\d{5}$/.test(censusZip) ||
+      unemploymentAutoAttemptedZip === censusZip ||
+      hasValue(assignmentDraft.neighborhood_unemployment_pct)
+    ) return;
+    void lookupZipUnemployment();
+  }, [
+    assignmentDraft.neighborhood_unemployment_pct,
+    assignmentFilesLoading,
+    censusZip,
+    lookupZipUnemployment,
+    unemploymentAutoAttemptedZip,
+  ]);
+
   const saveAssignmentDetails = async () => {
     if (assignmentValidationErrors(assignmentDraft).length) return;
     if (!accountId || !activeAssignmentFile) {
@@ -1892,7 +2337,11 @@ function AddressHero({
   };
 
   const inheritAssignmentFile = (source: AppraisalAssignmentFile) => {
-    setAssignmentDraft(assignmentDraftFromDetail(source.assignment_details));
+    setAssignmentDraft({
+      ...assignmentDraftFromDetail(source.assignment_details),
+      neighborhood_boundary_confirmed: false,
+      neighborhood_boundary_confirmed_at: "",
+    });
     setInheritedAssignmentFile(source);
     setInheritedLegacyAssignment(false);
     setActiveAssignmentFile(null);
@@ -1951,6 +2400,8 @@ function AddressHero({
     assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
       assignmentErrors.length > 0 || !activeAssignmentFile,
   );
+  const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
+  const appraisalReportAssignmentFile = activeAssignmentFile || inheritedAssignmentFile;
   const relatedParcelsToShow = (relatedParcels?.parcels || []).filter(
     (parcel) => parcel.is_subject || parcel.materially_different,
   );
@@ -2005,6 +2456,14 @@ function AddressHero({
                 readOnly={Boolean(activeAssignmentFile)}
                 onChange={(event) => {
                   setAssignmentFileNumber(event.target.value);
+                  if (event.target.value.trim() && !assignmentFileNumber.trim()) {
+                    setAssignmentDraft((current) => ({
+                      ...current,
+                      neighborhood_boundary_confirmed: false,
+                      neighborhood_boundary_confirmed_at: "",
+                    }));
+                    setAssignmentDirty(true);
+                  }
                   setAssignmentSaveMessage("");
                 }}
               />
@@ -2109,7 +2568,7 @@ function AddressHero({
               aria-label="Previous image"
               className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-white/90 text-slate-800 shadow-lg hover:bg-white"
             >
-              <span aria-hidden="true">‹</span>
+              <span aria-hidden="true">?</span>
             </button>
             <button
               type="button"
@@ -2117,7 +2576,7 @@ function AddressHero({
               aria-label="Next image"
               className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-white/90 text-slate-800 shadow-lg hover:bg-white"
             >
-              <span aria-hidden="true">›</span>
+              <span aria-hidden="true">?</span>
             </button>
             <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-full bg-black/40 px-3 py-2">
               {photos.map((_, index) => (
@@ -2274,7 +2733,7 @@ function AddressHero({
                         to={`/report/${encodeURIComponent(parcel.account_id)}`}
                         className="mt-3 inline-flex text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
                       >
-                        Open this parcel’s report →
+                        Open this parcel?s report ?
                       </Link>
                     ) : null}
                   </div>
@@ -2482,7 +2941,7 @@ function AddressHero({
             manuallyVerified={Boolean(activeAssignmentFile || detail?.report_manual_values?.["report.assignment_details"])}
             inherited={assignmentFromPrevious}
             compact
-            className="order-4"
+            className="order-5"
           >
             <div className="mb-3 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-2">
               <label className="block">
@@ -2603,7 +3062,7 @@ function AddressHero({
             </div>
           </SummarySection>
 
-          <div className="order-3 grid grid-cols-1 gap-5">
+          <div className="order-4 grid grid-cols-1 gap-5">
             <SummarySection
               title="Listings, Contracts, and Sales History"
               subtitle="MLS listing activity, contracts, closed sales, and CAD deed-transfer records"
@@ -2689,7 +3148,7 @@ function AddressHero({
                   improvement?.roof_material,
                 ]
                   .filter(hasValue)
-                  .join(" · ") || "Not reported"}
+                  .join(" ? ") || "Not reported"}
               />
               <SummaryField label="Heating" value={displayValue(improvement?.heating)} />
               <SummaryField label="Air Conditioning" value={displayValue(improvement?.air_conditioning)} />
@@ -2715,9 +3174,9 @@ function AddressHero({
                       <span className="mt-0.5 block text-xs font-normal leading-5 text-slate-600">
                         {[row.construction, row.floor, row.exterior_wall]
                           .filter(hasValue)
-                          .join(" · ") || "Construction details not reported"}
+                          .join(" ? ") || "Construction details not reported"}
                         {hasValue(row.year_built)
-                          ? ` · Built ${displayValue(row.year_built)}`
+                          ? ` ? Built ${displayValue(row.year_built)}`
                           : ""}
                       </span>
                     </div>
@@ -2768,11 +3227,11 @@ function AddressHero({
                           value={formatNumber(row.area_sqft, " sq. ft.")}
                         />
                         <SummaryField
-                          label={`${prefix}Frontage × Depth`}
+                          label={`${prefix}Frontage ? Depth`}
                           value={
                             parseNumber(row.frontage_ft) !== null ||
                             parseNumber(row.depth_ft) !== null
-                              ? `${formatNumber(row.frontage_ft, " ft.")} × ${formatNumber(
+                              ? `${formatNumber(row.frontage_ft, " ft.")} ? ${formatNumber(
                                   row.depth_ft,
                                   " ft.",
                                 )}`
@@ -2797,6 +3256,32 @@ function AddressHero({
                 </p>
               )}
             </div>
+          </SummarySection>
+
+          <SummarySection
+            title="Neighborhood Characteristics"
+            subtitle="Present land use, neighborhood factors, market ranges, and assignment boundary review"
+            manuallyVerified={Boolean(activeAssignmentFile)}
+            inherited={assignmentFromPrevious}
+            className="order-3"
+          >
+            <NeighborhoodCharacteristicsContent
+              accountId={accountId}
+              assignmentDraft={assignmentDraft}
+              postalCode={censusZip}
+              unemploymentLoading={unemploymentLookupLoading}
+              unemploymentMessage={unemploymentLookupMessage}
+              customAreaAvailable={Boolean(customMarketStudy?.market.custom_geometry)}
+              assignmentDirty={assignmentDirty}
+              assignmentSaveMessage={assignmentSaveMessage}
+              assignmentSaveDisabled={assignmentSaveDisabled}
+              savingAssignmentFile={savingAssignmentFile}
+              onAssignmentChange={updateAssignment}
+              onRefreshUnemployment={() => void lookupZipUnemployment()}
+              onRefreshBoundary={importCustomMarketArea}
+              onConfirmBoundary={confirmNeighborhoodBoundary}
+              onSave={() => void saveAssignmentDetails()}
+            />
           </SummarySection>
 
           <SummarySection
@@ -2826,7 +3311,7 @@ function AddressHero({
               detail?.report_manual_values?.["report.appraisal_values"] ||
               detail?.report_manual_values?.["report.exemptions"],
             )}
-            className="order-5"
+            className="order-6"
           >
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <SummaryField label="Market Value" value={formatMoney(values?.market_value)} />
@@ -2923,18 +3408,27 @@ function AddressHero({
           <Link
             to={
               accountId
-                ? `/AppraisalReport?propertyId=${encodeURIComponent(accountId)}`
+                ? `/AppraisalReport?propertyId=${encodeURIComponent(accountId)}${
+                    appraisalReportAssignmentFile
+                      ? `&assignmentFileId=${encodeURIComponent(String(appraisalReportAssignmentFile.id))}`
+                      : ""
+                  }`
                 : "#"
             }
             aria-label="Full Appraisal PDF"
             aria-disabled={!accountId}
+            title={neighborhoodBoundaryErrors.length
+              ? `PDF printing will be blocked until: ${neighborhoodBoundaryErrors.join(" ")}`
+              : "Open the full appraisal report"}
             className={`btn normal-case rounded-md px-4 py-2 ${
               accountId
-                ? "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
+                ? neighborhoodBoundaryErrors.length
+                  ? "border-amber-500 bg-amber-100 text-amber-950 hover:bg-amber-200"
+                  : "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
                 : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
             }`}
           >
-            Full Appraisal PDF
+            {neighborhoodBoundaryErrors.length ? "PDF Setup Required" : "Full Appraisal PDF"}
           </Link>
         </div>
       </div>
@@ -3015,7 +3509,7 @@ export default function PropertyReport() {
           <div className="flex w-full items-center justify-between">
             <span className="text-xl font-semibold">Property Report</span>
             <Link to="/" className="btn btn-ghost btn-sm normal-case">
-              ← Close Report
+              ? Close Report
             </Link>
           </div>
         </div>

@@ -199,6 +199,40 @@ export interface AssignmentDetailsPayload {
   seller_concessions?: string | number;
   seller_matches_public_records?: boolean | null;
   seller_mismatch_explanation?: string;
+  neighborhood_land_use_one_unit_pct?: string | number;
+  neighborhood_land_use_two_to_four_unit_pct?: string | number;
+  neighborhood_land_use_multifamily_pct?: string | number;
+  neighborhood_land_use_commercial_pct?: string | number;
+  neighborhood_land_use_other_vacant_pct?: string | number;
+  neighborhood_location_type?: string;
+  neighborhood_built_up?: string;
+  neighborhood_growth?: string;
+  neighborhood_unemployment_pct?: string | number;
+  neighborhood_unemployment_zip?: string;
+  neighborhood_unemployment_source?: string;
+  neighborhood_unemployment_dataset_year?: string | number;
+  neighborhood_unemployment_variable?: string;
+  neighborhood_market_trend?: string;
+  neighborhood_demand_supply?: string;
+  neighborhood_marketing_time?: string;
+  neighborhood_house_price_low?: string | number;
+  neighborhood_house_price_high?: string | number;
+  neighborhood_house_price_predominant?: string | number;
+  neighborhood_ppsf_low?: string | number;
+  neighborhood_ppsf_high?: string | number;
+  neighborhood_ppsf_predominant?: string | number;
+  neighborhood_age_low?: string | number;
+  neighborhood_age_high?: string | number;
+  neighborhood_age_predominant?: string | number;
+  neighborhood_gla_low?: string | number;
+  neighborhood_gla_high?: string | number;
+  neighborhood_gla_predominant?: string | number;
+  neighborhood_boundary_geometry?: GeoJsonPolygon | null;
+  neighborhood_boundary_label?: string;
+  neighborhood_boundary_source?: string;
+  neighborhood_boundary_saved_at?: string;
+  neighborhood_boundary_confirmed?: boolean;
+  neighborhood_boundary_confirmed_at?: string;
 }
 
 export interface PropertyActivityHistoryRow {
@@ -864,6 +898,14 @@ export interface MarketConditionsAnalysis {
     median_price_per_square_foot: number | null;
     minimum_sale_price: number | null;
     maximum_sale_price: number | null;
+    minimum_price_per_square_foot: number | null;
+    maximum_price_per_square_foot: number | null;
+    minimum_age: number | null;
+    maximum_age: number | null;
+    median_age: number | null;
+    minimum_living_area: number | null;
+    maximum_living_area: number | null;
+    median_living_area: number | null;
     congruency_factors: MarketCongruencyFactors;
   };
   statistics: MarketStudyStatistics;
@@ -1212,6 +1254,25 @@ export async function lookupAccountCensusGeography(
     body: JSON.stringify({}),
     timeoutMs: 135000,
   });
+}
+
+export interface CensusZipProfile {
+  postal_code: string;
+  geography_name: string | null;
+  unemployment_percent: number;
+  dataset: string;
+  dataset_year: number;
+  variable: string;
+  source: string;
+  retrieved_at: string;
+}
+
+/** Load the official ACS 5-year unemployment estimate for a ZIP/ZCTA. */
+export async function getCensusZipProfile(postalCode: string): Promise<CensusZipProfile> {
+  const zip = String(postalCode || '').replace(/\D/g, '').slice(0, 5);
+  return fetchJSON<CensusZipProfile>(
+    makeUrl(`/api/census/zip-profile/${encodeURIComponent(zip)}`),
+  );
 }
 
 /** Save a source-attributed manual housing classification for an account. */
@@ -1645,7 +1706,7 @@ export function toTile(row: AccountRow) {
   const title = formatSearchTileAddress(row.address, row.city);
   const mv = row.latest_market_value;
   const mvText = formatCurrency(mv);
-  const subtitle = mvText ? `${row.account_id} · ${mvText}` : row.account_id;
+  const subtitle = mvText ? `${row.account_id} ? ${mvText}` : row.account_id;
 
   return {
     id: row.account_id,
@@ -1660,10 +1721,10 @@ export function toTile(row: AccountRow) {
 // Some components import types/functions with older names. Provide thin aliases to avoid
 // touching many files while we iterate.
 
-// Older code imports `PropertyDetail` — map it to the current `AccountDetail` shape.
+// Older code imports `PropertyDetail` ? map it to the current `AccountDetail` shape.
 export type PropertyDetail = AccountDetail;
 
-// Older code imports `fetchPropertyDetail` — reuse the existing fetchProperty/getAccount logic.
+// Older code imports `fetchPropertyDetail` ? reuse the existing fetchProperty/getAccount logic.
 export async function fetchPropertyDetail(accountId: string): Promise<PropertyDetail> {
   return getAccount(accountId);
 }

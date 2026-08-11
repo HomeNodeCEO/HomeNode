@@ -742,19 +742,21 @@ function StudyStatistics({
 
 function RecommendedDetermination({
   response,
+  compact = false,
 }: {
   response: MarketConditionsResponse;
+  compact?: boolean;
 }) {
   const recommendation = response.recommendation;
   return (
-    <div className="mt-4 rounded-xl border border-indigo-200 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className={`${compact ? 'mt-2 p-3' : 'mt-4 p-4'} rounded-xl border border-indigo-200 bg-white`}>
+      <div className={`flex flex-wrap items-start justify-between ${compact ? 'gap-2' : 'gap-3'}`}>
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
             Recommended determination
           </div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-2">
-            <span className="text-xl font-bold text-slate-950">
+          <div className={`${compact ? 'mt-0.5' : 'mt-1'} flex flex-wrap items-baseline gap-2`}>
+            <span className={`${compact ? 'text-lg' : 'text-xl'} font-bold text-slate-950`}>
               {trendLabel(recommendation.conclusion)}
             </span>
             <span className="text-sm font-semibold text-indigo-800">
@@ -782,36 +784,36 @@ function RecommendedDetermination({
           </div>
         </div>
       </div>
-      <p className="mt-2 text-xs leading-5 text-slate-600">
+      <p className={`${compact ? 'mt-1 leading-4' : 'mt-2 leading-5'} text-xs text-slate-600`}>
         Studies are ranked by sample sufficiency, monthly coverage, composite
         COD/CV congruency, and characteristic coverage. A reconciled change
         within ±{numberText(recommendation.stable_threshold_percent, 1)}% is
         classified as stable. The appraiser may override this recommendation.
       </p>
       {recommendation.weighting_method === 'appraiser_defined_area_60_percent' ? (
-        <div className="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs font-medium text-indigo-900">
+        <div className={`${compact ? 'mt-1 px-2 py-1.5' : 'mt-2 px-3 py-2'} rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-medium text-indigo-900`}>
           The appraiser-defined area receives 60% of the reconciliation weight.
           The remaining 40% is divided among the other studies according to their
           reliability scores.
         </div>
       ) : null}
       {recommendation.ranked_studies.length > 0 && (
-        <div className="mt-3 grid gap-2 md:grid-cols-3">
+        <div className={`${compact ? 'mt-2 gap-1.5' : 'mt-3 gap-2'} grid md:grid-cols-3`}>
           {recommendation.ranked_studies.slice(0, 3).map((study) => (
             <div
               key={study.key}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
+              className={`rounded-lg border border-slate-200 bg-slate-50 text-xs ${compact ? 'px-2 py-1.5' : 'px-3 py-2'}`}
             >
               <div className="font-semibold text-slate-900">
                 #{study.rank} {study.label}
               </div>
-              <div className="mt-1 text-slate-600">
+              <div className={`${compact ? 'mt-0.5' : 'mt-1'} text-slate-600`}>
                 Score {numberText(study.reliability_score, 1)}/100 ·{' '}
                 {study.sale_count.toLocaleString()} sales ·{' '}
                 {signedPercentText(study.annualized_change_percent)}
               </div>
               {study.reconciliation_weight_percent != null ? (
-                <div className="mt-1 font-semibold text-indigo-700">
+                <div className={`${compact ? 'mt-0.5' : 'mt-1'} font-semibold text-indigo-700`}>
                   {numberText(study.reconciliation_weight_percent, 1)}% reconciliation weight
                 </div>
               ) : null}
@@ -1499,16 +1501,16 @@ export default function MarketConditionsAnalysis({
           : 'mb-4 rounded-2xl border border-emerald-200 bg-white shadow-sm'
       }
     >
-      <div className="border-b border-emerald-100 bg-emerald-50/60 p-5">
+      <div className={`border-b border-emerald-100 bg-emerald-50/60 ${embedded ? 'p-3' : 'p-5'}`}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
               Required before comparable selection
             </div>
-            <h2 className="mt-1 text-xl font-semibold text-slate-950">
+            <h2 className={`${embedded ? 'mt-0.5 text-lg' : 'mt-1 text-xl'} font-semibold text-slate-950`}>
               Market Conditions Analysis
             </h2>
-            <p className="mt-1 max-w-4xl text-sm text-slate-600">
+            <p className={`${embedded ? 'mt-0.5 text-xs' : 'mt-1 text-sm'} max-w-4xl text-slate-600`}>
               Compare multiple independent geographies, review time-based market
               evidence, and reconcile the market trend. These studies do not
               filter or change the comparable-sales inventory.
@@ -1526,15 +1528,15 @@ export default function MarketConditionsAnalysis({
         </div>
       </div>
 
-      <div className="space-y-5 p-5">
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[180px_180px_1fr]">
+      <div className={embedded ? 'space-y-3 p-3' : 'space-y-5 p-5'}>
+        <div className={`grid grid-cols-1 ${embedded ? 'gap-2 lg:grid-cols-[160px_160px_1fr]' : 'gap-4 lg:grid-cols-[180px_180px_1fr]'}`}>
           <label className="grid gap-1 text-sm text-slate-700">
             <span className="font-medium">Analysis as of</span>
             <input
               type="date"
               value={asOfDate}
               onChange={(event) => setAsOfDate(event.target.value)}
-              className="rounded-lg border border-slate-300 px-3 py-2"
+              className={`rounded-lg border border-slate-300 px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
             />
           </label>
           <label className="grid gap-1 text-sm text-slate-700">
@@ -1544,18 +1546,18 @@ export default function MarketConditionsAnalysis({
               onChange={(event) =>
                 setPeriodMonths(Number(event.target.value) as 12 | 24 | 36)
               }
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+              className={`rounded-lg border border-slate-300 bg-white px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
             >
               <option value={12}>12 months</option>
               <option value={24}>24 months</option>
               <option value={36}>36 months</option>
             </select>
-            <span className="text-xs text-slate-500">
+            <span className={`${embedded ? 'text-[10px] leading-4' : 'text-xs'} text-slate-500`}>
               Uses complete calendar months ending with the latest fully
               completed month.
             </span>
           </label>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <div className={`rounded-xl border border-slate-200 bg-slate-50 text-slate-600 ${embedded ? 'px-3 py-2 text-xs' : 'px-4 py-3 text-sm'}`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold text-slate-900">Study geography:</span>
               {contextOverrideEnabled && (
@@ -1564,7 +1566,7 @@ export default function MarketConditionsAnalysis({
                 </span>
               )}
             </div>
-            <div className="mt-1">
+            <div className={embedded ? 'mt-0.5' : 'mt-1'}>
             {loadingContext
               ? 'Loading parcel location...'
               : studyContext
@@ -1576,13 +1578,13 @@ export default function MarketConditionsAnalysis({
           </div>
         </div>
 
-        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className={`rounded-xl border border-amber-200 bg-amber-50/40 ${embedded ? 'p-3' : 'p-4'}`}>
+          <div className={`flex flex-wrap items-start justify-between ${embedded ? 'gap-2' : 'gap-3'}`}>
             <div>
               <h3 className="font-semibold text-slate-950">
                 Study geography and related CAD parcels
               </h3>
-              <p className="mt-1 max-w-4xl text-sm text-slate-600">
+              <p className={`${embedded ? 'mt-0.5 text-xs' : 'mt-1 text-sm'} max-w-4xl text-slate-600`}>
                 Verify same-address CAD parcels or supply a reviewable city,
                 ZIP, and study center. This does not change or merge stored
                 property records.
@@ -1599,7 +1601,7 @@ export default function MarketConditionsAnalysis({
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+          <div className={`${embedded ? 'mt-2 gap-2' : 'mt-4 gap-3'} grid md:grid-cols-[1fr_auto]`}>
             <label className="grid gap-1 text-sm text-slate-700">
               <span className="font-medium">Exact CAD situs address</span>
               <input
@@ -1607,14 +1609,14 @@ export default function MarketConditionsAnalysis({
                 value={parcelSearchAddress}
                 onChange={(event) => setParcelSearchAddress(event.target.value)}
                 placeholder="10010 Strait Ln"
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2"
+                className={`rounded-lg border border-slate-300 bg-white px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
               />
             </label>
             <button
               type="button"
               onClick={() => void checkRelatedParcels()}
               disabled={loadingRelatedParcels || loadingContext || !subject}
-              className="self-end rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300"
+              className={`self-end rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800 disabled:bg-slate-300 ${embedded ? 'py-2' : 'py-2.5'}`}
             >
               {loadingRelatedParcels ? 'Checking CAD...' : 'Check related CAD parcels'}
             </button>
@@ -1795,9 +1797,9 @@ export default function MarketConditionsAnalysis({
           )}
         </div>
 
-        <fieldset className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <legend className="text-base font-semibold text-slate-900">
+        <fieldset className={`rounded-xl border border-slate-200 bg-slate-50 ${embedded ? 'p-3' : 'p-4'}`}>
+          <div className={`flex flex-wrap items-center justify-between ${embedded ? 'gap-2' : 'gap-3'}`}>
+            <legend className={`${embedded ? 'text-sm' : 'text-base'} font-semibold text-slate-900`}>
               Select one or more independent study areas
             </legend>
             <div className="flex gap-2">
@@ -1819,13 +1821,13 @@ export default function MarketConditionsAnalysis({
               </button>
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <div className={`grid grid-cols-1 md:grid-cols-2 ${embedded ? 'mt-2 gap-2 lg:grid-cols-4' : 'mt-3 gap-3 xl:grid-cols-4'}`}>
             {AREA_OPTIONS.map((option) => {
               const selected = selectedAreaKeys.includes(option.key);
               return (
                 <label
                   key={option.key}
-                  className={`flex cursor-pointer gap-3 rounded-xl border p-3 ${
+                  className={`flex cursor-pointer rounded-xl border ${embedded ? 'gap-2 p-2' : 'gap-3 p-3'} ${
                     selected
                       ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-200'
                       : 'border-slate-200 bg-white hover:border-slate-400'
@@ -1838,10 +1840,10 @@ export default function MarketConditionsAnalysis({
                     className="mt-1 h-4 w-4 rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
                   />
                   <span>
-                    <span className="block text-sm font-semibold text-slate-900">
+                    <span className={`${embedded ? 'text-xs' : 'text-sm'} block font-semibold text-slate-900`}>
                       {option.label}
                     </span>
-                    <span className="mt-1 block text-xs text-slate-500">
+                    <span className={`${embedded ? 'mt-0.5 text-[10px] leading-4' : 'mt-1 text-xs'} block text-slate-500`}>
                       {option.description}
                     </span>
                   </span>
@@ -1968,7 +1970,7 @@ export default function MarketConditionsAnalysis({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className={`flex flex-wrap items-center ${embedded ? 'gap-2' : 'gap-3'}`}>
           <button
             type="button"
             onClick={() => void runAnalysis()}
@@ -1978,7 +1980,7 @@ export default function MarketConditionsAnalysis({
               !subject ||
               !selectedAreaKeys.length
             }
-            className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className={`rounded-lg bg-emerald-700 px-5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:bg-slate-300 ${embedded ? 'py-2' : 'py-2.5'}`}
           >
             {loadingAnalysis
               ? 'Calculating market studies...'
@@ -2010,7 +2012,7 @@ export default function MarketConditionsAnalysis({
         )}
 
         {analysisResult && (
-          <div className="space-y-6 border-t border-slate-200 pt-5">
+          <div className={embedded ? 'space-y-3 border-t border-slate-200 pt-3' : 'space-y-6 border-t border-slate-200 pt-5'}>
             {analysisResult.subject.context_override_active && (
               <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
                 <span className="font-semibold">Flagged study geography:</span>{' '}
@@ -2053,13 +2055,13 @@ export default function MarketConditionsAnalysis({
                 aria-controls="market-study-comparison-results"
                 aria-label={studyResultsExpanded ? 'Collapse market study results' : 'Expand market study results'}
                 onClick={() => setStudyResultsExpanded((current) => !current)}
-                className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left hover:bg-slate-50 md:px-5"
+                className={`flex w-full items-center justify-between text-left hover:bg-slate-50 ${embedded ? 'gap-3 px-3 py-2.5' : 'gap-4 px-4 py-4 md:px-5'}`}
               >
                 <div>
-                  <h3 className="text-lg font-semibold text-slate-950">
+                  <h3 className={`${embedded ? 'text-base' : 'text-lg'} font-semibold text-slate-950`}>
                     Study comparison and charts
                   </h3>
-                  <p className="mt-1 text-sm text-slate-600">
+                  <p className={`${embedded ? 'mt-0.5 text-xs' : 'mt-1 text-sm'} text-slate-600`}>
                     {analysisResult.analyses.length} independent market{' '}
                     {analysisResult.analyses.length === 1 ? 'study' : 'studies'} available for review.
                   </p>
@@ -2072,7 +2074,7 @@ export default function MarketConditionsAnalysis({
               {studyResultsExpanded && (
                 <div
                   id="market-study-comparison-results"
-                  className="space-y-6 border-t border-slate-200 p-4 md:p-5"
+                  className={embedded ? 'space-y-4 border-t border-slate-200 p-3' : 'space-y-6 border-t border-slate-200 p-4 md:p-5'}
                 >
                   <div>
                     <div className="flex flex-wrap items-end justify-between gap-3">
@@ -2199,24 +2201,24 @@ export default function MarketConditionsAnalysis({
               )}
             </div>
 
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50/40 p-5">
+            <div className={`rounded-2xl border border-indigo-200 bg-indigo-50/40 ${embedded ? 'p-3' : 'p-5'}`}>
               <div>
                 <div className="text-xs font-semibold uppercase tracking-wide text-indigo-700">
                   Appraiser reconciliation
                 </div>
-                <h3 className="mt-1 text-lg font-semibold text-slate-950">
+                <h3 className={`${embedded ? 'mt-0.5 text-base' : 'mt-1 text-lg'} font-semibold text-slate-950`}>
                   Market trend conclusion and evidence weighting
                 </h3>
-                <p className="mt-1 text-sm text-slate-600">
+                <p className={`${embedded ? 'mt-0.5 text-xs' : 'mt-1 text-sm'} text-slate-600`}>
                   Explain why particular study populations and time intervals
                   are most relevant. This narrative will be carried into the
                   appraisal report.
                 </p>
               </div>
 
-              <RecommendedDetermination response={analysisResult} />
+              <RecommendedDetermination response={analysisResult} compact={embedded} />
 
-              <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
+              <div className={`grid grid-cols-1 lg:grid-cols-[240px_1fr] ${embedded ? 'mt-2 gap-2' : 'mt-4 gap-4'}`}>
                 <label className="grid gap-1 text-sm text-slate-700">
                   <span className="font-medium">Market trend conclusion</span>
                   <select
@@ -2242,7 +2244,7 @@ export default function MarketConditionsAnalysis({
                   <legend className="text-sm font-medium text-slate-700">
                     Studies given greatest weight
                   </legend>
-                  <div className="mt-2 flex flex-wrap gap-2">
+                  <div className={`${embedded ? 'mt-1 gap-1.5' : 'mt-2 gap-2'} flex flex-wrap`}>
                     {analysisResult.analyses.map((analysis) => {
                       const selected =
                         reconciliation.reliedUponAreaKeys.includes(
@@ -2251,7 +2253,7 @@ export default function MarketConditionsAnalysis({
                       return (
                         <label
                           key={analysis.market.key}
-                          className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-2 text-xs font-semibold ${
+                          className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 text-xs font-semibold ${embedded ? 'py-1.5' : 'py-2'} ${
                             selected
                               ? 'border-indigo-500 bg-indigo-100 text-indigo-950'
                               : 'border-slate-300 bg-white text-slate-600'
@@ -2282,7 +2284,7 @@ export default function MarketConditionsAnalysis({
                 </fieldset>
               </div>
 
-              <label className="mt-4 grid gap-1 text-sm text-slate-700">
+              <label className={`${embedded ? 'mt-2' : 'mt-4'} grid gap-1 text-sm text-slate-700`}>
                 <span className="font-medium">Reconciliation explanation</span>
                 <textarea
                   value={reconciliation.explanation}
@@ -2292,13 +2294,13 @@ export default function MarketConditionsAnalysis({
                       explanation: event.target.value,
                     }))
                   }
-                  rows={6}
-                  className="rounded-xl border border-slate-300 bg-white px-3 py-3 leading-6"
+                  rows={embedded ? 3 : 6}
+                  className={`rounded-xl border border-slate-300 bg-white px-3 ${embedded ? 'py-2 leading-5' : 'py-3 leading-6'}`}
                   placeholder="Explain why the selected geography, population, and trend intervals best represent the subject's market."
                 />
               </label>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3">
+              <div className={`${embedded ? 'mt-2 gap-2' : 'mt-4 gap-3'} flex flex-wrap items-center`}>
                 <button
                   type="button"
                   onClick={saveReconciliation}

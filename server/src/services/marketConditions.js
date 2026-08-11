@@ -790,6 +790,22 @@ const MARKET_ANALYSIS_SQL = `
         FROM eligible
         WHERE price_per_square_foot IS NOT NULL
       ),
+      'average_sale_price', (SELECT AVG(sale_price) FROM eligible),
+      'average_price_per_square_foot', (
+        SELECT AVG(price_per_square_foot)
+        FROM eligible
+        WHERE price_per_square_foot IS NOT NULL
+      ),
+      'average_age', (
+        SELECT AVG(age_years)
+        FROM eligible
+        WHERE age_years IS NOT NULL
+      ),
+      'average_living_area', (
+        SELECT AVG(living_area)
+        FROM eligible
+        WHERE living_area IS NOT NULL
+      ),
       'minimum_sale_price', (SELECT MIN(sale_price) FROM eligible),
       'maximum_sale_price', (SELECT MAX(sale_price) FROM eligible),
       'minimum_price_per_square_foot', (SELECT MIN(price_per_square_foot) FROM eligible),
@@ -1213,6 +1229,12 @@ function normalizeAnalysisRow(row, periodMonths) {
       median_price_per_square_foot: numberOrNull(
         summary.median_price_per_square_foot,
       ),
+      average_sale_price: numberOrNull(summary.average_sale_price),
+      average_price_per_square_foot: numberOrNull(
+        summary.average_price_per_square_foot,
+      ),
+      average_age: numberOrNull(summary.average_age),
+      average_living_area: numberOrNull(summary.average_living_area),
       minimum_sale_price: numberOrNull(summary.minimum_sale_price),
       maximum_sale_price: numberOrNull(summary.maximum_sale_price),
       minimum_price_per_square_foot: numberOrNull(

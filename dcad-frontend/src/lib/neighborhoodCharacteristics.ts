@@ -39,6 +39,29 @@ export const NEIGHBORHOOD_RANGE_ROWS = [
   },
 ] as const;
 
+export const NEIGHBORHOOD_CITY_AVERAGE_ROWS = [
+  {
+    label: 'House Price',
+    field: 'neighborhood_city_average_sale_price',
+    format: 'money',
+  },
+  {
+    label: 'Price per Sq. Ft.',
+    field: 'neighborhood_city_average_ppsf',
+    format: 'money',
+  },
+  {
+    label: 'Age',
+    field: 'neighborhood_city_average_age',
+    format: 'number',
+  },
+  {
+    label: 'GLA',
+    field: 'neighborhood_city_average_gla',
+    format: 'number',
+  },
+] as const;
+
 export function numericValue(value: unknown): number | null {
   if (value === '' || value === null || value === undefined) return null;
   const parsed = Number(String(value).replace(/[$,%\s]/g, ''));
@@ -48,7 +71,7 @@ export function numericValue(value: unknown): number | null {
 export function neighborhoodLandUseTotal(details?: AssignmentDetailsPayload | null): number | null {
   const values = NEIGHBORHOOD_LAND_USE_FIELDS.map(([field]) => numericValue(details?.[field]));
   if (values.every((value) => value === null)) return null;
-  return values.reduce((sum, value) => sum + (value || 0), 0);
+  return values.reduce<number>((sum, value) => sum + (value || 0), 0);
 }
 
 export function isNeighborhoodBoundary(value: unknown): value is GeoJsonPolygon {

@@ -20,6 +20,7 @@ import {
 import {
   neighborhoodBoundaryReadinessErrors,
   neighborhoodLandUseTotal,
+  NEIGHBORHOOD_CITY_AVERAGE_ROWS,
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
@@ -1252,11 +1253,38 @@ export default function AppraisalReport() {
           </section>
 
           <section className="report-section">
+            <h2 className="report-section-title">Full-City Average Comparison</h2>
+            <div className="report-note">
+              The citywide study is a broader comparison and does not replace the appraiser-defined neighborhood ranges.
+            </div>
+            <div className="report-table-wrap">
+              <table className="report-table">
+                <thead><tr><th>City</th><th className="numeric">Sales</th>{NEIGHBORHOOD_CITY_AVERAGE_ROWS.map((row) => <th key={row.field} className="numeric">Avg. {row.label}</th>)}</tr></thead>
+                <tbody>
+                  <tr>
+                    <td>{text(neighborhoodDetails.neighborhood_city_name)}</td>
+                    <td className="numeric">{count(neighborhoodDetails.neighborhood_city_sale_count)}</td>
+                    {NEIGHBORHOOD_CITY_AVERAGE_ROWS.map((row) => (
+                      <td key={row.field} className="numeric">
+                        {row.format === "money"
+                          ? money(neighborhoodDetails[row.field])
+                          : count(neighborhoodDetails[row.field])}
+                      </td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="report-section">
             <h2 className="report-section-title">Appraiser-Defined Neighborhood Boundary</h2>
             <div className="report-facts">
               <Fact label="Boundary" value={neighborhoodDetails.neighborhood_boundary_label} wide />
               <Fact label="Source" value={neighborhoodDetails.neighborhood_boundary_source} />
               <Fact label="Market Study Saved" value={dateText(neighborhoodDetails.neighborhood_boundary_saved_at)} />
+              <Fact label="Boundary Streets" value={neighborhoodDetails.neighborhood_boundary_streets} wide />
+              <Fact label="Street Source" value={neighborhoodDetails.neighborhood_boundary_streets_source} wide />
               <Fact label="Appraiser Confirmed" value={neighborhoodDetails.neighborhood_boundary_confirmed ? "Yes" : "No"} />
               <Fact label="Confirmed At" value={dateText(neighborhoodDetails.neighborhood_boundary_confirmed_at)} />
             </div>

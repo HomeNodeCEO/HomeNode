@@ -58,6 +58,7 @@ import {
   startCensusGeographyWorker,
 } from "./services/censusGeography.js";
 import { fetchCensusZipProfile } from "./services/censusZipProfile.js";
+import { fetchBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
   ensureAppraisalRatingsSchema,
   SALE_REVIEW_SELECT,
@@ -4237,6 +4238,46 @@ app.post("/api/sales/market-analysis", async (req, res) => {
   } catch (error) {
     const message = error?.message || "market_analysis_failed";
     console.error("/api/sales/market-analysis failed", error);
+    res.status(marketConditionsErrorStatus(message)).json({
+      error: message,
+      ...(error?.detail ? { detail: error.detail } : {}),
+    });
+  }
+});
+
+/**
+ * POST /api/sales/neighborhood-profile
+ *
+ * Refreshes the appraiser-defined neighborhood ranges, a citywide comparison,
+ * and reviewable street names located along the drawn polygon boundary.
+ */
+app.post("/api/sales/neighborhood-profile", async (req, res) => {
+  const customGeometry = req.body?.custom_geometry || null;
+  try {
+    const market = await buildMarketConditionsAnalyses(pool, {
+      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+      areaKeys: ["custom", "city"],
+      asOfDate: String(req.body?.as_of || "").trim(),
+      periodMonths: req.body?.period_months ?? 24,
+      customGeometry,
+      marketContextOverride: req.body?.context_override || null,
+    });
+    let boundaryStreets = null;
+    let boundaryStreetWarning = null;
+    try {
+      boundaryStreets = await fetchBoundaryStreetNames(customGeometry);
+    } catch (error) {
+      boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
+      console.warn("/api/sales/neighborhood-profile street lookup failed", error);
+    }
+    res.json({
+      ...market,
+      boundary_streets: boundaryStreets,
+      boundary_street_warning: boundaryStreetWarning,
+    });
+  } catch (error) {
+    const message = error?.message || "neighborhood_profile_failed";
+    console.error("/api/sales/neighborhood-profile failed", error);
     res.status(marketConditionsErrorStatus(message)).json({
       error: message,
       ...(error?.detail ? { detail: error.detail } : {}),

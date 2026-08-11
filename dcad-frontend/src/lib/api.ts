@@ -227,10 +227,20 @@ export interface AssignmentDetailsPayload {
   neighborhood_gla_low?: string | number;
   neighborhood_gla_high?: string | number;
   neighborhood_gla_predominant?: string | number;
+  neighborhood_city_name?: string;
+  neighborhood_city_sale_count?: string | number;
+  neighborhood_city_average_sale_price?: string | number;
+  neighborhood_city_average_ppsf?: string | number;
+  neighborhood_city_average_age?: string | number;
+  neighborhood_city_average_gla?: string | number;
+  neighborhood_city_comparison_as_of?: string;
   neighborhood_boundary_geometry?: GeoJsonPolygon | null;
   neighborhood_boundary_label?: string;
   neighborhood_boundary_source?: string;
   neighborhood_boundary_saved_at?: string;
+  neighborhood_boundary_streets?: string;
+  neighborhood_boundary_streets_source?: string;
+  neighborhood_boundary_streets_retrieved_at?: string;
   neighborhood_boundary_confirmed?: boolean;
   neighborhood_boundary_confirmed_at?: string;
 }
@@ -896,6 +906,10 @@ export interface MarketConditionsAnalysis {
     median_days_on_market: number | null;
     median_sale_to_list_ratio: number | null;
     median_price_per_square_foot: number | null;
+    average_sale_price: number | null;
+    average_price_per_square_foot: number | null;
+    average_age: number | null;
+    average_living_area: number | null;
     minimum_sale_price: number | null;
     maximum_sale_price: number | null;
     minimum_price_per_square_foot: number | null;
@@ -1233,6 +1247,17 @@ export async function getAccountPhotos(accountId: string): Promise<AccountPhotos
   const id = (accountId || '').trim();
   const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}/photos`);
   return fetchJSON<AccountPhotosResponse>(url);
+}
+
+export interface NeighborhoodProfileResponse extends MarketConditionsResponse {
+  boundary_streets: {
+    street_names: string[];
+    source: string;
+    retrieved_at: string;
+    boundary_buffer_meters: number;
+    review_required: boolean;
+  } | null;
+  boundary_street_warning: string | null;
 }
 
 /** Resolve one property's Census tract immediately, ahead of the background queue. */
@@ -1576,6 +1601,27 @@ export async function runMarketConditionsAnalysis(
     body: JSON.stringify({
       subject_account_id: request.subjectAccountId.trim(),
       area_keys: request.areaKeys,
+      as_of: request.asOf,
+      period_months: request.periodMonths,
+      custom_geometry: request.customGeometry || null,
+      context_override: request.contextOverride || null,
+    }),
+    timeoutMs: 120000,
+  });
+}
+
+/** Refresh the saved custom neighborhood, citywide comparison, and boundary street candidates. */
+export async function getNeighborhoodProfile(
+  request: Omit<MarketConditionsRequest, 'areaKeys'>,
+): Promise<NeighborhoodProfileResponse> {
+  const url = makeUrl('/api/sales/neighborhood-profile');
+  return fetchJSON<NeighborhoodProfileResponse>(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      subject_account_id: request.subjectAccountId.trim(),
       as_of: request.asOf,
       period_months: request.periodMonths,
       custom_geometry: request.customGeometry || null,

@@ -5,6 +5,7 @@ import { fetchDetail } from "@/lib/dcad";
 import {
   createAssignmentFile,
   getCensusZipProfile,
+  getNeighborhoodProfile,
   getAssignmentFiles,
   getAccountPhotos,
   getRelatedParcels,
@@ -24,6 +25,7 @@ import {
   marketTrendFromChange,
   neighborhoodBoundaryReadinessErrors,
   neighborhoodLandUseTotal,
+  NEIGHBORHOOD_CITY_AVERAGE_ROWS,
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
@@ -335,10 +337,21 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_gla_low: value?.neighborhood_gla_low ?? "",
     neighborhood_gla_high: value?.neighborhood_gla_high ?? "",
     neighborhood_gla_predominant: value?.neighborhood_gla_predominant ?? "",
+    neighborhood_city_name: value?.neighborhood_city_name || "",
+    neighborhood_city_sale_count: value?.neighborhood_city_sale_count ?? "",
+    neighborhood_city_average_sale_price: value?.neighborhood_city_average_sale_price ?? "",
+    neighborhood_city_average_ppsf: value?.neighborhood_city_average_ppsf ?? "",
+    neighborhood_city_average_age: value?.neighborhood_city_average_age ?? "",
+    neighborhood_city_average_gla: value?.neighborhood_city_average_gla ?? "",
+    neighborhood_city_comparison_as_of: value?.neighborhood_city_comparison_as_of || "",
     neighborhood_boundary_geometry: value?.neighborhood_boundary_geometry || null,
     neighborhood_boundary_label: value?.neighborhood_boundary_label || "",
     neighborhood_boundary_source: value?.neighborhood_boundary_source || "",
     neighborhood_boundary_saved_at: value?.neighborhood_boundary_saved_at || "",
+    neighborhood_boundary_streets: value?.neighborhood_boundary_streets || "",
+    neighborhood_boundary_streets_source: value?.neighborhood_boundary_streets_source || "",
+    neighborhood_boundary_streets_retrieved_at:
+      value?.neighborhood_boundary_streets_retrieved_at || "",
     neighborhood_boundary_confirmed: Boolean(value?.neighborhood_boundary_confirmed),
     neighborhood_boundary_confirmed_at: value?.neighborhood_boundary_confirmed_at || "",
   };
@@ -631,6 +644,8 @@ function NeighborhoodCharacteristicsContent({
   postalCode,
   unemploymentLoading,
   unemploymentMessage,
+  profileLoading,
+  profileMessage,
   customAreaAvailable,
   assignmentDirty,
   assignmentSaveMessage,
@@ -647,6 +662,8 @@ function NeighborhoodCharacteristicsContent({
   postalCode: string;
   unemploymentLoading: boolean;
   unemploymentMessage: string;
+  profileLoading: boolean;
+  profileMessage: string;
   customAreaAvailable: boolean;
   assignmentDirty: boolean;
   assignmentSaveMessage: string;
@@ -792,6 +809,36 @@ function NeighborhoodCharacteristicsContent({
               </div>
             ))}
           </div>
+          <div className="mt-5 border-t border-slate-200 pt-4">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">Full-City Average Comparison</h4>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {assignmentDraft.neighborhood_city_name || "Subject city"} closed-sale averages; this does not replace the appraiser-defined neighborhood ranges.
+                </p>
+              </div>
+              <span className="text-xs font-medium text-slate-600">
+                {assignmentDraft.neighborhood_city_sale_count === "" || assignmentDraft.neighborhood_city_sale_count == null
+                  ? "Sample pending"
+                  : `${formatNumber(assignmentDraft.neighborhood_city_sale_count)} sales`}
+              </span>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {NEIGHBORHOOD_CITY_AVERAGE_ROWS.map((row) => (
+                <div key={row.field} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Average {row.label}</div>
+                  <div className="mt-1 text-base font-semibold text-slate-900">
+                    {row.format === "money"
+                      ? formatMoney(assignmentDraft[row.field])
+                      : formatNumber(assignmentDraft[row.field], row.label === "GLA" ? " sq. ft." : " years")}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {assignmentDraft.neighborhood_city_comparison_as_of ? (
+              <p className="mt-2 text-[11px] text-slate-500">Analysis through {formatDate(assignmentDraft.neighborhood_city_comparison_as_of)}</p>
+            ) : null}
+          </div>
         </div>
       </section>
 
@@ -823,12 +870,33 @@ function NeighborhoodCharacteristicsContent({
               type="button"
               className="btn btn-outline btn-sm normal-case"
               onClick={onRefreshBoundary}
-              disabled={!customAreaAvailable}
+              disabled={!customAreaAvailable || profileLoading}
             >
-              Import Saved Area
+              {profileLoading ? "Refreshing..." : "Refresh Area Data"}
             </button>
           </div>
         </div>
+        <label className="mt-4 block">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Boundary Streets</span>
+          <textarea
+            rows={2}
+            className="textarea textarea-bordered mt-1 w-full bg-white text-sm"
+            value={assignmentDraft.neighborhood_boundary_streets || ""}
+            onChange={(event) => onAssignmentChange("neighborhood_boundary_streets", event.target.value)}
+            placeholder="Street names found along the appraiser-defined boundary"
+          />
+          <span className="mt-1 block text-[11px] text-slate-500">
+            Automatically suggested from Census TIGERweb and left editable for appraiser review.
+            {assignmentDraft.neighborhood_boundary_streets_source
+              ? ` Source: ${assignmentDraft.neighborhood_boundary_streets_source}.`
+              : ""}
+          </span>
+        </label>
+        {profileMessage ? (
+          <div className={`mt-3 text-xs font-medium ${/updated|loaded|refreshed/i.test(profileMessage) ? "text-emerald-800" : "text-amber-900"}`}>
+            {profileMessage}
+          </div>
+        ) : null}
         <div className="mt-3 max-w-xl">
           <CheckboxChoice
             checked={Boolean(assignmentDraft.neighborhood_boundary_confirmed)}
@@ -1769,6 +1837,7 @@ function AddressHero({
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
   const [assignmentFiles, setAssignmentFiles] = useState<AppraisalAssignmentFile[]>([]);
   const [assignmentFilesLoading, setAssignmentFilesLoading] = useState(false);
+  const [assignmentFilesLoaded, setAssignmentFilesLoaded] = useState(false);
   const [assignmentFilesError, setAssignmentFilesError] = useState("");
   const [activeAssignmentFile, setActiveAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
   const [inheritedAssignmentFile, setInheritedAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
@@ -1780,6 +1849,9 @@ function AddressHero({
   const [unemploymentLookupLoading, setUnemploymentLookupLoading] = useState(false);
   const [unemploymentLookupMessage, setUnemploymentLookupMessage] = useState("");
   const [unemploymentAutoAttemptedZip, setUnemploymentAutoAttemptedZip] = useState("");
+  const [neighborhoodProfileLoading, setNeighborhoodProfileLoading] = useState(false);
+  const [neighborhoodProfileMessage, setNeighborhoodProfileMessage] = useState("");
+  const neighborhoodProfileAttemptedSignature = useRef("");
   const [marketConditionsDraft, setMarketConditionsDraft] = useState<MarketConditionsDraft | null>(
     () => readMarketConditionsDraft(accountId || ""),
   );
@@ -1806,7 +1878,10 @@ function AddressHero({
     setAssignmentDraft(fallback);
     setAssignmentDirty(false);
     setAssignmentSaveMessage("");
+    setNeighborhoodProfileMessage("");
+    neighborhoodProfileAttemptedSignature.current = "";
     setAssignmentFiles([]);
+    setAssignmentFilesLoaded(false);
     setActiveAssignmentFile(null);
     setInheritedAssignmentFile(null);
     setInheritedLegacyAssignment(false);
@@ -1818,6 +1893,7 @@ function AddressHero({
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     if (!accountId?.trim() || !detailLoaded) {
       setAssignmentFilesLoading(false);
+      setAssignmentFilesLoaded(true);
       return () => {
         cancelled = true;
       };
@@ -1844,7 +1920,10 @@ function AddressHero({
         }
       })
       .finally(() => {
-        if (!cancelled) setAssignmentFilesLoading(false);
+        if (!cancelled) {
+          setAssignmentFilesLoading(false);
+          setAssignmentFilesLoaded(true);
+        }
       });
 
     return () => {
@@ -2185,6 +2264,102 @@ function AddressHero({
     setAssignmentSaveMessage("Appraiser-defined area imported. Review and confirm it for this file.");
   }, [customMarketStudy, marketConditionsDraft?.savedAt]);
 
+  const refreshNeighborhoodProfile = useCallback(async () => {
+    const geometry = customMarketStudy?.market.custom_geometry;
+    if (!accountId || !geometry || !marketConditionsDraft || neighborhoodProfileLoading) {
+      if (!geometry) {
+        setNeighborhoodProfileMessage("Run and save an Appraiser-Defined Area in Market Conditions Analysis first.");
+      }
+      return;
+    }
+    setNeighborhoodProfileLoading(true);
+    setNeighborhoodProfileMessage("Refreshing market-area ranges, city averages, and boundary streets...");
+    try {
+      const profile = await getNeighborhoodProfile({
+        subjectAccountId: accountId,
+        asOf: marketConditionsDraft.asOfDate,
+        periodMonths: marketConditionsDraft.periodMonths,
+        customGeometry: geometry,
+        contextOverride: marketConditionsDraft.contextOverride || null,
+      });
+      const customStudy = profile.analyses.find((analysis) => analysis.market.key === "custom");
+      const cityStudy = profile.analyses.find((analysis) => analysis.market.key === "city");
+      if (!customStudy) throw new Error("The appraiser-defined area did not return a usable market study.");
+      const summary = customStudy.summary;
+      const boundaryStreets = profile.boundary_streets;
+      setAssignmentDraft((current) => {
+        const geometryChanged = JSON.stringify(current.neighborhood_boundary_geometry) !== JSON.stringify(geometry);
+        return {
+          ...current,
+          neighborhood_boundary_geometry: cloneEditorValue(geometry),
+          neighborhood_boundary_label:
+            customStudy.market.label || "Appraiser-defined market area",
+          neighborhood_boundary_source: "sales_comparison_market_conditions",
+          neighborhood_boundary_saved_at: marketConditionsDraft.savedAt || new Date().toISOString(),
+          neighborhood_boundary_confirmed: geometryChanged
+            ? false
+            : current.neighborhood_boundary_confirmed,
+          neighborhood_boundary_confirmed_at: geometryChanged
+            ? ""
+            : current.neighborhood_boundary_confirmed_at,
+          neighborhood_house_price_low: summary.minimum_sale_price ?? "",
+          neighborhood_house_price_high: summary.maximum_sale_price ?? "",
+          neighborhood_house_price_predominant: summary.median_sale_price ?? "",
+          neighborhood_ppsf_low: summary.minimum_price_per_square_foot ?? "",
+          neighborhood_ppsf_high: summary.maximum_price_per_square_foot ?? "",
+          neighborhood_ppsf_predominant: summary.median_price_per_square_foot ?? "",
+          neighborhood_age_low: summary.minimum_age ?? "",
+          neighborhood_age_high: summary.maximum_age ?? "",
+          neighborhood_age_predominant: summary.median_age ?? "",
+          neighborhood_gla_low: summary.minimum_living_area ?? "",
+          neighborhood_gla_high: summary.maximum_living_area ?? "",
+          neighborhood_gla_predominant: summary.median_living_area ?? "",
+          neighborhood_market_trend:
+            marketTrendFromChange(customStudy.statistics.annualized_change_percent) ||
+            current.neighborhood_market_trend || "",
+          neighborhood_city_name:
+            cityStudy?.market.city || profile.subject.city ||
+            detail?.property_location?.city || current.neighborhood_city_name || "",
+          neighborhood_city_sale_count: cityStudy?.population.eligible_sale_count ?? "",
+          neighborhood_city_average_sale_price: cityStudy?.summary.average_sale_price ?? "",
+          neighborhood_city_average_ppsf:
+            cityStudy?.summary.average_price_per_square_foot ?? "",
+          neighborhood_city_average_age: cityStudy?.summary.average_age ?? "",
+          neighborhood_city_average_gla: cityStudy?.summary.average_living_area ?? "",
+          neighborhood_city_comparison_as_of:
+            cityStudy?.period.end || marketConditionsDraft.asOfDate || "",
+          neighborhood_boundary_streets:
+            boundaryStreets?.street_names?.length
+              ? boundaryStreets.street_names.join("; ")
+              : current.neighborhood_boundary_streets || "",
+          neighborhood_boundary_streets_source:
+            boundaryStreets?.source || current.neighborhood_boundary_streets_source || "",
+          neighborhood_boundary_streets_retrieved_at:
+            boundaryStreets?.retrieved_at ||
+            current.neighborhood_boundary_streets_retrieved_at || "",
+        };
+      });
+      setAssignmentDirty(true);
+      setNeighborhoodProfileMessage(
+        profile.boundary_street_warning
+          ? "Market ranges and city averages refreshed. Boundary streets could not be refreshed and still require review."
+          : "Appraiser-defined ranges, city averages, and boundary street candidates refreshed.",
+      );
+    } catch (error) {
+      setNeighborhoodProfileMessage(
+        error instanceof Error ? error.message : "The neighborhood profile could not be refreshed.",
+      );
+    } finally {
+      setNeighborhoodProfileLoading(false);
+    }
+  }, [
+    accountId,
+    customMarketStudy,
+    detail?.property_location?.city,
+    marketConditionsDraft,
+    neighborhoodProfileLoading,
+  ]);
+
   const confirmNeighborhoodBoundary = (checked: boolean) => {
     setAssignmentDraft((current) => ({
       ...current,
@@ -2226,14 +2401,31 @@ function AddressHero({
 
   useEffect(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
-    if (!geometry || assignmentFilesLoading) return;
+    if (!geometry || assignmentFilesLoading || !assignmentFilesLoaded) return;
     if (JSON.stringify(assignmentDraft.neighborhood_boundary_geometry) === JSON.stringify(geometry)) return;
     importCustomMarketArea();
   }, [
     assignmentDraft.neighborhood_boundary_geometry,
     assignmentFilesLoading,
+    assignmentFilesLoaded,
     customMarketStudy,
     importCustomMarketArea,
+  ]);
+
+  useEffect(() => {
+    const geometry = customMarketStudy?.market.custom_geometry;
+    if (!geometry || !accountId || !marketConditionsDraft || assignmentFilesLoading || !assignmentFilesLoaded) return;
+    const signature = `${accountId}:${marketConditionsDraft.savedAt}:${JSON.stringify(geometry)}`;
+    if (neighborhoodProfileAttemptedSignature.current === signature) return;
+    neighborhoodProfileAttemptedSignature.current = signature;
+    void refreshNeighborhoodProfile();
+  }, [
+    accountId,
+    assignmentFilesLoading,
+    assignmentFilesLoaded,
+    customMarketStudy,
+    marketConditionsDraft,
+    refreshNeighborhoodProfile,
   ]);
 
   useEffect(() => {
@@ -3271,6 +3463,8 @@ function AddressHero({
               postalCode={censusZip}
               unemploymentLoading={unemploymentLookupLoading}
               unemploymentMessage={unemploymentLookupMessage}
+              profileLoading={neighborhoodProfileLoading}
+              profileMessage={neighborhoodProfileMessage}
               customAreaAvailable={Boolean(customMarketStudy?.market.custom_geometry)}
               assignmentDirty={assignmentDirty}
               assignmentSaveMessage={assignmentSaveMessage}
@@ -3278,7 +3472,7 @@ function AddressHero({
               savingAssignmentFile={savingAssignmentFile}
               onAssignmentChange={updateAssignment}
               onRefreshUnemployment={() => void lookupZipUnemployment()}
-              onRefreshBoundary={importCustomMarketArea}
+              onRefreshBoundary={() => void refreshNeighborhoodProfile()}
               onConfirmBoundary={confirmNeighborhoodBoundary}
               onSave={() => void saveAssignmentDetails()}
             />

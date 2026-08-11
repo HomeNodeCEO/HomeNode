@@ -1462,10 +1462,6 @@ function AddressHero({
     relatedParcels?.material_difference_found,
   );
 
-  const totalLandArea = landRows.reduce(
-    (sum, row) => sum + (parseNumber(row.area_sqft) || 0),
-    0,
-  );
   const primaryZoning =
     landRows.map((row) => row.zoning).find((value) => hasValue(value)) || "Not reported";
 
@@ -2282,6 +2278,25 @@ function AddressHero({
                 value={formatReportedBoolean(improvement?.sprinkler)}
               />
               <SummaryField label="Fence" value={displayValue(improvement?.fence_type)} />
+              {additionalImprovements.map((row, index) => (
+                <SummaryField
+                  key={`${row.number || index}-${row.improvement_type || "improvement"}`}
+                  label={displayValue(row.improvement_type, `Improvement ${index + 1}`)}
+                  value={(
+                    <div>
+                      <span>{formatNumber(row.area_sqft, " sq. ft.")}</span>
+                      <span className="mt-0.5 block text-xs font-normal leading-5 text-slate-600">
+                        {[row.construction, row.floor, row.exterior_wall]
+                          .filter(hasValue)
+                          .join(" · ") || "Construction details not reported"}
+                        {hasValue(row.year_built)
+                          ? ` · Built ${displayValue(row.year_built)}`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
+                />
+              ))}
             </div>
 
             <div className="mt-5 border-t border-slate-200 pt-4">
@@ -2308,85 +2323,53 @@ function AddressHero({
                 </button>
               </div>
 
-              <div className="my-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <SummaryField
-                  label="Total Land Area"
-                  value={totalLandArea ? formatNumber(totalLandArea, " sq. ft.") : "Not reported"}
-                />
-                <SummaryField label="Land Value" value={formatMoney(values?.land_value)} />
-              </div>
-
               {landRows.length ? (
-                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                  <table className="table table-sm w-full">
-                    <thead>
-                      <tr>
-                        <th>Use / State Code</th>
-                        <th>Zoning</th>
-                        <th className="text-right">Area</th>
-                        <th className="text-right">Frontage × Depth</th>
-                        <th>Pricing</th>
-                        <th className="text-right">Adjusted Price</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {landRows.map((row, index) => (
-                        <tr key={row.number || index}>
-                          <td>{displayValue(row.state_code)}</td>
-                          <td>{displayValue(row.zoning)}</td>
-                          <td className="text-right">
-                            {formatNumber(row.area_sqft, " sq. ft.")}
-                          </td>
-                          <td className="text-right">
-                            {parseNumber(row.frontage_ft) !== null ||
+                <div className="mt-4 space-y-4">
+                  {landRows.map((row, index) => {
+                    const prefix = landRows.length > 1 ? `Land ${index + 1} ` : "";
+                    return (
+                      <div
+                        key={row.number || index}
+                        className="grid grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 lg:grid-cols-5"
+                      >
+                        <SummaryField
+                          label={`${prefix}Use / State Code`}
+                          value={displayValue(row.state_code)}
+                        />
+                        <SummaryField
+                          label={`${prefix}Area`}
+                          value={formatNumber(row.area_sqft, " sq. ft.")}
+                        />
+                        <SummaryField
+                          label={`${prefix}Frontage × Depth`}
+                          value={
+                            parseNumber(row.frontage_ft) !== null ||
                             parseNumber(row.depth_ft) !== null
                               ? `${formatNumber(row.frontage_ft, " ft.")} × ${formatNumber(
                                   row.depth_ft,
                                   " ft.",
                                 )}`
-                              : "Not reported"}
-                          </td>
-                          <td>{displayValue(row.pricing_method)}</td>
-                          <td className="text-right">{formatMoney(row.adjusted_price)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                              : "Not reported"
+                          }
+                        />
+                        <SummaryField
+                          label={`${prefix}CAD Pricing`}
+                          value={displayValue(row.pricing_method)}
+                        />
+                        <SummaryField
+                          label={`${prefix}CAD Adjusted Price`}
+                          value={formatMoney(row.adjusted_price)}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+                <p className="mt-4 text-sm text-slate-600">
                   No land detail records were returned for this parcel.
                 </p>
               )}
             </div>
-
-            {additionalImprovements.length ? (
-              <div className="mt-5 border-t border-slate-200 pt-4">
-                <h3 className="text-sm font-semibold text-slate-800">Additional Improvements</h3>
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {additionalImprovements.map((row, index) => (
-                    <div
-                      key={`${row.number || index}-${row.improvement_type || "improvement"}`}
-                      className="rounded-xl border border-slate-200 bg-white p-3"
-                    >
-                      <div className="text-sm font-semibold text-slate-900">
-                        {displayValue(row.improvement_type, `Improvement ${index + 1}`)}
-                      </div>
-                      <div className="mt-1 text-xs leading-5 text-slate-600">
-                        {[row.construction, row.floor, row.exterior_wall]
-                          .filter(hasValue)
-                          .join(" · ") || "Construction details not reported"}
-                        <br />
-                        {formatNumber(row.area_sqft, " sq. ft.")}
-                        {hasValue(row.year_built)
-                          ? ` · Built ${displayValue(row.year_built)}`
-                          : ""}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
           </SummarySection>
 
           <SummarySection
@@ -2424,7 +2407,7 @@ function AddressHero({
                 value={formatMoney(values?.capped_value || values?.market_value)}
               />
               <SummaryField label="Improvement Value" value={formatMoney(values?.improvement_value)} />
-              <SummaryField label="Land Value" value={formatMoney(values?.land_value)} />
+              <SummaryField label="CAD Land Value" value={formatMoney(values?.land_value)} />
             </div>
 
             <div className="mt-5 border-t border-slate-200 pt-4">

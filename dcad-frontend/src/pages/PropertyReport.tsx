@@ -769,7 +769,7 @@ function NeighborhoodCharacteristicsContent({
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2">
           {NEIGHBORHOOD_CHOICE_GROUPS.map((group) => (
             <fieldset key={group.field} className="rounded-lg border border-slate-200 bg-white p-2">
               <legend className="px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">{group.label}</legend>
@@ -872,7 +872,7 @@ function NeighborhoodCharacteristicsContent({
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
           <h3 className="text-sm font-semibold text-slate-900">Neighborhood Property Ranges</h3>
           <p className="mt-0.5 text-xs text-slate-500 lg:hidden">Low, high, and predominant (median) values from the defined market area.</p>
-          <div className="mt-2 min-w-[620px]">
+          <div className="mt-2 min-w-[540px]">
             <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 border-b border-slate-300 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
               <div>Measure</div><div>Low</div><div>High</div><div>Predominant</div>
             </div>

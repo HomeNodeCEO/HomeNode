@@ -849,7 +849,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
       // Fallback: local template
       const local = [
-        `Based on a sales comparison approach, we selected nearby transactions within the same neighborhood and within a 0.5ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¹Ã…â€œmile radius of ${subjectAddr}. These properties are similar in age, size, and quality, providing a reliable indication of current market behavior.`,
+        `Based on a sales comparison approach, we selected nearby transactions within the same neighborhood and within a 0.5-mile radius of ${subjectAddr}. These properties are similar in age, size, and quality, providing a reliable indication of current market behavior.`,
         `Adjustments were applied for time, neighborhood code, gross living area, and condition, as well as specific features such as bathrooms, parking, and pools. The adjustments reflect observed market premiums/discounts evidenced by grouped analysis and regression where available, resulting in an indicated value that better aligns with market reactions than the district's broad categories.`,
         `A cost-to-cure analysis identified approximately $${costToCureTotal.toLocaleString()} in user-entered repairs. These items impact both buyer appeal and contributory value and should be reflected in the final reconciliation.`,
       ].join(' ');

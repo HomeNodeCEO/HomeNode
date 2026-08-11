@@ -924,7 +924,7 @@ function NeighborhoodCharacteristicsContent({
             <h3 className="text-sm font-semibold text-slate-900">Neighborhood Boundaries</h3>
             <p className="mt-1 text-xs text-slate-600">
               {assignmentDraft.neighborhood_boundary_geometry
-                ? `${assignmentDraft.neighborhood_boundary_label || "Appraiser-defined market area"} ? ${Math.max(boundaryRing.length - 1, 0)} boundary vertices`
+                ? `${assignmentDraft.neighborhood_boundary_label || "Appraiser-defined market area"} · ${Math.max(boundaryRing.length - 1, 0)} boundary vertices`
                 : "No appraiser-defined boundary has been imported."}
             </p>
             {assignmentDraft.neighborhood_boundary_saved_at ? (
@@ -1363,7 +1363,7 @@ function ListingsContractsSalesContent({
                   </div>
                   <div className="whitespace-nowrap text-right">{formatMoney(event.list_price)}</div>
                   <div className="whitespace-nowrap text-right">{formatMoney(event.sale_price)}</div>
-                  <div className="text-right">{displayValue(event.days_on_market, "?")}</div>
+                  <div className="text-right">{displayValue(event.days_on_market, "—")}</div>
                   <div className="text-xs leading-5">
                     <div>{displayValue(event.buyer_financing, "Financing not reported")}</div>
                     {hasValue(event.concessions) ? (
@@ -1920,7 +1920,7 @@ function ReportSectionEditor({
             className="btn normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
             disabled={saving || assignmentErrors.length > 0}
           >
-            {saving ? "Saving?" : "Save Changes"}
+            {saving ? "Saving…" : "Save Changes"}
           </button>
         </div>
       </div>
@@ -3027,7 +3027,7 @@ function AddressHero({
               aria-label="Previous image"
               className="absolute left-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-white/90 text-slate-800 shadow-lg hover:bg-white"
             >
-              <span aria-hidden="true">?</span>
+              <span aria-hidden="true">‹</span>
             </button>
             <button
               type="button"
@@ -3035,7 +3035,7 @@ function AddressHero({
               aria-label="Next image"
               className="absolute right-3 top-1/2 z-20 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-white/70 bg-white/90 text-slate-800 shadow-lg hover:bg-white"
             >
-              <span aria-hidden="true">?</span>
+              <span aria-hidden="true">›</span>
             </button>
             <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-full bg-black/40 px-3 py-2">
               {photos.map((_, index) => (
@@ -3068,13 +3068,13 @@ function AddressHero({
             </div>
           </div>
 
-          <div className={`rounded-xl border p-3 ${
+          <div className={`rounded-xl border p-3 text-center ${
             assignmentFromPrevious
               ? "border-amber-300 bg-amber-50"
               : "border-slate-200 bg-slate-50/80"
           }`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Prepare For</h2>
+            <div className="flex flex-col items-center justify-center gap-2">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Prepared For</h2>
               {assignmentFromPrevious ? (
                 <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-950">
                   From Previous Assignment
@@ -3084,7 +3084,7 @@ function AddressHero({
             <input
               type="text"
               maxLength={500}
-              className="input input-bordered input-sm mt-2 w-full bg-white"
+              className="input input-bordered input-sm mt-2 w-full bg-white text-center placeholder:text-center"
               value={assignmentDraft.lender_client_name || ""}
               onChange={(event) => updateAssignment("lender_client_name", event.target.value)}
               placeholder="Lender / client name"
@@ -3092,7 +3092,7 @@ function AddressHero({
             />
             <textarea
               maxLength={2000}
-              className="textarea textarea-bordered textarea-sm mt-2 min-h-14 w-full bg-white"
+              className="textarea textarea-bordered textarea-sm mt-2 min-h-14 w-full bg-white text-center placeholder:text-center"
               value={assignmentDraft.lender_client_address || ""}
               onChange={(event) => updateAssignment("lender_client_address", event.target.value)}
               placeholder="Lender / client address"
@@ -3101,7 +3101,7 @@ function AddressHero({
             <button
               type="button"
               onClick={() => void saveAssignmentFromSection()}
-              className="btn btn-primary btn-xs mt-2 normal-case rounded-lg"
+              className="btn btn-primary btn-xs mx-auto mt-2 normal-case rounded-lg"
               disabled={assignmentSaveDisabled}
             >
               {savingAssignmentFile ? "Saving..." : "Save Prepared For"}
@@ -3111,10 +3111,10 @@ function AddressHero({
             ) : null}
           </div>
 
-          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-right">
             <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Assignment Type</h2>
             {assignmentTypeLabels.length ? (
-              <div className="mt-2 flex flex-wrap gap-1.5">
+              <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                 {assignmentTypeLabels.map((label) => (
                   <span key={label} className="rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-900">
                     {label}
@@ -3258,7 +3258,7 @@ function AddressHero({
                         to={`/report/${encodeURIComponent(parcel.account_id)}`}
                         className="mt-3 inline-flex text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
                       >
-                        Open this parcel?s report ?
+                        Open this parcel&apos;s report →
                       </Link>
                     ) : null}
                   </div>
@@ -3665,7 +3665,7 @@ function AddressHero({
                   improvement?.roof_material,
                 ]
                   .filter(hasValue)
-                  .join(" ? ") || "Not reported"}
+                  .join(" · ") || "Not reported"}
               />
               <SummaryField label="Heating" value={displayValue(improvement?.heating)} />
               <SummaryField label="Air Conditioning" value={displayValue(improvement?.air_conditioning)} />
@@ -3691,9 +3691,9 @@ function AddressHero({
                       <span className="mt-0.5 block text-xs font-normal leading-5 text-slate-600">
                         {[row.construction, row.floor, row.exterior_wall]
                           .filter(hasValue)
-                          .join(" ? ") || "Construction details not reported"}
+                          .join(" · ") || "Construction details not reported"}
                         {hasValue(row.year_built)
-                          ? ` ? Built ${displayValue(row.year_built)}`
+                          ? ` · Built ${displayValue(row.year_built)}`
                           : ""}
                       </span>
                     </div>
@@ -3744,11 +3744,11 @@ function AddressHero({
                           value={formatNumber(row.area_sqft, " sq. ft.")}
                         />
                         <SummaryField
-                          label={`${prefix}Frontage ? Depth`}
+                          label={`${prefix}Frontage × Depth`}
                           value={
                             parseNumber(row.frontage_ft) !== null ||
                             parseNumber(row.depth_ft) !== null
-                              ? `${formatNumber(row.frontage_ft, " ft.")} ? ${formatNumber(
+                              ? `${formatNumber(row.frontage_ft, " ft.")} × ${formatNumber(
                                   row.depth_ft,
                                   " ft.",
                                 )}`
@@ -4030,7 +4030,7 @@ export default function PropertyReport() {
           <div className="flex w-full items-center justify-between">
             <span className="text-xl font-semibold">Property Report</span>
             <Link to="/" className="btn btn-ghost btn-sm normal-case">
-              ? Close Report
+              ← Close Report
             </Link>
           </div>
         </div>

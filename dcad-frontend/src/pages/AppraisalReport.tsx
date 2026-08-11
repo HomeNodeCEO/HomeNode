@@ -945,7 +945,7 @@ export default function AppraisalReport() {
                 <br />
                 Neighborhood: {text(detail.property_location?.neighborhood)}
                 <br />
-                Prepare For: {text(neighborhoodDetails.lender_client_name)}
+                Prepared For: {text(neighborhoodDetails.lender_client_name)}
                 {hasValue(neighborhoodDetails.lender_client_address) ? (
                   <><br />{text(neighborhoodDetails.lender_client_address)}</>
                 ) : null}

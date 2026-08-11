@@ -7,7 +7,7 @@ export function Button({
   variant = "primary",
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
-  const base = "btn"; // DaisyUI base
+  const base = "btn app-action-button";
   const styles =
     variant === "secondary"
       ? "btn-secondary"

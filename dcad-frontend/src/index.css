@@ -14,6 +14,60 @@ html, body, #root {
 img, video, canvas, iframe { max-width: 100%; height: auto; }
 .viewerContainer, .pdfViewer { max-width: 100% !important; overflow-x: auto; }
 
+/*
+ * Shared application action style. Icon-only controls keep their specialized
+ * shapes through aria-label; ordinary text actions use the same dark button.
+ */
+:where(.app-action-button, button:not([aria-label]), a.btn, [role="button"].btn) {
+  display: inline-flex;
+  min-height: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  padding: 0.625rem 1rem;
+  border: 1px solid #0f172a !important;
+  border-radius: 0.5rem !important;
+  background-color: #0f172a !important;
+  color: #ffffff !important;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.btn.btn-sm {
+  min-height: 2.25rem;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+}
+
+.btn.btn-xs {
+  min-height: 1.875rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+:where(.app-action-button, button:not([aria-label]), a.btn, [role="button"].btn):hover:not(:disabled) {
+  border-color: #1e293b !important;
+  background-color: #1e293b !important;
+}
+
+:where(.app-action-button, button:not([aria-label]), a.btn, [role="button"].btn):focus-visible {
+  outline: 2px solid #64748b;
+  outline-offset: 2px;
+}
+
+:where(.app-action-button, button:not([aria-label]), a.btn, [role="button"].btn):disabled,
+:where(.app-action-button, a.btn, [role="button"].btn)[aria-disabled="true"] {
+  border-color: #cbd5e1 !important;
+  background-color: #cbd5e1 !important;
+  color: #475569 !important;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
 /* Keep the analysis controls readable while reducing the page's vertical scroll. */
 .sales-comparison-compact .p-6 { padding-block: 1.125rem; }
 .sales-comparison-compact .p-5 { padding-block: 0.9375rem; }

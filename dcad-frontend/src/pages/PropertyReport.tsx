@@ -452,6 +452,7 @@ function SummarySection({
   manuallyVerified = false,
   inherited = false,
   compact = false,
+  className = "",
 }: {
   title: string;
   subtitle?: string;
@@ -461,11 +462,12 @@ function SummarySection({
   manuallyVerified?: boolean;
   inherited?: boolean;
   compact?: boolean;
+  className?: string;
 }) {
   return (
     <section className={`rounded-2xl border ${
       inherited ? "border-amber-300 bg-amber-50/80" : "border-slate-200 bg-slate-50/70"
-    } ${compact ? "p-3 sm:p-4" : "p-4 sm:p-5"}`}>
+    } ${compact ? "p-3 sm:p-4" : "p-4 sm:p-5"} ${className}`}>
       <div className={`${compact ? "mb-3" : "mb-4"} flex items-start justify-between gap-3`}>
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1794,15 +1796,58 @@ function AddressHero({
         </section>
         ) : null}
 
-        <div className="mt-5 space-y-5">
+        <div className="mt-5 flex flex-col gap-5">
           <SummarySection
             title="Subject Identification"
             subtitle="Parcel, ownership, and recorded legal information"
             {...sectionEditProps("report.subject_identification")}
+            className="order-1"
           >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <SummaryField label="Parcel / Account Number" value={displayValue(accountId)} />
               <SummaryField label="County" value={county} />
+              <SummaryField label="Subdivision" value={subdivision} />
+              <div className="hidden lg:block" aria-hidden="true" />
+              <SummaryField label="Zoning" value={primaryZoning} />
+              <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
+              <SummaryField
+                label={ownerParties.length > 1 ? "Owner Names" : "Owner Name"}
+                value={
+                  ownerParties.length ? (
+                    <div className="space-y-1.5">
+                      {ownerParties.map((party, index) => (
+                        <div key={`${party.owner_name}-${index}`}>
+                          {displayValue(party.owner_name)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : ownerName
+                }
+              />
+              <SummaryField
+                label="Ownership Percentage"
+                value={
+                  ownerParties.length ? (
+                    <div className="space-y-1.5">
+                      {ownerParties.map((party, index) => (
+                        <div key={`${party.owner_name}-share-${index}`}>
+                          {formatOwnershipPercent(party.ownership_pct)}
+                        </div>
+                      ))}
+                    </div>
+                  ) : "Share not reported"
+                }
+              />
+              <SummaryField
+                label="Owner Mailing Address"
+                value={ownerMailing}
+                className="sm:col-span-2 lg:col-span-4"
+              />
+              <SummaryField
+                label="Legal Description"
+                value={<span className="whitespace-pre-line">{legalDescription}</span>}
+                className="sm:col-span-2 lg:col-span-3"
+              />
               <SummaryField
                 label="Census Tract"
                 value={
@@ -1839,47 +1884,6 @@ function AddressHero({
                     ) : null}
                   </div>
                 }
-              />
-              <SummaryField label="Subdivision" value={subdivision} />
-              <SummaryField label="Zoning" value={primaryZoning} />
-              <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
-              <SummaryField
-                label={ownerParties.length > 1 ? "Owner Names" : "Owner Name"}
-                value={
-                  ownerParties.length ? (
-                    <div className="space-y-1.5">
-                      {ownerParties.map((party, index) => (
-                        <div key={`${party.owner_name}-${index}`}>
-                          {displayValue(party.owner_name)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : ownerName
-                }
-              />
-              <SummaryField
-                label="Ownership Percentage"
-                value={
-                  ownerParties.length ? (
-                    <div className="space-y-1.5">
-                      {ownerParties.map((party, index) => (
-                        <div key={`${party.owner_name}-share-${index}`}>
-                          {formatOwnershipPercent(party.ownership_pct)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : "Share not reported"
-                }
-              />
-              <SummaryField
-                label="Owner Mailing Address"
-                value={ownerMailing}
-                className="sm:col-span-2"
-              />
-              <SummaryField
-                label="Legal Description"
-                value={<span className="whitespace-pre-line">{legalDescription}</span>}
-                className="sm:col-span-2 lg:col-span-4"
               />
             </div>
 
@@ -1984,6 +1988,7 @@ function AddressHero({
             manuallyVerified={Boolean(activeAssignmentFile || detail?.report_manual_values?.["report.assignment_details"])}
             inherited={assignmentFromPrevious}
             compact
+            className="order-4"
           >
             <div className="mb-3 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 md:grid-cols-2">
               <label className="block">
@@ -2107,7 +2112,7 @@ function AddressHero({
             </div>
           </SummarySection>
 
-          <div className="grid grid-cols-1 gap-5">
+          <div className="order-3 grid grid-cols-1 gap-5">
             <SummarySection
               title="Listings, Contracts, and Sales History"
               subtitle="MLS listing activity, contracts, closed sales, and CAD deed-transfer records"
@@ -2115,26 +2120,34 @@ function AddressHero({
             >
               {propertyActivityHistory.length ? (
                 <div className="overflow-x-auto">
-                  <table className="table table-sm w-full">
-                    <thead>
-                      <tr>
-                        <th>Activity</th>
-                        <th>Date</th>
-                        <th>MLS</th>
-                        <th>Status / Source</th>
-                        <th className="text-right">List Price</th>
-                        <th className="text-right">Sale Price</th>
-                        <th className="text-right">DOM</th>
-                        <th>Financing / Concessions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {propertyActivityHistory.slice(0, 20).map((event, index) => (
-                        <tr
-                          key={event.source_record_id || event.sale_id ||
-                            `${event.record_type}-${event.activity_date}-${index}`}
-                        >
-                          <td>
+                  <div className="min-w-[1120px]">
+                    <div
+                      className="grid items-end gap-x-4 border-b border-slate-300 px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
+                      style={{
+                        gridTemplateColumns:
+                          "minmax(100px,.9fr) minmax(100px,.8fr) minmax(70px,.6fr) minmax(160px,1.3fr) minmax(110px,.9fr) minmax(110px,.9fr) minmax(70px,.5fr) minmax(190px,1.5fr)",
+                      }}
+                    >
+                      <div>Activity</div>
+                      <div>Date</div>
+                      <div>MLS</div>
+                      <div>Status / Source</div>
+                      <div className="text-right">List Price</div>
+                      <div className="text-right">Sale Price</div>
+                      <div className="text-right">DOM</div>
+                      <div>Financing / Concessions</div>
+                    </div>
+                    {propertyActivityHistory.slice(0, 20).map((event, index) => (
+                      <div
+                        key={event.source_record_id || event.sale_id ||
+                          `${event.record_type}-${event.activity_date}-${index}`}
+                        className="grid items-start gap-x-4 border-b border-slate-200 px-1 py-2.5 text-sm last:border-b-0"
+                        style={{
+                          gridTemplateColumns:
+                            "minmax(100px,.9fr) minmax(100px,.8fr) minmax(70px,.6fr) minmax(160px,1.3fr) minmax(110px,.9fr) minmax(110px,.9fr) minmax(70px,.5fr) minmax(190px,1.5fr)",
+                        }}
+                      >
+                          <div>
                             <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${activityTypeClass(event.record_type)}`}>
                               {activityTypeLabel(event.record_type)}
                             </span>
@@ -2146,13 +2159,13 @@ function AddressHero({
                                 !
                               </span>
                             ) : null}
-                          </td>
-                          <td className="whitespace-nowrap">
+                          </div>
+                          <div className="whitespace-nowrap">
                             {formatDate(event.activity_date || event.closing_date || event.listing_date)}
-                          </td>
-                          <td>{displayValue(event.listing_id, "—")}</td>
-                          <td>
-                            <div className="min-w-32">
+                          </div>
+                          <div>{displayValue(event.listing_id, "—")}</div>
+                          <div>
+                            <div>
                               <div className="font-medium text-slate-800">
                                 {displayValue(event.mls_status, activityTypeLabel(event.record_type))}
                               </div>
@@ -2160,18 +2173,18 @@ function AddressHero({
                                 {displayValue(event.source, "Source not reported")}
                               </div>
                             </div>
-                          </td>
-                          <td className="whitespace-nowrap text-right">
+                          </div>
+                          <div className="whitespace-nowrap text-right">
                             {formatMoney(event.list_price)}
-                          </td>
-                          <td className="whitespace-nowrap text-right">
+                          </div>
+                          <div className="whitespace-nowrap text-right">
                             {formatMoney(event.sale_price)}
-                          </td>
-                          <td className="text-right">
+                          </div>
+                          <div className="text-right">
                             {displayValue(event.days_on_market, "—")}
-                          </td>
-                          <td>
-                            <div className="min-w-36 text-xs">
+                          </div>
+                          <div>
+                            <div className="text-xs leading-5">
                               <div>
                                 {displayValue(event.buyer_financing, "Financing not reported")}
                               </div>
@@ -2181,11 +2194,10 @@ function AddressHero({
                                 </div>
                               ) : null}
                             </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4">
@@ -2204,6 +2216,7 @@ function AddressHero({
             title="Property Characteristics"
             subtitle="Auto-populated appraisal-district and verified MLS characteristics"
             {...sectionEditProps("report.property_characteristics")}
+            className="order-2"
           >
             <div className="grid grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 lg:grid-cols-5">
               <SummaryField
@@ -2399,6 +2412,7 @@ function AddressHero({
               detail?.report_manual_values?.["report.appraisal_values"] ||
               detail?.report_manual_values?.["report.exemptions"],
             )}
+            className="order-5"
           >
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <SummaryField label="Market Value" value={formatMoney(values?.market_value)} />
@@ -2411,45 +2425,35 @@ function AddressHero({
             </div>
 
             <div className="mt-5 border-t border-slate-200 pt-4">
-              <div className="mb-4 flex flex-wrap items-center gap-3">
-                <span
-                  className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
-                    homestead
-                      ? "bg-emerald-100 text-emerald-800"
-                      : "bg-slate-200 text-slate-700"
-                  }`}
-                >
-                  Homestead: {homestead ? "Yes" : "No"}
-                </span>
-                {exemptJurisdictionCount > 0 ? (
-                  <span className="text-sm text-slate-600">
-                    Exemption recorded in{" "}
-                    <strong className="text-slate-900">{exemptJurisdictionCount}</strong>{" "}
-                    taxing unit{exemptJurisdictionCount === 1 ? "" : "s"}.
-                  </span>
-                ) : null}
+              <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                <SummaryField label="Homestead" value={homestead ? "Yes" : "No"} />
+                <SummaryField
+                  label="Taxing Units with Exemption"
+                  value={new Intl.NumberFormat("en-US").format(exemptJurisdictionCount)}
+                />
               </div>
 
               {exemptionRows.length ? (
-                <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                  <table className="table table-sm w-full">
-                    <thead>
-                      <tr>
-                        <th>Taxing Unit</th>
-                        <th className="text-right">Homestead Exemption</th>
-                        <th className="text-right">Taxable Value</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {exemptionRows.map(({ key, fallbackLabel, row }) => (
-                        <tr key={key}>
-                          <td>{displayValue(row?.taxing_jurisdiction, fallbackLabel)}</td>
-                          <td className="text-right">{formatMoney(row?.homestead_exemption)}</td>
-                          <td className="text-right">{formatMoney(row?.taxable_value)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div>
+                  <div
+                    className="grid gap-x-6 border-b border-slate-300 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
+                    style={{ gridTemplateColumns: "minmax(180px,1.4fr) minmax(160px,1fr) minmax(160px,1fr)" }}
+                  >
+                    <div>Taxing Unit</div>
+                    <div className="text-right">Homestead Exemption</div>
+                    <div className="text-right">Taxable Value</div>
+                  </div>
+                  {exemptionRows.map(({ key, fallbackLabel, row }) => (
+                    <div
+                      key={key}
+                      className="grid gap-x-6 border-b border-slate-200 py-2.5 text-sm last:border-b-0"
+                      style={{ gridTemplateColumns: "minmax(180px,1.4fr) minmax(160px,1fr) minmax(160px,1fr)" }}
+                    >
+                      <div>{displayValue(row?.taxing_jurisdiction, fallbackLabel)}</div>
+                      <div className="text-right">{formatMoney(row?.homestead_exemption)}</div>
+                      <div className="text-right">{formatMoney(row?.taxable_value)}</div>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <p className="text-sm text-slate-600">

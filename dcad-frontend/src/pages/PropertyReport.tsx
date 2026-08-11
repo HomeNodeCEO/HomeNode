@@ -1113,7 +1113,7 @@ function ListingsContractsSalesContent({
                     <div className="font-medium text-slate-800">
                       {displayValue(
                         event.listing_id || event.listing_key || event.source_record_id,
-                        "?",
+                        "—",
                       )}
                     </div>
                     <div className="text-[11px] text-slate-500">
@@ -1352,7 +1352,7 @@ function ListingsContractsSalesContent({
                   <div className="whitespace-nowrap">
                     {formatDate(event.activity_date || event.closing_date || event.listing_date)}
                   </div>
-                  <div>{displayValue(event.listing_id, "?")}</div>
+                  <div>{displayValue(event.listing_id, "—")}</div>
                   <div>
                     <div className="font-medium text-slate-800">
                       {displayValue(event.mls_status, activityTypeLabel(event.record_type))}

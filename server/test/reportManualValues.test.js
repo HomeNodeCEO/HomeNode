@@ -51,3 +51,42 @@ test("assignment details enforce conditional explanations", () => {
     /lender_client_address_too_long/,
   );
 });
+
+test("assignment details allow a purchase contract with seller verification", () => {
+  assert.equal(validateAssignmentDetails({
+    assignment_types: ["purchase_transaction"],
+    subject_under_contract: true,
+    contract_arms_length: true,
+    contract_seller_names: "Pat Example",
+    seller_matches_public_records: true,
+  }), true);
+});
+
+test("assignment details enforce contract E&O safeguards", () => {
+  assert.throws(
+    () => validateAssignmentDetails({
+      assignment_types: ["refinance"],
+      subject_under_contract: true,
+      contract_arms_length: true,
+      seller_matches_public_records: true,
+    }),
+    /contract_requires_purchase_transaction/,
+  );
+  assert.throws(
+    () => validateAssignmentDetails({
+      assignment_types: ["purchase_transaction"],
+      subject_under_contract: true,
+      contract_arms_length: true,
+    }),
+    /contract_requires_seller_match_selection/,
+  );
+  assert.throws(
+    () => validateAssignmentDetails({
+      assignment_types: ["purchase_transaction"],
+      subject_under_contract: true,
+      contract_arms_length: true,
+      seller_matches_public_records: false,
+    }),
+    /seller_mismatch_requires_explanation/,
+  );
+});

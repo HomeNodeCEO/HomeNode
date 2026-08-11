@@ -1296,6 +1296,19 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
       "invalid_lender_client_address",
       "lender_client_name_too_long",
       "lender_client_address_too_long",
+      "invalid_subject_under_contract",
+      "invalid_contract_arms_length",
+      "invalid_seller_match_value",
+      "invalid_contract_seller_names",
+      "invalid_contract_date",
+      "invalid_seller_mismatch_explanation",
+      "contract_seller_names_too_long",
+      "contract_date_too_long",
+      "seller_mismatch_explanation_too_long",
+      "contract_requires_purchase_transaction",
+      "contract_requires_arms_length_selection",
+      "contract_requires_seller_match_selection",
+      "seller_mismatch_requires_explanation",
     ]);
     if (validationErrors.has(error?.message)) {
       return res.status(400).json({ error: error.message });

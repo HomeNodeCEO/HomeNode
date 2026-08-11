@@ -188,6 +188,17 @@ export interface AssignmentDetailsPayload {
   assignment_explanation?: string;
   lender_client_name?: string;
   lender_client_address?: string;
+  subject_under_contract?: boolean;
+  contract_arms_length?: boolean | null;
+  contract_seller_names?: string;
+  contract_price?: string | number;
+  contract_date?: string;
+  loan_amount?: string | number;
+  down_payment?: string | number;
+  earnest_money?: string | number;
+  seller_concessions?: string | number;
+  seller_matches_public_records?: boolean | null;
+  seller_mismatch_explanation?: string;
 }
 
 export interface PropertyActivityHistoryRow {

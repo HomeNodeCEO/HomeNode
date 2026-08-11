@@ -223,6 +223,14 @@ const ASSIGNMENT_TYPE_OPTIONS = [
   ["other", "Other"],
 ] as const;
 
+const CONTRACT_AMOUNT_FIELDS = [
+  ["contract_price", "Contract Price"],
+  ["loan_amount", "Loan Amount"],
+  ["down_payment", "Down Payment"],
+  ["earnest_money", "Earnest Money"],
+  ["seller_concessions", "Seller Concessions"],
+] as const;
+
 function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails {
   return {
     pud: Boolean(value?.pud),
@@ -235,6 +243,22 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     assignment_explanation: value?.assignment_explanation || "",
     lender_client_name: value?.lender_client_name || "",
     lender_client_address: value?.lender_client_address || "",
+    subject_under_contract: Boolean(value?.subject_under_contract),
+    contract_arms_length: typeof value?.contract_arms_length === "boolean"
+      ? value.contract_arms_length
+      : true,
+    contract_seller_names: value?.contract_seller_names || "",
+    contract_price: value?.contract_price || "",
+    contract_date: value?.contract_date || "",
+    loan_amount: value?.loan_amount || "",
+    down_payment: value?.down_payment || "",
+    earnest_money: value?.earnest_money || "",
+    seller_concessions: value?.seller_concessions || "",
+    seller_matches_public_records:
+      typeof value?.seller_matches_public_records === "boolean"
+        ? value.seller_matches_public_records
+        : null,
+    seller_mismatch_explanation: value?.seller_mismatch_explanation || "",
   };
 }
 
@@ -266,6 +290,25 @@ function assignmentValidationErrors(assignment: AssignmentDetails): string[] {
   ) {
     errors.push("Explain the Other assignment type.");
   }
+  if (assignment.subject_under_contract && !assignmentTypes.includes("purchase_transaction")) {
+    errors.push("Subject Under Contract requires Purchase Transaction in Assignment Details.");
+  }
+  if (assignment.subject_under_contract && typeof assignment.contract_arms_length !== "boolean") {
+    errors.push("Select Yes or No for Arms Length.");
+  }
+  if (
+    assignment.subject_under_contract &&
+    typeof assignment.seller_matches_public_records !== "boolean"
+  ) {
+    errors.push("Select Yes or No for whether the seller matches public records.");
+  }
+  if (
+    assignment.subject_under_contract &&
+    assignment.seller_matches_public_records === false &&
+    !String(assignment.seller_mismatch_explanation || "").trim()
+  ) {
+    errors.push("Explain the difference between the contract seller and public records.");
+  }
   return errors;
 }
 
@@ -273,13 +316,17 @@ function CheckboxChoice({
   checked,
   label,
   onChange,
+  disabled = false,
 }: {
   checked: boolean;
   label: string;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
+    <label className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
+      disabled ? "cursor-not-allowed opacity-55" : "cursor-pointer"
+    } ${
       checked
         ? "border-blue-400 bg-blue-50 text-blue-900"
         : "border-slate-200 bg-white text-slate-700"
@@ -288,6 +335,7 @@ function CheckboxChoice({
         type="checkbox"
         className="checkbox checkbox-sm checkbox-primary"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       {label}
@@ -422,6 +470,412 @@ function activityTypeClass(value: unknown): string {
     case "listing": return "bg-blue-100 text-blue-800";
     default: return "bg-slate-200 text-slate-700";
   }
+}
+
+function listingTimelineRows(events: DcadSaleHistoryRow[]): DcadSaleHistoryRow[] {
+  const rows = new Map<string, DcadSaleHistoryRow>();
+  events.forEach((event, index) => {
+    if (event.record_type === "cad_transfer") return;
+    if (
+      !hasValue(event.listing_id) &&
+      !hasValue(event.listing_key) &&
+      !hasValue(event.source_record_id) &&
+      !["listing", "contract", "closed_sale"].includes(String(event.record_type || ""))
+    ) return;
+    const key = String(
+      event.listing_id || event.listing_key || event.source_record_id ||
+      `${event.source || "source"}-${event.closing_date || event.listing_date || index}`,
+    );
+    const current = rows.get(key) || {};
+    const merged = { ...current } as DcadSaleHistoryRow;
+    Object.entries(event).forEach(([field, value]) => {
+      if (hasValue(value)) {
+        (merged as Record<string, unknown>)[field] = value;
+      }
+    });
+    rows.set(key, merged);
+  });
+  return [...rows.values()].sort((left, right) => {
+    const leftDate = Date.parse(String(left.closing_date || left.contract_date || left.listing_date || ""));
+    const rightDate = Date.parse(String(right.closing_date || right.contract_date || right.listing_date || ""));
+    return (Number.isFinite(rightDate) ? rightDate : 0) - (Number.isFinite(leftDate) ? leftDate : 0);
+  });
+}
+
+function normalizedNameTokens(value: unknown): string[] {
+  return [...new Set(
+    String(value || "")
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, " ")
+      .split(/\s+/)
+      .filter((token) => token && !["AND", "THE"].includes(token)),
+  )].sort();
+}
+
+function sellerComparisonSummary(contractSeller: unknown, publicOwner: unknown): {
+  matches: boolean | null;
+  summary: string;
+} {
+  const contractLabel = String(contractSeller || "").trim();
+  const publicLabel = String(publicOwner || "").trim();
+  if (!contractLabel) return { matches: null, summary: "Enter the contract seller name to compare it with CAD ownership." };
+  if (!publicLabel || publicLabel === "Not reported") {
+    return { matches: null, summary: "CAD ownership is unavailable, so the contract seller requires manual review." };
+  }
+  const contractTokens = normalizedNameTokens(contractLabel);
+  const publicTokens = normalizedNameTokens(publicLabel);
+  const matches =
+    contractTokens.length > 0 &&
+    contractTokens.length === publicTokens.length &&
+    contractTokens.every((token, index) => token === publicTokens[index]);
+  return matches
+    ? {
+        matches: true,
+        summary: `The contract seller appears consistent with CAD public records (${publicLabel}).`,
+      }
+    : {
+        matches: false,
+        summary: `The contract lists ${contractLabel}, while CAD public records list ${publicLabel}. Review and explain the difference before completing the assignment.`,
+      };
+}
+
+function ListingsContractsSalesContent({
+  listingRows,
+  salesHistoryRows,
+  assignmentDraft,
+  purchaseTransactionSelected,
+  assignmentErrors,
+  assignmentDirty,
+  assignmentSaveMessage,
+  assignmentSaveDisabled,
+  savingAssignmentFile,
+  contractSellerComparison,
+  onAssignmentChange,
+  onSave,
+}: {
+  listingRows: DcadSaleHistoryRow[];
+  salesHistoryRows: DcadSaleHistoryRow[];
+  assignmentDraft: AssignmentDetails;
+  purchaseTransactionSelected: boolean;
+  assignmentErrors: string[];
+  assignmentDirty: boolean;
+  assignmentSaveMessage: string;
+  assignmentSaveDisabled: boolean;
+  savingAssignmentFile: boolean;
+  contractSellerComparison: ReturnType<typeof sellerComparisonSummary>;
+  onAssignmentChange: <K extends keyof AssignmentDetails>(
+    key: K,
+    value: AssignmentDetails[K],
+  ) => void;
+  onSave: () => void;
+}) {
+  const listingColumns =
+    "minmax(150px,1.2fr) minmax(115px,.85fr) minmax(115px,.85fr) minmax(115px,.85fr) minmax(150px,1.1fr) minmax(130px,1fr)";
+  const salesColumns =
+    "minmax(100px,.9fr) minmax(100px,.8fr) minmax(70px,.6fr) minmax(160px,1.3fr) minmax(110px,.9fr) minmax(110px,.9fr) minmax(70px,.5fr) minmax(190px,1.5fr)";
+
+  return (
+    <>
+      <section>
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold text-slate-900">Listings</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Consolidated MLS listing dates, contract activity, and closing terms.
+          </p>
+        </div>
+        {listingRows.length ? (
+          <div className="overflow-x-auto">
+            <div className="min-w-[900px]">
+              <div
+                className="grid items-end gap-x-4 border-b border-slate-300 px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
+                style={{ gridTemplateColumns: listingColumns }}
+              >
+                <div>MLS / Source #</div>
+                <div>List Date</div>
+                <div>Contract Date</div>
+                <div>Closing Date</div>
+                <div>Financing Type</div>
+                <div>Concessions</div>
+              </div>
+              {listingRows.slice(0, 20).map((event, index) => (
+                <div
+                  key={event.listing_id || event.listing_key || event.source_record_id || index}
+                  className="grid items-start gap-x-4 border-b border-slate-200 px-1 py-2.5 text-sm last:border-b-0"
+                  style={{ gridTemplateColumns: listingColumns }}
+                >
+                  <div>
+                    <div className="font-medium text-slate-800">
+                      {displayValue(
+                        event.listing_id || event.listing_key || event.source_record_id,
+                        "—",
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {displayValue(event.source, "Source not reported")}
+                    </div>
+                  </div>
+                  <div className="whitespace-nowrap">{formatDate(event.listing_date)}</div>
+                  <div className="whitespace-nowrap">{formatDate(event.contract_date)}</div>
+                  <div className="whitespace-nowrap">{formatDate(event.closing_date)}</div>
+                  <div>{displayValue(event.buyer_financing)}</div>
+                  <div>{displayValue(event.concessions)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+            No linked MLS listing records are currently available for this parcel.
+          </div>
+        )}
+      </section>
+
+      <section className="mt-6 border-t border-slate-200 pt-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Contract Analysis</h3>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Assignment-specific contract terms and seller-to-public-record verification.
+            </p>
+          </div>
+          <div className="min-w-[230px]">
+            <CheckboxChoice
+              checked={Boolean(assignmentDraft.subject_under_contract)}
+              label="Subject Under Contract"
+              disabled={!purchaseTransactionSelected}
+              onChange={(checked) => onAssignmentChange("subject_under_contract", checked)}
+            />
+          </div>
+        </div>
+
+        {!purchaseTransactionSelected ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+            Select Purchase Transaction in Assignment Details before marking the subject under contract.
+          </div>
+        ) : null}
+
+        {assignmentDraft.subject_under_contract ? (
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <label className="block lg:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Contract Seller Name(s)
+                </span>
+                <input
+                  type="text"
+                  maxLength={1000}
+                  className="input input-bordered input-sm mt-1 w-full bg-white"
+                  value={assignmentDraft.contract_seller_names || ""}
+                  onChange={(event) => onAssignmentChange("contract_seller_names", event.target.value)}
+                  placeholder="Seller name exactly as shown in the contract"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Contract Date
+                </span>
+                <input
+                  type="date"
+                  className="input input-bordered input-sm mt-1 w-full bg-white"
+                  value={String(assignmentDraft.contract_date || "").slice(0, 10)}
+                  onChange={(event) => onAssignmentChange("contract_date", event.target.value)}
+                />
+              </label>
+              {CONTRACT_AMOUNT_FIELDS.map(([field, label]) => (
+                <label key={field} className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    {label}
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className="input input-bordered input-sm mt-1 w-full bg-white"
+                    value={assignmentDraft[field] ?? ""}
+                    onChange={(event) => onAssignmentChange(field, event.target.value)}
+                    placeholder="Dollar amount"
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
+                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Arms Length
+                </legend>
+                <div className="grid grid-cols-2 gap-2">
+                  <CheckboxChoice
+                    checked={assignmentDraft.contract_arms_length === true}
+                    label="Yes"
+                    onChange={(checked) => onAssignmentChange(
+                      "contract_arms_length",
+                      checked ? true : null,
+                    )}
+                  />
+                  <CheckboxChoice
+                    checked={assignmentDraft.contract_arms_length === false}
+                    label="No"
+                    onChange={(checked) => onAssignmentChange(
+                      "contract_arms_length",
+                      checked ? false : null,
+                    )}
+                  />
+                </div>
+              </fieldset>
+
+              <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
+                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Does Seller Match Public Records?
+                </legend>
+                <div className="grid grid-cols-2 gap-2">
+                  <CheckboxChoice
+                    checked={assignmentDraft.seller_matches_public_records === true}
+                    label="Yes"
+                    onChange={(checked) => onAssignmentChange(
+                      "seller_matches_public_records",
+                      checked ? true : null,
+                    )}
+                  />
+                  <CheckboxChoice
+                    checked={assignmentDraft.seller_matches_public_records === false}
+                    label="No"
+                    onChange={(checked) => onAssignmentChange(
+                      "seller_matches_public_records",
+                      checked ? false : null,
+                    )}
+                  />
+                </div>
+              </fieldset>
+            </div>
+
+            <div className={`rounded-xl border p-3 text-sm ${
+              contractSellerComparison.matches === true
+                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                : contractSellerComparison.matches === false
+                  ? "border-amber-300 bg-amber-50 text-amber-950"
+                  : "border-slate-200 bg-slate-50 text-slate-700"
+            }`}>
+              <div className="text-xs font-semibold uppercase tracking-wide">Seller Comparison</div>
+              <p className="mt-1">{contractSellerComparison.summary}</p>
+            </div>
+
+            {assignmentDraft.seller_matches_public_records === false ? (
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Seller Difference Explanation
+                </span>
+                <textarea
+                  maxLength={3000}
+                  className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                  value={assignmentDraft.seller_mismatch_explanation || ""}
+                  onChange={(event) => onAssignmentChange(
+                    "seller_mismatch_explanation",
+                    event.target.value,
+                  )}
+                  placeholder="Required when the contract seller does not match CAD ownership"
+                />
+              </label>
+            ) : null}
+          </div>
+        ) : (
+          <p className="mt-3 text-sm text-slate-500">
+            Contract terms remain hidden until Subject Under Contract is selected.
+          </p>
+        )}
+
+        {assignmentErrors.length ? (
+          <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+            <ul className="list-disc space-y-1 pl-5">
+              {assignmentErrors.map((error) => <li key={error}>{error}</li>)}
+            </ul>
+          </div>
+        ) : null}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <span className="text-xs text-slate-500">
+            {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
+          </span>
+          <button
+            type="button"
+            onClick={onSave}
+            className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+            disabled={assignmentSaveDisabled}
+          >
+            {savingAssignmentFile ? "Saving..." : "Save Contract Analysis"}
+          </button>
+        </div>
+      </section>
+
+      <section className="mt-6 border-t border-slate-200 pt-5">
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold text-slate-900">Sales History</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Closed MLS sales and CAD deed-transfer records.
+          </p>
+        </div>
+        {salesHistoryRows.length ? (
+          <div className="overflow-x-auto">
+            <div className="min-w-[1120px]">
+              <div
+                className="grid items-end gap-x-4 border-b border-slate-300 px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
+                style={{ gridTemplateColumns: salesColumns }}
+              >
+                <div>Activity</div>
+                <div>Date</div>
+                <div>MLS</div>
+                <div>Status / Source</div>
+                <div className="text-right">List Price</div>
+                <div className="text-right">Sale Price</div>
+                <div className="text-right">DOM</div>
+                <div>Financing / Concessions</div>
+              </div>
+              {salesHistoryRows.slice(0, 20).map((event, index) => (
+                <div
+                  key={event.source_record_id || event.sale_id || `${event.record_type}-${event.activity_date}-${index}`}
+                  className="grid items-start gap-x-4 border-b border-slate-200 px-1 py-2.5 text-sm last:border-b-0"
+                  style={{ gridTemplateColumns: salesColumns }}
+                >
+                  <div>
+                    <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${activityTypeClass(event.record_type)}`}>
+                      {activityTypeLabel(event.record_type)}
+                    </span>
+                    {event.requires_additional_review ? (
+                      <span className="ml-1 text-xs font-semibold text-amber-700" title="Source record needs review">!</span>
+                    ) : null}
+                  </div>
+                  <div className="whitespace-nowrap">
+                    {formatDate(event.activity_date || event.closing_date || event.listing_date)}
+                  </div>
+                  <div>{displayValue(event.listing_id, "—")}</div>
+                  <div>
+                    <div className="font-medium text-slate-800">
+                      {displayValue(event.mls_status, activityTypeLabel(event.record_type))}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {displayValue(event.source, "Source not reported")}
+                    </div>
+                  </div>
+                  <div className="whitespace-nowrap text-right">{formatMoney(event.list_price)}</div>
+                  <div className="whitespace-nowrap text-right">{formatMoney(event.sale_price)}</div>
+                  <div className="text-right">{displayValue(event.days_on_market, "—")}</div>
+                  <div className="text-xs leading-5">
+                    <div>{displayValue(event.buyer_financing, "Financing not reported")}</div>
+                    {hasValue(event.concessions) ? (
+                      <div className="mt-0.5 text-slate-500">Concessions: {displayValue(event.concessions)}</div>
+                    ) : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-sm text-slate-600">
+            No linked closed-sale or CAD deed-transfer records are currently available.
+          </div>
+        )}
+      </section>
+    </>
+  );
 }
 
 function formatReportedBoolean(value: unknown): string {
@@ -1234,6 +1688,23 @@ function AddressHero({
           assignment_explanation: detail?.assignment_details?.assignment_explanation || "",
           lender_client_name: detail?.assignment_details?.lender_client_name || "",
           lender_client_address: detail?.assignment_details?.lender_client_address || "",
+          subject_under_contract: Boolean(detail?.assignment_details?.subject_under_contract),
+          contract_arms_length: typeof detail?.assignment_details?.contract_arms_length === "boolean"
+            ? detail.assignment_details.contract_arms_length
+            : true,
+          contract_seller_names: detail?.assignment_details?.contract_seller_names || "",
+          contract_price: detail?.assignment_details?.contract_price || "",
+          contract_date: detail?.assignment_details?.contract_date || "",
+          loan_amount: detail?.assignment_details?.loan_amount || "",
+          down_payment: detail?.assignment_details?.down_payment || "",
+          earnest_money: detail?.assignment_details?.earnest_money || "",
+          seller_concessions: detail?.assignment_details?.seller_concessions || "",
+          seller_matches_public_records:
+            typeof detail?.assignment_details?.seller_matches_public_records === "boolean"
+              ? detail.assignment_details.seller_matches_public_records
+              : null,
+          seller_mismatch_explanation:
+            detail?.assignment_details?.seller_mismatch_explanation || "",
         };
     }
   };
@@ -1320,6 +1791,18 @@ function AddressHero({
     value: AssignmentDetails[K],
   ) => {
     setAssignmentDraft((current) => ({ ...current, [key]: value }));
+    setAssignmentDirty(true);
+    setAssignmentSaveMessage("");
+  };
+
+  const updateAssignmentTypes = (nextTypes: string[]) => {
+    setAssignmentDraft((current) => ({
+      ...current,
+      assignment_types: nextTypes,
+      subject_under_contract: nextTypes.includes("purchase_transaction")
+        ? current.subject_under_contract
+        : false,
+    }));
     setAssignmentDirty(true);
     setAssignmentSaveMessage("");
   };
@@ -1449,7 +1932,18 @@ function AddressHero({
   ).length;
   const homestead = detail?.homestead_yes || exemptJurisdictionCount > 0;
   const assignmentTypes = assignmentDraft.assignment_types || [];
+  const purchaseTransactionSelected = assignmentTypes.includes("purchase_transaction");
   const assignmentErrors = assignmentValidationErrors(assignmentDraft);
+  const listingRows = listingTimelineRows(propertyActivityHistory);
+  const salesHistoryRows = propertyActivityHistory.filter((event) => {
+    const recordType = String(event.record_type || "");
+    return ["closed_sale", "cad_transfer"].includes(recordType) ||
+      (!recordType && (hasValue(event.sale_price) || hasValue(event.closing_date) || hasValue(event.activity_date)));
+  });
+  const contractSellerComparison = sellerComparisonSummary(
+    assignmentDraft.contract_seller_names,
+    ownerName,
+  );
   const assignmentFromPrevious = Boolean(
     !activeAssignmentFile && (inheritedAssignmentFile || inheritedLegacyAssignment),
   );
@@ -2062,14 +2556,11 @@ function AddressHero({
                       key={value}
                       checked={assignmentTypes.includes(value)}
                       label={label}
-                      onChange={(checked) =>
-                        updateAssignment(
-                          "assignment_types",
-                          checked
-                            ? [...new Set([...assignmentTypes, value])]
-                            : assignmentTypes.filter((item) => item !== value),
-                        )
-                      }
+                      onChange={(checked) => updateAssignmentTypes(
+                        checked
+                          ? [...new Set([...assignmentTypes, value])]
+                          : assignmentTypes.filter((item) => item !== value),
+                      )}
                     />
                   ))}
                 </div>
@@ -2118,97 +2609,20 @@ function AddressHero({
               subtitle="MLS listing activity, contracts, closed sales, and CAD deed-transfer records"
               {...sectionEditProps("report.sales_history")}
             >
-              {propertyActivityHistory.length ? (
-                <div className="overflow-x-auto">
-                  <div className="min-w-[1120px]">
-                    <div
-                      className="grid items-end gap-x-4 border-b border-slate-300 px-1 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
-                      style={{
-                        gridTemplateColumns:
-                          "minmax(100px,.9fr) minmax(100px,.8fr) minmax(70px,.6fr) minmax(160px,1.3fr) minmax(110px,.9fr) minmax(110px,.9fr) minmax(70px,.5fr) minmax(190px,1.5fr)",
-                      }}
-                    >
-                      <div>Activity</div>
-                      <div>Date</div>
-                      <div>MLS</div>
-                      <div>Status / Source</div>
-                      <div className="text-right">List Price</div>
-                      <div className="text-right">Sale Price</div>
-                      <div className="text-right">DOM</div>
-                      <div>Financing / Concessions</div>
-                    </div>
-                    {propertyActivityHistory.slice(0, 20).map((event, index) => (
-                      <div
-                        key={event.source_record_id || event.sale_id ||
-                          `${event.record_type}-${event.activity_date}-${index}`}
-                        className="grid items-start gap-x-4 border-b border-slate-200 px-1 py-2.5 text-sm last:border-b-0"
-                        style={{
-                          gridTemplateColumns:
-                            "minmax(100px,.9fr) minmax(100px,.8fr) minmax(70px,.6fr) minmax(160px,1.3fr) minmax(110px,.9fr) minmax(110px,.9fr) minmax(70px,.5fr) minmax(190px,1.5fr)",
-                        }}
-                      >
-                          <div>
-                            <span className={`inline-flex whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold ${activityTypeClass(event.record_type)}`}>
-                              {activityTypeLabel(event.record_type)}
-                            </span>
-                            {event.requires_additional_review ? (
-                              <span
-                                className="ml-1 text-xs font-semibold text-amber-700"
-                                title="Source record needs review"
-                              >
-                                !
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="whitespace-nowrap">
-                            {formatDate(event.activity_date || event.closing_date || event.listing_date)}
-                          </div>
-                          <div>{displayValue(event.listing_id, "—")}</div>
-                          <div>
-                            <div>
-                              <div className="font-medium text-slate-800">
-                                {displayValue(event.mls_status, activityTypeLabel(event.record_type))}
-                              </div>
-                              <div className="text-[11px] text-slate-500">
-                                {displayValue(event.source, "Source not reported")}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="whitespace-nowrap text-right">
-                            {formatMoney(event.list_price)}
-                          </div>
-                          <div className="whitespace-nowrap text-right">
-                            {formatMoney(event.sale_price)}
-                          </div>
-                          <div className="text-right">
-                            {displayValue(event.days_on_market, "—")}
-                          </div>
-                          <div>
-                            <div className="text-xs leading-5">
-                              <div>
-                                {displayValue(event.buyer_financing, "Financing not reported")}
-                              </div>
-                              {hasValue(event.concessions) ? (
-                                <div className="mt-0.5 text-slate-500">
-                                  Concessions: {displayValue(event.concessions)}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-xl border border-dashed border-slate-300 bg-white p-4">
-                  <div className="text-sm font-semibold text-slate-800">
-                    No linked listing, contract, or sale records
-                  </div>
-                  <p className="mt-1 text-sm text-slate-600">
-                    No MLS or CAD deed-transfer activity is currently linked to this parcel.
-                  </p>
-                </div>
-              )}
+              <ListingsContractsSalesContent
+                listingRows={listingRows}
+                salesHistoryRows={salesHistoryRows}
+                assignmentDraft={assignmentDraft}
+                purchaseTransactionSelected={purchaseTransactionSelected}
+                assignmentErrors={assignmentErrors}
+                assignmentDirty={assignmentDirty}
+                assignmentSaveMessage={assignmentSaveMessage}
+                assignmentSaveDisabled={assignmentSaveDisabled}
+                savingAssignmentFile={savingAssignmentFile}
+                contractSellerComparison={contractSellerComparison}
+                onAssignmentChange={updateAssignment}
+                onSave={() => void saveAssignmentDetails()}
+              />
             </SummarySection>
           </div>
 

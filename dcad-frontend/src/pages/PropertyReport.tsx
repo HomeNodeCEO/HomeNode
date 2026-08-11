@@ -370,6 +370,9 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
       value?.neighborhood_boundary_streets_retrieved_at || "",
     neighborhood_boundary_confirmed: Boolean(value?.neighborhood_boundary_confirmed),
     neighborhood_boundary_confirmed_at: value?.neighborhood_boundary_confirmed_at || "",
+    lender_revision_count: Math.max(0, Number(value?.lender_revision_count) || 0),
+    lender_revision_last_requested_at: value?.lender_revision_last_requested_at || "",
+    lender_revision_note: value?.lender_revision_note || "",
   };
 }
 
@@ -1410,7 +1413,6 @@ function SummarySection({
   onEdit,
   actions,
   manuallyVerified = false,
-  inherited = false,
   compact = false,
   className = "",
 }: {
@@ -1420,14 +1422,13 @@ function SummarySection({
   onEdit?: () => void;
   actions?: ReactNode;
   manuallyVerified?: boolean;
-  inherited?: boolean;
   compact?: boolean;
   className?: string;
 }) {
   return (
-    <section className={`rounded-2xl border ${
-      inherited ? "border-amber-300 bg-amber-50/80" : "border-slate-200 bg-slate-50/70"
-    } ${compact ? "p-3 sm:p-4" : "p-4 sm:p-5"} ${className}`}>
+    <section className={`rounded-2xl border border-slate-200 bg-slate-50/70 ${
+      compact ? "p-3 sm:p-4" : "p-4 sm:p-5"
+    } ${className}`}>
       <div className={`${compact ? "mb-3" : "mb-4"} flex items-start justify-between gap-3`}>
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1437,11 +1438,6 @@ function SummarySection({
             {manuallyVerified ? (
               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-blue-800">
                 Manually verified
-              </span>
-            ) : null}
-            {inherited ? (
-              <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-amber-950">
-                From Previous Assignment
               </span>
             ) : null}
           </div>
@@ -1945,7 +1941,7 @@ function AddressHero({
   const [editingSection, setEditingSection] = useState<EditableReportSection | null>(null);
   const [savingSection, setSavingSection] = useState(false);
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDetails>(() =>
-    assignmentDraftFromDetail(detail?.assignment_details),
+    assignmentDraftFromDetail(),
   );
   const [assignmentDirty, setAssignmentDirty] = useState(false);
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
@@ -1954,8 +1950,6 @@ function AddressHero({
   const [assignmentFilesLoaded, setAssignmentFilesLoaded] = useState(false);
   const [assignmentFilesError, setAssignmentFilesError] = useState("");
   const [activeAssignmentFile, setActiveAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
-  const [inheritedAssignmentFile, setInheritedAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
-  const [inheritedLegacyAssignment, setInheritedLegacyAssignment] = useState(false);
   const [assignmentFileNumber, setAssignmentFileNumber] = useState("");
   const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
   const [censusLookupLoading, setCensusLookupLoading] = useState(false);
@@ -1993,7 +1987,7 @@ function AddressHero({
 
   useEffect(() => {
     let cancelled = false;
-    const fallback = assignmentDraftFromDetail(detail?.assignment_details);
+    const fallback = assignmentDraftFromDetail();
     if (unemploymentHydrationAccount.current !== (accountId || "")) {
       unemploymentHydrationAccount.current = accountId || "";
       unemploymentLookupSucceeded.current = false;
@@ -2031,8 +2025,6 @@ function AddressHero({
     setAssignmentFiles([]);
     setAssignmentFilesLoaded(false);
     setActiveAssignmentFile(null);
-    setInheritedAssignmentFile(null);
-    setInheritedLegacyAssignment(false);
     setAssignmentFileNumber("");
     setAssignmentFilesError("");
     setCensusLookupMessage("");
@@ -2054,10 +2046,8 @@ function AddressHero({
         setAssignmentFiles(response.files || []);
         if (response.latest_file) {
           hydrateAssignmentDraft(response.latest_file.assignment_details);
-          setInheritedAssignmentFile(response.latest_file);
-        } else if (response.legacy_assignment_details) {
-          hydrateAssignmentDraft(response.legacy_assignment_details);
-          setInheritedLegacyAssignment(true);
+          setActiveAssignmentFile(response.latest_file);
+          setAssignmentFileNumber(response.latest_file.file_number);
         }
       })
       .catch((error: unknown) => {
@@ -2746,15 +2736,13 @@ function AddressHero({
         {
           file_number: fileNumber,
           assignment_details: cloneEditorValue(assignmentDraft),
-          inherited_from_file_id: inheritedAssignmentFile?.id || null,
+          inherited_from_file_id: null,
         },
         editorKey,
       );
       const created = response.assignment_file;
       setAssignmentFiles((current) => [created, ...current.filter((file) => file.id !== created.id)]);
       setActiveAssignmentFile(created);
-      setInheritedAssignmentFile(null);
-      setInheritedLegacyAssignment(false);
       setAssignmentFileNumber(created.file_number);
       setAssignmentDirty(false);
       setAssignmentSaveMessage(`New appraisal file ${created.file_number} saved.`);
@@ -2792,18 +2780,68 @@ function AddressHero({
     await saveAssignmentDetails();
   };
 
-  const inheritAssignmentFile = (source: AppraisalAssignmentFile) => {
-    setAssignmentDraft({
-      ...assignmentDraftFromDetail(source.assignment_details),
-      neighborhood_boundary_confirmed: false,
-      neighborhood_boundary_confirmed_at: "",
-    });
-    setInheritedAssignmentFile(source);
-    setInheritedLegacyAssignment(false);
+  const startNewAssignmentFile = () => {
+    setAssignmentDraft(assignmentDraftFromDetail());
     setActiveAssignmentFile(null);
     setAssignmentFileNumber("");
     setAssignmentDirty(false);
-    setAssignmentSaveMessage(`Values copied from file ${source.file_number}. Enter a new file number to save.`);
+    setAssignmentSaveMessage("Enter a unique file number to begin a fresh appraisal assignment.");
+  };
+
+  const recordLenderRevisionRequest = async () => {
+    if (!accountId || !activeAssignmentFile) return;
+    const note = window.prompt(
+      "Record a lender/client-requested appraisal revision. Add an optional note, or choose Cancel.",
+      "",
+    );
+    if (note === null) return;
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    const nextRevisionCount = Math.max(
+      0,
+      Number(assignmentDraft.lender_revision_count) || 0,
+    ) + 1;
+    const updatedDetails: AssignmentDetails = {
+      ...cloneEditorValue(assignmentDraft),
+      lender_revision_count: nextRevisionCount,
+      lender_revision_last_requested_at: new Date().toISOString(),
+      lender_revision_note: note.trim(),
+    };
+    setSavingAssignmentFile(true);
+    try {
+      const response = await updateAssignmentFile(
+        accountId,
+        activeAssignmentFile.id,
+        {
+          assignment_details: updatedDetails,
+          expected_revision: activeAssignmentFile.revision,
+        },
+        editorKey,
+      );
+      setAssignmentDraft(assignmentDraftFromDetail(response.assignment_file.assignment_details));
+      setActiveAssignmentFile(response.assignment_file);
+      setAssignmentFiles((current) => current.map((file) =>
+        file.id === response.assignment_file.id ? response.assignment_file : file
+      ));
+      setAssignmentDirty(false);
+      setAssignmentSaveMessage(
+        `Recorded lender/client revision request ${nextRevisionCount} for file ${response.assignment_file.file_number}.`,
+      );
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "The lender/client revision request could not be recorded.";
+      if (/401|invalid_editor_key/i.test(message)) {
+        sessionStorage.removeItem("homenode-editor-key");
+      }
+      setAssignmentSaveMessage(
+        message === "assignment_file_revision_conflict"
+          ? "This file changed elsewhere. Reload the report before recording the revision request."
+          : message,
+      );
+    } finally {
+      setSavingAssignmentFile(false);
+    }
   };
 
   const editSection = (key: ReportManualSectionKey) => {
@@ -2853,14 +2891,15 @@ function AddressHero({
     assignmentDraft.contract_seller_names,
     ownerName,
   );
-  const assignmentFromPrevious = Boolean(
-    !activeAssignmentFile && (inheritedAssignmentFile || inheritedLegacyAssignment),
-  );
   const assignmentSaveDisabled = Boolean(
     assignmentFilesLoading || savingAssignmentFile || !assignmentDirty,
   );
+  const priorAssignmentFiles = activeAssignmentFile
+    ? assignmentFiles.filter((file) => file.id !== activeAssignmentFile.id)
+    : assignmentFiles;
+  const hasPriorAssignmentFiles = priorAssignmentFiles.length > 0;
   const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
-  const appraisalReportAssignmentFile = activeAssignmentFile || inheritedAssignmentFile;
+  const appraisalReportAssignmentFile = activeAssignmentFile;
   const relatedParcelsToShow = (relatedParcels?.parcels || []).filter(
     (parcel) => parcel.is_subject || parcel.materially_different,
   );
@@ -2896,10 +2935,6 @@ function AddressHero({
             <span className="mb-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
               Active file {activeAssignmentFile.file_number}
             </span>
-          ) : assignmentFromPrevious ? (
-            <span className="mb-1 rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-950">
-              From Previous Assignment
-            </span>
           ) : null}
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
             <label className="block min-w-0 flex-1 xl:w-64 xl:flex-none">
@@ -2931,7 +2966,7 @@ function AddressHero({
               <button
                 type="button"
                 className="btn btn-outline btn-sm normal-case rounded-lg border-slate-300 bg-white shadow-sm"
-                onClick={() => inheritAssignmentFile(activeAssignmentFile)}
+                onClick={startNewAssignmentFile}
                 disabled={savingAssignmentFile}
               >
                 Start Another File
@@ -2952,38 +2987,83 @@ function AddressHero({
           </div>
         </div>
 
-        <details className="mt-3 rounded-xl border border-slate-200 bg-white px-3 py-2">
-          <summary className="cursor-pointer text-xs font-semibold text-slate-700">
+        <details className={`mt-3 rounded-xl border px-3 py-2 ${
+          hasPriorAssignmentFiles
+            ? "border-red-300 bg-red-50"
+            : "border-slate-200 bg-white"
+        }`}>
+          <summary className={`cursor-pointer text-xs font-semibold ${
+            hasPriorAssignmentFiles ? "text-red-800" : "text-slate-700"
+          }`}>
             Assignment Log ({assignmentFiles.length})
+            {hasPriorAssignmentFiles ? " - prior appraisal service found" : ""}
           </summary>
-          <div className="mt-2 max-h-52 space-y-2 overflow-y-auto border-t border-slate-100 pt-2">
+          <div className={`mt-2 max-h-52 space-y-2 overflow-y-auto border-t pt-2 ${
+            hasPriorAssignmentFiles ? "border-red-200" : "border-slate-100"
+          }`}>
             {assignmentFilesLoading ? (
               <p className="text-xs text-slate-500">Loading prior assignment files...</p>
             ) : assignmentFilesError ? (
               <p className="text-xs text-rose-700">{assignmentFilesError}</p>
             ) : assignmentFiles.length ? (
-              assignmentFiles.map((file) => (
-                <div
-                  key={file.id}
-                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0 text-xs text-slate-600">
-                    <span className="font-semibold text-slate-900">{file.file_number}</span>
-                    <span className="mx-2 text-slate-300">|</span>
-                    Saved {formatDate(file.created_at)}
-                    <span className="mx-2 text-slate-300">|</span>
-                    Revision {file.revision}
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-xs normal-case text-blue-700"
-                    onClick={() => inheritAssignmentFile(file)}
-                    disabled={savingAssignmentFile}
+              assignmentFiles.map((file) => {
+                const lenderRevisionCount = Math.max(
+                  0,
+                  Number(file.assignment_details.lender_revision_count) || 0,
+                );
+                const isActiveFile = file.id === activeAssignmentFile?.id;
+                return (
+                  <div
+                    key={file.id}
+                    className={`flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between ${
+                      isActiveFile
+                        ? "border-emerald-200 bg-emerald-50"
+                        : "border-slate-200 bg-white"
+                    }`}
                   >
-                    Use for New File
-                  </button>
-                </div>
-              ))
+                    <div className="min-w-0 text-xs text-slate-600">
+                      <span className="font-semibold text-slate-900">{file.file_number}</span>
+                      {isActiveFile ? (
+                        <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">
+                          Current
+                        </span>
+                      ) : null}
+                      <span className="mx-2 text-slate-300">|</span>
+                      Created {formatDate(file.created_at)}
+                      <span className="mx-2 text-slate-300">|</span>
+                      {lenderRevisionCount} lender/client-requested {lenderRevisionCount === 1 ? "revision" : "revisions"}
+                      {file.assignment_details.lender_revision_last_requested_at ? (
+                        <span className="block pt-1 text-[11px] text-slate-500">
+                          Last requested {formatDate(file.assignment_details.lender_revision_last_requested_at)}
+                          {file.assignment_details.lender_revision_note
+                            ? ` - ${file.assignment_details.lender_revision_note}`
+                            : ""}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <a
+                        className="btn btn-sm normal-case"
+                        href={`/AppraisalReport?propertyId=${encodeURIComponent(accountId || "")}&assignmentFileId=${encodeURIComponent(String(file.id))}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View File
+                      </a>
+                      {isActiveFile ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm normal-case"
+                          onClick={() => void recordLenderRevisionRequest()}
+                          disabled={savingAssignmentFile}
+                        >
+                          Record Revision Request
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
               <p className="text-xs text-slate-500">
                 No appraisal files have been saved for this property yet.
@@ -3068,18 +3148,9 @@ function AddressHero({
             </div>
           </div>
 
-          <div className={`rounded-xl border p-3 text-center ${
-            assignmentFromPrevious
-              ? "border-amber-300 bg-amber-50"
-              : "border-slate-200 bg-slate-50/80"
-          }`}>
+          <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 text-center">
             <div className="flex flex-col items-center justify-center gap-2">
               <h2 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Prepared For</h2>
-              {assignmentFromPrevious ? (
-                <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-950">
-                  From Previous Assignment
-                </span>
-              ) : null}
             </div>
             <input
               type="text"
@@ -3365,21 +3436,10 @@ function AddressHero({
               />
             </div>
 
-            <div className={`mt-5 rounded-xl border p-4 ${
-              assignmentFromPrevious
-                ? "border-amber-300 bg-amber-50"
-                : "border-slate-200 bg-white/70"
-            }`}>
+            <div className="mt-5 rounded-xl border border-slate-200 bg-white/70 p-4">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-semibold text-slate-900">Occupancy</h3>
-                    {assignmentFromPrevious ? (
-                      <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-950">
-                        From Previous Assignment
-                      </span>
-                    ) : null}
-                  </div>
+                  <h3 className="text-sm font-semibold text-slate-900">Occupancy</h3>
                   <p className="mt-1 text-xs text-slate-500">Assignment-specific occupancy of the subject.</p>
                 </div>
                 <button
@@ -3419,20 +3479,9 @@ function AddressHero({
               ) : null}
             </div>
 
-            <div className={`mt-5 rounded-xl border p-4 ${
-              assignmentFromPrevious
-                ? "border-amber-300 bg-amber-50"
-                : "border-slate-200 bg-white/70"
-            }`}>
+            <div className="mt-5 rounded-xl border border-slate-200 bg-white/70 p-4">
               <div className="mb-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
-                  {assignmentFromPrevious ? (
-                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-950">
-                      From Previous Assignment
-                    </span>
-                  ) : null}
-                </div>
+                <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
                 <p className="mt-1 text-xs text-slate-500">
                   {activeAssignmentFile
                     ? `Saving to appraisal file ${activeAssignmentFile.file_number}.`
@@ -3518,7 +3567,6 @@ function AddressHero({
               ? `Saving to appraisal file ${activeAssignmentFile.file_number}`
               : "Choose a file number above to preserve these values as a new assignment"}
             manuallyVerified={Boolean(activeAssignmentFile || detail?.report_manual_values?.["report.assignment_details"])}
-            inherited={assignmentFromPrevious}
             compact
             className="order-5"
           >
@@ -3779,7 +3827,6 @@ function AddressHero({
             title="Neighborhood Characteristics"
             subtitle="Present land use, neighborhood factors, market ranges, and assignment boundary review"
             manuallyVerified={Boolean(activeAssignmentFile)}
-            inherited={assignmentFromPrevious}
             className="order-3"
           >
             <NeighborhoodCharacteristicsContent

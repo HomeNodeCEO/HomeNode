@@ -1329,7 +1329,7 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
   }
 });
 
-/** Save additional work to the active file while retaining its audit revisions. */
+/** Save additional work while retaining internal audit snapshots for conflict recovery. */
 app.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {

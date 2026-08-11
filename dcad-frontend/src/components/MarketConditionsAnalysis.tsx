@@ -2051,6 +2051,7 @@ export default function MarketConditionsAnalysis({
                 type="button"
                 aria-expanded={studyResultsExpanded}
                 aria-controls="market-study-comparison-results"
+                aria-label={studyResultsExpanded ? 'Collapse market study results' : 'Expand market study results'}
                 onClick={() => setStudyResultsExpanded((current) => !current)}
                 className="flex w-full items-center justify-between gap-4 px-4 py-4 text-left hover:bg-slate-50 md:px-5"
               >
@@ -2063,7 +2064,7 @@ export default function MarketConditionsAnalysis({
                     {analysisResult.analyses.length === 1 ? 'study' : 'studies'} available for review.
                   </p>
                 </div>
-                <span className="shrink-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
+                <span className="shrink-0 rounded-lg border border-slate-950 bg-slate-950 px-3 py-2 text-xs font-semibold text-white">
                   {studyResultsExpanded ? 'Collapse results' : 'Expand results'}
                 </span>
               </button>

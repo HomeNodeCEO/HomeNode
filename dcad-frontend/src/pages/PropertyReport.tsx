@@ -747,7 +747,7 @@ function NeighborhoodCharacteristicsContent({
             Total {landUseTotal === null ? "0" : landUseTotal.toFixed(1)}%
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-2 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
           {NEIGHBORHOOD_LAND_USE_FIELDS.map(([field, label]) => (
             <label key={field} className="block">
               <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">{label}</span>
@@ -769,7 +769,7 @@ function NeighborhoodCharacteristicsContent({
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">
-        <div className="grid grid-cols-2 gap-2 xl:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
           {NEIGHBORHOOD_CHOICE_GROUPS.map((group) => (
             <fieldset key={group.field} className="rounded-lg border border-slate-200 bg-white p-2">
               <legend className="px-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">{group.label}</legend>
@@ -907,7 +907,7 @@ function NeighborhoodCharacteristicsContent({
                   : `${formatNumber(assignmentDraft.neighborhood_city_sale_count)} sales`}
               </span>
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-2 xl:grid-cols-4">
+            <div className="mt-2 grid grid-cols-2 gap-2 lg:grid-cols-4">
               {NEIGHBORHOOD_CITY_AVERAGE_ROWS.map((row) => (
                 <div key={row.field} className="rounded-lg border border-slate-200 bg-slate-50 p-2">
                   <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Average {row.label}</div>
@@ -954,7 +954,7 @@ function NeighborhoodCharacteristicsContent({
         </div>
         <div className="mt-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Appraisal Boundary Summary</span>
-          <div className="mt-1 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-1 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {([
               ["neighborhood_boundary_north", "North"],
               ["neighborhood_boundary_east", "East"],

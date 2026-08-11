@@ -239,6 +239,11 @@ export interface AssignmentDetailsPayload {
   neighborhood_boundary_source?: string;
   neighborhood_boundary_saved_at?: string;
   neighborhood_boundary_streets?: string;
+  neighborhood_boundary_north?: string;
+  neighborhood_boundary_east?: string;
+  neighborhood_boundary_south?: string;
+  neighborhood_boundary_west?: string;
+  neighborhood_boundary_exclusions?: string;
   neighborhood_boundary_streets_source?: string;
   neighborhood_boundary_streets_retrieved_at?: string;
   neighborhood_boundary_confirmed?: boolean;
@@ -1252,6 +1257,12 @@ export async function getAccountPhotos(accountId: string): Promise<AccountPhotos
 export interface NeighborhoodProfileResponse extends MarketConditionsResponse {
   boundary_streets: {
     street_names: string[];
+    cardinal_boundaries: Record<'north' | 'east' | 'south' | 'west', {
+      primary_street: string | null;
+      confidence: 'high' | 'medium' | 'low' | 'unavailable';
+      candidates: Array<{ name: string; score: number }>;
+    }>;
+    summary: string;
     source: string;
     retrieved_at: string;
     boundary_buffer_meters: number;

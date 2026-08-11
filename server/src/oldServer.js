@@ -4249,7 +4249,7 @@ app.post("/api/sales/market-analysis", async (req, res) => {
  * POST /api/sales/neighborhood-profile
  *
  * Refreshes the appraiser-defined neighborhood ranges, a citywide comparison,
- * and reviewable street names located along the drawn polygon boundary.
+ * and a reviewable north/east/south/west road summary for the drawn boundary.
  */
 app.post("/api/sales/neighborhood-profile", async (req, res) => {
   const customGeometry = req.body?.custom_geometry || null;

@@ -95,8 +95,19 @@ export function neighborhoodBoundaryReadinessErrors(
   const errors: string[] = [];
   if (!isNeighborhoodBoundary(details?.neighborhood_boundary_geometry)) {
     errors.push('Draw and save an Appraiser-Defined Area in Market Conditions Analysis.');
-  } else if (details?.neighborhood_boundary_confirmed !== true) {
-    errors.push('Review and confirm the imported neighborhood boundary for this appraisal file.');
+  } else {
+    const missingSides = [
+      ['North', details?.neighborhood_boundary_north],
+      ['East', details?.neighborhood_boundary_east],
+      ['South', details?.neighborhood_boundary_south],
+      ['West', details?.neighborhood_boundary_west],
+    ].filter(([, value]) => !String(value || '').trim()).map(([label]) => label);
+    if (missingSides.length) {
+      errors.push(`Review and enter the ${missingSides.join(', ')} neighborhood ${missingSides.length === 1 ? 'boundary' : 'boundaries'}.`);
+    }
+    if (details?.neighborhood_boundary_confirmed !== true) {
+      errors.push('Review and confirm the imported neighborhood boundary for this appraisal file.');
+    }
   }
   return errors;
 }

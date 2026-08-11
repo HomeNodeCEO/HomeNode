@@ -3,7 +3,8 @@ const TIGERWEB_TRANSPORTATION_URL =
 const ROAD_LAYERS = [0, 1, 2];
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BOUNDARY_BUFFER_METERS = 75;
-const MAX_BOUNDARY_STREETS = 40;
+const CARDINAL_SIDES = ["north", "east", "south", "west"];
+const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const cache = new Map();
 
 function normalizedRing(geometry) {
@@ -75,11 +76,59 @@ function segmentDistanceAndAlignment(point, roadVector, boundaryStart, boundaryE
   return { distance, alignment };
 }
 
-export function rankBoundaryStreetNames(features = [], ring = []) {
-  if (!ring.length) return normalizeBoundaryStreetNames(features).slice(0, MAX_BOUNDARY_STREETS);
+function boundarySide(start, end, center) {
+  const deltaX = end[0] - start[0];
+  const deltaY = end[1] - start[1];
+  const midpoint = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+    return midpoint[1] >= center[1] ? "north" : "south";
+  }
+  return midpoint[0] >= center[0] ? "east" : "west";
+}
+
+function confidenceFor(top, second) {
+  if (!top) return "unavailable";
+  const separation = second ? top.score / Math.max(second.score, 1) : Number.POSITIVE_INFINITY;
+  if (top.score >= 250 && separation >= 1.45) return "high";
+  if (top.score >= 90 && separation >= 1.15) return "medium";
+  return "low";
+}
+
+export function summarizeCardinalBoundaries(features = [], ring = []) {
+  const empty = Object.fromEntries(CARDINAL_SIDES.map((side) => [side, {
+    primary_street: null,
+    confidence: "unavailable",
+    candidates: [],
+  }]));
+  if (!ring.length) return empty;
   const originLatitude = ring.reduce((sum, point) => sum + Number(point[1]), 0) / ring.length;
   const boundary = ring.map((point) => projectedPoint(point, originLatitude));
-  const scores = new Map();
+  const center = [
+    (Math.min(...boundary.map((point) => point[0])) + Math.max(...boundary.map((point) => point[0]))) / 2,
+    (Math.min(...boundary.map((point) => point[1])) + Math.max(...boundary.map((point) => point[1]))) / 2,
+  ];
+  const boundarySegments = [];
+  for (let index = 1; index < boundary.length; index += 1) {
+    const start = boundary[index - 1];
+    const end = boundary[index];
+    if (start[0] === end[0] && start[1] === end[1]) continue;
+    boundarySegments.push({ start, end, side: boundarySide(start, end, center) });
+  }
+  const networkLengthByName = new Map();
+  for (const feature of features) {
+    const name = normalizeBoundaryStreetNames([feature])[0];
+    if (!name) continue;
+    let featureLength = 0;
+    for (const path of feature?.geometry?.paths || []) {
+      for (let index = 1; index < path.length; index += 1) {
+        const start = projectedPoint(path[index - 1], originLatitude);
+        const end = projectedPoint(path[index], originLatitude);
+        featureLength += Math.hypot(end[0] - start[0], end[1] - start[1]);
+      }
+    }
+    networkLengthByName.set(name, (networkLengthByName.get(name) || 0) + featureLength);
+  }
+  const scoresBySide = new Map(CARDINAL_SIDES.map((side) => [side, new Map()]));
   for (const feature of features) {
     const name = normalizeBoundaryStreetNames([feature])[0];
     if (!name) continue;
@@ -91,31 +140,54 @@ export function rankBoundaryStreetNames(features = [], ring = []) {
         const roadLength = Math.hypot(roadVector[0], roadVector[1]);
         if (!roadLength) continue;
         const midpoint = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
-        let best = { distance: Number.POSITIVE_INFINITY, alignment: 0 };
-        for (let boundaryIndex = 1; boundaryIndex < boundary.length; boundaryIndex += 1) {
+        let best = { distance: Number.POSITIVE_INFINITY, alignment: 0, side: null };
+        for (const boundarySegment of boundarySegments) {
           const candidate = segmentDistanceAndAlignment(
             midpoint,
             roadVector,
-            boundary[boundaryIndex - 1],
-            boundary[boundaryIndex],
+            boundarySegment.start,
+            boundarySegment.end,
           );
-          if (candidate.distance < best.distance) best = candidate;
+          if (candidate.distance < best.distance) {
+            best = { ...candidate, side: boundarySegment.side };
+          }
         }
-        if (best.distance <= BOUNDARY_BUFFER_METERS && best.alignment >= 0.78) {
+        if (best.side && best.distance <= BOUNDARY_BUFFER_METERS && best.alignment >= 0.78) {
           const proximity = 1 - best.distance / BOUNDARY_BUFFER_METERS;
-          scores.set(name, (scores.get(name) || 0) + roadLength * best.alignment * proximity);
+          const layerWeight = LAYER_WEIGHTS.get(Number(feature.road_layer)) || 1;
+          const networkLength = Math.min(Math.max(networkLengthByName.get(name) || roadLength, 100), 5000);
+          const continuityWeight = (networkLength / 100) ** 0.55;
+          const score = roadLength * best.alignment * proximity * layerWeight * continuityWeight;
+          const sideScores = scoresBySide.get(best.side);
+          sideScores.set(name, (sideScores.get(name) || 0) + score);
         }
       }
     }
   }
-  const ranked = [...scores.entries()]
-    .filter(([, score]) => score >= 35)
-    .sort((left, right) => right[1] - left[1])
-    .slice(0, MAX_BOUNDARY_STREETS)
-    .map(([name]) => name);
-  return ranked.length
-    ? ranked.sort((left, right) => left.localeCompare(right))
-    : normalizeBoundaryStreetNames(features).slice(0, MAX_BOUNDARY_STREETS);
+  return Object.fromEntries(CARDINAL_SIDES.map((side) => {
+    const candidates = [...scoresBySide.get(side).entries()]
+      .filter(([, score]) => score >= 35)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 3)
+      .map(([name, score]) => ({ name, score: Math.round(score) }));
+    return [side, {
+      primary_street: candidates[0]?.name || null,
+      confidence: confidenceFor(candidates[0], candidates[1]),
+      candidates,
+    }];
+  }));
+}
+
+export function rankBoundaryStreetNames(features = [], ring = []) {
+  const cardinal = summarizeCardinalBoundaries(features, ring);
+  return [...new Set(CARDINAL_SIDES.map((side) => cardinal[side].primary_street).filter(Boolean))];
+}
+
+function cardinalSummary(cardinal) {
+  return CARDINAL_SIDES
+    .filter((side) => cardinal[side]?.primary_street)
+    .map((side) => `${side[0].toUpperCase()}${side.slice(1)}: ${cardinal[side].primary_street}`)
+    .join("; ");
 }
 
 async function queryRoadLayer(layer, ring, fetchImpl) {
@@ -143,7 +215,9 @@ async function queryRoadLayer(layer, ring, fetchImpl) {
   if (!response.ok) throw new Error(`tigerweb_http_${response.status}`);
   const payload = await response.json();
   if (payload?.error) throw new Error("tigerweb_query_failed");
-  return Array.isArray(payload?.features) ? payload.features : [];
+  return Array.isArray(payload?.features)
+    ? payload.features.map((feature) => ({ ...feature, road_layer: layer }))
+    : [];
 }
 
 export async function fetchBoundaryStreetNames(
@@ -163,8 +237,13 @@ export async function fetchBoundaryStreetNames(
   if (!features.length && results.every((result) => result.status === "rejected")) {
     throw new Error("boundary_street_lookup_failed");
   }
+  const cardinalBoundaries = summarizeCardinalBoundaries(features, ring);
   const value = {
-    street_names: rankBoundaryStreetNames(features, ring),
+    street_names: [...new Set(CARDINAL_SIDES
+      .map((side) => cardinalBoundaries[side].primary_street)
+      .filter(Boolean))],
+    cardinal_boundaries: cardinalBoundaries,
+    summary: cardinalSummary(cardinalBoundaries),
     source: "U.S. Census Bureau TIGERweb Transportation",
     retrieved_at: now().toISOString(),
     boundary_buffer_meters: BOUNDARY_BUFFER_METERS,

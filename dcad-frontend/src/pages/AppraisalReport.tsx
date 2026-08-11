@@ -1283,7 +1283,11 @@ export default function AppraisalReport() {
               <Fact label="Boundary" value={neighborhoodDetails.neighborhood_boundary_label} wide />
               <Fact label="Source" value={neighborhoodDetails.neighborhood_boundary_source} />
               <Fact label="Market Study Saved" value={dateText(neighborhoodDetails.neighborhood_boundary_saved_at)} />
-              <Fact label="Boundary Streets" value={neighborhoodDetails.neighborhood_boundary_streets} wide />
+              <Fact label="North Boundary" value={neighborhoodDetails.neighborhood_boundary_north} />
+              <Fact label="East Boundary" value={neighborhoodDetails.neighborhood_boundary_east} />
+              <Fact label="South Boundary" value={neighborhoodDetails.neighborhood_boundary_south} />
+              <Fact label="West Boundary" value={neighborhoodDetails.neighborhood_boundary_west} />
+              <Fact label="Exclusions / Irregular Areas" value={neighborhoodDetails.neighborhood_boundary_exclusions} wide />
               <Fact label="Street Source" value={neighborhoodDetails.neighborhood_boundary_streets_source} wide />
               <Fact label="Appraiser Confirmed" value={neighborhoodDetails.neighborhood_boundary_confirmed ? "Yes" : "No"} />
               <Fact label="Confirmed At" value={dateText(neighborhoodDetails.neighborhood_boundary_confirmed_at)} />

@@ -871,7 +871,7 @@ function NeighborhoodCharacteristicsContent({
 
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
           <h3 className="text-sm font-semibold text-slate-900">Neighborhood Property Ranges</h3>
-          <p className="mt-0.5 text-xs text-slate-500">Low, high, and predominant (median) values from the defined market area.</p>
+          <p className="mt-0.5 text-xs text-slate-500 lg:hidden">Low, high, and predominant (median) values from the defined market area.</p>
           <div className="mt-2 min-w-[620px]">
             <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 border-b border-slate-300 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
               <div>Measure</div><div>Low</div><div>High</div><div>Predominant</div>
@@ -897,7 +897,7 @@ function NeighborhoodCharacteristicsContent({
             <div className="flex flex-wrap items-end justify-between gap-2">
               <div>
                 <h4 className="text-sm font-semibold text-slate-900">Full-City Average Comparison</h4>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-slate-500 lg:hidden">
                   {assignmentDraft.neighborhood_city_name || "Subject city"} closed-sale averages; this does not replace the appraiser-defined neighborhood ranges.
                 </p>
               </div>

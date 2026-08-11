@@ -113,6 +113,9 @@ export function validateAssignmentDetails(value) {
     ["neighborhood_unemployment_zip", 10],
     ["neighborhood_unemployment_source", 500],
     ["neighborhood_unemployment_variable", 100],
+    ["neighborhood_city_unemployment_name", 300],
+    ["neighborhood_city_unemployment_source", 500],
+    ["neighborhood_city_unemployment_variable", 100],
     ["neighborhood_city_name", 200],
     ["neighborhood_city_comparison_as_of", 100],
     ["neighborhood_boundary_label", 1000],
@@ -171,6 +174,13 @@ export function validateAssignmentDetails(value) {
   const unemployment = optionalNumber(value.neighborhood_unemployment_pct);
   if (Number.isNaN(unemployment) || (unemployment !== null && (unemployment < 0 || unemployment > 100))) {
     throw new Error("invalid_neighborhood_unemployment_percentage");
+  }
+  const cityUnemployment = optionalNumber(value.neighborhood_city_unemployment_pct);
+  if (
+    Number.isNaN(cityUnemployment) ||
+    (cityUnemployment !== null && (cityUnemployment < 0 || cityUnemployment > 100))
+  ) {
+    throw new Error("invalid_neighborhood_city_unemployment_percentage");
   }
   for (const fields of NEIGHBORHOOD_RANGE_GROUPS) {
     const numbers = fields.map((field) => optionalNumber(value[field]));

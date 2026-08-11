@@ -212,6 +212,11 @@ export interface AssignmentDetailsPayload {
   neighborhood_unemployment_source?: string;
   neighborhood_unemployment_dataset_year?: string | number;
   neighborhood_unemployment_variable?: string;
+  neighborhood_city_unemployment_pct?: string | number;
+  neighborhood_city_unemployment_name?: string;
+  neighborhood_city_unemployment_source?: string;
+  neighborhood_city_unemployment_dataset_year?: string | number;
+  neighborhood_city_unemployment_variable?: string;
   neighborhood_market_trend?: string;
   neighborhood_demand_supply?: string;
   neighborhood_marketing_time?: string;
@@ -1303,12 +1308,35 @@ export interface CensusZipProfile {
   retrieved_at: string;
 }
 
+export interface CensusCityProfile {
+  city: string;
+  state: string;
+  state_fips: string;
+  place_code: string | null;
+  geography_name: string | null;
+  unemployment_percent: number;
+  dataset: string;
+  dataset_year: number;
+  variable: string;
+  source: string;
+  retrieved_at: string;
+}
+
 /** Load the official ACS 5-year unemployment estimate for a ZIP/ZCTA. */
 export async function getCensusZipProfile(postalCode: string): Promise<CensusZipProfile> {
   const zip = String(postalCode || '').replace(/\D/g, '').slice(0, 5);
   return fetchJSON<CensusZipProfile>(
     makeUrl(`/api/census/zip-profile/${encodeURIComponent(zip)}`),
   );
+}
+
+/** Load the official ACS 5-year unemployment estimate for a city/place. */
+export async function getCensusCityProfile(
+  city: string,
+  state = 'TX',
+): Promise<CensusCityProfile> {
+  const params = new URLSearchParams({ city: String(city || '').trim(), state });
+  return fetchJSON<CensusCityProfile>(makeUrl(`/api/census/city-profile?${params.toString()}`));
 }
 
 /** Save a source-attributed manual housing classification for an account. */

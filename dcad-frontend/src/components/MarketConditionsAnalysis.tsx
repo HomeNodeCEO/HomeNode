@@ -784,7 +784,7 @@ function RecommendedDetermination({
           </div>
         </div>
       </div>
-      <p className={`${compact ? 'mt-1 leading-4' : 'mt-2 leading-5'} text-xs text-slate-600`}>
+      <p className={`${compact ? 'hidden' : 'mt-2 leading-5'} text-xs text-slate-600`}>
         Studies are ranked by sample sufficiency, monthly coverage, composite
         COD/CV congruency, and characteristic coverage. A reconciled change
         within ±{numberText(recommendation.stable_threshold_percent, 1)}% is
@@ -1505,18 +1505,18 @@ export default function MarketConditionsAnalysis({
       }
     >
       <div className={`border-b border-emerald-100 bg-emerald-50/60 ${embedded ? 'p-2.5' : 'p-5'}`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+        <div className={`flex justify-between gap-2 ${embedded ? 'items-center' : 'flex-wrap items-start gap-3'}`}>
+          <div className={embedded ? 'min-w-0' : ''}>
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">
               Required before comparable selection
             </div>
             <h2 className={`${embedded ? 'mt-0.5 text-lg' : 'mt-1 text-xl'} font-semibold text-slate-950`}>
               Market Conditions Analysis
             </h2>
-            <p className={`${embedded ? 'mt-0.5 text-xs' : 'mt-1 text-sm'} max-w-4xl text-slate-600`}>
-              Compare multiple independent geographies, review time-based market
-              evidence, and reconcile the market trend. These studies do not
-              filter or change the comparable-sales inventory.
+            <p className={`${embedded ? 'mt-0.5 truncate text-xs' : 'mt-1 max-w-4xl text-sm'} text-slate-600`}>
+              {embedded
+                ? 'Compare study areas and reconcile the market trend.'
+                : 'Compare multiple independent geographies, review time-based market evidence, and reconcile the market trend. These studies do not filter or change the comparable-sales inventory.'}
             </p>
           </div>
           <span
@@ -1532,7 +1532,7 @@ export default function MarketConditionsAnalysis({
       </div>
 
       <div className={embedded ? 'space-y-2 p-2.5' : 'space-y-5 p-5'}>
-        <div className={`grid grid-cols-1 ${embedded ? 'gap-1.5 lg:grid-cols-[150px_150px_1fr]' : 'gap-4 lg:grid-cols-[180px_180px_1fr]'}`}>
+        <div className={embedded ? 'grid grid-cols-1 gap-1.5 lg:grid-cols-4' : 'grid grid-cols-1 gap-4 lg:grid-cols-[180px_180px_1fr]'}>
           <label className="grid gap-1 text-sm text-slate-700">
             <span className="font-medium">Analysis as of</span>
             <input
@@ -1560,7 +1560,7 @@ export default function MarketConditionsAnalysis({
               completed month.
             </span>
           </label>
-          <div className={`rounded-xl border border-slate-200 bg-slate-50 text-slate-600 ${embedded ? 'px-3 py-2 text-xs' : 'px-4 py-3 text-sm'}`}>
+          <div className={`rounded-xl border border-slate-200 bg-slate-50 text-slate-600 ${embedded ? 'px-3 py-2 text-xs lg:col-span-2' : 'px-4 py-3 text-sm'}`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-semibold text-slate-900">Study geography:</span>
               {contextOverrideEnabled && (
@@ -1838,7 +1838,7 @@ export default function MarketConditionsAnalysis({
               </button>
             </div>
           </div>
-          <div className={`grid grid-cols-1 md:grid-cols-2 ${embedded ? 'mt-1.5 gap-1.5 lg:grid-cols-4' : 'mt-3 gap-3 xl:grid-cols-4'}`}>
+          <div className={`grid grid-cols-1 md:grid-cols-2 ${embedded ? 'mt-1.5 gap-1.5 lg:grid-cols-8' : 'mt-3 gap-3 xl:grid-cols-4'}`}>
             {AREA_OPTIONS.map((option) => {
               const selected = selectedAreaKeys.includes(option.key);
               return (
@@ -1860,7 +1860,7 @@ export default function MarketConditionsAnalysis({
                     <span className={`${embedded ? 'text-[11px]' : 'text-sm'} block font-semibold text-slate-900`}>
                       {option.label}
                     </span>
-                    <span className={`${embedded ? 'mt-0 text-[10px] leading-3.5' : 'mt-1 text-xs'} block text-slate-500`}>
+                    <span className={embedded ? 'sr-only' : 'mt-1 block text-xs text-slate-500'}>
                       {option.description}
                     </span>
                   </span>
@@ -2235,8 +2235,8 @@ export default function MarketConditionsAnalysis({
 
               <RecommendedDetermination response={analysisResult} compact={embedded} />
 
-              <div className={`grid grid-cols-1 lg:grid-cols-[240px_1fr] ${embedded ? 'mt-2 gap-2' : 'mt-4 gap-4'}`}>
-                <label className="grid gap-1 text-sm text-slate-700">
+              <div className={embedded ? 'mt-2 grid grid-cols-1 gap-2 lg:grid-cols-4' : 'mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]'}>
+                <label className={`grid gap-1 text-sm text-slate-700 ${embedded ? 'lg:col-span-1' : ''}`}>
                   <span className="font-medium">Market trend conclusion</span>
                   <select
                     value={reconciliation.trendConclusion}
@@ -2257,7 +2257,7 @@ export default function MarketConditionsAnalysis({
                   </select>
                 </label>
 
-                <fieldset>
+                <fieldset className={embedded ? 'lg:col-span-3' : ''}>
                   <legend className="text-sm font-medium text-slate-700">
                     Studies given greatest weight
                   </legend>
@@ -2311,7 +2311,7 @@ export default function MarketConditionsAnalysis({
                       explanation: event.target.value,
                     }))
                   }
-                  rows={embedded ? 3 : 6}
+                  rows={embedded ? 2 : 6}
                   className={`rounded-xl border border-slate-300 bg-white px-3 ${embedded ? 'py-2 leading-5' : 'py-3 leading-6'}`}
                   placeholder="Explain why the selected geography, population, and trend intervals best represent the subject's market."
                 />

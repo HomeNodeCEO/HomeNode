@@ -90,3 +90,42 @@ test("assignment details enforce contract E&O safeguards", () => {
     /seller_mismatch_requires_explanation/,
   );
 });
+
+test("assignment details accept a complete neighborhood profile", () => {
+  assert.equal(validateAssignmentDetails({
+    neighborhood_land_use_one_unit_pct: 85,
+    neighborhood_land_use_two_to_four_unit_pct: 2,
+    neighborhood_land_use_multifamily_pct: 4,
+    neighborhood_land_use_commercial_pct: 3,
+    neighborhood_land_use_other_vacant_pct: 6,
+    neighborhood_location_type: "suburban",
+    neighborhood_built_up: "over_75",
+    neighborhood_growth: "stable",
+    neighborhood_unemployment_pct: 4.2,
+    neighborhood_unemployment_zip: "75044",
+    neighborhood_market_trend: "increasing",
+    neighborhood_demand_supply: "in_balance",
+    neighborhood_marketing_time: "under_3_months",
+    neighborhood_house_price_low: 200000,
+    neighborhood_house_price_predominant: 300000,
+    neighborhood_house_price_high: 500000,
+    neighborhood_boundary_geometry: {
+      type: "Polygon",
+      coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+    },
+    neighborhood_boundary_confirmed: true,
+  }), true);
+});
+
+test("assignment details enforce neighborhood totals and boundary confirmation", () => {
+  assert.throws(() => validateAssignmentDetails({
+    neighborhood_land_use_one_unit_pct: 80,
+    neighborhood_land_use_two_to_four_unit_pct: 2,
+    neighborhood_land_use_multifamily_pct: 4,
+    neighborhood_land_use_commercial_pct: 3,
+    neighborhood_land_use_other_vacant_pct: 6,
+  }), /neighborhood_land_use_must_total_100/);
+  assert.throws(() => validateAssignmentDetails({
+    neighborhood_boundary_confirmed: true,
+  }), /neighborhood_boundary_confirmation_requires_geometry/);
+});

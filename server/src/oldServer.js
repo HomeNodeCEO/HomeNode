@@ -57,6 +57,7 @@ import {
   seedCensusGeographyQueue,
   startCensusGeographyWorker,
 } from "./services/censusGeography.js";
+import { fetchCensusZipProfile } from "./services/censusZipProfile.js";
 import {
   ensureAppraisalRatingsSchema,
   SALE_REVIEW_SELECT,
@@ -1310,7 +1311,11 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
       "contract_requires_seller_match_selection",
       "seller_mismatch_requires_explanation",
     ]);
-    if (validationErrors.has(error?.message)) {
+    if (
+      validationErrors.has(error?.message) ||
+      String(error?.message || "").startsWith("invalid_neighborhood_") ||
+      String(error?.message || "").startsWith("neighborhood_")
+    ) {
       return res.status(400).json({ error: error.message });
     }
     console.error("assignment file create failed", error);
@@ -1484,6 +1489,18 @@ app.post("/api/accounts/:id/census-geography/lookup", async (req, res) => {
     if (code === "census_lookup_input_missing") return res.status(422).json({ error: code });
     console.error("on-demand census geography lookup failed", error);
     return res.status(502).json({ error: "census_geography_lookup_failed" });
+  }
+});
+
+/** Latest configured ACS 5-year unemployment estimate for a ZIP/ZCTA. */
+app.get("/api/census/zip-profile/:postalCode", async (req, res) => {
+  try {
+    return res.json(await fetchCensusZipProfile(req.params.postalCode));
+  } catch (error) {
+    const code = String(error?.code || error?.message || "census_zip_profile_failed");
+    const status = Number(error?.status) || 502;
+    if (status >= 500) console.error("Census ZIP profile lookup failed", code);
+    return res.status(status).json({ error: code });
   }
 });
 
@@ -4325,7 +4342,7 @@ app.get("/api/properties/search", async (req, res) => {
 
     const { whereSql, params } = buildClassWhere({ classes, county, neighborhoods });
 
-    // If literally no filters, you can choose to return an error or everything. We’ll just return first N.
+    // If literally no filters, you can choose to return an error or everything. We?ll just return first N.
     const sql = `
       SELECT p.account_id, p.county, p.situs_address,
              c.building_class, c.building_class_int

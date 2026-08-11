@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import * as api from "@/lib/api";
-import type { SaleRow } from "@/lib/api";
+import type { AppraisalAssignmentFile, AssignmentDetailsPayload, SaleRow } from "@/lib/api";
 import type {
   MarketConditionsAnalysis,
   MarketConditionsSeriesPoint,
@@ -17,6 +17,12 @@ import {
   type MarketConditionsDraft,
   type MarketTrendConclusion,
 } from "@/lib/marketConditionsDraft";
+import {
+  neighborhoodBoundaryReadinessErrors,
+  neighborhoodLandUseTotal,
+  NEIGHBORHOOD_LAND_USE_FIELDS,
+  NEIGHBORHOOD_RANGE_ROWS,
+} from "@/lib/neighborhoodCharacteristics";
 
 type Detail = {
   tax_year?: string | number;
@@ -154,6 +160,29 @@ function trendConclusionText(value: MarketTrendConclusion): string {
   return labels[value];
 }
 
+function neighborhoodChoiceLabel(value: unknown): string {
+  const labels: Record<string, string> = {
+    urban: "Urban",
+    suburban: "Suburban",
+    rural: "Rural",
+    over_75: "Over 75%",
+    "25_to_75": "25-75%",
+    under_25: "Under 25%",
+    rapid: "Rapid",
+    stable: "Stable",
+    slow: "Slow",
+    increasing: "Increasing",
+    declining: "Declining",
+    shortage: "Shortage",
+    in_balance: "In Balance",
+    over_supply: "Over Supply",
+    under_3_months: "Under 3 Months",
+    "3_to_6_months": "3-6 Months",
+    over_6_months: "Over 6 Months",
+  };
+  return labels[String(value || "")] || text(value);
+}
+
 function reportPeriodLabel(value: string | null): string {
   if (!value) return "Unknown";
   const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
@@ -273,6 +302,11 @@ export default function AppraisalReport() {
     const params = new URLSearchParams(location.search);
     return (params.get("propertyId") || params.get("accountId") || "").trim();
   }, [location.search]);
+  const requestedAssignmentFileId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const parsed = Number(params.get("assignmentFileId"));
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }, [location.search]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [draft, setDraft] = useState<AppraisalReportSalesDraft | null>(() =>
     readAppraisalReportDraft(propertyId),
@@ -280,6 +314,9 @@ export default function AppraisalReport() {
   const [marketDraft, setMarketDraft] = useState<MarketConditionsDraft | null>(
     () => readMarketConditionsDraft(propertyId),
   );
+  const [assignmentFile, setAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
+  const [assignmentLoading, setAssignmentLoading] = useState(Boolean(propertyId));
+  const [printBlocker, setPrintBlocker] = useState("");
   const [recommended, setRecommended] = useState<AppraisalReportComparable[]>([]);
   const [loading, setLoading] = useState(Boolean(propertyId));
   const [salesLoading, setSalesLoading] = useState(false);
@@ -300,6 +337,31 @@ export default function AppraisalReport() {
     setDraft(readAppraisalReportDraft(propertyId));
     setMarketDraft(readMarketConditionsDraft(propertyId));
   }, [propertyId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!propertyId) {
+      setAssignmentFile(null);
+      setAssignmentLoading(false);
+      return () => { cancelled = true; };
+    }
+    setAssignmentLoading(true);
+    void api.getAssignmentFiles(propertyId)
+      .then((response) => {
+        if (cancelled) return;
+        const selected = requestedAssignmentFileId
+          ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
+          : response.latest_file;
+        setAssignmentFile(selected || response.latest_file || null);
+      })
+      .catch(() => {
+        if (!cancelled) setAssignmentFile(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAssignmentLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [propertyId, requestedAssignmentFileId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -430,8 +492,22 @@ export default function AppraisalReport() {
       ),
     )
     .map((analysis) => analysis.market.label);
+  const neighborhoodDetails: AssignmentDetailsPayload = assignmentFile?.assignment_details || {};
+  const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(neighborhoodDetails);
+  const landUseTotal = neighborhoodLandUseTotal(neighborhoodDetails);
 
   const printReport = () => {
+    if (assignmentLoading) {
+      setPrintBlocker("Assignment-file checks are still loading. Try again in a moment.");
+      return;
+    }
+    if (neighborhoodBoundaryErrors.length) {
+      const message = `PDF E&O check: ${neighborhoodBoundaryErrors.join(" ")}`;
+      setPrintBlocker(message);
+      window.alert(message);
+      return;
+    }
+    setPrintBlocker("");
     window.setTimeout(() => window.print(), 100);
   };
 
@@ -454,7 +530,7 @@ export default function AppraisalReport() {
   }
 
   return (
-    <div className="appraisal-report-shell">
+    <div className={`appraisal-report-shell ${neighborhoodBoundaryErrors.length ? "report-print-blocked" : ""}`}>
       <style>{`
         .appraisal-report-shell {
           min-height: 100vh;
@@ -496,6 +572,7 @@ export default function AppraisalReport() {
           width: min(8.5in, calc(100% - 32px));
           margin: 24px auto 60px;
         }
+        .report-print-blocker-page { display: none; }
         .report-page {
           box-sizing: border-box;
           min-height: 10.2in;
@@ -778,6 +855,14 @@ export default function AppraisalReport() {
           .appraisal-report-shell { background: white !important; }
           .report-toolbar { display: none !important; }
           .report-document { width: auto; margin: 0; }
+          .report-print-blocked .report-document { display: none !important; }
+          .report-print-blocked .report-print-blocker-page {
+            display: block !important;
+            padding: 0.75in;
+            color: #7c2d12;
+            font-size: 16px;
+            line-height: 1.5;
+          }
           .report-page {
             width: 8.5in;
             height: 11in;
@@ -819,9 +904,19 @@ export default function AppraisalReport() {
             Sales Comparison
           </Link>
           <button type="button" className="report-print-button" onClick={printReport}>
-            Print / Save as PDF
+            {neighborhoodBoundaryErrors.length ? "Complete Boundary Review" : "Print / Save as PDF"}
           </button>
         </div>
+      </div>
+
+      {(printBlocker || neighborhoodBoundaryErrors.length > 0) ? (
+        <div className="mx-auto mt-3 w-[min(8.5in,calc(100%-24px))] rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950 print:hidden">
+          {printBlocker || `PDF E&O check: ${neighborhoodBoundaryErrors.join(" ")}`}
+        </div>
+      ) : null}
+      <div className="report-print-blocker-page">
+        <strong>PDF E&amp;O check incomplete.</strong>
+        <div>{neighborhoodBoundaryErrors.join(" ")}</div>
       </div>
 
       <main className="report-document">
@@ -1085,7 +1180,92 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={3} title="Market Conditions" address={address} />
+          <PageHeader page={3} title="Neighborhood Characteristics" address={address} />
+          <section className="report-section">
+            <div className={`report-note ${neighborhoodBoundaryErrors.length ? "" : "report-status"}`}>
+              <strong>{assignmentFile ? `Appraisal file ${assignmentFile.file_number}` : "No appraisal file selected"}.</strong>{" "}
+              {neighborhoodBoundaryErrors.length
+                ? `E&O review incomplete: ${neighborhoodBoundaryErrors.join(" ")}`
+                : "The appraiser-defined neighborhood boundary was reviewed and confirmed for this assignment."}
+            </div>
+          </section>
+
+          <section className="report-section">
+            <h2 className="report-section-title">Present Land Use</h2>
+            <div className="report-table-wrap">
+              <table className="report-table">
+                <thead><tr>{NEIGHBORHOOD_LAND_USE_FIELDS.map(([, label]) => <th key={label} className="numeric">{label}</th>)}</tr></thead>
+                <tbody>
+                  <tr>
+                    {NEIGHBORHOOD_LAND_USE_FIELDS.map(([field]) => (
+                      <td key={field} className="numeric">{percent(neighborhoodDetails[field])}</td>
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="report-note" style={{ marginTop: 8 }}>
+              Reported land-use total: {landUseTotal === null ? "Not developed" : percent(landUseTotal)}.
+            </div>
+          </section>
+
+          <section className="report-section">
+            <h2 className="report-section-title">Neighborhood Factors</h2>
+            <div className="report-facts">
+              <Fact label="Location Type" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_location_type)} />
+              <Fact label="Built-Up" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_built_up)} />
+              <Fact label="Overall Growth" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_growth)} />
+              <Fact label="Market Trend" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_market_trend)} />
+              <Fact label="Demand / Supply" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_demand_supply)} />
+              <Fact label="Marketing Time" value={neighborhoodChoiceLabel(neighborhoodDetails.neighborhood_marketing_time)} />
+              <Fact label="Unemployment" value={percent(neighborhoodDetails.neighborhood_unemployment_pct)} />
+              <Fact
+                label="Unemployment Source"
+                value={neighborhoodDetails.neighborhood_unemployment_source
+                  ? `${neighborhoodDetails.neighborhood_unemployment_source}, ${text(neighborhoodDetails.neighborhood_unemployment_dataset_year)} ACS 5-Year, ZIP ${text(neighborhoodDetails.neighborhood_unemployment_zip)}`
+                  : null}
+                wide
+              />
+            </div>
+          </section>
+
+          <section className="report-section">
+            <h2 className="report-section-title">Neighborhood Property Ranges</h2>
+            <div className="report-table-wrap">
+              <table className="report-table">
+                <thead><tr><th>Measure</th><th className="numeric">Low</th><th className="numeric">High</th><th className="numeric">Predominant (Median)</th></tr></thead>
+                <tbody>
+                  {NEIGHBORHOOD_RANGE_ROWS.map((row) => {
+                    const formatter = row.format === "money" ? money : count;
+                    return (
+                      <tr key={row.label}>
+                        <td>{row.label}</td>
+                        <td className="numeric">{formatter(neighborhoodDetails[row.low])}</td>
+                        <td className="numeric">{formatter(neighborhoodDetails[row.high])}</td>
+                        <td className="numeric">{formatter(neighborhoodDetails[row.predominant])}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="report-section">
+            <h2 className="report-section-title">Appraiser-Defined Neighborhood Boundary</h2>
+            <div className="report-facts">
+              <Fact label="Boundary" value={neighborhoodDetails.neighborhood_boundary_label} wide />
+              <Fact label="Source" value={neighborhoodDetails.neighborhood_boundary_source} />
+              <Fact label="Market Study Saved" value={dateText(neighborhoodDetails.neighborhood_boundary_saved_at)} />
+              <Fact label="Appraiser Confirmed" value={neighborhoodDetails.neighborhood_boundary_confirmed ? "Yes" : "No"} />
+              <Fact label="Confirmed At" value={dateText(neighborhoodDetails.neighborhood_boundary_confirmed_at)} />
+            </div>
+          </section>
+          <PageFooter generatedAt={generatedAt} />
+        </article>
+
+        <article className="report-page">
+          <PageHeader page={4} title="Market Conditions" address={address} />
           {marketDraft && marketAnalyses.length ? (
             <>
               <section className="report-section">
@@ -1212,7 +1392,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={4} title="Sales Comparison Approach" address={address} />
+          <PageHeader page={5} title="Sales Comparison Approach" address={address} />
           <section className="report-section">
             <div className="report-note">
               <strong>{salesSource}.</strong>{" "}
@@ -1346,7 +1526,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={5} title="Income Approach" address={address} />
+          <PageHeader page={6} title="Income Approach" address={address} />
           <section className="report-approach-hero">
             <div className="report-status">Preliminary methodology scaffold</div>
             <h2>Income Approach Not Yet Developed</h2>
@@ -1391,7 +1571,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={6} title="Cost Approach" address={address} />
+          <PageHeader page={7} title="Cost Approach" address={address} />
           <section className="report-approach-hero">
             <div className="report-status">Preliminary methodology scaffold</div>
             <h2>Cost Approach Not Yet Developed</h2>

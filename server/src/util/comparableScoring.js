@@ -720,6 +720,12 @@ export function scoreComparable(
     return null;
   }
 
+  // TODO(property-context-ranking): After the complexity engine has been
+  // validated against a representative set of simple and complex assignments,
+  // use the saved effective complexity to tune candidate radius, similarity
+  // tolerances, and/or weights. Keep this scoring formula stable until that
+  // appraisal testing is complete so the context rollout can be evaluated
+  // independently from ranking changes.
   const comparableScore = housingComparison.housingTypeCompatible
     ? (
         locationScore * config.locationWeight +

@@ -244,11 +244,15 @@ test("reuses a completed neighborhood analysis for the same subject and boundary
     subjectAccountId: "26272500060150000",
     customGeometry: boundary,
     fetchImpl,
+    preferLocalMirror: false,
+    persistentCache: false,
   });
   const second = await buildNeighborhoodLandUseAnalysis(pool, {
     subjectAccountId: "26272500060150000",
     customGeometry: boundary,
     fetchImpl,
+    preferLocalMirror: false,
+    persistentCache: false,
   });
   assert.equal(first.cache_hit, false);
   assert.equal(second.cache_hit, true);

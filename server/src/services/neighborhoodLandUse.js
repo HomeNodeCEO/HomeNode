@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 
 import { validateCustomMarketGeometry } from "./marketConditions.js";
 import { esriGeometryToGeoJson } from "../util/parcelArea.js";
+import {
+  ensurePropertyContextSchema,
+  getPropertyContextSourceHealth,
+  readBoundaryAnalysisCache,
+  writeBoundaryAnalysisCache,
+} from "./propertyContextStore.js";
 
 export const DCAD_LAND_USE_QUERY_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
@@ -435,6 +441,74 @@ function normalizedAccountId(value) {
   return String(value || "").replace(/[^0-9A-Za-z]/g, "").replace(/^0+/, "");
 }
 
+export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
+  const geometry = validateCustomMarketGeometry(customGeometry);
+  const { rows } = await pool.query(
+    `WITH boundary AS (
+       SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
+     )
+     SELECT
+       parcel.object_id,
+       parcel.account_id,
+       parcel.low_parcel_id,
+       parcel.site_address,
+       parcel.use_code,
+       parcel.use_description,
+       parcel.class_code,
+       parcel.class_description,
+       parcel.property_description,
+       parcel.subdivision_name,
+       parcel.structure_type,
+       parcel.building_area_sqft,
+       parcel.residential_area_sqft,
+       parcel.improvement_value,
+       parcel.source_updated_at,
+       parcel.source_attributes,
+       ST_AsGeoJSON(parcel.geom)::jsonb AS geometry
+     FROM gis.dcad_parcels parcel
+     CROSS JOIN boundary
+     WHERE parcel.geom && boundary.geom
+       AND ST_Intersects(parcel.geom, boundary.geom)
+     ORDER BY parcel.object_id
+     LIMIT $2`,
+    [JSON.stringify(geometry), MAX_PARCELS + 1],
+  );
+  if (rows.length > MAX_PARCELS) throw new Error("land_use_area_too_many_parcels");
+  return rows.map((row, index) => {
+    const attributes = {
+      ...(row.source_attributes || {}),
+      OBJECTID: row.object_id,
+      PARCELID: row.account_id,
+      LOWPARCELID: row.low_parcel_id,
+      SITEADDRESS: row.site_address,
+      USECD: row.use_code,
+      USEDSCRP: row.use_description,
+      CLASSCD: row.class_code,
+      CLASSDSCRP: row.class_description,
+      PRPRTYDSCRP: row.property_description,
+      CNVYNAME: row.subdivision_name,
+      RESSTRTYP: row.structure_type,
+      BLDGAREA: row.building_area_sqft,
+      RESFLRAREA: row.residential_area_sqft,
+      IMPVALUE: row.improvement_value,
+    };
+    return {
+      source_index: index,
+      object_id: row.object_id,
+      account_id: String(row.account_id || row.low_parcel_id || "").trim() || null,
+      site_address: String(row.site_address || "").trim() || null,
+      use_description: String(row.use_description || "").trim() || null,
+      use_code: String(row.use_code || "").trim() || null,
+      class_code: String(row.class_code || "").trim() || null,
+      class_description: String(row.class_description || "").trim() || null,
+      property_description: String(row.property_description || "").trim() || null,
+      source_updated_at: row.source_updated_at,
+      attributes,
+      geometry: row.geometry,
+    };
+  });
+}
+
 const analysisCache = new Map();
 
 function cloned(value) {
@@ -512,7 +586,13 @@ export function evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaBy
 
 export async function buildNeighborhoodLandUseAnalysis(
   pool,
-  { subjectAccountId, customGeometry, fetchImpl = fetch },
+  {
+    subjectAccountId,
+    customGeometry,
+    fetchImpl = fetch,
+    preferLocalMirror = true,
+    persistentCache = true,
+  },
 ) {
   const analysisStartedAt = Date.now();
   const accountId = String(subjectAccountId || "").trim();
@@ -522,6 +602,25 @@ export async function buildNeighborhoodLandUseAnalysis(
   const cacheKey = `${accountId}:${boundarySignature}`;
   const cached = cachedAnalysis(cacheKey, analysisStartedAt);
   if (cached) return cached;
+  let persistentCached = null;
+  if (persistentCache) {
+    await ensurePropertyContextSchema(pool);
+    persistentCached = await readBoundaryAnalysisCache(
+      pool,
+      `land_use:${cacheKey}`,
+    ).catch(() => null);
+    if (persistentCached?.result) {
+      return {
+        ...persistentCached.result,
+        cache_hit: true,
+        persistent_cache_hit: true,
+        stale_cache_used: false,
+        processing_duration_ms: Date.now() - analysisStartedAt,
+        cached_analysis_duration_ms:
+          persistentCached.result.processing_duration_ms ?? null,
+      };
+    }
+  }
   const { rows: accountRows } = await pool.query(
     "SELECT account_id, county FROM core.accounts WHERE account_id = $1",
     [accountId],
@@ -531,7 +630,45 @@ export async function buildNeighborhoodLandUseAnalysis(
     throw new Error("land_use_analysis_dallas_county_only");
   }
 
-  const parcels = await fetchDcadLandUseParcels(boundary, { fetchImpl });
+  let sourceMode = "live_dcad";
+  let sourceHealth = null;
+  let parcels = [];
+  if (preferLocalMirror) {
+    const sources = await getPropertyContextSourceHealth(pool).catch(() => []);
+    sourceHealth = sources.find((source) => source.source_key === "dcad_parcels") || null;
+    if (sourceHealth?.usable) {
+      parcels = await fetchLocalDcadLandUseParcels(pool, boundary);
+      sourceMode = "local_mirror";
+    }
+  }
+  if (!parcels.length && sourceMode !== "local_mirror") {
+    try {
+      parcels = await fetchDcadLandUseParcels(boundary, { fetchImpl });
+    } catch (error) {
+      if (persistentCache) {
+        const stale = await readBoundaryAnalysisCache(
+          pool,
+          `land_use:${cacheKey}`,
+          { allowExpired: true },
+        ).catch(() => null);
+        if (stale?.result) {
+          return {
+            ...stale.result,
+            cache_hit: true,
+            persistent_cache_hit: true,
+            stale_cache_used: true,
+            processing_duration_ms: Date.now() - analysisStartedAt,
+            cached_analysis_duration_ms: stale.result.processing_duration_ms ?? null,
+            warnings: [
+              ...(stale.result.warnings || []),
+              "The live Dallas CAD GIS request failed. HomeNode is using the most recent saved analysis for this exact boundary.",
+            ],
+          };
+        }
+      }
+      throw error;
+    }
+  }
   if (!parcels.length) throw new Error("no_dcad_parcels_in_boundary");
   const landParcels = parcels.filter((parcel) => parcel.use_code !== "3");
   if (!landParcels.length) throw new Error("no_dcad_parcels_in_boundary");
@@ -602,12 +739,19 @@ export async function buildNeighborhoodLandUseAnalysis(
   if (excludedNonLandRecordCount) {
     warnings.push(`${excludedNonLandRecordCount} mapped business-personal-property record${excludedNonLandRecordCount === 1 ? " was" : "s were"} excluded because those records do not represent separate land parcels.`);
   }
+  if (sourceMode === "local_mirror" && sourceHealth?.serving_stale_data) {
+    warnings.push("Dallas CAD GIS synchronization is currently stale or unavailable. This analysis uses the most recent locally stored county parcel data.");
+  }
 
   const result = {
     subject_account_id: accountId,
     jurisdiction: "Dallas County",
-    source: "Dallas Central Appraisal District ParcelPublishing GIS",
+    source: sourceMode === "local_mirror"
+      ? "HomeNode local Dallas CAD ParcelPublishing mirror"
+      : "Dallas Central Appraisal District ParcelPublishing GIS",
     source_url: DCAD_LAND_USE_QUERY_URL,
+    source_mode: sourceMode,
+    source_health: sourceHealth,
     analyzed_at: new Date().toISOString(),
     methodology_version: 1,
     boundary,
@@ -640,10 +784,26 @@ export async function buildNeighborhoodLandUseAnalysis(
     warnings,
     denominator_note: "Percentages use dissolved, clipped CAD parcel acreage. Roads and uncovered non-parcel land are reported in coverage but excluded from the category denominator.",
     cache_hit: false,
+    persistent_cache_hit: false,
+    stale_cache_used: false,
     processing_duration_ms: Date.now() - analysisStartedAt,
     cached_analysis_duration_ms: null,
   };
   cacheAnalysis(cacheKey, result);
+  if (persistentCache) {
+    await writeBoundaryAnalysisCache(pool, {
+      cacheKey: `land_use:${cacheKey}`,
+      subjectAccountId: accountId,
+      boundarySignature,
+      analysisType: "neighborhood_land_use",
+      boundary,
+      result,
+      sourceState: sourceHealth || { source_mode: sourceMode },
+      ttlHours: 24,
+    }).catch((error) => {
+      console.warn("[neighborhood-land-use] persistent cache write failed", error?.message || error);
+    });
+  }
   return result;
 }
 

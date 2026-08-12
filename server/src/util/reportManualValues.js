@@ -53,6 +53,7 @@ const NEIGHBORHOOD_LAND_USE_FIELDS = [
   "neighborhood_land_use_commercial_pct",
   "neighborhood_land_use_other_vacant_pct",
 ];
+const NEIGHBORHOOD_LAND_USE_CONFIDENCE = new Set(["", "high", "moderate", "limited"]);
 const NEIGHBORHOOD_RANGE_GROUPS = [
   ["neighborhood_house_price_low", "neighborhood_house_price_predominant", "neighborhood_house_price_high"],
   ["neighborhood_ppsf_low", "neighborhood_ppsf_predominant", "neighborhood_ppsf_high"],
@@ -164,6 +165,9 @@ export function validateAssignmentDetails(value) {
     ["neighborhood_boundary_streets_source", 500],
     ["neighborhood_boundary_streets_retrieved_at", 100],
     ["neighborhood_boundary_confirmed_at", 100],
+    ["neighborhood_land_use_analysis_source", 500],
+    ["neighborhood_land_use_analyzed_at", 100],
+    ["neighborhood_land_use_boundary_signature", 128],
   ];
 
   if (!HOA_FREQUENCIES.has(hoaFrequency)) throw new Error("invalid_hoa_frequency");
@@ -216,6 +220,20 @@ export function validateAssignmentDetails(value) {
   if (landUseValues.every((item) => item !== null)) {
     const total = landUseValues.reduce((sum, item) => sum + item, 0);
     if (Math.abs(total - 100) > 0.1) throw new Error("neighborhood_land_use_must_total_100");
+  }
+  if (!NEIGHBORHOOD_LAND_USE_CONFIDENCE.has(text(value.neighborhood_land_use_confidence).toLowerCase())) {
+    throw new Error("invalid_neighborhood_land_use_confidence");
+  }
+  const landUseAnalysisNumbers = [
+    optionalNumber(value.neighborhood_land_use_parcel_count),
+    optionalNumber(value.neighborhood_land_use_review_count),
+    optionalNumber(value.neighborhood_land_use_coverage_percent),
+  ];
+  if (
+    landUseAnalysisNumbers.some((item) => Number.isNaN(item) || (item !== null && item < 0)) ||
+    (landUseAnalysisNumbers[2] !== null && landUseAnalysisNumbers[2] > 100)
+  ) {
+    throw new Error("invalid_neighborhood_land_use_analysis_metadata");
   }
   const unemployment = optionalNumber(value.neighborhood_unemployment_pct);
   if (Number.isNaN(unemployment) || (unemployment !== null && (unemployment < 0 || unemployment > 100))) {

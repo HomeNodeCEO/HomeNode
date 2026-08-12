@@ -97,7 +97,8 @@ test("FEMA flood normalization preserves zone and special-hazard status", () => 
     type: "Feature",
     properties: {
       OBJECTID: 11,
-      GFID: "flood-area-11",
+      GFID: "shared-firm-dataset",
+      FLD_AR_ID: "flood-area-11",
       FLD_ZONE: "AE",
       ZONE_SUBTY: "FLOODWAY",
       SFHA_TF: "T",

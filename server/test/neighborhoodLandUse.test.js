@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   allocateLandUsePercentages,
+  classifyBuiltUpBand,
   classifyDcadLandUse,
   fetchDcadLandUseParcels,
+  isDcadParcelBuiltUp,
 } from "../src/services/neighborhoodLandUse.js";
 
 test("classifies common DCAD land-use descriptions", () => {
@@ -49,6 +51,17 @@ test("allocates one-decimal percentages that total exactly one hundred", () => {
     commercial: 5,
     other_vacant: 4,
   })).reduce((sum, value) => sum + value, 0), 100);
+});
+
+test("derives built-up status and the appraisal checkbox band from DCAD fields", () => {
+  assert.equal(isDcadParcelBuiltUp({ CLASSCD: "1", IMPVALUE: 0 }), true);
+  assert.equal(isDcadParcelBuiltUp({ CLASSCD: "7", IMPVALUE: 25_000 }), false);
+  assert.equal(isDcadParcelBuiltUp({ CLASSCD: "0", IMPVALUE: 25_000 }), true);
+  assert.equal(isDcadParcelBuiltUp({ CLASSCD: "0", IMPVALUE: 0 }), false);
+  assert.deepEqual(classifyBuiltUpBand(75.1), { key: "over_75", label: "Over 75%" });
+  assert.deepEqual(classifyBuiltUpBand(75), { key: "25_to_75", label: "25-75%" });
+  assert.deepEqual(classifyBuiltUpBand(25), { key: "25_to_75", label: "25-75%" });
+  assert.deepEqual(classifyBuiltUpBand(24.9), { key: "under_25", label: "Under 25%" });
 });
 
 test("loads every intersecting DCAD parcel by object id with classification fields", async () => {

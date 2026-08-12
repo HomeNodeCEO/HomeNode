@@ -81,6 +81,7 @@ test("flags a subject site only when it is smaller than at least three same-use 
   assert.deepEqual(result, {
     subject_site_area_sqft: 5_000,
     comparison_min_site_area_sqft: 6_500,
+    comparison_median_site_area_sqft: 7_500,
     comparison_parcel_count: 3,
     subject_smaller_than_all_comparisons: true,
   });
@@ -90,6 +91,7 @@ test("does not create a site-size flag when the subject parcel cannot be matched
   assert.deepEqual(evaluateSubjectSiteSize("missing", [], new Map()), {
     subject_site_area_sqft: null,
     comparison_min_site_area_sqft: null,
+    comparison_median_site_area_sqft: null,
     comparison_parcel_count: 0,
     subject_smaller_than_all_comparisons: false,
   });

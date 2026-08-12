@@ -1293,6 +1293,17 @@ export default function AppraisalReport() {
                 </tbody>
               </table>
             </div>
+            <div className="report-note" style={{ marginTop: 8 }}>
+              <strong>Median Predominant Value Analysis</strong>
+              <div style={{ marginTop: 4 }}>
+                {neighborhoodDetails.subject_concluded_value
+                  ? `Concluded subject value: ${money(neighborhoodDetails.subject_concluded_value)}; predominant neighborhood value: ${money(neighborhoodDetails.neighborhood_house_price_predominant)}; difference: ${money(Math.abs(Number(neighborhoodDetails.neighborhood_value_difference) || 0))} (${Math.abs(Number(neighborhoodDetails.neighborhood_value_difference_pct) || 0).toFixed(1)}%).`
+                  : "The subject value has not yet been concluded; the predominant-value comparison remains pending."}
+              </div>
+              {neighborhoodDetails.neighborhood_value_conclusion ? (
+                <div style={{ marginTop: 4 }}>{String(neighborhoodDetails.neighborhood_value_conclusion)}</div>
+              ) : null}
+            </div>
           </section>
 
           <section className="report-section">

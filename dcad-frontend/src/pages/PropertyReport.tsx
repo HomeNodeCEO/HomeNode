@@ -3,6 +3,10 @@ import type { ReactNode } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
 import {
+  readAppraisalReportDraft,
+  type AppraisalReportSalesDraft,
+} from "@/lib/appraisalReportDraft";
+import {
   createAssignmentFile,
   getCensusCityProfile,
   getCensusZipProfile,
@@ -34,6 +38,7 @@ import {
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
 import {
+  determineNeighborhoodValuePosition,
   determineHighestBestUse,
   growthFromMarket,
   locationTypeFromLandUse,
@@ -427,8 +432,21 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
       value?.highest_best_use_subject_site_area_sqft ?? "",
     highest_best_use_comparison_min_site_area_sqft:
       value?.highest_best_use_comparison_min_site_area_sqft ?? "",
+    highest_best_use_comparison_median_site_area_sqft:
+      value?.highest_best_use_comparison_median_site_area_sqft ?? "",
     highest_best_use_comparison_parcel_count:
       value?.highest_best_use_comparison_parcel_count ?? "",
+    subject_concluded_value: value?.subject_concluded_value ?? "",
+    neighborhood_value_position: value?.neighborhood_value_position || "",
+    neighborhood_value_difference: value?.neighborhood_value_difference ?? "",
+    neighborhood_value_difference_pct: value?.neighborhood_value_difference_pct ?? "",
+    neighborhood_value_conclusion: value?.neighborhood_value_conclusion || "",
+    neighborhood_value_conclusion_auto: value?.neighborhood_value_conclusion_auto || "",
+    neighborhood_value_conclusion_signature:
+      value?.neighborhood_value_conclusion_signature || "",
+    neighborhood_value_conclusion_generated_at:
+      value?.neighborhood_value_conclusion_generated_at || "",
+    neighborhood_value_source: value?.neighborhood_value_source || "",
     lender_revision_count: Math.max(0, Number(value?.lender_revision_count) || 0),
     lender_revision_last_requested_at: value?.lender_revision_last_requested_at || "",
     lender_revision_note: value?.lender_revision_note || "",
@@ -732,6 +750,7 @@ function NeighborhoodCharacteristicsContent({
   customAreaAvailable,
   marketConditionsDraft,
   highestBestUseContext,
+  valuePositionContext,
   assignmentDirty,
   assignmentSaveMessage,
   assignmentSaveDisabled,
@@ -756,6 +775,13 @@ function NeighborhoodCharacteristicsContent({
   highestBestUseContext: {
     zoning: string;
     currentUse: string;
+  };
+  valuePositionContext: {
+    concludedValue: number | null;
+    source: string;
+    subjectGla: number | null;
+    subjectAge: number | null;
+    subjectQuality: string;
   };
   assignmentDirty: boolean;
   assignmentSaveMessage: string;
@@ -782,6 +808,70 @@ function NeighborhoodCharacteristicsContent({
   const unemploymentDifference = zipUnemployment !== null && cityUnemployment !== null
     ? zipUnemployment - cityUnemployment
     : null;
+  const effectiveConcludedValue = valuePositionContext.concludedValue ??
+    parseNumber(assignmentDraft.subject_concluded_value);
+  const valuePosition = useMemo(() => determineNeighborhoodValuePosition({
+    concludedValue: effectiveConcludedValue,
+    predominantValue: assignmentDraft.neighborhood_house_price_predominant,
+    neighborhoodLowValue: assignmentDraft.neighborhood_house_price_low,
+    neighborhoodHighValue: assignmentDraft.neighborhood_house_price_high,
+    subjectGla: valuePositionContext.subjectGla,
+    predominantGla: assignmentDraft.neighborhood_gla_predominant,
+    subjectSiteSize: assignmentDraft.highest_best_use_subject_site_area_sqft,
+    predominantSiteSize: assignmentDraft.highest_best_use_comparison_median_site_area_sqft,
+    subjectAge: valuePositionContext.subjectAge,
+    predominantAge: assignmentDraft.neighborhood_age_predominant,
+    conditionRating: assignmentDraft.subject_condition_rating,
+    qualityRating: valuePositionContext.subjectQuality,
+    conformsToNeighborhood: assignmentDraft.subject_conforms_to_neighborhood,
+    nonconformityType: assignmentDraft.subject_nonconformity_type,
+  }), [
+    assignmentDraft.highest_best_use_comparison_median_site_area_sqft,
+    assignmentDraft.highest_best_use_subject_site_area_sqft,
+    assignmentDraft.neighborhood_age_predominant,
+    assignmentDraft.neighborhood_gla_predominant,
+    assignmentDraft.neighborhood_house_price_high,
+    assignmentDraft.neighborhood_house_price_low,
+    assignmentDraft.neighborhood_house_price_predominant,
+    assignmentDraft.subject_condition_rating,
+    assignmentDraft.subject_conforms_to_neighborhood,
+    assignmentDraft.subject_nonconformity_type,
+    effectiveConcludedValue,
+    valuePositionContext.subjectAge,
+    valuePositionContext.subjectGla,
+    valuePositionContext.subjectQuality,
+  ]);
+  const valuePositionSignature = useMemo(() => JSON.stringify({
+    concludedValue: effectiveConcludedValue,
+    predominantValue: assignmentDraft.neighborhood_house_price_predominant,
+    lowValue: assignmentDraft.neighborhood_house_price_low,
+    highValue: assignmentDraft.neighborhood_house_price_high,
+    subjectGla: valuePositionContext.subjectGla,
+    predominantGla: assignmentDraft.neighborhood_gla_predominant,
+    subjectSiteSize: assignmentDraft.highest_best_use_subject_site_area_sqft,
+    predominantSiteSize: assignmentDraft.highest_best_use_comparison_median_site_area_sqft,
+    subjectAge: valuePositionContext.subjectAge,
+    predominantAge: assignmentDraft.neighborhood_age_predominant,
+    condition: assignmentDraft.subject_condition_rating,
+    quality: valuePositionContext.subjectQuality,
+    conforms: assignmentDraft.subject_conforms_to_neighborhood,
+    nonconformityType: assignmentDraft.subject_nonconformity_type,
+  }), [
+    assignmentDraft.highest_best_use_comparison_median_site_area_sqft,
+    assignmentDraft.highest_best_use_subject_site_area_sqft,
+    assignmentDraft.neighborhood_age_predominant,
+    assignmentDraft.neighborhood_gla_predominant,
+    assignmentDraft.neighborhood_house_price_high,
+    assignmentDraft.neighborhood_house_price_low,
+    assignmentDraft.neighborhood_house_price_predominant,
+    assignmentDraft.subject_condition_rating,
+    assignmentDraft.subject_conforms_to_neighborhood,
+    assignmentDraft.subject_nonconformity_type,
+    effectiveConcludedValue,
+    valuePositionContext.subjectAge,
+    valuePositionContext.subjectGla,
+    valuePositionContext.subjectQuality,
+  ]);
   const landUseAnalysisIsCurrent = Boolean(
     landUseAnalysis && assignmentDraft.neighborhood_boundary_geometry &&
     JSON.stringify(landUseAnalysis.boundary.coordinates) ===
@@ -880,6 +970,10 @@ function NeighborhoodCharacteristicsContent({
       "highest_best_use_comparison_min_site_area_sqft",
       result.comparison_min_site_area_sqft ?? "",
     );
+    onAssignmentChange(
+      "highest_best_use_comparison_median_site_area_sqft",
+      result.comparison_median_site_area_sqft ?? "",
+    );
     onAssignmentChange("highest_best_use_comparison_parcel_count", result.comparison_parcel_count);
     onAssignmentChange(
       "neighborhood_land_use_boundary_signature",
@@ -904,6 +998,61 @@ function NeighborhoodCharacteristicsContent({
     ].filter(([, street]) => String(street || "").trim())
       .map(([side, street]) => `${side}: ${String(street).trim()}`)
       .join("; "));
+  };
+
+  useEffect(() => {
+    if (!valuePosition.ready || !effectiveConcludedValue) return;
+    if (assignmentDraft.neighborhood_value_conclusion_signature === valuePositionSignature) return;
+    const currentNarrative = String(assignmentDraft.neighborhood_value_conclusion || "").trim();
+    const previousAutomaticNarrative = String(
+      assignmentDraft.neighborhood_value_conclusion_auto || "",
+    ).trim();
+    const preserveManualNarrative = Boolean(
+      currentNarrative && currentNarrative !== previousAutomaticNarrative,
+    );
+    onAssignmentChange("subject_concluded_value", effectiveConcludedValue);
+    onAssignmentChange("neighborhood_value_position", valuePosition.relationship);
+    onAssignmentChange("neighborhood_value_difference", valuePosition.difference ?? "");
+    onAssignmentChange("neighborhood_value_difference_pct", valuePosition.differencePercent ?? "");
+    onAssignmentChange("neighborhood_value_conclusion_auto", valuePosition.narrative);
+    onAssignmentChange("neighborhood_value_conclusion_signature", valuePositionSignature);
+    onAssignmentChange("neighborhood_value_conclusion_generated_at", new Date().toISOString());
+    onAssignmentChange(
+      "neighborhood_value_source",
+      valuePositionContext.source || "sales_comparison_approach",
+    );
+    if (!preserveManualNarrative) {
+      onAssignmentChange("neighborhood_value_conclusion", valuePosition.narrative);
+    }
+  }, [
+    assignmentDraft.neighborhood_value_conclusion,
+    assignmentDraft.neighborhood_value_conclusion_auto,
+    assignmentDraft.neighborhood_value_conclusion_signature,
+    effectiveConcludedValue,
+    onAssignmentChange,
+    valuePosition.difference,
+    valuePosition.differencePercent,
+    valuePosition.narrative,
+    valuePosition.ready,
+    valuePosition.relationship,
+    valuePositionContext.source,
+    valuePositionSignature,
+  ]);
+
+  const regenerateValueConclusion = () => {
+    if (!valuePosition.ready || !effectiveConcludedValue) return;
+    onAssignmentChange("subject_concluded_value", effectiveConcludedValue);
+    onAssignmentChange("neighborhood_value_position", valuePosition.relationship);
+    onAssignmentChange("neighborhood_value_difference", valuePosition.difference ?? "");
+    onAssignmentChange("neighborhood_value_difference_pct", valuePosition.differencePercent ?? "");
+    onAssignmentChange("neighborhood_value_conclusion", valuePosition.narrative);
+    onAssignmentChange("neighborhood_value_conclusion_auto", valuePosition.narrative);
+    onAssignmentChange("neighborhood_value_conclusion_signature", valuePositionSignature);
+    onAssignmentChange("neighborhood_value_conclusion_generated_at", new Date().toISOString());
+    onAssignmentChange(
+      "neighborhood_value_source",
+      valuePositionContext.source || "sales_comparison_approach",
+    );
   };
 
   return (
@@ -1165,6 +1314,89 @@ function NeighborhoodCharacteristicsContent({
                 })}
               </div>
             ))}
+          </div>
+          <div className={`mt-3 rounded-xl border p-3 ${
+            valuePosition.ready
+              ? valuePosition.recommendedReview
+                ? "border-amber-300 bg-amber-50"
+                : "border-blue-200 bg-blue-50/60"
+              : "border-slate-200 bg-slate-50"
+          }`}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">Median Predominant Value</h4>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  Subject value positioning and conformity explanation based on the defined neighborhood.
+                </p>
+              </div>
+              <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${
+                valuePosition.ready
+                  ? valuePosition.recommendedReview
+                    ? "bg-amber-200 text-amber-950"
+                    : "bg-blue-100 text-blue-900"
+                  : "bg-slate-200 text-slate-700"
+              }`}>
+                {!valuePosition.ready
+                  ? "Awaiting value conclusion"
+                  : valuePosition.relationship === "above_predominant"
+                    ? "Above predominant"
+                    : valuePosition.relationship === "below_predominant"
+                      ? "Below predominant"
+                      : "At predominant"}
+              </span>
+            </div>
+            {valuePosition.ready ? (
+              <>
+                <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-4">
+                  <div className="rounded-lg border border-white/80 bg-white p-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Concluded Subject Value</div>
+                    <div className="mt-0.5 text-sm font-bold text-slate-900">{formatMoney(effectiveConcludedValue)}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/80 bg-white p-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Predominant Value</div>
+                    <div className="mt-0.5 text-sm font-bold text-slate-900">{formatMoney(assignmentDraft.neighborhood_house_price_predominant)}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/80 bg-white p-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Dollar Difference</div>
+                    <div className="mt-0.5 text-sm font-bold text-slate-900">{formatMoney(Math.abs(valuePosition.difference || 0))}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/80 bg-white p-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Percent Difference</div>
+                    <div className="mt-0.5 text-sm font-bold text-slate-900">{Math.abs(valuePosition.differencePercent || 0).toFixed(1)}%</div>
+                  </div>
+                </div>
+                {valuePosition.recommendedReview ? (
+                  <div className="mt-2 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-semibold text-amber-950">
+                    E&amp;O review: the concluded value falls outside the observed neighborhood range. Review whether the subject is an {valuePosition.recommendedReview === "over_improvement" ? "over-improvement" : "under-improvement"} before finalizing conformity.
+                  </div>
+                ) : null}
+                <label className="mt-3 block">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Value Position and Conformity Commentary</span>
+                  <textarea
+                    rows={4}
+                    className="textarea textarea-bordered mt-1 w-full bg-white text-sm leading-5"
+                    value={assignmentDraft.neighborhood_value_conclusion || valuePosition.narrative}
+                    onChange={(event) => onAssignmentChange("neighborhood_value_conclusion", event.target.value)}
+                  />
+                </label>
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] leading-4 text-slate-500">
+                    Factors reviewed: GLA, site size, age, condition, quality, neighborhood range, and the appraiser's conformity classification. The explanation remains editable.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-neutral btn-xs normal-case rounded-lg text-white"
+                    onClick={regenerateValueConclusion}
+                  >
+                    Regenerate Explanation
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-600">
+                {valuePosition.narrative}
+              </div>
+            )}
           </div>
           <div className="mt-2 border-t border-slate-200 pt-2">
             <div className="flex flex-wrap items-end justify-between gap-2">
@@ -2267,6 +2499,9 @@ function AddressHero({
   const [marketConditionsDraft, setMarketConditionsDraft] = useState<MarketConditionsDraft | null>(
     () => readMarketConditionsDraft(accountId || ""),
   );
+  const [salesComparisonDraft, setSalesComparisonDraft] = useState<AppraisalReportSalesDraft | null>(
+    () => readAppraisalReportDraft(accountId || ""),
+  );
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
@@ -2330,6 +2565,7 @@ function AddressHero({
     setUnemploymentLookupMessage("");
     setUnemploymentAutoAttemptedSignature("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
+    setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
     if (!accountId?.trim() || !detailLoaded) {
       setAssignmentFilesLoading(false);
       setAssignmentFilesLoaded(true);
@@ -2367,6 +2603,18 @@ function AddressHero({
       cancelled = true;
     };
   }, [accountId, detail?.assignment_details, detailLoaded]);
+
+  useEffect(() => {
+    const refreshSalesComparisonDraft = () => {
+      setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
+    };
+    window.addEventListener("focus", refreshSalesComparisonDraft);
+    window.addEventListener("storage", refreshSalesComparisonDraft);
+    return () => {
+      window.removeEventListener("focus", refreshSalesComparisonDraft);
+      window.removeEventListener("storage", refreshSalesComparisonDraft);
+    };
+  }, [accountId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2432,6 +2680,29 @@ function AddressHero({
   const salesHistory = detail?.sales_history || [];
   const propertyActivityHistory = detail?.property_activity_history || salesHistory;
   const values = detail?.value_summary;
+  const subjectGla = parseNumber(
+    improvement?.living_area_sqft ??
+    improvement?.total_living_area ??
+    improvement?.total_area_sqft,
+  );
+  const reportedSubjectAge = parseNumber(improvement?.actual_age);
+  const subjectYearBuilt = parseNumber(
+    improvement?.effective_year_built ?? improvement?.year_built,
+  );
+  const subjectAge = reportedSubjectAge ?? (
+    subjectYearBuilt !== null
+      ? Math.max(0, new Date().getFullYear() - subjectYearBuilt)
+      : null
+  );
+  const salesComparisonValue = parseNumber(
+    salesComparisonDraft?.opinionAfterCostToCure ?? salesComparisonDraft?.opinionOfValue,
+  );
+  const salesComparisonValueSource = salesComparisonDraft?.opinionAfterCostToCure !== null &&
+    salesComparisonDraft?.opinionAfterCostToCure !== undefined
+    ? "Sales Comparison Approach after cost to cure"
+    : salesComparisonDraft?.opinionOfValue !== null && salesComparisonDraft?.opinionOfValue !== undefined
+      ? "Sales Comparison Approach"
+      : "";
 
   const editableSectionValue = (sectionKey: ReportManualSectionKey): Record<string, unknown> => {
     switch (sectionKey) {
@@ -4332,7 +4603,7 @@ function AddressHero({
                   </select>
                 </div>
 
-                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="mt-3 grid gap-3 md:grid-cols-4">
                   <SummaryField
                     label="Zoning Compatibility"
                     value={
@@ -4347,6 +4618,13 @@ function AddressHero({
                     label="Subject Site"
                     value={formatNumber(
                       assignmentDraft.highest_best_use_subject_site_area_sqft,
+                      " sq. ft.",
+                    )}
+                  />
+                  <SummaryField
+                    label="Predominant Same-Use Site"
+                    value={formatNumber(
+                      assignmentDraft.highest_best_use_comparison_median_site_area_sqft,
                       " sq. ft.",
                     )}
                   />
@@ -4438,6 +4716,13 @@ function AddressHero({
                   housing?.structural_style,
                   ...landRows.map((row) => row.state_code),
                 ].filter(Boolean).join(" "),
+              }}
+              valuePositionContext={{
+                concludedValue: salesComparisonValue,
+                source: salesComparisonValueSource,
+                subjectGla,
+                subjectAge,
+                subjectQuality: String(salesComparisonDraft?.subject?.quality || ""),
               }}
               onMarketConditionsChange={updateMarketConditions}
               onSave={() => void saveAssignmentFromSection()}

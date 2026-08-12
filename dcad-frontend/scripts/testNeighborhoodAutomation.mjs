@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  determineNeighborhoodValuePosition,
   determineHighestBestUse,
   growthFromMarket,
   locationTypeFromLandUse,
@@ -43,5 +44,51 @@ const flagged = determineHighestBestUse({
 });
 assert.equal(flagged.conclusion, 'investigation_required');
 assert.equal(flagged.flags.length, 2);
+
+const abovePredominant = determineNeighborhoodValuePosition({
+  concludedValue: 360_000,
+  predominantValue: 300_000,
+  neighborhoodLowValue: 225_000,
+  neighborhoodHighValue: 425_000,
+  subjectGla: 2_200,
+  predominantGla: 1_800,
+  subjectSiteSize: 10_000,
+  predominantSiteSize: 7_500,
+  subjectAge: 15,
+  predominantAge: 35,
+  conditionRating: 'C2',
+  qualityRating: 'Q3',
+  conformsToNeighborhood: true,
+});
+assert.equal(abovePredominant.ready, true);
+assert.equal(abovePredominant.relationship, 'above_predominant');
+assert.equal(abovePredominant.differencePercent, 20);
+assert.equal(abovePredominant.recommendedReview, '');
+assert.match(abovePredominant.narrative, /larger 2,200-square-foot GLA/);
+assert.match(abovePredominant.narrative, /conforms to the area/);
+
+const underImprovement = determineNeighborhoodValuePosition({
+  concludedValue: 190_000,
+  predominantValue: 300_000,
+  neighborhoodLowValue: 225_000,
+  neighborhoodHighValue: 425_000,
+  subjectGla: 1_200,
+  predominantGla: 1_800,
+  subjectAge: 60,
+  predominantAge: 35,
+  conditionRating: 'C5',
+  conformsToNeighborhood: false,
+  nonconformityType: 'under_improvement',
+});
+assert.equal(underImprovement.recommendedReview, 'under_improvement');
+assert.match(underImprovement.narrative, /does not conform/);
+assert.match(underImprovement.narrative, /redevelopment, or demolition/);
+
+const pendingValue = determineNeighborhoodValuePosition({
+  concludedValue: null,
+  predominantValue: 300_000,
+});
+assert.equal(pendingValue.ready, false);
+assert.equal(pendingValue.relationship, 'pending');
 
 console.log('Neighborhood automation rules passed.');

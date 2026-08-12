@@ -414,6 +414,7 @@ export function evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaBy
     return {
       subject_site_area_sqft: null,
       comparison_min_site_area_sqft: null,
+      comparison_median_site_area_sqft: null,
       comparison_parcel_count: 0,
       subject_smaller_than_all_comparisons: false,
     };
@@ -429,9 +430,17 @@ export function evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaBy
     .filter((item) => item.index !== subjectIndex && item.category === subjectCategory && item.area > 0)
     .map((item) => item.area);
   const comparisonMinimum = comparisonAreas.length ? Math.min(...comparisonAreas) : null;
+  const sortedComparisonAreas = [...comparisonAreas].sort((left, right) => left - right);
+  const midpoint = Math.floor(sortedComparisonAreas.length / 2);
+  const comparisonMedian = !sortedComparisonAreas.length
+    ? null
+    : sortedComparisonAreas.length % 2
+      ? sortedComparisonAreas[midpoint]
+      : (sortedComparisonAreas[midpoint - 1] + sortedComparisonAreas[midpoint]) / 2;
   return {
     subject_site_area_sqft: subjectArea > 0 ? rounded(subjectArea, 0) : null,
     comparison_min_site_area_sqft: comparisonMinimum === null ? null : rounded(comparisonMinimum, 0),
+    comparison_median_site_area_sqft: comparisonMedian === null ? null : rounded(comparisonMedian, 0),
     comparison_parcel_count: comparisonAreas.length,
     subject_smaller_than_all_comparisons: Boolean(
       subjectArea > 0 && comparisonAreas.length >= 3 && comparisonMinimum !== null && subjectArea < comparisonMinimum,

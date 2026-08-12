@@ -277,7 +277,17 @@ export interface AssignmentDetailsPayload {
   highest_best_use_analyzed_at?: string;
   highest_best_use_subject_site_area_sqft?: string | number;
   highest_best_use_comparison_min_site_area_sqft?: string | number;
+  highest_best_use_comparison_median_site_area_sqft?: string | number;
   highest_best_use_comparison_parcel_count?: string | number;
+  subject_concluded_value?: string | number;
+  neighborhood_value_position?: string;
+  neighborhood_value_difference?: string | number;
+  neighborhood_value_difference_pct?: string | number;
+  neighborhood_value_conclusion?: string;
+  neighborhood_value_conclusion_auto?: string;
+  neighborhood_value_conclusion_signature?: string;
+  neighborhood_value_conclusion_generated_at?: string;
+  neighborhood_value_source?: string;
   lender_revision_count?: string | number;
   lender_revision_last_requested_at?: string;
   lender_revision_note?: string;
@@ -1354,6 +1364,7 @@ export interface NeighborhoodLandUseAnalysisResponse {
   built_up_parcel_count: number;
   subject_site_area_sqft: number | null;
   comparison_min_site_area_sqft: number | null;
+  comparison_median_site_area_sqft: number | null;
   comparison_parcel_count: number;
   subject_smaller_than_all_comparisons: boolean;
   coverage_percent: number;

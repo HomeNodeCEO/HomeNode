@@ -162,7 +162,16 @@ test("assignment details accept a complete neighborhood profile", () => {
     highest_best_use_flags: [],
     highest_best_use_subject_site_area_sqft: 7578,
     highest_best_use_comparison_min_site_area_sqft: 7600,
+    highest_best_use_comparison_median_site_area_sqft: 8250,
     highest_best_use_comparison_parcel_count: 41,
+    subject_concluded_value: 345000,
+    neighborhood_value_position: "above_predominant",
+    neighborhood_value_difference: 45000,
+    neighborhood_value_difference_pct: 15,
+    neighborhood_value_conclusion: "The subject is above the predominant value due to its larger GLA.",
+    neighborhood_value_conclusion_auto: "The subject is above the predominant value due to its larger GLA.",
+    neighborhood_value_conclusion_signature: "comparison-signature",
+    neighborhood_value_source: "Sales Comparison Approach",
   }), true);
 });
 
@@ -192,4 +201,10 @@ test("assignment details enforce neighborhood totals and boundary confirmation",
   assert.throws(() => validateAssignmentDetails({
     highest_best_use_flags: "review zoning",
   }), /invalid_highest_best_use_flags/);
+  assert.throws(() => validateAssignmentDetails({
+    neighborhood_value_position: "far_above",
+  }), /invalid_neighborhood_value_position/);
+  assert.throws(() => validateAssignmentDetails({
+    subject_concluded_value: -1,
+  }), /invalid_neighborhood_value_comparison/);
 });

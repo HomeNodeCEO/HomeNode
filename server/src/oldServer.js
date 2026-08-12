@@ -15,6 +15,7 @@ import {
   filterComparablesForMarket,
   scoreComparable,
 } from "./util/comparableScoring.js";
+import { decorateAndRankByInfluence } from "./util/propertyInfluence.js";
 import { resolveComparableSearchProfile } from "./util/comparableSearchProfiles.js";
 import {
   ensureAccountLocationsTable,
@@ -107,6 +108,10 @@ import {
   savePropertyContextReview,
 } from "./services/propertyContext.js";
 import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
+import {
+  enqueuePropertyInfluenceAccounts,
+  getPropertyInfluenceContexts,
+} from "./services/propertyInfluenceStore.js";
 import { getRecentScheduledMaintenanceRuns } from "./services/scheduledMaintenance.js";
 import {
   createRequestPerformanceMonitor,
@@ -2554,7 +2559,8 @@ app.get("/api/search", async (req, res) => {
 /**
  * GET /api/sales/recommendations
  *
- * Ranks matched CAD sales using parcel-centroid distance (40%), continuous
+ * Ranks matched CAD sales first by comparable mapped location influences when
+ * local influence coverage is sufficient, then by parcel-centroid distance (40%), continuous
  * living-area similarity (37%), year-built similarity (10%), site-size
  * similarity (5%), and closing-date recency (8%). The default
  * 12-month analysis period excludes older sales unless the caller explicitly
@@ -2838,6 +2844,24 @@ app.get("/api/sales/recommendations", async (req, res) => {
       });
     }
 
+    const subjectInfluenceContexts = await getPropertyInfluenceContexts(
+      pool,
+      [subjectAccountId],
+    );
+    const subjectInfluenceContext = subjectInfluenceContexts.get(subjectAccountId) || null;
+    const subjectInfluenceSignature = subjectInfluenceContext?.influence_signature || null;
+    if (!subjectInfluenceSignature) {
+      void enqueuePropertyInfluenceAccounts(pool, [subjectAccountId], {
+        reason: "comparable_subject",
+        priority: 120,
+      }).catch((error) => {
+        console.warn(
+          "[recommendations] subject influence queueing failed",
+          error?.message || error,
+        );
+      });
+    }
+
     const candidateParams = [subjectAccountId];
     const candidateWhere = [
       "sale.primary_account_id IS NOT NULL",
@@ -2875,10 +2899,24 @@ app.get("/api/sales/recommendations", async (req, res) => {
       "location.status = 'matched'",
       "location.latitude IS NOT NULL",
       "location.longitude IS NOT NULL",
-      `location.latitude::double precision BETWEEN ${latitudeMinimum} AND ${latitudeMaximum}`,
-      `location.longitude::double precision BETWEEN ${longitudeMinimum} AND ${longitudeMaximum}`,
-      `(${candidateDistanceSql}) <= ${radiusMilesSql}`,
     );
+    const standardRadiusScopeSql = `(
+      location.latitude::double precision BETWEEN ${latitudeMinimum} AND ${latitudeMaximum}
+      AND location.longitude::double precision BETWEEN ${longitudeMinimum} AND ${longitudeMaximum}
+      AND (${candidateDistanceSql}) <= ${radiusMilesSql}
+    )`;
+    const subjectMaterialCategories = subjectInfluenceSignature?.material_influence_present
+      ? subjectInfluenceSignature.material_categories || []
+      : [];
+    if (subjectMaterialCategories.length) {
+      const influenceCategoriesSql = `$${candidateParams.push(subjectMaterialCategories)}::text[]`;
+      candidateWhere.push(`(
+        ${standardRadiusScopeSql}
+        OR candidate_influence.material_categories && ${influenceCategoriesSql}
+      )`);
+    } else {
+      candidateWhere.push(standardRadiusScopeSql);
+    }
 
     const candidateSql = `
       SELECT
@@ -2967,12 +3005,18 @@ app.get("/api/sales/recommendations", async (req, res) => {
         location.confidence AS location_confidence,
         location.review_required AS location_review_required,
         location.review_reason AS location_review_reason,
-        location.geocoded_at AS location_geocoded_at
+        location.geocoded_at AS location_geocoded_at,
+        candidate_influence.influence_signature AS candidate_influence_signature,
+        candidate_influence.material_keys AS candidate_material_keys,
+        candidate_influence.material_categories AS candidate_material_categories,
+        candidate_influence.computed_at AS candidate_influence_computed_at
       FROM core.v_sales_enriched sale
       JOIN core.accounts account
         ON account.account_id = sale.primary_account_id
       LEFT JOIN core.account_locations location
         ON location.account_id = sale.primary_account_id
+      LEFT JOIN gis.property_influence_contexts candidate_influence
+        ON candidate_influence.account_id = sale.primary_account_id
       LEFT JOIN app.property_attribute_manual_values manual_report
         ON manual_report.account_id = sale.primary_account_id
        AND manual_report.attribute_key = 'report.property_characteristics'
@@ -3038,6 +3082,21 @@ app.get("/api/sales/recommendations", async (req, res) => {
           .filter(Boolean),
       ),
     ];
+    const missingInfluenceAccounts = candidates
+      .filter((candidate) => !candidate.candidate_influence_signature)
+      .slice(0, 1_000)
+      .map((candidate) => candidate.primary_account_id);
+    if (missingInfluenceAccounts.length) {
+      void enqueuePropertyInfluenceAccounts(pool, missingInfluenceAccounts, {
+        reason: "comparable_recommendation",
+        priority: 110,
+      }).catch((error) => {
+        console.warn(
+          "[recommendations] candidate influence queueing failed",
+          error?.message || error,
+        );
+      });
+    }
     const cadSiteSizeByAccount = new Map();
     if (candidateAccountIds.length) {
       const { rows: cadSiteRows } = await pool.query(
@@ -3180,10 +3239,31 @@ app.get("/api/sales/recommendations", async (req, res) => {
           String(left.closing_date || ""),
         ),
     );
-    scoped.forEach((candidate, index) => {
+    const influenceRanked = decorateAndRankByInfluence(
+      scoped,
+      subjectInfluenceSignature,
+      (candidate) => candidate.candidate_influence_signature || null,
+    );
+    const rankedScoped = influenceRanked.sales.map((candidate) => ({
+      ...candidate,
+      influence_support_candidate:
+        Number(candidate.distanceMiles) > Number(radiusMiles) &&
+        candidate.influence_similarity?.exact_material_match === true,
+      candidate_purpose:
+        Number(candidate.distanceMiles) > Number(radiusMiles) &&
+        candidate.influence_similarity?.exact_material_match === true
+          ? "influence_support"
+          : "primary_similarity",
+    }));
+    // TODO(secondary-comparable-grid): When the dedicated secondary sales grid
+    // is added, route influence_support candidates that are weaker on physical
+    // similarity into that grid while preserving their defining influence and
+    // explanation. They remain eligible for the primary grid today because the
+    // appraiser requested influence similarity as the first ranking tier.
+    rankedScoped.forEach((candidate, index) => {
       candidate.score_rank = index + 1;
     });
-    const recommendationResult = applyRecommendationPolicy(scoped, {
+    const recommendationResult = applyRecommendationPolicy(rankedScoped, {
       referenceDate: effectiveDateTo,
       policy: {
         ...DEFAULT_RECOMMENDATION_POLICY,
@@ -3241,6 +3321,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
         location_review_required: subject.location_review_required,
         location_review_reason: subject.location_review_reason,
         location_geocoded_at: subject.geocoded_at,
+        influence_signature: subjectInfluenceSignature,
       },
       scoring: {
         ...scoringConfig,
@@ -3288,7 +3369,14 @@ app.get("/api/sales/recommendations", async (req, res) => {
         ).length,
         recent_high_score_count:
           recommendationResult.policy.recentHighScoreCount,
+        influence_context_count: influenceRanked.policy.measured_sale_count,
+        missing_influence_context_count: Math.max(
+          0,
+          influenceRanked.policy.eligible_sale_count -
+            influenceRanked.policy.measured_sale_count,
+        ),
       },
+      influence_ranking: influenceRanked.policy,
       recommendation_policy: recommendationResult.policy,
       statistical_analysis: outlierResult.analysis,
       analysis_period: {

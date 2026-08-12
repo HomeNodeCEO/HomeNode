@@ -234,6 +234,47 @@ export function buildPropertyComplexityAssessment({
       evidence: nearestMajorRoad,
     }, points >= 12 ? "moderate" : null);
   }
+  const nearestRailroad = spatialContext.nearest_railroad;
+  const railroadDistance = finiteNumber(nearestRailroad?.distance_feet);
+  if (railroadDistance !== null && railroadDistance <= 1_000) {
+    const points = railroadDistance <= 250 ? 24 : railroadDistance <= 500 ? 16 : 7;
+    addFactor({
+      code: "railroad_influence",
+      label: "Railroad influence",
+      severity: points >= 16 ? "high" : "moderate",
+      points,
+      detail: `${nearestRailroad.name || "A mapped railroad"} is approximately ${Math.round(railroadDistance).toLocaleString()} feet from the parcel.`,
+      evidence: nearestRailroad,
+    }, railroadDistance <= 500 ? "moderate" : null);
+  }
+  const floodContext = spatialContext.flood_context;
+  if (floodContext?.special_flood_hazard === true) {
+    addFactor({
+      code: "special_flood_hazard_area",
+      label: "Mapped special flood hazard area",
+      severity: "high",
+      points: 25,
+      detail: `The parcel intersects FEMA flood zone ${floodContext.flood_zone || "SFHA"}; the effective map and any property-specific flood determination require appraiser review.`,
+      evidence: floodContext,
+    }, "complex");
+  }
+  const zoningContext = spatialContext.zoning_context;
+  const generalizedZoning = String(zoningContext?.generalized_use || "").toLowerCase();
+  const housingType = String(subject.housing_type || "").toLowerCase();
+  const residentialSubject = /single|detached|attached|town|condo|residen/.test(housingType);
+  if (
+    residentialSubject && generalizedZoning &&
+    !/residen|mixed|planned|pud|pd/.test(generalizedZoning)
+  ) {
+    addFactor({
+      code: "zoning_use_mismatch",
+      label: "Zoning/current-use mismatch",
+      severity: "high",
+      points: 25,
+      detail: `The saved zoning source classifies the site as ${zoningContext.generalized_use}; the current residential use requires investigation.`,
+      evidence: zoningContext,
+    }, "complex");
+  }
   const compactness = finiteNumber(spatialContext.parcel_compactness);
   if (compactness !== null && compactness < 0.4) {
     addFactor({

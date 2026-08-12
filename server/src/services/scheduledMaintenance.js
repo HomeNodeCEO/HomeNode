@@ -14,18 +14,29 @@ import {
 } from "./censusGeography.js";
 import {
   syncDcadPropertyContext,
+  syncFemaFloodContext,
+  syncOfficialZoningContext,
   syncTigerRoadContext,
 } from "./propertyContextSync.js";
+import {
+  getPropertyInfluenceStatus,
+  runPropertyInfluenceBatch,
+  seedPropertyInfluenceQueue,
+} from "./propertyInfluenceQueue.js";
 
 const MAINTENANCE_LOCK_A = 48_632_941;
 const MAINTENANCE_LOCK_B = 20_260_812;
 const TASK_ALIASES = Object.freeze({
-  routine: ["census", "locations", "parcels"],
-  all: ["census", "locations", "parcels", "roads"],
+  routine: ["census", "locations", "parcels", "influences"],
+  all: ["census", "locations", "parcels", "roads", "floods", "zoning", "influences"],
+  context: ["roads", "floods", "zoning", "influences"],
   census: ["census"],
   locations: ["locations"],
   parcels: ["parcels"],
   roads: ["roads"],
+  floods: ["floods"],
+  zoning: ["zoning"],
+  influences: ["influences"],
 });
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -147,6 +158,37 @@ async function runLocationTask(pool, options) {
   return { ...totals, status: await getLocationBackfillStatus(pool) };
 }
 
+async function runInfluenceTask(pool, options) {
+  const maximumBatches = boundedInteger(options.influenceMaximumBatches, 4, 1, 100);
+  const batchSize = boundedInteger(options.influenceBatchSize, 100, 1, 500);
+  const seedLimit = boundedInteger(options.influenceSeedLimit, 10_000, 1, 50_000);
+  const totals = {
+    seeded: 0,
+    batches: 0,
+    claimed: 0,
+    completed: 0,
+    retry: 0,
+    manualReview: 0,
+  };
+  for (let batch = 0; batch < maximumBatches && Date.now() < options.deadline; batch += 1) {
+    const seed = batch === 0
+      ? await seedPropertyInfluenceQueue(pool, { limit: seedLimit })
+      : { queued: 0 };
+    const result = await runPropertyInfluenceBatch(pool, {
+      batchSize,
+      workerId: `${options.workerId}-influences`,
+      maximumAttempts: options.maximumAttempts,
+    });
+    totals.seeded += Number(seed.queued || 0);
+    if (result.claimed) totals.batches += 1;
+    for (const key of ["claimed", "completed", "retry", "manualReview"]) {
+      totals[key] += Number(result[key] || 0);
+    }
+    if (!seed.queued && !result.claimed) break;
+  }
+  return { ...totals, status: await getPropertyInfluenceStatus(pool) };
+}
+
 async function runTask(pool, task, options) {
   if (task === "census") return runCensusTask(pool, options);
   if (task === "locations") return runLocationTask(pool, options);
@@ -163,6 +205,19 @@ async function runTask(pool, task, options) {
       concurrency: options.fetchConcurrency,
     });
   }
+  if (task === "floods") {
+    return syncFemaFloodContext(pool, {
+      batchSize: options.hazardBatchSize,
+      concurrency: options.fetchConcurrency,
+    });
+  }
+  if (task === "zoning") {
+    return syncOfficialZoningContext(pool, {
+      batchSize: options.zoningBatchSize,
+      concurrency: options.fetchConcurrency,
+    });
+  }
+  if (task === "influences") return runInfluenceTask(pool, options);
   throw new Error(`Unsupported maintenance task '${task}'.`);
 }
 
@@ -178,6 +233,11 @@ export async function runScheduledMaintenance(pool, {
   locationSeedLimit = 1_000,
   parcelBatchSize = 2_000,
   roadBatchSize = 5_000,
+  hazardBatchSize = 1_000,
+  zoningBatchSize = 1_000,
+  influenceMaximumBatches = 4,
+  influenceBatchSize = 100,
+  influenceSeedLimit = 10_000,
   fetchConcurrency = 3,
   logger = console,
   taskRunner = runTask,
@@ -215,6 +275,11 @@ export async function runScheduledMaintenance(pool, {
       locationSeedLimit,
       parcelBatchSize: boundedInteger(parcelBatchSize, 2_000, 100, 10_000),
       roadBatchSize: boundedInteger(roadBatchSize, 5_000, 100, 10_000),
+      hazardBatchSize: boundedInteger(hazardBatchSize, 1_000, 100, 2_000),
+      zoningBatchSize: boundedInteger(zoningBatchSize, 1_000, 100, 2_000),
+      influenceMaximumBatches,
+      influenceBatchSize,
+      influenceSeedLimit,
       fetchConcurrency: boundedInteger(fetchConcurrency, 3, 1, 8),
     };
 

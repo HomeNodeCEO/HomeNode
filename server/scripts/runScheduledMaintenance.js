@@ -33,6 +33,18 @@ try {
       "location-maximum-batches",
       process.env.MAINTENANCE_LOCATION_MAX_BATCHES || "4",
     ),
+    influenceMaximumBatches: option(
+      "influence-maximum-batches",
+      process.env.MAINTENANCE_INFLUENCE_MAX_BATCHES || "4",
+    ),
+    influenceBatchSize: option(
+      "influence-batch-size",
+      process.env.MAINTENANCE_INFLUENCE_BATCH_SIZE || "100",
+    ),
+    influenceSeedLimit: option(
+      "influence-seed-limit",
+      process.env.MAINTENANCE_INFLUENCE_SEED_LIMIT || "10000",
+    ),
     fetchConcurrency: process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || "3",
   });
   console.log(JSON.stringify(result, null, 2));

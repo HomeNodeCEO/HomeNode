@@ -3293,7 +3293,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   Recommendation scoring details and audit
                 </span>
                 <span className="mt-0.5 block text-xs text-slate-600">
-                  Ranking weights, optional filters, selected-slot review, and outlier diagnostics.
+                  Influence-first ranking, scoring weights, selected-slot review, and outlier diagnostics.
                   {' '}{selectedSales.filter(Boolean).length} of {COMPARABLE_COUNT} comparable slots are populated.
                 </span>
               </span>
@@ -3305,7 +3305,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             {recommendationDetailsExpanded && (
               <div id="comparable-recommendation-details" className="border-t border-slate-200 p-4">
           <div className="rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm text-indigo-950">
-            Recommendations use parcel-center distance at 40%, living-area similarity at 37%, year-built similarity at 10%, site-size similarity at 5%, and sale-date recency at 8%.
+            When reliable stored GIS context covers the candidate set, recommendations first prioritize sales with the same mapped location influences—even when they are farther away or less recent. The normal score then orders sales within each influence tier using parcel-center distance at 40%, living-area similarity at 37%, year-built similarity at 10%, site-size similarity at 5%, and sale-date recency at 8%.
             The 10% living-area and site-size settings control how quickly those scores decline; they do not exclude larger or smaller properties.
             A 10-year age difference or 10% site-size difference receives half of that factor&apos;s points. Missing year-built or site-size data receives no points for that factor and is flagged for review rather than excluded.
             The 12-month period is the default and excludes sales over one year old. Select 24 or 36 months to include older sales as recency-weighted fallback evidence.
@@ -3418,6 +3418,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               {' '}Search profile: {recommendationSummary.search_profile.label} within{' '}
               {recommendationSummary.search_profile.radius_miles} mile{recommendationSummary.search_profile.radius_miles === 1 ? '' : 's'}.
               {' '}Subject location confidence: {recommendationSummary.subject.location_confidence}.
+              {recommendationSummary.influence_ranking && (
+                recommendationSummary.influence_ranking.influence_priority_applied
+                  ? ` Influence-first ordering was applied to ${recommendationSummary.influence_ranking.measured_sale_count.toLocaleString()} sales with stored GIS context.`
+                  : ` Influence-first ordering is pending: ${recommendationSummary.influence_ranking.measured_sale_count.toLocaleString()} of ${recommendationSummary.influence_ranking.eligible_sale_count.toLocaleString()} eligible sales currently have stored GIS context.`
+              )}
               {recommendationSummary.coverage.missing_location_count > 0 && (
                 <> {recommendationSummary.coverage.missing_location_count.toLocaleString()} lacked parcel coordinates.</>
               )}
@@ -3565,6 +3570,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                 {sale.score_requires_review && (
                                   <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">Review</span>
                                 )}
+                                {sale.influence_similarity?.exact_material_match && (
+                                  <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-semibold text-cyan-950">
+                                    Matched location influence
+                                  </span>
+                                )}
+                                {sale.influence_support_candidate && (
+                                  <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-950">
+                                    Influence support
+                                  </span>
+                                )}
                               </div>
                               <div className="mt-1 text-xs text-slate-600">
                                 {sale.distanceMiles?.toFixed(2)} mi · {sale.squareFootageDifferencePercent?.toFixed(1)}% size difference
@@ -3572,6 +3587,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               <div className="mt-1 text-xs text-slate-500">
                                 Location {sale.locationScore?.toFixed(1)} · GLA {sale.squareFootageScore?.toFixed(1)} · Age {sale.ageDataAvailable ? sale.ageScore?.toFixed(1) : 'Review'} · Site {sale.siteDataAvailable ? sale.siteSizeScore?.toFixed(1) : 'Review'} · Date {sale.salesDateScore?.toFixed(1)}
                               </div>
+                              {sale.influence_similarity?.data_available && (
+                                <div className="mt-1 text-xs text-cyan-900">
+                                  Influence tier {sale.influence_similarity.priority_tier} · similarity {sale.influence_similarity.similarity_score?.toFixed(1) ?? 'Review'}
+                                  {sale.influence_signature?.descriptors?.length
+                                    ? ` · ${sale.influence_signature.descriptors.join(', ')}`
+                                    : ''}
+                                </div>
+                              )}
                               {sale.recommendationExclusionReason === 'outside_analysis_period' && (
                                 <div className="mt-1 text-xs font-medium text-amber-800">
                                   Outside the selected historical period.

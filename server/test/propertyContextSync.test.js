@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  deduplicateSourceRecords,
   fetchArcGisObjectIds,
   normalizeDcadParcelFeature,
   normalizeFemaFloodFeature,
   normalizeOfficialZoningFeature,
   normalizeRoadFeature,
   syncDcadPropertyContext,
+  tigerRoadOutFields,
 } from "../src/services/propertyContextSync.js";
 
 test("ArcGIS object IDs are numeric, unique, and sorted", async () => {
@@ -73,6 +75,21 @@ test("road normalization retains the named road and source class", () => {
   assert.equal(record.name, "N GARLAND AVE");
   assert.equal(record.road_class, "secondary");
   assert.equal(record.source_vintage, "2025");
+});
+
+test("railroad sync requests only fields exposed by the TIGER railroad layer", () => {
+  assert.equal(tigerRoadOutFields(3).includes("RTTYP"), false);
+  assert.equal(tigerRoadOutFields(3).includes("SUFTYPEABRV"), true);
+  assert.equal(tigerRoadOutFields(0).includes("RTTYP"), true);
+});
+
+test("FEMA records are deduplicated by stable source identity before upsert", () => {
+  const records = [
+    { source_key: "fema_nfhl", source_record_id: "same", flood_zone: "A" },
+    { source_key: "fema_nfhl", source_record_id: "same", flood_zone: "AE" },
+    { source_key: "fema_nfhl", source_record_id: "other", flood_zone: "X" },
+  ];
+  assert.deepEqual(deduplicateSourceRecords(records), [records[1], records[2]]);
 });
 
 test("FEMA flood normalization preserves zone and special-hazard status", () => {

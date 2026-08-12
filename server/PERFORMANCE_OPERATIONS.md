@@ -30,6 +30,28 @@ Future flood, zoning, road, and influence imports belong in the scheduled task
 registry in `src/services/scheduledMaintenance.js`; they must not be added to
 web-server startup.
 
+## DFW county onboarding prerequisite
+
+The Census and parcel-context jobs enrich accounts already present in
+`core.accounts`; they do not discover or download a county's complete appraisal
+roll. Before treating a DFW county as covered:
+
+1. Obtain the county appraisal-district account inventory (CSV until an
+   approved automated feed is available).
+2. Upsert the county account IDs, county name, situs address, city, and ZIP into
+   `core.accounts` without creating duplicates.
+3. Compare the imported distinct-account total with the county source total and
+   resolve rejected or duplicate rows.
+4. Configure and validate the county-specific parcel GIS source. The account ID
+   is the join key; Census may fall back to a situs address, but parcel geometry
+   still requires a compatible county parcel source or a manual-review path.
+5. Run the Census and parcel-context maintenance queues, then confirm county
+   coverage and review counts independently.
+
+Do not describe Census or parcel coverage as "all DFW" until Dallas, Collin,
+Denton, Tarrant, Rockwall, and every other county in the intended product scope
+has passed this inventory reconciliation.
+
 ## Safety and failure behavior
 
 - A PostgreSQL advisory lock prevents overlapping scheduled runs, including a

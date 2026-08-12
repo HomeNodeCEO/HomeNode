@@ -308,8 +308,10 @@ function generalizedZoningUse(...values) {
 export function normalizeFemaFloodFeature(feature, runId) {
   const attributes = feature?.properties || feature?.attributes || {};
   const geometry = geoJsonGeometry(feature);
-  const sourceRecordId = text(attributes.GFID) || text(attributes.FLD_AR_ID) ||
-    text(attributes.OBJECTID ?? feature?.id);
+  // GFID identifies the effective FIRM dataset and is shared by thousands of
+  // polygons. FLD_AR_ID is the stable identity of the individual flood area.
+  const sourceRecordId = text(attributes.FLD_AR_ID) ||
+    text(attributes.OBJECTID ?? feature?.id) || text(attributes.GFID);
   if (!sourceRecordId || !geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) {
     return null;
   }
@@ -907,8 +909,10 @@ export async function syncTigerRoadContext(pool, {
 
 export async function syncFemaFloodContext(pool, {
   fetchImpl = fetch,
-  batchSize = 1_000,
-  concurrency = 2,
+  // NFHL polygons can be extremely detailed. Smaller batches avoid transient
+  // ArcGIS HTTP 500 responses caused by oversized geometry payloads.
+  batchSize = 200,
+  concurrency = 1,
   sourceVintage = process.env.FEMA_NFHL_VINTAGE || "effective-current",
   logger = console,
 } = {}) {

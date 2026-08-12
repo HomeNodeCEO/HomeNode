@@ -5,6 +5,7 @@ import {
   allocateLandUsePercentages,
   classifyBuiltUpBand,
   classifyDcadLandUse,
+  evaluateSubjectSiteSize,
   fetchDcadLandUseParcels,
   isDcadParcelBuiltUp,
 } from "../src/services/neighborhoodLandUse.js";
@@ -62,6 +63,36 @@ test("derives built-up status and the appraisal checkbox band from DCAD fields",
   assert.deepEqual(classifyBuiltUpBand(75), { key: "25_to_75", label: "25-75%" });
   assert.deepEqual(classifyBuiltUpBand(25), { key: "25_to_75", label: "25-75%" });
   assert.deepEqual(classifyBuiltUpBand(24.9), { key: "under_25", label: "Under 25%" });
+});
+
+test("flags a subject site only when it is smaller than at least three same-use parcels", () => {
+  const classifiedParcels = [
+    { account_id: "26272500060150000", classification: { category: "one_unit" } },
+    { account_id: "A", classification: { category: "one_unit" } },
+    { account_id: "B", classification: { category: "one_unit" } },
+    { account_id: "C", classification: { category: "one_unit" } },
+    { account_id: "D", classification: { category: "commercial" } },
+  ];
+  const result = evaluateSubjectSiteSize(
+    "26272500060150000",
+    classifiedParcels,
+    new Map([[0, 5_000], [1, 6_500], [2, 7_500], [3, 8_500], [4, 1_000]]),
+  );
+  assert.deepEqual(result, {
+    subject_site_area_sqft: 5_000,
+    comparison_min_site_area_sqft: 6_500,
+    comparison_parcel_count: 3,
+    subject_smaller_than_all_comparisons: true,
+  });
+});
+
+test("does not create a site-size flag when the subject parcel cannot be matched", () => {
+  assert.deepEqual(evaluateSubjectSiteSize("missing", [], new Map()), {
+    subject_site_area_sqft: null,
+    comparison_min_site_area_sqft: null,
+    comparison_parcel_count: 0,
+    subject_smaller_than_all_comparisons: false,
+  });
 });
 
 test("loads every intersecting DCAD parcel by object id with classification fields", async () => {

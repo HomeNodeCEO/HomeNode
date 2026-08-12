@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test:adjustments": "node scripts/testComparableAdjustments.mjs",
     "test:ratings": "node scripts/testConditionQualityRatings.mjs",
-    "test:condition-study": "node scripts/testConditionQualityRatings.mjs"
+    "test:condition-study": "node scripts/testConditionQualityRatings.mjs",
+    "test:neighborhood": "node --experimental-strip-types scripts/testNeighborhoodAutomation.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.540.0",

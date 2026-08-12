@@ -33,6 +33,15 @@ import {
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
+import {
+  determineHighestBestUse,
+  growthFromMarket,
+  locationTypeFromLandUse,
+  marketTrendFromRecommendation,
+  marketingTimeFromMedianDom,
+  reconciledMedianDaysOnMarket,
+  type NeighborhoodLocationType,
+} from "@/lib/neighborhoodAutomation";
 import { UAD_CONDITION_RATINGS } from "@/lib/conditionQualityRatings";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 
@@ -367,6 +376,8 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_city_unemployment_variable:
       value?.neighborhood_city_unemployment_variable || "",
     neighborhood_market_trend: value?.neighborhood_market_trend || "",
+    neighborhood_market_change_pct: value?.neighborhood_market_change_pct ?? "",
+    neighborhood_median_dom: value?.neighborhood_median_dom ?? "",
     neighborhood_demand_supply: value?.neighborhood_demand_supply || "",
     neighborhood_marketing_time: value?.neighborhood_marketing_time || "",
     neighborhood_house_price_low: value?.neighborhood_house_price_low ?? "",
@@ -403,6 +414,21 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
       value?.neighborhood_boundary_streets_retrieved_at || "",
     neighborhood_boundary_confirmed: Boolean(value?.neighborhood_boundary_confirmed),
     neighborhood_boundary_confirmed_at: value?.neighborhood_boundary_confirmed_at || "",
+    highest_best_use_conclusion: value?.highest_best_use_conclusion || "",
+    highest_best_use_summary: value?.highest_best_use_summary || "",
+    highest_best_use_zoning_compatible:
+      typeof value?.highest_best_use_zoning_compatible === "boolean"
+        ? value.highest_best_use_zoning_compatible
+        : null,
+    highest_best_use_flags: cloneEditorValue(value?.highest_best_use_flags || []),
+    highest_best_use_source: value?.highest_best_use_source || "",
+    highest_best_use_analyzed_at: value?.highest_best_use_analyzed_at || "",
+    highest_best_use_subject_site_area_sqft:
+      value?.highest_best_use_subject_site_area_sqft ?? "",
+    highest_best_use_comparison_min_site_area_sqft:
+      value?.highest_best_use_comparison_min_site_area_sqft ?? "",
+    highest_best_use_comparison_parcel_count:
+      value?.highest_best_use_comparison_parcel_count ?? "",
     lender_revision_count: Math.max(0, Number(value?.lender_revision_count) || 0),
     lender_revision_last_requested_at: value?.lender_revision_last_requested_at || "",
     lender_revision_note: value?.lender_revision_note || "",
@@ -704,6 +730,8 @@ function NeighborhoodCharacteristicsContent({
   profileMessage,
   boundarySuggestions,
   customAreaAvailable,
+  marketConditionsDraft,
+  highestBestUseContext,
   assignmentDirty,
   assignmentSaveMessage,
   assignmentSaveDisabled,
@@ -724,6 +752,11 @@ function NeighborhoodCharacteristicsContent({
   profileMessage: string;
   boundarySuggestions: NonNullable<NeighborhoodProfileResponse["boundary_streets"]>["cardinal_boundaries"] | null;
   customAreaAvailable: boolean;
+  marketConditionsDraft: MarketConditionsDraft | null;
+  highestBestUseContext: {
+    zoning: string;
+    currentUse: string;
+  };
   assignmentDirty: boolean;
   assignmentSaveMessage: string;
   assignmentSaveDisabled: boolean;
@@ -769,9 +802,7 @@ function NeighborhoodCharacteristicsContent({
         assignmentDraft.neighborhood_boundary_geometry,
       );
       setLandUseAnalysis(result);
-      setLandUseAnalysisMessage(
-        `Analysis completed from ${result.parcel_count.toLocaleString()} DCAD parcels. Review the results, then apply them to this assignment.`,
-      );
+      applyPresentLandUse(result);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Present land-use analysis failed.";
       setLandUseAnalysisMessage(
@@ -787,8 +818,7 @@ function NeighborhoodCharacteristicsContent({
       setLandUseAnalysisLoading(false);
     }
   };
-  const applyPresentLandUse = () => {
-    if (!landUseAnalysis || !landUseAnalysisIsCurrent) return;
+  const applyPresentLandUse = (result: NeighborhoodLandUseAnalysisResponse) => {
     const fieldByCategory = {
       one_unit: "neighborhood_land_use_one_unit_pct",
       two_to_four_unit: "neighborhood_land_use_two_to_four_unit_pct",
@@ -796,23 +826,67 @@ function NeighborhoodCharacteristicsContent({
       commercial: "neighborhood_land_use_commercial_pct",
       other_vacant: "neighborhood_land_use_other_vacant_pct",
     } as const;
-    landUseAnalysis.categories.forEach((category) => {
+    result.categories.forEach((category) => {
       onAssignmentChange(fieldByCategory[category.key], category.percentage);
     });
-    onAssignmentChange("neighborhood_land_use_analysis_source", landUseAnalysis.source);
-    onAssignmentChange("neighborhood_land_use_analyzed_at", landUseAnalysis.analyzed_at);
-    onAssignmentChange("neighborhood_land_use_parcel_count", landUseAnalysis.parcel_count);
-    onAssignmentChange("neighborhood_land_use_review_count", landUseAnalysis.review_required_count);
-    onAssignmentChange("neighborhood_land_use_coverage_percent", landUseAnalysis.coverage_percent);
-    onAssignmentChange("neighborhood_land_use_confidence", landUseAnalysis.confidence);
-    onAssignmentChange("neighborhood_built_up", landUseAnalysis.built_up_band);
-    onAssignmentChange("neighborhood_built_up_pct", landUseAnalysis.built_up_percent);
+    const categoryPercentage = new Map(result.categories.map((category) => [category.key, category.percentage]));
+    const locationType = locationTypeFromLandUse({
+      oneUnit: categoryPercentage.get("one_unit") || 0,
+      twoToFourUnit: categoryPercentage.get("two_to_four_unit") || 0,
+      multifamily: categoryPercentage.get("multifamily") || 0,
+      commercial: categoryPercentage.get("commercial") || 0,
+      otherVacant: categoryPercentage.get("other_vacant") || 0,
+    });
+    const medianDom = marketConditionsDraft
+      ? reconciledMedianDaysOnMarket(marketConditionsDraft.response)
+      : null;
+    const marketChange = marketConditionsDraft?.response.recommendation.recommended_change_percent ?? null;
+    const highestBestUse = determineHighestBestUse({
+      zoning: highestBestUseContext.zoning,
+      currentUse: highestBestUseContext.currentUse,
+      subjectSmallerThanAllComparisons: result.subject_smaller_than_all_comparisons,
+      comparisonParcelCount: result.comparison_parcel_count,
+    });
+    onAssignmentChange("neighborhood_land_use_analysis_source", result.source);
+    onAssignmentChange("neighborhood_land_use_analyzed_at", result.analyzed_at);
+    onAssignmentChange("neighborhood_land_use_parcel_count", result.parcel_count);
+    onAssignmentChange("neighborhood_land_use_review_count", result.review_required_count);
+    onAssignmentChange("neighborhood_land_use_coverage_percent", result.coverage_percent);
+    onAssignmentChange("neighborhood_land_use_confidence", result.confidence);
+    onAssignmentChange("neighborhood_built_up", result.built_up_band);
+    onAssignmentChange("neighborhood_built_up_pct", result.built_up_percent);
+    if (locationType) onAssignmentChange("neighborhood_location_type", locationType);
+    if (marketConditionsDraft) {
+      const marketTrend = marketTrendFromRecommendation(
+        marketConditionsDraft.response.recommendation.conclusion,
+      );
+      const marketingTime = marketingTimeFromMedianDom(medianDom);
+      const growth = growthFromMarket(marketChange, medianDom, locationType ||
+        (assignmentDraft.neighborhood_location_type as NeighborhoodLocationType));
+      if (marketTrend) onAssignmentChange("neighborhood_market_trend", marketTrend);
+      if (marketingTime) onAssignmentChange("neighborhood_marketing_time", marketingTime);
+      if (growth) onAssignmentChange("neighborhood_growth", growth);
+      onAssignmentChange("neighborhood_market_change_pct", marketChange ?? "");
+      onAssignmentChange("neighborhood_median_dom", medianDom ?? "");
+    }
+    onAssignmentChange("highest_best_use_conclusion", highestBestUse.conclusion);
+    onAssignmentChange("highest_best_use_summary", highestBestUse.summary);
+    onAssignmentChange("highest_best_use_zoning_compatible", highestBestUse.zoningCompatible);
+    onAssignmentChange("highest_best_use_flags", highestBestUse.flags);
+    onAssignmentChange("highest_best_use_source", "automated_land_use_and_zoning_screening");
+    onAssignmentChange("highest_best_use_analyzed_at", result.analyzed_at);
+    onAssignmentChange("highest_best_use_subject_site_area_sqft", result.subject_site_area_sqft ?? "");
+    onAssignmentChange(
+      "highest_best_use_comparison_min_site_area_sqft",
+      result.comparison_min_site_area_sqft ?? "",
+    );
+    onAssignmentChange("highest_best_use_comparison_parcel_count", result.comparison_parcel_count);
     onAssignmentChange(
       "neighborhood_land_use_boundary_signature",
-      landUseAnalysis.boundary_signature,
+      result.boundary_signature,
     );
     setLandUseAnalysisMessage(
-      `Land-use percentages and ${landUseAnalysis.built_up_label} built-up classification were applied. Save Neighborhood Characteristics to store them in this appraisal file.`,
+      `Analysis completed from ${result.parcel_count.toLocaleString()} DCAD parcels. Land-use percentages, ${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.`,
     );
   };
   const updateBoundarySide = (
@@ -850,16 +924,6 @@ function NeighborhoodCharacteristicsContent({
             >
               {landUseAnalysisLoading ? "Analyzing..." : "Analyze Present Land Use"}
             </button>
-            {landUseAnalysis ? (
-              <button
-                type="button"
-                className="btn btn-neutral btn-xs normal-case rounded-lg text-white"
-                onClick={applyPresentLandUse}
-                disabled={!landUseAnalysisIsCurrent}
-              >
-                Apply Results
-              </button>
-            ) : null}
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
               landUseTotal !== null && Math.abs(landUseTotal - 100) <= 0.1
                 ? "bg-emerald-100 text-emerald-800"
@@ -903,7 +967,7 @@ function NeighborhoodCharacteristicsContent({
           }`}>
             {!landUseAnalysisIsCurrent ? (
               <p className="mb-2 text-xs font-semibold text-amber-900">
-                The boundary changed after this run. Analyze again before applying the results.
+                The boundary changed after this run. Analyze again to refresh the automatic selections.
               </p>
             ) : null}
             <div className="grid grid-cols-2 gap-1.5 text-xs lg:grid-cols-5">
@@ -980,6 +1044,11 @@ function NeighborhoodCharacteristicsContent({
             </fieldset>
           ))}
         </div>
+        {assignmentDraft.neighborhood_market_change_pct !== "" || assignmentDraft.neighborhood_median_dom !== "" ? (
+          <p className="mt-2 text-[10px] leading-4 text-slate-500">
+            Automated market review: {formatNumber(assignmentDraft.neighborhood_market_change_pct)}% reconciled annualized change · {formatNumber(assignmentDraft.neighborhood_median_dom)}-day reconciled median DOM. Selections remain editable until saved.
+          </p>
+        ) : null}
       </section>
       </div>
 
@@ -2580,6 +2649,32 @@ function AddressHero({
     value: AssignmentDetails[K],
   ) => {
     setAssignmentDraft((current) => ({ ...current, [key]: value }));
+    setAssignmentDirty(true);
+    setAssignmentSaveMessage("");
+  };
+
+  const updateMarketConditions = (draft: MarketConditionsDraft | null) => {
+    setMarketConditionsDraft(draft);
+    if (!draft) return;
+    const medianDom = reconciledMedianDaysOnMarket(draft.response);
+    const marketChange = draft.response.recommendation.recommended_change_percent;
+    const marketTrend = marketTrendFromRecommendation(draft.response.recommendation.conclusion);
+    const marketingTime = marketingTimeFromMedianDom(medianDom);
+    setAssignmentDraft((current) => {
+      const growth = growthFromMarket(
+        marketChange,
+        medianDom,
+        (current.neighborhood_location_type || "") as NeighborhoodLocationType,
+      );
+      return {
+        ...current,
+        ...(marketTrend ? { neighborhood_market_trend: marketTrend } : {}),
+        ...(marketingTime ? { neighborhood_marketing_time: marketingTime } : {}),
+        ...(growth ? { neighborhood_growth: growth } : {}),
+        neighborhood_market_change_pct: marketChange ?? "",
+        neighborhood_median_dom: medianDom ?? "",
+      };
+    });
     setAssignmentDirty(true);
     setAssignmentSaveMessage("");
   };
@@ -4210,6 +4305,104 @@ function AddressHero({
                   No land detail records were returned for this parcel.
                 </p>
               )}
+
+              <div className="mt-5 border-t border-slate-200 pt-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-slate-800">Highest and Best Use</h3>
+                      {assignmentDraft.highest_best_use_source ? (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800">
+                          Automated screening
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Provisional as-improved conclusion based on current use, zoning, and the defined-area site comparison.
+                    </p>
+                  </div>
+                  <select
+                    className="select select-bordered select-sm bg-white"
+                    value={assignmentDraft.highest_best_use_conclusion || ""}
+                    onChange={(event) => updateAssignment("highest_best_use_conclusion", event.target.value)}
+                  >
+                    <option value="">Not analyzed</option>
+                    <option value="current_use">Current use</option>
+                    <option value="investigation_required">Investigation required</option>
+                  </select>
+                </div>
+
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <SummaryField
+                    label="Zoning Compatibility"
+                    value={
+                      assignmentDraft.highest_best_use_zoning_compatible === true
+                        ? "Appears compatible"
+                        : assignmentDraft.highest_best_use_zoning_compatible === false
+                          ? "Potential mismatch"
+                          : "Requires verification"
+                    }
+                  />
+                  <SummaryField
+                    label="Subject Site"
+                    value={formatNumber(
+                      assignmentDraft.highest_best_use_subject_site_area_sqft,
+                      " sq. ft.",
+                    )}
+                  />
+                  <SummaryField
+                    label="Smallest Same-Use Comparison Site"
+                    value={
+                      parseNumber(assignmentDraft.highest_best_use_comparison_min_site_area_sqft) !== null
+                        ? `${formatNumber(assignmentDraft.highest_best_use_comparison_min_site_area_sqft, " sq. ft.")} · ${formatNumber(assignmentDraft.highest_best_use_comparison_parcel_count)} parcels reviewed`
+                        : "Not available"
+                    }
+                  />
+                </div>
+
+                {(assignmentDraft.highest_best_use_flags || []).length ? (
+                  <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-amber-950">
+                      Investigation flags
+                    </div>
+                    <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-amber-950">
+                      {(assignmentDraft.highest_best_use_flags || []).map((flag) => (
+                        <li key={flag}>{flag}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : assignmentDraft.highest_best_use_conclusion === "current_use" ? (
+                  <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs font-medium text-emerald-900">
+                    No automated zoning or site-size investigation flags were identified.
+                  </div>
+                ) : null}
+
+                <label className="mt-3 block">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Conclusion and Support</span>
+                  <textarea
+                    className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                    value={assignmentDraft.highest_best_use_summary || ""}
+                    onChange={(event) => updateAssignment("highest_best_use_summary", event.target.value)}
+                    placeholder="Run Present Land Use to populate a provisional conclusion, then edit as needed."
+                  />
+                </label>
+
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-xs text-slate-500">
+                    {assignmentDraft.highest_best_use_analyzed_at
+                      ? `Screened ${formatDate(assignmentDraft.highest_best_use_analyzed_at)}. Final appraiser verification is required.`
+                      : "Run Analyze Present Land Use to perform the automated screening."}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void saveAssignmentFromSection()}
+                    className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                    disabled={assignmentSaveDisabled}
+                  >
+                    {savingAssignmentFile ? "Saving..." : "Save Highest and Best Use"}
+                  </button>
+                </div>
+              </div>
             </div>
           </SummarySection>
 
@@ -4237,7 +4430,16 @@ function AddressHero({
               onRefreshUnemployment={() => void lookupUnemploymentComparison()}
               onRefreshBoundary={() => void refreshNeighborhoodProfile()}
               onConfirmBoundary={confirmNeighborhoodBoundary}
-              onMarketConditionsChange={setMarketConditionsDraft}
+              marketConditionsDraft={marketConditionsDraft}
+              highestBestUseContext={{
+                zoning: String(primaryZoning || ""),
+                currentUse: [
+                  housing?.housing_type,
+                  housing?.structural_style,
+                  ...landRows.map((row) => row.state_code),
+                ].filter(Boolean).join(" "),
+              }}
+              onMarketConditionsChange={updateMarketConditions}
               onSave={() => void saveAssignmentFromSection()}
             />
           </SummarySection>

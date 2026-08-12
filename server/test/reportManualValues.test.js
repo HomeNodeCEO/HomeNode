@@ -62,6 +62,32 @@ test("assignment details allow a purchase contract with seller verification", ()
   }), true);
 });
 
+test("assignment details accept subject condition and neighborhood conformity review", () => {
+  assert.equal(validateAssignmentDetails({
+    subject_condition_rating: "C4-C3",
+    subject_condition_notes: "Average upkeep with limited recent updating.",
+    significant_physical_deficiencies: false,
+    subject_conforms_to_neighborhood: false,
+    subject_nonconformity_type: "under_improvement",
+    subject_nonconformity_explanation: "The subject is smaller than the predominant homes.",
+  }), true);
+});
+
+test("assignment details reject invalid subject condition and conformity values", () => {
+  assert.throws(
+    () => validateAssignmentDetails({ subject_condition_rating: "C7" }),
+    /invalid_subject_condition_rating/,
+  );
+  assert.throws(
+    () => validateAssignmentDetails({ significant_physical_deficiencies: "no" }),
+    /invalid_significant_physical_deficiencies/,
+  );
+  assert.throws(
+    () => validateAssignmentDetails({ subject_nonconformity_type: "different" }),
+    /invalid_subject_nonconformity_type/,
+  );
+});
+
 test("assignment details enforce contract E&O safeguards", () => {
   assert.throws(
     () => validateAssignmentDetails({

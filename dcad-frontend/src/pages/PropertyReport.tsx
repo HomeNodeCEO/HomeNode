@@ -31,6 +31,7 @@ import {
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
+import { UAD_CONDITION_RATINGS } from "@/lib/conditionQualityRatings";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 
 type DcadOwner = {
@@ -248,6 +249,13 @@ const CONTRACT_AMOUNT_FIELDS = [
   ["seller_concessions", "Seller Concessions"],
 ] as const;
 
+const SUBJECT_NONCONFORMITY_OPTIONS = [
+  ["under_improvement", "Under-Improvement"],
+  ["over_improvement", "Over-Improvement"],
+  ["functional_obsolescence", "Functional Obsolescence"],
+  ["other", "Other"],
+] as const;
+
 const NEIGHBORHOOD_CHOICE_GROUPS = [
   {
     label: "Location Type",
@@ -283,6 +291,18 @@ const NEIGHBORHOOD_CHOICE_GROUPS = [
 
 function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails {
   return {
+    subject_condition_rating: value?.subject_condition_rating || "",
+    subject_condition_notes: value?.subject_condition_notes || "",
+    significant_physical_deficiencies:
+      typeof value?.significant_physical_deficiencies === "boolean"
+        ? value.significant_physical_deficiencies
+        : null,
+    subject_conforms_to_neighborhood:
+      typeof value?.subject_conforms_to_neighborhood === "boolean"
+        ? value.subject_conforms_to_neighborhood
+        : null,
+    subject_nonconformity_type: value?.subject_nonconformity_type || "",
+    subject_nonconformity_explanation: value?.subject_nonconformity_explanation || "",
     pud: Boolean(value?.pud),
     hoa_dues_amount: value?.hoa_dues_amount || "",
     hoa_frequency: value?.hoa_frequency || "",
@@ -1422,6 +1442,8 @@ function SummarySection({
   actions,
   manuallyVerified = false,
   compact = false,
+  collapsible = false,
+  defaultExpanded = true,
   className = "",
 }: {
   title: string;
@@ -1431,8 +1453,12 @@ function SummarySection({
   actions?: ReactNode;
   manuallyVerified?: boolean;
   compact?: boolean;
+  collapsible?: boolean;
+  defaultExpanded?: boolean;
   className?: string;
 }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+
   return (
     <section className={`rounded-2xl border border-slate-200 bg-slate-50/70 ${
       compact ? "p-3 sm:p-4" : "p-4 sm:p-5"
@@ -1451,17 +1477,29 @@ function SummarySection({
           </div>
           {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
         </div>
-        {actions || (onEdit ? (
-          <button
-            type="button"
-            onClick={onEdit}
-            className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
-          >
-            Edit
-          </button>
-        ) : null)}
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {(!collapsible || expanded) && (actions || (onEdit ? (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+            >
+              Edit
+            </button>
+          ) : null))}
+          {collapsible ? (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              onClick={() => setExpanded((current) => !current)}
+              className="btn btn-sm normal-case rounded-lg border-slate-950 bg-slate-950 text-white hover:border-black hover:bg-black"
+            >
+              {expanded ? "Collapse" : "Expand"}
+            </button>
+          ) : null}
+        </div>
       </div>
-      {children}
+      {!collapsible || expanded ? children : null}
     </section>
   );
 }
@@ -2358,6 +2396,21 @@ function AddressHero({
     value: AssignmentDetails[K],
   ) => {
     setAssignmentDraft((current) => ({ ...current, [key]: value }));
+    setAssignmentDirty(true);
+    setAssignmentSaveMessage("");
+  };
+
+  const updateSubjectConformity = (value: boolean | null) => {
+    setAssignmentDraft((current) => ({
+      ...current,
+      subject_conforms_to_neighborhood: value,
+      ...(value === false
+        ? {}
+        : {
+            subject_nonconformity_type: "",
+            subject_nonconformity_explanation: "",
+          }),
+    }));
     setAssignmentDirty(true);
     setAssignmentSaveMessage("");
   };
@@ -3759,6 +3812,151 @@ function AddressHero({
             </div>
 
             <div className="mt-5 border-t border-slate-200 pt-4">
+              <div className="mb-4">
+                <h3 className="text-sm font-semibold text-slate-800">
+                  Subject Condition and Neighborhood Conformity
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Appraiser selections and comments saved with the active appraisal file.
+                </p>
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)]">
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Condition Rating
+                  </span>
+                  <select
+                    className="select select-bordered mt-1 w-full bg-white"
+                    value={assignmentDraft.subject_condition_rating || ""}
+                    onChange={(event) =>
+                      updateAssignment("subject_condition_rating", event.target.value)
+                    }
+                  >
+                    <option value="">Select condition rating</option>
+                    {UAD_CONDITION_RATINGS.map((rating) => (
+                      <option key={rating} value={rating}>{rating}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Subject Condition Comments
+                  </span>
+                  <textarea
+                    className="textarea textarea-bordered mt-1 min-h-24 w-full bg-white"
+                    value={assignmentDraft.subject_condition_notes || ""}
+                    onChange={(event) =>
+                      updateAssignment("subject_condition_notes", event.target.value)
+                    }
+                    placeholder="Describe the home's condition, updating, maintenance, and other relevant observations."
+                  />
+                </label>
+              </div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
+                  <legend className="px-1 text-sm font-semibold text-slate-900">
+                    Significant Physical Deficiencies
+                  </legend>
+                  <p className="mb-3 text-xs leading-5 text-slate-600">
+                    Do any deficiencies affect the subject&apos;s livability, soundness, or structural integrity?
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <CheckboxChoice
+                      checked={assignmentDraft.significant_physical_deficiencies === true}
+                      label="Yes"
+                      onChange={(checked) => updateAssignment(
+                        "significant_physical_deficiencies",
+                        checked ? true : null,
+                      )}
+                    />
+                    <CheckboxChoice
+                      checked={assignmentDraft.significant_physical_deficiencies === false}
+                      label="No"
+                      onChange={(checked) => updateAssignment(
+                        "significant_physical_deficiencies",
+                        checked ? false : null,
+                      )}
+                    />
+                  </div>
+                </fieldset>
+
+                <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
+                  <legend className="px-1 text-sm font-semibold text-slate-900">
+                    Neighborhood Conformity
+                  </legend>
+                  <p className="mb-3 text-xs leading-5 text-slate-600">
+                    Does the subject conform to the neighborhood?
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <CheckboxChoice
+                      checked={assignmentDraft.subject_conforms_to_neighborhood === true}
+                      label="Yes"
+                      onChange={(checked) => updateSubjectConformity(checked ? true : null)}
+                    />
+                    <CheckboxChoice
+                      checked={assignmentDraft.subject_conforms_to_neighborhood === false}
+                      label="No"
+                      onChange={(checked) => updateSubjectConformity(checked ? false : null)}
+                    />
+                  </div>
+
+                  {assignmentDraft.subject_conforms_to_neighborhood === false ? (
+                    <label className="mt-4 block">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        Nonconformity Type
+                      </span>
+                      <select
+                        className="select select-bordered mt-1 w-full bg-white"
+                        value={assignmentDraft.subject_nonconformity_type || ""}
+                        onChange={(event) =>
+                          updateAssignment("subject_nonconformity_type", event.target.value)
+                        }
+                      >
+                        <option value="">Select a type</option>
+                        {SUBJECT_NONCONFORMITY_OPTIONS.map(([value, label]) => (
+                          <option key={value} value={value}>{label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+
+                  {assignmentDraft.subject_conforms_to_neighborhood === false &&
+                  assignmentDraft.subject_nonconformity_type ? (
+                    <label className="mt-4 block">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        Explanation
+                      </span>
+                      <textarea
+                        className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                        value={assignmentDraft.subject_nonconformity_explanation || ""}
+                        onChange={(event) =>
+                          updateAssignment("subject_nonconformity_explanation", event.target.value)
+                        }
+                        placeholder="Explain how the subject differs from the neighborhood."
+                      />
+                    </label>
+                  ) : null}
+                </fieldset>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <span className="text-xs text-slate-500">
+                  {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void saveAssignmentFromSection()}
+                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                  disabled={assignmentSaveDisabled}
+                >
+                  {savingAssignmentFile ? "Saving..." : "Save Condition & Conformity"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 border-t border-slate-200 pt-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -3887,6 +4085,8 @@ function AddressHero({
               detail?.report_manual_values?.["report.appraisal_values"] ||
               detail?.report_manual_values?.["report.exemptions"],
             )}
+            collapsible
+            defaultExpanded={false}
             className="order-6"
           >
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

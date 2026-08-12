@@ -178,6 +178,12 @@ export interface ReportManualValue {
 }
 
 export interface AssignmentDetailsPayload {
+  subject_condition_rating?: string;
+  subject_condition_notes?: string;
+  significant_physical_deficiencies?: boolean | null;
+  subject_conforms_to_neighborhood?: boolean | null;
+  subject_nonconformity_type?: string;
+  subject_nonconformity_explanation?: string;
   pud?: boolean;
   hoa_dues_amount?: string | number;
   hoa_frequency?: string;

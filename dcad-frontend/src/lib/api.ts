@@ -470,6 +470,20 @@ export interface SaleRow {
   squareFootageDifferencePercent?: number;
   score_rank?: number;
   score_requires_review?: boolean;
+  candidate_influence_signature?: PropertyInfluenceSignature | null;
+  influence_signature?: PropertyInfluenceSignature | null;
+  influence_similarity?: {
+    data_available: boolean;
+    priority_tier: number;
+    similarity_score: number | null;
+    exact_material_match: boolean;
+    shared_material_keys: string[];
+    missing_subject_keys: string[];
+    additional_comparable_keys: string[];
+    reason: string;
+  };
+  influence_support_candidate?: boolean;
+  candidate_purpose?: 'primary_similarity' | 'influence_support';
   saleAgeDays?: number | null;
   soldWithinOneYear?: boolean;
   soldOverOneYear?: boolean;
@@ -717,6 +731,7 @@ export interface ComparableRecommendationsResponse {
     location_review_required: boolean;
     location_review_reason: string | null;
     location_geocoded_at: string | null;
+    influence_signature?: PropertyInfluenceSignature | null;
   };
   scoring: {
     locationWeight: number;
@@ -748,10 +763,23 @@ export interface ComparableRecommendationsResponse {
     missing_square_footage_count: number;
     missing_year_built_count: number;
     missing_site_size_count: number;
+    influence_context_count?: number;
+    missing_influence_context_count?: number;
     recommended_count: number;
     older_than_two_years_count: number;
     older_than_one_year_count: number;
     recent_high_score_count: number;
+  };
+  influence_ranking?: {
+    methodology_version: number;
+    influence_priority_applied: boolean;
+    subject_context_available: boolean;
+    eligible_sale_count: number;
+    measured_sale_count: number;
+    coverage_ratio: number;
+    minimum_coverage_ratio: number;
+    material_influence_categories: string[];
+    ordering: string[];
   };
   recommendation_policy: {
     count: number;
@@ -1468,6 +1496,12 @@ export interface PropertyComplexityAssessment {
       road_class: string;
       distance_feet: number;
     } | null;
+    nearest_railroad?: {
+      name: string | null;
+      distance_feet: number;
+    } | null;
+    zoning_context?: Record<string, unknown> | null;
+    flood_context?: Record<string, unknown> | null;
     adjacent_influences: Array<Record<string, unknown>>;
     nearby_influences: Array<Record<string, unknown>>;
   };
@@ -1480,6 +1514,17 @@ export interface PropertyComplexityAssessment {
   reviewed_at: string | null;
 }
 
+export interface PropertyInfluenceSignature {
+  methodology_version: number;
+  context_available: boolean;
+  material_influence_present: boolean;
+  material_keys: string[];
+  material_categories: string[];
+  zoning_keys: string[];
+  descriptors: string[];
+  dominant_influence_key: string;
+}
+
 export interface PropertyContextStatusResponse {
   ok: true;
   offline_first: true;
@@ -1488,6 +1533,27 @@ export interface PropertyContextStatusResponse {
   usable_source_count: number;
   stale_source_count: number;
   unavailable_source_count: number;
+  influence_context?: {
+    queue: Record<string, number>;
+    coverage: {
+      sale_account_count: number;
+      measured_sale_account_count: number;
+      missing_sale_account_count: number;
+      coverage_percent: number;
+    };
+  };
+  zoning_source_hierarchy?: Array<{
+    provider_key: string;
+    provider_label: string;
+    provider_type: 'official_municipal' | 'propzone_gridics';
+    jurisdiction: string;
+    priority: number;
+    status: string;
+    configured: boolean;
+    request_path_dependency: false;
+    last_success_at: string | null;
+    last_error: string | null;
+  }>;
   checked_at: string;
 }
 

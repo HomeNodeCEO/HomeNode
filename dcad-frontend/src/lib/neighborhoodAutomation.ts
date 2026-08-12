@@ -143,3 +143,200 @@ export function determineHighestBestUse(input: {
     : `Automated screening identified one or more issues affecting the highest-and-best-use conclusion for the ${useLabel} use under ${zoningLabel} zoning. Complete the flagged investigation before finalizing the appraisal.`;
   return { conclusion, zoningCompatible, flags, summary };
 }
+
+export type NeighborhoodValuePositionResult = {
+  ready: boolean;
+  relationship: 'pending' | 'above_predominant' | 'below_predominant' | 'at_predominant';
+  difference: number | null;
+  differencePercent: number | null;
+  reasons: string[];
+  recommendedReview: '' | 'over_improvement' | 'under_improvement';
+  narrative: string;
+};
+
+function finiteValue(value: unknown): number | null {
+  if (value === '' || value === null || value === undefined) return null;
+  const parsed = Number(String(value).replace(/[$,%\s]/g, ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function money(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(Math.round(value));
+}
+
+function count(value: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Math.round(value));
+}
+
+function ratingScore(value: unknown, prefix: 'C' | 'Q'): number | null {
+  const matches = String(value || '').toUpperCase().match(new RegExp(`${prefix}([1-6])`, 'g')) || [];
+  const scores = matches.map((match) => Number(match.slice(1))).filter(Number.isFinite);
+  return scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : null;
+}
+
+function materiallyDifferent(subject: number, predominant: number): boolean {
+  if (predominant <= 0) return false;
+  return Math.abs(subject - predominant) / predominant >= 0.1;
+}
+
+function factorReasons(input: {
+  direction: 'above' | 'below' | 'at';
+  subjectGla: number | null;
+  predominantGla: number | null;
+  subjectSiteSize: number | null;
+  predominantSiteSize: number | null;
+  subjectAge: number | null;
+  predominantAge: number | null;
+  conditionRating: unknown;
+  qualityRating: unknown;
+}): string[] {
+  const reasons: string[] = [];
+  const above = input.direction === 'above';
+  const below = input.direction === 'below';
+  if (
+    input.subjectGla !== null && input.predominantGla !== null &&
+    materiallyDifferent(input.subjectGla, input.predominantGla)
+  ) {
+    if ((above && input.subjectGla > input.predominantGla) || (below && input.subjectGla < input.predominantGla)) {
+      reasons.push(`${input.subjectGla > input.predominantGla ? 'larger' : 'smaller'} ${count(input.subjectGla)}-square-foot GLA compared with the ${count(input.predominantGla)}-square-foot predominant GLA`);
+    }
+  }
+  if (
+    input.subjectSiteSize !== null && input.predominantSiteSize !== null &&
+    materiallyDifferent(input.subjectSiteSize, input.predominantSiteSize)
+  ) {
+    if ((above && input.subjectSiteSize > input.predominantSiteSize) || (below && input.subjectSiteSize < input.predominantSiteSize)) {
+      reasons.push(`${input.subjectSiteSize > input.predominantSiteSize ? 'larger' : 'smaller'} ${count(input.subjectSiteSize)}-square-foot site compared with the ${count(input.predominantSiteSize)}-square-foot predominant site`);
+    }
+  }
+  if (
+    input.subjectAge !== null && input.predominantAge !== null &&
+    (Math.abs(input.subjectAge - input.predominantAge) >= 5 || materiallyDifferent(input.subjectAge, input.predominantAge))
+  ) {
+    if ((above && input.subjectAge < input.predominantAge) || (below && input.subjectAge > input.predominantAge)) {
+      reasons.push(`${input.subjectAge < input.predominantAge ? 'newer' : 'older'} effective age of ${count(input.subjectAge)} years compared with the ${count(input.predominantAge)}-year predominant age`);
+    }
+  }
+  const condition = ratingScore(input.conditionRating, 'C');
+  if (condition !== null && ((above && condition <= 2.5) || (below && condition >= 4))) {
+    reasons.push(`${String(input.conditionRating).toUpperCase()} condition, indicating ${condition <= 2.5 ? 'superior updating and market appeal' : 'inferior condition or deferred updating'}`);
+  }
+  const quality = ratingScore(input.qualityRating, 'Q');
+  if (quality !== null && ((above && quality <= 3) || (below && quality >= 5))) {
+    reasons.push(`${String(input.qualityRating).toUpperCase()} quality, indicating ${quality <= 3 ? 'superior construction quality' : 'inferior construction quality'}`);
+  }
+  return reasons;
+}
+
+export function determineNeighborhoodValuePosition(input: {
+  concludedValue: unknown;
+  predominantValue: unknown;
+  neighborhoodLowValue?: unknown;
+  neighborhoodHighValue?: unknown;
+  subjectGla?: unknown;
+  predominantGla?: unknown;
+  subjectSiteSize?: unknown;
+  predominantSiteSize?: unknown;
+  subjectAge?: unknown;
+  predominantAge?: unknown;
+  conditionRating?: unknown;
+  qualityRating?: unknown;
+  conformsToNeighborhood?: boolean | null;
+  nonconformityType?: unknown;
+}): NeighborhoodValuePositionResult {
+  const concludedValue = finiteValue(input.concludedValue);
+  const predominantValue = finiteValue(input.predominantValue);
+  if (concludedValue === null || concludedValue <= 0) {
+    return {
+      ready: false,
+      relationship: 'pending',
+      difference: null,
+      differencePercent: null,
+      reasons: [],
+      recommendedReview: '',
+      narrative: 'Complete the Sales Comparison Approach value conclusion before developing the subject-to-predominant-value analysis.',
+    };
+  }
+  if (predominantValue === null || predominantValue <= 0) {
+    return {
+      ready: false,
+      relationship: 'pending',
+      difference: null,
+      differencePercent: null,
+      reasons: [],
+      recommendedReview: '',
+      narrative: 'A concluded subject value is available, but the neighborhood predominant value must be developed before the comparison can be completed.',
+    };
+  }
+  const difference = Math.round(concludedValue - predominantValue);
+  const differencePercent = Math.round((difference / predominantValue) * 1000) / 10;
+  const direction = difference > 0 ? 'above' : difference < 0 ? 'below' : 'at';
+  const relationship = difference > 0
+    ? 'above_predominant'
+    : difference < 0
+      ? 'below_predominant'
+      : 'at_predominant';
+  const reasons = factorReasons({
+    direction,
+    subjectGla: finiteValue(input.subjectGla),
+    predominantGla: finiteValue(input.predominantGla),
+    subjectSiteSize: finiteValue(input.subjectSiteSize),
+    predominantSiteSize: finiteValue(input.predominantSiteSize),
+    subjectAge: finiteValue(input.subjectAge),
+    predominantAge: finiteValue(input.predominantAge),
+    conditionRating: input.conditionRating,
+    qualityRating: input.qualityRating,
+  });
+  const lowValue = finiteValue(input.neighborhoodLowValue);
+  const highValue = finiteValue(input.neighborhoodHighValue);
+  const recommendedReview = highValue !== null && concludedValue > highValue
+    ? 'over_improvement'
+    : lowValue !== null && concludedValue < lowValue
+      ? 'under_improvement'
+      : '';
+  const nonconformityType = String(input.nonconformityType || '').toLowerCase();
+  const labelByType: Record<string, string> = {
+    over_improvement: 'an over-improvement',
+    under_improvement: 'an under-improvement',
+    functional_obsolescence: 'affected by functional obsolescence',
+    other: 'otherwise nonconforming',
+  };
+  const comparison = direction === 'at'
+    ? `is consistent with the ${money(predominantValue)} median predominant value`
+    : `is ${money(Math.abs(difference))} (${Math.abs(differencePercent).toFixed(1)}%) ${direction} the ${money(predominantValue)} median predominant value`;
+  const support = reasons.length
+    ? ` The difference is supported by the subject's ${reasons.join(', ')}.`
+    : direction === 'at'
+      ? ' Its physical characteristics and market appeal are generally consistent with the predominant housing in the defined area.'
+      : ' The remaining difference reflects other market-recognized characteristics captured in the sales comparison analysis.';
+  if (input.conformsToNeighborhood === false && labelByType[nonconformityType]) {
+    const redevelopment = ['over_improvement', 'under_improvement'].includes(nonconformityType)
+      ? ' Highest-and-best-use analysis should determine whether continued use, modification, redevelopment, or demolition produces the greatest value.'
+      : ' The appraisal should explain the market effect of this nonconformity.';
+    return {
+      ready: true,
+      relationship,
+      difference,
+      differencePercent,
+      reasons,
+      recommendedReview,
+      narrative: `The subject's concluded value of ${money(concludedValue)} ${comparison}. The subject is identified as ${labelByType[nonconformityType]} and does not conform to the neighborhood.${support}${redevelopment}`,
+    };
+  }
+  const rangeReview = recommendedReview
+    ? ` The concluded value is outside the observed neighborhood ${recommendedReview === 'over_improvement' ? 'high' : 'low'} and warrants ${recommendedReview === 'over_improvement' ? 'over-improvement' : 'under-improvement'} review before conformity is finalized.`
+    : ' The concluded value remains within the observed neighborhood range, and the subject conforms to the area despite its position relative to the median.';
+  return {
+    ready: true,
+    relationship,
+    difference,
+    differencePercent,
+    reasons,
+    recommendedReview,
+    narrative: `The subject's concluded value of ${money(concludedValue)} ${comparison}.${support}${rangeReview}`,
+  };
+}

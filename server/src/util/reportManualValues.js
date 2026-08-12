@@ -55,6 +55,12 @@ const NEIGHBORHOOD_LAND_USE_FIELDS = [
 ];
 const NEIGHBORHOOD_LAND_USE_CONFIDENCE = new Set(["", "high", "moderate", "limited"]);
 const HIGHEST_BEST_USE_CONCLUSIONS = new Set(["", "current_use", "investigation_required"]);
+const NEIGHBORHOOD_VALUE_POSITIONS = new Set([
+  "",
+  "above_predominant",
+  "below_predominant",
+  "at_predominant",
+]);
 const NEIGHBORHOOD_RANGE_GROUPS = [
   ["neighborhood_house_price_low", "neighborhood_house_price_predominant", "neighborhood_house_price_high"],
   ["neighborhood_ppsf_low", "neighborhood_ppsf_predominant", "neighborhood_ppsf_high"],
@@ -182,6 +188,11 @@ export function validateAssignmentDetails(value) {
     ["highest_best_use_summary", 5000],
     ["highest_best_use_source", 500],
     ["highest_best_use_analyzed_at", 100],
+    ["neighborhood_value_conclusion", 5000],
+    ["neighborhood_value_conclusion_auto", 5000],
+    ["neighborhood_value_conclusion_signature", 4000],
+    ["neighborhood_value_conclusion_generated_at", 100],
+    ["neighborhood_value_source", 500],
   ];
 
   if (!HOA_FREQUENCIES.has(hoaFrequency)) throw new Error("invalid_hoa_frequency");
@@ -241,6 +252,9 @@ export function validateAssignmentDetails(value) {
   if (!HIGHEST_BEST_USE_CONCLUSIONS.has(text(value.highest_best_use_conclusion).toLowerCase())) {
     throw new Error("invalid_highest_best_use_conclusion");
   }
+  if (!NEIGHBORHOOD_VALUE_POSITIONS.has(text(value.neighborhood_value_position).toLowerCase())) {
+    throw new Error("invalid_neighborhood_value_position");
+  }
   if (
     Array.isArray(value.highest_best_use_flags) &&
     (value.highest_best_use_flags.length > 20 || value.highest_best_use_flags.some(
@@ -296,10 +310,22 @@ export function validateAssignmentDetails(value) {
   const highestBestUseNumbers = [
     optionalNumber(value.highest_best_use_subject_site_area_sqft),
     optionalNumber(value.highest_best_use_comparison_min_site_area_sqft),
+    optionalNumber(value.highest_best_use_comparison_median_site_area_sqft),
     optionalNumber(value.highest_best_use_comparison_parcel_count),
   ];
   if (highestBestUseNumbers.some((item) => Number.isNaN(item) || (item !== null && item < 0))) {
     throw new Error("invalid_highest_best_use_site_comparison");
+  }
+  const subjectConcludedValue = optionalNumber(value.subject_concluded_value);
+  const neighborhoodValueDifference = optionalNumber(value.neighborhood_value_difference);
+  const neighborhoodValueDifferencePercent = optionalNumber(value.neighborhood_value_difference_pct);
+  if (
+    Number.isNaN(subjectConcludedValue) ||
+    (subjectConcludedValue !== null && subjectConcludedValue < 0) ||
+    Number.isNaN(neighborhoodValueDifference) ||
+    Number.isNaN(neighborhoodValueDifferencePercent)
+  ) {
+    throw new Error("invalid_neighborhood_value_comparison");
   }
   if (
     value.neighborhood_boundary_geometry !== undefined &&

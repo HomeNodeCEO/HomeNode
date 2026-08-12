@@ -237,6 +237,17 @@ export async function ensureCensusGeographySchema(pool) {
  * Prefer cached parcel coordinates. If they are unavailable, queue the situs
  * address for the Census address-batch service so tract coverage is not held
  * hostage by a county-specific mapping backlog.
+ *
+ * DFW ONBOARDING PREREQUISITE: this queue does not discover county appraisal
+ * accounts. Before claiming Census coverage for Dallas, Collin, Denton,
+ * Tarrant, Rockwall, or another county, import/upsert that county's complete
+ * account inventory into core.accounts and reconcile its source total. The
+ * county account ID is the join key for Census geography, parcel geometry, and
+ * later GIS context; a situs address can support the Census fallback, but it
+ * does not replace the account inventory or the county-specific parcel source.
+ * Keep CSV imports as the onboarding path until an approved automated county
+ * feed exists. Never interpret this queue's coverage percentage as county-wide
+ * completeness without first verifying the imported county account total.
  */
 export async function seedCensusGeographyQueue(
   pool,

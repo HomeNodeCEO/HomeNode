@@ -4,6 +4,7 @@ import {
   completePropertyInfluenceQueueItem,
   failPropertyInfluenceQueueItem,
   getPropertyInfluenceStatus,
+  recoverStalePropertyInfluenceClaims,
   seedPropertyInfluenceQueue,
 } from "./propertyInfluenceStore.js";
 
@@ -46,5 +47,6 @@ export async function runPropertyInfluenceBatch(pool, {
 
 export {
   getPropertyInfluenceStatus,
+  recoverStalePropertyInfluenceClaims,
   seedPropertyInfluenceQueue,
 };

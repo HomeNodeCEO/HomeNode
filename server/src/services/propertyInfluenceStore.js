@@ -234,6 +234,22 @@ export async function claimPropertyInfluenceQueue(pool, {
   return rows;
 }
 
+export async function recoverStalePropertyInfluenceClaims(pool, {
+  olderThanMinutes = 30,
+} = {}) {
+  const safeMinutes = Math.max(5, Math.min(240, Math.trunc(Number(olderThanMinutes) || 30)));
+  const { rowCount } = await pool.query(
+    `UPDATE gis.property_influence_queue
+     SET status = 'retry', available_at = now(), locked_at = NULL,
+         locked_by = NULL, updated_at = now(),
+         last_error = COALESCE(last_error, 'stale_worker_claim_recovered')
+     WHERE status = 'processing'
+       AND locked_at < now() - ($1::text || ' minutes')::interval`,
+    [safeMinutes],
+  );
+  return rowCount || 0;
+}
+
 export async function completePropertyInfluenceQueueItem(pool, accountId) {
   await pool.query(
     `UPDATE gis.property_influence_queue

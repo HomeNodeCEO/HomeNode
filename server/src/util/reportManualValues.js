@@ -17,6 +17,27 @@ const ASSIGNMENT_TYPES = new Set([
   "dscr",
   "other",
 ]);
+const CONDITION_RATINGS = new Set([
+  "",
+  "C1",
+  "C2-C1",
+  "C2",
+  "C3-C2",
+  "C3",
+  "C4-C3",
+  "C4",
+  "C5-C4",
+  "C5",
+  "C6-C5",
+  "C6",
+]);
+const SUBJECT_NONCONFORMITY_TYPES = new Set([
+  "",
+  "under_improvement",
+  "over_improvement",
+  "functional_obsolescence",
+  "other",
+]);
 const NEIGHBORHOOD_SELECTIONS = {
   neighborhood_location_type: new Set(["", "urban", "suburban", "rural"]),
   neighborhood_built_up: new Set(["", "over_75", "25_to_75", "under_25"]),
@@ -65,6 +86,15 @@ export function validateAssignmentDetails(value) {
   if (value.assignment_types !== undefined && !Array.isArray(value.assignment_types)) {
     throw new Error("invalid_assignment_type");
   }
+  for (const field of ["significant_physical_deficiencies", "subject_conforms_to_neighborhood"]) {
+    if (
+      value[field] !== undefined &&
+      value[field] !== null &&
+      typeof value[field] !== "boolean"
+    ) {
+      throw new Error(`invalid_${field}`);
+    }
+  }
   if (
     value.subject_under_contract !== undefined &&
     typeof value.subject_under_contract !== "boolean"
@@ -109,6 +139,10 @@ export function validateAssignmentDetails(value) {
     ["contract_date", 100],
     ["seller_mismatch_explanation", 3000],
   ];
+  const subjectConditionTextFields = [
+    ["subject_condition_notes", 5000],
+    ["subject_nonconformity_explanation", 5000],
+  ];
   const neighborhoodTextFields = [
     ["neighborhood_unemployment_zip", 10],
     ["neighborhood_unemployment_source", 500],
@@ -133,6 +167,12 @@ export function validateAssignmentDetails(value) {
   ];
 
   if (!HOA_FREQUENCIES.has(hoaFrequency)) throw new Error("invalid_hoa_frequency");
+  if (!CONDITION_RATINGS.has(text(value.subject_condition_rating).toUpperCase())) {
+    throw new Error("invalid_subject_condition_rating");
+  }
+  if (!SUBJECT_NONCONFORMITY_TYPES.has(text(value.subject_nonconformity_type).toLowerCase())) {
+    throw new Error("invalid_subject_nonconformity_type");
+  }
   if (!OCCUPANCIES.has(occupancy)) throw new Error("invalid_occupancy");
   if (assignmentTypes.some((item) => !ASSIGNMENT_TYPES.has(item))) {
     throw new Error("invalid_assignment_type");
@@ -149,6 +189,12 @@ export function validateAssignmentDetails(value) {
   if (lenderClientName.length > 500) throw new Error("lender_client_name_too_long");
   if (lenderClientAddress.length > 2000) throw new Error("lender_client_address_too_long");
   for (const [field, maxLength] of contractTextFields) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw new Error(`invalid_${field}`);
+    }
+    if (text(value[field]).length > maxLength) throw new Error(`${field}_too_long`);
+  }
+  for (const [field, maxLength] of subjectConditionTextFields) {
     if (value[field] !== undefined && typeof value[field] !== "string") {
       throw new Error(`invalid_${field}`);
     }

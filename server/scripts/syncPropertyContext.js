@@ -3,6 +3,8 @@ import pg from "pg";
 
 import {
   syncDcadPropertyContext,
+  syncFemaFloodContext,
+  syncOfficialZoningContext,
   syncTigerRoadContext,
 } from "../src/services/propertyContextSync.js";
 
@@ -14,9 +16,9 @@ function argument(name, fallback = null) {
 
 const source = String(argument("source", "all")).trim().toLowerCase();
 const mode = String(argument("mode", "incremental")).trim().toLowerCase();
-const validSources = new Set(["all", "parcels", "roads"]);
+const validSources = new Set(["all", "parcels", "roads", "floods", "zoning"]);
 if (!validSources.has(source)) {
-  throw new Error("source must be all, parcels, or roads");
+  throw new Error("source must be all, parcels, roads, floods, or zoning");
 }
 if (!["full", "incremental"].includes(mode)) {
   throw new Error("mode must be full or incremental");
@@ -43,6 +45,18 @@ try {
     results.push(...await syncTigerRoadContext(pool, {
       batchSize: Number(process.env.PROPERTY_CONTEXT_ROAD_BATCH_SIZE || 5_000),
       concurrency: Number(process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || 3),
+    }));
+  }
+  if (source === "all" || source === "floods") {
+    results.push(await syncFemaFloodContext(pool, {
+      batchSize: Number(process.env.PROPERTY_CONTEXT_HAZARD_BATCH_SIZE || 1_000),
+      concurrency: Number(process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || 2),
+    }));
+  }
+  if (source === "all" || source === "zoning") {
+    results.push(...await syncOfficialZoningContext(pool, {
+      batchSize: Number(process.env.PROPERTY_CONTEXT_ZONING_BATCH_SIZE || 1_000),
+      concurrency: Number(process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || 2),
     }));
   }
   console.log(JSON.stringify({ ok: true, source, mode, results }, null, 2));

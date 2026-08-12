@@ -294,6 +294,7 @@ export async function fetchDcadLandUseParcels(customGeometry, { fetchImpl = fetc
 async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) {
   const payload = classifiedParcels.map((parcel, sourceIndex) => ({
     source_index: sourceIndex,
+    account_id: parcel.account_id,
     category: parcel.classification.category,
     built_up: parcel.built_up,
     geometry: parcel.geometry,
@@ -304,6 +305,7 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
      ), source_features AS (
        SELECT
          (item->>'source_index')::integer AS source_index,
+         NULLIF(item->>'account_id', '') AS account_id,
          item->>'category' AS category,
          COALESCE((item->>'built_up')::boolean, false) AS built_up,
          ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((item->'geometry')::text), 4326)) AS geom
@@ -311,6 +313,7 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
      ), clipped AS (
        SELECT
          source_index,
+         account_id,
          category,
          built_up,
          ST_CollectionExtract(ST_Intersection(source_features.geom, boundary.geom), 3) AS geom
@@ -318,7 +321,7 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
        CROSS JOIN boundary
        WHERE ST_Intersects(source_features.geom, boundary.geom)
      ), usable AS (
-       SELECT source_index, category, built_up, geom
+       SELECT source_index, account_id, category, built_up, geom
        FROM clipped
        WHERE NOT ST_IsEmpty(geom)
      ), category_dissolved AS (
@@ -378,7 +381,12 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
        COALESCE((
          SELECT jsonb_agg(jsonb_build_object(
            'source_index', source_index,
-           'area_sqft', ST_Area(geom::geography) * 10.76391041671
+           'area_sqft', ST_Area(geom::geography) * 10.76391041671,
+           'full_area_sqft', (
+             SELECT ST_Area(source_features.geom::geography) * 10.76391041671
+             FROM source_features
+             WHERE source_features.source_index = usable.source_index
+           )
          ) ORDER BY source_index)
          FROM usable
        ), '[]'::jsonb) AS parcel_areas
@@ -391,6 +399,44 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
 function rounded(value, digits = 1) {
   const factor = 10 ** digits;
   return Math.round((Number(value) || 0) * factor) / factor;
+}
+
+function normalizedAccountId(value) {
+  return String(value || "").replace(/[^0-9A-Za-z]/g, "").replace(/^0+/, "");
+}
+
+export function evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaByIndex) {
+  const normalizedSubject = normalizedAccountId(accountId);
+  const subjectIndex = classifiedParcels.findIndex(
+    (parcel) => normalizedAccountId(parcel.account_id) === normalizedSubject,
+  );
+  if (subjectIndex < 0) {
+    return {
+      subject_site_area_sqft: null,
+      comparison_min_site_area_sqft: null,
+      comparison_parcel_count: 0,
+      subject_smaller_than_all_comparisons: false,
+    };
+  }
+  const subjectArea = Number(fullAreaByIndex.get(subjectIndex)) || 0;
+  const subjectCategory = classifiedParcels[subjectIndex].classification.category;
+  const comparisonAreas = classifiedParcels
+    .map((parcel, index) => ({
+      index,
+      category: parcel.classification.category,
+      area: Number(fullAreaByIndex.get(index)) || 0,
+    }))
+    .filter((item) => item.index !== subjectIndex && item.category === subjectCategory && item.area > 0)
+    .map((item) => item.area);
+  const comparisonMinimum = comparisonAreas.length ? Math.min(...comparisonAreas) : null;
+  return {
+    subject_site_area_sqft: subjectArea > 0 ? rounded(subjectArea, 0) : null,
+    comparison_min_site_area_sqft: comparisonMinimum === null ? null : rounded(comparisonMinimum, 0),
+    comparison_parcel_count: comparisonAreas.length,
+    subject_smaller_than_all_comparisons: Boolean(
+      subjectArea > 0 && comparisonAreas.length >= 3 && comparisonMinimum !== null && subjectArea < comparisonMinimum,
+    ),
+  };
 }
 
 export async function buildNeighborhoodLandUseAnalysis(
@@ -423,6 +469,10 @@ export async function buildNeighborhoodLandUseAnalysis(
   const parcelAreaByIndex = new Map(
     (metrics.parcel_areas || []).map((item) => [Number(item.source_index), Number(item.area_sqft) || 0]),
   );
+  const fullAreaByIndex = new Map(
+    (metrics.parcel_areas || []).map((item) => [Number(item.source_index), Number(item.full_area_sqft) || 0]),
+  );
+  const siteSizeReview = evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaByIndex);
   const categoryAreas = Object.fromEntries(
     LAND_USE_CATEGORIES.map(({ key }) => [key, Number(metrics.category_areas?.[key]) || 0]),
   );
@@ -493,6 +543,7 @@ export async function buildNeighborhoodLandUseAnalysis(
     built_up_band: builtUpBand.key,
     built_up_label: builtUpBand.label,
     built_up_parcel_count: Number(metrics.built_up_parcel_count) || 0,
+    ...siteSizeReview,
     coverage_percent: rounded(coveragePercent, 1),
     overlap_percent: rounded(overlapPercent, 1),
     parcel_count: classifiedParcels.length,

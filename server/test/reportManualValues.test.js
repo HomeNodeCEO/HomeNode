@@ -136,6 +136,8 @@ test("assignment details accept a complete neighborhood profile", () => {
     neighborhood_city_unemployment_dataset_year: 2024,
     neighborhood_city_unemployment_variable: "DP03_0009PE",
     neighborhood_market_trend: "increasing",
+    neighborhood_market_change_pct: 3.2,
+    neighborhood_median_dom: 21,
     neighborhood_demand_supply: "in_balance",
     neighborhood_marketing_time: "under_3_months",
     neighborhood_house_price_low: 200000,
@@ -154,6 +156,13 @@ test("assignment details accept a complete neighborhood profile", () => {
       coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
     },
     neighborhood_boundary_confirmed: true,
+    highest_best_use_conclusion: "current_use",
+    highest_best_use_summary: "The current residential use is consistent with zoning.",
+    highest_best_use_zoning_compatible: true,
+    highest_best_use_flags: [],
+    highest_best_use_subject_site_area_sqft: 7578,
+    highest_best_use_comparison_min_site_area_sqft: 7600,
+    highest_best_use_comparison_parcel_count: 41,
   }), true);
 });
 
@@ -177,4 +186,10 @@ test("assignment details enforce neighborhood totals and boundary confirmation",
   assert.throws(() => validateAssignmentDetails({
     neighborhood_built_up_pct: 101,
   }), /invalid_neighborhood_land_use_analysis_metadata/);
+  assert.throws(() => validateAssignmentDetails({
+    highest_best_use_conclusion: "approved_without_review",
+  }), /invalid_highest_best_use_conclusion/);
+  assert.throws(() => validateAssignmentDetails({
+    highest_best_use_flags: "review zoning",
+  }), /invalid_highest_best_use_flags/);
 });

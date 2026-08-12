@@ -54,6 +54,7 @@ const NEIGHBORHOOD_LAND_USE_FIELDS = [
   "neighborhood_land_use_other_vacant_pct",
 ];
 const NEIGHBORHOOD_LAND_USE_CONFIDENCE = new Set(["", "high", "moderate", "limited"]);
+const HIGHEST_BEST_USE_CONCLUSIONS = new Set(["", "current_use", "investigation_required"]);
 const NEIGHBORHOOD_RANGE_GROUPS = [
   ["neighborhood_house_price_low", "neighborhood_house_price_predominant", "neighborhood_house_price_high"],
   ["neighborhood_ppsf_low", "neighborhood_ppsf_predominant", "neighborhood_ppsf_high"],
@@ -95,6 +96,16 @@ export function validateAssignmentDetails(value) {
     ) {
       throw new Error(`invalid_${field}`);
     }
+  }
+  if (
+    value.highest_best_use_zoning_compatible !== undefined &&
+    value.highest_best_use_zoning_compatible !== null &&
+    typeof value.highest_best_use_zoning_compatible !== "boolean"
+  ) {
+    throw new Error("invalid_highest_best_use_zoning_compatible");
+  }
+  if (value.highest_best_use_flags !== undefined && !Array.isArray(value.highest_best_use_flags)) {
+    throw new Error("invalid_highest_best_use_flags");
   }
   if (
     value.subject_under_contract !== undefined &&
@@ -168,6 +179,9 @@ export function validateAssignmentDetails(value) {
     ["neighborhood_land_use_analysis_source", 500],
     ["neighborhood_land_use_analyzed_at", 100],
     ["neighborhood_land_use_boundary_signature", 128],
+    ["highest_best_use_summary", 5000],
+    ["highest_best_use_source", 500],
+    ["highest_best_use_analyzed_at", 100],
   ];
 
   if (!HOA_FREQUENCIES.has(hoaFrequency)) throw new Error("invalid_hoa_frequency");
@@ -224,6 +238,17 @@ export function validateAssignmentDetails(value) {
   if (!NEIGHBORHOOD_LAND_USE_CONFIDENCE.has(text(value.neighborhood_land_use_confidence).toLowerCase())) {
     throw new Error("invalid_neighborhood_land_use_confidence");
   }
+  if (!HIGHEST_BEST_USE_CONCLUSIONS.has(text(value.highest_best_use_conclusion).toLowerCase())) {
+    throw new Error("invalid_highest_best_use_conclusion");
+  }
+  if (
+    Array.isArray(value.highest_best_use_flags) &&
+    (value.highest_best_use_flags.length > 20 || value.highest_best_use_flags.some(
+      (item) => typeof item !== "string" || text(item).length > 2000,
+    ))
+  ) {
+    throw new Error("invalid_highest_best_use_flags");
+  }
   const landUseAnalysisNumbers = [
     optionalNumber(value.neighborhood_land_use_parcel_count),
     optionalNumber(value.neighborhood_land_use_review_count),
@@ -261,6 +286,20 @@ export function validateAssignmentDetails(value) {
   const cityValues = NEIGHBORHOOD_CITY_NUMERIC_FIELDS.map((field) => optionalNumber(value[field]));
   if (cityValues.some((item) => Number.isNaN(item) || (item !== null && item < 0))) {
     throw new Error("invalid_neighborhood_city_comparison");
+  }
+  const medianDom = optionalNumber(value.neighborhood_median_dom);
+  if (Number.isNaN(medianDom) || (medianDom !== null && medianDom < 0)) {
+    throw new Error("invalid_neighborhood_median_dom");
+  }
+  const marketChange = optionalNumber(value.neighborhood_market_change_pct);
+  if (Number.isNaN(marketChange)) throw new Error("invalid_neighborhood_market_change");
+  const highestBestUseNumbers = [
+    optionalNumber(value.highest_best_use_subject_site_area_sqft),
+    optionalNumber(value.highest_best_use_comparison_min_site_area_sqft),
+    optionalNumber(value.highest_best_use_comparison_parcel_count),
+  ];
+  if (highestBestUseNumbers.some((item) => Number.isNaN(item) || (item !== null && item < 0))) {
+    throw new Error("invalid_highest_best_use_site_comparison");
   }
   if (
     value.neighborhood_boundary_geometry !== undefined &&

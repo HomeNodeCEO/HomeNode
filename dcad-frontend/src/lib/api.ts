@@ -232,6 +232,8 @@ export interface AssignmentDetailsPayload {
   neighborhood_city_unemployment_dataset_year?: string | number;
   neighborhood_city_unemployment_variable?: string;
   neighborhood_market_trend?: string;
+  neighborhood_market_change_pct?: string | number;
+  neighborhood_median_dom?: string | number;
   neighborhood_demand_supply?: string;
   neighborhood_marketing_time?: string;
   neighborhood_house_price_low?: string | number;
@@ -267,6 +269,15 @@ export interface AssignmentDetailsPayload {
   neighborhood_boundary_streets_retrieved_at?: string;
   neighborhood_boundary_confirmed?: boolean;
   neighborhood_boundary_confirmed_at?: string;
+  highest_best_use_conclusion?: string;
+  highest_best_use_summary?: string;
+  highest_best_use_zoning_compatible?: boolean | null;
+  highest_best_use_flags?: string[];
+  highest_best_use_source?: string;
+  highest_best_use_analyzed_at?: string;
+  highest_best_use_subject_site_area_sqft?: string | number;
+  highest_best_use_comparison_min_site_area_sqft?: string | number;
+  highest_best_use_comparison_parcel_count?: string | number;
   lender_revision_count?: string | number;
   lender_revision_last_requested_at?: string;
   lender_revision_note?: string;
@@ -1341,6 +1352,10 @@ export interface NeighborhoodLandUseAnalysisResponse {
   built_up_band: 'over_75' | '25_to_75' | 'under_25';
   built_up_label: 'Over 75%' | '25-75%' | 'Under 25%';
   built_up_parcel_count: number;
+  subject_site_area_sqft: number | null;
+  comparison_min_site_area_sqft: number | null;
+  comparison_parcel_count: number;
+  subject_smaller_than_all_comparisons: boolean;
   coverage_percent: number;
   overlap_percent: number;
   parcel_count: number;

@@ -6,14 +6,17 @@ import {
   runScheduledMaintenance,
 } from "../src/services/scheduledMaintenance.js";
 
-test("routine maintenance excludes the slower monthly roads refresh", () => {
-  assert.deepEqual(resolveMaintenanceTasks("routine"), ["census", "locations", "parcels"]);
+test("routine maintenance refreshes cached parcel influences but excludes slower monthly source mirrors", () => {
+  assert.deepEqual(resolveMaintenanceTasks("routine"), ["census", "locations", "parcels", "influences"]);
 });
 
 test("maintenance tasks can be scheduled independently", () => {
   assert.deepEqual(resolveMaintenanceTasks("roads"), ["roads"]);
   assert.deepEqual(resolveMaintenanceTasks("census"), ["census"]);
-  assert.deepEqual(resolveMaintenanceTasks("all"), ["census", "locations", "parcels", "roads"]);
+  assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "floods", "zoning", "influences"]);
+  assert.deepEqual(resolveMaintenanceTasks("all"), [
+    "census", "locations", "parcels", "roads", "floods", "zoning", "influences",
+  ]);
 });
 
 test("unknown maintenance tasks fail before any database work", () => {

@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   fetchArcGisObjectIds,
   normalizeDcadParcelFeature,
+  normalizeFemaFloodFeature,
+  normalizeOfficialZoningFeature,
   normalizeRoadFeature,
   syncDcadPropertyContext,
 } from "../src/services/propertyContextSync.js";
@@ -71,6 +73,47 @@ test("road normalization retains the named road and source class", () => {
   assert.equal(record.name, "N GARLAND AVE");
   assert.equal(record.road_class, "secondary");
   assert.equal(record.source_vintage, "2025");
+});
+
+test("FEMA flood normalization preserves zone and special-hazard status", () => {
+  const record = normalizeFemaFloodFeature({
+    type: "Feature",
+    properties: {
+      OBJECTID: 11,
+      GFID: "flood-area-11",
+      FLD_ZONE: "AE",
+      ZONE_SUBTY: "FLOODWAY",
+      SFHA_TF: "T",
+      STATIC_BFE: 518.4,
+    },
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+    },
+  }, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  assert.equal(record.source_record_id, "flood-area-11");
+  assert.equal(record.flood_zone, "AE");
+  assert.equal(record.special_flood_hazard, true);
+  assert.equal(record.static_base_flood_elevation, 518.4);
+});
+
+test("official zoning normalization retains provider provenance and generalized use", () => {
+  const record = normalizeOfficialZoningFeature({
+    type: "Feature",
+    properties: { OBJECTID: 17, BASE_ZONE: "SF-7", MISC: "Single Family Residential" },
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+    },
+  }, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", {
+    providerKey: "city_test_official",
+    jurisdiction: "Test City",
+    zoningCodeFields: ["BASE_ZONE"],
+    descriptionFields: ["MISC"],
+  });
+  assert.equal(record.provider_key, "city_test_official");
+  assert.equal(record.zoning_code, "SF-7");
+  assert.equal(record.generalized_use, "residential");
 });
 
 test("an implausibly small full DCAD response cannot delete the last good mirror", async () => {

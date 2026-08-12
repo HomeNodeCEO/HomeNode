@@ -20,6 +20,7 @@ import {
 } from "./propertyContextSync.js";
 import {
   getPropertyInfluenceStatus,
+  recoverStalePropertyInfluenceClaims,
   runPropertyInfluenceBatch,
   seedPropertyInfluenceQueue,
 } from "./propertyInfluenceQueue.js";
@@ -159,6 +160,7 @@ async function runLocationTask(pool, options) {
 }
 
 async function runInfluenceTask(pool, options) {
+  const recovered = await recoverStalePropertyInfluenceClaims(pool);
   const maximumBatches = boundedInteger(options.influenceMaximumBatches, 4, 1, 100);
   const batchSize = boundedInteger(options.influenceBatchSize, 100, 1, 500);
   const seedLimit = boundedInteger(options.influenceSeedLimit, 10_000, 1, 50_000);
@@ -186,7 +188,7 @@ async function runInfluenceTask(pool, options) {
     }
     if (!seed.queued && !result.claimed) break;
   }
-  return { ...totals, status: await getPropertyInfluenceStatus(pool) };
+  return { recovered_stale_claims: recovered, ...totals, status: await getPropertyInfluenceStatus(pool) };
 }
 
 async function runTask(pool, task, options) {
@@ -233,7 +235,7 @@ export async function runScheduledMaintenance(pool, {
   locationSeedLimit = 1_000,
   parcelBatchSize = 2_000,
   roadBatchSize = 5_000,
-  hazardBatchSize = 1_000,
+  hazardBatchSize = 200,
   zoningBatchSize = 1_000,
   influenceMaximumBatches = 4,
   influenceBatchSize = 100,
@@ -275,7 +277,7 @@ export async function runScheduledMaintenance(pool, {
       locationSeedLimit,
       parcelBatchSize: boundedInteger(parcelBatchSize, 2_000, 100, 10_000),
       roadBatchSize: boundedInteger(roadBatchSize, 5_000, 100, 10_000),
-      hazardBatchSize: boundedInteger(hazardBatchSize, 1_000, 100, 2_000),
+      hazardBatchSize: boundedInteger(hazardBatchSize, 200, 50, 1_000),
       zoningBatchSize: boundedInteger(zoningBatchSize, 1_000, 100, 2_000),
       influenceMaximumBatches,
       influenceBatchSize,

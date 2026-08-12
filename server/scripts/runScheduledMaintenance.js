@@ -45,6 +45,10 @@ try {
       "influence-seed-limit",
       process.env.MAINTENANCE_INFLUENCE_SEED_LIMIT || "10000",
     ),
+    hazardBatchSize: option(
+      "hazard-batch-size",
+      process.env.MAINTENANCE_HAZARD_BATCH_SIZE || "200",
+    ),
     fetchConcurrency: process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || "3",
   });
   console.log(JSON.stringify(result, null, 2));

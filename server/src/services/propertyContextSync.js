@@ -48,11 +48,28 @@ const DEFAULT_BATCH_SIZE = 2_000;
 const DEFAULT_FETCH_CONCURRENCY = 3;
 
 const ROAD_LAYERS = Object.freeze([
-  { id: 0, sourceKey: "tiger_roads_primary", label: "Census TIGER primary roads", roadClass: "primary" },
-  { id: 1, sourceKey: "tiger_roads_secondary", label: "Census TIGER secondary roads", roadClass: "secondary" },
-  { id: 2, sourceKey: "tiger_roads_local", label: "Census TIGER local roads", roadClass: "local" },
-  { id: 3, sourceKey: "tiger_railroads", label: "Census TIGER railroads", roadClass: "railroad" },
+  { id: 0, sourceKey: "tiger_roads_primary", label: "Census TIGER primary roads", roadClass: "primary", outFields: ROAD_FIELDS },
+  { id: 1, sourceKey: "tiger_roads_secondary", label: "Census TIGER secondary roads", roadClass: "secondary", outFields: ROAD_FIELDS },
+  { id: 2, sourceKey: "tiger_roads_local", label: "Census TIGER local roads", roadClass: "local", outFields: ROAD_FIELDS },
+  {
+    id: 3,
+    sourceKey: "tiger_railroads",
+    label: "Census TIGER railroads",
+    roadClass: "railroad",
+    // The railroad layer does not expose the road-only RTTYP field.
+    outFields: "OBJECTID,OID,NAME,BASENAME,MTFCC,SUFTYP,SUFTYPEABRV",
+  },
 ]);
+
+export function tigerRoadOutFields(layerId) {
+  return ROAD_LAYERS.find((layer) => layer.id === Number(layerId))?.outFields || ROAD_FIELDS;
+}
+
+export function deduplicateSourceRecords(records = []) {
+  return [...new Map(
+    records.map((record) => [`${record.source_key}:${record.source_record_id}`, record]),
+  ).values()];
+}
 const OFFICIAL_ZONING_SOURCES = Object.freeze([
   {
     providerKey: "city_dallas_official",
@@ -291,8 +308,10 @@ function generalizedZoningUse(...values) {
 export function normalizeFemaFloodFeature(feature, runId) {
   const attributes = feature?.properties || feature?.attributes || {};
   const geometry = geoJsonGeometry(feature);
-  const sourceRecordId = text(attributes.GFID) || text(attributes.FLD_AR_ID) ||
-    text(attributes.OBJECTID ?? feature?.id);
+  // GFID identifies the effective FIRM dataset and is shared by thousands of
+  // polygons. FLD_AR_ID is the stable identity of the individual flood area.
+  const sourceRecordId = text(attributes.FLD_AR_ID) ||
+    text(attributes.OBJECTID ?? feature?.id) || text(attributes.GFID);
   if (!sourceRecordId || !geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) {
     return null;
   }
@@ -581,6 +600,10 @@ async function upsertRoadSegments(pool, roads) {
 
 async function upsertFloodHazards(pool, records) {
   if (!records.length) return 0;
+  // FEMA can return multiple geometries with the same stable GFID/FLD_AR_ID
+  // in a single response. PostgreSQL cannot update the same conflict target
+  // twice within one INSERT, so keep one deterministic record per identity.
+  const uniqueRecords = deduplicateSourceRecords(records);
   const { rowCount } = await pool.query(
     `WITH source AS (
        SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
@@ -618,7 +641,7 @@ async function upsertFloodHazards(pool, records) {
        source_updated_at = EXCLUDED.source_updated_at,
        sync_run_id = EXCLUDED.sync_run_id,
        synced_at = now(), geom = EXCLUDED.geom`,
-    [JSON.stringify(records)],
+    [JSON.stringify(uniqueRecords)],
   );
   return rowCount || 0;
 }
@@ -814,7 +837,7 @@ async function syncTigerRoadLayer(pool, layer, {
       concurrency,
       fetchBatch: (ids) => fetchArcGisFeatures(sourceUrl, {
         objectIds: ids,
-        outFields: ROAD_FIELDS,
+        outFields: tigerRoadOutFields(layer.id),
         fetchImpl,
       }),
       normalizeFeature: (feature) => normalizeRoadFeature(feature, {
@@ -886,8 +909,10 @@ export async function syncTigerRoadContext(pool, {
 
 export async function syncFemaFloodContext(pool, {
   fetchImpl = fetch,
-  batchSize = 1_000,
-  concurrency = 2,
+  // NFHL polygons can be extremely detailed. Smaller batches avoid transient
+  // ArcGIS HTTP 500 responses caused by oversized geometry payloads.
+  batchSize = 200,
+  concurrency = 1,
   sourceVintage = process.env.FEMA_NFHL_VINTAGE || "effective-current",
   logger = console,
 } = {}) {

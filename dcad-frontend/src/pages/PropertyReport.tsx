@@ -7,6 +7,7 @@ import {
   getCensusCityProfile,
   getCensusZipProfile,
   getNeighborhoodProfile,
+  runNeighborhoodLandUseAnalysis,
   getAssignmentFiles,
   getAccountPhotos,
   getRelatedParcels,
@@ -16,6 +17,7 @@ import {
   type AppraisalAssignmentFile,
   type AssignmentDetailsPayload,
   type NeighborhoodProfileResponse,
+  type NeighborhoodLandUseAnalysisResponse,
   type ReportManualSectionKey,
   type RelatedParcelsResponse,
 } from "@/lib/api";
@@ -336,6 +338,16 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_land_use_commercial_pct: value?.neighborhood_land_use_commercial_pct ?? "",
     neighborhood_land_use_other_vacant_pct:
       value?.neighborhood_land_use_other_vacant_pct ?? "",
+    neighborhood_land_use_analysis_source:
+      value?.neighborhood_land_use_analysis_source || "",
+    neighborhood_land_use_analyzed_at: value?.neighborhood_land_use_analyzed_at || "",
+    neighborhood_land_use_parcel_count: value?.neighborhood_land_use_parcel_count ?? "",
+    neighborhood_land_use_review_count: value?.neighborhood_land_use_review_count ?? "",
+    neighborhood_land_use_coverage_percent:
+      value?.neighborhood_land_use_coverage_percent ?? "",
+    neighborhood_land_use_confidence: value?.neighborhood_land_use_confidence || "",
+    neighborhood_land_use_boundary_signature:
+      value?.neighborhood_land_use_boundary_signature || "",
     neighborhood_location_type: value?.neighborhood_location_type || "",
     neighborhood_built_up: value?.neighborhood_built_up || "",
     neighborhood_growth: value?.neighborhood_growth || "",
@@ -725,6 +737,9 @@ function NeighborhoodCharacteristicsContent({
   onMarketConditionsChange: (draft: MarketConditionsDraft | null) => void;
   onSave: () => void;
 }) {
+  const [landUseAnalysis, setLandUseAnalysis] = useState<NeighborhoodLandUseAnalysisResponse | null>(null);
+  const [landUseAnalysisLoading, setLandUseAnalysisLoading] = useState(false);
+  const [landUseAnalysisMessage, setLandUseAnalysisMessage] = useState("");
   const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
@@ -733,6 +748,70 @@ function NeighborhoodCharacteristicsContent({
   const unemploymentDifference = zipUnemployment !== null && cityUnemployment !== null
     ? zipUnemployment - cityUnemployment
     : null;
+  const landUseAnalysisIsCurrent = Boolean(
+    landUseAnalysis && assignmentDraft.neighborhood_boundary_geometry &&
+    JSON.stringify(landUseAnalysis.boundary.coordinates) ===
+      JSON.stringify(assignmentDraft.neighborhood_boundary_geometry.coordinates),
+  );
+  const analyzePresentLandUse = async () => {
+    if (!accountId || !assignmentDraft.neighborhood_boundary_geometry) {
+      setLandUseAnalysisMessage(
+        "Import or refresh the Appraiser-Defined Area before analyzing present land use.",
+      );
+      return;
+    }
+    setLandUseAnalysisLoading(true);
+    setLandUseAnalysisMessage("");
+    try {
+      const result = await runNeighborhoodLandUseAnalysis(
+        accountId,
+        assignmentDraft.neighborhood_boundary_geometry,
+      );
+      setLandUseAnalysis(result);
+      setLandUseAnalysisMessage(
+        `Analysis completed from ${result.parcel_count.toLocaleString()} DCAD parcels. Review the results, then apply them to this assignment.`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Present land-use analysis failed.";
+      setLandUseAnalysisMessage(
+        /dallas_county_only/i.test(message)
+          ? "Automated parcel land-use analysis is currently available for Dallas County properties only."
+          : /too_many_parcels/i.test(message)
+            ? "The drawn area contains too many parcels. Tighten the neighborhood boundary and try again."
+            : /dcad_land_use_query/i.test(message)
+              ? "The official DCAD parcel service is temporarily unavailable. No report values were changed."
+              : message,
+      );
+    } finally {
+      setLandUseAnalysisLoading(false);
+    }
+  };
+  const applyPresentLandUse = () => {
+    if (!landUseAnalysis || !landUseAnalysisIsCurrent) return;
+    const fieldByCategory = {
+      one_unit: "neighborhood_land_use_one_unit_pct",
+      two_to_four_unit: "neighborhood_land_use_two_to_four_unit_pct",
+      multifamily: "neighborhood_land_use_multifamily_pct",
+      commercial: "neighborhood_land_use_commercial_pct",
+      other_vacant: "neighborhood_land_use_other_vacant_pct",
+    } as const;
+    landUseAnalysis.categories.forEach((category) => {
+      onAssignmentChange(fieldByCategory[category.key], category.percentage);
+    });
+    onAssignmentChange("neighborhood_land_use_analysis_source", landUseAnalysis.source);
+    onAssignmentChange("neighborhood_land_use_analyzed_at", landUseAnalysis.analyzed_at);
+    onAssignmentChange("neighborhood_land_use_parcel_count", landUseAnalysis.parcel_count);
+    onAssignmentChange("neighborhood_land_use_review_count", landUseAnalysis.review_required_count);
+    onAssignmentChange("neighborhood_land_use_coverage_percent", landUseAnalysis.coverage_percent);
+    onAssignmentChange("neighborhood_land_use_confidence", landUseAnalysis.confidence);
+    onAssignmentChange(
+      "neighborhood_land_use_boundary_signature",
+      landUseAnalysis.boundary_signature,
+    );
+    setLandUseAnalysisMessage(
+      "Land-use percentages were applied to the editable fields. Save Neighborhood Characteristics to store them in this appraisal file.",
+    );
+  };
   const updateBoundarySide = (
     field: "neighborhood_boundary_north" | "neighborhood_boundary_east" |
       "neighborhood_boundary_south" | "neighborhood_boundary_west",
@@ -757,15 +836,35 @@ function NeighborhoodCharacteristicsContent({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Present Land Use</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Enter the current neighborhood allocation; all categories must total 100%.</p>
+            <p className="mt-0.5 text-xs text-slate-500">Analyze all official DCAD parcels in the appraiser-defined area, or enter the allocation manually.</p>
           </div>
-          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-            landUseTotal !== null && Math.abs(landUseTotal - 100) <= 0.1
-              ? "bg-emerald-100 text-emerald-800"
-              : "bg-amber-100 text-amber-900"
-          }`}>
-            Total {landUseTotal === null ? "0" : landUseTotal.toFixed(1)}%
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className="btn btn-neutral btn-xs normal-case rounded-lg text-white"
+              onClick={() => void analyzePresentLandUse()}
+              disabled={landUseAnalysisLoading || !assignmentDraft.neighborhood_boundary_geometry}
+            >
+              {landUseAnalysisLoading ? "Analyzing..." : "Analyze Present Land Use"}
+            </button>
+            {landUseAnalysis ? (
+              <button
+                type="button"
+                className="btn btn-neutral btn-xs normal-case rounded-lg text-white"
+                onClick={applyPresentLandUse}
+                disabled={!landUseAnalysisIsCurrent}
+              >
+                Apply Results
+              </button>
+            ) : null}
+            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+              landUseTotal !== null && Math.abs(landUseTotal - 100) <= 0.1
+                ? "bg-emerald-100 text-emerald-800"
+                : "bg-amber-100 text-amber-900"
+            }`}>
+              Total {landUseTotal === null ? "0" : landUseTotal.toFixed(1)}%
+            </span>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
           {NEIGHBORHOOD_LAND_USE_FIELDS.map(([field, label]) => (
@@ -786,6 +885,76 @@ function NeighborhoodCharacteristicsContent({
             </label>
           ))}
         </div>
+        {landUseAnalysisMessage ? (
+          <p className={`mt-2 text-xs font-medium ${
+            /failed|unavailable|too many|only|before analyzing/i.test(landUseAnalysisMessage)
+              ? "text-amber-800"
+              : "text-emerald-700"
+          }`}>{landUseAnalysisMessage}</p>
+        ) : null}
+        {landUseAnalysis ? (
+          <div className={`mt-2 rounded-lg border p-2 ${
+            landUseAnalysisIsCurrent
+              ? "border-slate-200 bg-slate-50"
+              : "border-amber-300 bg-amber-50"
+          }`}>
+            {!landUseAnalysisIsCurrent ? (
+              <p className="mb-2 text-xs font-semibold text-amber-900">
+                The boundary changed after this run. Analyze again before applying the results.
+              </p>
+            ) : null}
+            <div className="grid grid-cols-2 gap-1.5 text-xs lg:grid-cols-4">
+              <div><span className="text-slate-500">Confidence</span><div className="font-semibold capitalize text-slate-900">{landUseAnalysis.confidence}</div></div>
+              <div><span className="text-slate-500">Parcel coverage</span><div className="font-semibold text-slate-900">{landUseAnalysis.coverage_percent.toFixed(1)}%</div></div>
+              <div><span className="text-slate-500">CAD parcels</span><div className="font-semibold text-slate-900">{landUseAnalysis.parcel_count.toLocaleString()}</div></div>
+              <div><span className="text-slate-500">Needs review</span><div className="font-semibold text-slate-900">{landUseAnalysis.review_required_count.toLocaleString()}</div></div>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-1.5 lg:grid-cols-5">
+              {landUseAnalysis.categories.map((category) => (
+                <div key={category.key} className="rounded-md border border-slate-200 bg-white px-2 py-1.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{category.label}</div>
+                  <div className="text-sm font-semibold text-slate-900">{category.percentage.toFixed(1)}%</div>
+                  <div className="text-[10px] text-slate-500">{category.area_acres.toFixed(2)} acres</div>
+                </div>
+              ))}
+            </div>
+            {landUseAnalysis.warnings.length ? (
+              <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-amber-900">
+                {landUseAnalysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            ) : null}
+            <p className="mt-2 text-[10px] leading-4 text-slate-500">
+              {landUseAnalysis.denominator_note} Analyzed {formatDate(landUseAnalysis.analyzed_at)}.
+            </p>
+            {landUseAnalysis.review_parcels.length ? (
+              <details className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5">
+                <summary className="cursor-pointer text-xs font-semibold text-amber-950">
+                  Review uncertain parcel classifications ({landUseAnalysis.review_required_count})
+                </summary>
+                <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+                  {landUseAnalysis.review_parcels.map((parcel, index) => (
+                    <div key={`${parcel.object_id || parcel.account_id || "parcel"}-${index}`} className="rounded border border-amber-200 bg-white p-2 text-[11px]">
+                      <div className="font-semibold text-slate-900">
+                        {parcel.site_address || parcel.account_id || `DCAD parcel ${parcel.object_id || index + 1}`}
+                      </div>
+                      <div className="text-slate-600">
+                        {parcel.use_description || parcel.property_description || "Use not reported"} · {parcel.category_label} · {parcel.clipped_area_acres.toFixed(3)} acres
+                      </div>
+                      <div className="text-amber-900">{parcel.review_reason}</div>
+                    </div>
+                  ))}
+                  {landUseAnalysis.review_parcels_truncated ? (
+                    <p className="text-[11px] font-medium text-amber-900">Only the 250 largest review parcels are shown.</p>
+                  ) : null}
+                </div>
+              </details>
+            ) : null}
+          </div>
+        ) : assignmentDraft.neighborhood_land_use_analysis_source ? (
+          <p className="mt-2 text-[10px] text-slate-500">
+            Saved analysis: {assignmentDraft.neighborhood_land_use_analysis_source} · {formatNumber(assignmentDraft.neighborhood_land_use_parcel_count)} parcels · {formatNumber(assignmentDraft.neighborhood_land_use_coverage_percent)}% coverage
+          </p>
+        ) : null}
       </section>
 
       <section className="rounded-xl border border-slate-200 bg-slate-50/60 p-3">

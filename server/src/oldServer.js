@@ -63,6 +63,10 @@ import {
 } from "./services/censusZipProfile.js";
 import { fetchBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
+  buildNeighborhoodLandUseAnalysis,
+  neighborhoodLandUseErrorStatus,
+} from "./services/neighborhoodLandUse.js";
+import {
   ensureAppraisalRatingsSchema,
   SALE_REVIEW_SELECT,
   SUBJECT_RATING_SELECT,
@@ -4294,6 +4298,30 @@ app.post("/api/sales/neighborhood-profile", async (req, res) => {
     const message = error?.message || "neighborhood_profile_failed";
     console.error("/api/sales/neighborhood-profile failed", error);
     res.status(marketConditionsErrorStatus(message)).json({
+      error: message,
+      ...(error?.detail ? { detail: error.detail } : {}),
+    });
+  }
+});
+
+/**
+ * POST /api/sales/neighborhood-land-use
+ *
+ * Calculates present land-use percentages from every official DCAD parcel
+ * intersecting the saved appraiser-defined polygon. This is intentionally
+ * on-demand and independent from the residential account scraper.
+ */
+app.post("/api/sales/neighborhood-land-use", async (req, res) => {
+  try {
+    const result = await buildNeighborhoodLandUseAnalysis(pool, {
+      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+      customGeometry: req.body?.custom_geometry || null,
+    });
+    res.json(result);
+  } catch (error) {
+    const message = error?.message || "neighborhood_land_use_analysis_failed";
+    console.error("/api/sales/neighborhood-land-use failed", error);
+    res.status(neighborhoodLandUseErrorStatus(message)).json({
       error: message,
       ...(error?.detail ? { detail: error.detail } : {}),
     });

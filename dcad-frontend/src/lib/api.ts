@@ -210,6 +210,13 @@ export interface AssignmentDetailsPayload {
   neighborhood_land_use_multifamily_pct?: string | number;
   neighborhood_land_use_commercial_pct?: string | number;
   neighborhood_land_use_other_vacant_pct?: string | number;
+  neighborhood_land_use_analysis_source?: string;
+  neighborhood_land_use_analyzed_at?: string;
+  neighborhood_land_use_parcel_count?: string | number;
+  neighborhood_land_use_review_count?: string | number;
+  neighborhood_land_use_coverage_percent?: string | number;
+  neighborhood_land_use_confidence?: string;
+  neighborhood_land_use_boundary_signature?: string;
   neighborhood_location_type?: string;
   neighborhood_built_up?: string;
   neighborhood_growth?: string;
@@ -1285,6 +1292,63 @@ export interface NeighborhoodProfileResponse extends MarketConditionsResponse {
   boundary_street_warning: string | null;
 }
 
+export type NeighborhoodLandUseCategoryKey =
+  | 'one_unit'
+  | 'two_to_four_unit'
+  | 'multifamily'
+  | 'commercial'
+  | 'other_vacant';
+
+export interface NeighborhoodLandUseCategoryResult {
+  key: NeighborhoodLandUseCategoryKey;
+  label: string;
+  parcel_count: number;
+  area_sqft: number;
+  area_acres: number;
+  percentage: number;
+}
+
+export interface NeighborhoodLandUseReviewParcel {
+  object_id: string | number | null;
+  account_id: string | null;
+  site_address: string | null;
+  use_description: string | null;
+  property_description: string | null;
+  class_code: string | null;
+  class_description: string | null;
+  category: NeighborhoodLandUseCategoryKey;
+  category_label: string;
+  confidence: 'high' | 'medium' | 'low';
+  review_reason: string;
+  clipped_area_sqft: number;
+  clipped_area_acres: number;
+}
+
+export interface NeighborhoodLandUseAnalysisResponse {
+  subject_account_id: string;
+  jurisdiction: 'Dallas County';
+  source: string;
+  source_url: string;
+  analyzed_at: string;
+  methodology_version: number;
+  boundary: GeoJsonPolygon;
+  boundary_signature: string;
+  boundary_area_acres: number;
+  covered_parcel_area_acres: number;
+  coverage_percent: number;
+  overlap_percent: number;
+  parcel_count: number;
+  excluded_non_land_record_count: number;
+  review_required_count: number;
+  review_area_percent: number;
+  confidence: 'high' | 'moderate' | 'limited';
+  categories: NeighborhoodLandUseCategoryResult[];
+  review_parcels: NeighborhoodLandUseReviewParcel[];
+  review_parcels_truncated: boolean;
+  warnings: string[];
+  denominator_note: string;
+}
+
 /** Resolve one property's Census tract immediately, ahead of the background queue. */
 export async function lookupAccountCensusGeography(
   accountId: string,
@@ -1677,6 +1741,25 @@ export async function getNeighborhoodProfile(
     }),
     timeoutMs: 120000,
   });
+}
+
+/** Calculate present land use from every official DCAD parcel in the saved custom boundary. */
+export async function runNeighborhoodLandUseAnalysis(
+  subjectAccountId: string,
+  customGeometry: GeoJsonPolygon,
+): Promise<NeighborhoodLandUseAnalysisResponse> {
+  return fetchJSON<NeighborhoodLandUseAnalysisResponse>(
+    makeUrl('/api/sales/neighborhood-land-use'),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        subject_account_id: subjectAccountId.trim(),
+        custom_geometry: customGeometry,
+      }),
+      timeoutMs: 180000,
+    },
+  );
 }
 
 /** Build current one-year bathroom, garage, pool, and living-area grouped adjustment studies. */

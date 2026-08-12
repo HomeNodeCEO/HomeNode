@@ -10,6 +10,8 @@ export const DCAD_PARCEL_SYNC_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
 export const TIGER_ROAD_SERVICE_URL =
   "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation_LargeScale/MapServer";
+export const FEMA_NFHL_QUERY_URL =
+  "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query";
 
 const DCAD_SYNC_FIELDS = [
   "OBJECTID",
@@ -34,6 +36,7 @@ const DCAD_SYNC_FIELDS = [
 ].join(",");
 
 const ROAD_FIELDS = "OBJECTID,OID,NAME,BASENAME,MTFCC,RTTYP";
+const FEMA_NFHL_FIELDS = "OBJECTID,GFID,DFIRM_ID,FLD_AR_ID,FLD_ZONE,ZONE_SUBTY,SFHA_TF,STATIC_BFE,SOURCE_CIT";
 const DALLAS_COUNTY_QUERY_ENVELOPE = Object.freeze({
   xmin: -97.05,
   ymin: 32.50,
@@ -48,6 +51,29 @@ const ROAD_LAYERS = Object.freeze([
   { id: 0, sourceKey: "tiger_roads_primary", label: "Census TIGER primary roads", roadClass: "primary" },
   { id: 1, sourceKey: "tiger_roads_secondary", label: "Census TIGER secondary roads", roadClass: "secondary" },
   { id: 2, sourceKey: "tiger_roads_local", label: "Census TIGER local roads", roadClass: "local" },
+  { id: 3, sourceKey: "tiger_railroads", label: "Census TIGER railroads", roadClass: "railroad" },
+]);
+const OFFICIAL_ZONING_SOURCES = Object.freeze([
+  {
+    providerKey: "city_dallas_official",
+    sourceKey: "zoning_city_dallas_official",
+    label: "City of Dallas official zoning GIS",
+    jurisdiction: "Dallas",
+    url: "https://gis.dallascityhall.com/arcgis/rest/services/sdc_public/Zoning/MapServer/15/query",
+    outFields: "OBJECTID,GLOBALID,ZONE_DIST,LONG_ZONE_DIST,PD_NUM,CD_NUM,DISTRICTUSE,EFFECTIVEDATE",
+    zoningCodeFields: ["LONG_ZONE_DIST", "ZONE_DIST"],
+    descriptionFields: ["DISTRICTUSE"],
+  },
+  {
+    providerKey: "city_garland_official",
+    sourceKey: "zoning_city_garland_official",
+    label: "City of Garland official zoning GIS",
+    jurisdiction: "Garland",
+    url: "https://maps.garlandtx.gov/arcgis/rest/services/CityMap_Other/GDC_Zoning/MapServer/1/query",
+    outFields: "OBJECTID,PD_NUM,GDC_ZONING,ORD_NO,BASE_ZONE,MISC",
+    zoningCodeFields: ["BASE_ZONE", "GDC_ZONING"],
+    descriptionFields: ["MISC"],
+  },
 ]);
 
 function chunks(values, size) {
@@ -94,24 +120,38 @@ function arcGisBody(values) {
   );
 }
 
-export async function requestArcGis(url, values, { fetchImpl = fetch, timeoutMs = 120_000 } = {}) {
-  const response = await fetchImpl(url, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      accept: "application/json",
-    },
-    body: arcGisBody(values),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!response.ok) throw new Error(`property_context_source_http_${response.status}`);
-  const payload = await response.json();
-  if (payload?.error) {
-    throw new Error(
-      `property_context_source_${payload.error.code || "error"}: ${payload.error.message || "unknown error"}`,
-    );
+export async function requestArcGis(url, values, {
+  fetchImpl = fetch,
+  timeoutMs = 120_000,
+  maximumAttempts = 3,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          accept: "application/json",
+        },
+        body: arcGisBody(values),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) throw new Error(`property_context_source_http_${response.status}`);
+      const payload = await response.json();
+      if (payload?.error) {
+        throw new Error(
+          `property_context_source_${payload.error.code || "error"}: ${payload.error.message || "unknown error"}`,
+        );
+      }
+      return payload;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= maximumAttempts) break;
+      await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    }
   }
-  return payload;
+  throw lastError || new Error("property_context_source_failed");
 }
 
 export async function fetchArcGisObjectIds(url, {
@@ -223,6 +263,74 @@ export function normalizeRoadFeature(feature, { runId, sourceLayer, roadClass, s
     road_class: roadClass,
     source_vintage: sourceVintage,
     source_attributes: attributes,
+    sync_run_id: runId,
+    geometry,
+  };
+  return { ...normalized, source_record_hash: recordHash(normalized) };
+}
+
+function firstText(attributes, fields) {
+  for (const field of fields || []) {
+    const value = text(attributes[field]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function generalizedZoningUse(...values) {
+  const description = values.filter(Boolean).join(" ").toUpperCase();
+  if (/INDUSTR|WAREHOUSE|MANUFACTUR/.test(description)) return "industrial";
+  if (/MIXED|MX|MU/.test(description)) return "mixed_use";
+  if (/COMMERCIAL|RETAIL|OFFICE|CENTRAL BUSINESS|CBD|CR|CS|CA/.test(description)) return "commercial";
+  if (/MULTI|APARTMENT|DUPLEX|TOWNHOUSE|MF/.test(description)) return "multifamily_residential";
+  if (/RESIDENTIAL|SINGLE FAMILY|AGRICULTUR|RURAL|R-|SF|TH/.test(description)) return "residential";
+  if (/PLANNED|PD|PUD/.test(description)) return "planned_development";
+  return "unclassified";
+}
+
+export function normalizeFemaFloodFeature(feature, runId) {
+  const attributes = feature?.properties || feature?.attributes || {};
+  const geometry = geoJsonGeometry(feature);
+  const sourceRecordId = text(attributes.GFID) || text(attributes.FLD_AR_ID) ||
+    text(attributes.OBJECTID ?? feature?.id);
+  if (!sourceRecordId || !geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) {
+    return null;
+  }
+  const staticBfe = numeric(attributes.STATIC_BFE);
+  const normalized = {
+    source_key: "fema_nfhl",
+    source_record_id: sourceRecordId,
+    flood_zone: text(attributes.FLD_ZONE),
+    zone_subtype: text(attributes.ZONE_SUBTY),
+    special_flood_hazard: String(attributes.SFHA_TF || "").toUpperCase() === "T",
+    static_base_flood_elevation: staticBfe !== null && staticBfe > -9_000 ? staticBfe : null,
+    source_attributes: attributes,
+    source_updated_at: null,
+    sync_run_id: runId,
+    geometry,
+  };
+  return { ...normalized, source_record_hash: recordHash(normalized) };
+}
+
+export function normalizeOfficialZoningFeature(feature, runId, source) {
+  const attributes = feature?.properties || feature?.attributes || {};
+  const geometry = geoJsonGeometry(feature);
+  const sourceRecordId = text(attributes.GLOBALID) || text(attributes.OBJECTID ?? feature?.id);
+  if (!sourceRecordId || !geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) {
+    return null;
+  }
+  const zoningCode = firstText(attributes, source.zoningCodeFields);
+  const zoningDescription = firstText(attributes, source.descriptionFields);
+  const normalized = {
+    provider_key: source.providerKey,
+    source_record_id: sourceRecordId,
+    jurisdiction: source.jurisdiction,
+    zoning_code: zoningCode,
+    zoning_description: zoningDescription,
+    generalized_use: generalizedZoningUse(zoningCode, zoningDescription),
+    overlays: [],
+    source_attributes: attributes,
+    source_updated_at: sourceDate(attributes.EFFECTIVEDATE),
     sync_run_id: runId,
     geometry,
   };
@@ -471,6 +579,92 @@ async function upsertRoadSegments(pool, roads) {
   return rowCount || 0;
 }
 
+async function upsertFloodHazards(pool, records) {
+  if (!records.length) return 0;
+  const { rowCount } = await pool.query(
+    `WITH source AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
+         source_key text, source_record_id text, flood_zone text,
+         zone_subtype text, special_flood_hazard boolean,
+         static_base_flood_elevation numeric, source_attributes jsonb,
+         source_record_hash text, source_updated_at timestamptz,
+         sync_run_id uuid, geometry jsonb
+       )
+     ), prepared AS (
+       SELECT source.*,
+              ST_Multi(ST_CollectionExtract(ST_MakeValid(
+                ST_SetSRID(ST_GeomFromGeoJSON(source.geometry::text), 4326)
+              ), 3))::geometry(MultiPolygon,4326) AS geom
+       FROM source
+     )
+     INSERT INTO gis.flood_hazard_areas (
+       source_key, source_record_id, flood_zone, zone_subtype,
+       special_flood_hazard, static_base_flood_elevation,
+       source_attributes, source_record_hash, source_updated_at,
+       sync_run_id, synced_at, geom
+     )
+     SELECT source_key, source_record_id, flood_zone, zone_subtype,
+            special_flood_hazard, static_base_flood_elevation,
+            source_attributes, source_record_hash, source_updated_at,
+            sync_run_id, now(), geom
+     FROM prepared WHERE NOT ST_IsEmpty(geom)
+     ON CONFLICT (source_key, source_record_id) DO UPDATE SET
+       flood_zone = EXCLUDED.flood_zone,
+       zone_subtype = EXCLUDED.zone_subtype,
+       special_flood_hazard = EXCLUDED.special_flood_hazard,
+       static_base_flood_elevation = EXCLUDED.static_base_flood_elevation,
+       source_attributes = EXCLUDED.source_attributes,
+       source_record_hash = EXCLUDED.source_record_hash,
+       source_updated_at = EXCLUDED.source_updated_at,
+       sync_run_id = EXCLUDED.sync_run_id,
+       synced_at = now(), geom = EXCLUDED.geom`,
+    [JSON.stringify(records)],
+  );
+  return rowCount || 0;
+}
+
+async function upsertZoningDistricts(pool, records) {
+  if (!records.length) return 0;
+  const { rowCount } = await pool.query(
+    `WITH source AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
+         provider_key text, source_record_id text, jurisdiction text,
+         zoning_code text, zoning_description text, generalized_use text,
+         overlays jsonb, source_attributes jsonb, source_record_hash text,
+         source_updated_at timestamptz, sync_run_id uuid, geometry jsonb
+       )
+     ), prepared AS (
+       SELECT source.*,
+              ST_Multi(ST_CollectionExtract(ST_MakeValid(
+                ST_SetSRID(ST_GeomFromGeoJSON(source.geometry::text), 4326)
+              ), 3))::geometry(MultiPolygon,4326) AS geom
+       FROM source
+     )
+     INSERT INTO gis.zoning_districts (
+       provider_key, source_record_id, jurisdiction, zoning_code,
+       zoning_description, generalized_use, overlays, source_attributes,
+       source_record_hash, source_updated_at, sync_run_id, synced_at, geom
+     )
+     SELECT provider_key, source_record_id, jurisdiction, zoning_code,
+            zoning_description, generalized_use, overlays, source_attributes,
+            source_record_hash, source_updated_at, sync_run_id, now(), geom
+     FROM prepared WHERE NOT ST_IsEmpty(geom)
+     ON CONFLICT (provider_key, source_record_id) DO UPDATE SET
+       jurisdiction = EXCLUDED.jurisdiction,
+       zoning_code = EXCLUDED.zoning_code,
+       zoning_description = EXCLUDED.zoning_description,
+       generalized_use = EXCLUDED.generalized_use,
+       overlays = EXCLUDED.overlays,
+       source_attributes = EXCLUDED.source_attributes,
+       source_record_hash = EXCLUDED.source_record_hash,
+       source_updated_at = EXCLUDED.source_updated_at,
+       sync_run_id = EXCLUDED.sync_run_id,
+       synced_at = now(), geom = EXCLUDED.geom`,
+    [JSON.stringify(records)],
+  );
+  return rowCount || 0;
+}
+
 async function fetchAndWriteBatches({
   objectIds,
   batchSize,
@@ -684,6 +878,169 @@ export async function syncTigerRoadContext(pool, {
       batchSize,
       concurrency,
       sourceVintage,
+      logger,
+    }));
+  }
+  return results;
+}
+
+export async function syncFemaFloodContext(pool, {
+  fetchImpl = fetch,
+  batchSize = 1_000,
+  concurrency = 2,
+  sourceVintage = process.env.FEMA_NFHL_VINTAGE || "effective-current",
+  logger = console,
+} = {}) {
+  await ensurePropertyContextSchema(pool);
+  const sourceKey = "fema_nfhl";
+  const runId = await startRun(pool, {
+    sourceKey,
+    sourceLabel: "FEMA National Flood Hazard Layer",
+    sourceUrl: FEMA_NFHL_QUERY_URL,
+    sourceVintage,
+    mode: "full",
+  });
+  try {
+    const objectIds = await fetchArcGisObjectIds(FEMA_NFHL_QUERY_URL, {
+      geometry: DALLAS_COUNTY_QUERY_ENVELOPE,
+      fetchImpl,
+    });
+    if (objectIds.length < 1_000) {
+      throw new Error(`property_context_fema_nfhl_full_sync_incomplete_${objectIds.length}`);
+    }
+    logger.log(`[property-context] FEMA NFHL sync found ${objectIds.length.toLocaleString()} object ids`);
+    const progress = await fetchAndWriteBatches({
+      objectIds,
+      batchSize,
+      concurrency,
+      fetchBatch: (ids) => fetchArcGisFeatures(FEMA_NFHL_QUERY_URL, {
+        objectIds: ids,
+        outFields: FEMA_NFHL_FIELDS,
+        fetchImpl,
+      }),
+      normalizeFeature: (feature) => normalizeFemaFloodFeature(feature, runId),
+      writeBatch: (records) => upsertFloodHazards(pool, records),
+      onCheckpoint: (checkpoint) => updateRunCheckpoint(
+        pool,
+        runId,
+        sourceKey,
+        checkpoint,
+        checkpoint.seen,
+        checkpoint.written,
+      ),
+    });
+    const deletedResult = await pool.query(
+      "DELETE FROM gis.flood_hazard_areas WHERE source_key = $1 AND sync_run_id IS DISTINCT FROM $2",
+      [sourceKey, runId],
+    );
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::bigint AS count FROM gis.flood_hazard_areas WHERE source_key = $1",
+      [sourceKey],
+    );
+    await completeRun(pool, {
+      runId,
+      sourceKey,
+      rowCount: Number(rows[0]?.count || 0),
+      seen: progress.seen,
+      written: progress.written,
+      deleted: deletedResult.rowCount || 0,
+      metadata: { envelope: DALLAS_COUNTY_QUERY_ENVELOPE, layer: 28 },
+    });
+    return { source_key: sourceKey, run_id: runId, mode: "full", ...progress };
+  } catch (error) {
+    await failRun(pool, { runId, sourceKey, error }).catch(() => {});
+    throw error;
+  }
+}
+
+async function syncOfficialZoningSource(pool, source, {
+  fetchImpl,
+  batchSize,
+  concurrency,
+  logger,
+}) {
+  const runId = await startRun(pool, {
+    sourceKey: source.sourceKey,
+    sourceLabel: source.label,
+    sourceUrl: source.url,
+    sourceVintage: "municipal-current",
+    mode: "full",
+  });
+  try {
+    const objectIds = await fetchArcGisObjectIds(source.url, { fetchImpl });
+    if (!objectIds.length) {
+      throw new Error(`property_context_${source.sourceKey}_full_sync_empty`);
+    }
+    logger.log(`[property-context] ${source.label} sync found ${objectIds.length.toLocaleString()} object ids`);
+    const progress = await fetchAndWriteBatches({
+      objectIds,
+      batchSize,
+      concurrency,
+      fetchBatch: (ids) => fetchArcGisFeatures(source.url, {
+        objectIds: ids,
+        outFields: source.outFields,
+        fetchImpl,
+      }),
+      normalizeFeature: (feature) => normalizeOfficialZoningFeature(feature, runId, source),
+      writeBatch: (records) => upsertZoningDistricts(pool, records),
+      onCheckpoint: (checkpoint) => updateRunCheckpoint(
+        pool,
+        runId,
+        source.sourceKey,
+        checkpoint,
+        checkpoint.seen,
+        checkpoint.written,
+      ),
+    });
+    const deletedResult = await pool.query(
+      "DELETE FROM gis.zoning_districts WHERE provider_key = $1 AND sync_run_id IS DISTINCT FROM $2",
+      [source.providerKey, runId],
+    );
+    const { rows } = await pool.query(
+      "SELECT COUNT(*)::bigint AS count FROM gis.zoning_districts WHERE provider_key = $1",
+      [source.providerKey],
+    );
+    await completeRun(pool, {
+      runId,
+      sourceKey: source.sourceKey,
+      rowCount: Number(rows[0]?.count || 0),
+      seen: progress.seen,
+      written: progress.written,
+      deleted: deletedResult.rowCount || 0,
+      metadata: { jurisdiction: source.jurisdiction, provider_key: source.providerKey },
+    });
+    await pool.query(
+      `UPDATE gis.zoning_source_registry
+       SET status = 'current', last_success_at = now(), last_error = NULL, updated_at = now()
+       WHERE provider_key = $1`,
+      [source.providerKey],
+    );
+    return { source_key: source.sourceKey, run_id: runId, mode: "full", ...progress };
+  } catch (error) {
+    await failRun(pool, { runId, sourceKey: source.sourceKey, error }).catch(() => {});
+    await pool.query(
+      `UPDATE gis.zoning_source_registry
+       SET status = 'failed', last_error = $2, updated_at = now()
+       WHERE provider_key = $1`,
+      [source.providerKey, String(error?.message || error).slice(0, 4_000)],
+    ).catch(() => {});
+    throw error;
+  }
+}
+
+export async function syncOfficialZoningContext(pool, {
+  fetchImpl = fetch,
+  batchSize = 1_000,
+  concurrency = 2,
+  logger = console,
+} = {}) {
+  await ensurePropertyContextSchema(pool);
+  const results = [];
+  for (const source of OFFICIAL_ZONING_SOURCES) {
+    results.push(await syncOfficialZoningSource(pool, source, {
+      fetchImpl,
+      batchSize,
+      concurrency,
       logger,
     }));
   }

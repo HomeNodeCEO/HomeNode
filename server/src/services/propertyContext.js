@@ -10,6 +10,12 @@ import {
   buildPropertyComplexityAssessment,
   normalizePropertyComplexityReview,
 } from "../util/propertyComplexity.js";
+import { buildPropertyInfluenceSignature } from "../util/propertyInfluence.js";
+import {
+  getPropertyInfluenceStatus,
+  getZoningSourceRegistry,
+  savePropertyInfluenceContext,
+} from "./propertyInfluenceStore.js";
 
 const FEET_PER_METER = 3.280839895;
 const DEFAULT_CONTEXT_RADIUS_METERS = 3_218.688;
@@ -80,6 +86,35 @@ function pointCoordinates(value) {
   const longitude = finiteNumber(coordinates[0]);
   const latitude = finiteNumber(coordinates[1]);
   return longitude === null || latitude === null ? null : [longitude, latitude];
+}
+
+export function detectCornerLot(subjectPoint, roadFrontages = []) {
+  const subject = pointCoordinates(subjectPoint);
+  if (!subject || !Array.isArray(roadFrontages) || roadFrontages.length < 2) {
+    return false;
+  }
+  const vectors = roadFrontages
+    .map((road) => ({
+      name: normalizedRoadName(road?.name),
+      point: pointCoordinates(road?.closest_point),
+    }))
+    .filter((road) => road.name && road.point)
+    .map((road) => ({
+      ...road,
+      angle: Math.atan2(
+        road.point[1] - subject[1],
+        road.point[0] - subject[0],
+      ) * 180 / Math.PI,
+    }));
+  for (let left = 0; left < vectors.length; left += 1) {
+    for (let right = left + 1; right < vectors.length; right += 1) {
+      if (vectors[left].name === vectors[right].name) continue;
+      const rawDifference = Math.abs(vectors[left].angle - vectors[right].angle);
+      const difference = Math.min(rawDifference, 360 - rawDifference);
+      if (difference >= 35 && difference <= 145) return true;
+    }
+  }
+  return false;
 }
 
 export function determineInfluenceRelationship({
@@ -363,7 +398,7 @@ async function loadPeerStatistics(pool, subject, customGeometry, centerPoint) {
   };
 }
 
-async function loadSpatialContext(pool, subject, customGeometry) {
+export async function loadSpatialContext(pool, subject, customGeometry) {
   const longitude = finiteNumber(subject.longitude);
   const latitude = finiteNumber(subject.latitude);
   const { rows: parcelRows } = await pool.query(
@@ -489,19 +524,26 @@ async function loadSpatialContext(pool, subject, customGeometry) {
        ST_AsGeoJSON(ST_ClosestPoint(road.geom, ST_PointOnSurface(subject.geom)))::jsonb AS closest_point
      FROM gis.road_segments road
      CROSS JOIN subject
-     WHERE ST_DWithin(subject.geom::geography, road.geom::geography, $2)
-       AND road.road_class <> 'railroad'
+     WHERE (
+       (road.road_class = 'railroad' AND
+        ST_DWithin(subject.geom::geography, road.geom::geography, $4))
+       OR
+       (road.road_class <> 'railroad' AND
+        ST_DWithin(subject.geom::geography, road.geom::geography, $2))
+     )
      ORDER BY ST_Distance(subject.geom::geography, road.geom::geography), road.road_class, road.name
      LIMIT 100`,
-    [parcel.object_id, 500 / FEET_PER_METER, FEET_PER_METER],
+    [parcel.object_id, 500 / FEET_PER_METER, FEET_PER_METER, 1_000 / FEET_PER_METER],
   );
   const namedFrontages = [...new Map(
     roadRows
-      .filter((road) => road.name && Number(road.distance_feet) <= 85)
+      .filter((road) => road.road_class !== "railroad" && road.name && Number(road.distance_feet) <= 85)
       .map((road) => [normalizedRoadName(road.name), road]),
   ).values()];
-  const cornerLot = namedFrontages.length >= 2;
-  const frontageRoad = roadRows.find((road) => roadMatchesAddress(road.name, subject.address)) || roadRows[0] || null;
+  const cornerLot = detectCornerLot(parcel.subject_point, namedFrontages);
+  const frontageRoad = roadRows.find(
+    (road) => road.road_class !== "railroad" && roadMatchesAddress(road.name, subject.address),
+  ) || roadRows.find((road) => road.road_class !== "railroad") || null;
   const influences = influenceRows.map((influence) => ({
     ...influence,
     distance_feet: rounded(influence.distance_feet, 0),
@@ -513,6 +555,53 @@ async function loadSpatialContext(pool, subject, customGeometry) {
     }),
   }));
   const nearestMajorRoad = roadRows.find((road) => ["primary", "secondary"].includes(road.road_class));
+  const nearestRailroad = roadRows.find((road) => road.road_class === "railroad");
+  const { rows: zoningRows } = await pool.query(
+    `WITH subject AS (
+       SELECT geom, ST_PointOnSurface(geom) AS center
+       FROM gis.dcad_parcels WHERE object_id = $1
+     )
+     SELECT
+       zoning.provider_key,
+       registry.provider_label,
+       registry.provider_type,
+       registry.priority,
+       zoning.jurisdiction,
+       zoning.zoning_code,
+       zoning.zoning_description,
+       zoning.generalized_use,
+       zoning.overlays,
+       zoning.source_updated_at,
+       zoning.synced_at
+     FROM gis.zoning_districts zoning
+     JOIN gis.zoning_source_registry registry
+       ON registry.provider_key = zoning.provider_key
+     CROSS JOIN subject
+     WHERE ST_Covers(zoning.geom, subject.center)
+     ORDER BY registry.priority DESC,
+              (registry.provider_type = 'official_municipal') DESC,
+              zoning.source_updated_at DESC NULLS LAST,
+              zoning.synced_at DESC
+     LIMIT 1`,
+    [parcel.object_id],
+  );
+  const { rows: floodRows } = await pool.query(
+    `WITH subject AS (
+       SELECT geom, ST_PointOnSurface(geom) AS center
+       FROM gis.dcad_parcels WHERE object_id = $1
+     )
+     SELECT source_key, source_record_id, flood_zone, zone_subtype,
+            special_flood_hazard, static_base_flood_elevation,
+            source_updated_at, synced_at
+     FROM gis.flood_hazard_areas flood
+     CROSS JOIN subject
+     WHERE ST_Intersects(flood.geom, subject.geom)
+     ORDER BY flood.special_flood_hazard DESC NULLS LAST,
+              ST_Area(ST_Intersection(flood.geom, subject.geom)::geography) DESC,
+              flood.synced_at DESC
+     LIMIT 1`,
+    [parcel.object_id],
+  );
   const subjectPoint = pointCoordinates(parcel.subject_point);
   return {
     parcel_available: true,
@@ -537,6 +626,13 @@ async function loadSpatialContext(pool, subject, customGeometry) {
       mtfcc: nearestMajorRoad.mtfcc,
       distance_feet: rounded(nearestMajorRoad.distance_feet, 0),
     } : null,
+    nearest_railroad: nearestRailroad ? {
+      name: nearestRailroad.name,
+      mtfcc: nearestRailroad.mtfcc,
+      distance_feet: rounded(nearestRailroad.distance_feet, 0),
+    } : null,
+    zoning_context: zoningRows[0] || null,
+    flood_context: floodRows[0] || null,
     adjacent_influences: influences.filter((influence) => influence.directly_adjacent),
     nearby_influences: influences.filter((influence) => !influence.directly_adjacent),
     subject_point: parcel.subject_point,
@@ -557,6 +653,13 @@ export async function analyzePropertyContext(pool, {
   const subject = await loadSubject(pool, normalizedAccountId, assignmentFileId);
   const sourceHealth = await getPropertyContextSourceHealth(pool);
   const spatialContext = await loadSpatialContext(pool, subject, boundary);
+  const influenceSignature = buildPropertyInfluenceSignature(spatialContext);
+  await savePropertyInfluenceContext(pool, {
+    accountId: normalizedAccountId,
+    spatialContext,
+    influenceSignature,
+    sourceHealth,
+  });
   const peerStatistics = await loadPeerStatistics(
     pool,
     subject,
@@ -588,6 +691,26 @@ export async function analyzePropertyContext(pool, {
   });
 }
 
+export async function refreshStoredPropertyInfluenceContext(pool, {
+  accountId,
+} = {}) {
+  const normalizedAccountId = String(accountId || "").trim();
+  if (!/^[0-9A-Za-z]{17}$/.test(normalizedAccountId)) {
+    throw new Error("invalid_account_id");
+  }
+  await ensurePropertyContextSchema(pool);
+  const subject = await loadSubject(pool, normalizedAccountId, null);
+  const sourceHealth = await getPropertyContextSourceHealth(pool);
+  const spatialContext = await loadSpatialContext(pool, subject, null);
+  const influenceSignature = buildPropertyInfluenceSignature(spatialContext);
+  return savePropertyInfluenceContext(pool, {
+    accountId: normalizedAccountId,
+    spatialContext,
+    influenceSignature,
+    sourceHealth,
+  });
+}
+
 export async function getStoredPropertyContext(pool, {
   accountId,
   assignmentFileId = null,
@@ -616,7 +739,11 @@ export async function savePropertyContextReview(pool, {
 
 export async function getPropertyContextStatus(pool) {
   await ensurePropertyContextSchema(pool);
-  const sources = await getPropertyContextSourceHealth(pool);
+  const [sources, influenceStatus, zoningProviders] = await Promise.all([
+    getPropertyContextSourceHealth(pool),
+    getPropertyInfluenceStatus(pool),
+    getZoningSourceRegistry(pool),
+  ]);
   return {
     ok: true,
     offline_first: true,
@@ -625,6 +752,8 @@ export async function getPropertyContextStatus(pool) {
     usable_source_count: sources.filter((source) => source.usable).length,
     stale_source_count: sources.filter((source) => source.serving_stale_data).length,
     unavailable_source_count: sources.filter((source) => !source.usable).length,
+    influence_context: influenceStatus,
+    zoning_source_hierarchy: zoningProviders,
     checked_at: new Date().toISOString(),
   };
 }

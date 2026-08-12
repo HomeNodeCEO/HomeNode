@@ -1,7 +1,10 @@
 const DEFAULT_BOUNDARY_CACHE_TTL_HOURS = 24 * 7;
+const schemaReadyByPool = new WeakMap();
 
 export async function ensurePropertyContextSchema(pool) {
-  await pool.query(`
+  const existing = schemaReadyByPool.get(pool);
+  if (existing) return existing;
+  const pending = pool.query(`
     CREATE SCHEMA IF NOT EXISTS gis;
     CREATE SCHEMA IF NOT EXISTS app;
 
@@ -105,6 +108,129 @@ export async function ensurePropertyContextSchema(pool) {
     CREATE INDEX IF NOT EXISTS road_segments_geom_gix
       ON gis.road_segments USING gist (geom);
 
+    CREATE TABLE IF NOT EXISTS gis.zoning_source_registry (
+      provider_key text PRIMARY KEY,
+      provider_label text NOT NULL,
+      provider_type text NOT NULL
+        CHECK (provider_type IN ('official_municipal', 'propzone_gridics')),
+      jurisdiction text NOT NULL,
+      priority integer NOT NULL,
+      status text NOT NULL DEFAULT 'registered'
+        CHECK (status IN ('registered', 'configured', 'current', 'failed', 'pending_credentials')),
+      service_url text,
+      service_layer integer,
+      configuration jsonb NOT NULL DEFAULT '{}'::jsonb,
+      last_success_at timestamptz,
+      last_error text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    INSERT INTO gis.zoning_source_registry (
+      provider_key, provider_label, provider_type, jurisdiction, priority,
+      status, service_url, service_layer, configuration
+    ) VALUES
+      (
+        'city_dallas_official', 'City of Dallas official zoning GIS',
+        'official_municipal', 'Dallas', 100, 'registered',
+        'https://gis.dallascityhall.com/arcgis/rest/services/sdc_public/Zoning/MapServer/15/query',
+        15, '{"zoning_code_fields":["LONG_ZONE_DIST","ZONE_DIST"]}'::jsonb
+      ),
+      (
+        'city_garland_official', 'City of Garland official zoning GIS',
+        'official_municipal', 'Garland', 100, 'registered',
+        'https://maps.garlandtx.gov/arcgis/rest/services/CityMap_Other/GDC_Zoning/MapServer/1/query',
+        1, '{"zoning_code_fields":["BASE_ZONE","GDC_ZONING"]}'::jsonb
+      ),
+      (
+        'propzone_gridics', 'Gridics PropZone zoning fallback',
+        'propzone_gridics', 'DFW configured coverage', 50,
+        'pending_credentials', NULL, NULL,
+        '{"request_path":"scheduled_only","fallback_only":true}'::jsonb
+      )
+    ON CONFLICT (provider_key) DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS gis.zoning_districts (
+      provider_key text NOT NULL
+        REFERENCES gis.zoning_source_registry(provider_key) ON DELETE CASCADE,
+      source_record_id text NOT NULL,
+      jurisdiction text NOT NULL,
+      zoning_code text,
+      zoning_description text,
+      generalized_use text,
+      overlays jsonb NOT NULL DEFAULT '[]'::jsonb,
+      source_attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+      source_record_hash text NOT NULL,
+      source_updated_at timestamptz,
+      sync_run_id uuid REFERENCES gis.source_sync_runs(id) ON DELETE SET NULL,
+      synced_at timestamptz NOT NULL DEFAULT now(),
+      geom geometry(MultiPolygon, 4326) NOT NULL,
+      PRIMARY KEY (provider_key, source_record_id)
+    );
+    CREATE INDEX IF NOT EXISTS zoning_districts_jurisdiction_idx
+      ON gis.zoning_districts (upper(jurisdiction), provider_key);
+    CREATE INDEX IF NOT EXISTS zoning_districts_geom_gix
+      ON gis.zoning_districts USING gist (geom);
+
+    CREATE TABLE IF NOT EXISTS gis.flood_hazard_areas (
+      source_key text NOT NULL DEFAULT 'fema_nfhl',
+      source_record_id text NOT NULL,
+      flood_zone text,
+      zone_subtype text,
+      special_flood_hazard boolean,
+      static_base_flood_elevation numeric,
+      source_attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+      source_record_hash text NOT NULL,
+      source_updated_at timestamptz,
+      sync_run_id uuid REFERENCES gis.source_sync_runs(id) ON DELETE SET NULL,
+      synced_at timestamptz NOT NULL DEFAULT now(),
+      geom geometry(MultiPolygon, 4326) NOT NULL,
+      PRIMARY KEY (source_key, source_record_id)
+    );
+    CREATE INDEX IF NOT EXISTS flood_hazard_areas_zone_idx
+      ON gis.flood_hazard_areas (flood_zone, special_flood_hazard);
+    CREATE INDEX IF NOT EXISTS flood_hazard_areas_geom_gix
+      ON gis.flood_hazard_areas USING gist (geom);
+
+    CREATE TABLE IF NOT EXISTS gis.property_influence_contexts (
+      account_id text PRIMARY KEY,
+      parcel_object_id bigint,
+      methodology_version integer NOT NULL,
+      spatial_context jsonb NOT NULL,
+      influence_signature jsonb NOT NULL,
+      material_influence_present boolean NOT NULL DEFAULT false,
+      dominant_influence_key text NOT NULL DEFAULT 'ordinary_location',
+      material_keys text[] NOT NULL DEFAULT '{}'::text[],
+      material_categories text[] NOT NULL DEFAULT '{}'::text[],
+      source_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+      computed_at timestamptz NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS property_influence_contexts_material_idx
+      ON gis.property_influence_contexts (material_influence_present, dominant_influence_key);
+    CREATE INDEX IF NOT EXISTS property_influence_contexts_keys_gin
+      ON gis.property_influence_contexts USING gin (material_keys);
+    CREATE INDEX IF NOT EXISTS property_influence_contexts_categories_gin
+      ON gis.property_influence_contexts USING gin (material_categories);
+    CREATE INDEX IF NOT EXISTS property_influence_contexts_computed_idx
+      ON gis.property_influence_contexts (computed_at);
+
+    CREATE TABLE IF NOT EXISTS gis.property_influence_queue (
+      account_id text PRIMARY KEY,
+      reason text NOT NULL,
+      priority integer NOT NULL DEFAULT 10,
+      status text NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'retry', 'completed', 'manual_review')),
+      attempts integer NOT NULL DEFAULT 0,
+      available_at timestamptz NOT NULL DEFAULT now(),
+      locked_at timestamptz,
+      locked_by text,
+      last_error text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      completed_at timestamptz
+    );
+    CREATE INDEX IF NOT EXISTS property_influence_queue_claim_idx
+      ON gis.property_influence_queue (status, available_at, priority DESC, updated_at);
+
     CREATE TABLE IF NOT EXISTS gis.boundary_analysis_cache (
       cache_key text PRIMARY KEY,
       subject_account_id text NOT NULL,
@@ -144,7 +270,12 @@ export async function ensurePropertyContextSchema(pool) {
     );
     CREATE INDEX IF NOT EXISTS property_complexity_account_updated_idx
       ON app.property_complexity_assessments (account_id, updated_at DESC);
-  `);
+  `).catch((error) => {
+    schemaReadyByPool.delete(pool);
+    throw error;
+  });
+  schemaReadyByPool.set(pool, pending);
+  return pending;
 }
 
 function sourceAgeHours(value, now = Date.now()) {
@@ -184,7 +315,10 @@ export async function getPropertyContextSourceHealth(pool, { now = Date.now() } 
             last_error, metadata
      FROM gis.source_sync_state
      WHERE source_key IN ('dcad_parcels', 'tiger_roads_primary',
-                          'tiger_roads_secondary', 'tiger_roads_local')
+                          'tiger_roads_secondary', 'tiger_roads_local',
+                          'tiger_railroads', 'fema_nfhl',
+                          'zoning_city_dallas_official',
+                          'zoning_city_garland_official')
      ORDER BY source_key`,
   );
   const byKey = new Map(rows.map((row) => [row.source_key, row]));
@@ -193,6 +327,10 @@ export async function getPropertyContextSourceHealth(pool, { now = Date.now() } 
     ["tiger_roads_primary", "Census TIGER primary roads", 24 * 45],
     ["tiger_roads_secondary", "Census TIGER secondary roads", 24 * 45],
     ["tiger_roads_local", "Census TIGER local roads", 24 * 45],
+    ["tiger_railroads", "Census TIGER railroads", 24 * 45],
+    ["fema_nfhl", "FEMA National Flood Hazard Layer", 24 * 30],
+    ["zoning_city_dallas_official", "City of Dallas official zoning GIS", 24 * 14],
+    ["zoning_city_garland_official", "City of Garland official zoning GIS", 24 * 14],
   ];
   return expected.map(([sourceKey, label, staleAfterHours]) => normalizeSourceHealth(
     byKey.get(sourceKey) || { source_key: sourceKey, source_label: label },

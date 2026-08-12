@@ -107,8 +107,24 @@ import {
   savePropertyContextReview,
 } from "./services/propertyContext.js";
 import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
+import { getRecentScheduledMaintenanceRuns } from "./services/scheduledMaintenance.js";
+import {
+  createRequestPerformanceMonitor,
+  environmentFlag,
+} from "./util/requestPerformance.js";
 
 const app = express();
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: Number(process.env.DATABASE_POOL_SIZE || 10),
+  connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 10_000),
+  application_name: "homenode-web",
+});
+pool.on("error", (error) => {
+  console.error("[database] idle pool client error", error?.message || error);
+});
+const requestPerformance = createRequestPerformanceMonitor({ pool });
+app.use(requestPerformance.middleware);
 app.use(express.json());
 // Support comma-separated list in CORS_ORIGIN env (e.g. "http://localhost:5173,http://127.0.0.1:5173")
 const corsEnv = process.env.CORS_ORIGIN;
@@ -120,7 +136,6 @@ const corsOrigins = !corsEnv
       .filter(Boolean);
 app.use(cors({ origin: corsOrigins }));
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const trestleClient = new TrestleClient();
 
 // Ensure a simple signups table exists (no external migrations required)
@@ -334,6 +349,9 @@ const salesReconciliationReady = ensureSalesReconciliationSchema(pool)
   });
 
 let locationBackfillWorker = null;
+const locationBackfillInlineEnabled = environmentFlag(
+  process.env.LOCATION_BACKFILL_ENABLED,
+);
 const locationBackfillReady = Promise.all([
   accountLocationsReady,
   salesReconciliationReady,
@@ -341,10 +359,7 @@ const locationBackfillReady = Promise.all([
   .then(() => ensureLocationBackfillQueueSchema(pool))
   .then(() => {
     console.log("[init] location backfill queue ensured");
-    const enabled = String(
-      process.env.LOCATION_BACKFILL_ENABLED ?? "true",
-    ).toLowerCase() !== "false";
-    if (enabled) {
+    if (locationBackfillInlineEnabled) {
       locationBackfillWorker = startLocationBackfillWorker(pool, {
         intervalMs: process.env.LOCATION_BACKFILL_INTERVAL_MS,
         seedIntervalMs: process.env.LOCATION_BACKFILL_SEED_INTERVAL_MS,
@@ -357,7 +372,7 @@ const locationBackfillReady = Promise.all([
         `[init] location backfill worker started (${locationBackfillWorker.workerId})`,
       );
     } else {
-      console.log("[init] location backfill worker disabled by environment");
+      console.log("[init] location backfill worker disabled; use scheduled maintenance");
     }
   })
   .catch((error) => {
@@ -368,14 +383,14 @@ const locationBackfillReady = Promise.all([
   });
 
 let censusGeographyWorker = null;
+const censusGeographyInlineEnabled = environmentFlag(
+  process.env.CENSUS_GEOGRAPHY_ENABLED,
+);
 const censusGeographyReady = accountLocationsReady
   .then(() => ensureCensusGeographySchema(pool))
   .then(() => {
     console.log("[init] census geography schema ensured");
-    const enabled = String(
-      process.env.CENSUS_GEOGRAPHY_ENABLED ?? "true",
-    ).toLowerCase() !== "false";
-    if (enabled) {
+    if (censusGeographyInlineEnabled) {
       censusGeographyWorker = startCensusGeographyWorker(pool, {
         intervalMs: process.env.CENSUS_GEOGRAPHY_INTERVAL_MS,
         seedIntervalMs: process.env.CENSUS_GEOGRAPHY_SEED_INTERVAL_MS,
@@ -388,7 +403,7 @@ const censusGeographyReady = accountLocationsReady
         `[init] census geography worker started (${censusGeographyWorker.workerId})`,
       );
     } else {
-      console.log("[init] census geography worker disabled by environment");
+      console.log("[init] census geography worker disabled; use scheduled maintenance");
     }
   })
   .catch((error) => {
@@ -400,6 +415,36 @@ const censusGeographyReady = accountLocationsReady
 
 // simple health
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// Operational acceptance endpoint. It intentionally reports aggregate timing
+// and worker state only; credentials, SQL text, and raw property identifiers
+// are never included.
+app.get("/api/system/performance", async (_req, res) => {
+  let recentMaintenance = [];
+  let maintenanceStatus = "available";
+  try {
+    recentMaintenance = await getRecentScheduledMaintenanceRuns(pool, { limit: 8 });
+  } catch (error) {
+    maintenanceStatus = "unavailable";
+    console.warn("[performance] maintenance history unavailable", error?.message || error);
+  }
+  res.json({
+    ok: true,
+    uptime_seconds: Math.round(process.uptime()),
+    web_process: {
+      inline_workers: {
+        census_geography: censusGeographyInlineEnabled,
+        sales_location_backfill: locationBackfillInlineEnabled,
+      },
+      scheduled_maintenance_expected: !censusGeographyInlineEnabled && !locationBackfillInlineEnabled,
+    },
+    requests: requestPerformance.snapshot(),
+    maintenance: {
+      status: maintenanceStatus,
+      recent_runs: recentMaintenance,
+    },
+  });
+});
 
 // SMTP status (non-sensitive): helps verify Render env is set correctly
 app.get("/api/signup/smtp-status", (_req, res) => {

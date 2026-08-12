@@ -54,6 +54,7 @@ import {
 } from "@/lib/neighborhoodAutomation";
 import { UAD_CONDITION_RATINGS } from "@/lib/conditionQualityRatings";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
+import DeferredReportSection from "@/components/DeferredReportSection";
 
 type DcadOwner = {
   owner_name?: string;
@@ -2503,6 +2504,7 @@ function AddressHero({
   const unemploymentLookupSucceeded = useRef(false);
   const unemploymentHydrationAccount = useRef("");
   const [neighborhoodProfileLoading, setNeighborhoodProfileLoading] = useState(false);
+  const [neighborhoodSectionReady, setNeighborhoodSectionReady] = useState(false);
   const [neighborhoodProfileMessage, setNeighborhoodProfileMessage] = useState("");
   const [neighborhoodBoundarySuggestions, setNeighborhoodBoundarySuggestions] = useState<
     NonNullable<NeighborhoodProfileResponse["boundary_streets"]>["cardinal_boundaries"] | null
@@ -2666,24 +2668,31 @@ function AddressHero({
       };
     }
 
-    setRelatedParcelsLoading(true);
-    void getRelatedParcels(accountId, exactAddress || undefined)
-      .then((response) => {
-        if (!cancelled) setRelatedParcels(response);
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setRelatedParcelsError(
-            error instanceof Error ? error.message : "The related-parcel check was unavailable.",
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setRelatedParcelsLoading(false);
-      });
+    const startRelatedParcelLookup = () => {
+      if (cancelled) return;
+      setRelatedParcelsLoading(true);
+      void getRelatedParcels(accountId, exactAddress || undefined)
+        .then((response) => {
+          if (!cancelled) setRelatedParcels(response);
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) {
+            setRelatedParcelsError(
+              error instanceof Error ? error.message : "The related-parcel check was unavailable.",
+            );
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setRelatedParcelsLoading(false);
+        });
+    };
+    // Related-parcel review is useful but is not required to display the
+    // subject. Let the browser paint the primary report before starting it.
+    const relatedParcelTimer = window.setTimeout(startRelatedParcelLookup, 900);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(relatedParcelTimer);
     };
   }, [accountId, detailLoaded, exactAddress, relatedParcelSearchVersion]);
 
@@ -3261,7 +3270,7 @@ function AddressHero({
 
   useEffect(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
-    if (!geometry || !accountId || !marketConditionsDraft || assignmentFilesLoading || !assignmentFilesLoaded) return;
+    if (!neighborhoodSectionReady || !geometry || !accountId || !marketConditionsDraft || assignmentFilesLoading || !assignmentFilesLoaded) return;
     const structuredBoundariesPresent = [
       assignmentDraft.neighborhood_boundary_north,
       assignmentDraft.neighborhood_boundary_east,
@@ -3293,11 +3302,13 @@ function AddressHero({
     assignmentFilesLoaded,
     customMarketStudy,
     marketConditionsDraft,
+    neighborhoodSectionReady,
     refreshNeighborhoodProfile,
   ]);
 
   useEffect(() => {
     if (
+      !neighborhoodSectionReady ||
       assignmentFilesLoading ||
       !assignmentFilesLoaded ||
       (!/^\d{5}$/.test(censusZip) && (!city || city === "Not reported")) ||
@@ -3316,6 +3327,7 @@ function AddressHero({
     censusZip,
     city,
     lookupUnemploymentComparison,
+    neighborhoodSectionReady,
     state,
     unemploymentAutoAttemptedSignature,
   ]);
@@ -4921,13 +4933,18 @@ function AddressHero({
             </div>
           </SummarySection>
 
-          <SummarySection
-            title="Neighborhood Characteristics"
-            subtitle="Present land use, neighborhood factors, market ranges, and assignment boundary review"
-            manuallyVerified={Boolean(activeAssignmentFile)}
+          <DeferredReportSection
+            label="Neighborhood Characteristics"
             className="order-3"
+            minimumHeight={300}
+            onReady={() => setNeighborhoodSectionReady(true)}
           >
-            <NeighborhoodCharacteristicsContent
+            <SummarySection
+              title="Neighborhood Characteristics"
+              subtitle="Present land use, neighborhood factors, market ranges, and assignment boundary review"
+              manuallyVerified={Boolean(activeAssignmentFile)}
+            >
+              <NeighborhoodCharacteristicsContent
               accountId={accountId}
               assignmentDraft={assignmentDraft}
               postalCode={censusZip}
@@ -4963,8 +4980,9 @@ function AddressHero({
               }}
               onMarketConditionsChange={updateMarketConditions}
               onSave={() => void saveAssignmentFromSection()}
-            />
-          </SummarySection>
+              />
+            </SummarySection>
+          </DeferredReportSection>
 
           <SummarySection
             title="CAD Values, Taxes, and Exemptions"
@@ -5132,6 +5150,8 @@ function AddressHero({
 export default function PropertyReport() {
   const location = useLocation();
   const { accountId: routeAccountId } = useParams<{ accountId?: string }>();
+  const reportOpenedAt = useRef(performance.now());
+  const subjectVisibleReported = useRef(false);
 
   const presetAccount = useMemo(() => {
     if (routeAccountId) return routeAccountId;
@@ -5178,6 +5198,29 @@ export default function PropertyReport() {
   }
 
   useEffect(() => {
+    subjectVisibleReported.current = false;
+    reportOpenedAt.current = performance.now();
+  }, [account]);
+
+  useEffect(() => {
+    if (!detail || subjectVisibleReported.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      subjectVisibleReported.current = true;
+      const durationMs = Math.round((performance.now() - reportOpenedAt.current) * 10) / 10;
+      performance.clearMeasures("homenode-property-report-subject-visible");
+      performance.measure("homenode-property-report-subject-visible", {
+        start: reportOpenedAt.current,
+        end: performance.now(),
+      });
+      console.info("[performance] property report subject visible", { duration_ms: durationMs });
+      window.dispatchEvent(new CustomEvent("homenode:report-subject-visible", {
+        detail: { duration_ms: durationMs },
+      }));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [detail]);
+
+  useEffect(() => {
     if (!hasAutoImported.current && account) {
       hasAutoImported.current = true;
       void importFromDatabase();
@@ -5199,7 +5242,10 @@ export default function PropertyReport() {
         </div>
       </div>
 
-      <main className="container mx-auto space-y-4 px-4 py-4">
+      <main
+        className="container mx-auto space-y-4 px-4 py-4"
+        data-report-subject-loaded={detail ? "true" : "false"}
+      >
         <AddressHero detail={detail} accountId={account} onReload={importFromDatabase} />
       </main>
     </div>

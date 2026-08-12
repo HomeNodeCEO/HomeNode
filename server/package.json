@@ -10,6 +10,8 @@
         "enrich:non-dallas": "node scripts/runNonDallasEnrichment.js",
         "sync:property-context": "node scripts/syncPropertyContext.js",
         "sync:property-context:full": "node scripts/syncPropertyContext.js --source=all --mode=full",
+        "maintenance:scheduled": "node scripts/runScheduledMaintenance.js --task=routine",
+        "maintenance:roads": "node scripts/runScheduledMaintenance.js --task=roads",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"
   },

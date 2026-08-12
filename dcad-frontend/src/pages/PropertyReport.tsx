@@ -980,7 +980,13 @@ function NeighborhoodCharacteristicsContent({
       result.boundary_signature,
     );
     setLandUseAnalysisMessage(
-      `Analysis completed from ${result.parcel_count.toLocaleString()} DCAD parcels. Land-use percentages, ${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.`,
+      `Analysis completed from ${result.parcel_count.toLocaleString()} DCAD parcels${
+        result.cache_hit
+          ? " using the recent saved calculation"
+          : result.processing_duration_ms > 0
+            ? ` in ${(result.processing_duration_ms / 1000).toFixed(1)} seconds`
+            : ""
+      }. Land-use percentages, ${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.`,
     );
   };
   const updateBoundarySide = (
@@ -4955,9 +4961,9 @@ export default function PropertyReport() {
         <div className="container mx-auto px-4">
           <div className="flex w-full items-center justify-between">
             <span className="text-xl font-semibold">Property Report</span>
-            <Link to="/" className="btn btn-ghost btn-sm normal-case">
+            <a href="/" className="btn btn-ghost btn-sm normal-case">
               ← Close Report
-            </Link>
+            </a>
           </div>
         </div>
       </div>

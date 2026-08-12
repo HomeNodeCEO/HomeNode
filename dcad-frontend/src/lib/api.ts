@@ -1379,6 +1379,9 @@ export interface NeighborhoodLandUseAnalysisResponse {
   review_parcels_truncated: boolean;
   warnings: string[];
   denominator_note: string;
+  cache_hit: boolean;
+  processing_duration_ms: number;
+  cached_analysis_duration_ms: number | null;
 }
 
 /** Resolve one property's Census tract immediately, ahead of the background queue. */

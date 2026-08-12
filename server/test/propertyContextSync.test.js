@@ -76,8 +76,8 @@ test("road normalization retains the named road and source class", () => {
 test("an implausibly small full DCAD response cannot delete the last good mirror", async () => {
   const statements = [];
   const pool = {
-    query: async (sql) => {
-      statements.push(String(sql));
+    query: async (sql, params) => {
+      statements.push({ sql: String(sql), params });
       if (String(sql).includes("SELECT last_success_at")) return { rows: [] };
       return { rows: [], rowCount: 0 };
     },
@@ -96,11 +96,18 @@ test("an implausibly small full DCAD response cannot delete the last good mirror
     /full_sync_incomplete_3/,
   );
   assert.equal(
-    statements.some((sql) => sql.includes("DELETE FROM gis.dcad_parcels")),
+    statements.some(({ sql }) => sql.includes("DELETE FROM gis.dcad_parcels")),
     false,
   );
   assert.equal(
-    statements.some((sql) => sql.includes("SET status = 'failed'")),
+    statements.some(({ sql }) => sql.includes("SET status = 'failed'")),
     true,
+  );
+  assert.equal(
+    statements.some(({ sql, params }) => (
+      params && sql.trim().split(";").filter(Boolean).length > 1
+    )),
+    false,
+    "parameterized sync queries must contain a single PostgreSQL statement",
   );
 });

@@ -233,11 +233,14 @@ async function startRun(pool, { sourceKey, sourceLabel, sourceUrl, sourceVintage
   const runId = randomUUID();
   await pool.query(
     `INSERT INTO gis.source_sync_runs (id, source_key, mode, status)
-     VALUES ($1,$2,$3,'running');
-     INSERT INTO gis.source_sync_state (
+     VALUES ($1,$2,$3,'running')`,
+    [runId, sourceKey, mode],
+  );
+  await pool.query(
+    `INSERT INTO gis.source_sync_state (
        source_key, source_label, status, source_url, source_vintage,
        last_attempt_at, last_run_id, last_error
-     ) VALUES ($2,$4,'running',$5,$6,now(),$1,NULL)
+     ) VALUES ($1,$2,'running',$3,$4,now(),$5,NULL)
      ON CONFLICT (source_key) DO UPDATE SET
        source_label = EXCLUDED.source_label,
        status = 'running',
@@ -247,7 +250,7 @@ async function startRun(pool, { sourceKey, sourceLabel, sourceUrl, sourceVintage
        last_run_id = EXCLUDED.last_run_id,
        last_error = NULL,
        updated_at = now()`,
-    [runId, sourceKey, mode, sourceLabel, sourceUrl, sourceVintage],
+    [sourceKey, sourceLabel, sourceUrl, sourceVintage, runId],
   );
   return runId;
 }
@@ -255,12 +258,15 @@ async function startRun(pool, { sourceKey, sourceLabel, sourceUrl, sourceVintage
 async function updateRunCheckpoint(pool, runId, sourceKey, checkpoint, seen, written) {
   await pool.query(
     `UPDATE gis.source_sync_runs
-     SET records_seen = $3, records_written = $4, checkpoint = $5::jsonb
-     WHERE id = $1;
-     UPDATE gis.source_sync_state
-     SET checkpoint = $5::jsonb, updated_at = now()
-     WHERE source_key = $2`,
-    [runId, sourceKey, seen, written, JSON.stringify(checkpoint)],
+     SET records_seen = $2, records_written = $3, checkpoint = $4::jsonb
+     WHERE id = $1`,
+    [runId, seen, written, JSON.stringify(checkpoint)],
+  );
+  await pool.query(
+    `UPDATE gis.source_sync_state
+     SET checkpoint = $2::jsonb, updated_at = now()
+     WHERE source_key = $1`,
+    [sourceKey, JSON.stringify(checkpoint)],
   );
 }
 
@@ -276,22 +282,21 @@ async function completeRun(pool, {
 }) {
   await pool.query(
     `UPDATE gis.source_sync_runs
-     SET status = 'complete', records_seen = $3, records_written = $4,
-         records_deleted = $5, completed_at = now(), error_message = NULL
-     WHERE id = $1;
-     UPDATE gis.source_sync_state
-     SET status = 'current', row_count = $6, last_success_at = now(),
-         last_source_update_at = COALESCE($7::timestamptz, last_source_update_at),
+     SET status = 'complete', records_seen = $2, records_written = $3,
+         records_deleted = $4, completed_at = now(), error_message = NULL
+     WHERE id = $1`,
+    [runId, seen, written, deleted],
+  );
+  await pool.query(
+    `UPDATE gis.source_sync_state
+     SET status = 'current', row_count = $2, last_success_at = now(),
+         last_source_update_at = COALESCE($3::timestamptz, last_source_update_at),
          checkpoint = '{}'::jsonb, last_error = NULL,
-         metadata = COALESCE(metadata, '{}'::jsonb) || $8::jsonb,
+         metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
          updated_at = now()
-     WHERE source_key = $2`,
+     WHERE source_key = $1`,
     [
-      runId,
       sourceKey,
-      seen,
-      written,
-      deleted,
       rowCount,
       lastSourceUpdateAt,
       JSON.stringify(metadata),
@@ -303,12 +308,15 @@ async function failRun(pool, { runId, sourceKey, error }) {
   const message = String(error?.message || error || "property_context_sync_failed").slice(0, 4_000);
   await pool.query(
     `UPDATE gis.source_sync_runs
-     SET status = 'failed', error_message = $3, completed_at = now()
-     WHERE id = $1;
-     UPDATE gis.source_sync_state
-     SET status = 'failed', last_error = $3, updated_at = now()
-     WHERE source_key = $2`,
-    [runId, sourceKey, message],
+     SET status = 'failed', error_message = $2, completed_at = now()
+     WHERE id = $1`,
+    [runId, message],
+  );
+  await pool.query(
+    `UPDATE gis.source_sync_state
+     SET status = 'failed', last_error = $2, updated_at = now()
+     WHERE source_key = $1`,
+    [sourceKey, message],
   );
 }
 

@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 
 import { validateCustomMarketGeometry } from "./marketConditions.js";
 import { esriGeometryToGeoJson } from "../util/parcelArea.js";
+import {
+  ensurePropertyContextSchema,
+  getPropertyContextSourceHealth,
+  readBoundaryAnalysisCache,
+  writeBoundaryAnalysisCache,
+} from "./propertyContextStore.js";
 
 export const DCAD_LAND_USE_QUERY_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
@@ -34,6 +40,9 @@ const DCAD_FIELDS = [
 ].join(",");
 const MAX_PARCELS = 25_000;
 const PARCEL_BATCH_SIZE = 2_000;
+const PARCEL_FETCH_CONCURRENCY = 3;
+const ANALYSIS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const ANALYSIS_CACHE_MAX_ENTRIES = 50;
 const SQ_FEET_PER_ACRE = 43_560;
 const VACANT_CLASS_CODES = new Set(["7", "8", "9", "10", "11", "39"]);
 const IMPROVED_CLASS_CODES = new Set(["1", "2", "3", "4", "5", "6", "17", "18", "35", "40"]);
@@ -221,6 +230,23 @@ function chunks(values, size) {
   return result;
 }
 
+async function mapWithConcurrency(values, concurrency, mapper) {
+  const results = new Array(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await mapper(values[index], index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 function normalizeParcelFeature(feature, index) {
   const properties = feature?.properties || feature?.attributes || {};
   const geometry = feature?.geometry?.rings
@@ -264,28 +290,32 @@ export async function fetchDcadLandUseParcels(customGeometry, { fetchImpl = fetc
   if (objectIds.length > MAX_PARCELS) throw new Error("land_use_area_too_many_parcels");
   if (!objectIds.length) return [];
 
-  const features = [];
-  for (const objectIdBatch of chunks(objectIds, PARCEL_BATCH_SIZE)) {
-    let payload = await arcGisRequest(arcGisBody({
-      objectIds: objectIdBatch.join(","),
-      outFields: DCAD_FIELDS,
-      returnGeometry: "true",
-      outSR: "4326",
-      geometryPrecision: "7",
-      f: "geojson",
-    }), fetchImpl);
-    if (!Array.isArray(payload.features)) {
-      payload = await arcGisRequest(arcGisBody({
+  const featureBatches = await mapWithConcurrency(
+    chunks(objectIds, PARCEL_BATCH_SIZE),
+    PARCEL_FETCH_CONCURRENCY,
+    async (objectIdBatch) => {
+      let payload = await arcGisRequest(arcGisBody({
         objectIds: objectIdBatch.join(","),
         outFields: DCAD_FIELDS,
         returnGeometry: "true",
         outSR: "4326",
         geometryPrecision: "7",
-        f: "json",
+        f: "geojson",
       }), fetchImpl);
-    }
-    features.push(...(payload.features || []));
-  }
+      if (!Array.isArray(payload.features)) {
+        payload = await arcGisRequest(arcGisBody({
+          objectIds: objectIdBatch.join(","),
+          outFields: DCAD_FIELDS,
+          returnGeometry: "true",
+          outSR: "4326",
+          geometryPrecision: "7",
+          f: "json",
+        }), fetchImpl);
+      }
+      return payload.features || [];
+    },
+  );
+  const features = featureBatches.flat();
   return features
     .map((feature, index) => normalizeParcelFeature(feature, index))
     .filter(Boolean);
@@ -310,18 +340,28 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
          COALESCE((item->>'built_up')::boolean, false) AS built_up,
          ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((item->'geometry')::text), 4326)) AS geom
        FROM jsonb_array_elements($2::jsonb) item
+     ), source_measured AS (
+       SELECT
+         source_index,
+         account_id,
+         category,
+         built_up,
+         geom,
+         ST_Area(geom::geography) * 10.76391041671 AS full_area_sqft
+       FROM source_features
      ), clipped AS (
        SELECT
          source_index,
          account_id,
          category,
          built_up,
+         full_area_sqft,
          ST_CollectionExtract(ST_Intersection(source_features.geom, boundary.geom), 3) AS geom
-       FROM source_features
+       FROM source_measured source_features
        CROSS JOIN boundary
        WHERE ST_Intersects(source_features.geom, boundary.geom)
      ), usable AS (
-       SELECT source_index, account_id, category, built_up, geom
+       SELECT source_index, account_id, category, built_up, full_area_sqft, geom
        FROM clipped
        WHERE NOT ST_IsEmpty(geom)
      ), category_dissolved AS (
@@ -382,11 +422,7 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
          SELECT jsonb_agg(jsonb_build_object(
            'source_index', source_index,
            'area_sqft', ST_Area(geom::geography) * 10.76391041671,
-           'full_area_sqft', (
-             SELECT ST_Area(source_features.geom::geography) * 10.76391041671
-             FROM source_features
-             WHERE source_features.source_index = usable.source_index
-           )
+           'full_area_sqft', full_area_sqft
          ) ORDER BY source_index)
          FROM usable
        ), '[]'::jsonb) AS parcel_areas
@@ -403,6 +439,106 @@ function rounded(value, digits = 1) {
 
 function normalizedAccountId(value) {
   return String(value || "").replace(/[^0-9A-Za-z]/g, "").replace(/^0+/, "");
+}
+
+export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
+  const geometry = validateCustomMarketGeometry(customGeometry);
+  const { rows } = await pool.query(
+    `WITH boundary AS (
+       SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
+     )
+     SELECT
+       parcel.object_id,
+       parcel.account_id,
+       parcel.low_parcel_id,
+       parcel.site_address,
+       parcel.use_code,
+       parcel.use_description,
+       parcel.class_code,
+       parcel.class_description,
+       parcel.property_description,
+       parcel.subdivision_name,
+       parcel.structure_type,
+       parcel.building_area_sqft,
+       parcel.residential_area_sqft,
+       parcel.improvement_value,
+       parcel.source_updated_at,
+       parcel.source_attributes,
+       ST_AsGeoJSON(parcel.geom)::jsonb AS geometry
+     FROM gis.dcad_parcels parcel
+     CROSS JOIN boundary
+     WHERE parcel.geom && boundary.geom
+       AND ST_Intersects(parcel.geom, boundary.geom)
+     ORDER BY parcel.object_id
+     LIMIT $2`,
+    [JSON.stringify(geometry), MAX_PARCELS + 1],
+  );
+  if (rows.length > MAX_PARCELS) throw new Error("land_use_area_too_many_parcels");
+  return rows.map((row, index) => {
+    const attributes = {
+      ...(row.source_attributes || {}),
+      OBJECTID: row.object_id,
+      PARCELID: row.account_id,
+      LOWPARCELID: row.low_parcel_id,
+      SITEADDRESS: row.site_address,
+      USECD: row.use_code,
+      USEDSCRP: row.use_description,
+      CLASSCD: row.class_code,
+      CLASSDSCRP: row.class_description,
+      PRPRTYDSCRP: row.property_description,
+      CNVYNAME: row.subdivision_name,
+      RESSTRTYP: row.structure_type,
+      BLDGAREA: row.building_area_sqft,
+      RESFLRAREA: row.residential_area_sqft,
+      IMPVALUE: row.improvement_value,
+    };
+    return {
+      source_index: index,
+      object_id: row.object_id,
+      account_id: String(row.account_id || row.low_parcel_id || "").trim() || null,
+      site_address: String(row.site_address || "").trim() || null,
+      use_description: String(row.use_description || "").trim() || null,
+      use_code: String(row.use_code || "").trim() || null,
+      class_code: String(row.class_code || "").trim() || null,
+      class_description: String(row.class_description || "").trim() || null,
+      property_description: String(row.property_description || "").trim() || null,
+      source_updated_at: row.source_updated_at,
+      attributes,
+      geometry: row.geometry,
+    };
+  });
+}
+
+const analysisCache = new Map();
+
+function cloned(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function cachedAnalysis(key, now = Date.now()) {
+  const cached = analysisCache.get(key);
+  if (!cached) return null;
+  if (now - cached.cachedAt >= ANALYSIS_CACHE_TTL_MS) {
+    analysisCache.delete(key);
+    return null;
+  }
+  return {
+    ...cloned(cached.value),
+    cache_hit: true,
+    processing_duration_ms: 0,
+    cached_analysis_duration_ms: cached.value.processing_duration_ms,
+  };
+}
+
+function cacheAnalysis(key, value, now = Date.now()) {
+  analysisCache.set(key, { cachedAt: now, value: cloned(value) });
+  while (analysisCache.size > ANALYSIS_CACHE_MAX_ENTRIES) {
+    analysisCache.delete(analysisCache.keys().next().value);
+  }
+}
+
+export function clearNeighborhoodLandUseAnalysisCache() {
+  analysisCache.clear();
 }
 
 export function evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaByIndex) {
@@ -450,11 +586,41 @@ export function evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaBy
 
 export async function buildNeighborhoodLandUseAnalysis(
   pool,
-  { subjectAccountId, customGeometry, fetchImpl = fetch },
+  {
+    subjectAccountId,
+    customGeometry,
+    fetchImpl = fetch,
+    preferLocalMirror = true,
+    persistentCache = true,
+  },
 ) {
+  const analysisStartedAt = Date.now();
   const accountId = String(subjectAccountId || "").trim();
   if (!/^[0-9A-Za-z]{17}$/.test(accountId)) throw new Error("invalid_account_id");
   const boundary = validateCustomMarketGeometry(customGeometry);
+  const boundarySignature = createHash("sha256").update(JSON.stringify(boundary)).digest("hex");
+  const cacheKey = `${accountId}:${boundarySignature}`;
+  const cached = cachedAnalysis(cacheKey, analysisStartedAt);
+  if (cached) return cached;
+  let persistentCached = null;
+  if (persistentCache) {
+    await ensurePropertyContextSchema(pool);
+    persistentCached = await readBoundaryAnalysisCache(
+      pool,
+      `land_use:${cacheKey}`,
+    ).catch(() => null);
+    if (persistentCached?.result) {
+      return {
+        ...persistentCached.result,
+        cache_hit: true,
+        persistent_cache_hit: true,
+        stale_cache_used: false,
+        processing_duration_ms: Date.now() - analysisStartedAt,
+        cached_analysis_duration_ms:
+          persistentCached.result.processing_duration_ms ?? null,
+      };
+    }
+  }
   const { rows: accountRows } = await pool.query(
     "SELECT account_id, county FROM core.accounts WHERE account_id = $1",
     [accountId],
@@ -464,7 +630,45 @@ export async function buildNeighborhoodLandUseAnalysis(
     throw new Error("land_use_analysis_dallas_county_only");
   }
 
-  const parcels = await fetchDcadLandUseParcels(boundary, { fetchImpl });
+  let sourceMode = "live_dcad";
+  let sourceHealth = null;
+  let parcels = [];
+  if (preferLocalMirror) {
+    const sources = await getPropertyContextSourceHealth(pool).catch(() => []);
+    sourceHealth = sources.find((source) => source.source_key === "dcad_parcels") || null;
+    if (sourceHealth?.usable) {
+      parcels = await fetchLocalDcadLandUseParcels(pool, boundary);
+      sourceMode = "local_mirror";
+    }
+  }
+  if (!parcels.length && sourceMode !== "local_mirror") {
+    try {
+      parcels = await fetchDcadLandUseParcels(boundary, { fetchImpl });
+    } catch (error) {
+      if (persistentCache) {
+        const stale = await readBoundaryAnalysisCache(
+          pool,
+          `land_use:${cacheKey}`,
+          { allowExpired: true },
+        ).catch(() => null);
+        if (stale?.result) {
+          return {
+            ...stale.result,
+            cache_hit: true,
+            persistent_cache_hit: true,
+            stale_cache_used: true,
+            processing_duration_ms: Date.now() - analysisStartedAt,
+            cached_analysis_duration_ms: stale.result.processing_duration_ms ?? null,
+            warnings: [
+              ...(stale.result.warnings || []),
+              "The live Dallas CAD GIS request failed. HomeNode is using the most recent saved analysis for this exact boundary.",
+            ],
+          };
+        }
+      }
+      throw error;
+    }
+  }
   if (!parcels.length) throw new Error("no_dcad_parcels_in_boundary");
   const landParcels = parcels.filter((parcel) => parcel.use_code !== "3");
   if (!landParcels.length) throw new Error("no_dcad_parcels_in_boundary");
@@ -535,16 +739,23 @@ export async function buildNeighborhoodLandUseAnalysis(
   if (excludedNonLandRecordCount) {
     warnings.push(`${excludedNonLandRecordCount} mapped business-personal-property record${excludedNonLandRecordCount === 1 ? " was" : "s were"} excluded because those records do not represent separate land parcels.`);
   }
+  if (sourceMode === "local_mirror" && sourceHealth?.serving_stale_data) {
+    warnings.push("Dallas CAD GIS synchronization is currently stale or unavailable. This analysis uses the most recent locally stored county parcel data.");
+  }
 
-  return {
+  const result = {
     subject_account_id: accountId,
     jurisdiction: "Dallas County",
-    source: "Dallas Central Appraisal District ParcelPublishing GIS",
+    source: sourceMode === "local_mirror"
+      ? "HomeNode local Dallas CAD ParcelPublishing mirror"
+      : "Dallas Central Appraisal District ParcelPublishing GIS",
     source_url: DCAD_LAND_USE_QUERY_URL,
+    source_mode: sourceMode,
+    source_health: sourceHealth,
     analyzed_at: new Date().toISOString(),
     methodology_version: 1,
     boundary,
-    boundary_signature: createHash("sha256").update(JSON.stringify(boundary)).digest("hex"),
+    boundary_signature: boundarySignature,
     boundary_area_acres: rounded(boundaryArea / SQ_FEET_PER_ACRE, 2),
     covered_parcel_area_acres: rounded(coveredArea / SQ_FEET_PER_ACRE, 2),
     built_up_area_acres: rounded(builtUpArea / SQ_FEET_PER_ACRE, 2),
@@ -572,7 +783,28 @@ export async function buildNeighborhoodLandUseAnalysis(
     review_parcels_truncated: reviewParcels.length > 250,
     warnings,
     denominator_note: "Percentages use dissolved, clipped CAD parcel acreage. Roads and uncovered non-parcel land are reported in coverage but excluded from the category denominator.",
+    cache_hit: false,
+    persistent_cache_hit: false,
+    stale_cache_used: false,
+    processing_duration_ms: Date.now() - analysisStartedAt,
+    cached_analysis_duration_ms: null,
   };
+  cacheAnalysis(cacheKey, result);
+  if (persistentCache) {
+    await writeBoundaryAnalysisCache(pool, {
+      cacheKey: `land_use:${cacheKey}`,
+      subjectAccountId: accountId,
+      boundarySignature,
+      analysisType: "neighborhood_land_use",
+      boundary,
+      result,
+      sourceState: sourceHealth || { source_mode: sourceMode },
+      ttlHours: 24,
+    }).catch((error) => {
+      console.warn("[neighborhood-land-use] persistent cache write failed", error?.message || error);
+    });
+  }
+  return result;
 }
 
 export function neighborhoodLandUseErrorStatus(message) {

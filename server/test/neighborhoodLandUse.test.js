@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   allocateLandUsePercentages,
+  buildNeighborhoodLandUseAnalysis,
   classifyBuiltUpBand,
   classifyDcadLandUse,
+  clearNeighborhoodLandUseAnalysisCache,
   evaluateSubjectSiteSize,
   fetchDcadLandUseParcels,
   isDcadParcelBuiltUp,
@@ -141,4 +143,120 @@ test("loads every intersecting DCAD parcel by object id with classification fiel
   assert.equal(requests[0].get("spatialRel"), "esriSpatialRelIntersects");
   assert.equal(requests[1].get("objectIds"), "22,11");
   assert.match(requests[1].get("outFields"), /CLASSDSCRP/);
+});
+
+test("loads large DCAD parcel sets with bounded parallel batch requests", async () => {
+  let activeBatches = 0;
+  let maximumActiveBatches = 0;
+  let batchRequests = 0;
+  const fetchImpl = async (_url, options) => {
+    const params = new URLSearchParams(String(options.body));
+    if (params.get("returnIdsOnly") === "true") {
+      return {
+        ok: true,
+        json: async () => ({ objectIds: Array.from({ length: 4_001 }, (_, index) => index + 1) }),
+      };
+    }
+    batchRequests += 1;
+    activeBatches += 1;
+    maximumActiveBatches = Math.max(maximumActiveBatches, activeBatches);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    activeBatches -= 1;
+    const firstId = Number(params.get("objectIds").split(",")[0]);
+    return {
+      ok: true,
+      json: async () => ({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          id: firstId,
+          properties: { OBJECTID: firstId, PARCELID: String(firstId).padStart(17, "0"), CLASSCD: "1" },
+          geometry: {
+            type: "Polygon",
+            coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+          },
+        }],
+      }),
+    };
+  };
+  const parcels = await fetchDcadLandUseParcels({
+    type: "Polygon",
+    coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+  }, { fetchImpl });
+  assert.equal(batchRequests, 3);
+  assert.equal(maximumActiveBatches, 3);
+  assert.equal(parcels.length, 3);
+});
+
+test("reuses a completed neighborhood analysis for the same subject and boundary", async () => {
+  clearNeighborhoodLandUseAnalysisCache();
+  const boundary = {
+    type: "Polygon",
+    coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+  };
+  let fetchRequests = 0;
+  const fetchImpl = async (_url, options) => {
+    fetchRequests += 1;
+    const params = new URLSearchParams(String(options.body));
+    if (params.get("returnIdsOnly") === "true") {
+      return { ok: true, json: async () => ({ objectIds: [1] }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          id: 1,
+          properties: {
+            OBJECTID: 1,
+            PARCELID: "26272500060150000",
+            CLASSCD: "1",
+            IMPVALUE: 250_000,
+          },
+          geometry: {
+            type: "Polygon",
+            coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+          },
+        }],
+      }),
+    };
+  };
+  let databaseQueries = 0;
+  const pool = {
+    query: async (sql) => {
+      databaseQueries += 1;
+      if (String(sql).includes("FROM core.accounts")) {
+        return { rows: [{ account_id: "26272500060150000", county: "Dallas" }] };
+      }
+      return { rows: [{
+        boundary_area_sqft: 1_000,
+        covered_area_sqft: 500,
+        built_up_area_sqft: 500,
+        built_up_parcel_count: 1,
+        raw_category_area_sqft: 500,
+        category_areas: { one_unit: 500 },
+        parcel_areas: [{ source_index: 0, area_sqft: 500, full_area_sqft: 600 }],
+      }] };
+    },
+  };
+  const first = await buildNeighborhoodLandUseAnalysis(pool, {
+    subjectAccountId: "26272500060150000",
+    customGeometry: boundary,
+    fetchImpl,
+    preferLocalMirror: false,
+    persistentCache: false,
+  });
+  const second = await buildNeighborhoodLandUseAnalysis(pool, {
+    subjectAccountId: "26272500060150000",
+    customGeometry: boundary,
+    fetchImpl,
+    preferLocalMirror: false,
+    persistentCache: false,
+  });
+  assert.equal(first.cache_hit, false);
+  assert.equal(second.cache_hit, true);
+  assert.equal(fetchRequests, 2);
+  assert.equal(databaseQueries, 2);
+  clearNeighborhoodLandUseAnalysisCache();
 });

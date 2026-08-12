@@ -191,6 +191,7 @@ export async function fetchDetail(accountId: string, countyId = 1) {
         : [],
     })),
     census_geography: data?.census_geography || null,
+    property_context: data?.property_context || null,
     // Photos are loaded independently by the report page and never delay the
     // core property response.
     photos: [],

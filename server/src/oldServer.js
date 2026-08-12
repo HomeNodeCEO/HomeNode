@@ -99,6 +99,14 @@ import {
   normalizeAssignmentFileId,
   normalizeAssignmentFileNumber,
 } from "./services/assignmentFiles.js";
+import {
+  analyzePropertyContext,
+  getPropertyContextStatus,
+  getStoredPropertyContext,
+  propertyContextErrorStatus,
+  savePropertyContextReview,
+} from "./services/propertyContext.js";
+import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
 
 const app = express();
 app.use(express.json());
@@ -195,6 +203,31 @@ async function ensureAssignmentFilesAvailable() {
   if (!assignmentFilesSchemaReady) {
     await ensureAssignmentFilesSchema(pool);
     assignmentFilesSchemaReady = true;
+  }
+}
+
+let propertyContextSchemaReady = false;
+const propertyContextReady = Promise.all([
+  accountLocationsReady,
+  assignmentFilesReady,
+])
+  .then(() => ensurePropertyContextSchema(pool))
+  .then(() => {
+    propertyContextSchemaReady = true;
+    console.log("[init] offline property-context schema ensured");
+  })
+  .catch((error) => {
+    console.warn(
+      "[init] property-context schema failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+async function ensurePropertyContextAvailable() {
+  await propertyContextReady;
+  if (!propertyContextSchemaReady) {
+    await ensurePropertyContextSchema(pool);
+    propertyContextSchemaReady = true;
   }
 }
 
@@ -581,6 +614,13 @@ app.get("/api/accounts/:id", async (req, res) => {
         }]),
       );
     })();
+    const propertyContextPromise = (async () => {
+      await ensurePropertyContextAvailable();
+      return getStoredPropertyContext(pool, { accountId: canonicalId });
+    })().catch((error) => {
+      console.warn("property context lookup failed", error?.message || error);
+      return null;
+    });
 
     const impSql = `
       SELECT
@@ -761,6 +801,7 @@ app.get("/api/accounts/:id", async (req, res) => {
       property_activity_history: await propertyActivityHistoryPromise,
       census_geography: await censusGeographyPromise,
       report_manual_values: await reportManualValuesPromise,
+      property_context: await propertyContextPromise,
       // Secondary improvements (all rows for account)
       additional_improvements: []
     };
@@ -4325,6 +4366,91 @@ app.post("/api/sales/neighborhood-land-use", async (req, res) => {
       error: message,
       ...(error?.detail ? { detail: error.detail } : {}),
     });
+  }
+});
+
+/**
+ * GET /api/property-context/status
+ *
+ * Reports local mirror freshness without contacting any external service.
+ */
+app.get("/api/property-context/status", async (_req, res) => {
+  try {
+    await ensurePropertyContextAvailable();
+    res.json(await getPropertyContextStatus(pool));
+  } catch (error) {
+    console.error("/api/property-context/status failed", error);
+    res.status(500).json({ error: "property_context_status_failed" });
+  }
+});
+
+/** Load the latest saved property-context and complexity assessment. */
+app.get("/api/accounts/:id/property-context", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    await ensurePropertyContextAvailable();
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(
+      req.query.assignment_file_id,
+    );
+    const assessment = await getStoredPropertyContext(pool, {
+      accountId,
+      assignmentFileId,
+    });
+    res.json({ account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "property_context_lookup_failed";
+    res.status(propertyContextErrorStatus(message)).json({ error: message });
+  }
+});
+
+/**
+ * POST /api/accounts/:id/property-context/analyze
+ *
+ * Uses only locally stored CAD, property-characteristic, and road data. Source
+ * outages are surfaced in the response but never cause a live GIS dependency.
+ */
+app.post("/api/accounts/:id/property-context/analyze", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    await ensurePropertyContextAvailable();
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(
+      req.body?.assignment_file_id,
+    );
+    const assessment = await analyzePropertyContext(pool, {
+      accountId,
+      assignmentFileId,
+      customGeometry: req.body?.custom_geometry || null,
+      geography: req.body?.geography || null,
+    });
+    res.json({ ok: true, account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "property_context_analysis_failed";
+    console.error("/api/accounts/:id/property-context/analyze failed", error);
+    res.status(propertyContextErrorStatus(message)).json({ error: message });
+  }
+});
+
+/** Save an appraiser confirmation or override without rewriting source data. */
+app.patch("/api/accounts/:id/property-context", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    await ensurePropertyContextAvailable();
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(
+      req.body?.assignment_file_id,
+    );
+    const assessment = await savePropertyContextReview(pool, {
+      accountId,
+      assignmentFileId,
+      review: req.body,
+    });
+    res.json({ ok: true, account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "property_context_review_failed";
+    console.error("/api/accounts/:id/property-context review failed", error);
+    res.status(propertyContextErrorStatus(message)).json({ error: message });
   }
 });
 

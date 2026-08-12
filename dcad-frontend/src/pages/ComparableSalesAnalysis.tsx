@@ -5,6 +5,7 @@ import * as api from '@/lib/api';
 import type {
   ComparableRecommendationsResponse,
   ComparableSearchProfileKey,
+  PropertyComplexityAssessment,
   SalePhoto,
   SaleRow,
 } from '@/lib/api';
@@ -425,6 +426,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     useState<SalesAnalysisPeriodMonths>(12);
   const [comparableSearchProfile, setComparableSearchProfile] =
     useState<ComparableSearchProfileKey | ''>('');
+  const [propertyContextAssessment, setPropertyContextAssessment] =
+    useState<PropertyComplexityAssessment | null>(null);
+  const [propertyContextLoading, setPropertyContextLoading] = useState(false);
+  const [propertyContextError, setPropertyContextError] = useState<string | null>(null);
+  const [propertyContextRefresh, setPropertyContextRefresh] = useState(0);
+  const propertyContextRequestRef = useRef('');
   const selectedComparableSearchProfile = useMemo(
     () => COMPARABLE_SEARCH_PROFILE_OPTIONS.find(
       (profile) => profile.key === comparableSearchProfile,
@@ -500,6 +507,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   useEffect(() => {
     setComparableSearchProfile('');
+    setPropertyContextAssessment(null);
+    setPropertyContextError(null);
+    setPropertyContextLoading(false);
+    setPropertyContextRefresh(0);
+    propertyContextRequestRef.current = '';
     setRecommendationDetailsExpanded(false);
     setRecommendationSummary(null);
     setSalesResults([]);
@@ -537,6 +549,47 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       asOfDate: marketConditionsDraft?.asOfDate,
     };
   }, [marketConditionsDraft]);
+
+  useEffect(() => {
+    if (!propertyId || !marketConditionsDraft) return;
+    const geometry = appraiserDefinedAdjustmentArea?.geometry || null;
+    const requestKey = `${propertyId}:${JSON.stringify(geometry)}:${propertyContextRefresh}`;
+    if (propertyContextRequestRef.current === requestKey) return;
+    propertyContextRequestRef.current = requestKey;
+    let cancelled = false;
+    setPropertyContextLoading(true);
+    setPropertyContextError(null);
+    void api.getAssignmentFiles(propertyId)
+      .catch(() => null)
+      .then((assignmentResponse) => api.analyzePropertyContext(propertyId, {
+        assignmentFileId: assignmentResponse?.latest_file?.id || null,
+        customGeometry: geometry,
+      }))
+      .then((assessment) => {
+        if (cancelled) return;
+        setPropertyContextAssessment(assessment);
+        setComparableSearchProfile((current) => (
+          current || assessment.recommended_search_profile
+        ));
+      })
+      .catch((analysisError) => {
+        if (cancelled) return;
+        setPropertyContextError(
+          analysisError instanceof Error
+            ? analysisError.message
+            : 'The saved property-context assessment could not be refreshed.',
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setPropertyContextLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [
+    appraiserDefinedAdjustmentArea?.geometry,
+    marketConditionsDraft,
+    propertyContextRefresh,
+    propertyId,
+  ]);
 
   useEffect(() => {
     const normalizedCondition = normalizeUadConditionRating(conditionCode);
@@ -2922,9 +2975,79 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
 
           <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+            <div className="mb-4 rounded-lg border border-indigo-200 bg-white/80 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-900">
+                      Property Context &amp; Complexity
+                    </span>
+                    {propertyContextAssessment ? (
+                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                        propertyContextAssessment.effective_complexity === 'complex'
+                          ? 'bg-red-100 text-red-800'
+                          : propertyContextAssessment.effective_complexity === 'moderate'
+                            ? 'bg-amber-100 text-amber-900'
+                            : 'bg-emerald-100 text-emerald-800'
+                      }`}>
+                        {propertyContextAssessment.effective_complexity[0].toUpperCase() + propertyContextAssessment.effective_complexity.slice(1)}
+                        {' '}· {propertyContextAssessment.score}/100
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 max-w-4xl text-xs leading-5 text-slate-600">
+                    {propertyContextLoading
+                      ? 'Evaluating locally stored GLA, age, site size, amenities, parcel context, nearby land uses, and roads…'
+                      : propertyContextAssessment
+                        ? `${propertyContextAssessment.confidence[0].toUpperCase()}${propertyContextAssessment.confidence.slice(1)}-confidence screening recommends ${propertyContextAssessment.recommended_search_profile.split('_').map((part) => part[0].toUpperCase() + part.slice(1)).join(' - ')}. You can override the search profile below.`
+                        : 'The appraiser can still select a search profile manually if the local context assessment is unavailable.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPropertyContextRefresh((current) => current + 1)}
+                  disabled={propertyContextLoading || !marketConditionsDraft}
+                  className="rounded-lg border border-slate-900 bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-black disabled:opacity-60"
+                >
+                  {propertyContextLoading ? 'Analyzing…' : 'Refresh Complexity'}
+                </button>
+              </div>
+
+              {propertyContextAssessment?.factors.length ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {propertyContextAssessment.factors.slice(0, 5).map((factor) => (
+                    <span
+                      key={factor.code}
+                      title={factor.detail}
+                      className={`rounded-full border px-2 py-1 text-[11px] font-medium ${
+                        factor.severity === 'high'
+                          ? 'border-red-200 bg-red-50 text-red-800'
+                          : factor.severity === 'moderate'
+                            ? 'border-amber-200 bg-amber-50 text-amber-900'
+                            : 'border-slate-200 bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      {factor.label} +{factor.points}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              {propertyContextAssessment?.source_health.some((source) => source.serving_stale_data) ? (
+                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                  One or more GIS sources need attention. The recommendation used the most recent locally stored data; comparable search remains available.
+                </div>
+              ) : null}
+              {propertyContextError ? (
+                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                  Complexity refresh notice: {propertyContextError} Manual profile selection remains available.
+                </div>
+              ) : null}
+            </div>
+
             <div className="grid gap-3 lg:grid-cols-[minmax(260px,360px)_1fr] lg:items-end">
               <label className="grid gap-1 text-sm font-medium text-slate-800">
-                <span>Comparable-search complexity (required first)</span>
+                <span>Comparable-search profile (appraiser may override)</span>
                 <select
                   aria-label="Comparable-search complexity"
                   value={comparableSearchProfile}
@@ -2955,7 +3078,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <div className="text-sm text-slate-700">
                 {selectedComparableSearchProfile
                   ? `${selectedComparableSearchProfile.label} limits comparable-sale candidates to ${selectedComparableSearchProfile.radiusMiles} mile${selectedComparableSearchProfile.radiusMiles === 1 ? '' : 's'} from the subject before ranking.`
-                  : 'Choose the property environment and assignment complexity to unlock comparable search and ranking.'}
+                  : propertyContextLoading
+                    ? 'The local context engine is selecting a recommended profile. You may also choose one manually.'
+                    : 'Choose the property environment and assignment complexity to unlock comparable search and ranking.'}
                 {' '}This selection does not change the independent Market Conditions Analysis saved on the Property Report.
               </div>
             </div>

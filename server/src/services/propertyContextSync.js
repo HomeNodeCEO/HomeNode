@@ -48,11 +48,28 @@ const DEFAULT_BATCH_SIZE = 2_000;
 const DEFAULT_FETCH_CONCURRENCY = 3;
 
 const ROAD_LAYERS = Object.freeze([
-  { id: 0, sourceKey: "tiger_roads_primary", label: "Census TIGER primary roads", roadClass: "primary" },
-  { id: 1, sourceKey: "tiger_roads_secondary", label: "Census TIGER secondary roads", roadClass: "secondary" },
-  { id: 2, sourceKey: "tiger_roads_local", label: "Census TIGER local roads", roadClass: "local" },
-  { id: 3, sourceKey: "tiger_railroads", label: "Census TIGER railroads", roadClass: "railroad" },
+  { id: 0, sourceKey: "tiger_roads_primary", label: "Census TIGER primary roads", roadClass: "primary", outFields: ROAD_FIELDS },
+  { id: 1, sourceKey: "tiger_roads_secondary", label: "Census TIGER secondary roads", roadClass: "secondary", outFields: ROAD_FIELDS },
+  { id: 2, sourceKey: "tiger_roads_local", label: "Census TIGER local roads", roadClass: "local", outFields: ROAD_FIELDS },
+  {
+    id: 3,
+    sourceKey: "tiger_railroads",
+    label: "Census TIGER railroads",
+    roadClass: "railroad",
+    // The railroad layer does not expose the road-only RTTYP field.
+    outFields: "OBJECTID,OID,NAME,BASENAME,MTFCC,SUFTYP,SUFTYPEABRV",
+  },
 ]);
+
+export function tigerRoadOutFields(layerId) {
+  return ROAD_LAYERS.find((layer) => layer.id === Number(layerId))?.outFields || ROAD_FIELDS;
+}
+
+export function deduplicateSourceRecords(records = []) {
+  return [...new Map(
+    records.map((record) => [`${record.source_key}:${record.source_record_id}`, record]),
+  ).values()];
+}
 const OFFICIAL_ZONING_SOURCES = Object.freeze([
   {
     providerKey: "city_dallas_official",
@@ -581,6 +598,10 @@ async function upsertRoadSegments(pool, roads) {
 
 async function upsertFloodHazards(pool, records) {
   if (!records.length) return 0;
+  // FEMA can return multiple geometries with the same stable GFID/FLD_AR_ID
+  // in a single response. PostgreSQL cannot update the same conflict target
+  // twice within one INSERT, so keep one deterministic record per identity.
+  const uniqueRecords = deduplicateSourceRecords(records);
   const { rowCount } = await pool.query(
     `WITH source AS (
        SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
@@ -618,7 +639,7 @@ async function upsertFloodHazards(pool, records) {
        source_updated_at = EXCLUDED.source_updated_at,
        sync_run_id = EXCLUDED.sync_run_id,
        synced_at = now(), geom = EXCLUDED.geom`,
-    [JSON.stringify(records)],
+    [JSON.stringify(uniqueRecords)],
   );
   return rowCount || 0;
 }
@@ -814,7 +835,7 @@ async function syncTigerRoadLayer(pool, layer, {
       concurrency,
       fetchBatch: (ids) => fetchArcGisFeatures(sourceUrl, {
         objectIds: ids,
-        outFields: ROAD_FIELDS,
+        outFields: tigerRoadOutFields(layer.id),
         fetchImpl,
       }),
       normalizeFeature: (feature) => normalizeRoadFeature(feature, {

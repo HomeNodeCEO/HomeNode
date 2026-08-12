@@ -35,6 +35,8 @@ const DCAD_FIELDS = [
 const MAX_PARCELS = 25_000;
 const PARCEL_BATCH_SIZE = 2_000;
 const SQ_FEET_PER_ACRE = 43_560;
+const VACANT_CLASS_CODES = new Set(["7", "8", "9", "10", "11", "39"]);
+const IMPROVED_CLASS_CODES = new Set(["1", "2", "3", "4", "5", "6", "17", "18", "35", "40"]);
 
 function normalizedDescription(...values) {
   return values
@@ -146,6 +148,21 @@ export function classifyDcadLandUse(attributes = {}) {
     "low",
     "DCAD use description did not match a recognized land-use category.",
   );
+}
+
+export function isDcadParcelBuiltUp(attributes = {}) {
+  const classCode = String(attributes.CLASSCD ?? attributes.class_code ?? "").trim();
+  if (VACANT_CLASS_CODES.has(classCode)) return false;
+  if (IMPROVED_CLASS_CODES.has(classCode)) return true;
+  const improvementValue = Number(attributes.IMPVALUE ?? attributes.improvement_value);
+  return Number.isFinite(improvementValue) && improvementValue > 0;
+}
+
+export function classifyBuiltUpBand(value) {
+  const percent = Math.max(0, Math.min(100, Number(value) || 0));
+  if (percent > 75) return { key: "over_75", label: "Over 75%" };
+  if (percent >= 25) return { key: "25_to_75", label: "25-75%" };
+  return { key: "under_25", label: "Under 25%" };
 }
 
 export function allocateLandUsePercentages(categoryAreas) {
@@ -278,6 +295,7 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
   const payload = classifiedParcels.map((parcel, sourceIndex) => ({
     source_index: sourceIndex,
     category: parcel.classification.category,
+    built_up: parcel.built_up,
     geometry: parcel.geometry,
   }));
   const { rows } = await pool.query(
@@ -287,18 +305,20 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
        SELECT
          (item->>'source_index')::integer AS source_index,
          item->>'category' AS category,
+         COALESCE((item->>'built_up')::boolean, false) AS built_up,
          ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON((item->'geometry')::text), 4326)) AS geom
        FROM jsonb_array_elements($2::jsonb) item
      ), clipped AS (
        SELECT
          source_index,
          category,
+         built_up,
          ST_CollectionExtract(ST_Intersection(source_features.geom, boundary.geom), 3) AS geom
        FROM source_features
        CROSS JOIN boundary
        WHERE ST_Intersects(source_features.geom, boundary.geom)
      ), usable AS (
-       SELECT source_index, category, geom
+       SELECT source_index, category, built_up, geom
        FROM clipped
        WHERE NOT ST_IsEmpty(geom)
      ), category_dissolved AS (
@@ -337,10 +357,16 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
      ), covered AS (
        SELECT ST_Area(ST_UnaryUnion(ST_Collect(geom))::geography) * 10.76391041671 AS area_sqft
        FROM usable
+     ), built_up_covered AS (
+       SELECT ST_Area(ST_UnaryUnion(ST_Collect(geom))::geography) * 10.76391041671 AS area_sqft
+       FROM usable
+       WHERE built_up
      )
      SELECT
        ST_Area(boundary.geom::geography) * 10.76391041671 AS boundary_area_sqft,
        COALESCE((SELECT area_sqft FROM covered), 0) AS covered_area_sqft,
+       COALESCE((SELECT area_sqft FROM built_up_covered), 0) AS built_up_area_sqft,
+       (SELECT COUNT(*) FROM usable WHERE built_up) AS built_up_parcel_count,
        COALESCE((
          SELECT SUM(ST_Area(geom::geography) * 10.76391041671)
          FROM category_dissolved
@@ -391,6 +417,7 @@ export async function buildNeighborhoodLandUseAnalysis(
   const classifiedParcels = landParcels.map((parcel) => ({
     ...parcel,
     classification: classifyDcadLandUse(parcel.attributes),
+    built_up: isDcadParcelBuiltUp(parcel.attributes),
   }));
   const metrics = await calculateClippedParcelMetrics(pool, boundary, classifiedParcels);
   const parcelAreaByIndex = new Map(
@@ -403,6 +430,9 @@ export async function buildNeighborhoodLandUseAnalysis(
   const categoryAreaSum = Object.values(categoryAreas).reduce((sum, value) => sum + value, 0);
   const boundaryArea = Number(metrics.boundary_area_sqft) || 0;
   const coveredArea = Number(metrics.covered_area_sqft) || 0;
+  const builtUpArea = Number(metrics.built_up_area_sqft) || 0;
+  const builtUpPercent = coveredArea > 0 ? (builtUpArea / coveredArea) * 100 : 0;
+  const builtUpBand = classifyBuiltUpBand(builtUpPercent);
   const rawCategoryArea = Number(metrics.raw_category_area_sqft) || 0;
   const coveragePercent = boundaryArea > 0 ? (coveredArea / boundaryArea) * 100 : 0;
   const overlapPercent = coveredArea > 0
@@ -458,6 +488,11 @@ export async function buildNeighborhoodLandUseAnalysis(
     boundary_signature: createHash("sha256").update(JSON.stringify(boundary)).digest("hex"),
     boundary_area_acres: rounded(boundaryArea / SQ_FEET_PER_ACRE, 2),
     covered_parcel_area_acres: rounded(coveredArea / SQ_FEET_PER_ACRE, 2),
+    built_up_area_acres: rounded(builtUpArea / SQ_FEET_PER_ACRE, 2),
+    built_up_percent: rounded(builtUpPercent, 1),
+    built_up_band: builtUpBand.key,
+    built_up_label: builtUpBand.label,
+    built_up_parcel_count: Number(metrics.built_up_parcel_count) || 0,
     coverage_percent: rounded(coveragePercent, 1),
     overlap_percent: rounded(overlapPercent, 1),
     parcel_count: classifiedParcels.length,

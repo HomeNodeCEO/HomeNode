@@ -348,6 +348,7 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_land_use_confidence: value?.neighborhood_land_use_confidence || "",
     neighborhood_land_use_boundary_signature:
       value?.neighborhood_land_use_boundary_signature || "",
+    neighborhood_built_up_pct: value?.neighborhood_built_up_pct ?? "",
     neighborhood_location_type: value?.neighborhood_location_type || "",
     neighborhood_built_up: value?.neighborhood_built_up || "",
     neighborhood_growth: value?.neighborhood_growth || "",
@@ -804,12 +805,14 @@ function NeighborhoodCharacteristicsContent({
     onAssignmentChange("neighborhood_land_use_review_count", landUseAnalysis.review_required_count);
     onAssignmentChange("neighborhood_land_use_coverage_percent", landUseAnalysis.coverage_percent);
     onAssignmentChange("neighborhood_land_use_confidence", landUseAnalysis.confidence);
+    onAssignmentChange("neighborhood_built_up", landUseAnalysis.built_up_band);
+    onAssignmentChange("neighborhood_built_up_pct", landUseAnalysis.built_up_percent);
     onAssignmentChange(
       "neighborhood_land_use_boundary_signature",
       landUseAnalysis.boundary_signature,
     );
     setLandUseAnalysisMessage(
-      "Land-use percentages were applied to the editable fields. Save Neighborhood Characteristics to store them in this appraisal file.",
+      `Land-use percentages and ${landUseAnalysis.built_up_label} built-up classification were applied. Save Neighborhood Characteristics to store them in this appraisal file.`,
     );
   };
   const updateBoundarySide = (
@@ -903,11 +906,12 @@ function NeighborhoodCharacteristicsContent({
                 The boundary changed after this run. Analyze again before applying the results.
               </p>
             ) : null}
-            <div className="grid grid-cols-2 gap-1.5 text-xs lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-1.5 text-xs lg:grid-cols-5">
               <div><span className="text-slate-500">Confidence</span><div className="font-semibold capitalize text-slate-900">{landUseAnalysis.confidence}</div></div>
               <div><span className="text-slate-500">Parcel coverage</span><div className="font-semibold text-slate-900">{landUseAnalysis.coverage_percent.toFixed(1)}%</div></div>
               <div><span className="text-slate-500">CAD parcels</span><div className="font-semibold text-slate-900">{landUseAnalysis.parcel_count.toLocaleString()}</div></div>
               <div><span className="text-slate-500">Needs review</span><div className="font-semibold text-slate-900">{landUseAnalysis.review_required_count.toLocaleString()}</div></div>
+              <div><span className="text-slate-500">Built-up</span><div className="font-semibold text-slate-900">{landUseAnalysis.built_up_percent.toFixed(1)}% · {landUseAnalysis.built_up_label}</div></div>
             </div>
             <div className="mt-2 grid grid-cols-2 gap-1.5 lg:grid-cols-5">
               {landUseAnalysis.categories.map((category) => (
@@ -952,7 +956,7 @@ function NeighborhoodCharacteristicsContent({
           </div>
         ) : assignmentDraft.neighborhood_land_use_analysis_source ? (
           <p className="mt-2 text-[10px] text-slate-500">
-            Saved analysis: {assignmentDraft.neighborhood_land_use_analysis_source} · {formatNumber(assignmentDraft.neighborhood_land_use_parcel_count)} parcels · {formatNumber(assignmentDraft.neighborhood_land_use_coverage_percent)}% coverage
+            Saved analysis: {assignmentDraft.neighborhood_land_use_analysis_source} · {formatNumber(assignmentDraft.neighborhood_land_use_parcel_count)} parcels · {formatNumber(assignmentDraft.neighborhood_land_use_coverage_percent)}% coverage{assignmentDraft.neighborhood_built_up_pct !== "" && assignmentDraft.neighborhood_built_up_pct != null ? ` · ${formatNumber(assignmentDraft.neighborhood_built_up_pct)}% built-up` : ""}
           </p>
         ) : null}
       </section>
@@ -1068,17 +1072,28 @@ function NeighborhoodCharacteristicsContent({
             {NEIGHBORHOOD_RANGE_ROWS.map((row) => (
               <div key={row.label} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] items-center gap-2 border-b border-slate-100 py-1 last:border-0">
                 <div className="text-xs font-medium text-slate-800">{row.label}</div>
-                {[row.low, row.high, row.predominant].map((field) => (
-                  <input
-                    key={field}
-                    type="number"
-                    min="0"
-                    step={row.label === "Age" ? "1" : "0.01"}
-                    className="input input-bordered input-xs w-full bg-white"
-                    value={assignmentDraft[field] ?? ""}
-                    onChange={(event) => onAssignmentChange(field, event.target.value)}
-                  />
-                ))}
+                {[row.low, row.high, row.predominant].map((field) => {
+                  const isMoney = row.format === "money";
+                  const isPricePerSquareFoot = row.label === "Price per Sq. Ft.";
+                  return (
+                    <div key={field} className="relative">
+                      {isMoney ? (
+                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-600">$</span>
+                      ) : null}
+                      <input
+                        type="number"
+                        min="0"
+                        step={row.label === "Age" ? "1" : "0.01"}
+                        className={`input input-bordered input-xs w-full bg-white ${isMoney ? "pl-5" : ""} ${isPricePerSquareFoot ? "pr-8" : ""}`}
+                        value={assignmentDraft[field] ?? ""}
+                        onChange={(event) => onAssignmentChange(field, event.target.value)}
+                      />
+                      {isPricePerSquareFoot ? (
+                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">/SF</span>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           </div>

@@ -124,6 +124,7 @@ test("assignment details accept a complete neighborhood profile", () => {
     neighborhood_land_use_multifamily_pct: 4,
     neighborhood_land_use_commercial_pct: 3,
     neighborhood_land_use_other_vacant_pct: 6,
+    neighborhood_built_up_pct: 91.4,
     neighborhood_location_type: "suburban",
     neighborhood_built_up: "over_75",
     neighborhood_growth: "stable",
@@ -173,4 +174,7 @@ test("assignment details enforce neighborhood totals and boundary confirmation",
   assert.throws(() => validateAssignmentDetails({
     neighborhood_city_unemployment_pct: 101,
   }), /invalid_neighborhood_city_unemployment_percentage/);
+  assert.throws(() => validateAssignmentDetails({
+    neighborhood_built_up_pct: 101,
+  }), /invalid_neighborhood_land_use_analysis_metadata/);
 });

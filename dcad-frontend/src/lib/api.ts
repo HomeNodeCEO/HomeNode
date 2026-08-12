@@ -217,6 +217,7 @@ export interface AssignmentDetailsPayload {
   neighborhood_land_use_coverage_percent?: string | number;
   neighborhood_land_use_confidence?: string;
   neighborhood_land_use_boundary_signature?: string;
+  neighborhood_built_up_pct?: string | number;
   neighborhood_location_type?: string;
   neighborhood_built_up?: string;
   neighborhood_growth?: string;
@@ -1335,6 +1336,11 @@ export interface NeighborhoodLandUseAnalysisResponse {
   boundary_signature: string;
   boundary_area_acres: number;
   covered_parcel_area_acres: number;
+  built_up_area_acres: number;
+  built_up_percent: number;
+  built_up_band: 'over_75' | '25_to_75' | 'under_25';
+  built_up_label: 'Over 75%' | '25-75%' | 'Under 25%';
+  built_up_parcel_count: number;
   coverage_percent: number;
   overlap_percent: number;
   parcel_count: number;

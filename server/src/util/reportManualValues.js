@@ -228,10 +228,12 @@ export function validateAssignmentDetails(value) {
     optionalNumber(value.neighborhood_land_use_parcel_count),
     optionalNumber(value.neighborhood_land_use_review_count),
     optionalNumber(value.neighborhood_land_use_coverage_percent),
+    optionalNumber(value.neighborhood_built_up_pct),
   ];
   if (
     landUseAnalysisNumbers.some((item) => Number.isNaN(item) || (item !== null && item < 0)) ||
-    (landUseAnalysisNumbers[2] !== null && landUseAnalysisNumbers[2] > 100)
+    (landUseAnalysisNumbers[2] !== null && landUseAnalysisNumbers[2] > 100) ||
+    (landUseAnalysisNumbers[3] !== null && landUseAnalysisNumbers[3] > 100)
   ) {
     throw new Error("invalid_neighborhood_land_use_analysis_metadata");
   }

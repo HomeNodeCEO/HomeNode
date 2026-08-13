@@ -12,9 +12,11 @@
         "sync:property-context:full": "node scripts/syncPropertyContext.js --source=all --mode=full",
         "maintenance:scheduled": "node scripts/runScheduledMaintenance.js --task=routine",
         "maintenance:roads": "node scripts/runScheduledMaintenance.js --task=roads",
+        "maintenance:traffic": "node scripts/runScheduledMaintenance.js --task=traffic",
         "maintenance:context": "node scripts/runScheduledMaintenance.js --task=context",
         "maintenance:floods": "node scripts/runScheduledMaintenance.js --task=floods",
         "maintenance:zoning": "node scripts/runScheduledMaintenance.js --task=zoning",
+        "maintenance:zoning-documents": "node scripts/syncZoningEvidenceDocuments.js",
         "maintenance:influences": "node scripts/runScheduledMaintenance.js --task=influences",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"

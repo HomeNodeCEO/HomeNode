@@ -31,6 +31,21 @@ test("a mapped commercial rear adjacency produces a stable material influence si
   assert.ok(signature.zoning_keys.includes("zoning_use:residential"));
 });
 
+test("TxDOT traffic volume becomes a distinct comparable influence", () => {
+  const signature = buildPropertyInfluenceSignature({
+    parcel_available: true,
+    adjacent_influences: [],
+    nearby_influences: [],
+    nearest_high_traffic_road: {
+      annual_average_daily_traffic: 61_000,
+      distance_feet: 240,
+    },
+  });
+
+  assert.equal(signature.methodology_version, 3);
+  assert.ok(signature.material_keys.includes("traffic_volume:very_high:within_300ft"));
+});
+
 test("an exact material influence match receives the highest priority tier", () => {
   const subject = buildPropertyInfluenceSignature({
     parcel_available: true,

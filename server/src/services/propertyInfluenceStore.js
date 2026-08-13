@@ -1,4 +1,7 @@
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
+import { AUTOMATED_ZONING_SOURCE_KEYS } from "./propertyZoningSources.js";
+
+const CURRENT_INFLUENCE_METHODOLOGY_VERSION = 3;
 
 function normalizedAccountIds(values, maximum = 10_000) {
   return [...new Set((values || [])
@@ -70,7 +73,7 @@ export async function savePropertyInfluenceContext(pool, {
     [
       normalizedAccountId,
       spatialContext?.parcel_object_id || null,
-      Number(signature.methodology_version || 2),
+      Number(signature.methodology_version || CURRENT_INFLUENCE_METHODOLOGY_VERSION),
       JSON.stringify(spatialContext || {}),
       JSON.stringify(signature),
       Boolean(signature.material_influence_present),
@@ -91,8 +94,9 @@ export async function getPropertyInfluenceContexts(pool, accountIds) {
   const { rows } = await pool.query(
     `SELECT *
      FROM gis.property_influence_contexts
-     WHERE account_id = ANY($1::text[])`,
-    [ids],
+     WHERE account_id = ANY($1::text[])
+       AND methodology_version >= $2`,
+    [ids, CURRENT_INFLUENCE_METHODOLOGY_VERSION],
   );
   return new Map(rows.map((row) => [row.account_id, response(row)]));
 }
@@ -136,13 +140,10 @@ export async function seedPropertyInfluenceQueue(pool, { limit = 10_000 } = {}) 
   await ensurePropertyContextSchema(pool);
   const safeLimit = Math.max(1, Math.min(50_000, Math.trunc(Number(limit) || 10_000)));
   const { rowCount } = await pool.query(
-    `WITH road_state AS (
+    `WITH influence_source_state AS (
        SELECT MAX(last_success_at) AS refreshed_at
        FROM gis.source_sync_state
-       WHERE source_key IN ('tiger_roads_primary', 'tiger_roads_secondary',
-                            'tiger_roads_local', 'tiger_railroads', 'fema_nfhl',
-                            'zoning_city_dallas_official',
-                            'zoning_city_garland_official')
+       WHERE source_key = ANY($3::text[])
      ), candidates AS (
        SELECT sale.primary_account_id AS account_id,
               100 AS priority, 'matched_sale_inventory'::text AS reason
@@ -175,11 +176,11 @@ export async function seedPropertyInfluenceQueue(pool, { limit = 10_000 } = {}) 
          WHERE parcel.account_id = prioritized.account_id
             OR parcel.low_parcel_id = prioritized.account_id
        ) parcel_state ON TRUE
-       CROSS JOIN road_state
+       CROSS JOIN influence_source_state
        WHERE context.account_id IS NULL
-          OR context.methodology_version < 2
+          OR context.methodology_version < $2
           OR context.computed_at < COALESCE(parcel_state.refreshed_at, '-infinity'::timestamptz)
-          OR context.computed_at < COALESCE(road_state.refreshed_at, '-infinity'::timestamptz)
+          OR context.computed_at < COALESCE(influence_source_state.refreshed_at, '-infinity'::timestamptz)
        ORDER BY prioritized.priority DESC, prioritized.account_id
        LIMIT $1
      )
@@ -203,7 +204,19 @@ export async function seedPropertyInfluenceQueue(pool, { limit = 10_000 } = {}) 
        END,
        updated_at = now(),
        completed_at = NULL`,
-    [safeLimit],
+    [
+      safeLimit,
+      CURRENT_INFLUENCE_METHODOLOGY_VERSION,
+      [
+        "tiger_roads_primary",
+        "tiger_roads_secondary",
+        "tiger_roads_local",
+        "tiger_railroads",
+        "fema_nfhl",
+        "txdot_aadt",
+        ...AUTOMATED_ZONING_SOURCE_KEYS,
+      ],
+    ],
   );
   return { queued: rowCount || 0 };
 }
@@ -302,7 +315,9 @@ export async function getPropertyInfluenceStatus(pool) {
        (SELECT COALESCE(jsonb_object_agg(status, count), '{}'::jsonb) FROM queue) AS queue,
        (SELECT COUNT(*)::integer FROM sales) AS sale_account_count,
        (SELECT COUNT(*)::integer
-        FROM sales JOIN gis.property_influence_contexts context USING (account_id)) AS measured_sale_account_count` ,
+        FROM sales JOIN gis.property_influence_contexts context USING (account_id)
+        WHERE context.methodology_version >= $1) AS measured_sale_account_count` ,
+    [CURRENT_INFLUENCE_METHODOLOGY_VERSION],
   );
   const row = rows[0] || {};
   const saleCount = Number(row.sale_account_count || 0);
@@ -322,14 +337,19 @@ export async function getZoningSourceRegistry(pool) {
   await ensurePropertyContextSchema(pool);
   const { rows } = await pool.query(
     `SELECT provider_key, provider_label, provider_type, jurisdiction, priority,
-            status, service_url, last_success_at, last_error, updated_at
+            status, service_url, service_layer, configuration,
+            last_success_at, last_error, updated_at
      FROM gis.zoning_source_registry
      ORDER BY jurisdiction, priority DESC, provider_key`,
   );
   return rows.map((row) => ({
     ...row,
     priority: Number(row.priority),
-    configured: row.status !== "pending_credentials",
+    service_layer: row.service_layer == null ? null : Number(row.service_layer),
+    automation_status: row.configuration?.automation_status || (
+      row.service_url ? "automatic" : "manual_review"
+    ),
+    configured: Boolean(row.service_url) && row.status !== "pending_credentials",
     request_path_dependency: false,
   }));
 }

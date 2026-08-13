@@ -1,10 +1,78 @@
+import {
+  AUTOMATED_ZONING_SOURCE_KEYS,
+  DALLAS_COUNTY_ZONING_JURISDICTIONS,
+  OFFICIAL_ZONING_SOURCES,
+} from "./propertyZoningSources.js";
+
 const DEFAULT_BOUNDARY_CACHE_TTL_HOURS = 24 * 7;
 const schemaReadyByPool = new WeakMap();
+
+async function upsertDallasCountyZoningRegistry(pool) {
+  const records = DALLAS_COUNTY_ZONING_JURISDICTIONS.map((jurisdiction) => ({
+    provider_key: jurisdiction.providerKey,
+    provider_label: jurisdiction.providerLabel,
+    provider_type: "official_municipal",
+    jurisdiction: jurisdiction.city,
+    priority: 100,
+    status: "registered",
+    service_url: jurisdiction.serviceUrl,
+    service_layer: jurisdiction.serviceLayer,
+    configuration: jurisdiction.configuration,
+  }));
+  await pool.query(
+    `INSERT INTO gis.zoning_source_registry (
+       provider_key, provider_label, provider_type, jurisdiction, priority,
+       status, service_url, service_layer, configuration
+     )
+     SELECT provider_key, provider_label, provider_type, jurisdiction, priority,
+            status, service_url, service_layer, configuration
+     FROM jsonb_to_recordset($1::jsonb) AS source(
+       provider_key text, provider_label text, provider_type text,
+       jurisdiction text, priority integer, status text, service_url text,
+       service_layer integer, configuration jsonb
+     )
+     ON CONFLICT (provider_key) DO UPDATE SET
+       provider_label = EXCLUDED.provider_label,
+       provider_type = EXCLUDED.provider_type,
+       jurisdiction = EXCLUDED.jurisdiction,
+       priority = EXCLUDED.priority,
+       status = CASE
+         WHEN EXCLUDED.service_url IS NULL THEN 'registered'
+         WHEN gis.zoning_source_registry.status = 'current'
+          AND gis.zoning_source_registry.service_url IS NOT DISTINCT FROM EXCLUDED.service_url
+           THEN 'current'
+         ELSE 'registered'
+       END,
+       service_url = EXCLUDED.service_url,
+       service_layer = EXCLUDED.service_layer,
+       configuration = EXCLUDED.configuration,
+       last_success_at = CASE
+         WHEN gis.zoning_source_registry.service_url IS NOT DISTINCT FROM EXCLUDED.service_url
+           THEN gis.zoning_source_registry.last_success_at
+         ELSE NULL
+       END,
+       last_error = CASE
+         WHEN gis.zoning_source_registry.service_url IS NOT DISTINCT FROM EXCLUDED.service_url
+           THEN gis.zoning_source_registry.last_error
+         ELSE NULL
+       END,
+       updated_at = now()`,
+    [JSON.stringify(records)],
+  );
+  await pool.query(
+    `UPDATE gis.zoning_source_registry
+     SET status = 'pending_credentials', service_url = NULL, service_layer = NULL,
+         configuration = '{"request_path":"disabled","fallback_only":true,"disabled_reason":"paid_provider_not_enabled"}'::jsonb,
+         last_error = NULL, updated_at = now()
+     WHERE provider_key = 'propzone_gridics'`,
+  );
+}
 
 export async function ensurePropertyContextSchema(pool) {
   const existing = schemaReadyByPool.get(pool);
   if (existing) return existing;
-  const pending = pool.query(`
+  const pending = (async () => {
+    await pool.query(`
     CREATE SCHEMA IF NOT EXISTS gis;
     CREATE SCHEMA IF NOT EXISTS app;
 
@@ -108,6 +176,27 @@ export async function ensurePropertyContextSchema(pool) {
     CREATE INDEX IF NOT EXISTS road_segments_geom_gix
       ON gis.road_segments USING gist (geom);
 
+    CREATE TABLE IF NOT EXISTS gis.traffic_volume_segments (
+      source_key text NOT NULL DEFAULT 'txdot_aadt',
+      source_object_id bigint NOT NULL,
+      route_name text,
+      route_prefix text,
+      route_number text,
+      roadway_type text,
+      current_aadt integer,
+      source_date timestamptz,
+      source_attributes jsonb NOT NULL DEFAULT '{}'::jsonb,
+      source_record_hash text NOT NULL,
+      sync_run_id uuid REFERENCES gis.source_sync_runs(id) ON DELETE SET NULL,
+      synced_at timestamptz NOT NULL DEFAULT now(),
+      geom geometry(MultiLineString, 4326) NOT NULL,
+      PRIMARY KEY (source_key, source_object_id)
+    );
+    CREATE INDEX IF NOT EXISTS traffic_volume_segments_aadt_idx
+      ON gis.traffic_volume_segments (current_aadt DESC);
+    CREATE INDEX IF NOT EXISTS traffic_volume_segments_geom_gix
+      ON gis.traffic_volume_segments USING gist (geom);
+
     CREATE TABLE IF NOT EXISTS gis.zoning_source_registry (
       provider_key text PRIMARY KEY,
       provider_label text NOT NULL,
@@ -141,10 +230,28 @@ export async function ensurePropertyContextSchema(pool) {
         1, '{"zoning_code_fields":["BASE_ZONE","GDC_ZONING"]}'::jsonb
       ),
       (
+        'city_farmers_branch_official', 'City of Farmers Branch official zoning GIS',
+        'official_municipal', 'Farmers Branch', 100, 'registered',
+        'https://services1.arcgis.com/rrMt0tlqg3eYOL0M/arcgis/rest/services/Zoning_public/FeatureServer/0/query',
+        0, '{"zoning_code_fields":["ZONECLASS","CITYPDDIST"]}'::jsonb
+      ),
+      (
+        'city_richardson_official', 'City of Richardson official zoning GIS',
+        'official_municipal', 'Richardson', 100, 'registered',
+        'https://maps.cor.gov/arcgis/rest/services/DevelopmentServices/ZoningDistricts/MapServer/1/query',
+        1, '{"zoning_code_fields":["ZONECLASS","CZO"]}'::jsonb
+      ),
+      (
+        'city_desoto_official', 'City of DeSoto official zoning GIS',
+        'official_municipal', 'DeSoto', 100, 'registered',
+        'https://services8.arcgis.com/QHqdbIhWBJLlMbGN/arcgis/rest/services/Zoning_DeSoto/FeatureServer/0/query',
+        0, '{"zoning_code_fields":["Zone_Code","ZONECLASS"]}'::jsonb
+      ),
+      (
         'propzone_gridics', 'Gridics PropZone zoning fallback',
         'propzone_gridics', 'DFW configured coverage', 50,
         'pending_credentials', NULL, NULL,
-        '{"request_path":"scheduled_only","fallback_only":true}'::jsonb
+        '{"request_path":"disabled","fallback_only":true,"disabled_reason":"paid_provider_not_enabled"}'::jsonb
       )
     ON CONFLICT (provider_key) DO NOTHING;
 
@@ -270,7 +377,9 @@ export async function ensurePropertyContextSchema(pool) {
     );
     CREATE INDEX IF NOT EXISTS property_complexity_account_updated_idx
       ON app.property_complexity_assessments (account_id, updated_at DESC);
-  `).catch((error) => {
+    `);
+    await upsertDallasCountyZoningRegistry(pool);
+  })().catch((error) => {
     schemaReadyByPool.delete(pool);
     throw error;
   });
@@ -309,29 +418,35 @@ export function normalizeSourceHealth(row, { staleAfterHours, now = Date.now() }
 }
 
 export async function getPropertyContextSourceHealth(pool, { now = Date.now() } = {}) {
-  const { rows } = await pool.query(
-    `SELECT source_key, source_label, status, source_url, source_vintage,
-            row_count, last_attempt_at, last_success_at, last_source_update_at,
-            last_error, metadata
-     FROM gis.source_sync_state
-     WHERE source_key IN ('dcad_parcels', 'tiger_roads_primary',
-                          'tiger_roads_secondary', 'tiger_roads_local',
-                          'tiger_railroads', 'fema_nfhl',
-                          'zoning_city_dallas_official',
-                          'zoning_city_garland_official')
-     ORDER BY source_key`,
-  );
-  const byKey = new Map(rows.map((row) => [row.source_key, row]));
   const expected = [
     ["dcad_parcels", "Dallas CAD parcel GIS", 72],
     ["tiger_roads_primary", "Census TIGER primary roads", 24 * 45],
     ["tiger_roads_secondary", "Census TIGER secondary roads", 24 * 45],
     ["tiger_roads_local", "Census TIGER local roads", 24 * 45],
     ["tiger_railroads", "Census TIGER railroads", 24 * 45],
+    ["txdot_aadt", "TxDOT annual average daily traffic", 24 * 45],
     ["fema_nfhl", "FEMA National Flood Hazard Layer", 24 * 30],
-    ["zoning_city_dallas_official", "City of Dallas official zoning GIS", 24 * 14],
-    ["zoning_city_garland_official", "City of Garland official zoning GIS", 24 * 14],
+    ...OFFICIAL_ZONING_SOURCES.map((source) => [source.sourceKey, source.label, 24 * 14]),
   ];
+  const { rows } = await pool.query(
+    `SELECT source_key, source_label, status, source_url, source_vintage,
+            row_count, last_attempt_at, last_success_at, last_source_update_at,
+            last_error, metadata
+     FROM gis.source_sync_state
+     WHERE source_key = ANY($1::text[])
+     ORDER BY source_key`,
+    [[
+      "dcad_parcels",
+      "tiger_roads_primary",
+      "tiger_roads_secondary",
+      "tiger_roads_local",
+      "tiger_railroads",
+      "txdot_aadt",
+      "fema_nfhl",
+      ...AUTOMATED_ZONING_SOURCE_KEYS,
+    ]],
+  );
+  const byKey = new Map(rows.map((row) => [row.source_key, row]));
   return expected.map(([sourceKey, label, staleAfterHours]) => normalizeSourceHealth(
     byKey.get(sourceKey) || { source_key: sourceKey, source_label: label },
     { staleAfterHours, now },

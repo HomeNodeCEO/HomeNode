@@ -35,15 +35,19 @@ try {
     ),
     influenceMaximumBatches: option(
       "influence-maximum-batches",
-      process.env.MAINTENANCE_INFLUENCE_MAX_BATCHES || "4",
+      process.env.MAINTENANCE_INFLUENCE_MAX_BATCHES || "20",
     ),
     influenceBatchSize: option(
       "influence-batch-size",
-      process.env.MAINTENANCE_INFLUENCE_BATCH_SIZE || "100",
+      process.env.MAINTENANCE_INFLUENCE_BATCH_SIZE || "250",
     ),
     influenceSeedLimit: option(
       "influence-seed-limit",
       process.env.MAINTENANCE_INFLUENCE_SEED_LIMIT || "10000",
+    ),
+    influenceConcurrency: option(
+      "influence-concurrency",
+      process.env.MAINTENANCE_INFLUENCE_CONCURRENCY || "6",
     ),
     hazardBatchSize: option(
       "hazard-batch-size",

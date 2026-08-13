@@ -9,6 +9,7 @@ import {
 import {
   createAssignmentFile,
   analyzePropertyContext as runPropertyContextAnalysis,
+  getPropertyZoningEvidence,
   getCensusCityProfile,
   getCensusZipProfile,
   getNeighborhoodProfile,
@@ -19,6 +20,7 @@ import {
   getRelatedParcels,
   lookupAccountCensusGeography,
   savePropertyContextReview,
+  savePropertyZoningVerification,
   updateAssignmentFile,
   updatePropertyReportSections,
   type AppraisalAssignmentFile,
@@ -27,8 +29,10 @@ import {
   type NeighborhoodLandUseAnalysisResponse,
   type PropertyComplexityAssessment,
   type PropertyComplexityLevel,
+  type PropertyZoningEvidence,
   type ReportManualSectionKey,
   type RelatedParcelsResponse,
+  makeUrl,
 } from "@/lib/api";
 import {
   readMarketConditionsDraft,
@@ -2522,6 +2526,20 @@ function AddressHero({
   const [propertyContextLoading, setPropertyContextLoading] = useState(false);
   const [propertyContextSaving, setPropertyContextSaving] = useState(false);
   const [propertyContextMessage, setPropertyContextMessage] = useState("");
+  const [zoningEvidence, setZoningEvidence] = useState<PropertyZoningEvidence | null>(null);
+  const [zoningEvidenceOpen, setZoningEvidenceOpen] = useState(false);
+  const [zoningEvidenceLoading, setZoningEvidenceLoading] = useState(false);
+  const [zoningEvidenceMessage, setZoningEvidenceMessage] = useState("");
+  const [zoningDraft, setZoningDraft] = useState({
+    sourceDocumentId: "",
+    sourceType: "map_pdf" as "map_pdf" | "interactive_map" | "city_confirmation" | "official_gis" | "manual",
+    zoningCode: "",
+    zoningDescription: "",
+    pageNumber: "",
+    confirmationReference: "",
+    notes: "",
+    reviewer: "",
+  });
   const [propertyComplexityDraft, setPropertyComplexityDraft] = useState<PropertyComplexityLevel>(
     () => detail?.property_context?.effective_complexity || "simple",
   );
@@ -2540,6 +2558,53 @@ function AddressHero({
   );
   const detailLoaded = Boolean(detail);
   const exactAddress = detail?.property_location?.address?.trim() || "";
+
+  const hydrateZoningEvidence = useCallback((evidence: PropertyZoningEvidence) => {
+    setZoningEvidence(evidence);
+    const verification = evidence.verification;
+    const automatic = evidence.automatic_result;
+    const firstDocument = evidence.documents[0];
+    setZoningDraft((current) => ({
+      sourceDocumentId: verification?.source_document_id
+        ? String(verification.source_document_id)
+        : firstDocument ? String(firstDocument.id) : "",
+      sourceType: verification?.source_type || (firstDocument
+        ? "map_pdf"
+        : automatic ? "official_gis" : "city_confirmation"),
+      zoningCode: verification?.zoning_code || automatic?.zoning_code || current.zoningCode,
+      zoningDescription:
+        verification?.zoning_description || automatic?.zoning_description || current.zoningDescription,
+      pageNumber: verification?.page_number ? String(verification.page_number) : "",
+      confirmationReference: verification?.confirmation_reference || "",
+      notes: verification?.notes || "",
+      reviewer: verification?.reviewer || current.reviewer,
+    }));
+  }, []);
+
+  const loadZoningEvidence = useCallback(async ({ open = false } = {}) => {
+    if (!accountId) return;
+    if (open) setZoningEvidenceOpen(true);
+    setZoningEvidenceLoading(true);
+    setZoningEvidenceMessage("");
+    try {
+      const response = await getPropertyZoningEvidence(
+        accountId,
+        activeAssignmentFile?.id || null,
+      );
+      hydrateZoningEvidence(response.evidence);
+    } catch (error) {
+      setZoningEvidenceMessage(
+        error instanceof Error ? error.message : "Zoning evidence could not be loaded.",
+      );
+    } finally {
+      setZoningEvidenceLoading(false);
+    }
+  }, [accountId, activeAssignmentFile?.id, hydrateZoningEvidence]);
+
+  useEffect(() => {
+    if (!detailLoaded || !accountId) return;
+    void loadZoningEvidence();
+  }, [accountId, detailLoaded, loadZoningEvidence]);
 
   useEffect(() => {
     if (photoIndex >= photos.length) setPhotoIndex(0);
@@ -2894,6 +2959,56 @@ function AddressHero({
       sessionStorage.setItem("homenode-editor-key", editorKey);
     }
     return editorKey;
+  };
+
+  const saveZoningEvidence = async () => {
+    if (!accountId || !zoningEvidence?.jurisdiction) return;
+    if (!zoningDraft.zoningCode.trim()) {
+      setZoningEvidenceMessage("Enter the confirmed zoning code before saving.");
+      return;
+    }
+    if (!zoningDraft.reviewer.trim()) {
+      setZoningEvidenceMessage("Enter the appraiser or reviewer name before saving.");
+      return;
+    }
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    setZoningEvidenceLoading(true);
+    setZoningEvidenceMessage("");
+    try {
+      const response = await savePropertyZoningVerification(
+        accountId,
+        {
+          assignment_file_id: activeAssignmentFile?.id || null,
+          jurisdiction_city: zoningEvidence.jurisdiction.city,
+          source_document_id: zoningDraft.sourceDocumentId
+            ? Number(zoningDraft.sourceDocumentId)
+            : null,
+          source_type: zoningDraft.sourceType,
+          zoning_code: zoningDraft.zoningCode.trim(),
+          zoning_description: zoningDraft.zoningDescription.trim(),
+          page_number: zoningDraft.pageNumber ? Number(zoningDraft.pageNumber) : null,
+          confirmation_reference: zoningDraft.confirmationReference.trim(),
+          notes: zoningDraft.notes.trim(),
+          reviewer: zoningDraft.reviewer.trim(),
+        },
+        editorKey,
+      );
+      hydrateZoningEvidence({
+        ...zoningEvidence,
+        review_required: false,
+        verification: response.verification,
+      });
+      setZoningEvidenceMessage("Confirmed zoning and source provenance saved to this property file.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The zoning verification could not be saved.";
+      if (/401|invalid_editor_key/i.test(message)) {
+        sessionStorage.removeItem("homenode-editor-key");
+      }
+      setZoningEvidenceMessage(message);
+    } finally {
+      setZoningEvidenceLoading(false);
+    }
   };
 
   const saveManualSection = async (
@@ -3629,7 +3744,13 @@ function AddressHero({
   );
 
   const primaryZoning =
-    landRows.map((row) => row.zoning).find((value) => hasValue(value)) || "Not reported";
+    zoningEvidence?.verification?.zoning_code ||
+    zoningEvidence?.automatic_result?.zoning_code ||
+    landRows.map((row) => row.zoning).find((value) => hasValue(value)) ||
+    "Not reported";
+  const selectedZoningDocument = zoningEvidence?.documents.find(
+    (document) => String(document.id) === zoningDraft.sourceDocumentId,
+  ) || zoningEvidence?.documents[0] || null;
 
   const protestUrl = accountId
     ? `/PropertyTaxProtest?propertyId=${encodeURIComponent(accountId)}${
@@ -4155,6 +4276,172 @@ function AddressHero({
                   </div>
                 }
               />
+            </div>
+
+            <div className={`mt-5 rounded-xl border p-4 ${
+              zoningEvidence?.review_required
+                ? "border-amber-300 bg-amber-50/70"
+                : "border-slate-200 bg-white/70"
+            }`}>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold text-slate-900">Zoning Evidence</h3>
+                    {zoningEvidence?.verification ? (
+                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                        Appraiser confirmed
+                      </span>
+                    ) : zoningEvidence?.review_required ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                        Review required
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {zoningEvidence?.jurisdiction?.provider_label || "Loading the official municipal source..."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                  onClick={() => zoningEvidenceOpen
+                    ? setZoningEvidenceOpen(false)
+                    : void loadZoningEvidence({ open: true })}
+                  disabled={zoningEvidenceLoading}
+                >
+                  {zoningEvidenceLoading
+                    ? "Loading..."
+                    : zoningEvidenceOpen ? "Close Evidence Viewer" : "Review Zoning Evidence"}
+                </button>
+              </div>
+              {zoningEvidence?.review_reason ? (
+                <p className="mt-2 text-xs leading-5 text-amber-800">{zoningEvidence.review_reason}</p>
+              ) : null}
+              {zoningEvidenceMessage ? (
+                <p className="mt-2 text-xs font-medium text-slate-700">{zoningEvidenceMessage}</p>
+              ) : null}
+
+              {zoningEvidenceOpen && zoningEvidence?.jurisdiction ? (
+                <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(22rem,1fr)]">
+                  <div className="min-w-0">
+                    {selectedZoningDocument ? (
+                      <>
+                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                          <select
+                            className="select select-bordered select-sm min-w-64 bg-white"
+                            value={String(selectedZoningDocument.id)}
+                            onChange={(event) => setZoningDraft((current) => ({
+                              ...current,
+                              sourceDocumentId: event.target.value,
+                              sourceType: "map_pdf",
+                            }))}
+                          >
+                            {zoningEvidence.documents.map((document) => (
+                              <option key={document.id} value={document.id}>{document.title}</option>
+                            ))}
+                          </select>
+                          <a
+                            href={selectedZoningDocument.official_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs font-semibold text-blue-700 hover:underline"
+                          >
+                            Open official source
+                          </a>
+                        </div>
+                        <iframe
+                          title={selectedZoningDocument.title}
+                          src={makeUrl(selectedZoningDocument.content_url)}
+                          className="h-[32rem] w-full rounded-lg border border-slate-300 bg-slate-100"
+                        />
+                        <p className="mt-2 text-[11px] leading-4 text-slate-500">
+                          Cached {formatDate(selectedZoningDocument.fetched_at)} · {selectedZoningDocument.page_count || "Unknown"} page(s) · Source version {selectedZoningDocument.checksum_sha256.slice(0, 12)}
+                        </p>
+                      </>
+                    ) : (
+                      <div className="flex h-64 flex-col items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-center">
+                        <p className="text-sm font-semibold text-slate-800">No cacheable PDF is published for this city.</p>
+                        <p className="mt-2 max-w-xl text-xs leading-5 text-slate-600">
+                          Use the official interactive source and the city contact shown here. The confirmed result can still be saved with full provenance.
+                        </p>
+                        {zoningEvidence.jurisdiction.reference_url ? (
+                          <a
+                            href={zoningEvidence.jurisdiction.reference_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn btn-primary btn-sm mt-4 normal-case rounded-lg"
+                          >
+                            Open Official Zoning Resource
+                          </a>
+                        ) : null}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    {zoningEvidence.jurisdiction.contact ? (
+                      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-slate-700">
+                        <h4 className="font-semibold text-slate-900">City verification contact</h4>
+                        <p className="mt-1 font-medium">{zoningEvidence.jurisdiction.contact.department}</p>
+                        {zoningEvidence.jurisdiction.contact.contactName ? <p>{zoningEvidence.jurisdiction.contact.contactName}</p> : null}
+                        {zoningEvidence.jurisdiction.contact.phone ? (
+                          <p className="mt-1"><a className="font-semibold text-blue-800 hover:underline" href={`tel:${zoningEvidence.jurisdiction.contact.phone}`}>{zoningEvidence.jurisdiction.contact.phone}</a></p>
+                        ) : null}
+                        {zoningEvidence.jurisdiction.contact.email ? (
+                          <p><a className="font-semibold text-blue-800 hover:underline" href={`mailto:${zoningEvidence.jurisdiction.contact.email}`}>{zoningEvidence.jurisdiction.contact.email}</a></p>
+                        ) : null}
+                        {zoningEvidence.jurisdiction.contact.address ? <p className="mt-1">{zoningEvidence.jurisdiction.contact.address}</p> : null}
+                        <a href={zoningEvidence.jurisdiction.contact.sourceUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block font-semibold text-blue-800 hover:underline">
+                          Verify current contact on city site
+                        </a>
+                      </div>
+                    ) : null}
+
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+                      <label className="block">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Confirmed Zoning Code</span>
+                        <input className="input input-bordered input-sm mt-1 w-full bg-white" value={zoningDraft.zoningCode} onChange={(event) => setZoningDraft((current) => ({ ...current, zoningCode: event.target.value }))} />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Source Type</span>
+                        <select className="select select-bordered select-sm mt-1 w-full bg-white" value={zoningDraft.sourceType} onChange={(event) => setZoningDraft((current) => ({ ...current, sourceType: event.target.value as typeof current.sourceType }))}>
+                          {selectedZoningDocument ? <option value="map_pdf">Official map / PDF</option> : null}
+                          <option value="interactive_map">Official interactive map</option>
+                          <option value="city_confirmation">Confirmed with city</option>
+                          <option value="official_gis">Official GIS result</option>
+                          <option value="manual">Other manual verification</option>
+                        </select>
+                      </label>
+                      <label className="block sm:col-span-2 xl:col-span-1 2xl:col-span-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Description</span>
+                        <input className="input input-bordered input-sm mt-1 w-full bg-white" value={zoningDraft.zoningDescription} onChange={(event) => setZoningDraft((current) => ({ ...current, zoningDescription: event.target.value }))} />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">PDF Page</span>
+                        <input type="number" min="1" className="input input-bordered input-sm mt-1 w-full bg-white" value={zoningDraft.pageNumber} onChange={(event) => setZoningDraft((current) => ({ ...current, pageNumber: event.target.value }))} />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Reviewer</span>
+                        <input className="input input-bordered input-sm mt-1 w-full bg-white" placeholder="Appraiser name" value={zoningDraft.reviewer} onChange={(event) => setZoningDraft((current) => ({ ...current, reviewer: event.target.value }))} />
+                      </label>
+                      <label className="block sm:col-span-2 xl:col-span-1 2xl:col-span-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">City Confirmation / Reference</span>
+                        <input className="input input-bordered input-sm mt-1 w-full bg-white" placeholder="Contact name, call date, letter number, or ordinance" value={zoningDraft.confirmationReference} onChange={(event) => setZoningDraft((current) => ({ ...current, confirmationReference: event.target.value }))} />
+                      </label>
+                      <label className="block sm:col-span-2 xl:col-span-1 2xl:col-span-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Review Notes</span>
+                        <textarea className="textarea textarea-bordered textarea-sm mt-1 min-h-20 w-full bg-white" value={zoningDraft.notes} onChange={(event) => setZoningDraft((current) => ({ ...current, notes: event.target.value }))} />
+                      </label>
+                    </div>
+                    <p className="text-[11px] leading-4 text-slate-500">
+                      Blurry or machine-read map labels are suggestions only. Saving requires an identified reviewer and never alters the official source document.
+                    </p>
+                    <button type="button" className="btn btn-primary btn-sm w-full normal-case rounded-lg shadow-sm" onClick={() => void saveZoningEvidence()} disabled={zoningEvidenceLoading}>
+                      {zoningEvidenceLoading ? "Saving..." : "Save Confirmed Zoning"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="mt-5 rounded-xl border border-slate-200 bg-white/70 p-4">

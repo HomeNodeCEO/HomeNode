@@ -442,6 +442,7 @@ export async function loadSpatialContext(pool, subject, customGeometry) {
       road_frontage_count: 0,
       road_frontages: [],
       nearest_major_road: null,
+      nearest_high_traffic_road: null,
       adjacent_influences: [],
       nearby_influences: [],
       subject_point: longitude !== null && latitude !== null
@@ -556,6 +557,24 @@ export async function loadSpatialContext(pool, subject, customGeometry) {
   }));
   const nearestMajorRoad = roadRows.find((road) => ["primary", "secondary"].includes(road.road_class));
   const nearestRailroad = roadRows.find((road) => road.road_class === "railroad");
+  const { rows: trafficRows } = await pool.query(
+    `WITH subject AS (
+       SELECT geom FROM gis.dcad_parcels WHERE object_id = $1
+     )
+     SELECT traffic.source_key, traffic.source_object_id, traffic.route_name,
+            traffic.route_prefix, traffic.route_number, traffic.roadway_type,
+            traffic.current_aadt, traffic.source_date, traffic.synced_at,
+            ST_Distance(subject.geom::geography, traffic.geom::geography) * $3 AS distance_feet
+     FROM gis.traffic_volume_segments traffic
+     CROSS JOIN subject
+     WHERE traffic.current_aadt >= 10000
+       AND ST_DWithin(subject.geom::geography, traffic.geom::geography, $2)
+     ORDER BY ST_Distance(subject.geom::geography, traffic.geom::geography),
+              traffic.current_aadt DESC
+     LIMIT 1`,
+    [parcel.object_id, 750 / FEET_PER_METER, FEET_PER_METER],
+  );
+  const nearestHighTrafficRoad = trafficRows[0] || null;
   const { rows: zoningRows } = await pool.query(
     `WITH subject AS (
        SELECT geom, ST_PointOnSurface(geom) AS center
@@ -625,6 +644,17 @@ export async function loadSpatialContext(pool, subject, customGeometry) {
       road_class: nearestMajorRoad.road_class,
       mtfcc: nearestMajorRoad.mtfcc,
       distance_feet: rounded(nearestMajorRoad.distance_feet, 0),
+    } : null,
+    nearest_high_traffic_road: nearestHighTrafficRoad ? {
+      name: nearestHighTrafficRoad.route_name,
+      route_prefix: nearestHighTrafficRoad.route_prefix,
+      route_number: nearestHighTrafficRoad.route_number,
+      roadway_type: nearestHighTrafficRoad.roadway_type,
+      annual_average_daily_traffic: Number(nearestHighTrafficRoad.current_aadt),
+      distance_feet: rounded(nearestHighTrafficRoad.distance_feet, 0),
+      source_date: nearestHighTrafficRoad.source_date,
+      synced_at: nearestHighTrafficRoad.synced_at,
+      source: "TxDOT AADT",
     } : null,
     nearest_railroad: nearestRailroad ? {
       name: nearestRailroad.name,
@@ -744,6 +774,15 @@ export async function getPropertyContextStatus(pool) {
     getPropertyInfluenceStatus(pool),
     getZoningSourceRegistry(pool),
   ]);
+  const municipalZoningProviders = zoningProviders.filter(
+    (provider) => provider.provider_type === "official_municipal",
+  );
+  const automatedZoningProviders = municipalZoningProviders.filter(
+    (provider) => provider.automation_status === "automatic",
+  );
+  const manualReviewZoningProviders = municipalZoningProviders.filter(
+    (provider) => provider.automation_status === "manual_review",
+  );
   return {
     ok: true,
     offline_first: true,
@@ -754,6 +793,21 @@ export async function getPropertyContextStatus(pool) {
     unavailable_source_count: sources.filter((source) => !source.usable).length,
     influence_context: influenceStatus,
     zoning_source_hierarchy: zoningProviders,
+    zoning_coverage: {
+      county: "Dallas",
+      municipality_count: municipalZoningProviders.length,
+      automated_source_count: automatedZoningProviders.length,
+      current_source_count: automatedZoningProviders.filter(
+        (provider) => provider.status === "current",
+      ).length,
+      pending_initial_sync_count: automatedZoningProviders.filter(
+        (provider) => provider.status !== "current",
+      ).length,
+      manual_review_count: manualReviewZoningProviders.length,
+      manual_review_jurisdictions: manualReviewZoningProviders.map(
+        (provider) => provider.jurisdiction,
+      ),
+    },
     checked_at: new Date().toISOString(),
   };
 }

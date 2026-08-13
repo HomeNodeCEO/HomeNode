@@ -13,9 +13,10 @@ test("routine maintenance refreshes cached parcel influences but excludes slower
 test("maintenance tasks can be scheduled independently", () => {
   assert.deepEqual(resolveMaintenanceTasks("roads"), ["roads"]);
   assert.deepEqual(resolveMaintenanceTasks("census"), ["census"]);
-  assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "floods", "zoning", "influences"]);
+  assert.deepEqual(resolveMaintenanceTasks("traffic"), ["traffic"]);
+  assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "traffic", "floods", "zoning", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("all"), [
-    "census", "locations", "parcels", "roads", "floods", "zoning", "influences",
+    "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
   ]);
 });
 

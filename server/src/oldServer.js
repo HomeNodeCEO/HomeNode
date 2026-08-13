@@ -109,6 +109,11 @@ import {
 } from "./services/propertyContext.js";
 import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
 import {
+  getPropertyZoningEvidence,
+  getZoningDocumentContent,
+  savePropertyZoningVerification,
+} from "./services/zoningEvidence.js";
+import {
   enqueuePropertyInfluenceAccounts,
   getPropertyInfluenceContexts,
 } from "./services/propertyInfluenceStore.js";
@@ -3017,6 +3022,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
         ON location.account_id = sale.primary_account_id
       LEFT JOIN gis.property_influence_contexts candidate_influence
         ON candidate_influence.account_id = sale.primary_account_id
+       AND candidate_influence.methodology_version >= 3
       LEFT JOIN app.property_attribute_manual_values manual_report
         ON manual_report.account_id = sale.primary_account_id
        AND manual_report.attribute_key = 'report.property_characteristics'
@@ -3255,11 +3261,6 @@ app.get("/api/sales/recommendations", async (req, res) => {
           ? "influence_support"
           : "primary_similarity",
     }));
-    // TODO(secondary-comparable-grid): When the dedicated secondary sales grid
-    // is added, route influence_support candidates that are weaker on physical
-    // similarity into that grid while preserving their defining influence and
-    // explanation. They remain eligible for the primary grid today because the
-    // appraiser requested influence similarity as the first ranking tier.
     rankedScoped.forEach((candidate, index) => {
       candidate.score_rank = index + 1;
     });
@@ -3279,12 +3280,15 @@ app.get("/api/sales/recommendations", async (req, res) => {
     );
     const analyzedSales = outlierResult.sales;
     const recommendedSales = analyzedSales.filter((sale) => sale.recommended);
-    const competitiveSales = analyzedSales.filter(
+    const secondarySales = analyzedSales.filter(
       (sale) =>
         sale.insideAnalysisPeriod &&
-        sale.soldWithinOneYear &&
         sale.housingTypeCompatible !== false &&
         !sale.recommended,
+    ).sort((left, right) =>
+      Number(Boolean(right.influence_support_candidate)) - Number(Boolean(left.influence_support_candidate)) ||
+      Number(right.influence_similarity?.priority_tier || 0) - Number(left.influence_similarity?.priority_tier || 0) ||
+      Number(right.comparableScore || 0) - Number(left.comparableScore || 0),
     );
 
     const marketLabel = !marketBreakdown
@@ -3398,7 +3402,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
         label: marketLabel,
       },
       recommended_sales: recommendedSales,
-      competitive_sales: competitiveSales.slice(0, resultLimit),
+      secondary_sales: secondarySales.slice(0, resultLimit),
+      competitive_sales: secondarySales.slice(0, resultLimit),
       sales: analyzedSales.slice(0, resultLimit),
     });
   } catch (err) {
@@ -4584,6 +4589,78 @@ app.patch("/api/accounts/:id/property-context", async (req, res) => {
     const message = error?.message || "property_context_review_failed";
     console.error("/api/accounts/:id/property-context review failed", error);
     res.status(propertyContextErrorStatus(message)).json({ error: message });
+  }
+});
+
+/** Load the correct official zoning evidence and review contact for a subject. */
+app.get("/api/accounts/:id/zoning-evidence", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    await ensurePropertyContextAvailable();
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.query.assignment_file_id);
+    const evidence = await getPropertyZoningEvidence(pool, { accountId, assignmentFileId });
+    res.json({ ok: true, account_id: accountId, evidence });
+  } catch (error) {
+    const message = error?.message || "zoning_evidence_lookup_failed";
+    res.status(message === "account_not_found" ? 404 : 500).json({ error: message });
+  }
+});
+
+/** Stream the immutable cached PDF inline; old versions remain auditable. */
+app.get("/api/zoning-source-documents/:id/content", async (req, res) => {
+  const documentId = Number(req.params.id);
+  if (!Number.isInteger(documentId) || documentId < 1) {
+    return res.status(400).json({ error: "invalid_zoning_document_id" });
+  }
+  try {
+    await ensurePropertyContextAvailable();
+    const document = await getZoningDocumentContent(pool, documentId);
+    if (!document) return res.status(404).json({ error: "zoning_document_not_found" });
+    res.set({
+      "Content-Type": document.content_type || "application/pdf",
+      "Content-Disposition": `inline; filename="zoning-evidence-${document.id}.pdf"`,
+      ETag: `"${document.checksum_sha256}"`,
+      "Cache-Control": "private, max-age=86400, immutable",
+      "X-Content-Type-Options": "nosniff",
+    });
+    return res.send(document.content);
+  } catch (error) {
+    console.error("zoning document stream failed", error);
+    return res.status(500).json({ error: "zoning_document_stream_failed" });
+  }
+});
+
+/** Save an appraiser-confirmed zoning result with its source and reviewer. */
+app.put("/api/accounts/:id/zoning-verification", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (!configuredEditorKey) {
+    return res.status(503).json({ error: "zoning_editor_not_configured" });
+  }
+  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return res.status(401).json({ error: "invalid_editor_key" });
+  }
+  try {
+    await ensurePropertyContextAvailable();
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.body?.assignment_file_id);
+    const verification = await savePropertyZoningVerification(pool, {
+      accountId,
+      assignmentFileId,
+      input: req.body,
+    });
+    return res.json({ ok: true, account_id: accountId, verification });
+  } catch (error) {
+    const message = error?.message || "zoning_verification_failed";
+    const clientErrors = new Set([
+      "invalid_zoning_jurisdiction",
+      "zoning_code_required",
+      "zoning_reviewer_required",
+      "invalid_zoning_source_type",
+      "invalid_zoning_source_document",
+    ]);
+    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
   }
 });
 

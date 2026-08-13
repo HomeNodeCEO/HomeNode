@@ -5,6 +5,7 @@ import {
   isDcadParcelBuiltUp,
 } from "./neighborhoodLandUse.js";
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
+import { OFFICIAL_ZONING_SOURCES } from "./propertyZoningSources.js";
 
 export const DCAD_PARCEL_SYNC_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
@@ -12,6 +13,8 @@ export const TIGER_ROAD_SERVICE_URL =
   "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation_LargeScale/MapServer";
 export const FEMA_NFHL_QUERY_URL =
   "https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28/query";
+export const TXDOT_AADT_QUERY_URL =
+  "https://services.arcgis.com/KTcxiTD9dsQw4r7Z/arcgis/rest/services/TxDOT_AADT/FeatureServer/0/query";
 
 const DCAD_SYNC_FIELDS = [
   "OBJECTID",
@@ -37,6 +40,7 @@ const DCAD_SYNC_FIELDS = [
 
 const ROAD_FIELDS = "OBJECTID,OID,NAME,BASENAME,MTFCC,RTTYP";
 const FEMA_NFHL_FIELDS = "OBJECTID,GFID,DFIRM_ID,FLD_AR_ID,FLD_ZONE,ZONE_SUBTY,SFHA_TF,STATIC_BFE,SOURCE_CIT";
+const TXDOT_AADT_FIELDS = "OBJECTID,RTE_NM,RTE_PRFX,RTE_NBR,RDBD_TYPE,AADT_CUR,EXT_DATE";
 const DALLAS_COUNTY_QUERY_ENVELOPE = Object.freeze({
   xmin: -97.05,
   ymin: 32.50,
@@ -70,29 +74,6 @@ export function deduplicateSourceRecords(records = []) {
     records.map((record) => [`${record.source_key}:${record.source_record_id}`, record]),
   ).values()];
 }
-const OFFICIAL_ZONING_SOURCES = Object.freeze([
-  {
-    providerKey: "city_dallas_official",
-    sourceKey: "zoning_city_dallas_official",
-    label: "City of Dallas official zoning GIS",
-    jurisdiction: "Dallas",
-    url: "https://gis.dallascityhall.com/arcgis/rest/services/sdc_public/Zoning/MapServer/15/query",
-    outFields: "OBJECTID,GLOBALID,ZONE_DIST,LONG_ZONE_DIST,PD_NUM,CD_NUM,DISTRICTUSE,EFFECTIVEDATE",
-    zoningCodeFields: ["LONG_ZONE_DIST", "ZONE_DIST"],
-    descriptionFields: ["DISTRICTUSE"],
-  },
-  {
-    providerKey: "city_garland_official",
-    sourceKey: "zoning_city_garland_official",
-    label: "City of Garland official zoning GIS",
-    jurisdiction: "Garland",
-    url: "https://maps.garlandtx.gov/arcgis/rest/services/CityMap_Other/GDC_Zoning/MapServer/1/query",
-    outFields: "OBJECTID,PD_NUM,GDC_ZONING,ORD_NO,BASE_ZONE,MISC",
-    zoningCodeFields: ["BASE_ZONE", "GDC_ZONING"],
-    descriptionFields: ["MISC"],
-  },
-]);
-
 function chunks(values, size) {
   const result = [];
   for (let index = 0; index < values.length; index += size) {
@@ -117,9 +98,14 @@ function text(value) {
 }
 
 function sourceDate(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
   const numericValue = Number(value);
   if (Number.isFinite(numericValue) && numericValue > 0) {
     return new Date(numericValue).toISOString();
+  }
+  const monthDayYear = String(value || "").match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (monthDayYear) {
+    return new Date(`${monthDayYear[3]}-${monthDayYear[1]}-${monthDayYear[2]}T00:00:00.000Z`).toISOString();
   }
   const parsed = new Date(value || 0);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
@@ -286,6 +272,27 @@ export function normalizeRoadFeature(feature, { runId, sourceLayer, roadClass, s
   return { ...normalized, source_record_hash: recordHash(normalized) };
 }
 
+export function normalizeTrafficVolumeFeature(feature, runId) {
+  const attributes = feature?.properties || feature?.attributes || {};
+  const objectId = integer(attributes.OBJECTID ?? feature?.id);
+  const geometry = geoJsonGeometry(feature);
+  if (!objectId || !geometry || !["LineString", "MultiLineString"].includes(geometry.type)) return null;
+  const normalized = {
+    source_key: "txdot_aadt",
+    source_object_id: objectId,
+    route_name: text(attributes.RTE_NM),
+    route_prefix: text(attributes.RTE_PRFX),
+    route_number: text(attributes.RTE_NBR),
+    roadway_type: text(attributes.RDBD_TYPE),
+    current_aadt: integer(attributes.AADT_CUR),
+    source_date: sourceDate(attributes.EXT_DATE),
+    source_attributes: attributes,
+    sync_run_id: runId,
+    geometry,
+  };
+  return { ...normalized, source_record_hash: recordHash(normalized) };
+}
+
 function firstText(attributes, fields) {
   for (const field of fields || []) {
     const value = text(attributes[field]);
@@ -334,7 +341,11 @@ export function normalizeFemaFloodFeature(feature, runId) {
 export function normalizeOfficialZoningFeature(feature, runId, source) {
   const attributes = feature?.properties || feature?.attributes || {};
   const geometry = geoJsonGeometry(feature);
-  const sourceRecordId = text(attributes.GLOBALID) || text(attributes.OBJECTID ?? feature?.id);
+  const rawSourceRecordId = firstText(attributes, source.sourceIdFields) ||
+    text(attributes.GLOBALID) || text(attributes.OBJECTID ?? feature?.id);
+  const sourceRecordId = rawSourceRecordId && source.sourceRecordPrefix
+    ? `${source.sourceRecordPrefix}:${rawSourceRecordId}`
+    : rawSourceRecordId;
   if (!sourceRecordId || !geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) {
     return null;
   }
@@ -349,7 +360,9 @@ export function normalizeOfficialZoningFeature(feature, runId, source) {
     generalized_use: generalizedZoningUse(zoningCode, zoningDescription),
     overlays: [],
     source_attributes: attributes,
-    source_updated_at: sourceDate(attributes.EFFECTIVEDATE),
+    source_updated_at: sourceDate(
+      firstText(attributes, source.sourceUpdatedFields) || attributes.EFFECTIVEDATE,
+    ),
     sync_run_id: runId,
     geometry,
   };
@@ -594,6 +607,49 @@ async function upsertRoadSegments(pool, roads) {
        synced_at = now(),
        geom = EXCLUDED.geom`,
     [JSON.stringify(roads)],
+  );
+  return rowCount || 0;
+}
+
+async function upsertTrafficVolumeSegments(pool, records) {
+  if (!records.length) return 0;
+  const { rowCount } = await pool.query(
+    `WITH source AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
+         source_key text, source_object_id bigint, route_name text,
+         route_prefix text, route_number text, roadway_type text,
+         current_aadt integer, source_date timestamptz,
+         source_attributes jsonb, source_record_hash text,
+         sync_run_id uuid, geometry jsonb
+       )
+     ), prepared AS (
+       SELECT source.*,
+              ST_Multi(ST_CollectionExtract(ST_MakeValid(
+                ST_SetSRID(ST_GeomFromGeoJSON(source.geometry::text), 4326)
+              ), 2))::geometry(MultiLineString,4326) AS geom
+       FROM source
+     )
+     INSERT INTO gis.traffic_volume_segments (
+       source_key, source_object_id, route_name, route_prefix, route_number,
+       roadway_type, current_aadt, source_date, source_attributes,
+       source_record_hash, sync_run_id, synced_at, geom
+     )
+     SELECT source_key, source_object_id, route_name, route_prefix, route_number,
+            roadway_type, current_aadt, source_date, source_attributes,
+            source_record_hash, sync_run_id, now(), geom
+     FROM prepared WHERE NOT ST_IsEmpty(geom)
+     ON CONFLICT (source_key, source_object_id) DO UPDATE SET
+       route_name = EXCLUDED.route_name,
+       route_prefix = EXCLUDED.route_prefix,
+       route_number = EXCLUDED.route_number,
+       roadway_type = EXCLUDED.roadway_type,
+       current_aadt = EXCLUDED.current_aadt,
+       source_date = EXCLUDED.source_date,
+       source_attributes = EXCLUDED.source_attributes,
+       source_record_hash = EXCLUDED.source_record_hash,
+       sync_run_id = EXCLUDED.sync_run_id,
+       synced_at = now(), geom = EXCLUDED.geom`,
+    [JSON.stringify(records)],
   );
   return rowCount || 0;
 }
@@ -907,6 +963,72 @@ export async function syncTigerRoadContext(pool, {
   return results;
 }
 
+export async function syncTxdotTrafficContext(pool, {
+  fetchImpl = fetch,
+  batchSize = 1_000,
+  concurrency = DEFAULT_FETCH_CONCURRENCY,
+  sourceVintage = "current",
+  logger = console,
+} = {}) {
+  await ensurePropertyContextSchema(pool);
+  const sourceKey = "txdot_aadt";
+  const runId = await startRun(pool, {
+    sourceKey,
+    sourceLabel: "TxDOT annual average daily traffic",
+    sourceUrl: TXDOT_AADT_QUERY_URL,
+    sourceVintage,
+    mode: "full",
+  });
+  try {
+    const objectIds = await fetchArcGisObjectIds(TXDOT_AADT_QUERY_URL, {
+      geometry: DALLAS_COUNTY_QUERY_ENVELOPE,
+      fetchImpl,
+    });
+    if (objectIds.length < 1_000) {
+      throw new Error(`property_context_txdot_aadt_full_sync_incomplete_${objectIds.length}`);
+    }
+    logger.log(`[property-context] TxDOT AADT sync found ${objectIds.length.toLocaleString()} object ids`);
+    const progress = await fetchAndWriteBatches({
+      objectIds,
+      batchSize,
+      concurrency,
+      fetchBatch: (ids) => fetchArcGisFeatures(TXDOT_AADT_QUERY_URL, {
+        objectIds: ids,
+        outFields: TXDOT_AADT_FIELDS,
+        fetchImpl,
+      }),
+      normalizeFeature: (feature) => normalizeTrafficVolumeFeature(feature, runId),
+      writeBatch: (records) => upsertTrafficVolumeSegments(pool, records),
+      onCheckpoint: (checkpoint) => updateRunCheckpoint(
+        pool, runId, sourceKey, checkpoint, checkpoint.seen, checkpoint.written,
+      ),
+    });
+    const deletedResult = await pool.query(
+      "DELETE FROM gis.traffic_volume_segments WHERE source_key = $1 AND sync_run_id IS DISTINCT FROM $2",
+      [sourceKey, runId],
+    );
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::bigint AS count, MAX(source_date) AS max_source_date
+       FROM gis.traffic_volume_segments WHERE source_key = $1`,
+      [sourceKey],
+    );
+    await completeRun(pool, {
+      runId,
+      sourceKey,
+      rowCount: Number(rows[0]?.count || 0),
+      seen: progress.seen,
+      written: progress.written,
+      deleted: deletedResult.rowCount || 0,
+      lastSourceUpdateAt: rows[0]?.max_source_date || null,
+      metadata: { envelope: DALLAS_COUNTY_QUERY_ENVELOPE, authoritative: true },
+    });
+    return { source_key: sourceKey, run_id: runId, mode: "full", deleted: deletedResult.rowCount || 0, ...progress };
+  } catch (error) {
+    await failRun(pool, { runId, sourceKey, error }).catch(() => {});
+    throw error;
+  }
+}
+
 export async function syncFemaFloodContext(pool, {
   fetchImpl = fetch,
   // NFHL polygons can be extremely detailed. Smaller batches avoid transient
@@ -992,31 +1114,54 @@ async function syncOfficialZoningSource(pool, source, {
     mode: "full",
   });
   try {
-    const objectIds = await fetchArcGisObjectIds(source.url, { fetchImpl });
-    if (!objectIds.length) {
+    const querySources = source.queryUrls?.length
+      ? source.queryUrls
+      : [{ url: source.url, recordPrefix: null }];
+    const sourceLayers = [];
+    for (const querySource of querySources) {
+      const objectIds = await fetchArcGisObjectIds(querySource.url, { fetchImpl });
+      sourceLayers.push({ ...querySource, objectIds });
+    }
+    const totalObjectIds = sourceLayers.reduce((sum, layer) => sum + layer.objectIds.length, 0);
+    if (!totalObjectIds) {
       throw new Error(`property_context_${source.sourceKey}_full_sync_empty`);
     }
-    logger.log(`[property-context] ${source.label} sync found ${objectIds.length.toLocaleString()} object ids`);
-    const progress = await fetchAndWriteBatches({
-      objectIds,
-      batchSize,
-      concurrency,
-      fetchBatch: (ids) => fetchArcGisFeatures(source.url, {
-        objectIds: ids,
-        outFields: source.outFields,
-        fetchImpl,
-      }),
-      normalizeFeature: (feature) => normalizeOfficialZoningFeature(feature, runId, source),
-      writeBatch: (records) => upsertZoningDistricts(pool, records),
-      onCheckpoint: (checkpoint) => updateRunCheckpoint(
-        pool,
-        runId,
-        source.sourceKey,
-        checkpoint,
-        checkpoint.seen,
-        checkpoint.written,
-      ),
-    });
+    logger.log(`[property-context] ${source.label} sync found ${totalObjectIds.toLocaleString()} object ids`);
+    const progress = { seen: 0, written: 0 };
+    for (const layer of sourceLayers) {
+      const completedBefore = { ...progress };
+      const layerProgress = await fetchAndWriteBatches({
+        objectIds: layer.objectIds,
+        batchSize,
+        concurrency,
+        fetchBatch: (ids) => fetchArcGisFeatures(layer.url, {
+          objectIds: ids,
+          outFields: source.outFields,
+          fetchImpl,
+        }),
+        normalizeFeature: (feature) => normalizeOfficialZoningFeature(feature, runId, {
+          ...source,
+          sourceRecordPrefix: layer.recordPrefix || null,
+        }),
+        writeBatch: (records) => upsertZoningDistricts(pool, records),
+        onCheckpoint: (checkpoint) => updateRunCheckpoint(
+          pool,
+          runId,
+          source.sourceKey,
+          {
+            ...checkpoint,
+            layer_url: layer.url,
+            layer_record_prefix: layer.recordPrefix || null,
+            seen: completedBefore.seen + checkpoint.seen,
+            written: completedBefore.written + checkpoint.written,
+          },
+          completedBefore.seen + checkpoint.seen,
+          completedBefore.written + checkpoint.written,
+        ),
+      });
+      progress.seen += layerProgress.seen;
+      progress.written += layerProgress.written;
+    }
     const deletedResult = await pool.query(
       "DELETE FROM gis.zoning_districts WHERE provider_key = $1 AND sync_run_id IS DISTINCT FROM $2",
       [source.providerKey, runId],
@@ -1058,16 +1203,28 @@ export async function syncOfficialZoningContext(pool, {
   batchSize = 1_000,
   concurrency = 2,
   logger = console,
+  continueOnError = true,
 } = {}) {
   await ensurePropertyContextSchema(pool);
   const results = [];
   for (const source of OFFICIAL_ZONING_SOURCES) {
-    results.push(await syncOfficialZoningSource(pool, source, {
-      fetchImpl,
-      batchSize,
-      concurrency,
-      logger,
-    }));
+    try {
+      results.push(await syncOfficialZoningSource(pool, source, {
+        fetchImpl,
+        batchSize,
+        concurrency,
+        logger,
+      }));
+    } catch (error) {
+      if (!continueOnError) throw error;
+      logger.error?.(`[property-context] ${source.label} sync failed; retained last usable data`, error);
+      results.push({
+        source_key: source.sourceKey,
+        mode: "full",
+        status: "failed",
+        error: String(error?.message || error),
+      });
+    }
   }
   return results;
 }

@@ -8,6 +8,7 @@ import {
   normalizeFemaFloodFeature,
   normalizeOfficialZoningFeature,
   normalizeRoadFeature,
+  normalizeTrafficVolumeFeature,
   syncDcadPropertyContext,
   tigerRoadOutFields,
 } from "../src/services/propertyContextSync.js";
@@ -75,6 +76,28 @@ test("road normalization retains the named road and source class", () => {
   assert.equal(record.name, "N GARLAND AVE");
   assert.equal(record.road_class, "secondary");
   assert.equal(record.source_vintage, "2025");
+});
+
+test("TxDOT traffic normalization retains authoritative traffic volume and route evidence", () => {
+  const record = normalizeTrafficVolumeFeature({
+    type: "Feature",
+    id: 19,
+    properties: {
+      OBJECTID: 19,
+      RTE_NM: "SH0078-KG",
+      RTE_PRFX: "SH",
+      RTE_NBR: "78",
+      RDBD_TYPE: "KG",
+      AADT_CUR: 42_750,
+      EXT_DATE: "08-10-2026",
+    },
+    geometry: { type: "LineString", coordinates: [[-96.7, 32.9], [-96.69, 32.91]] },
+  }, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+
+  assert.equal(record.source_key, "txdot_aadt");
+  assert.equal(record.current_aadt, 42_750);
+  assert.equal(record.route_number, "78");
+  assert.equal(record.source_date, "2026-08-10T00:00:00.000Z");
 });
 
 test("railroad sync requests only fields exposed by the TIGER railroad layer", () => {

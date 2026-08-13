@@ -1,6 +1,7 @@
 const MATERIAL_INFLUENCE_CATEGORIES = Object.freeze([
   "external_use",
   "major_road",
+  "traffic_volume",
   "railroad",
   "flood",
   "corner",
@@ -102,6 +103,28 @@ export function buildPropertyInfluenceSignature(spatialContext = {}) {
     descriptors.push(`${majorRoadClass} road ${majorRoadBand.replaceAll("_", " ")}`);
   }
 
+  const trafficRoad = spatialContext.nearest_high_traffic_road;
+  const trafficCount = finiteNumber(trafficRoad?.annual_average_daily_traffic);
+  const trafficBand = trafficCount === null
+    ? null
+    : trafficCount >= 50000
+      ? "very_high"
+      : trafficCount >= 25000
+        ? "high"
+        : trafficCount >= 10000
+          ? "moderate"
+          : null;
+  const trafficDistanceBand = proximityBand(trafficRoad?.distance_feet, [
+    { key: "within_100ft", maximum: 100 },
+    { key: "within_300ft", maximum: 300 },
+    { key: "within_500ft", maximum: 500 },
+    { key: "within_750ft", maximum: 750 },
+  ]);
+  if (trafficBand && trafficDistanceBand) {
+    materialKeys.push(`traffic_volume:${trafficBand}:${trafficDistanceBand}`);
+    descriptors.push(`${trafficBand.replaceAll("_", " ")} traffic ${trafficDistanceBand.replaceAll("_", " ")}`);
+  }
+
   const railroad = spatialContext.nearest_railroad;
   const railroadBand = proximityBand(railroad?.distance_feet, [
     { key: "within_250ft", maximum: 250 },
@@ -141,7 +164,7 @@ export function buildPropertyInfluenceSignature(spatialContext = {}) {
   const contextAvailable = spatialContext.parcel_available === true;
 
   return {
-    methodology_version: 2,
+    methodology_version: 3,
     context_available: contextAvailable,
     material_influence_present: sortedMaterialKeys.length > 0,
     material_keys: sortedMaterialKeys,

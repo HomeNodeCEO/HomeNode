@@ -222,8 +222,27 @@ export function buildPropertyComplexityAssessment({
     });
   }
   const nearestMajorRoad = spatialContext.nearest_major_road;
+  const nearestHighTrafficRoad = spatialContext.nearest_high_traffic_road;
+  const trafficDistance = finiteNumber(nearestHighTrafficRoad?.distance_feet);
+  const trafficVolume = finiteNumber(nearestHighTrafficRoad?.annual_average_daily_traffic);
   const majorRoadDistance = finiteNumber(nearestMajorRoad?.distance_feet);
-  if (majorRoadDistance !== null && majorRoadDistance <= 300) {
+  if (trafficDistance !== null && trafficVolume !== null && trafficDistance <= 500) {
+    const points = trafficVolume >= 50000 && trafficDistance <= 150
+      ? 24
+      : trafficVolume >= 25000 && trafficDistance <= 300
+        ? 16
+        : trafficVolume >= 10000 && trafficDistance <= 300
+          ? 10
+          : 6;
+    addFactor({
+      code: "measured_traffic_influence",
+      label: "Measured traffic-volume influence",
+      severity: points >= 16 ? "high" : points >= 10 ? "moderate" : "low",
+      points,
+      detail: `${nearestHighTrafficRoad.name || "A measured roadway"} is approximately ${Math.round(trafficDistance).toLocaleString()} feet from the parcel and carries about ${Math.round(trafficVolume).toLocaleString()} vehicles per day (TxDOT AADT).`,
+      evidence: nearestHighTrafficRoad,
+    }, points >= 16 ? "moderate" : null);
+  } else if (majorRoadDistance !== null && majorRoadDistance <= 300) {
     const primary = nearestMajorRoad.road_class === "primary";
     const points = primary && majorRoadDistance <= 150 ? 20 : majorRoadDistance <= 100 ? 12 : 7;
     addFactor({
@@ -308,7 +327,7 @@ export function buildPropertyComplexityAssessment({
       : "limited";
 
   return {
-    methodology_version: 1,
+    methodology_version: 2,
     computed_at: computedAt,
     automatic_complexity: automaticLevel,
     effective_complexity: automaticLevel,

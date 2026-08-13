@@ -811,6 +811,7 @@ export interface ComparableRecommendationsResponse {
     label: string;
   };
   recommended_sales: SaleRow[];
+  secondary_sales: SaleRow[];
   competitive_sales: SaleRow[];
   sales: SaleRow[];
 }
@@ -1500,6 +1501,17 @@ export interface PropertyComplexityAssessment {
       name: string | null;
       distance_feet: number;
     } | null;
+    nearest_high_traffic_road?: {
+      name: string | null;
+      route_prefix: string | null;
+      route_number: string | null;
+      roadway_type: string | null;
+      annual_average_daily_traffic: number;
+      distance_feet: number;
+      source_date: string | null;
+      synced_at: string | null;
+      source: 'TxDOT AADT';
+    } | null;
     zoning_context?: Record<string, unknown> | null;
     flood_context?: Record<string, unknown> | null;
     adjacent_influences: Array<Record<string, unknown>>;
@@ -1549,12 +1561,125 @@ export interface PropertyContextStatusResponse {
     jurisdiction: string;
     priority: number;
     status: string;
+    service_url?: string | null;
+    service_layer?: number | null;
+    configuration?: Record<string, unknown>;
+    automation_status?: 'automatic' | 'manual_review';
     configured: boolean;
     request_path_dependency: false;
     last_success_at: string | null;
     last_error: string | null;
   }>;
+  zoning_coverage?: {
+    county: 'Dallas';
+    municipality_count: number;
+    automated_source_count: number;
+    current_source_count: number;
+    pending_initial_sync_count: number;
+    manual_review_count: number;
+    manual_review_jurisdictions: string[];
+  };
   checked_at: string;
+}
+
+export interface ZoningEvidenceDocument {
+  id: number;
+  provider_key: string;
+  document_key: string;
+  title: string;
+  official_url: string;
+  content_type: string;
+  checksum_sha256: string;
+  file_size_bytes: number;
+  page_count: number | null;
+  extraction_status: 'machine_readable' | 'review_required' | 'extraction_failed';
+  fetched_at: string;
+  source_last_modified: string | null;
+  content_url: string;
+}
+
+export interface ZoningVerification {
+  id: number;
+  account_id: string;
+  assignment_file_id: number | null;
+  provider_key: string;
+  source_document_id: number | null;
+  source_type: 'map_pdf' | 'interactive_map' | 'city_confirmation' | 'official_gis' | 'manual';
+  zoning_code: string;
+  zoning_description: string | null;
+  page_number: number | null;
+  confirmation_reference: string | null;
+  notes: string | null;
+  reviewer: string;
+  verified_at: string;
+}
+
+export interface PropertyZoningEvidence {
+  account: { account_id: string; address: string | null; city: string | null; county: string | null };
+  jurisdiction: {
+    city: string;
+    provider_key: string;
+    provider_label: string;
+    automation_status: 'automatic' | 'manual_review';
+    reference_url: string | null;
+    contact: {
+      department: string;
+      contactName?: string | null;
+      phone: string | null;
+      email: string | null;
+      address: string | null;
+      sourceUrl: string;
+    } | null;
+  } | null;
+  review_required: boolean;
+  review_reason: string | null;
+  documents: ZoningEvidenceDocument[];
+  automatic_result: {
+    zoning_code: string | null;
+    zoning_description: string | null;
+    provider_key: string;
+    source_updated_at: string | null;
+    synced_at: string;
+  } | null;
+  verification: ZoningVerification | null;
+}
+
+export async function getPropertyZoningEvidence(
+  accountId: string,
+  assignmentFileId?: number | null,
+): Promise<{ ok: true; account_id: string; evidence: PropertyZoningEvidence }> {
+  return fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(String(accountId || '').trim())}/zoning-evidence`,
+    { assignment_file_id: assignmentFileId || undefined },
+  ));
+}
+
+export async function savePropertyZoningVerification(
+  accountId: string,
+  input: {
+    assignment_file_id?: number | null;
+    jurisdiction_city: string;
+    source_document_id?: number | null;
+    source_type: ZoningVerification['source_type'];
+    zoning_code: string;
+    zoning_description?: string;
+    page_number?: number | null;
+    confirmation_reference?: string;
+    notes?: string;
+    reviewer: string;
+  },
+  editorKey: string,
+): Promise<{ ok: true; account_id: string; verification: ZoningVerification }> {
+  return fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(String(accountId || '').trim())}/zoning-verification`,
+  ), {
+    method: 'PUT',
+    headers: {
+      'content-type': 'application/json',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: JSON.stringify(input),
+  });
 }
 
 /** Resolve one property's Census tract immediately, ahead of the background queue. */

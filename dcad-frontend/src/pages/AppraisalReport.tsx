@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import * as api from "@/lib/api";
-import type { AppraisalAssignmentFile, AssignmentDetailsPayload, SaleRow } from "@/lib/api";
+import type {
+  AppraisalAssignmentFile,
+  AssignmentDetailsPayload,
+  PropertyComplexityAssessment,
+  SaleRow,
+} from "@/lib/api";
 import type {
   MarketConditionsAnalysis,
   MarketConditionsSeriesPoint,
@@ -58,6 +63,7 @@ type Detail = {
   sales_history?: Array<Record<string, unknown>>;
   homestead_yes?: boolean;
   photos?: string[];
+  property_context?: PropertyComplexityAssessment | null;
 };
 
 const EMPTY_ADJUSTMENTS = {
@@ -269,7 +275,7 @@ function PageHeader({
       <div className="report-page-meta">
         <strong>Draft</strong>
         <span>{address}</span>
-        <span>Page {page} of 6</span>
+        <span>Page {page} of 8</span>
       </div>
     </header>
   );
@@ -499,6 +505,7 @@ export default function AppraisalReport() {
     .join(", ");
   const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(neighborhoodDetails);
   const landUseTotal = neighborhoodLandUseTotal(neighborhoodDetails);
+  const propertyContext = detail.property_context || null;
 
   const printReport = () => {
     if (assignmentLoading) {
@@ -1192,7 +1199,101 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={3} title="Neighborhood Characteristics" address={address} />
+          <PageHeader page={3} title="Property Context & Complexity" address={address} />
+          {propertyContext ? (
+            <>
+              <section className="report-section">
+                <h2 className="report-section-title">Complexity Determination</h2>
+                <div className="report-facts">
+                  <Fact label="Automatic Recommendation" value={`${propertyContext.automatic_complexity} (${propertyContext.score}/100)`} />
+                  <Fact label="Effective Complexity" value={propertyContext.effective_complexity} />
+                  <Fact label="Confidence" value={propertyContext.confidence} />
+                  <Fact label="Search Profile" value={propertyContext.recommended_search_profile.replaceAll("_", " - ")} />
+                  <Fact label="Geography" value={propertyContext.geography.replaceAll("_", " ")} />
+                  <Fact label="Peer Properties" value={propertyContext.peer_statistics.peer_count} />
+                  <Fact label="Review Status" value={propertyContext.review_status} />
+                  <Fact label="Computed" value={dateText(propertyContext.computed_at)} />
+                </div>
+              </section>
+
+              <section className="report-section">
+                <h2 className="report-section-title">Measured Complexity Factors</h2>
+                {propertyContext.factors.length ? (
+                  <div className="report-table-wrap">
+                    <table className="report-table">
+                      <thead><tr><th>Factor</th><th>Severity</th><th className="numeric">Points</th><th style={{ width: "55%" }}>Evidence</th></tr></thead>
+                      <tbody>
+                        {propertyContext.factors.map((factor) => (
+                          <tr key={factor.code}>
+                            <td>{factor.label}</td>
+                            <td>{factor.severity}</td>
+                            <td className="numeric">{factor.points}</td>
+                            <td>{factor.detail}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="report-note">No measured factor currently raises the automatic complexity score.</div>
+                )}
+              </section>
+
+              <section className="report-section">
+                <h2 className="report-section-title">Location Evidence</h2>
+                <div className="report-facts">
+                  <Fact label="Parcel Match" value={propertyContext.spatial_context.parcel_match_method} />
+                  <Fact label="Site Percentile" value={percent(propertyContext.spatial_context.site_percentile)} />
+                  <Fact label="Corner Lot" value={booleanText(propertyContext.spatial_context.corner_lot)} />
+                  <Fact label="Road Frontages" value={propertyContext.spatial_context.road_frontages.join(", ")} />
+                  <Fact label="Nearest Major Road" value={propertyContext.spatial_context.nearest_major_road ? `${text(propertyContext.spatial_context.nearest_major_road.name)} - ${count(propertyContext.spatial_context.nearest_major_road.distance_feet, " ft.")}` : null} wide />
+                  <Fact label="Measured Traffic" value={propertyContext.spatial_context.nearest_high_traffic_road ? `${text(propertyContext.spatial_context.nearest_high_traffic_road.name)} - ${count(propertyContext.spatial_context.nearest_high_traffic_road.annual_average_daily_traffic, " vehicles/day")} at ${count(propertyContext.spatial_context.nearest_high_traffic_road.distance_feet, " ft.")}` : null} wide />
+                  <Fact label="Nearest Railroad" value={propertyContext.spatial_context.nearest_railroad ? `${text(propertyContext.spatial_context.nearest_railroad.name)} - ${count(propertyContext.spatial_context.nearest_railroad.distance_feet, " ft.")}` : null} wide />
+                  <Fact label="Adjacent External Uses" value={propertyContext.spatial_context.adjacent_influences.length} />
+                  <Fact label="Nearby External Uses" value={propertyContext.spatial_context.nearby_influences.length} />
+                </div>
+              </section>
+
+              <section className="report-section">
+                <h2 className="report-section-title">Source Provenance and Freshness</h2>
+                <div className="report-table-wrap">
+                  <table className="report-table">
+                    <thead><tr><th>Source</th><th>Status</th><th className="numeric">Records</th><th>Last Successful Refresh</th><th>Vintage</th></tr></thead>
+                    <tbody>
+                      {propertyContext.source_health.map((source) => (
+                        <tr key={source.source_key}>
+                          <td>{source.label}</td>
+                          <td>{source.serving_stale_data ? "Stale local copy" : source.status}</td>
+                          <td className="numeric">{source.row_count.toLocaleString()}</td>
+                          <td>{dateText(source.last_success_at)}</td>
+                          <td>{text(source.source_vintage)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              {(propertyContext.warnings.length || propertyContext.appraiser_notes) ? (
+                <section className="report-section">
+                  <h2 className="report-section-title">Appraiser Review and Data Notices</h2>
+                  <div className="report-note">
+                    {propertyContext.appraiser_notes ? <div><strong>Appraiser notes:</strong> {propertyContext.appraiser_notes}</div> : null}
+                    {propertyContext.warnings.map((warning) => <div key={warning}>• {warning}</div>)}
+                  </div>
+                </section>
+              ) : null}
+            </>
+          ) : (
+            <section className="report-section">
+              <div className="report-note">Property context has not been analyzed for this assignment. Complete the local context review before final delivery.</div>
+            </section>
+          )}
+          <PageFooter generatedAt={generatedAt} />
+        </article>
+
+        <article className="report-page">
+          <PageHeader page={4} title="Neighborhood Characteristics" address={address} />
           <section className="report-section">
             <div className={`report-note ${neighborhoodBoundaryErrors.length ? "" : "report-status"}`}>
               <strong>{assignmentFile ? `Appraisal file ${assignmentFile.file_number}` : "No appraisal file selected"}.</strong>{" "}
@@ -1326,7 +1427,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={4} title="Market Conditions" address={address} />
+          <PageHeader page={5} title="Market Conditions" address={address} />
           {marketDraft && marketAnalyses.length ? (
             <>
               <section className="report-section">
@@ -1453,7 +1554,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={5} title="Sales Comparison Approach" address={address} />
+          <PageHeader page={6} title="Sales Comparison Approach" address={address} />
           <section className="report-section">
             <div className="report-note">
               <strong>{salesSource}.</strong>{" "}
@@ -1587,7 +1688,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={6} title="Income Approach" address={address} />
+          <PageHeader page={7} title="Income Approach" address={address} />
           <section className="report-approach-hero">
             <div className="report-status">Preliminary methodology scaffold</div>
             <h2>Income Approach Not Yet Developed</h2>
@@ -1632,7 +1733,7 @@ export default function AppraisalReport() {
         </article>
 
         <article className="report-page">
-          <PageHeader page={7} title="Cost Approach" address={address} />
+          <PageHeader page={8} title="Cost Approach" address={address} />
           <section className="report-approach-hero">
             <div className="report-status">Preliminary methodology scaffold</div>
             <h2>Cost Approach Not Yet Developed</h2>

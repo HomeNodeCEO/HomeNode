@@ -756,7 +756,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       ...salesResults,
       ...(recommendationSummary?.sales || []),
       ...(recommendationSummary?.recommended_sales || []),
-      ...(recommendationSummary?.competitive_sales || []),
+      ...(recommendationSummary?.secondary_sales || recommendationSummary?.competitive_sales || []),
       ...selectedSales.filter((sale): sale is SaleRow => Boolean(sale)),
       ...listingResults,
       ...selectedListings.filter((sale): sale is SaleRow => Boolean(sale)),
@@ -1455,6 +1455,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setRecommendationSummary((current) => current ? {
         ...current,
         recommended_sales: current.recommended_sales.map(withProfile),
+        secondary_sales: current.secondary_sales?.map(withProfile) || [],
         competitive_sales: current.competitive_sales?.map(withProfile) || [],
         sales: current.sales.map(withProfile),
       } : current);
@@ -3709,15 +3710,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
 
-          {recommendationSummary?.competitive_sales?.length > 0 && (
+          {(recommendationSummary?.secondary_sales?.length || recommendationSummary?.competitive_sales?.length) > 0 && (
             <section className="mt-6 rounded-2xl border border-slate-300 bg-slate-50 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold text-slate-950">
-                    Additional Competitive Sales Grid
+                    Secondary Comparable Sales Grid
                   </h3>
                   <p className="mt-1 text-sm text-slate-600">
-                    The next {recommendationSummary.competitive_sales.length} lower-ranked sales from the past year are retained as challengers to the primary six.
+                    {(recommendationSummary.secondary_sales || recommendationSummary.competitive_sales).length} additional sales are retained for appraiser review. Exact influence matches outside the normal search radius are surfaced here even when their physical score is lower.
                   </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
@@ -3738,7 +3739,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     </tr>
                   </thead>
                   <tbody>
-                    {recommendationSummary.competitive_sales.map((sale) => {
+                    {(recommendationSummary.secondary_sales || recommendationSummary.competitive_sales).map((sale) => {
                       const selectedSlot = selectedSales.findIndex(
                         (item) => item && saleKey(item) === saleKey(sale),
                       );
@@ -3756,6 +3757,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                           }`}
                         >
                           <td className="px-3 py-3">
+                            {sale.influence_support_candidate && (
+                              <div className="mb-1 inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-950">
+                                Similar location influence support
+                              </div>
+                            )}
                             <div className="font-semibold text-indigo-950">
                               #{sale.score_rank ?? '—'} · {sale.comparableScore?.toFixed(1) ?? '—'}
                             </div>

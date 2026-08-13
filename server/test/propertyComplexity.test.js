@@ -114,6 +114,36 @@ test("a failed refresh remains usable and tells the appraiser stale data was use
   assert.match(assessment.warnings.join(" "), /most recent locally stored data/i);
 });
 
+test("measured TxDOT traffic volume replaces the road-class proxy when available", () => {
+  const assessment = buildPropertyComplexityAssessment({
+    subject: { gross_living_area_sqft: 2_000, actual_age: 25, site_area_sqft: 8_000, amenities: [] },
+    peerStatistics: {
+      peer_count: 50,
+      gla: { count: 50, percentile: 50 },
+      age: { count: 50, percentile: 50 },
+      site_area: { count: 50, percentile: 50 },
+    },
+    spatialContext: {
+      parcel_available: true,
+      site_percentile: 50,
+      site_comparison_count: 50,
+      adjacent_influences: [],
+      nearby_influences: [],
+      nearest_major_road: { name: "STATE HWY 78", road_class: "primary", distance_feet: 125 },
+      nearest_high_traffic_road: {
+        name: "SH0078-KG",
+        annual_average_daily_traffic: 55_000,
+        distance_feet: 125,
+      },
+    },
+    sourceHealth: [CURRENT_SOURCE],
+  });
+
+  assert.ok(assessment.factors.some((factor) => factor.code === "measured_traffic_influence"));
+  assert.equal(assessment.factors.some((factor) => factor.code === "major_road_influence"), false);
+  assert.equal(assessment.automatic_complexity, "moderate");
+});
+
 test("missing parcel compactness is not treated as an irregular parcel", () => {
   const assessment = buildPropertyComplexityAssessment({
     subject: {

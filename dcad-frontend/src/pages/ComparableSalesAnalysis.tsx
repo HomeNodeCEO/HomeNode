@@ -548,11 +548,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       asOfDate: marketConditionsDraft?.asOfDate,
     };
   }, [marketConditionsDraft]);
+  const appraiserDefinedAdjustmentGeometryKey = useMemo(
+    () => JSON.stringify(appraiserDefinedAdjustmentArea?.geometry || null),
+    [appraiserDefinedAdjustmentArea?.geometry],
+  );
+  const marketConditionsReady = Boolean(marketConditionsDraft);
 
   useEffect(() => {
-    if (!propertyId || !marketConditionsDraft) return;
+    if (!propertyId || !marketConditionsReady) return;
     const geometry = appraiserDefinedAdjustmentArea?.geometry || null;
-    const requestKey = `${propertyId}:${JSON.stringify(geometry)}:${propertyContextRefresh}`;
+    const requestKey = `${propertyId}:${appraiserDefinedAdjustmentGeometryKey}:${propertyContextRefresh}`;
     if (propertyContextRequestRef.current === requestKey) return;
     propertyContextRequestRef.current = requestKey;
     let cancelled = false;
@@ -594,8 +599,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       });
     return () => { cancelled = true; };
   }, [
-    appraiserDefinedAdjustmentArea?.geometry,
-    marketConditionsDraft,
+    appraiserDefinedAdjustmentGeometryKey,
+    marketConditionsReady,
     propertyContextRefresh,
     propertyId,
   ]);

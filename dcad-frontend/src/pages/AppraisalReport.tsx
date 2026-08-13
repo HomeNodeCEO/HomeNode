@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import * as api from "@/lib/api";
 import type { AppraisalAssignmentFile, AssignmentDetailsPayload, SaleRow } from "@/lib/api";
 import type {
@@ -525,9 +525,9 @@ export default function AppraisalReport() {
         <div className="mx-auto max-w-2xl rounded-2xl bg-white p-6 shadow">
           <h1 className="text-xl font-semibold">Appraisal report unavailable</h1>
           <p className="mt-2 text-slate-600">{error || "Property data was not returned."}</p>
-          <Link to="/" className="mt-4 inline-flex rounded-md bg-slate-900 px-4 py-2 text-white">
+          <a href="/" className="mt-4 inline-flex rounded-md bg-slate-900 px-4 py-2 text-white">
             Return to Property Search
-          </Link>
+          </a>
         </div>
       </div>
     );
@@ -903,10 +903,10 @@ export default function AppraisalReport() {
           <div className="text-xs text-slate-500">{address}</div>
         </div>
         <div className="report-toolbar-actions">
-          <Link to={`/report/${encodeURIComponent(propertyId)}`}>Property Report</Link>
-          <Link to={`/ComparableSalesAnalysis?propertyId=${encodeURIComponent(propertyId)}`}>
+          <a href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
+          <a href={`/ComparableSalesAnalysis?propertyId=${encodeURIComponent(propertyId)}`}>
             Sales Comparison
-          </Link>
+          </a>
           <button type="button" className="report-print-button" onClick={printReport}>
             {neighborhoodBoundaryErrors.length ? "Complete Boundary Review" : "Print / Save as PDF"}
           </button>

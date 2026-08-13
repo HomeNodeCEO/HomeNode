@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import * as api from '@/lib/api';
 import {
   readAppraisalReportDraft,
@@ -202,19 +202,19 @@ export default function PropertyTaxProtest() {
             </div>
             <div className="flex flex-wrap gap-2">
               {propertyId && (
-                <Link
-                  to={`/report/${encodeURIComponent(propertyId)}`}
+                <a
+                  href={`/report/${encodeURIComponent(propertyId)}`}
                   className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Back to Property Report
-                </Link>
+                </a>
               )}
-              <Link
-                to={authorizationUrl}
+              <a
+                href={authorizationUrl}
                 className="rounded-md border border-blue-600 bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
               >
                 Begin Authorization Form
-              </Link>
+              </a>
             </div>
           </div>
           {subjectError && (

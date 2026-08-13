@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
 import {
   readAppraisalReportDraft,
@@ -4046,12 +4046,12 @@ function AddressHero({
                       </p>
                     ) : null}
                     {!parcel.is_subject && parcel.in_database ? (
-                      <Link
-                        to={`/report/${encodeURIComponent(parcel.account_id)}`}
+                      <a
+                        href={`/report/${encodeURIComponent(parcel.account_id)}`}
                         className="mt-3 inline-flex text-xs font-semibold text-blue-700 hover:text-blue-900 hover:underline"
                       >
                         Open this parcel&apos;s report →
-                      </Link>
+                      </a>
                     ) : null}
                   </div>
                 ))}
@@ -5066,8 +5066,8 @@ function AddressHero({
         </div>
 
         <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-5 sm:grid-cols-2 xl:grid-cols-5">
-          <Link
-            to={
+          <a
+            href={
               accountId
                 ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`
                 : "#"
@@ -5081,7 +5081,7 @@ function AddressHero({
             }`}
           >
             Sales Comparison Approach
-          </Link>
+          </a>
           <button
             type="button"
             disabled
@@ -5100,15 +5100,15 @@ function AddressHero({
           >
             Income Approach
           </button>
-          <Link
-            to={protestUrl}
+          <a
+            href={protestUrl}
             aria-label="Property Tax Protest"
             className="btn normal-case rounded-md border-blue-600 bg-blue-600 px-4 py-2 text-white hover:border-blue-700 hover:bg-blue-700"
           >
             Property Tax Protest
-          </Link>
-          <Link
-            to={
+          </a>
+          <a
+            href={
               accountId
                 ? `/AppraisalReport?propertyId=${encodeURIComponent(accountId)}${
                     appraisalReportAssignmentFile
@@ -5131,7 +5131,7 @@ function AddressHero({
             }`}
           >
             {neighborhoodBoundaryErrors.length ? "PDF Setup Required" : "Full Appraisal PDF"}
-          </Link>
+          </a>
         </div>
       </div>
       {editingSection ? (

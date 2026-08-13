@@ -560,10 +560,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setPropertyContextError(null);
     void api.getAssignmentFiles(propertyId)
       .catch(() => null)
-      .then((assignmentResponse) => api.analyzePropertyContext(propertyId, {
-        assignmentFileId: assignmentResponse?.latest_file?.id || null,
-        customGeometry: geometry,
-      }))
+      .then(async (assignmentResponse) => {
+        const assignmentFileId = assignmentResponse?.latest_file?.id || null;
+        if (propertyContextRefresh === 0) {
+          const storedAssessment = await api.getPropertyContextAssessment(
+            propertyId,
+            assignmentFileId,
+          ).catch(() => null);
+          if (storedAssessment) return storedAssessment;
+        }
+        return api.analyzePropertyContext(propertyId, {
+          assignmentFileId,
+          customGeometry: geometry,
+        });
+      })
       .then((assessment) => {
         if (cancelled) return;
         setPropertyContextAssessment(assessment);

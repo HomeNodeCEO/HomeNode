@@ -1,6 +1,5 @@
 // src/pages/PropertySearch.tsx (resilient to different api.ts versions)
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
 import * as api from "@/lib/api"; // we'll safely probe for functions at runtime
 import SalesReconciliationQueue from "@/components/SalesReconciliationQueue";
 
@@ -131,7 +130,6 @@ async function requestItems(query: string, city: string, limit = 25): Promise<Se
 }
 
 export default function PropertySearchPage() {
-  const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [city, setCity] = useState("");
   const [results, setResults] = useState<SearchItem[]>([]);
@@ -204,7 +202,7 @@ export default function PropertySearchPage() {
       : undefined;
 
     if (exact) {
-      navigate(`/report/${encodeURIComponent(exact.id)}`);
+      window.location.assign(`/report/${encodeURIComponent(exact.id)}`);
     }
   }
 
@@ -309,9 +307,9 @@ export default function PropertySearchPage() {
             ].includes(qualityStatus);
 
             return (
-              <Link
+              <a
                 key={r.id}
-                to={`/report/${encodeURIComponent(r.id)}`}
+                href={`/report/${encodeURIComponent(r.id)}`}
                 style={{
                   textDecoration: "none",
                   color: "inherit",
@@ -387,7 +385,7 @@ export default function PropertySearchPage() {
                 <div style={{ fontSize: 12, opacity: 0.6 }}>
                   Market Value: {mvDisplay}
                 </div>
-              </Link>
+              </a>
             );
           })}
         </div>

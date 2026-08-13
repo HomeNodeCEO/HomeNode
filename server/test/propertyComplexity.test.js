@@ -114,6 +114,39 @@ test("a failed refresh remains usable and tells the appraiser stale data was use
   assert.match(assessment.warnings.join(" "), /most recent locally stored data/i);
 });
 
+test("missing parcel compactness is not treated as an irregular parcel", () => {
+  const assessment = buildPropertyComplexityAssessment({
+    subject: {
+      gross_living_area_sqft: 1_470,
+      actual_age: 53,
+      site_area_sqft: 7_578,
+      amenities: [],
+    },
+    peerStatistics: {
+      peer_count: 162,
+      gla: { count: 162, percentile: 34 },
+      age: { count: 162, percentile: 70 },
+      site_area: { count: 147, percentile: 73 },
+    },
+    spatialContext: {
+      parcel_available: false,
+      parcel_compactness: null,
+      adjacent_influences: [],
+      nearby_influences: [],
+      corner_lot: false,
+    },
+    sourceHealth: [],
+    geography: "suburban",
+  });
+
+  assert.equal(
+    assessment.factors.some((factor) => factor.code === "irregular_site"),
+    false,
+  );
+  assert.equal(assessment.automatic_complexity, "simple");
+  assert.match(assessment.warnings.join(" "), /parcel is not yet available/i);
+});
+
 test("appraiser override changes the effective search profile without rewriting automation", () => {
   const automatic = buildPropertyComplexityAssessment({
     peerStatistics: { peer_count: 25 },

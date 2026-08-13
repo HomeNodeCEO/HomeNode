@@ -1,4 +1,4 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
@@ -330,7 +330,6 @@ function calculateLivingAreaGroupedAdjustment(
 
 export default function ComparableSalesAnalysis() {
   const location = useLocation();
-  const navigate = useNavigate();
   const propertyId = useMemo(() => {
     const p = new URLSearchParams(location.search);
     return p.get('propertyId') || '';
@@ -2912,32 +2911,28 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Link
-              to={`/PropertyTaxProtest?propertyId=${encodeURIComponent(propertyId)}`}
+            <a
+              href={`/PropertyTaxProtest?propertyId=${encodeURIComponent(propertyId)}`}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-600 border border-emerald-600 text-white hover:bg-emerald-700"
               aria-label="File My Protest"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16l4-4h10a2 2 0 0 0 2-2V8z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
               File My Protest
-            </Link>
-            <Link
-              to={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}`}
+            </a>
+            <a
+              href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}`}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 border border-blue-600 text-white hover:bg-blue-700"
               aria-label="Generate Full Appraisal PDF"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16l4-4h10a2 2 0 0 0 2-2V8z"/><path d="M12 12h3"/><path d="M12 15h3"/><path d="M9 12h.01"/><path d="M9 15h.01"/></svg>
               Full Appraisal PDF
-            </Link>
-            <button
-              type="button"
-              onClick={() => {
-                if (propertyId) navigate(`/report/${encodeURIComponent(propertyId)}`);
-                else navigate(-1);
-              }}
+            </a>
+            <a
+              href={propertyId ? `/report/${encodeURIComponent(propertyId)}` : '/'}
               className="btn normal-case px-4 py-2 rounded-md bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200"
             >
               Close Report
-            </button>
+            </a>
           </div>
         </div>
 
@@ -2957,12 +2952,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 Market studies and the appraiser-defined neighborhood area are now completed in Neighborhood Characteristics on the Property Report page.
               </div>
             </div>
-            <Link
-              to={`/report/${encodeURIComponent(propertyId)}`}
+            <a
+              href={`/report/${encodeURIComponent(propertyId)}`}
               className="rounded-md border border-current bg-white px-3 py-2 text-xs font-semibold hover:bg-slate-50"
             >
               {marketConditionsDraft ? 'Review Market Analysis' : 'Complete Market Analysis'}
-            </Link>
+            </a>
           </div>
         </div>
 

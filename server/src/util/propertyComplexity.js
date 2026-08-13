@@ -360,3 +360,5 @@ export function applyPropertyComplexityReview(assessment, review) {
   };
 }
 
+
+// Temporary newline normalization marker.

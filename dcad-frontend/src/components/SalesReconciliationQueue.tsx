@@ -255,6 +255,16 @@ export default function SalesReconciliationQueue() {
                   <strong>Classification</strong>
                   <span>{item.structural_style || item.attachment_type || "Unspecified"}</span>
                 </div>
+                <div>
+                  <strong>Location evidence</strong>
+                  <span>
+                    {item.location_evidence_status === "coordinate_ready"
+                      ? `MLS coordinates available (${item.source_latitude?.toFixed(5)}, ${item.source_longitude?.toFixed(5)})`
+                      : item.location_evidence_status === "address_ready"
+                        ? item.address_hint
+                        : "No usable MLS address or coordinates; manual review required"}
+                  </span>
+                </div>
               </div>
 
               <div className="sales-reconciliation__badges">

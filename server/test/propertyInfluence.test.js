@@ -91,6 +91,7 @@ test("influence matching outranks a closer newer sale after coverage is sufficie
   ], subject, (sale) => sale.signature);
 
   assert.equal(result.policy.influence_priority_applied, true);
+  assert.equal(result.policy.methodology_version, 3);
   assert.deepEqual(result.sales.map((sale) => sale.id), ["far-older-match", "close-new"]);
 });
 

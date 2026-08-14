@@ -35,11 +35,11 @@ try {
     ),
     influenceMaximumBatches: option(
       "influence-maximum-batches",
-      process.env.MAINTENANCE_INFLUENCE_MAX_BATCHES || "20",
+      process.env.MAINTENANCE_INFLUENCE_MAX_BATCHES || "40",
     ),
     influenceBatchSize: option(
       "influence-batch-size",
-      process.env.MAINTENANCE_INFLUENCE_BATCH_SIZE || "250",
+      process.env.MAINTENANCE_INFLUENCE_BATCH_SIZE || "100",
     ),
     influenceSeedLimit: option(
       "influence-seed-limit",
@@ -47,7 +47,11 @@ try {
     ),
     influenceConcurrency: option(
       "influence-concurrency",
-      process.env.MAINTENANCE_INFLUENCE_CONCURRENCY || "6",
+      process.env.MAINTENANCE_INFLUENCE_CONCURRENCY || "4",
+    ),
+    influenceStatementTimeoutMs: option(
+      "influence-statement-timeout-ms",
+      process.env.MAINTENANCE_INFLUENCE_STATEMENT_TIMEOUT_MS || "60000",
     ),
     hazardBatchSize: option(
       "hazard-batch-size",

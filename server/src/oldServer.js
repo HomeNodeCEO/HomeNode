@@ -1688,6 +1688,24 @@ app.patch("/api/sales/:sourceRecordId/reconcile", async (req, res) => {
         locationError?.message || locationError,
       );
     }
+    try {
+      await ensurePropertyContextAvailable();
+      await enqueuePropertyInfluenceAccounts(
+        pool,
+        [result.account.account_id],
+        {
+          reason: "sales_reconciliation",
+          priority: 200,
+        },
+      );
+    } catch (influenceError) {
+      // The confirmed sale remains saved. The durable sale trigger and the
+      // next maintenance seed provide two independent retry paths.
+      console.warn(
+        "manual sale link saved; influence queueing deferred",
+        influenceError?.message || influenceError,
+      );
+    }
     return res.json({ ok: true, ...result });
   } catch (error) {
     const message = error?.message || "sales_reconciliation_failed";

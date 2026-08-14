@@ -97,6 +97,23 @@ export async function getRecentScheduledMaintenanceRuns(pool, { limit = 10 } = {
   }
 }
 
+export async function recoverStaleScheduledMaintenanceRuns(pool, {
+  olderThanMinutes = 360,
+} = {}) {
+  const safeMinutes = boundedInteger(olderThanMinutes, 360, 30, 1_440);
+  const { rowCount } = await pool.query(
+    `UPDATE app.scheduled_maintenance_runs
+     SET status = 'failed', finished_at = now(),
+         error_message = COALESCE(error_message, 'stale_maintenance_run_recovered'),
+         details = COALESCE(details, '{}'::jsonb) ||
+           jsonb_build_object('recovered_as_stale_at', now())
+     WHERE status = 'running'
+       AND started_at < now() - ($1::text || ' minutes')::interval`,
+    [safeMinutes],
+  );
+  return rowCount || 0;
+}
+
 async function acquireMaintenanceLock(pool) {
   const { rows } = await pool.query(
     "SELECT pg_try_advisory_lock($1, $2) AS acquired",
@@ -167,7 +184,7 @@ async function runInfluenceTask(pool, options) {
   const maximumBatches = boundedInteger(options.influenceMaximumBatches, 4, 1, 100);
   const batchSize = boundedInteger(options.influenceBatchSize, 100, 1, 500);
   const seedLimit = boundedInteger(options.influenceSeedLimit, 10_000, 1, 50_000);
-  const concurrency = boundedInteger(options.influenceConcurrency, 6, 1, 12);
+  const concurrency = boundedInteger(options.influenceConcurrency, 4, 1, 12);
   const totals = {
     seeded: 0,
     batches: 0,
@@ -177,14 +194,28 @@ async function runInfluenceTask(pool, options) {
     manualReview: 0,
   };
   for (let batch = 0; batch < maximumBatches && Date.now() < options.deadline; batch += 1) {
+    const remainingMs = Math.max(0, options.deadline - Date.now());
+    const itemTimeoutMs = boundedInteger(
+      options.influenceStatementTimeoutMs,
+      60_000,
+      5_000,
+      300_000,
+    );
+    if (remainingMs <= itemTimeoutMs + 5_000) break;
+    const maximumTimedItems = Math.max(
+      concurrency,
+      Math.floor((remainingMs - 5_000) / itemTimeoutMs) * concurrency,
+    );
+    const timedBatchSize = Math.min(batchSize, maximumTimedItems);
     const seed = batch === 0
       ? await seedPropertyInfluenceQueue(pool, { limit: seedLimit })
       : { queued: 0 };
     const result = await runPropertyInfluenceBatch(pool, {
-      batchSize,
+      batchSize: timedBatchSize,
       concurrency,
       workerId: `${options.workerId}-influences`,
       maximumAttempts: options.maximumAttempts,
+      statementTimeoutMs: options.influenceStatementTimeoutMs,
     });
     totals.seeded += Number(seed.queued || 0);
     if (result.claimed) totals.batches += 1;
@@ -251,10 +282,11 @@ export async function runScheduledMaintenance(pool, {
   trafficBatchSize = 1_000,
   hazardBatchSize = 200,
   zoningBatchSize = 1_000,
-  influenceMaximumBatches = 20,
-  influenceBatchSize = 250,
+  influenceMaximumBatches = 40,
+  influenceBatchSize = 100,
   influenceSeedLimit = 10_000,
-  influenceConcurrency = 6,
+  influenceConcurrency = 4,
+  influenceStatementTimeoutMs = 60_000,
   fetchConcurrency = 3,
   logger = console,
   taskRunner = runTask,
@@ -272,11 +304,14 @@ export async function runScheduledMaintenance(pool, {
   const failures = [];
   try {
     await ensureScheduledMaintenanceSchema(pool);
+    const recoveredStaleRuns = await recoverStaleScheduledMaintenanceRuns(pool, {
+      olderThanMinutes: Math.max(60, Number(maximumRuntimeMinutes || 45) + 30),
+    });
     const { rows } = await pool.query(
       `INSERT INTO app.scheduled_maintenance_runs (job_name, worker_id, status, details)
        VALUES ($1, $2, 'running', $3::jsonb)
        RETURNING id`,
-      [task, workerId, JSON.stringify({ tasks })],
+      [task, workerId, JSON.stringify({ tasks, recovered_stale_runs: recoveredStaleRuns })],
     );
     runId = rows[0]?.id || null;
     const safeRuntimeMinutes = boundedInteger(maximumRuntimeMinutes, 45, 1, 240);
@@ -299,6 +334,12 @@ export async function runScheduledMaintenance(pool, {
       influenceBatchSize,
       influenceSeedLimit,
       influenceConcurrency,
+      influenceStatementTimeoutMs: boundedInteger(
+        influenceStatementTimeoutMs,
+        60_000,
+        5_000,
+        300_000,
+      ),
       fetchConcurrency: boundedInteger(fetchConcurrency, 3, 1, 8),
     };
 
@@ -333,7 +374,15 @@ export async function runScheduledMaintenance(pool, {
         ],
       );
     }
-    return { ok, skipped: false, run_id: runId, tasks, results, failures };
+    return {
+      ok,
+      skipped: false,
+      run_id: runId,
+      recovered_stale_runs: recoveredStaleRuns,
+      tasks,
+      results,
+      failures,
+    };
   } catch (error) {
     if (runId) {
       await pool.query(

@@ -34,8 +34,9 @@ export async function savePropertyInfluenceContext(pool, {
   influenceSignature,
   sourceHealth = [],
   computedAt = new Date().toISOString(),
+  schemaReady = false,
 } = {}) {
-  await ensurePropertyContextSchema(pool);
+  if (!schemaReady) await ensurePropertyContextSchema(pool);
   const normalizedAccountId = String(accountId || "").trim();
   if (!/^[0-9A-Za-z]{17}$/.test(normalizedAccountId)) {
     throw new Error("invalid_account_id");
@@ -51,12 +52,37 @@ export async function savePropertyInfluenceContext(pool, {
     }]),
   );
   const { rows } = await pool.query(
-    `INSERT INTO gis.property_influence_contexts (
+    `WITH versioned AS (
+       INSERT INTO gis.property_influence_context_versions (
+         account_id, parcel_object_id, methodology_version, spatial_context,
+         influence_signature, material_influence_present,
+         dominant_influence_key, material_keys, material_categories,
+         source_state, computed_at
+       ) VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8::text[],$9::text[],$10::jsonb,$11::timestamptz)
+       ON CONFLICT (account_id, methodology_version) DO UPDATE SET
+         parcel_object_id = EXCLUDED.parcel_object_id,
+         spatial_context = EXCLUDED.spatial_context,
+         influence_signature = EXCLUDED.influence_signature,
+         material_influence_present = EXCLUDED.material_influence_present,
+         dominant_influence_key = EXCLUDED.dominant_influence_key,
+         material_keys = EXCLUDED.material_keys,
+         material_categories = EXCLUDED.material_categories,
+         source_state = EXCLUDED.source_state,
+         computed_at = EXCLUDED.computed_at,
+         updated_at = now()
+       RETURNING *
+     )
+     INSERT INTO gis.property_influence_contexts (
        account_id, parcel_object_id, methodology_version, spatial_context,
        influence_signature, material_influence_present,
        dominant_influence_key, material_keys, material_categories,
        source_state, computed_at
-     ) VALUES ($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7,$8::text[],$9::text[],$10::jsonb,$11::timestamptz)
+     )
+     SELECT account_id, parcel_object_id, methodology_version, spatial_context,
+            influence_signature, material_influence_present,
+            dominant_influence_key, material_keys, material_categories,
+            source_state, computed_at
+     FROM versioned
      ON CONFLICT (account_id) DO UPDATE SET
        parcel_object_id = EXCLUDED.parcel_object_id,
        methodology_version = EXCLUDED.methodology_version,
@@ -310,25 +336,57 @@ export async function getPropertyInfluenceStatus(pool) {
        SELECT DISTINCT primary_account_id AS account_id
        FROM core.v_sales_enriched
        WHERE primary_account_id IS NOT NULL
+     ), version_coverage AS (
+       SELECT version.methodology_version, COUNT(DISTINCT version.account_id)::integer AS count
+       FROM sales
+       JOIN gis.property_influence_context_versions version USING (account_id)
+       GROUP BY version.methodology_version
+     ), unresolved_sales AS (
+       SELECT COUNT(*)::integer AS count
+       FROM core.sales_source_records source
+       WHERE source.record_type = 'closed_sale'
+         AND source.match_status <> 'manual_verified'
+         AND (
+           source.primary_account_id IS NULL
+           OR source.match_status IN ('unmatched', 'multiple')
+           OR source.has_unresolved_parcel
+         )
      )
      SELECT
        (SELECT COALESCE(jsonb_object_agg(status, count), '{}'::jsonb) FROM queue) AS queue,
        (SELECT COUNT(*)::integer FROM sales) AS sale_account_count,
        (SELECT COUNT(*)::integer
         FROM sales JOIN gis.property_influence_contexts context USING (account_id)
-        WHERE context.methodology_version >= $1) AS measured_sale_account_count` ,
+        WHERE context.methodology_version >= $1) AS measured_sale_account_count,
+       (SELECT COUNT(DISTINCT version.account_id)::integer
+        FROM sales JOIN gis.property_influence_context_versions version USING (account_id)
+        WHERE version.methodology_version < $1) AS prior_version_sale_account_count,
+       (SELECT count FROM unresolved_sales) AS unmatched_closed_sale_record_count,
+       (SELECT COALESCE(jsonb_object_agg(methodology_version::text, count), '{}'::jsonb)
+        FROM version_coverage) AS version_coverage` ,
     [CURRENT_INFLUENCE_METHODOLOGY_VERSION],
   );
   const row = rows[0] || {};
   const saleCount = Number(row.sale_account_count || 0);
   const measured = Number(row.measured_sale_account_count || 0);
   return {
+    current_methodology_version: CURRENT_INFLUENCE_METHODOLOGY_VERSION,
     queue: row.queue || {},
     coverage: {
       sale_account_count: saleCount,
       measured_sale_account_count: measured,
       missing_sale_account_count: Math.max(0, saleCount - measured),
       coverage_percent: saleCount ? Math.round(measured / saleCount * 10_000) / 100 : 0,
+    },
+    migration: {
+      prior_version_sale_account_count: Number(row.prior_version_sale_account_count || 0),
+      version_coverage: row.version_coverage || {},
+      recalculation_in_progress: measured < saleCount,
+    },
+    unmatched_sales: {
+      review_required_record_count: Number(row.unmatched_closed_sale_record_count || 0),
+      included_in_account_coverage: false,
+      coverage_note: "Unmatched MLS records remain visible in the sales reconciliation queue until a CAD account is verified.",
     },
   };
 }

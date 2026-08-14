@@ -115,6 +115,15 @@ test("FEMA records are deduplicated by stable source identity before upsert", ()
   assert.deepEqual(deduplicateSourceRecords(records), [records[1], records[2]]);
 });
 
+test("municipal zoning records are deduplicated by provider and source identity", () => {
+  const records = [
+    { provider_key: "city_duncanville_official", source_record_id: "multi_address:77", zoning_code: "SF-7" },
+    { provider_key: "city_duncanville_official", source_record_id: "multi_address:77", zoning_code: "PD" },
+    { provider_key: "city_duncanville_official", source_record_id: "single_parcel:77", zoning_code: "SF-7" },
+  ];
+  assert.deepEqual(deduplicateSourceRecords(records), [records[1], records[2]]);
+});
+
 test("FEMA flood normalization preserves zone and special-hazard status", () => {
   const record = normalizeFemaFloodFeature({
     type: "Feature",

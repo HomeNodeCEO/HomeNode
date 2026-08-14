@@ -73,7 +73,10 @@ export function tigerRoadOutFields(layerId) {
 
 export function deduplicateSourceRecords(records = []) {
   return [...new Map(
-    records.map((record) => [`${record.source_key}:${record.source_record_id}`, record]),
+    records.map((record) => [
+      `${record.provider_key || ""}:${record.source_key || ""}:${record.source_record_id}`,
+      record,
+    ]),
   ).values()];
 }
 function chunks(values, size) {
@@ -706,6 +709,12 @@ async function upsertFloodHazards(pool, records) {
 
 async function upsertZoningDistricts(pool, records) {
   if (!records.length) return 0;
+  // Some municipal layers reuse the same GIS_ID for multipart or overlapping
+  // zoning polygons in one response. PostgreSQL cannot update the same conflict
+  // target twice in a single INSERT, so keep one deterministic record per
+  // provider/source identity. Layer prefixes still keep genuinely separate
+  // Duncanville layers distinct.
+  const uniqueRecords = deduplicateSourceRecords(records);
   const { rowCount } = await pool.query(
     `WITH source AS (
        SELECT * FROM jsonb_to_recordset($1::jsonb) AS row(
@@ -741,7 +750,7 @@ async function upsertZoningDistricts(pool, records) {
        source_updated_at = EXCLUDED.source_updated_at,
        sync_run_id = EXCLUDED.sync_run_id,
        synced_at = now(), geom = EXCLUDED.geom`,
-    [JSON.stringify(records)],
+    [JSON.stringify(uniqueRecords)],
   );
   return rowCount || 0;
 }

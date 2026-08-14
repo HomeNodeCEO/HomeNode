@@ -320,6 +320,41 @@ export async function ensurePropertyContextSchema(pool) {
     CREATE INDEX IF NOT EXISTS property_influence_contexts_computed_idx
       ON gis.property_influence_contexts (computed_at);
 
+    -- Keep every methodology revision instead of replacing the previous
+    -- evidence while a new countywide backfill is still in progress. The
+    -- single-row table above remains the fast current lookup used by ranking.
+    CREATE TABLE IF NOT EXISTS gis.property_influence_context_versions (
+      account_id text NOT NULL,
+      methodology_version integer NOT NULL,
+      parcel_object_id bigint,
+      spatial_context jsonb NOT NULL,
+      influence_signature jsonb NOT NULL,
+      material_influence_present boolean NOT NULL DEFAULT false,
+      dominant_influence_key text NOT NULL DEFAULT 'ordinary_location',
+      material_keys text[] NOT NULL DEFAULT '{}'::text[],
+      material_categories text[] NOT NULL DEFAULT '{}'::text[],
+      source_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+      computed_at timestamptz NOT NULL,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (account_id, methodology_version)
+    );
+    CREATE INDEX IF NOT EXISTS property_influence_versions_method_idx
+      ON gis.property_influence_context_versions (methodology_version, computed_at);
+    CREATE INDEX IF NOT EXISTS property_influence_versions_keys_gin
+      ON gis.property_influence_context_versions USING gin (material_keys);
+    INSERT INTO gis.property_influence_context_versions (
+      account_id, methodology_version, parcel_object_id, spatial_context,
+      influence_signature, material_influence_present,
+      dominant_influence_key, material_keys, material_categories,
+      source_state, computed_at, updated_at
+    )
+    SELECT account_id, methodology_version, parcel_object_id, spatial_context,
+           influence_signature, material_influence_present,
+           dominant_influence_key, material_keys, material_categories,
+           source_state, computed_at, updated_at
+    FROM gis.property_influence_contexts
+    ON CONFLICT (account_id, methodology_version) DO NOTHING;
+
     CREATE TABLE IF NOT EXISTS gis.property_influence_queue (
       account_id text PRIMARY KEY,
       reason text NOT NULL,
@@ -337,6 +372,82 @@ export async function ensurePropertyContextSchema(pool) {
     );
     CREATE INDEX IF NOT EXISTS property_influence_queue_claim_idx
       ON gis.property_influence_queue (status, available_at, priority DESC, updated_at);
+
+    -- Any importer can write sales without knowing about the maintenance
+    -- worker. This trigger makes a newly matched or rematched sale immediately
+    -- eligible for location-influence calculation.
+    CREATE OR REPLACE FUNCTION gis.queue_property_influence_for_sale()
+    RETURNS trigger
+    LANGUAGE plpgsql
+    AS $property_influence_trigger$
+    DECLARE
+      candidate_account_id text;
+      previous_account_id text;
+    BEGIN
+      candidate_account_id := COALESCE(
+        NULLIF(BTRIM(to_jsonb(NEW)->>'primary_account_id'), ''),
+        NULLIF(BTRIM(to_jsonb(NEW)->>'account_id'), '')
+      );
+      IF TG_OP = 'UPDATE' THEN
+        previous_account_id := COALESCE(
+          NULLIF(BTRIM(to_jsonb(OLD)->>'primary_account_id'), ''),
+          NULLIF(BTRIM(to_jsonb(OLD)->>'account_id'), '')
+        );
+        IF previous_account_id IS NOT DISTINCT FROM candidate_account_id THEN
+          RETURN NEW;
+        END IF;
+      END IF;
+      IF candidate_account_id ~ '^[0-9A-Za-z]{17}$' THEN
+        INSERT INTO gis.property_influence_queue (
+          account_id, reason, priority, status, available_at
+        ) VALUES (
+          candidate_account_id, 'sale_inventory_change', 120, 'pending', now()
+        )
+        ON CONFLICT (account_id) DO UPDATE SET
+          reason = EXCLUDED.reason,
+          priority = GREATEST(gis.property_influence_queue.priority, EXCLUDED.priority),
+          status = CASE
+            WHEN gis.property_influence_queue.status = 'processing'
+              THEN gis.property_influence_queue.status
+            ELSE 'pending'
+          END,
+          available_at = CASE
+            WHEN gis.property_influence_queue.status = 'processing'
+              THEN gis.property_influence_queue.available_at
+            ELSE now()
+          END,
+          completed_at = NULL,
+          updated_at = now();
+      END IF;
+      RETURN NEW;
+    END;
+    $property_influence_trigger$;
+
+    DO $property_influence_triggers$
+    BEGIN
+      IF to_regclass('core.sales_source_records') IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'queue_property_influence_on_source_sale'
+          AND tgrelid = 'core.sales_source_records'::regclass
+          AND NOT tgisinternal
+      ) THEN
+        EXECUTE 'CREATE TRIGGER queue_property_influence_on_source_sale
+          AFTER INSERT OR UPDATE OF primary_account_id ON core.sales_source_records
+          FOR EACH ROW WHEN (NEW.record_type = ''closed_sale'')
+          EXECUTE FUNCTION gis.queue_property_influence_for_sale()';
+      END IF;
+      IF to_regclass('core.sales') IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'queue_property_influence_on_canonical_sale'
+          AND tgrelid = 'core.sales'::regclass
+          AND NOT tgisinternal
+      ) THEN
+        EXECUTE 'CREATE TRIGGER queue_property_influence_on_canonical_sale
+          AFTER INSERT OR UPDATE OF account_id ON core.sales
+          FOR EACH ROW EXECUTE FUNCTION gis.queue_property_influence_for_sale()';
+      END IF;
+    END;
+    $property_influence_triggers$;
 
     CREATE TABLE IF NOT EXISTS gis.boundary_analysis_cache (
       cache_key text PRIMARY KEY,

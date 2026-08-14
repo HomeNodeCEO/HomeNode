@@ -533,6 +533,9 @@ export interface SalesReconciliationQueueItem {
   data_quality_flags: string[];
   canonical_sale_id: string | number | null;
   address_hint: string | null;
+  source_latitude: number | null;
+  source_longitude: number | null;
+  location_evidence_status: 'coordinate_ready' | 'address_ready' | 'manual_review';
   queue_reasons: string[];
 }
 
@@ -1546,12 +1549,23 @@ export interface PropertyContextStatusResponse {
   stale_source_count: number;
   unavailable_source_count: number;
   influence_context?: {
+    current_methodology_version?: number;
     queue: Record<string, number>;
     coverage: {
       sale_account_count: number;
       measured_sale_account_count: number;
       missing_sale_account_count: number;
       coverage_percent: number;
+    };
+    migration?: {
+      prior_version_sale_account_count: number;
+      version_coverage: Record<string, number>;
+      recalculation_in_progress: boolean;
+    };
+    unmatched_sales?: {
+      review_required_record_count: number;
+      included_in_account_coverage: false;
+      coverage_note: string;
     };
   };
   zoning_source_hierarchy?: Array<{

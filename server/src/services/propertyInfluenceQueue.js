@@ -1,5 +1,9 @@
 import { refreshStoredPropertyInfluenceContext } from "./propertyContext.js";
 import {
+  ensurePropertyContextSchema,
+  getPropertyContextSourceHealth,
+} from "./propertyContextStore.js";
+import {
   claimPropertyInfluenceQueue,
   completePropertyInfluenceQueueItem,
   failPropertyInfluenceQueueItem,
@@ -21,13 +25,60 @@ export async function runWithConcurrency(items, concurrency, worker) {
   await Promise.all(Array.from({ length: safeConcurrency }, () => runWorker()));
 }
 
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(parsed)));
+}
+
+/**
+ * Give each spatial fingerprint an independent database timeout. A malformed
+ * parcel or an unexpectedly expensive geometry must retry by itself instead
+ * of holding an entire Render maintenance run open for hours.
+ */
+export async function refreshInfluenceQueueItem(pool, {
+  accountId,
+  sourceHealth,
+  statementTimeoutMs = 60_000,
+  refresh = refreshStoredPropertyInfluenceContext,
+} = {}) {
+  const timeoutMs = boundedInteger(statementTimeoutMs, 60_000, 5_000, 300_000);
+  if (typeof pool?.connect !== "function") {
+    return refresh(pool, {
+      accountId,
+      sourceHealth,
+      schemaReady: true,
+    });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [`${timeoutMs}ms`]);
+    const result = await refresh(client, {
+      accountId,
+      sourceHealth,
+      schemaReady: true,
+    });
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function runPropertyInfluenceBatch(pool, {
   batchSize = 100,
-  concurrency = 6,
+  concurrency = 4,
   workerId = "property-influence-worker",
   maximumAttempts = 5,
+  statementTimeoutMs = 60_000,
   logger = console,
 } = {}) {
+  await ensurePropertyContextSchema(pool);
+  const sourceHealth = await getPropertyContextSourceHealth(pool);
   const claimed = await claimPropertyInfluenceQueue(pool, { batchSize, workerId });
   const totals = {
     claimed: claimed.length,
@@ -37,8 +88,10 @@ export async function runPropertyInfluenceBatch(pool, {
   };
   await runWithConcurrency(claimed, concurrency, async (item) => {
     try {
-      await refreshStoredPropertyInfluenceContext(pool, {
+      await refreshInfluenceQueueItem(pool, {
         accountId: item.account_id,
+        sourceHealth,
+        statementTimeoutMs,
       });
       await completePropertyInfluenceQueueItem(pool, item.account_id);
       totals.completed += 1;

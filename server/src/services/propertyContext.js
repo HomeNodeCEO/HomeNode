@@ -286,6 +286,35 @@ async function loadSubject(pool, accountId, assignmentFileId) {
   return subject;
 }
 
+/**
+ * The countywide influence worker needs only identity, situs address, and the
+ * cached parcel center. Avoid loading improvement, ownership, assignment, and
+ * manual-report joins for tens of thousands of sales.
+ */
+async function loadInfluenceSubject(pool, accountId) {
+  const { rows } = await pool.query(
+    `SELECT account.account_id, account.address, account.city, account.county,
+            account.postal_code, location.latitude, location.longitude
+     FROM core.accounts account
+     LEFT JOIN core.account_locations location
+       ON location.account_id = account.account_id
+     WHERE account.account_id = $1`,
+    [accountId],
+  );
+  if (!rows.length) throw new Error("account_not_found");
+  const row = rows[0];
+  return {
+    account_id: row.account_id,
+    address: row.address,
+    city: row.city,
+    county: row.county,
+    postal_code: row.postal_code,
+    latitude: finiteNumber(row.latitude),
+    longitude: finiteNumber(row.longitude),
+    site_area_sqft: null,
+  };
+}
+
 async function loadPeerStatistics(pool, subject, customGeometry, centerPoint) {
   const longitude = finiteNumber(centerPoint?.longitude ?? subject.longitude);
   const latitude = finiteNumber(centerPoint?.latitude ?? subject.latitude);
@@ -398,7 +427,12 @@ async function loadPeerStatistics(pool, subject, customGeometry, centerPoint) {
   };
 }
 
-export async function loadSpatialContext(pool, subject, customGeometry) {
+export async function loadSpatialContext(
+  pool,
+  subject,
+  customGeometry,
+  { includeSiteStatistics = true } = {},
+) {
   const longitude = finiteNumber(subject.longitude);
   const latitude = finiteNumber(subject.latitude);
   const { rows: parcelRows } = await pool.query(
@@ -452,33 +486,36 @@ export async function loadSpatialContext(pool, subject, customGeometry) {
   }
 
   const boundary = customGeometry ? JSON.stringify(customGeometry) : null;
-  const { rows: siteRows } = await pool.query(
-    `WITH subject AS (
-       SELECT geom, land_use_category, parcel_area_sqft
-       FROM gis.dcad_parcels WHERE object_id = $1
-     ), peers AS (
-       SELECT parcel.parcel_area_sqft
-       FROM gis.dcad_parcels parcel
-       CROSS JOIN subject
-       WHERE parcel.object_id <> $1
-         AND parcel.land_use_category = subject.land_use_category
-         AND parcel.parcel_area_sqft > 0
-         AND CASE WHEN $2::text IS NULL
-              THEN ST_DWithin(parcel.geom::geography, subject.geom::geography, $3)
-              ELSE ST_Intersects(
-                parcel.geom,
-                ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($2),4326))
-              )
-             END
-     )
-     SELECT
-       COUNT(*)::integer AS peer_count,
-       COUNT(*) FILTER (WHERE parcel_area_sqft <= (SELECT parcel_area_sqft FROM subject))::integer AS at_or_below,
-       percentile_cont(0.5) WITHIN GROUP (ORDER BY parcel_area_sqft) AS median_area
-     FROM peers`,
-    [parcel.object_id, boundary, DEFAULT_CONTEXT_RADIUS_METERS],
-  );
-  const site = siteRows[0] || {};
+  let site = {};
+  if (includeSiteStatistics) {
+    const { rows: siteRows } = await pool.query(
+      `WITH subject AS (
+         SELECT geom, land_use_category, parcel_area_sqft
+         FROM gis.dcad_parcels WHERE object_id = $1
+       ), peers AS (
+         SELECT parcel.parcel_area_sqft
+         FROM gis.dcad_parcels parcel
+         CROSS JOIN subject
+         WHERE parcel.object_id <> $1
+           AND parcel.land_use_category = subject.land_use_category
+           AND parcel.parcel_area_sqft > 0
+           AND CASE WHEN $2::text IS NULL
+                THEN ST_DWithin(parcel.geom::geography, subject.geom::geography, $3)
+                ELSE ST_Intersects(
+                  parcel.geom,
+                  ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($2),4326))
+                )
+               END
+       )
+       SELECT
+         COUNT(*)::integer AS peer_count,
+         COUNT(*) FILTER (WHERE parcel_area_sqft <= (SELECT parcel_area_sqft FROM subject))::integer AS at_or_below,
+         percentile_cont(0.5) WITHIN GROUP (ORDER BY parcel_area_sqft) AS median_area
+       FROM peers`,
+      [parcel.object_id, boundary, DEFAULT_CONTEXT_RADIUS_METERS],
+    );
+    site = siteRows[0] || {};
+  }
 
   const { rows: influenceRows } = await pool.query(
     `WITH subject AS (
@@ -723,21 +760,29 @@ export async function analyzePropertyContext(pool, {
 
 export async function refreshStoredPropertyInfluenceContext(pool, {
   accountId,
+  sourceHealth = null,
+  schemaReady = false,
 } = {}) {
   const normalizedAccountId = String(accountId || "").trim();
   if (!/^[0-9A-Za-z]{17}$/.test(normalizedAccountId)) {
     throw new Error("invalid_account_id");
   }
-  await ensurePropertyContextSchema(pool);
-  const subject = await loadSubject(pool, normalizedAccountId, null);
-  const sourceHealth = await getPropertyContextSourceHealth(pool);
-  const spatialContext = await loadSpatialContext(pool, subject, null);
+  if (!schemaReady) await ensurePropertyContextSchema(pool);
+  const subject = await loadInfluenceSubject(pool, normalizedAccountId);
+  const effectiveSourceHealth = sourceHealth || await getPropertyContextSourceHealth(pool);
+  // Countywide influence backfills do not need the peer site-size percentile.
+  // Skipping that two-mile aggregate removes the dominant per-sale query cost;
+  // full property complexity analyses still calculate it on demand.
+  const spatialContext = await loadSpatialContext(pool, subject, null, {
+    includeSiteStatistics: false,
+  });
   const influenceSignature = buildPropertyInfluenceSignature(spatialContext);
   return savePropertyInfluenceContext(pool, {
     accountId: normalizedAccountId,
     spatialContext,
     influenceSignature,
-    sourceHealth,
+    sourceHealth: effectiveSourceHealth,
+    schemaReady: true,
   });
 }
 

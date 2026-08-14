@@ -5,6 +5,78 @@ function optionalText(value, maximumLength) {
   return text ? text.slice(0, maximumLength) : null;
 }
 
+function normalizedPayloadValues(rawPayload) {
+  if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+    return new Map();
+  }
+  const values = new Map();
+  const visit = (record) => {
+    for (const [key, value] of Object.entries(record || {})) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        visit(value);
+        continue;
+      }
+      const normalizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (normalizedKey && !values.has(normalizedKey)) values.set(normalizedKey, value);
+    }
+  };
+  visit(rawPayload);
+  return values;
+}
+
+function firstPayloadValue(values, keys) {
+  for (const key of keys) {
+    const value = values.get(key);
+    if (value !== null && value !== undefined && String(value).trim()) return value;
+  }
+  return null;
+}
+
+function coordinate(value, kind) {
+  const parsed = Number(String(value ?? "").replace(/,/g, "").trim());
+  if (!Number.isFinite(parsed)) return null;
+  const withinTexas = kind === "latitude"
+    ? parsed >= 25.5 && parsed <= 36.6
+    : parsed >= -106.7 && parsed <= -93.4;
+  return withinTexas ? parsed : null;
+}
+
+export function salesSourceLocationEvidence(rawPayload) {
+  const values = normalizedPayloadValues(rawPayload);
+  const address = optionalText(firstPayloadValue(values, [
+    "unparsedaddress",
+    "propertyaddress",
+    "fulladdress",
+    "streetaddress",
+    "address",
+    "addressfull",
+  ]), 500);
+  const latitude = coordinate(firstPayloadValue(values, [
+    "latitude",
+    "lat",
+    "propertylatitude",
+    "mlslatitude",
+  ]), "latitude");
+  const longitude = coordinate(firstPayloadValue(values, [
+    "longitude",
+    "lon",
+    "lng",
+    "propertylongitude",
+    "mlslongitude",
+  ]), "longitude");
+  const hasCoordinates = latitude !== null && longitude !== null;
+  return {
+    address_hint: address,
+    source_latitude: hasCoordinates ? latitude : null,
+    source_longitude: hasCoordinates ? longitude : null,
+    location_evidence_status: hasCoordinates
+      ? "coordinate_ready"
+      : address
+        ? "address_ready"
+        : "manual_review",
+  };
+}
+
 export function normalizeSalesReconciliationUpdate(input = {}) {
   const accountId = String(input.account_id ?? "").trim();
   if (!ACCOUNT_ID_PATTERN.test(accountId)) {
@@ -138,11 +210,7 @@ export async function listSalesReconciliationQueue(
     offset: safeOffset,
     items: rows.map(({ queue_total: _queueTotal, raw_payload: rawPayload, ...row }) => ({
       ...row,
-      address_hint:
-        rawPayload?.UnparsedAddress ||
-        rawPayload?.Address ||
-        rawPayload?.StreetAddress ||
-        null,
+      ...salesSourceLocationEvidence(rawPayload),
       queue_reasons: queueReasons(row),
     })),
   };

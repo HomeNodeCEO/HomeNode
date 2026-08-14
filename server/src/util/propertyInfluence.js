@@ -301,7 +301,7 @@ export function decorateAndRankByInfluence(
   return {
     sales: decorated,
     policy: {
-      methodology_version: 2,
+      methodology_version: 3,
       influence_priority_applied: applied,
       subject_context_available: subjectAvailable,
       eligible_sale_count: eligible.length,

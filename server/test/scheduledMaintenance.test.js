@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  recoverStaleScheduledMaintenanceRuns,
   resolveMaintenanceTasks,
   runScheduledMaintenance,
 } from "../src/services/scheduledMaintenance.js";
@@ -22,6 +23,22 @@ test("maintenance tasks can be scheduled independently", () => {
 
 test("unknown maintenance tasks fail before any database work", () => {
   assert.throws(() => resolveMaintenanceTasks("mystery"), /Unknown maintenance task/);
+});
+
+test("stale maintenance history is closed without touching a live advisory lock", async () => {
+  let params = null;
+  const pool = {
+    async query(sql, values) {
+      assert.match(sql, /stale_maintenance_run_recovered/);
+      params = values;
+      return { rowCount: 3, rows: [] };
+    },
+  };
+  assert.equal(
+    await recoverStaleScheduledMaintenanceRuns(pool, { olderThanMinutes: 75 }),
+    3,
+  );
+  assert.deepEqual(params, [75]);
 });
 
 test("an overlapping scheduled run exits without starting task work", async () => {

@@ -110,9 +110,19 @@ import {
 import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
 import {
   getPropertyZoningEvidence,
+  getZoningDocumentDescriptionSuggestion,
   getZoningDocumentContent,
   savePropertyZoningVerification,
 } from "./services/zoningEvidence.js";
+import {
+  createAssignmentDocument,
+  ensureAssignmentDocumentsSchema,
+  getAssignmentDocument,
+  listAssignmentDocuments,
+  MAX_ASSIGNMENT_DOCUMENT_BYTES,
+  processAssignmentDocument,
+  reviewAssignmentDocumentCandidate,
+} from "./services/assignmentDocuments.js";
 import {
   enqueuePropertyInfluenceAccounts,
   getPropertyInfluenceContexts,
@@ -228,6 +238,28 @@ async function ensureAssignmentFilesAvailable() {
   if (!assignmentFilesSchemaReady) {
     await ensureAssignmentFilesSchema(pool);
     assignmentFilesSchemaReady = true;
+  }
+}
+
+let assignmentDocumentsSchemaReady = false;
+const assignmentDocumentsReady = assignmentFilesReady
+  .then(() => ensureAssignmentDocumentsSchema(pool))
+  .then(() => {
+    assignmentDocumentsSchemaReady = true;
+    console.log("[init] assignment document evidence schema ensured");
+  })
+  .catch((error) => {
+    console.warn(
+      "[init] assignment document evidence schema failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+async function ensureAssignmentDocumentsAvailable() {
+  await assignmentDocumentsReady;
+  if (!assignmentDocumentsSchemaReady) {
+    await ensureAssignmentDocumentsSchema(pool);
+    assignmentDocumentsSchemaReady = true;
   }
 }
 
@@ -4649,6 +4681,24 @@ app.get("/api/zoning-source-documents/:id/content", async (req, res) => {
   }
 });
 
+/** Suggest the verbatim district wording found beside a confirmed zoning code. */
+app.get("/api/zoning-source-documents/:id/description-suggestion", async (req, res) => {
+  try {
+    await ensurePropertyContextAvailable();
+    const result = await getZoningDocumentDescriptionSuggestion(pool, {
+      documentId: req.params.id,
+      zoningCode: String(req.query.zoning_code || "").trim(),
+    });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    const message = error?.message || "zoning_description_suggestion_failed";
+    const status = message === "zoning_document_not_found"
+      ? 404
+      : message === "invalid_zoning_document_id" ? 400 : 500;
+    return res.status(status).json({ error: message });
+  }
+});
+
 /** Save an appraiser-confirmed zoning result with its source and reviewer. */
 app.put("/api/accounts/:id/zoning-verification", async (req, res) => {
   const requestedId = String(req.params.id || "").trim();
@@ -4674,9 +4724,173 @@ app.put("/api/accounts/:id/zoning-verification", async (req, res) => {
     const clientErrors = new Set([
       "invalid_zoning_jurisdiction",
       "zoning_code_required",
+      "zoning_description_required",
       "zoning_reviewer_required",
       "invalid_zoning_source_type",
       "invalid_zoning_source_document",
+    ]);
+    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+  }
+});
+
+function decodedDocumentHeader(req, name, fallback = "") {
+  const value = String(req.get(name) || fallback);
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** List assignment PDFs and their machine-review status for a property file. */
+app.get("/api/accounts/:id/documents", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!requireEditor(req, res)) return;
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.query.assignment_file_id);
+    const documents = await listAssignmentDocuments(pool, { accountId, assignmentFileId });
+    return res.json({ ok: true, account_id: accountId, documents });
+  } catch (error) {
+    const message = error?.message || "assignment_documents_lookup_failed";
+    return res.status(message === "account_not_found" ? 404 : 500).json({ error: message });
+  }
+});
+
+/**
+ * Upload a PDF without base64 expansion. Extraction is durable and asynchronous;
+ * a scheduled maintenance pass retries any interrupted work.
+ */
+app.post(
+  "/api/accounts/:id/documents",
+  express.raw({
+    type: ["application/pdf", "application/octet-stream"],
+    limit: MAX_ASSIGNMENT_DOCUMENT_BYTES,
+  }),
+  async (req, res) => {
+    const requestedId = String(req.params.id || "").trim();
+    const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+    if (!configuredEditorKey) return res.status(503).json({ error: "document_editor_not_configured" });
+    if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+      return res.status(401).json({ error: "invalid_editor_key" });
+    }
+    try {
+      await ensureAssignmentDocumentsAvailable();
+      const accountId = await resolveCanonicalAccountId(pool, requestedId);
+      const assignmentFileId = normalizeAssignmentFileId(req.get("x-assignment-file-id"));
+      if (assignmentFileId) {
+        const { rowCount } = await pool.query(
+          "SELECT 1 FROM app.assignment_files WHERE id = $1 AND account_id = $2",
+          [assignmentFileId, accountId],
+        );
+        if (!rowCount) return res.status(400).json({ error: "invalid_assignment_file" });
+      }
+      const document = await createAssignmentDocument(pool, {
+        accountId,
+        assignmentFileId,
+        documentType: decodedDocumentHeader(req, "x-document-type", "other"),
+        title: decodedDocumentHeader(req, "x-document-title"),
+        fileName: decodedDocumentHeader(req, "x-document-file-name", "document.pdf"),
+        contentType: req.get("content-type"),
+        content: req.body,
+        uploadedBy: decodedDocumentHeader(req, "x-document-uploaded-by"),
+      });
+      void processAssignmentDocument(pool, document.id).catch((error) => {
+        console.warn("[documents] background extraction failed", error?.message || error);
+      });
+      return res.status(201).json({ ok: true, account_id: accountId, document });
+    } catch (error) {
+      const message = error?.message || "assignment_document_upload_failed";
+      const clientErrors = new Set([
+        "document_content_required",
+        "document_too_large",
+        "document_not_pdf",
+        "invalid_document_type",
+      ]);
+      return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+    }
+  },
+);
+
+/** Load a document plus page-cited field candidates. */
+app.get("/api/documents/:id", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    const document = await getAssignmentDocument(pool, req.params.id);
+    if (!document) return res.status(404).json({ error: "document_not_found" });
+    return res.json({ ok: true, document });
+  } catch (error) {
+    console.error("assignment document lookup failed", error);
+    return res.status(500).json({ error: "assignment_document_lookup_failed" });
+  }
+});
+
+/** Stream immutable uploaded source bytes inline for the embedded PDF viewer. */
+app.get("/api/documents/:id/content", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    const document = await getAssignmentDocument(pool, req.params.id, { includeContent: true });
+    if (!document) return res.status(404).json({ error: "document_not_found" });
+    const fileName = String(document.file_name || `document-${document.id}.pdf`)
+      .replace(/[\r\n"]/g, "_");
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="${fileName}"`,
+      ETag: `"${document.checksum_sha256}"`,
+      "Cache-Control": "private, max-age=86400, immutable",
+      "X-Content-Type-Options": "nosniff",
+    });
+    return res.send(document.content);
+  } catch (error) {
+    console.error("assignment document stream failed", error);
+    return res.status(500).json({ error: "assignment_document_stream_failed" });
+  }
+});
+
+/** Retry text extraction after a worker interruption or parser improvement. */
+app.post("/api/documents/:id/reprocess", async (req, res) => {
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (!configuredEditorKey) return res.status(503).json({ error: "document_editor_not_configured" });
+  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return res.status(401).json({ error: "invalid_editor_key" });
+  }
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    const document = await processAssignmentDocument(pool, req.params.id);
+    return res.json({ ok: true, document });
+  } catch (error) {
+    const message = error?.message || "assignment_document_reprocess_failed";
+    return res.status(message === "document_not_found" ? 404 : 500).json({ error: message });
+  }
+});
+
+/** Confirm or reject one machine suggestion without mutating the source PDF. */
+app.patch("/api/documents/:documentId/candidates/:candidateId", async (req, res) => {
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (!configuredEditorKey) return res.status(503).json({ error: "document_editor_not_configured" });
+  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return res.status(401).json({ error: "invalid_editor_key" });
+  }
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    const candidate = await reviewAssignmentDocumentCandidate(pool, {
+      documentId: req.params.documentId,
+      candidateId: req.params.candidateId,
+      reviewStatus: req.body?.review_status,
+      confirmedValue: req.body?.confirmed_value,
+      reviewer: req.body?.reviewer,
+    });
+    return res.json({ ok: true, candidate });
+  } catch (error) {
+    const message = error?.message || "document_candidate_review_failed";
+    const clientErrors = new Set([
+      "invalid_document_candidate",
+      "invalid_document_review_status",
+      "document_reviewer_required",
+      "document_candidate_not_found",
     ]);
     return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
   }

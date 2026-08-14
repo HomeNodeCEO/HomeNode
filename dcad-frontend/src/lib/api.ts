@@ -1607,6 +1607,12 @@ export interface ZoningEvidenceDocument {
   file_size_bytes: number;
   page_count: number | null;
   extraction_status: 'machine_readable' | 'review_required' | 'extraction_failed';
+  extraction?: {
+    extraction_method?: string;
+    text_length?: number;
+    review_reason?: string;
+    candidates?: AssignmentDocumentCandidate[];
+  };
   fetched_at: string;
   source_last_modified: string | null;
   content_url: string;
@@ -1652,10 +1658,189 @@ export interface PropertyZoningEvidence {
     zoning_code: string | null;
     zoning_description: string | null;
     provider_key: string;
+    source_record_id?: string | null;
+    source_attributes?: Record<string, unknown> | null;
     source_updated_at: string | null;
     synced_at: string;
   } | null;
   verification: ZoningVerification | null;
+}
+
+export async function getZoningDocumentDescriptionSuggestion(
+  documentId: number,
+  zoningCode: string,
+): Promise<{
+  ok: true;
+  extraction_status: string;
+  suggestion: AssignmentDocumentCandidate | null;
+}> {
+  return fetchJSON(makeUrl(
+    `/api/zoning-source-documents/${documentId}/description-suggestion`,
+    { zoning_code: zoningCode },
+  ));
+}
+
+export type AssignmentDocumentType =
+  | 'zoning_map'
+  | 'zoning_ordinance'
+  | 'purchase_contract'
+  | 'engagement_letter'
+  | 'mls_sheet'
+  | 'map'
+  | 'other';
+
+export interface AssignmentDocumentCandidate {
+  id?: number;
+  document_id?: number;
+  field_key: string;
+  raw_value: string;
+  normalized_value: string | null;
+  page_number: number | null;
+  confidence: number | null;
+  evidence_excerpt: string | null;
+  extraction_method: string;
+  review_status?: 'suggested' | 'confirmed' | 'rejected';
+  confirmed_value?: string | null;
+  reviewer?: string | null;
+  reviewed_at?: string | null;
+}
+
+export interface AssignmentDocument {
+  id: number;
+  account_id: string;
+  assignment_file_id: number | null;
+  document_type: AssignmentDocumentType;
+  title: string;
+  file_name: string;
+  content_type: string;
+  checksum_sha256: string;
+  file_size_bytes: number;
+  page_count: number | null;
+  processing_status: 'uploaded' | 'processing' | 'review_required' | 'ocr_required' | 'extraction_failed' | 'reviewed';
+  extraction_method: string | null;
+  extraction_summary: {
+    text_length?: number;
+    candidate_count?: number;
+    review_reason?: string;
+    error?: string;
+  };
+  source_kind: 'upload' | 'official_url' | 'zoning_cache';
+  source_url: string | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  processed_at: string | null;
+  reviewed_at: string | null;
+  content_url: string;
+  candidate_count?: number;
+  suggested_candidate_count?: number;
+  candidates?: AssignmentDocumentCandidate[];
+}
+
+export async function getAssignmentDocuments(
+  accountId: string,
+  editorKey: string,
+  assignmentFileId?: number | null,
+): Promise<AssignmentDocument[]> {
+  const response = await fetchJSON<{ ok: true; documents: AssignmentDocument[] }>(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(accountId.trim())}/documents`,
+      { assignment_file_id: assignmentFileId || undefined },
+    ),
+    { headers: { 'x-homenode-editor-key': editorKey } },
+  );
+  return response.documents;
+}
+
+export async function getAssignmentDocument(
+  documentId: number,
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/documents/${documentId}`),
+    { headers: { 'x-homenode-editor-key': editorKey } },
+  );
+  return response.document;
+}
+
+export async function getAssignmentDocumentContent(
+  documentId: number,
+  editorKey: string,
+): Promise<Blob> {
+  const response = await fetch(makeUrl(`/api/documents/${documentId}/content`), {
+    headers: { 'x-homenode-editor-key': editorKey },
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body?.error || `HTTP ${response.status}`);
+  }
+  return response.blob();
+}
+
+export async function uploadAssignmentDocument(
+  accountId: string,
+  file: File,
+  metadata: {
+    assignmentFileId?: number | null;
+    documentType: AssignmentDocumentType;
+    title?: string;
+    uploadedBy?: string;
+  },
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId.trim())}/documents`),
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/pdf',
+        'x-homenode-editor-key': editorKey,
+        'x-assignment-file-id': metadata.assignmentFileId ? String(metadata.assignmentFileId) : '',
+        'x-document-type': encodeURIComponent(metadata.documentType),
+        'x-document-title': encodeURIComponent(metadata.title || file.name),
+        'x-document-file-name': encodeURIComponent(file.name),
+        'x-document-uploaded-by': encodeURIComponent(metadata.uploadedBy || ''),
+      },
+      body: file,
+      timeoutMs: 120000,
+    },
+  );
+  return response.document;
+}
+
+export async function reprocessAssignmentDocument(
+  documentId: number,
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/documents/${documentId}/reprocess`),
+    { method: 'POST', headers: { 'x-homenode-editor-key': editorKey }, timeoutMs: 120000 },
+  );
+  return response.document;
+}
+
+export async function reviewAssignmentDocumentCandidate(
+  documentId: number,
+  candidateId: number,
+  input: {
+    reviewStatus: 'confirmed' | 'rejected';
+    confirmedValue?: string;
+    reviewer: string;
+  },
+  editorKey: string,
+): Promise<AssignmentDocumentCandidate> {
+  const response = await fetchJSON<{ ok: true; candidate: AssignmentDocumentCandidate }>(
+    makeUrl(`/api/documents/${documentId}/candidates/${candidateId}`),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
+      body: JSON.stringify({
+        review_status: input.reviewStatus,
+        confirmed_value: input.confirmedValue || '',
+        reviewer: input.reviewer,
+      }),
+    },
+  );
+  return response.candidate;
 }
 
 export async function getPropertyZoningEvidence(

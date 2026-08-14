@@ -1,0 +1,277 @@
+import { extractText, getDocumentProxy } from "unpdf";
+
+export const DOCUMENT_TYPES = Object.freeze([
+  "zoning_map",
+  "zoning_ordinance",
+  "purchase_contract",
+  "engagement_letter",
+  "mls_sheet",
+  "map",
+  "other",
+]);
+
+const DOCUMENT_TYPE_SET = new Set(DOCUMENT_TYPES);
+const MAX_PDF_PAGES = 250;
+const MAX_EXTRACTED_TEXT_LENGTH = 4_000_000;
+
+function cleanText(value, maximum = MAX_EXTRACTED_TEXT_LENGTH) {
+  return String(value ?? "")
+    .replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n")
+    .trim()
+    .slice(0, maximum);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizedMoney(value) {
+  const match = String(value || "").match(/\$?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/);
+  if (!match) return null;
+  const amount = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(amount) ? amount.toFixed(2) : null;
+}
+
+function pageLines(pages) {
+  return pages.flatMap((text, pageIndex) => cleanText(text, 500_000)
+    .split("\n")
+    .map((line, lineIndex) => ({
+      pageNumber: pageIndex + 1,
+      lineIndex,
+      line: line.trim(),
+    }))
+    .filter((entry) => entry.line));
+}
+
+function firstLabeledCandidate(entries, {
+  fieldKey,
+  labels,
+  confidence = 0.86,
+  normalize = (value) => value,
+}) {
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    for (const label of labels) {
+      const match = entry.line.match(label);
+      if (!match) continue;
+      const sameLineValue = cleanText(match[1] || "", 2_000);
+      const nextEntry = entries[index + 1];
+      const rawValue = sameLineValue || (
+        nextEntry?.pageNumber === entry.pageNumber ? cleanText(nextEntry.line, 2_000) : ""
+      );
+      if (!rawValue) continue;
+      const normalizedValue = normalize(rawValue);
+      if (normalizedValue == null || normalizedValue === "") continue;
+      return {
+        field_key: fieldKey,
+        raw_value: rawValue,
+        normalized_value: String(normalizedValue),
+        page_number: entry.pageNumber,
+        confidence,
+        evidence_excerpt: sameLineValue
+          ? entry.line
+          : `${entry.line} ${nextEntry.line}`.slice(0, 2_000),
+        extraction_method: "labeled_text",
+      };
+    }
+  }
+  return null;
+}
+
+export function normalizeDocumentType(value) {
+  const normalized = String(value || "other").trim().toLowerCase();
+  if (!DOCUMENT_TYPE_SET.has(normalized)) throw new Error("invalid_document_type");
+  return normalized;
+}
+
+export function classifyDocument({ requestedType = "other", fileName = "", pages = [] } = {}) {
+  const normalizedRequested = normalizeDocumentType(requestedType);
+  if (normalizedRequested !== "other") return normalizedRequested;
+  const sample = `${fileName}\n${pages.join("\n").slice(0, 80_000)}`.toLowerCase();
+  if (/zoning\s+(?:map|district)|official\s+zoning\s+map/.test(sample)) return "zoning_map";
+  if (/zoning\s+(?:ordinance|code)|development\s+code/.test(sample)) return "zoning_ordinance";
+  if (/one\s+to\s+four\s+family\s+residential\s+contract|earnest\s+money|purchase\s+contract/.test(sample)) {
+    return "purchase_contract";
+  }
+  if (/engagement\s+letter|appraisal\s+assignment|scope\s+of\s+work/.test(sample)) {
+    return "engagement_letter";
+  }
+  if (/multiple\s+listing\s+service|\bmls\s*(?:#|number|no\.)|days\s+on\s+market/.test(sample)) {
+    return "mls_sheet";
+  }
+  return "other";
+}
+
+export function findZoningDescriptionInPages(pages, zoningCode) {
+  const code = cleanText(zoningCode, 200);
+  if (!code) return null;
+  const codePattern = new RegExp(
+    `(?:^|\\s)${escapeRegExp(code)}(?:\\s|$|[-:\u2013\u2014])`,
+    "i",
+  );
+  const entries = pageLines(pages);
+  for (const entry of entries) {
+    if (!codePattern.test(entry.line)) continue;
+    const direct = entry.line.match(new RegExp(
+      `(?:^|\\s)${escapeRegExp(code)}\\s*(?:-|:|\\u2013|\\u2014)\\s*(.{3,})$`,
+      "i",
+    ));
+    if (direct?.[1]) {
+      return {
+        field_key: "zoning_description",
+        raw_value: cleanText(direct[1], 2_000),
+        normalized_value: cleanText(direct[1], 2_000),
+        page_number: entry.pageNumber,
+        confidence: 0.78,
+        evidence_excerpt: entry.line.slice(0, 2_000),
+        extraction_method: "zoning_code_context",
+      };
+    }
+  }
+  return null;
+}
+
+export function buildDocumentFieldCandidates({ documentType, pages }) {
+  const entries = pageLines(pages);
+  const definitions = [
+    {
+      fieldKey: "zoning_code",
+      labels: [
+        /^(?:current\s+)?zoning(?:\s+(?:district|code|classification))?\s*(?:[:#-]|\bis\b)\s*(.+)$/i,
+      ],
+    },
+    {
+      fieldKey: "zoning_description",
+      labels: [/^(?:zoning|district)\s+(?:description|name|use)\s*[:#-]\s*(.+)$/i],
+    },
+    {
+      fieldKey: "contract_price",
+      labels: [/^(?:sales?|contract|purchase)\s+price\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedMoney,
+    },
+    {
+      fieldKey: "contract_date",
+      labels: [/^(?:contract|effective)\s+date\s*[:#-]?\s*(.+)$/i],
+    },
+    {
+      fieldKey: "closing_date",
+      labels: [/^(?:closing|settlement)\s+date\s*[:#-]?\s*(.+)$/i],
+    },
+    {
+      fieldKey: "loan_amount",
+      labels: [/^loan\s+amount\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedMoney,
+    },
+    {
+      fieldKey: "down_payment",
+      labels: [/^down\s+payment\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedMoney,
+    },
+    {
+      fieldKey: "earnest_money",
+      labels: [/^earnest\s+money\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedMoney,
+    },
+    {
+      fieldKey: "seller_concessions",
+      labels: [/^(?:seller\s+)?concessions?\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedMoney,
+    },
+    {
+      fieldKey: "seller_name",
+      labels: [/^seller(?:\(s\))?\s*[:#-]\s*(.+)$/i],
+    },
+    {
+      fieldKey: "buyer_name",
+      labels: [/^(?:buyer|borrower)(?:\(s\))?\s*[:#-]\s*(.+)$/i],
+    },
+    {
+      fieldKey: "lender_client_name",
+      labels: [/^(?:lender|client|prepared\s+for)\s*[:#-]\s*(.+)$/i],
+    },
+    {
+      fieldKey: "lender_client_address",
+      labels: [/^(?:lender|client)\s+address\s*[:#-]\s*(.+)$/i],
+    },
+    {
+      fieldKey: "mls_number",
+      labels: [/^(?:mls|listing)\s*(?:#|number|no\.)\s*[:#-]?\s*(.+)$/i],
+    },
+    {
+      fieldKey: "list_price",
+      labels: [/^(?:original\s+)?list\s+price\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedMoney,
+    },
+    {
+      fieldKey: "list_date",
+      labels: [/^list(?:ing)?\s+date\s*[:#-]?\s*(.+)$/i],
+    },
+    {
+      fieldKey: "financing_type",
+      labels: [/^(?:financing|loan)\s+type\s*[:#-]?\s*(.+)$/i],
+    },
+  ];
+  const allowedFields = {
+    zoning_map: new Set(["zoning_code", "zoning_description"]),
+    zoning_ordinance: new Set(["zoning_code", "zoning_description"]),
+    purchase_contract: new Set([
+      "contract_price", "contract_date", "closing_date", "loan_amount",
+      "down_payment", "earnest_money", "seller_concessions", "seller_name",
+      "buyer_name", "financing_type",
+    ]),
+    engagement_letter: new Set(["lender_client_name", "lender_client_address"]),
+    mls_sheet: new Set([
+      "mls_number", "list_price", "list_date", "contract_date", "closing_date",
+      "financing_type", "seller_concessions",
+    ]),
+  }[documentType] || null;
+  const candidates = definitions
+    .filter((definition) => !allowedFields || allowedFields.has(definition.fieldKey))
+    .map((definition) => firstLabeledCandidate(entries, definition))
+    .filter(Boolean);
+
+  if (["zoning_map", "zoning_ordinance"].includes(documentType)) {
+    const zoning = candidates.find((candidate) => candidate.field_key === "zoning_code");
+    if (zoning && !candidates.some((candidate) => candidate.field_key === "zoning_description")) {
+      const suggestion = findZoningDescriptionInPages(pages, zoning.raw_value);
+      if (suggestion) candidates.push(suggestion);
+    }
+  }
+  return candidates;
+}
+
+export async function extractPdfEvidence(buffer, {
+  requestedType = "other",
+  fileName = "",
+} = {}) {
+  if (!Buffer.isBuffer(buffer) || buffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
+    throw new Error("document_not_pdf");
+  }
+  const bytes = new Uint8Array(buffer);
+  const pdf = await getDocumentProxy(bytes);
+  try {
+    if (pdf.numPages > MAX_PDF_PAGES) throw new Error("document_page_limit_exceeded");
+    const extracted = await extractText(pdf, { mergePages: false });
+    const pages = (Array.isArray(extracted.text) ? extracted.text : [extracted.text])
+      .map((text) => cleanText(text, 500_000));
+    const textLength = pages.reduce((sum, text) => sum + text.length, 0);
+    const documentType = classifyDocument({ requestedType, fileName, pages });
+    const candidates = buildDocumentFieldCandidates({ documentType, pages });
+    return {
+      document_type: documentType,
+      page_count: extracted.totalPages,
+      extraction_status: textLength >= 40 ? "review_required" : "ocr_required",
+      extraction_method: textLength >= 40 ? "pdf_text" : "none",
+      text_length: textLength,
+      pages,
+      candidates,
+      review_reason: textLength >= 40
+        ? "Machine-extracted values are suggestions and require appraiser confirmation."
+        : "No reliable text layer was found. Visual review or OCR is required.",
+    };
+  } finally {
+    await pdf.cleanup?.();
+    await pdf.destroy?.();
+  }
+}

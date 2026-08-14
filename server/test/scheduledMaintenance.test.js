@@ -8,16 +8,17 @@ import {
 } from "../src/services/scheduledMaintenance.js";
 
 test("routine maintenance refreshes cached parcel influences but excludes slower monthly source mirrors", () => {
-  assert.deepEqual(resolveMaintenanceTasks("routine"), ["census", "locations", "parcels", "influences"]);
+  assert.deepEqual(resolveMaintenanceTasks("routine"), ["documents", "census", "locations", "parcels", "influences"]);
 });
 
 test("maintenance tasks can be scheduled independently", () => {
   assert.deepEqual(resolveMaintenanceTasks("roads"), ["roads"]);
   assert.deepEqual(resolveMaintenanceTasks("census"), ["census"]);
   assert.deepEqual(resolveMaintenanceTasks("traffic"), ["traffic"]);
+  assert.deepEqual(resolveMaintenanceTasks("documents"), ["documents"]);
   assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "traffic", "floods", "zoning", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("all"), [
-    "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
+    "documents", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
   ]);
 });
 

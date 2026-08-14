@@ -25,4 +25,7 @@ __pycache__/
 venv/
 .venv/
 .testdeps/
+.pnpm-store/
+.tmp-pack/
+/server/tmp/
 .DS_Store

@@ -26,12 +26,13 @@ import {
   seedPropertyInfluenceQueue,
 } from "./propertyInfluenceQueue.js";
 import { syncOfficialZoningDocuments } from "./zoningEvidence.js";
+import { processPendingAssignmentDocuments } from "./assignmentDocuments.js";
 
 const MAINTENANCE_LOCK_A = 48_632_941;
 const MAINTENANCE_LOCK_B = 20_260_812;
 const TASK_ALIASES = Object.freeze({
-  routine: ["census", "locations", "parcels", "influences"],
-  all: ["census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences"],
+  routine: ["documents", "census", "locations", "parcels", "influences"],
+  all: ["documents", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences"],
   context: ["roads", "traffic", "floods", "zoning", "influences"],
   census: ["census"],
   locations: ["locations"],
@@ -40,6 +41,7 @@ const TASK_ALIASES = Object.freeze({
   traffic: ["traffic"],
   floods: ["floods"],
   zoning: ["zoning"],
+  documents: ["documents"],
   influences: ["influences"],
 });
 
@@ -228,6 +230,9 @@ async function runInfluenceTask(pool, options) {
 }
 
 async function runTask(pool, task, options) {
+  if (task === "documents") {
+    return processPendingAssignmentDocuments(pool, { limit: options.documentBatchSize });
+  }
   if (task === "census") return runCensusTask(pool, options);
   if (task === "locations") return runLocationTask(pool, options);
   if (task === "parcels") {
@@ -259,6 +264,7 @@ async function runTask(pool, task, options) {
     const polygons = await syncOfficialZoningContext(pool, {
       batchSize: options.zoningBatchSize,
       concurrency: options.fetchConcurrency,
+      jurisdictions: options.zoningJurisdictions,
     });
     const documents = await syncOfficialZoningDocuments(pool);
     return { polygons, documents };
@@ -282,6 +288,8 @@ export async function runScheduledMaintenance(pool, {
   trafficBatchSize = 1_000,
   hazardBatchSize = 200,
   zoningBatchSize = 1_000,
+  zoningJurisdictions = null,
+  documentBatchSize = 5,
   influenceMaximumBatches = 40,
   influenceBatchSize = 100,
   influenceSeedLimit = 10_000,
@@ -330,6 +338,8 @@ export async function runScheduledMaintenance(pool, {
       trafficBatchSize: boundedInteger(trafficBatchSize, 1_000, 100, 2_000),
       hazardBatchSize: boundedInteger(hazardBatchSize, 200, 50, 1_000),
       zoningBatchSize: boundedInteger(zoningBatchSize, 1_000, 100, 2_000),
+      zoningJurisdictions,
+      documentBatchSize: boundedInteger(documentBatchSize, 5, 1, 25),
       influenceMaximumBatches,
       influenceBatchSize,
       influenceSeedLimit,

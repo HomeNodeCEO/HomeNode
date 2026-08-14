@@ -10,6 +10,7 @@ import {
   createAssignmentFile,
   analyzePropertyContext as runPropertyContextAnalysis,
   getPropertyZoningEvidence,
+  getZoningDocumentDescriptionSuggestion,
   getCensusCityProfile,
   getCensusZipProfile,
   getNeighborhoodProfile,
@@ -24,6 +25,7 @@ import {
   updateAssignmentFile,
   updatePropertyReportSections,
   type AppraisalAssignmentFile,
+  type AssignmentDocumentType,
   type AssignmentDetailsPayload,
   type NeighborhoodProfileResponse,
   type NeighborhoodLandUseAnalysisResponse,
@@ -59,6 +61,7 @@ import {
 import { UAD_CONDITION_RATINGS } from "@/lib/conditionQualityRatings";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 import DeferredReportSection from "@/components/DeferredReportSection";
+import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
 
 type DcadOwner = {
   owner_name?: string;
@@ -2967,6 +2970,10 @@ function AddressHero({
       setZoningEvidenceMessage("Enter the confirmed zoning code before saving.");
       return;
     }
+    if (!zoningDraft.zoningDescription.trim()) {
+      setZoningEvidenceMessage("Enter or prefill the exact official zoning description before saving.");
+      return;
+    }
     if (!zoningDraft.reviewer.trim()) {
       setZoningEvidenceMessage("Enter the appraiser or reviewer name before saving.");
       return;
@@ -3006,6 +3013,46 @@ function AddressHero({
         sessionStorage.removeItem("homenode-editor-key");
       }
       setZoningEvidenceMessage(message);
+    } finally {
+      setZoningEvidenceLoading(false);
+    }
+  };
+
+  const prefillVerbatimZoningDescription = async () => {
+    const sourceDocument = zoningEvidence?.documents.find(
+      (document) => String(document.id) === zoningDraft.sourceDocumentId,
+    ) || zoningEvidence?.documents[0] || null;
+    if (!sourceDocument || !zoningDraft.zoningCode.trim()) {
+      setZoningEvidenceMessage("Select an official PDF and enter the zoning code first.");
+      return;
+    }
+    setZoningEvidenceLoading(true);
+    setZoningEvidenceMessage("");
+    try {
+      const result = await getZoningDocumentDescriptionSuggestion(
+        sourceDocument.id,
+        zoningDraft.zoningCode.trim(),
+      );
+      if (!result.suggestion?.raw_value) {
+        setZoningEvidenceMessage(
+          "That code was not found beside a reliable description in the PDF text layer. Review the visible document and city contact before confirming.",
+        );
+        return;
+      }
+      setZoningDraft((current) => ({
+        ...current,
+        zoningDescription: result.suggestion?.raw_value || current.zoningDescription,
+        pageNumber: result.suggestion?.page_number
+          ? String(result.suggestion.page_number)
+          : current.pageNumber,
+      }));
+      setZoningEvidenceMessage(
+        `Prefilled the exact wording found on PDF page ${result.suggestion.page_number || "unknown"}. Appraiser confirmation is still required.`,
+      );
+    } catch (error) {
+      setZoningEvidenceMessage(
+        error instanceof Error ? error.message : "The zoning description could not be suggested.",
+      );
     } finally {
       setZoningEvidenceLoading(false);
     }
@@ -3138,6 +3185,43 @@ function AddressHero({
     }));
     setAssignmentDirty(true);
     setAssignmentSaveMessage("");
+  };
+
+  const applyConfirmedDocumentCandidate = (
+    fieldKey: string,
+    value: string,
+    documentType: AssignmentDocumentType,
+  ) => {
+    const assignmentFieldByCandidate: Record<string, keyof AssignmentDetails> = {
+      lender_client_name: "lender_client_name",
+      lender_client_address: "lender_client_address",
+      contract_price: "contract_price",
+      contract_date: "contract_date",
+      loan_amount: "loan_amount",
+      down_payment: "down_payment",
+      earnest_money: "earnest_money",
+      seller_concessions: "seller_concessions",
+      seller_name: "contract_seller_names",
+    };
+    const assignmentField = assignmentFieldByCandidate[fieldKey];
+    if (!assignmentField) {
+      setAssignmentSaveMessage("The confirmed document field remains attached as page-cited evidence.");
+      return;
+    }
+    setAssignmentDraft((current) => {
+      const next: AssignmentDetails = { ...current, [assignmentField]: value };
+      if (documentType === "purchase_contract") {
+        const types = new Set(current.assignment_types || []);
+        types.add("purchase_transaction");
+        next.assignment_types = Array.from(types);
+        next.subject_under_contract = true;
+      }
+      return next;
+    });
+    setAssignmentDirty(true);
+    setAssignmentSaveMessage(
+      "Confirmed document evidence prefills this assignment. Save Assignment Details to retain it.",
+    );
   };
 
   const importCustomMarketArea = useCallback(() => {
@@ -4351,7 +4435,7 @@ function AddressHero({
                         </div>
                         <iframe
                           title={selectedZoningDocument.title}
-                          src={makeUrl(selectedZoningDocument.content_url)}
+                          src={`/pdfjs-viewer.html?file=${encodeURIComponent(makeUrl(selectedZoningDocument.content_url))}`}
                           className="h-[32rem] w-full rounded-lg border border-slate-300 bg-slate-100"
                         />
                         <p className="mt-2 text-[11px] leading-4 text-slate-500">
@@ -4413,8 +4497,18 @@ function AddressHero({
                         </select>
                       </label>
                       <label className="block sm:col-span-2 xl:col-span-1 2xl:col-span-2">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Description</span>
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Verbatim Official Zoning Description</span>
                         <input className="input input-bordered input-sm mt-1 w-full bg-white" value={zoningDraft.zoningDescription} onChange={(event) => setZoningDraft((current) => ({ ...current, zoningDescription: event.target.value }))} />
+                        {selectedZoningDocument ? (
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-xs mt-2 normal-case rounded-lg"
+                            onClick={() => void prefillVerbatimZoningDescription()}
+                            disabled={zoningEvidenceLoading || !zoningDraft.zoningCode.trim()}
+                          >
+                            Prefill Exact Wording from PDF
+                          </button>
+                        ) : null}
                       </label>
                       <label className="block">
                         <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">PDF Page</span>
@@ -4634,6 +4728,14 @@ function AddressHero({
               </button>
             </div>
           </SummarySection>
+
+          <AssignmentDocumentCenter
+            accountId={accountId || ""}
+            assignmentFileId={activeAssignmentFile?.id || null}
+            getEditorKey={editorKeyForSave}
+            onApplyConfirmedCandidate={applyConfirmedDocumentCandidate}
+            className="order-6"
+          />
 
           <div className="order-4 grid grid-cols-1 gap-5">
             <SummarySection

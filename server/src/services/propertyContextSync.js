@@ -5,7 +5,9 @@ import {
   isDcadParcelBuiltUp,
 } from "./neighborhoodLandUse.js";
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
-import { OFFICIAL_ZONING_SOURCES } from "./propertyZoningSources.js";
+import {
+  selectOfficialZoningSources,
+} from "./propertyZoningSources.js";
 
 export const DCAD_PARCEL_SYNC_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
@@ -1204,10 +1206,11 @@ export async function syncOfficialZoningContext(pool, {
   concurrency = 2,
   logger = console,
   continueOnError = true,
+  jurisdictions = null,
 } = {}) {
   await ensurePropertyContextSchema(pool);
   const results = [];
-  for (const source of OFFICIAL_ZONING_SOURCES) {
+  for (const source of selectOfficialZoningSources(jurisdictions)) {
     try {
       results.push(await syncOfficialZoningSource(pool, source, {
         fetchImpl,

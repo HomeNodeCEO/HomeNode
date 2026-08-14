@@ -57,6 +57,14 @@ try {
       "hazard-batch-size",
       process.env.MAINTENANCE_HAZARD_BATCH_SIZE || "200",
     ),
+    zoningJurisdictions: option(
+      "zoning-jurisdictions",
+      process.env.MAINTENANCE_ZONING_JURISDICTIONS || "",
+    ),
+    documentBatchSize: option(
+      "document-batch-size",
+      process.env.MAINTENANCE_DOCUMENT_BATCH_SIZE || "5",
+    ),
     fetchConcurrency: process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || "3",
   });
   console.log(JSON.stringify(result, null, 2));

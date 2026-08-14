@@ -6,6 +6,7 @@ import {
   DALLAS_COUNTY_CITIES,
   DALLAS_COUNTY_ZONING_JURISDICTIONS,
   OFFICIAL_ZONING_SOURCES,
+  selectOfficialZoningSources,
 } from "../src/services/propertyZoningSources.js";
 import { normalizeOfficialZoningFeature } from "../src/services/propertyContextSync.js";
 
@@ -51,6 +52,7 @@ test("manual zoning sources retain official evidence and city verification conta
     .map((entry) => entry.city)
     .sort();
   assert.deepEqual(cachedMapCities, [
+    "Cockrell Hill",
     "Ferris",
     "Glenn Heights",
     "Highland Park",
@@ -84,4 +86,15 @@ test("multi-layer municipal records retain a stable layer prefix", () => {
   });
   assert.equal(record.source_record_id, "single_parcel:42");
   assert.equal(record.zoning_code, "SF-7");
+});
+
+test("zoning synchronization can select a bounded municipal batch", () => {
+  assert.deepEqual(
+    selectOfficialZoningSources("Balch Springs,Carrollton").map((source) => source.jurisdiction),
+    ["Balch Springs", "Carrollton"],
+  );
+  assert.throws(
+    () => selectOfficialZoningSources(["Not a Dallas County city"]),
+    /unknown_zoning_jurisdiction/,
+  );
 });

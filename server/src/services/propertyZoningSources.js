@@ -310,6 +310,11 @@ const MANUAL_REFERENCE_URLS = Object.freeze({
 // unavailable. Interactive-only jurisdictions retain their official link and
 // contact path below instead of being treated as if a PDF exists.
 const MANUAL_ZONING_DOCUMENTS = Object.freeze({
+  "Cockrell Hill": [{
+    key: "official_zoning_code",
+    title: "Cockrell Hill Official Zoning and Development Code",
+    url: "https://cityofcockrellhill.us/DocumentCenter/View/387/ZONING-CODE-ENTIRE-2008-F-Ch-153",
+  }],
   Ferris: [{
     key: "official_zoning_map",
     title: "Ferris Official Zoning District Map",
@@ -454,3 +459,23 @@ export const DALLAS_COUNTY_ZONING_JURISDICTIONS = Object.freeze(
 export const AUTOMATED_ZONING_SOURCE_KEYS = Object.freeze(
   OFFICIAL_ZONING_SOURCES.map((source) => source.sourceKey),
 );
+
+export function selectOfficialZoningSources(jurisdictions = null) {
+  const requested = Array.isArray(jurisdictions)
+    ? jurisdictions
+    : String(jurisdictions || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+  if (!requested.length) return [...OFFICIAL_ZONING_SOURCES];
+  const requestedByName = new Map(requested.map((city) => [city.toUpperCase(), city]));
+  const selected = OFFICIAL_ZONING_SOURCES.filter(
+    (source) => requestedByName.has(source.jurisdiction.toUpperCase()),
+  );
+  const found = new Set(selected.map((source) => source.jurisdiction.toUpperCase()));
+  const unknown = requested.filter((city) => !found.has(city.toUpperCase()));
+  if (unknown.length) {
+    throw new Error(`unknown_zoning_jurisdiction:${unknown.join(",")}`);
+  }
+  return selected;
+}

@@ -82,3 +82,36 @@ complexity evidence.
 Phase 2 source work includes TxDOT traffic counts, municipal zoning overlays,
 FEMA flood information, and any additional influence layers selected after
 source/licensing validation.
+
+## Municipal zoning synchronization
+
+Municipal zoning is synchronized into the local PostgreSQL mirror and is not
+queried during report rendering. This keeps the Property Report usable when a
+city GIS is unavailable. The bounded Dallas County batch currently used for
+the next rollout is:
+
+- Balch Springs
+- Carrollton
+- Cedar Hill
+- Coppell
+- DeSoto
+- Duncanville
+- Farmers Branch
+- Grand Prairie
+
+Run only this batch without touching the already-validated Dallas and Garland
+sources:
+
+```sh
+npm run sync:property-context -- --source=zoning --mode=full --jurisdictions="Balch Springs,Carrollton,Cedar Hill,Coppell,DeSoto,Duncanville,Farmers Branch,Grand Prairie"
+```
+
+The same comma-separated list may be passed to scheduled maintenance with
+`MAINTENANCE_ZONING_JURISDICTIONS`. A failed city refresh is isolated, recorded,
+and does not remove the last successful local snapshot for that city.
+
+Cities without a verified queryable GIS source remain manual-review sources.
+Their official map/code URL, planning contact, and cached official PDF (when
+the city exposes one that can be downloaded reliably) are returned in the
+Property Report. Machine-extracted zoning wording is always a suggestion until
+an appraiser confirms it.

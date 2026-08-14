@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 
 import { DALLAS_COUNTY_ZONING_JURISDICTIONS } from "./propertyZoningSources.js";
+import {
+  extractPdfEvidence,
+  findZoningDescriptionInPages,
+} from "./documentIntelligence.js";
 
 const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 45_000;
@@ -41,6 +45,7 @@ function publicDocument(row) {
     file_size_bytes: Number(row.file_size_bytes || 0),
     page_count: row.page_count == null ? null : Number(row.page_count),
     extraction_status: row.extraction_status,
+    extraction: row.extraction || {},
     fetched_at: row.fetched_at,
     source_last_modified: row.source_last_modified,
     content_url: `/api/zoning-source-documents/${row.id}/content`,
@@ -174,6 +179,35 @@ export async function syncOfficialZoningDocuments(pool, { logger = console } = {
       try {
         const fetched = await fetchOfficialPdf(document.url);
         const checksum = createHash("sha256").update(fetched.buffer).digest("hex");
+        let extraction;
+        try {
+          extraction = await extractPdfEvidence(fetched.buffer, {
+            requestedType: document.key.includes("code") || document.key.includes("ordinance")
+              ? "zoning_ordinance"
+              : "zoning_map",
+            fileName: `${document.title}.pdf`,
+          });
+        } catch (error) {
+          extraction = {
+            page_count: documentPageCount(fetched.buffer),
+            extraction_status: "extraction_failed",
+            extraction_method: "none",
+            pages: [],
+            candidates: [],
+            text_length: 0,
+            review_reason: String(error?.message || error),
+          };
+        }
+        const databaseExtractionStatus = extraction.extraction_status === "ocr_required"
+          ? "review_required"
+          : extraction.extraction_status;
+        const extractedText = extraction.pages.join("\n\f\n") || null;
+        const extractionSummary = JSON.stringify({
+          extraction_method: extraction.extraction_method,
+          text_length: extraction.text_length,
+          candidates: extraction.candidates,
+          review_reason: extraction.review_reason,
+        });
         const client = await pool.connect();
         try {
           await client.query("BEGIN");
@@ -187,9 +221,21 @@ export async function syncOfficialZoningDocuments(pool, { logger = console } = {
             await client.query(
               `UPDATE gis.zoning_source_documents
                SET fetched_at = now(), source_etag = $2, source_last_modified = $3,
-                   official_url = $4, title = $5, is_current = true
+                   official_url = $4, title = $5, is_current = true,
+                   page_count = $6, extraction_status = $7,
+                   extracted_text = $8, extraction = $9::jsonb
                WHERE id = $1`,
-              [documentId, fetched.etag, fetched.lastModified, document.url, document.title],
+              [
+                documentId,
+                fetched.etag,
+                fetched.lastModified,
+                document.url,
+                document.title,
+                extraction.page_count,
+                databaseExtractionStatus,
+                extractedText,
+                extractionSummary,
+              ],
             );
           } else {
             await client.query(
@@ -202,8 +248,9 @@ export async function syncOfficialZoningDocuments(pool, { logger = console } = {
               `INSERT INTO gis.zoning_source_documents (
                  provider_key, document_key, title, official_url, content_type,
                  content, checksum_sha256, file_size_bytes, page_count,
-                 extraction_status, source_etag, source_last_modified
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'review_required', $10, $11)
+                 extraction_status, extracted_text, extraction,
+                 source_etag, source_last_modified
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13, $14)
                RETURNING id`,
               [
                 jurisdiction.providerKey,
@@ -214,7 +261,10 @@ export async function syncOfficialZoningDocuments(pool, { logger = console } = {
                 fetched.buffer,
                 checksum,
                 fetched.buffer.length,
-                documentPageCount(fetched.buffer),
+                extraction.page_count,
+                databaseExtractionStatus,
+                extractedText,
+                extractionSummary,
                 fetched.etag,
                 fetched.lastModified,
               ],
@@ -273,7 +323,7 @@ export async function getPropertyZoningEvidence(pool, {
     pool.query(
       `SELECT id, provider_key, document_key, title, official_url, content_type,
               checksum_sha256, file_size_bytes, page_count, extraction_status,
-              fetched_at, source_last_modified
+              extraction, fetched_at, source_last_modified
        FROM gis.zoning_source_documents
        WHERE provider_key = $1 AND is_current
        ORDER BY document_key`,
@@ -290,6 +340,7 @@ export async function getPropertyZoningEvidence(pool, {
     ),
     pool.query(
       `SELECT zoning.zoning_code, zoning.zoning_description, zoning.provider_key,
+              zoning.source_record_id, zoning.source_attributes,
               zoning.source_updated_at, zoning.synced_at
        FROM core.account_locations location
        JOIN gis.zoning_districts zoning
@@ -331,6 +382,27 @@ export async function getZoningDocumentContent(pool, documentId) {
   return rows[0] || null;
 }
 
+export async function getZoningDocumentDescriptionSuggestion(pool, {
+  documentId,
+  zoningCode,
+} = {}) {
+  await ensureZoningEvidenceSchema(pool);
+  const id = positiveInteger(documentId);
+  if (!id) throw new Error("invalid_zoning_document_id");
+  const { rows } = await pool.query(
+    `SELECT extracted_text, extraction_status
+     FROM gis.zoning_source_documents
+     WHERE id = $1`,
+    [id],
+  );
+  if (!rows[0]) throw new Error("zoning_document_not_found");
+  const pages = String(rows[0].extracted_text || "").split(/\n\f\n/);
+  return {
+    extraction_status: rows[0].extraction_status,
+    suggestion: findZoningDescriptionInPages(pages, zoningCode),
+  };
+}
+
 export async function savePropertyZoningVerification(pool, {
   accountId,
   assignmentFileId = null,
@@ -340,9 +412,11 @@ export async function savePropertyZoningVerification(pool, {
   const jurisdiction = jurisdictionForCity(input?.jurisdiction_city);
   if (!jurisdiction) throw new Error("invalid_zoning_jurisdiction");
   const zoningCode = cleanText(input?.zoning_code, 200);
+  const zoningDescription = cleanText(input?.zoning_description, 8_000);
   const reviewer = cleanText(input?.reviewer, 200);
   const sourceType = cleanText(input?.source_type, 40);
   if (!zoningCode) throw new Error("zoning_code_required");
+  if (!zoningDescription) throw new Error("zoning_description_required");
   if (!reviewer) throw new Error("zoning_reviewer_required");
   if (!["map_pdf", "interactive_map", "city_confirmation", "official_gis", "manual"].includes(sourceType)) {
     throw new Error("invalid_zoning_source_type");
@@ -382,7 +456,7 @@ export async function savePropertyZoningVerification(pool, {
       sourceDocumentId,
       sourceType,
       zoningCode,
-      cleanText(input?.zoning_description, 2_000),
+      zoningDescription,
       positiveInteger(input?.page_number),
       cleanText(input?.confirmation_reference, 1_000),
       cleanText(input?.notes, 4_000),

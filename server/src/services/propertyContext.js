@@ -541,6 +541,9 @@ export async function loadSpatialContext(
      CROSS JOIN subject
      WHERE parcel.object_id <> $1
        AND parcel.land_use_category IN ('commercial', 'multifamily')
+       -- The geometry bounding box uses dcad_parcels_geom_gix to reduce the
+       -- countywide table before the precise geography distance calculation.
+       AND parcel.geom && ST_Expand(subject.geom, $2 / 111320.0)
        AND ST_DWithin(subject.geom::geography, parcel.geom::geography, $2)
      ORDER BY ST_Distance(subject.geom::geography, parcel.geom::geography), parcel.object_id
      LIMIT 25`,
@@ -562,7 +565,8 @@ export async function loadSpatialContext(
        ST_AsGeoJSON(ST_ClosestPoint(road.geom, ST_PointOnSurface(subject.geom)))::jsonb AS closest_point
      FROM gis.road_segments road
      CROSS JOIN subject
-     WHERE (
+     WHERE road.geom && ST_Expand(subject.geom, $4 / 111320.0)
+       AND (
        (road.road_class = 'railroad' AND
         ST_DWithin(subject.geom::geography, road.geom::geography, $4))
        OR
@@ -605,6 +609,7 @@ export async function loadSpatialContext(
      FROM gis.traffic_volume_segments traffic
      CROSS JOIN subject
      WHERE traffic.current_aadt >= 10000
+       AND traffic.geom && ST_Expand(subject.geom, $2 / 111320.0)
        AND ST_DWithin(subject.geom::geography, traffic.geom::geography, $2)
      ORDER BY ST_Distance(subject.geom::geography, traffic.geom::geography),
               traffic.current_aadt DESC

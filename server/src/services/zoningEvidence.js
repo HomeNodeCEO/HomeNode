@@ -346,10 +346,11 @@ export async function getPropertyZoningEvidence(pool, {
        JOIN gis.zoning_districts zoning
          ON ST_Covers(zoning.geom, ST_SetSRID(ST_MakePoint(location.longitude, location.latitude), 4326))
        WHERE location.account_id = $1
+         AND zoning.provider_key = $2
          AND location.latitude IS NOT NULL AND location.longitude IS NOT NULL
        ORDER BY zoning.synced_at DESC
        LIMIT 1`,
-      [accountId],
+      [accountId, jurisdiction.providerKey],
     ),
   ]);
   return {

@@ -16,9 +16,20 @@ import {
   getZoningSourceRegistry,
   savePropertyInfluenceContext,
 } from "./propertyInfluenceStore.js";
+import { DALLAS_COUNTY_ZONING_JURISDICTIONS } from "./propertyZoningSources.js";
 
 const FEET_PER_METER = 3.280839895;
 const DEFAULT_CONTEXT_RADIUS_METERS = 3_218.688;
+const ZONING_PROVIDER_BY_CITY = new Map(
+  DALLAS_COUNTY_ZONING_JURISDICTIONS.map((entry) => [
+    entry.city.toUpperCase(),
+    entry.providerKey,
+  ]),
+);
+
+function zoningProviderForCity(city) {
+  return ZONING_PROVIDER_BY_CITY.get(String(city || "").trim().toUpperCase()) || null;
+}
 
 function finiteNumber(value) {
   if (typeof value === "string") {
@@ -435,6 +446,7 @@ export async function loadSpatialContext(
 ) {
   const longitude = finiteNumber(subject.longitude);
   const latitude = finiteNumber(subject.latitude);
+  const zoningProviderKey = zoningProviderForCity(subject.city);
   const { rows: parcelRows } = await pool.query(
     `SELECT
        parcel.object_id,
@@ -638,13 +650,14 @@ export async function loadSpatialContext(
      JOIN gis.zoning_source_registry registry
        ON registry.provider_key = zoning.provider_key
      CROSS JOIN subject
-     WHERE ST_Covers(zoning.geom, subject.center)
+     WHERE zoning.provider_key = $2
+       AND ST_Covers(zoning.geom, subject.center)
      ORDER BY registry.priority DESC,
               (registry.provider_type = 'official_municipal') DESC,
               zoning.source_updated_at DESC NULLS LAST,
               zoning.synced_at DESC
      LIMIT 1`,
-    [parcel.object_id],
+    [parcel.object_id, zoningProviderKey],
   );
   const { rows: floodRows } = await pool.query(
     `WITH subject AS (

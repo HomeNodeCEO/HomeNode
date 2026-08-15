@@ -191,8 +191,20 @@ export async function seedPropertyInfluenceQueue(pool, { limit = 10_000 } = {}) 
        FROM candidates candidate
        WHERE candidate.account_id ~ '^[0-9A-Za-z]{17}$'
        GROUP BY candidate.account_id
-     ), stale AS (
-       SELECT prioritized.*
+    ), stale AS (
+       SELECT prioritized.account_id,
+              prioritized.priority + CASE
+                WHEN context.account_id IS NULL
+                  OR context.methodology_version < $2
+                  THEN 50
+                ELSE 0
+              END AS priority,
+              CASE
+                WHEN context.account_id IS NULL
+                  OR context.methodology_version < $2
+                  THEN 'initial_influence_coverage'
+                ELSE prioritized.reason
+              END AS reason
        FROM prioritized
        LEFT JOIN gis.property_influence_contexts context
          ON context.account_id = prioritized.account_id
@@ -207,7 +219,14 @@ export async function seedPropertyInfluenceQueue(pool, { limit = 10_000 } = {}) 
           OR context.methodology_version < $2
           OR context.computed_at < COALESCE(parcel_state.refreshed_at, '-infinity'::timestamptz)
           OR context.computed_at < COALESCE(influence_source_state.refreshed_at, '-infinity'::timestamptz)
-       ORDER BY prioritized.priority DESC, prioritized.account_id
+       -- Reach useful comparable-sale coverage before refreshing contexts that
+       -- are already usable. Source refreshes still queue every stale account,
+       -- but a missing/current-version context receives the first maintenance
+       -- capacity so the ranking migration cannot stall behind refresh work.
+       ORDER BY
+         (context.account_id IS NULL OR context.methodology_version < $2) DESC,
+         prioritized.priority DESC,
+         prioritized.account_id
        LIMIT $1
      )
      INSERT INTO gis.property_influence_queue (

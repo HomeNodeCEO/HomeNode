@@ -9,7 +9,7 @@ import {
 } from "./propertyContextStore.js";
 import { NEIGHBORHOOD_BOUNDARY_DISCLOSURE } from "./neighborhoodRelevance.js";
 
-export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 1;
+export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 2;
 
 const METERS_PER_MILE = 1609.344;
 const MAX_BOUNDARY_POINTS = 2500;
@@ -440,12 +440,12 @@ export async function generateNeighborhoodBoundary(pool, {
     });
   } catch (error) {
     roadEvidence = {
-      source: "Local Census TIGER road mirror",
+      source: "Local TxDOT AADT mirror with Census road names",
       street_names: [],
       cardinal_boundaries: {},
       summary: "",
       review_required: true,
-      warning: error?.message || "local_boundary_roads_unavailable",
+      warning: error?.message || "local_txdot_boundary_roads_unavailable",
     };
   }
   const [zoningEvidence, sourceHealth] = await Promise.all([
@@ -613,3 +613,4 @@ export async function reviewNeighborhoodBoundary(pool, {
   if (!rows.length) throw new Error("neighborhood_boundary_assessment_not_found");
   return boundaryResponse(rows[0]);
 }
+

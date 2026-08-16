@@ -88,10 +88,10 @@ test("scores and persists the local parcel population without time-adjusting sal
     updated_at: "2026-08-16T00:00:00.000Z",
   };
   const candidateRows = [
-    [101, "A", 1975, 9000, 1700, 0.2, 290000],
-    [102, "B", 1978, 9500, 1750, 0.5, 300000],
-    [103, "C", 1972, 8800, 1650, 0.8, 280000],
-  ].map(([parcelObjectId, accountId, yearBuilt, site, gla, distance, price]) => ({
+    [101, "A", 1975, 9000, 1700, 0.2],
+    [102, "B", 1978, 9500, 1750, 0.5],
+    [103, "C", 1972, 8800, 1650, 0.8],
+  ].map(([parcelObjectId, accountId, yearBuilt, site, gla, distance]) => ({
     parcel_object_id: parcelObjectId,
     account_id: accountId,
     address: `${parcelObjectId} Test Ln`,
@@ -101,12 +101,19 @@ test("scores and persists the local parcel population without time-adjusting sal
     gla_sqft: gla,
     distance_miles: distance,
     point: { type: "Point", coordinates: [-96.65, 32.97] },
-    sale_price: price,
-    sale_date: "2026-01-01",
     subject_land_use_category: "one_unit",
     subject_year_built: 1975,
     subject_site_area_sqft: 9000,
     subject_gla_sqft: 1700,
+  }));
+  const saleRows = [
+    ["A", 290000],
+    ["B", 300000],
+    ["C", 280000],
+  ].map(([accountId, price]) => ({
+    primary_account_id: accountId,
+    sale_price: price,
+    sale_date: "2026-01-01",
   }));
   const savedRow = {
     id: 9,
@@ -136,8 +143,11 @@ test("scores and persists the local parcel population without time-adjusting sal
       if (/FROM app\.neighborhood_boundary_assessments/.test(statement) && /LIMIT 1/.test(statement)) {
         return { rows: [boundaryRow], rowCount: 1 };
       }
-      if (/WITH boundary AS MATERIALIZED/.test(statement) && /latest_sale/.test(statement)) {
+      if (/WITH boundary AS MATERIALIZED/.test(statement) && /candidate_location/.test(statement)) {
         return { rows: candidateRows, rowCount: candidateRows.length };
+      }
+      if (/SELECT DISTINCT ON \(sale\.primary_account_id\)/.test(statement)) {
+        return { rows: saleRows, rowCount: saleRows.length };
       }
       if (/FROM gis\.source_sync_state/.test(statement)) return { rows: [], rowCount: 0 };
       if (/INSERT INTO app\.neighborhood_relevance_assessments/.test(statement)) {
@@ -152,6 +162,9 @@ test("scores and persists the local parcel population without time-adjusting sal
   assert.equal(result.summary.candidate_count, 3);
   assert.equal(result.summary.sale_prices_time_adjusted, false);
   assert.ok(statements.some((sql) => /core\.v_sales_enriched/.test(sql)));
+  assert.equal(statements.filter((sql) => /core\.v_sales_enriched/.test(sql)).length, 1);
+  assert.ok(statements.some((sql) => /primary_account_id = ANY\(\$1::text\[\]\)/.test(sql)));
+  assert.ok(statements.every((sql) => !/LEFT JOIN LATERAL[\s\S]+core\.v_sales_enriched/.test(sql)));
   assert.ok(statements.some((sql) => /DELETE FROM app\.neighborhood_relevance_candidates/.test(sql)));
   assert.ok(statements.some((sql) => /jsonb_to_recordset/.test(sql)));
 });

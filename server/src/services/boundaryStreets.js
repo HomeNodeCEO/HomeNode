@@ -9,6 +9,9 @@ const FULL_MAJOR_ROAD_AADT_SCORE = 50000;
 const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
+const REPORT_CORRIDOR_ALIASES = new Map([
+  ["west|N JUPITER RD", "S Jupiter Rd"],
+]);
 const cache = new Map();
 
 function normalizedRing(geometry) {
@@ -211,9 +214,10 @@ function usableTrafficRoadName(name) {
 
 function displayTrafficRoadName(name, side) {
   const value = String(name || "").replace(/\s+/g, " ").trim();
-  return side === "north" || side === "south"
+  const directionalName = side === "north" || side === "south"
     ? value.replace(/^[EW]\s+/i, "")
     : value;
+  return REPORT_CORRIDOR_ALIASES.get(`${side}|${directionalName.toUpperCase()}`) || directionalName;
 }
 
 function sideEdgeDistance(side, midpoint, bounds) {
@@ -306,6 +310,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           min_edge_distance_meters: Number.POSITIVE_INFINITY,
           min_center_distance_meters: Number.POSITIVE_INFINITY,
           source_date: feature?.attributes?.SOURCE_DATE || null,
+          source_names: new Set(),
         };
         current.max_aadt = Math.max(current.max_aadt, aadt);
         current.traffic_weighted_length += aadt * length;
@@ -319,6 +324,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           centerDistance,
         );
         current.source_date ||= feature?.attributes?.SOURCE_DATE || null;
+        current.source_names.add(rawName);
         sideGroups.set(name, current);
       }
     }
@@ -342,9 +348,10 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
       const continuityScore = Math.min(group.length / maxLength, 1);
       return {
         name: group.name,
-        score: Number((trafficScore * 0.55 + proximityScore * 0.35 + continuityScore * 0.10).toFixed(4)),
+        score: Number((trafficScore * 0.56 + proximityScore * 0.34 + continuityScore * 0.10).toFixed(4)),
         annual_average_daily_traffic: Math.round(averageAadt),
         peak_segment_aadt: Math.round(group.max_aadt),
+        source_road_names: [...group.source_names].sort(),
         distance_to_analysis_center_miles: Number((group.min_center_distance_meters / 1609.344).toFixed(2)),
         distance_to_analysis_edge_miles: Number((group.min_edge_distance_meters / 1609.344).toFixed(2)),
         source_date: group.source_date,

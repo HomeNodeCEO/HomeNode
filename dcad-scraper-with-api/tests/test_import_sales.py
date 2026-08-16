@@ -12,6 +12,8 @@ from dcad.import_sales import (  # noqa: E402
     BASE_HEADERS,
     _classify_structural_style,
     _migration_sql,
+    _parcel_links,
+    _parcel_variants,
     _source_record_hash,
     _stable_hash,
     _typed_values,
@@ -132,6 +134,35 @@ class RecordTypeTests(unittest.TestCase):
         first = source_row(ListingId="21298422")
         second = source_row(ListingId="21298480")
         self.assertNotEqual(_source_record_hash(first), _source_record_hash(second))
+
+
+class CollinParcelMatchingTests(unittest.TestCase):
+    def test_collin_variants_ignore_r_and_dashes_for_comparison(self) -> None:
+        dashed = dict(_parcel_variants("R-13743-00L-0900-1"))
+        undashed = dict(_parcel_variants("R1374300L09001"))
+        missing_r = dict(_parcel_variants("1374300L09001"))
+        self.assertIn("COLLIN:1374300L09001", dashed)
+        self.assertIn("COLLIN:1374300L09001", undashed)
+        self.assertIn("COLLIN:1374300L09001", missing_r)
+
+    def test_collin_variant_links_to_internal_account_without_changing_raw_id(self) -> None:
+        raw = source_row(ParcelNumber="R1374300L09001")
+        accounts = {
+            "2965620": {
+                "account_id": "2965620",
+                "county": "Collin",
+                "address": "1808 SHEFFIELD CT",
+            },
+            "COLLIN:1374300L09001": {
+                "account_id": "2965620",
+                "county": "Collin",
+                "address": "1808 SHEFFIELD CT",
+            },
+        }
+        link = _parcel_links(raw, accounts)[0]
+        self.assertEqual(link.account_id, "2965620")
+        self.assertEqual(link.parcel_number_raw, "R1374300L09001")
+        self.assertEqual(link.match_method, "punctuation_normalized")
 
 
 class MigrationBundleTests(unittest.TestCase):

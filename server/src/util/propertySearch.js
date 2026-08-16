@@ -1,4 +1,5 @@
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z]{17}$/;
+const COLLIN_ACCOUNT_ID_PATTERN = /^(?=.{4,100}$)(?=.*\d)R[0-9A-Za-z._/#-]+$/i;
 const HOUSE_NUMBER_PATTERN = /^([0-9]+[A-Za-z]?(?:-[0-9]+[A-Za-z]?)?(?:\s+1\/2)?)\s+(.+)$/;
 const ADDRESS_PREFIX_PATTERN = /^[0-9]/;
 
@@ -28,7 +29,12 @@ export function parsePropertySearch(value) {
 
   return {
     raw,
-    isAccountId: ACCOUNT_ID_PATTERN.test(raw),
+    // Dallas uses the familiar 17-character key. Collin CAD account IDs are
+    // native identifiers beginning with R and may contain punctuation. Keep
+    // the original value intact so a correct Collin ID can be resolved through
+    // the county-identifier bridge instead of being mistaken for an address.
+    isAccountId:
+      ACCOUNT_ID_PATTERN.test(raw) || COLLIN_ACCOUNT_ID_PATTERN.test(raw),
     normalizedAddress,
     houseNumber: houseMatch?.[1] || null,
     streetName: houseMatch?.[2] || normalizedAddress,

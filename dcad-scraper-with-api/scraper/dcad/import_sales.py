@@ -49,6 +49,7 @@ OPTIONAL_SOURCE_HEADERS = [
 ]
 ACCOUNT_PATTERN = re.compile(r"^[A-Z0-9]{17}$")
 EMBEDDED_ACCOUNT_PATTERN = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{17})(?![A-Z0-9])")
+COLLIN_VARIANT_PREFIX = "COLLIN:"
 
 
 @dataclass
@@ -212,6 +213,21 @@ def _parcel_variants(value: str | None) -> list[tuple[str, str]]:
             if ACCOUNT_PATTERN.fullmatch(candidate):
                 variants.setdefault(candidate, "concatenated_full_ids")
 
+    # NTREIS agents commonly omit the punctuation (and sometimes the leading
+    # R) from Collin CAD's authoritative geoID. The sentinel keeps this
+    # comparison namespace separate from Dallas account IDs; the importer maps
+    # it through app.county_account_identifiers and still stores the official
+    # dashed Collin identifier there for display and audit.
+    collin_key = collapsed[1:] if collapsed.startswith("R") else collapsed
+    if (
+        (collapsed.startswith("R") or not ACCOUNT_PATTERN.fullmatch(collapsed))
+        and 4 <= len(collin_key) <= 99
+    ):
+        variants.setdefault(
+            f"{COLLIN_VARIANT_PREFIX}{collin_key}",
+            "punctuation_normalized",
+        )
+
     return list(variants.items())
 
 
@@ -373,6 +389,7 @@ def _migration_sql() -> str:
         root / "migrations" / "010_sales_media.sql",
         root / "migrations" / "013_sales_listing_identity.sql",
         root / "migrations" / "014_sales_reconciliation.sql",
+        root / "migrations" / "017_native_county_account_identifiers.sql",
     )
     return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
 
@@ -405,6 +422,15 @@ def _existing_hashes_by_listing_id(
 def _account_map(connection, variants: set[str]) -> dict[str, dict[str, Any]]:
     if not variants:
         return {}
+    direct_variants = [
+        value for value in variants if not value.startswith(COLLIN_VARIANT_PREFIX)
+    ]
+    collin_keys = [
+        value[len(COLLIN_VARIANT_PREFIX) :]
+        for value in variants
+        if value.startswith(COLLIN_VARIANT_PREFIX)
+    ]
+    accounts: dict[str, dict[str, Any]] = {}
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -412,12 +438,48 @@ def _account_map(connection, variants: set[str]) -> dict[str, dict[str, Any]]:
             FROM core.accounts
             WHERE account_id = ANY(%s)
             """,
-            (list(variants),),
+            (direct_variants,),
         )
-        return {
-            account_id: {"county": county, "address": address}
-            for account_id, county, address in cursor.fetchall()
-        }
+        for account_id, county, address in cursor.fetchall():
+            accounts[account_id] = {
+                "account_id": account_id,
+                "county": county,
+                "address": address,
+            }
+
+        if collin_keys:
+            cursor.execute(
+                """
+                SELECT to_regclass('app.county_account_identifiers') IS NOT NULL
+                """
+            )
+            aliases_available = bool(cursor.fetchone()[0])
+            if aliases_available:
+                cursor.execute(
+                    """
+                    SELECT
+                        identifier.normalized_account_id,
+                        account.account_id,
+                        account.county,
+                        account.address
+                    FROM app.county_account_identifiers identifier
+                    JOIN core.accounts account
+                      ON account.account_id = identifier.account_id
+                    WHERE identifier.county = 'COLLIN'
+                      AND identifier.normalized_account_id = ANY(%s)
+                    """,
+                    (collin_keys,),
+                )
+                for key, account_id, county, address in cursor.fetchall():
+                    record = {
+                        "account_id": account_id,
+                        "county": county,
+                        "address": address,
+                    }
+                    accounts.setdefault(account_id, record)
+                    accounts[f"{COLLIN_VARIANT_PREFIX}{key}"] = record
+
+    return accounts
 
 
 def _parcel_links(
@@ -431,8 +493,11 @@ def _parcel_links(
 
         matched: list[tuple[str, str]] = []
         for candidate, method in _parcel_variants(raw_value):
-            if candidate in accounts and candidate not in {item[0] for item in matched}:
-                matched.append((candidate, method))
+            if candidate not in accounts:
+                continue
+            account_id = accounts[candidate]["account_id"]
+            if account_id not in {item[0] for item in matched}:
+                matched.append((account_id, method))
 
         if matched:
             for parcel_sequence, (account_id, method) in enumerate(matched, start=1):

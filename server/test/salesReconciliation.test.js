@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  countyFromNativeAccountId,
+  findAccountByCountyIdentifier,
+  normalizedCountyAccountKey,
   normalizeSalesReconciliationUpdate,
   salesSourceLocationEvidence,
+  validateSalesReconciliationAccountId,
 } from "../src/services/salesReconciliation.js";
 
 test("sales reconciliation requires a valid CAD account and normalizes audit fields", () => {
@@ -15,6 +19,7 @@ test("sales reconciliation requires a valid CAD account and normalizes audit fie
     }),
     {
       accountId: "00000416188000000",
+      linkedAccountId: null,
       notes: "Confirmed against DCAD.",
       reviewer: "Jordan",
     },
@@ -23,6 +28,88 @@ test("sales reconciliation requires a valid CAD account and normalizes audit fie
     () => normalizeSalesReconciliationUpdate({ account_id: "123" }),
     /invalid_account_id/,
   );
+});
+
+test("sales reconciliation preserves authoritative Collin CAD punctuation", () => {
+  assert.deepEqual(
+    normalizeSalesReconciliationUpdate({
+      account_id: " R-13743-00L-0900-1 ",
+      linked_account_id: "2965620",
+    }),
+    {
+      accountId: "R-13743-00L-0900-1",
+      linkedAccountId: "2965620",
+      notes: null,
+      reviewer: "HomeNode editor",
+    },
+  );
+  assert.equal(countyFromNativeAccountId("R-13743-00L-0900-1"), "COLLIN");
+  assert.equal(
+    normalizedCountyAccountKey("R-13743-00L-0900-1", "Collin County"),
+    "1374300L09001",
+  );
+  assert.equal(
+    normalizedCountyAccountKey("R1374300L09001", "Collin"),
+    "1374300L09001",
+  );
+});
+
+test("county rules keep Dallas strict and require the Collin R prefix", () => {
+  assert.equal(
+    validateSalesReconciliationAccountId("26272500060150000", "Dallas"),
+    "26272500060150000",
+  );
+  assert.throws(
+    () => validateSalesReconciliationAccountId("2627250006015", "Dallas"),
+    /invalid_dallas_account_id/,
+  );
+  assert.throws(
+    () => validateSalesReconciliationAccountId("13743-00L-0900-1", "Collin"),
+    /invalid_collin_account_id/,
+  );
+  assert.throws(
+    () => validateSalesReconciliationAccountId("R1374300L09001", "Collin"),
+    /invalid_collin_account_id/,
+  );
+  assert.throws(
+    () => validateSalesReconciliationAccountId("R-13743-00L-0900-1", "Dallas"),
+    /invalid_dallas_account_id/,
+  );
+});
+
+test("Collin lookup resolves an undashed MLS reference through the official alias", async () => {
+  const calls = [];
+  const queryable = {
+    async query(sql, params) {
+      calls.push({ sql: String(sql), params });
+      if (String(sql).includes("FROM core.accounts requested")) {
+        if (params[0] === "R1374300L09001") return { rows: [], rowCount: 0 };
+        return {
+          rows: [{
+            requested_account_id: "2965620",
+            account_id: "2965620",
+            address: "1808 SHEFFIELD CT",
+            city: "CELINA",
+            postal_code: "75009",
+            county: "Collin",
+          }],
+          rowCount: 1,
+        };
+      }
+      if (String(sql).includes("app.county_account_identifiers")) {
+        assert.deepEqual(params, ["1374300L09001"]);
+        return { rows: [{ account_id: "2965620" }], rowCount: 1 };
+      }
+      throw new Error("unexpected_query");
+    },
+  };
+  const account = await findAccountByCountyIdentifier(
+    queryable,
+    "R1374300L09001",
+  );
+  assert.equal(account.account_id, "2965620");
+  assert.equal(account.county, "Collin");
+  assert.equal(calls.length, 3);
 });
 
 test("sales reconciliation preserves normalized MLS address and coordinate evidence", () => {

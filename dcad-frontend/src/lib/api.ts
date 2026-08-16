@@ -61,6 +61,7 @@ export interface AccountRow {
   data_quality_status?: string | null;
   data_quality_flags?: string[] | null;
   canonical_account_id?: string | null;
+  native_account_id?: string | null;
   requested_account_id?: string | null;
   resolved_from_legacy?: boolean;
 
@@ -564,6 +565,7 @@ export interface LocationBackfillStatus {
 
 export interface SalesReconciliationUpdate {
   account_id: string;
+  linked_account_id?: string | null;
   notes?: string | null;
   reviewer?: string | null;
 }
@@ -1307,7 +1309,7 @@ export interface GroupedAnalysesResponse {
 /** ---------------- API calls (DB only; no scraper) ---------------- */
 
 /**
- * Search accounts by address fragment or exact 17-char account_id.
+ * Search accounts by address fragment, Dallas account ID, or native Collin geoID.
  * Backend route: GET /api/search?q=&limit=&offset=
  */
 export async function searchAccounts(q: string, limit = 25, offset = 0): Promise<AccountRow[]> {
@@ -2069,6 +2071,7 @@ export async function reconcileSalesSourceRecord(
     postal_code: string | null;
     county: string | null;
   };
+  verified_parcel_id: string;
   unresolved_parcel_count: number;
 }> {
   const url = makeUrl(`/api/sales/${encodeURIComponent(String(sourceRecordId))}/reconcile`);

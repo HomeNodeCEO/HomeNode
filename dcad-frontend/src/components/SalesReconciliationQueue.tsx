@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 
 const PAGE_SIZE = 10;
+const NATIVE_CAD_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z ._/#-]{3,99}$/;
 const money = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -19,6 +20,8 @@ const money = new Intl.NumberFormat("en-US", {
 
 type Draft = {
   accountId: string;
+  linkedAccountId: string;
+  linkedCounty: string;
   accountQuery: string;
   notes: string;
   results: AccountRow[];
@@ -30,6 +33,8 @@ type Draft = {
 function emptyDraft(item: SalesReconciliationQueueItem): Draft {
   return {
     accountId: item.primary_account_id || "",
+    linkedAccountId: item.primary_account_id || "",
+    linkedCounty: "",
     accountQuery: item.address_hint || item.parcel_number_raw || "",
     notes: "",
     results: [],
@@ -45,6 +50,23 @@ function displayDate(value: string | null) {
   return Number.isNaN(parsed.valueOf())
     ? value
     : parsed.toLocaleDateString("en-US");
+}
+
+function reconciliationErrorMessage(message: string | undefined) {
+  const known: Record<string, string> = {
+    invalid_editor_key: "The editor key was not accepted.",
+    invalid_collin_account_id: "Collin CAD IDs must include the official leading R and dashes exactly as published.",
+    invalid_dallas_account_id: "Dallas CAD IDs must contain exactly 17 characters.",
+    account_county_mismatch: "That R-prefixed ID belongs to Collin CAD, but the selected account is in another county.",
+    account_identifier_mismatch: "The verified parcel ID does not match the selected CAD account.",
+    county_account_identifier_conflict: "That official Collin ID is already linked to another property; review both records before changing it.",
+    ambiguous_collin_account_id: "More than one Collin account matches that ID; select the correct address first.",
+  };
+  return (message && known[message]) || message || "The verified sale could not be saved.";
+}
+
+function caughtErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : undefined;
 }
 
 export default function SalesReconciliationQueue() {
@@ -73,8 +95,8 @@ export default function SalesReconciliationQueue() {
         }
         return next;
       });
-    } catch (loadError: any) {
-      setError(loadError?.message || "Unable to load the sales reconciliation queue.");
+    } catch (loadError: unknown) {
+      setError(caughtErrorMessage(loadError) || "Unable to load the sales reconciliation queue.");
     } finally {
       setLoading(false);
     }
@@ -111,7 +133,7 @@ export default function SalesReconciliationQueue() {
     const draft = drafts[key] || emptyDraft(item);
     const query = draft.accountQuery.trim();
     if (!query) {
-      updateDraft(key, { error: "Enter an address or 17-character CAD account ID." });
+      updateDraft(key, { error: "Enter an address or county CAD account ID." });
       return;
     }
     updateDraft(key, { searching: true, error: null, results: [] });
@@ -122,10 +144,10 @@ export default function SalesReconciliationQueue() {
         results,
         error: results.length ? null : "No CAD accounts matched that search.",
       });
-    } catch (searchError: any) {
+    } catch (searchError: unknown) {
       updateDraft(key, {
         searching: false,
-        error: searchError?.message || "CAD account search failed.",
+        error: caughtErrorMessage(searchError) || "CAD account search failed.",
       });
     }
   }
@@ -137,8 +159,12 @@ export default function SalesReconciliationQueue() {
       updateDraft(key, { error: "Enter your personal editor key before saving." });
       return;
     }
-    if (!/^[0-9A-Za-z]{17}$/.test(draft.accountId.trim())) {
-      updateDraft(key, { error: "Select or enter a valid 17-character CAD account ID." });
+    if (!NATIVE_CAD_ACCOUNT_ID_PATTERN.test(draft.accountId.trim())) {
+      updateDraft(key, { error: "Enter the CAD account ID exactly as the county reports it." });
+      return;
+    }
+    if (/collin/i.test(draft.linkedCounty) && !/^R-/i.test(draft.accountId.trim())) {
+      updateDraft(key, { error: "A verified Collin CAD ID must include its official leading R and dashes." });
       return;
     }
     updateDraft(key, { saving: true, error: null });
@@ -147,6 +173,7 @@ export default function SalesReconciliationQueue() {
         item.source_record_id,
         {
           account_id: draft.accountId.trim(),
+          linked_account_id: draft.linkedAccountId.trim() || null,
           notes: draft.notes.trim() || null,
           reviewer: "HomeNode sales reconciliation",
         },
@@ -160,13 +187,10 @@ export default function SalesReconciliationQueue() {
       });
       await loadQueue(offset);
       void loadLocationStatus();
-    } catch (saveError: any) {
+    } catch (saveError: unknown) {
       updateDraft(key, {
         saving: false,
-        error:
-          saveError?.message === "invalid_editor_key"
-            ? "The editor key was not accepted."
-            : saveError?.message || "The verified sale could not be saved.",
+        error: reconciliationErrorMessage(caughtErrorMessage(saveError)),
       });
     }
   }
@@ -177,7 +201,7 @@ export default function SalesReconciliationQueue() {
         <div>
           <h2>Sales Reconciliation Queue</h2>
           <p>
-            Unmatched MLS sales stay here until their CAD account is manually verified. Saving a match upserts the sale immediately; any missing Dallas parcel coordinates are completed by the background mapping queue.
+            Unmatched MLS sales stay here until their CAD account is manually verified. Dallas IDs retain the 17-character safeguard; Collin IDs keep their authoritative leading R and dashes. Saving a match upserts the sale immediately.
           </p>
         </div>
         <div className="sales-reconciliation__count">
@@ -298,15 +322,27 @@ export default function SalesReconciliationQueue() {
                       <button
                         type="button"
                         key={account.account_id}
-                        onClick={() => updateDraft(key, {
-                          accountId: account.canonical_account_id || account.account_id,
-                          accountQuery: account.address || account.account_id,
-                          results: [],
-                          error: null,
-                        })}
+                        onClick={() => {
+                          const searchedId = draft.accountQuery.trim();
+                          const verifiedAccountId = /collin/i.test(account.county || "") && account.native_account_id
+                            ? account.native_account_id
+                            : /collin/i.test(account.county || "") && /^R-/i.test(searchedId)
+                              ? searchedId
+                            : /^R/i.test(draft.accountId.trim())
+                              ? draft.accountId.trim()
+                              : account.account_id;
+                          updateDraft(key, {
+                            accountId: verifiedAccountId,
+                            linkedAccountId: account.account_id,
+                            linkedCounty: account.county || "",
+                            accountQuery: account.address || account.account_id,
+                            results: [],
+                            error: null,
+                          });
+                        }}
                       >
                         <strong>{account.address || "Address unavailable"}</strong>
-                        <span>{account.account_id} · {[account.city, account.postal_code].filter(Boolean).join(" ")}</span>
+                        <span>{account.native_account_id || account.account_id} · {[account.county, account.city, account.postal_code].filter(Boolean).join(" · ")}</span>
                       </button>
                     ))}
                   </div>
@@ -314,12 +350,18 @@ export default function SalesReconciliationQueue() {
 
                 <div className="sales-reconciliation__save-grid">
                   <label>
-                    <span>Verified CAD account ID</span>
+                    <span>Verified county CAD account ID</span>
                     <input
                       value={draft.accountId}
                       onChange={(event) => updateDraft(key, { accountId: event.target.value })}
-                      placeholder="17-character account ID"
+                      placeholder="Dallas: 17 characters; Collin: exact R-prefixed ID"
                     />
+                    {draft.linkedAccountId && (
+                      <small>
+                        Linked HomeNode record: {draft.linkedAccountId}
+                        {draft.linkedCounty ? ` (${draft.linkedCounty})` : ""}
+                      </small>
+                    )}
                   </label>
                   <label>
                     <span>Review note (optional)</span>

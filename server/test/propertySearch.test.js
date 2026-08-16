@@ -54,6 +54,16 @@ test("recognizes exact account IDs", () => {
   assert.equal(parsePropertySearch("26272500060150000").isAccountId, true);
 });
 
+test("recognizes native Collin CAD IDs without removing their formatting", () => {
+  const parsed = parsePropertySearch("R-0033-003-0080-1");
+  assert.equal(parsed.isAccountId, true);
+  assert.equal(parsed.raw, "R-0033-003-0080-1");
+});
+
+test("does not mistake a numeric house-number prefix for an account ID", () => {
+  assert.equal(parsePropertySearch("1909").isAccountId, false);
+});
+
 test("removes county annotations from DCAD city names", () => {
   assert.equal(normalizePropertyCity("GARLAND (DALLAS CO)"), "GARLAND");
 });

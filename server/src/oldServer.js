@@ -79,6 +79,7 @@ import {
 import { ensurePropertyEnrichmentSchema } from "./services/propertyEnrichment.js";
 import {
   ensureSalesReconciliationSchema,
+  findAccountByCountyIdentifier,
   listSalesReconciliationQueue,
   reconcileSalesSourceRecord,
 } from "./services/salesReconciliation.js";
@@ -1741,13 +1742,22 @@ app.patch("/api/sales/:sourceRecordId/reconcile", async (req, res) => {
     return res.json({ ok: true, ...result });
   } catch (error) {
     const message = error?.message || "sales_reconciliation_failed";
-    const status =
-      message === "source_record_not_found" || message === "account_not_found"
-        ? 404
-        : String(message).startsWith("invalid_") ||
-            message === "source_record_not_closed_sale"
-          ? 400
-          : 500;
+    let status = 500;
+    if (message === "source_record_not_found" || message === "account_not_found") {
+      status = 404;
+    } else if (
+      message === "ambiguous_collin_account_id" ||
+      message === "county_account_identifier_conflict"
+    ) {
+      status = 409;
+    } else if (
+      String(message).startsWith("invalid_") ||
+      message === "source_record_not_closed_sale" ||
+      message === "account_county_mismatch" ||
+      message === "account_identifier_mismatch"
+    ) {
+      status = 400;
+    }
     if (status === 500) {
       console.error("sales reconciliation failed", error);
     }
@@ -2450,7 +2460,8 @@ app.get("/api/accounts/:id/market_value_history", async (req, res) => {
 
 /**
  * GET /api/search?q=&city=&limit=&offset=
- * Search by exact account ID or indexed address/street metadata. The optional
+ * Search by Dallas account ID, native Collin geoID, or indexed address/street
+ * metadata. The optional
  * city parameter independently narrows the original query. Queries
  * beginning with a house number remain full-address prefixes so every
  * keystroke narrows the same autocomplete results.
@@ -2459,6 +2470,7 @@ app.get("/api/accounts/:id/market_value_history", async (req, res) => {
 app.get("/api/search", async (req, res) => {
   try {
     await accountQualityReady;
+    await salesReconciliationReady;
     const q = String(req.query.q || "").trim();
     const requestedCity = normalizePropertyCity(req.query.city) || null;
     const limit = Math.min(parseInt(String(req.query.limit || "25"), 10) || 25, 100);
@@ -2497,9 +2509,11 @@ app.get("/api/search", async (req, res) => {
         a.account_id
       `;
     } else if (parsed.isAccountId) {
-      const canonicalAccountId = await resolveCanonicalAccountId(pool, q);
+      await salesReconciliationReady;
+      const countyAccount = await findAccountByCountyIdentifier(pool, q);
+      const canonicalAccountId = countyAccount?.account_id || await resolveCanonicalAccountId(pool, q);
       if (canonicalAccountId !== q.toUpperCase()) {
-        requestedLegacyAccountId = q.toUpperCase();
+        requestedLegacyAccountId = q;
       }
       where = `a.account_id = ${bind(canonicalAccountId)} ${cityWhere(parsed.city)}`;
       matchSql = `'exact_account'`;
@@ -2562,6 +2576,7 @@ app.get("/api/search", async (req, res) => {
         a.data_quality_status,
         a.data_quality_flags,
         a.canonical_account_id,
+        native_identifier.native_account_id,
         ${matchSql} AS search_match,
         COALESCE(vsc.certified_year, mv.tax_year)                 AS latest_tax_year,
         COALESCE(vsc.market_value, mv.total_value)                AS latest_market_value,
@@ -2569,6 +2584,15 @@ app.get("/api/search", async (req, res) => {
         COALESCE(vsc.land_value, mv.land_value)                   AS latest_land_value,
         COALESCE(vsc.capped_value, mv.homestead_cap_value)        AS latest_capped_value
       FROM core.accounts a
+      LEFT JOIN LATERAL (
+        SELECT identifier.native_account_id
+        FROM app.county_account_identifiers identifier
+        WHERE identifier.account_id = a.account_id
+        ORDER BY
+          (identifier.verification_source = 'collin_cad_open_data') DESC,
+          identifier.updated_at DESC
+        LIMIT 1
+      ) native_identifier ON TRUE
       LEFT JOIN core.value_summary_current vsc ON vsc.account_id = a.account_id
       LEFT JOIN LATERAL (
         SELECT m.* FROM core.market_values m

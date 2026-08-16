@@ -1,4 +1,50 @@
-const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z]{17}$/;
+const DALLAS_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z]{17}$/;
+const NATIVE_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z ._\/#-]{3,99}$/;
+const COLLIN_ACCOUNT_REFERENCE_PATTERN = /^(?=.{4,100}$)(?=.*\d)R[0-9A-Za-z._\/#-]+$/i;
+const COLLIN_ACCOUNT_ID_PATTERN = /^(?=.{6,100}$)(?=.*\d)R-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)+$/i;
+
+function normalizedCounty(value) {
+  return String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+COUNTY$/, "");
+}
+
+export function countyFromNativeAccountId(value) {
+  const accountId = String(value ?? "").trim();
+  return COLLIN_ACCOUNT_REFERENCE_PATTERN.test(accountId) ? "COLLIN" : null;
+}
+
+export function normalizedCountyAccountKey(value, county = null) {
+  let key = String(value ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, "");
+  if (normalizedCounty(county) === "COLLIN" || /^R/i.test(String(value ?? "").trim())) {
+    key = key.replace(/^R/, "");
+  }
+  return key;
+}
+
+export function validateSalesReconciliationAccountId(value, county = null) {
+  const accountId = String(value ?? "").trim();
+  if (!NATIVE_ACCOUNT_ID_PATTERN.test(accountId)) {
+    throw new Error("invalid_account_id");
+  }
+
+  const normalizedAccountCounty = normalizedCounty(county);
+  const inferredCounty = countyFromNativeAccountId(accountId);
+  if (normalizedAccountCounty === "DALLAS" && !DALLAS_ACCOUNT_ID_PATTERN.test(accountId)) {
+    throw new Error("invalid_dallas_account_id");
+  }
+  if (normalizedAccountCounty === "COLLIN" && !COLLIN_ACCOUNT_ID_PATTERN.test(accountId)) {
+    throw new Error("invalid_collin_account_id");
+  }
+  if (inferredCounty === "COLLIN" && normalizedAccountCounty && normalizedAccountCounty !== "COLLIN") {
+    throw new Error("account_county_mismatch");
+  }
+  return accountId;
+}
 
 function optionalText(value, maximumLength) {
   const text = String(value ?? "").trim();
@@ -78,12 +124,13 @@ export function salesSourceLocationEvidence(rawPayload) {
 }
 
 export function normalizeSalesReconciliationUpdate(input = {}) {
-  const accountId = String(input.account_id ?? "").trim();
-  if (!ACCOUNT_ID_PATTERN.test(accountId)) {
-    throw new Error("invalid_account_id");
-  }
+  const accountId = validateSalesReconciliationAccountId(input.account_id);
+  const linkedAccountId = input.linked_account_id == null
+    ? null
+    : validateSalesReconciliationAccountId(input.linked_account_id);
   return {
     accountId,
+    linkedAccountId,
     notes: optionalText(input.notes, 2000),
     reviewer: optionalText(input.reviewer, 200) || "HomeNode editor",
   };
@@ -133,9 +180,173 @@ export async function ensureSalesReconciliationSchema(pool) {
       verified_at         timestamptz NOT NULL DEFAULT now()
     );
 
+    ALTER TABLE app.sales_reconciliation_history
+      ADD COLUMN IF NOT EXISTS verified_parcel_id text,
+      ADD COLUMN IF NOT EXISTS verified_county text;
+
+    UPDATE app.sales_reconciliation_history
+    SET verified_parcel_id = verified_account_id
+    WHERE verified_parcel_id IS NULL;
+
+    ALTER TABLE app.sales_reconciliation_history
+      ALTER COLUMN verified_parcel_id SET NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS app.county_account_identifiers (
+      county                  text NOT NULL,
+      normalized_account_id   text NOT NULL,
+      native_account_id       text NOT NULL,
+      account_id              text NOT NULL
+                                REFERENCES core.accounts(account_id)
+                                ON DELETE CASCADE,
+      verification_source     text NOT NULL DEFAULT 'manual_sales_reconciliation',
+      source_record_id        bigint
+                                REFERENCES core.sales_source_records(id)
+                                ON DELETE SET NULL,
+      reviewer                text,
+      verified_at             timestamptz NOT NULL DEFAULT now(),
+      updated_at              timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (county, normalized_account_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS county_account_identifiers_account_idx
+      ON app.county_account_identifiers (account_id, county);
+
     CREATE INDEX IF NOT EXISTS sales_reconciliation_history_source_idx
       ON app.sales_reconciliation_history (source_record_id, verified_at DESC);
   `);
+}
+
+async function loadCanonicalAccount(queryable, requestedAccountId) {
+  const { rows } = await queryable.query(
+    `
+      SELECT
+        requested.account_id AS requested_account_id,
+        COALESCE(
+          NULLIF(BTRIM(requested.canonical_account_id), ''),
+          requested.account_id
+        ) AS account_id,
+        canonical.address,
+        canonical.city,
+        canonical.postal_code,
+        canonical.county
+      FROM core.accounts requested
+      JOIN core.accounts canonical
+        ON canonical.account_id = COALESCE(
+          NULLIF(BTRIM(requested.canonical_account_id), ''),
+          requested.account_id
+        )
+      WHERE requested.account_id = $1
+    `,
+    [requestedAccountId],
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Resolve a reviewer-entered native county identifier to HomeNode's existing
+ * account row. Collin imports historically omitted the leading R and/or
+ * punctuation, so a normalized bridge is used while the verified native value
+ * remains unchanged for audit and display purposes.
+ */
+export async function findAccountByCountyIdentifier(queryable, requestedAccountId) {
+  const accountId = validateSalesReconciliationAccountId(requestedAccountId);
+  const exact = await loadCanonicalAccount(queryable, accountId);
+  if (exact) {
+    validateSalesReconciliationAccountId(accountId, exact.county);
+    return exact;
+  }
+
+  if (countyFromNativeAccountId(accountId) !== "COLLIN") return null;
+  const normalizedKey = normalizedCountyAccountKey(accountId, "COLLIN");
+  const aliasResult = await queryable.query(
+    `
+      SELECT account_id
+      FROM app.county_account_identifiers
+      WHERE county = 'COLLIN'
+        AND normalized_account_id = $1
+      LIMIT 2
+    `,
+    [normalizedKey],
+  );
+  if (aliasResult.rowCount > 1) throw new Error("ambiguous_collin_account_id");
+  if (aliasResult.rowCount === 1) {
+    const aliased = await loadCanonicalAccount(queryable, aliasResult.rows[0].account_id);
+    if (aliased) return aliased;
+  }
+
+  const candidateResult = await queryable.query(
+    `
+      SELECT account_id
+      FROM core.accounts
+      WHERE county ILIKE '%collin%'
+        AND REGEXP_REPLACE(
+              UPPER(REGEXP_REPLACE(BTRIM(account_id), '^R', '', 'i')),
+              '[^0-9A-Z]',
+              '',
+              'g'
+            ) = $1
+      ORDER BY account_id
+      LIMIT 2
+    `,
+    [normalizedKey],
+  );
+  if (candidateResult.rowCount > 1) throw new Error("ambiguous_collin_account_id");
+  if (!candidateResult.rowCount) return null;
+  return loadCanonicalAccount(queryable, candidateResult.rows[0].account_id);
+}
+
+function identifiersMatch(verifiedAccountId, account, linkedAccountId = null) {
+  const county = normalizedCounty(account?.county);
+  // Collin's short numeric propID and authoritative R-prefixed geoID are
+  // different key systems, not merely differently punctuated versions. A
+  // reviewer-selected Collin account is therefore the deliberate bridge; the
+  // verified geoID is persisted as the authoritative native identifier.
+  if (county === "COLLIN" && linkedAccountId) return true;
+  const verifiedKey = normalizedCountyAccountKey(verifiedAccountId, county);
+  const candidates = [
+    linkedAccountId,
+    account?.requested_account_id,
+    account?.account_id,
+  ].filter(Boolean);
+  return candidates.some(
+    (candidate) => normalizedCountyAccountKey(candidate, county) === verifiedKey,
+  );
+}
+
+async function saveCountyAccountIdentifier(
+  queryable,
+  { account, nativeAccountId, sourceRecordId, reviewer },
+) {
+  const county = normalizedCounty(account?.county);
+  if (county !== "COLLIN") return;
+  const normalizedAccountId = normalizedCountyAccountKey(nativeAccountId, county);
+  const result = await queryable.query(
+    `
+      INSERT INTO app.county_account_identifiers (
+        county, normalized_account_id, native_account_id, account_id,
+        verification_source, source_record_id, reviewer
+      ) VALUES ($1, $2, $3, $4, 'manual_sales_reconciliation', $5, $6)
+      ON CONFLICT (county, normalized_account_id) DO UPDATE
+      SET native_account_id = EXCLUDED.native_account_id,
+          account_id = EXCLUDED.account_id,
+          verification_source = EXCLUDED.verification_source,
+          source_record_id = EXCLUDED.source_record_id,
+          reviewer = EXCLUDED.reviewer,
+          verified_at = now(),
+          updated_at = now()
+      WHERE app.county_account_identifiers.account_id = EXCLUDED.account_id
+      RETURNING account_id
+    `,
+    [
+      county,
+      normalizedAccountId,
+      nativeAccountId,
+      account.account_id,
+      sourceRecordId,
+      reviewer,
+    ],
+  );
+  if (!result.rowCount) throw new Error("county_account_identifier_conflict");
 }
 
 function queueReasons(row) {
@@ -242,36 +453,31 @@ export async function reconcileSalesSourceRecord(
       throw new Error("source_record_not_closed_sale");
     }
 
-    const accountResult = await client.query(
-      `
-        SELECT
-          requested.account_id AS requested_account_id,
-          COALESCE(
-            NULLIF(BTRIM(requested.canonical_account_id), ''),
-            requested.account_id
-          ) AS account_id,
-          canonical.address,
-          canonical.city,
-          canonical.postal_code,
-          canonical.county
-        FROM core.accounts requested
-        JOIN core.accounts canonical
-          ON canonical.account_id = COALESCE(
-            NULLIF(BTRIM(requested.canonical_account_id), ''),
-            requested.account_id
-          )
-        WHERE requested.account_id = $1
-      `,
-      [update.accountId],
-    );
-    if (!accountResult.rowCount) throw new Error("account_not_found");
-    const account = accountResult.rows[0];
+    const account = update.linkedAccountId
+      ? await loadCanonicalAccount(client, update.linkedAccountId)
+      : await findAccountByCountyIdentifier(client, update.accountId);
+    if (!account) throw new Error("account_not_found");
+    validateSalesReconciliationAccountId(update.accountId, account.county);
+    if (
+      update.linkedAccountId &&
+      !identifiersMatch(update.accountId, account, update.linkedAccountId)
+    ) {
+      throw new Error("account_identifier_mismatch");
+    }
+
+    await saveCountyAccountIdentifier(client, {
+      account,
+      nativeAccountId: update.accountId,
+      sourceRecordId: id,
+      reviewer: update.reviewer,
+    });
 
     const parcelResult = await client.query(
       `
         UPDATE core.sale_parcels
-        SET account_id = $2,
-            parcel_number_normalized = $2,
+        SET parcel_number_raw = $2,
+            account_id = $3,
+            parcel_number_normalized = $3,
             match_method = 'manual_verified',
             is_resolved = true
         WHERE id = (
@@ -283,7 +489,7 @@ export async function reconcileSalesSourceRecord(
         )
         RETURNING id
       `,
-      [id, account.account_id],
+      [id, update.accountId, account.account_id],
     );
     if (!parcelResult.rowCount) {
       await client.query(
@@ -294,7 +500,7 @@ export async function reconcileSalesSourceRecord(
             match_method, is_resolved
           ) VALUES ($1, 1, 1, 'primary', $2, $3, $3, 'manual_verified', true)
         `,
-        [id, source.parcel_number_raw, account.account_id],
+        [id, update.accountId, account.account_id],
       );
     }
 
@@ -403,14 +609,17 @@ export async function reconcileSalesSourceRecord(
       `
         INSERT INTO app.sales_reconciliation_history (
           source_record_id, listing_id, previous_account_id,
-          verified_account_id, notes, reviewer
-        ) VALUES ($1, $2, $3, $4, $5, $6)
+          verified_account_id, verified_parcel_id, verified_county,
+          notes, reviewer
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
       [
         id,
         source.listing_id,
         source.primary_account_id,
         account.account_id,
+        update.accountId,
+        normalizedCounty(account.county) || null,
         update.notes,
         update.reviewer,
       ],
@@ -420,6 +629,7 @@ export async function reconcileSalesSourceRecord(
       source_record: updatedSourceResult.rows[0],
       sale_id: saleResult.rows[0].id,
       account,
+      verified_parcel_id: update.accountId,
       unresolved_parcel_count: unresolvedCount,
     };
   } catch (error) {

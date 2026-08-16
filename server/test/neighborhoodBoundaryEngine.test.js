@@ -26,7 +26,7 @@ function generatedRow(overrides = {}) {
     account_id: "26272500060150000",
     scope_key: "property",
     assignment_file_id: null,
-    methodology_version: 1,
+    methodology_version: NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION,
     status: "generated",
     search_profile: "suburban_simple",
     discovery_radius_miles: 2,
@@ -88,12 +88,12 @@ test("generates a local, persisted broad boundary without a remote road dependen
       market_value_count: 149,
       sampled_max_distance_miles: 1.9,
     }],
-    // local boundary roads
+    // local TxDOT traffic-backed boundary roads
     [
-      { name: "Apollo Rd", base_name: "Apollo", road_class: "primary", geometry: { type: "MultiLineString", coordinates: [[[-96.659, 32.9799], [-96.641, 32.9799]]] } },
-      { name: "N Garland Ave", base_name: "Garland", road_class: "primary", geometry: { type: "MultiLineString", coordinates: [[[-96.6401, 32.961], [-96.6401, 32.979]]] } },
-      { name: "W Buckingham Rd", base_name: "Buckingham", road_class: "secondary", geometry: { type: "MultiLineString", coordinates: [[[-96.659, 32.9601], [-96.641, 32.9601]]] } },
-      { name: "N Jupiter Rd", base_name: "Jupiter", road_class: "secondary", geometry: { type: "MultiLineString", coordinates: [[[-96.6599, 32.961], [-96.6599, 32.979]]] } },
+      { name: "Arapaho Rd", route_name: "CS", current_aadt: 42000, geometry: { type: "MultiLineString", coordinates: [[[-96.68, 32.994], [-96.62, 32.994]]] } },
+      { name: "N Garland Ave", route_name: "SH0078-KG", current_aadt: 38000, geometry: { type: "MultiLineString", coordinates: [[[-96.625, 32.94], [-96.625, 33.00]]] } },
+      { name: "Belt Line Rd", route_name: "CS", current_aadt: 40000, geometry: { type: "MultiLineString", coordinates: [[[-96.68, 32.946], [-96.62, 32.946]]] } },
+      { name: "S Jupiter Rd", route_name: "CS", current_aadt: 34000, geometry: { type: "MultiLineString", coordinates: [[[-96.675, 32.94], [-96.675, 33.00]]] } },
     ],
     // zoning evidence
     [{
@@ -121,7 +121,7 @@ test("generates a local, persisted broad boundary without a remote road dependen
   assert.equal(result.search_profile, "suburban_simple");
   assert.equal(result.review_required, true);
   assert.ok(statements.some((sql) => /ST_ConcaveHull/.test(sql)));
-  assert.ok(statements.some((sql) => /gis\.road_segments/.test(sql)));
+  assert.ok(statements.some((sql) => /gis\.traffic_volume_segments/.test(sql)));
   assert.ok(statements.some((sql) => /gis\.zoning_districts/.test(sql)));
   assert.ok(statements.some((sql) => /INSERT INTO app\.neighborhood_boundary_assessments/.test(sql)));
 });
@@ -200,3 +200,4 @@ test("records an assignment-specific appraiser confirmation", async () => {
   assert.match(statements.at(-1), /status = CASE WHEN \$4::boolean THEN 'confirmed'/);
   assert.match(statements.at(-1), /scope_key = \$3/);
 });
+

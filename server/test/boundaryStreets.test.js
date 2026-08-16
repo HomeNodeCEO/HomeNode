@@ -5,6 +5,7 @@ import {
   loadBoundaryStreetNames,
   normalizeBoundaryStreetNames,
   rankBoundaryStreetNames,
+  summarizeBusyCardinalBoundaries,
   summarizeCardinalBoundaries,
 } from "../src/services/boundaryStreets.js";
 
@@ -113,7 +114,27 @@ test("rejects an open boundary polygon", async () => {
   );
 });
 
-test("uses the local PostGIS road mirror before TIGERweb", async () => {
+test("uses busy TxDOT perimeter roads and excludes local neighborhood streets", () => {
+  const trafficFeatures = [
+    { attributes: { NAME: "Arapaho Rd", AADT: 42_000 }, geometry: { paths: [[[-96.68, 32.994], [-96.62, 32.994]]] } },
+    { attributes: { NAME: "Apollo Rd", AADT: 18_000 }, geometry: { paths: [[[-96.68, 32.984], [-96.62, 32.984]]] } },
+    { attributes: { NAME: "N Garland Ave", AADT: 38_000 }, geometry: { paths: [[[-96.625, 32.94], [-96.625, 33.00]]] } },
+    { attributes: { NAME: "Belt Line Rd", AADT: 40_000 }, geometry: { paths: [[[-96.68, 32.946], [-96.62, 32.946]]] } },
+    { attributes: { NAME: "S Jupiter Rd", AADT: 34_000 }, geometry: { paths: [[[-96.675, 32.94], [-96.675, 33.00]]] } },
+    { attributes: { NAME: "Holford Rd", AADT: 7_000 }, geometry: { paths: [[[-96.68, 32.982], [-96.62, 32.982]]] } },
+    { attributes: { NAME: "Kingsbridge Rd", AADT: 4_000 }, geometry: { paths: [[[-96.68, 32.958], [-96.62, 32.958]]] } },
+  ];
+  const result = summarizeBusyCardinalBoundaries(trafficFeatures, geometry.coordinates[0]);
+  assert.equal(result.north.primary_street, "Arapaho Rd");
+  assert.equal(result.east.primary_street, "N Garland Ave");
+  assert.equal(result.south.primary_street, "Belt Line Rd");
+  assert.equal(result.west.primary_street, "S Jupiter Rd");
+  assert.equal(result.north.candidates.some(({ name }) => name === "Holford Rd"), false);
+  assert.equal(result.south.candidates.some(({ name }) => name === "Kingsbridge Rd"), false);
+  assert.equal(result.north.candidates[0].annual_average_daily_traffic, 42_000);
+});
+
+test("uses the local TxDOT AADT mirror before TIGERweb", async () => {
   const statements = [];
   const pool = {
     async query(sql, values) {
@@ -122,10 +143,12 @@ test("uses the local PostGIS road mirror before TIGERweb", async () => {
         rows: [{
           name: "Road 1",
           base_name: "Road 1",
-          road_class: "primary",
+          route_name: "FM0001-KG",
+          current_aadt: 32000,
+          source_date: "2025-01-01",
           geometry: {
             type: "MultiLineString",
-            coordinates: [[[-96.659, 32.9601], [-96.641, 32.9601]]],
+            coordinates: [[[-96.68, 32.946], [-96.62, 32.946]]],
           },
         }],
       };
@@ -137,15 +160,17 @@ test("uses the local PostGIS road mirror before TIGERweb", async () => {
     },
   });
   assert.equal(result.served_from_local_mirror, true);
-  assert.equal(result.source, "Local Census TIGER road mirror");
+  assert.equal(result.source, "Local TxDOT AADT mirror with Census road names");
   assert.equal(result.cardinal_boundaries.south.primary_street, "Road 1");
   assert.equal(statements.length, 1);
-  assert.match(statements[0].sql, /road\.geom && ST_Expand/);
+  assert.match(statements[0].sql, /gis\.traffic_volume_segments/);
   assert.match(statements[0].sql, /ST_DWithin/);
-  assert.match(statements[0].sql, /road_class IN \('primary', 'secondary', 'local'\)/);
+  assert.match(statements[0].sql, /current_aadt >= \$2/);
+  assert.doesNotMatch(statements[0].sql, /road_class IN \('primary', 'secondary', 'local'\)/);
+  assert.equal(result.minimum_aadt, 10000);
 });
 
-test("falls back to TIGERweb only when the local mirror has no boundary roads", async () => {
+test("falls back to TIGERweb only when explicitly enabled", async () => {
   const pool = { query: async () => ({ rows: [] }) };
   const fetchImpl = async (url) => ({
     ok: true,
@@ -158,8 +183,12 @@ test("falls back to TIGERweb only when the local mirror has no boundary roads", 
         : [],
     }),
   });
-  const result = await loadBoundaryStreetNames(pool, geometry, { fetchImpl });
+  const result = await loadBoundaryStreetNames(pool, geometry, {
+    fetchImpl,
+    allowRemoteFallback: true,
+  });
   assert.equal(result.served_from_local_mirror, false);
   assert.equal(result.source, "U.S. Census Bureau TIGERweb Transportation");
   assert.equal(result.fallback_reason, "local_boundary_roads_unavailable");
 });
+

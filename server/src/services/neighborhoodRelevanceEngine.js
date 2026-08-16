@@ -150,48 +150,49 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
          parcel.residential_year_built AS year_built,
          parcel.parcel_area_sqft AS site_area_sqft,
          parcel.residential_area_sqft AS gla_sqft,
-         ST_Distance(subject.center::geography, ST_PointOnSurface(parcel.geom)::geography)
+         ST_Distance(subject.center::geography, candidate_location.center::geography)
            / 1609.344 AS distance_miles,
-         ST_AsGeoJSON(ST_PointOnSurface(parcel.geom))::jsonb AS point
+         ST_AsGeoJSON(candidate_location.center)::jsonb AS point
        FROM gis.dcad_parcels parcel
        CROSS JOIN boundary
        CROSS JOIN subject
+       CROSS JOIN LATERAL (
+         SELECT ST_PointOnSurface(parcel.geom) AS center
+       ) candidate_location
        WHERE parcel.object_id <> subject.object_id
          AND parcel.geom && boundary.geom
-         AND ST_Covers(boundary.geom, ST_PointOnSurface(parcel.geom))
-       ORDER BY ST_Distance(subject.center::geography, ST_PointOnSurface(parcel.geom)::geography),
+         AND ST_Covers(boundary.geom, candidate_location.center)
+       ORDER BY ST_Distance(subject.center::geography, candidate_location.center::geography),
                 parcel.object_id
        LIMIT $3
      )
      SELECT
        candidate.*,
-       latest_sale.sale_price,
-       latest_sale.closing_date AS sale_date,
        subject.residential_year_built AS subject_year_built,
        subject.land_use_category AS subject_land_use_category,
        subject.parcel_area_sqft AS subject_site_area_sqft,
        subject.residential_area_sqft AS subject_gla_sqft
      FROM candidates candidate
-     CROSS JOIN subject
-     LEFT JOIN LATERAL (
-       SELECT sale.sale_price::numeric, sale.closing_date
-       FROM core.v_sales_enriched sale
-       WHERE sale.primary_account_id = candidate.account_id
-         AND sale.record_type = 'closed_sale'
-         AND sale.sale_price > 0
-         AND sale.closing_date >= CURRENT_DATE - ($4::text || ' months')::interval
-       ORDER BY sale.closing_date DESC, sale.source_record_id DESC NULLS LAST
-       LIMIT 1
-     ) latest_sale ON TRUE`,
+     CROSS JOIN subject`,
     [
       accountId,
       JSON.stringify(boundary),
       MAX_CANDIDATE_PARCELS,
-      RELEVANCE_SALE_HISTORY_MONTHS,
     ],
   );
   if (!rows.length) throw new Error("neighborhood_relevance_candidates_unavailable");
   const first = rows[0];
+  const subjectLandUse = String(first.subject_land_use_category || "").trim();
+  const saleAccountIds = [...new Set(rows
+    .filter((row) => {
+      const candidateLandUse = String(row.land_use_category || "").trim();
+      return row.account_id && (
+        !subjectLandUse || !candidateLandUse || candidateLandUse === subjectLandUse
+      );
+    })
+    .map((row) => String(row.account_id).trim())
+    .filter(Boolean))];
+  const latestSales = await loadLatestCandidateSales(pool, saleAccountIds);
   return {
     subject: {
       account_id: accountId,
@@ -200,21 +201,44 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
       site_area_sqft: first.subject_site_area_sqft,
       gla_sqft: first.subject_gla_sqft,
     },
-    candidates: rows.map((row) => ({
-      parcel_object_id: Number(row.parcel_object_id),
-      id: `parcel:${row.parcel_object_id}`,
-      account_id: row.account_id || null,
-      address: row.address || null,
-      land_use_category: row.land_use_category || null,
-      year_built: row.year_built,
-      site_area_sqft: row.site_area_sqft,
-      gla_sqft: row.gla_sqft,
-      distance_miles: row.distance_miles,
-      sale_price: row.sale_price,
-      sale_date: row.sale_date,
-      point: row.point,
-    })),
+    candidates: rows.map((row) => {
+      const sale = latestSales.get(String(row.account_id || "").trim());
+      return {
+        parcel_object_id: Number(row.parcel_object_id),
+        id: `parcel:${row.parcel_object_id}`,
+        account_id: row.account_id || null,
+        address: row.address || null,
+        land_use_category: row.land_use_category || null,
+        year_built: row.year_built,
+        site_area_sqft: row.site_area_sqft,
+        gla_sqft: row.gla_sqft,
+        distance_miles: row.distance_miles,
+        sale_price: sale?.sale_price ?? null,
+        sale_date: sale?.sale_date ?? null,
+        point: row.point,
+      };
+    }),
   };
+}
+
+async function loadLatestCandidateSales(pool, accountIds) {
+  if (!accountIds.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (sale.primary_account_id)
+       sale.primary_account_id,
+       sale.sale_price::numeric AS sale_price,
+       sale.closing_date AS sale_date
+     FROM core.v_sales_enriched sale
+     WHERE sale.primary_account_id = ANY($1::text[])
+       AND sale.record_type = 'closed_sale'
+       AND sale.sale_price > 0
+       AND sale.closing_date >= CURRENT_DATE - ($2::text || ' months')::interval
+     ORDER BY sale.primary_account_id,
+              sale.closing_date DESC,
+              sale.source_record_id DESC NULLS LAST`,
+    [accountIds, RELEVANCE_SALE_HISTORY_MONTHS],
+  );
+  return new Map(rows.map((row) => [String(row.primary_account_id), row]));
 }
 
 async function loadPotentialPocketAdjacency(pool, parcelObjectIds) {

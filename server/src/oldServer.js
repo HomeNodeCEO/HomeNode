@@ -18,6 +18,15 @@ import {
 import { decorateAndRankByInfluence } from "./util/propertyInfluence.js";
 import { resolveComparableSearchProfile } from "./util/comparableSearchProfiles.js";
 import {
+  generateNeighborhoodBoundary,
+  getLatestNeighborhoodBoundary,
+  reviewNeighborhoodBoundary,
+} from "./services/neighborhoodBoundaryEngine.js";
+import {
+  generateNeighborhoodRelevance,
+  getLatestNeighborhoodRelevance,
+} from "./services/neighborhoodRelevanceEngine.js";
+import {
   ensureAccountLocationsTable,
   findDcadParcelsByAddress,
   refreshAccountLocations,
@@ -62,7 +71,7 @@ import {
   fetchCensusCityProfile,
   fetchCensusZipProfile,
 } from "./services/censusZipProfile.js";
-import { fetchBoundaryStreetNames } from "./services/boundaryStreets.js";
+import { loadBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
   buildNeighborhoodLandUseAnalysis,
   neighborhoodLandUseErrorStatus,
@@ -129,6 +138,7 @@ import {
   getPropertyInfluenceContexts,
 } from "./services/propertyInfluenceStore.js";
 import { getRecentScheduledMaintenanceRuns } from "./services/scheduledMaintenance.js";
+import { getNeighborhoodEngineReadiness } from "./services/neighborhoodEngineReadiness.js";
 import {
   createRequestPerformanceMonitor,
   environmentFlag,
@@ -4537,7 +4547,7 @@ app.post("/api/sales/neighborhood-profile", async (req, res) => {
     let boundaryStreets = null;
     let boundaryStreetWarning = null;
     try {
-      boundaryStreets = await fetchBoundaryStreetNames(customGeometry);
+      boundaryStreets = await loadBoundaryStreetNames(pool, customGeometry);
     } catch (error) {
       boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
       console.warn("/api/sales/neighborhood-profile street lookup failed", error);
@@ -4593,6 +4603,159 @@ app.get("/api/property-context/status", async (_req, res) => {
   } catch (error) {
     console.error("/api/property-context/status failed", error);
     res.status(500).json({ error: "property_context_status_failed" });
+  }
+});
+
+/**
+ * GET /api/neighborhood-engine/readiness
+ *
+ * Audits locally stored Dallas County inputs for the broad-boundary and
+ * independent relevance-selection engines. It never contacts a remote source.
+ */
+app.get("/api/neighborhood-engine/readiness", async (req, res) => {
+  try {
+    await ensurePropertyContextAvailable();
+    res.json(await getNeighborhoodEngineReadiness(pool, {
+      county: req.query.county || "Dallas",
+    }));
+  } catch (error) {
+    console.error("/api/neighborhood-engine/readiness failed", error);
+    if (error?.message === "neighborhood_engine_county_not_configured") {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: "neighborhood_engine_readiness_failed" });
+  }
+});
+
+/** Load the latest generated or appraiser-confirmed broad neighborhood boundary. */
+app.get("/api/accounts/:id/neighborhood-boundary", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.query.assignment_file_id);
+    const assessment = await getLatestNeighborhoodBoundary(pool, {
+      accountId,
+      assignmentFileId,
+    });
+    res.json({ account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "neighborhood_boundary_lookup_failed";
+    const status = message === "account_not_found" ? 404
+      : ["invalid_account_id", "invalid_assignment_file"].includes(message) ? 400
+        : 500;
+    res.status(status).json({ error: message });
+  }
+});
+
+/**
+ * Generate and persist a broad descriptive neighborhood from local PostGIS
+ * mirrors. Independent statistical relevance screening remains a later step.
+ */
+app.post("/api/accounts/:id/neighborhood-boundary/generate", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.body?.assignment_file_id);
+    const assessment = await generateNeighborhoodBoundary(pool, {
+      accountId,
+      assignmentFileId,
+      searchProfileKey: req.body?.search_profile,
+    });
+    res.json({ ok: true, account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "neighborhood_boundary_generation_failed";
+    console.error("/api/accounts/:id/neighborhood-boundary/generate failed", error);
+    const clientErrors = new Set([
+      "invalid_account_id",
+      "invalid_assignment_file",
+      "invalid_neighborhood_search_profile",
+    ]);
+    const status = message === "account_not_found" ||
+      message === "subject_parcel_geometry_unavailable" ? 404
+      : clientErrors.has(message) ? 400
+        : 500;
+    res.status(status).json({ error: message });
+  }
+});
+
+/** Preserve the appraiser's assignment-specific confirmation in the audit table. */
+app.patch("/api/accounts/:id/neighborhood-boundary/:assessmentId", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.body?.assignment_file_id);
+    const assessment = await reviewNeighborhoodBoundary(pool, {
+      accountId,
+      assessmentId: req.params.assessmentId,
+      assignmentFileId,
+      confirmed: req.body?.confirmed,
+      reviewer: req.body?.reviewer,
+      notes: req.body?.notes,
+    });
+    res.json({ ok: true, account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "neighborhood_boundary_review_failed";
+    const clientErrors = new Set([
+      "invalid_account_id",
+      "invalid_assignment_file",
+      "invalid_neighborhood_boundary_assessment",
+      "invalid_neighborhood_boundary_review",
+      "invalid_neighborhood_boundary_reviewer",
+      "neighborhood_boundary_notes_too_long",
+    ]);
+    const status = message === "account_not_found" ||
+      message === "neighborhood_boundary_assessment_not_found" ? 404
+      : clientErrors.has(message) ? 400
+        : 500;
+    res.status(status).json({ error: message });
+  }
+});
+
+/** Load the latest independent relevant-property population summary. */
+app.get("/api/accounts/:id/neighborhood-relevance", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.query.assignment_file_id);
+    const assessment = await getLatestNeighborhoodRelevance(pool, {
+      accountId,
+      assignmentFileId,
+    });
+    res.json({ account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "neighborhood_relevance_lookup_failed";
+    res.status(message === "account_not_found" ? 404
+      : ["invalid_account_id", "invalid_assignment_file"].includes(message) ? 400
+        : 500).json({ error: message });
+  }
+});
+
+/** Score the broad area's parcel population and persist reviewable exclusions. */
+app.post("/api/accounts/:id/neighborhood-relevance/generate", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  try {
+    const accountId = await resolveCanonicalAccountId(pool, requestedId);
+    const assignmentFileId = normalizeAssignmentFileId(req.body?.assignment_file_id);
+    const assessment = await generateNeighborhoodRelevance(pool, {
+      accountId,
+      assignmentFileId,
+      boundaryAssessmentId: req.body?.boundary_assessment_id,
+    });
+    res.json({ ok: true, account_id: accountId, assessment });
+  } catch (error) {
+    const message = error?.message || "neighborhood_relevance_generation_failed";
+    console.error("/api/accounts/:id/neighborhood-relevance/generate failed", error);
+    const clientErrors = new Set([
+      "invalid_account_id",
+      "invalid_assignment_file",
+      "invalid_neighborhood_boundary_assessment",
+      "neighborhood_boundary_required",
+    ]);
+    const status = message === "account_not_found" ? 404
+      : clientErrors.has(message) ? 400
+        : message === "neighborhood_relevance_candidates_unavailable" ? 422
+          : 500;
+    res.status(status).json({ error: message });
   }
 });
 

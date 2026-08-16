@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   fetchBoundaryStreetNames,
+  loadBoundaryStreetNames,
   normalizeBoundaryStreetNames,
   rankBoundaryStreetNames,
   summarizeCardinalBoundaries,
@@ -110,4 +111,55 @@ test("rejects an open boundary polygon", async () => {
     }),
     /invalid_boundary_geometry/,
   );
+});
+
+test("uses the local PostGIS road mirror before TIGERweb", async () => {
+  const statements = [];
+  const pool = {
+    async query(sql, values) {
+      statements.push({ sql: String(sql), values });
+      return {
+        rows: [{
+          name: "Road 1",
+          base_name: "Road 1",
+          road_class: "primary",
+          geometry: {
+            type: "MultiLineString",
+            coordinates: [[[-96.659, 32.9601], [-96.641, 32.9601]]],
+          },
+        }],
+      };
+    },
+  };
+  const result = await loadBoundaryStreetNames(pool, geometry, {
+    fetchImpl: async () => {
+      throw new Error("remote TIGERweb must not be contacted");
+    },
+  });
+  assert.equal(result.served_from_local_mirror, true);
+  assert.equal(result.source, "Local Census TIGER road mirror");
+  assert.equal(result.cardinal_boundaries.south.primary_street, "Road 1");
+  assert.equal(statements.length, 1);
+  assert.match(statements[0].sql, /road\.geom && ST_Expand/);
+  assert.match(statements[0].sql, /ST_DWithin/);
+  assert.match(statements[0].sql, /road_class IN \('primary', 'secondary', 'local'\)/);
+});
+
+test("falls back to TIGERweb only when the local mirror has no boundary roads", async () => {
+  const pool = { query: async () => ({ rows: [] }) };
+  const fetchImpl = async (url) => ({
+    ok: true,
+    json: async () => ({
+      features: url.toString().includes("/0/query")
+        ? [{
+          attributes: { NAME: "Road 1" },
+          geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] },
+        }]
+        : [],
+    }),
+  });
+  const result = await loadBoundaryStreetNames(pool, geometry, { fetchImpl });
+  assert.equal(result.served_from_local_mirror, false);
+  assert.equal(result.source, "U.S. Census Bureau TIGERweb Transportation");
+  assert.equal(result.fallback_reason, "local_boundary_roads_unavailable");
 });

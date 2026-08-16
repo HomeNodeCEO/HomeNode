@@ -271,6 +271,20 @@ export interface AssignmentDetailsPayload {
   neighborhood_boundary_streets_retrieved_at?: string;
   neighborhood_boundary_confirmed?: boolean;
   neighborhood_boundary_confirmed_at?: string;
+  neighborhood_boundary_engine_assessment_id?: number | string;
+  neighborhood_boundary_engine_assignment_file_id?: number | string;
+  neighborhood_boundary_engine_methodology_version?: number | string;
+  neighborhood_boundary_engine_confidence?: string;
+  neighborhood_boundary_engine_disclosure?: string;
+  neighborhood_boundary_engine_warnings?: string[];
+  neighborhood_relevance_assessment_id?: number | string;
+  neighborhood_relevance_methodology_version?: number | string;
+  neighborhood_relevance_confidence?: string;
+  neighborhood_relevance_candidate_count?: number | string;
+  neighborhood_relevance_included_count?: number | string;
+  neighborhood_relevance_excluded_count?: number | string;
+  neighborhood_relevance_insufficient_data_count?: number | string;
+  neighborhood_relevance_generated_at?: string;
   highest_best_use_conclusion?: string;
   highest_best_use_summary?: string;
   highest_best_use_zoning_compatible?: boolean | null;
@@ -1598,6 +1612,132 @@ export interface PropertyContextStatusResponse {
   checked_at: string;
 }
 
+export interface NeighborhoodEngineReadinessResponse {
+  county: string;
+  measured_at: string;
+  prototype_ready: boolean;
+  production_ready: boolean;
+  prototype_blockers: string[];
+  production_blockers: string[];
+  accounts: {
+    total_accounts: number;
+    parcel_accounts: number;
+    year_built_accounts: number;
+    site_size_accounts: number;
+    coordinate_accounts: number;
+    coverage: {
+      parcel_geometry_percent: number;
+      year_built_percent: number;
+      site_size_percent: number;
+      coordinate_percent: number;
+    };
+  };
+  sales: {
+    usable_sales: number;
+    distinct_sale_accounts: number;
+    coordinate_percent: number;
+    year_built_percent: number;
+    site_size_percent: number;
+    price_percent: number;
+  };
+  roads: {
+    segment_counts: Record<string, number>;
+    required_roads_available: boolean;
+    traffic_available: boolean;
+  };
+  zoning: {
+    provider_count: number;
+    district_count: number;
+    available: boolean;
+  };
+  source_health: PropertyContextSourceHealth[];
+  warnings: string[];
+}
+
+export interface NeighborhoodBoundaryAssessment {
+  id: number;
+  account_id: string;
+  scope_key: string;
+  assignment_file_id: number | null;
+  methodology_version: number;
+  status: 'generated' | 'confirmed' | 'rejected' | 'superseded';
+  search_profile: string;
+  discovery_radius_miles: number;
+  input_signature: string;
+  boundary: GeoJsonPolygon;
+  evidence: {
+    boundary_purpose?: string;
+    broad_boundary_is_relevance_filter?: false;
+    disclosure?: string;
+    subject?: Record<string, unknown>;
+    discovery?: {
+      profile_key?: string;
+      profile_label?: string;
+      profile_source?: string;
+      radius_miles?: number;
+      candidate_count?: number;
+      boundary_area_square_miles?: number | null;
+      physical_characteristic_coverage_percent?: number;
+    };
+    roads?: {
+      source?: string;
+      retrieved_at?: string;
+      summary?: string;
+      street_names?: string[];
+      cardinal_boundaries?: Record<'north' | 'east' | 'south' | 'west', {
+        primary_street?: string | null;
+        confidence?: string;
+        candidates?: Array<{ name: string; score: number }>;
+      }>;
+    };
+    zoning?: Record<string, unknown>;
+    warnings?: string[];
+  };
+  source_state: Record<string, unknown>;
+  confidence: 'high' | 'moderate' | 'limited';
+  review_required: boolean;
+  reviewer: string | null;
+  review_notes: string | null;
+  confirmed_at: string | null;
+  generated_at: string;
+  updated_at: string;
+}
+
+export interface NeighborhoodRelevanceAssessment {
+  id: number;
+  account_id: string;
+  scope_key: string;
+  assignment_file_id: number | null;
+  boundary_assessment_id: number;
+  methodology_version: number;
+  input_signature: string;
+  summary: {
+    candidate_count: number;
+    included_count: number;
+    excluded_count: number;
+    insufficient_data_count: number;
+    low_relevance_excluded_count: number;
+    dissimilar_pocket_excluded_count: number;
+    classification_counts: Record<string, number>;
+    score_range: { minimum: number | null; maximum: number | null };
+    sale_history_months: number;
+    sale_prices_time_adjusted: false;
+    minimum_dissimilar_pocket_size: number;
+  };
+  distributions: Record<string, unknown>;
+  confidence: {
+    confidence?: 'high' | 'moderate' | 'limited';
+    counts?: Record<string, number>;
+    coverage?: Record<string, number>;
+    automatic_actions?: string[];
+    appraiser_review_required?: boolean;
+  };
+  source_state: Record<string, unknown>;
+  disclosure: string;
+  generated_at: string;
+  updated_at: string;
+}
+
 export interface ZoningEvidenceDocument {
   id: number;
   provider_key: string;
@@ -2367,6 +2507,121 @@ export async function savePropertyContextReview(
 /** Show local source freshness without calling Dallas CAD or Census services. */
 export async function getPropertyContextStatus(): Promise<PropertyContextStatusResponse> {
   return fetchJSON<PropertyContextStatusResponse>(makeUrl('/api/property-context/status'));
+}
+
+/** Audit locally stored inputs before enabling automated neighborhood generation. */
+export async function getNeighborhoodEngineReadiness(
+  county = 'Dallas',
+): Promise<NeighborhoodEngineReadinessResponse> {
+  return fetchJSON<NeighborhoodEngineReadinessResponse>(makeUrl('/api/neighborhood-engine/readiness', {
+    county,
+  }));
+}
+
+/** Load the latest assignment-specific broad boundary, falling back to the property result. */
+export async function getNeighborhoodBoundary(
+  accountId: string,
+  assignmentFileId?: number | null,
+): Promise<NeighborhoodBoundaryAssessment | null> {
+  const response = await fetchJSON<{
+    account_id: string;
+    assessment: NeighborhoodBoundaryAssessment | null;
+  }>(makeUrl(`/api/accounts/${encodeURIComponent(accountId.trim())}/neighborhood-boundary`, {
+    assignment_file_id: assignmentFileId || undefined,
+  }));
+  return response.assessment;
+}
+
+/** Generate and persist an outage-tolerant broad boundary from local PostGIS mirrors. */
+export async function generateNeighborhoodBoundary(
+  accountId: string,
+  options: {
+    assignmentFileId?: number | null;
+    searchProfile?: string | null;
+  } = {},
+): Promise<NeighborhoodBoundaryAssessment> {
+  const response = await fetchJSON<{
+    ok: true;
+    account_id: string;
+    assessment: NeighborhoodBoundaryAssessment;
+  }>(makeUrl(`/api/accounts/${encodeURIComponent(accountId.trim())}/neighborhood-boundary/generate`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      assignment_file_id: options.assignmentFileId || null,
+      search_profile: options.searchProfile || null,
+    }),
+    timeoutMs: 120000,
+  });
+  return response.assessment;
+}
+
+/** Persist the appraiser's confirmation independently for the current assignment file. */
+export async function reviewNeighborhoodBoundary(
+  accountId: string,
+  assessmentId: number,
+  options: {
+    assignmentFileId?: number | null;
+    confirmed: boolean;
+    reviewer?: string;
+    notes?: string;
+  },
+): Promise<NeighborhoodBoundaryAssessment> {
+  const response = await fetchJSON<{
+    ok: true;
+    account_id: string;
+    assessment: NeighborhoodBoundaryAssessment;
+  }>(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/neighborhood-boundary/${assessmentId}`,
+  ), {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      assignment_file_id: options.assignmentFileId || null,
+      confirmed: options.confirmed,
+      reviewer: options.reviewer || 'HomeNode appraiser',
+      notes: options.notes || '',
+    }),
+  });
+  return response.assessment;
+}
+
+/** Load the latest independent relevance-population summary for the file. */
+export async function getNeighborhoodRelevance(
+  accountId: string,
+  assignmentFileId?: number | null,
+): Promise<NeighborhoodRelevanceAssessment | null> {
+  const response = await fetchJSON<{
+    account_id: string;
+    assessment: NeighborhoodRelevanceAssessment | null;
+  }>(makeUrl(`/api/accounts/${encodeURIComponent(accountId.trim())}/neighborhood-relevance`, {
+    assignment_file_id: assignmentFileId || undefined,
+  }));
+  return response.assessment;
+}
+
+/** Score and persist the relevant property population for a saved broad boundary. */
+export async function generateNeighborhoodRelevance(
+  accountId: string,
+  options: {
+    assignmentFileId?: number | null;
+    boundaryAssessmentId?: number | null;
+  } = {},
+): Promise<NeighborhoodRelevanceAssessment> {
+  const response = await fetchJSON<{
+    ok: true;
+    account_id: string;
+    assessment: NeighborhoodRelevanceAssessment;
+  }>(makeUrl(`/api/accounts/${encodeURIComponent(accountId.trim())}/neighborhood-relevance/generate`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      assignment_file_id: options.assignmentFileId || null,
+      boundary_assessment_id: options.boundaryAssessmentId || null,
+    }),
+    timeoutMs: 120000,
+  });
+  return response.assessment;
 }
 
 /** Build current one-year bathroom, garage, pool, and living-area grouped adjustment studies. */

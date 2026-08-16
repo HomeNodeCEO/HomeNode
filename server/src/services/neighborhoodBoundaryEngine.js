@@ -437,6 +437,7 @@ export async function generateNeighborhoodBoundary(pool, {
   try {
     roadEvidence = await loadBoundaryStreetNames(pool, boundary, {
       allowRemoteFallback: false,
+      centerPoint: boundaryRow.subject_point,
     });
   } catch (error) {
     roadEvidence = {

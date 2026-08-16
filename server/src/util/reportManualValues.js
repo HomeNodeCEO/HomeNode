@@ -66,6 +66,18 @@ const NEIGHBORHOOD_RANGE_GROUPS = [
   ["neighborhood_ppsf_low", "neighborhood_ppsf_predominant", "neighborhood_ppsf_high"],
   ["neighborhood_age_low", "neighborhood_age_predominant", "neighborhood_age_high"],
   ["neighborhood_gla_low", "neighborhood_gla_predominant", "neighborhood_gla_high"],
+  ["neighborhood_all_house_price_low", "neighborhood_all_house_price_predominant", "neighborhood_all_house_price_high"],
+  ["neighborhood_all_ppsf_low", "neighborhood_all_ppsf_predominant", "neighborhood_all_ppsf_high"],
+  ["neighborhood_all_age_low", "neighborhood_all_age_predominant", "neighborhood_all_age_high"],
+  ["neighborhood_all_gla_low", "neighborhood_all_gla_predominant", "neighborhood_all_gla_high"],
+];
+const NEIGHBORHOOD_PROFILE_COUNT_FIELDS = [
+  "neighborhood_sale_count",
+  "neighborhood_all_property_count",
+  "neighborhood_all_value_count",
+  "neighborhood_all_ppsf_count",
+  "neighborhood_all_age_count",
+  "neighborhood_all_gla_count",
 ];
 const NEIGHBORHOOD_CITY_NUMERIC_FIELDS = [
   "neighborhood_city_sale_count",
@@ -308,6 +320,10 @@ export function validateAssignmentDetails(value) {
       const [low, predominant, high] = numbers;
       if (low > predominant || predominant > high) throw new Error("invalid_neighborhood_range_order");
     }
+  }
+  const profileCounts = NEIGHBORHOOD_PROFILE_COUNT_FIELDS.map((field) => optionalNumber(value[field]));
+  if (profileCounts.some((item) => Number.isNaN(item) || (item !== null && item < 0))) {
+    throw new Error("invalid_neighborhood_profile_count");
   }
   const cityValues = NEIGHBORHOOD_CITY_NUMERIC_FIELDS.map((field) => optionalNumber(value[field]));
   if (cityValues.some((item) => Number.isNaN(item) || (item !== null && item < 0))) {

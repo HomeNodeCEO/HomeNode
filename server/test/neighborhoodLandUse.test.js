@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   allocateLandUsePercentages,
+  buildNeighborhoodPropertyProfile,
   buildNeighborhoodLandUseAnalysis,
   classifyBuiltUpBand,
   classifyDcadLandUse,
@@ -11,6 +12,57 @@ import {
   fetchDcadLandUseParcels,
   isDcadParcelBuiltUp,
 } from "../src/services/neighborhoodLandUse.js";
+
+test("profiles all improved one-unit properties whether or not they sold", () => {
+  const profile = buildNeighborhoodPropertyProfile([
+    {
+      classification: { category: "one_unit" },
+      built_up: true,
+      attributes: { CNTASSDVAL: 200_000, RESFLRAREA: 1_000, RESYRBLT: 2000 },
+    },
+    {
+      classification: { category: "one_unit" },
+      built_up: true,
+      attributes: { CNTASSDVAL: 300_000, RESFLRAREA: 1_500, RESYRBLT: 2010 },
+    },
+    {
+      classification: { category: "one_unit" },
+      built_up: true,
+      attributes: { CNTASSDVAL: 500_000, RESFLRAREA: 2_500, RESYRBLT: 2020 },
+    },
+    {
+      classification: { category: "commercial" },
+      built_up: true,
+      attributes: { CNTASSDVAL: 9_000_000, BLDGAREA: 50_000, RESYRBLT: 1990 },
+    },
+    {
+      classification: { category: "one_unit" },
+      built_up: false,
+      attributes: { CNTASSDVAL: 100_000 },
+    },
+  ], { asOfYear: 2026 });
+
+  assert.equal(profile.property_count, 3);
+  assert.deepEqual(profile.house_price, {
+    count: 3,
+    low: 200_000,
+    high: 500_000,
+    predominant: 300_000,
+  });
+  assert.deepEqual(profile.price_per_square_foot, {
+    count: 3,
+    low: 200,
+    high: 200,
+    predominant: 200,
+  });
+  assert.deepEqual(profile.age, { count: 3, low: 6, high: 26, predominant: 16 });
+  assert.deepEqual(profile.living_area, {
+    count: 3,
+    low: 1_000,
+    high: 2_500,
+    predominant: 1_500,
+  });
+});
 
 test("classifies common DCAD land-use descriptions", () => {
   assert.equal(classifyDcadLandUse({ USEDSCRP: "SINGLE FAMILY RESIDENCE" }).category, "one_unit");

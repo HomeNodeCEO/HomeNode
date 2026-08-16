@@ -250,6 +250,24 @@ export interface AssignmentDetailsPayload {
   neighborhood_gla_low?: string | number;
   neighborhood_gla_high?: string | number;
   neighborhood_gla_predominant?: string | number;
+  neighborhood_sale_count?: string | number;
+  neighborhood_all_property_count?: string | number;
+  neighborhood_all_house_price_low?: string | number;
+  neighborhood_all_house_price_high?: string | number;
+  neighborhood_all_house_price_predominant?: string | number;
+  neighborhood_all_ppsf_low?: string | number;
+  neighborhood_all_ppsf_high?: string | number;
+  neighborhood_all_ppsf_predominant?: string | number;
+  neighborhood_all_age_low?: string | number;
+  neighborhood_all_age_high?: string | number;
+  neighborhood_all_age_predominant?: string | number;
+  neighborhood_all_gla_low?: string | number;
+  neighborhood_all_gla_high?: string | number;
+  neighborhood_all_gla_predominant?: string | number;
+  neighborhood_all_value_count?: string | number;
+  neighborhood_all_ppsf_count?: string | number;
+  neighborhood_all_age_count?: string | number;
+  neighborhood_all_gla_count?: string | number;
   neighborhood_city_name?: string;
   neighborhood_city_sale_count?: string | number;
   neighborhood_city_average_sale_price?: string | number;
@@ -1426,6 +1444,16 @@ export interface NeighborhoodLandUseAnalysisResponse {
   review_area_percent: number;
   confidence: 'high' | 'moderate' | 'limited';
   categories: NeighborhoodLandUseCategoryResult[];
+  property_profile?: {
+    population: 'all_one_unit_properties';
+    property_count: number;
+    house_price: NeighborhoodPropertyProfileMetric;
+    price_per_square_foot: NeighborhoodPropertyProfileMetric;
+    age: NeighborhoodPropertyProfileMetric;
+    living_area: NeighborhoodPropertyProfileMetric;
+    value_basis: string;
+    denominator_note: string;
+  };
   review_parcels: NeighborhoodLandUseReviewParcel[];
   review_parcels_truncated: boolean;
   warnings: string[];
@@ -1435,6 +1463,13 @@ export interface NeighborhoodLandUseAnalysisResponse {
   stale_cache_used?: boolean;
   processing_duration_ms: number;
   cached_analysis_duration_ms: number | null;
+}
+
+export interface NeighborhoodPropertyProfileMetric {
+  count: number;
+  low: number | null;
+  high: number | null;
+  predominant: number | null;
 }
 
 export type PropertyComplexityLevel = 'simple' | 'moderate' | 'complex';

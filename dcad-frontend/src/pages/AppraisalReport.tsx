@@ -23,8 +23,10 @@ import {
   type MarketTrendConclusion,
 } from "@/lib/marketConditionsDraft";
 import {
+  calculateNeighborhoodRepresentativeness,
   neighborhoodBoundaryReadinessErrors,
   neighborhoodLandUseTotal,
+  NEIGHBORHOOD_ALL_PROPERTY_ROWS,
   NEIGHBORHOOD_CITY_AVERAGE_ROWS,
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
@@ -505,6 +507,7 @@ export default function AppraisalReport() {
     .join(", ");
   const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(neighborhoodDetails);
   const landUseTotal = neighborhoodLandUseTotal(neighborhoodDetails);
+  const neighborhoodRepresentativeness = calculateNeighborhoodRepresentativeness(neighborhoodDetails);
   const propertyContext = detail.property_context || null;
 
   const printReport = () => {
@@ -1350,24 +1353,55 @@ export default function AppraisalReport() {
           </section>
 
           <section className="report-section">
-            <h2 className="report-section-title">Neighborhood Property Ranges</h2>
-            <div className="report-table-wrap">
-              <table className="report-table">
-                <thead><tr><th>Measure</th><th className="numeric">Low</th><th className="numeric">High</th><th className="numeric">Predominant (Median)</th></tr></thead>
-                <tbody>
-                  {NEIGHBORHOOD_RANGE_ROWS.map((row) => {
-                    const formatter = row.format === "money" ? money : count;
-                    return (
-                      <tr key={row.label}>
-                        <td>{row.label}</td>
-                        <td className="numeric">{formatter(neighborhoodDetails[row.low])}</td>
-                        <td className="numeric">{formatter(neighborhoodDetails[row.high])}</td>
-                        <td className="numeric">{formatter(neighborhoodDetails[row.predominant])}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <h2 className="report-section-title">Neighborhood Sales and Property Profile</h2>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <div className="report-note"><strong>Neighborhood Sales Data (only includes sales)</strong><br />{count(neighborhoodDetails.neighborhood_sale_count)} closed sales in the selected period.</div>
+                <div className="report-table-wrap">
+                  <table className="report-table">
+                    <thead><tr><th>Measure</th><th className="numeric">Low</th><th className="numeric">High</th><th className="numeric">Median</th></tr></thead>
+                    <tbody>
+                      {NEIGHBORHOOD_RANGE_ROWS.map((row) => {
+                        const formatter = row.format === "money" ? money : count;
+                        return (
+                          <tr key={row.label}>
+                            <td>{row.label}</td>
+                            <td className="numeric">{formatter(neighborhoodDetails[row.low])}</td>
+                            <td className="numeric">{formatter(neighborhoodDetails[row.high])}</td>
+                            <td className="numeric">{formatter(neighborhoodDetails[row.predominant])}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div>
+                <div className="report-note"><strong>Neighborhood Profile (All properties, sold and unsold)</strong><br />{count(neighborhoodDetails.neighborhood_all_property_count)} improved one-unit properties in the same boundary.</div>
+                <div className="report-table-wrap">
+                  <table className="report-table">
+                    <thead><tr><th>Measure</th><th className="numeric">Low</th><th className="numeric">High</th><th className="numeric">Median</th></tr></thead>
+                    <tbody>
+                      {NEIGHBORHOOD_ALL_PROPERTY_ROWS.map((row) => {
+                        const formatter = row.format === "money" ? money : count;
+                        return (
+                          <tr key={row.label}>
+                            <td>{row.label}</td>
+                            <td className="numeric">{formatter(neighborhoodDetails[row.low])}</td>
+                            <td className="numeric">{formatter(neighborhoodDetails[row.high])}</td>
+                            <td className="numeric">{formatter(neighborhoodDetails[row.predominant])}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            <div className="report-note" style={{ marginTop: 8 }}>
+              <strong>Sales Sample Representativeness: {neighborhoodRepresentativeness.score === null ? "Pending" : `${neighborhoodRepresentativeness.score.toFixed(1)}%`} — {neighborhoodRepresentativeness.label}</strong>
+              <div style={{ marginTop: 4 }}>{neighborhoodRepresentativeness.narrative}</div>
+              <div style={{ marginTop: 4 }}>The score equally compares predominant value/price, value/price per square foot, age, and GLA. CAD market values and MLS sale prices have different valuation bases; the result is a descriptive reasonableness check subject to appraiser review.</div>
             </div>
           </section>
 

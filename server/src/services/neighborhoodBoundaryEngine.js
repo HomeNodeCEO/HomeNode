@@ -11,6 +11,11 @@ import { NEIGHBORHOOD_BOUNDARY_DISCLOSURE } from "./neighborhoodRelevance.js";
 
 export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 2;
 
+// TODO(neighborhood-boundary-validation): Test automated boundary suggestions on
+// representative properties in multiple Dallas County cities and urban,
+// suburban, semi-rural, and rural settings before treating these road-selection
+// thresholds and reporting aliases as stable appraisal methodology.
+
 const METERS_PER_MILE = 1609.344;
 const MAX_BOUNDARY_POINTS = 2500;
 const MINIMUM_BOUNDARY_BUFFER_METERS = 120;
@@ -614,4 +619,3 @@ export async function reviewNeighborhoodBoundary(pool, {
   if (!rows.length) throw new Error("neighborhood_boundary_assessment_not_found");
   return boundaryResponse(rows[0]);
 }
-

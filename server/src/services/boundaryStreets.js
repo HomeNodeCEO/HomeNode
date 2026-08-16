@@ -3,6 +3,10 @@ const TIGERWEB_TRANSPORTATION_URL =
 const ROAD_LAYERS = [0, 1, 2];
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BOUNDARY_BUFFER_METERS = 75;
+const MAJOR_ROAD_SEARCH_METERS = 3219;
+const MAJOR_ROAD_INWARD_TOLERANCE_METERS = 350;
+const MIN_MAJOR_ROAD_AADT = 10000;
+const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const cache = new Map();
@@ -190,7 +194,141 @@ function cardinalSummary(cardinal) {
     .join("; ");
 }
 
-function localRoadFeature(row) {
+function trafficValue(feature) {
+  const value = Number(feature?.attributes?.AADT ?? feature?.attributes?.current_aadt);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function sideEdgeDistance(side, midpoint, bounds) {
+  if (side === "north") return midpoint[1] - bounds.maxY;
+  if (side === "south") return bounds.minY - midpoint[1];
+  if (side === "east") return midpoint[0] - bounds.maxX;
+  return bounds.minX - midpoint[0];
+}
+
+function confidenceForMajorRoad(top, second) {
+  if (!top) return "unavailable";
+  const separation = second ? top.score - second.score : 1;
+  if (top.score >= 0.72 && separation >= 0.12) return "high";
+  if (top.score >= 0.52 && separation >= 0.05) return "medium";
+  return "low";
+}
+
+/**
+ * Select one broad, traffic-backed perimeter road for each cardinal side.
+ *
+ * This intentionally does not consider local streets. A road must have a
+ * measured TxDOT AADT of at least 10,000 vehicles/day, run in the expected
+ * direction for the side, and sit outside (or immediately inside) the
+ * analysis-area edge. AADT is the dominant factor; proximity and corridor
+ * continuity keep a distant freeway from displacing the road that actually
+ * borders the selected area.
+ */
+export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
+  const empty = Object.fromEntries(CARDINAL_SIDES.map((side) => [side, {
+    primary_street: null,
+    confidence: "unavailable",
+    candidates: [],
+  }]));
+  if (!ring.length) return empty;
+
+  const originLatitude = ring.reduce((sum, point) => sum + Number(point[1]), 0) / ring.length;
+  const boundary = ring.map((point) => projectedPoint(point, originLatitude));
+  const bounds = {
+    minX: Math.min(...boundary.map((point) => point[0])),
+    maxX: Math.max(...boundary.map((point) => point[0])),
+    minY: Math.min(...boundary.map((point) => point[1])),
+    maxY: Math.max(...boundary.map((point) => point[1])),
+  };
+  const center = [(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2];
+  const grouped = new Map(CARDINAL_SIDES.map((side) => [side, new Map()]));
+
+  for (const feature of features) {
+    const name = normalizeBoundaryStreetNames([feature])[0];
+    const aadt = trafficValue(feature);
+    if (!name || aadt < MIN_MAJOR_ROAD_AADT) continue;
+    for (const path of feature?.geometry?.paths || []) {
+      for (let index = 1; index < path.length; index += 1) {
+        const start = projectedPoint(path[index - 1], originLatitude);
+        const end = projectedPoint(path[index], originLatitude);
+        const deltaX = end[0] - start[0];
+        const deltaY = end[1] - start[1];
+        const length = Math.hypot(deltaX, deltaY);
+        if (!length) continue;
+        const midpoint = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
+        const horizontalAlignment = Math.abs(deltaX) / length;
+        const verticalAlignment = Math.abs(deltaY) / length;
+        const side = horizontalAlignment >= verticalAlignment
+          ? (midpoint[1] >= center[1] ? "north" : "south")
+          : (midpoint[0] >= center[0] ? "east" : "west");
+        const alignment = side === "north" || side === "south"
+          ? horizontalAlignment
+          : verticalAlignment;
+        if (alignment < MIN_MAJOR_ROAD_ALIGNMENT) continue;
+        const signedEdgeDistance = sideEdgeDistance(side, midpoint, bounds);
+        if (
+          signedEdgeDistance < -MAJOR_ROAD_INWARD_TOLERANCE_METERS ||
+          signedEdgeDistance > MAJOR_ROAD_SEARCH_METERS
+        ) continue;
+
+        const sideGroups = grouped.get(side);
+        const current = sideGroups.get(name) || {
+          name,
+          max_aadt: 0,
+          traffic_weighted_length: 0,
+          length: 0,
+          min_edge_distance_meters: Number.POSITIVE_INFINITY,
+          source_date: feature?.attributes?.SOURCE_DATE || null,
+        };
+        current.max_aadt = Math.max(current.max_aadt, aadt);
+        current.traffic_weighted_length += aadt * length;
+        current.length += length;
+        current.min_edge_distance_meters = Math.min(
+          current.min_edge_distance_meters,
+          Math.max(0, signedEdgeDistance),
+        );
+        current.source_date ||= feature?.attributes?.SOURCE_DATE || null;
+        sideGroups.set(name, current);
+      }
+    }
+  }
+
+  return Object.fromEntries(CARDINAL_SIDES.map((side) => {
+    const groups = [...grouped.get(side).values()];
+    const maxAadt = Math.max(...groups.map((group) => group.max_aadt), 1);
+    const maxLength = Math.max(...groups.map((group) => group.length), 1);
+    const candidates = groups.map((group) => {
+      const averageAadt = group.length
+        ? group.traffic_weighted_length / group.length
+        : group.max_aadt;
+      const trafficScore = group.max_aadt / maxAadt;
+      const proximityScore = 1 - Math.min(
+        group.min_edge_distance_meters / MAJOR_ROAD_SEARCH_METERS,
+        1,
+      );
+      const continuityScore = Math.min(group.length / maxLength, 1);
+      return {
+        name: group.name,
+        score: Number((trafficScore * 0.65 + proximityScore * 0.25 + continuityScore * 0.10).toFixed(4)),
+        annual_average_daily_traffic: Math.round(averageAadt),
+        peak_segment_aadt: Math.round(group.max_aadt),
+        distance_to_analysis_edge_miles: Number((group.min_edge_distance_meters / 1609.344).toFixed(2)),
+        source_date: group.source_date,
+      };
+    }).sort((left, right) =>
+      right.score - left.score ||
+      right.peak_segment_aadt - left.peak_segment_aadt ||
+      left.distance_to_analysis_edge_miles - right.distance_to_analysis_edge_miles,
+    ).slice(0, 3);
+    return [side, {
+      primary_street: candidates[0]?.name || null,
+      confidence: confidenceForMajorRoad(candidates[0], candidates[1]),
+      candidates,
+    }];
+  }));
+}
+
+function trafficRoadFeature(row) {
   const geometry = row?.geometry;
   const paths = geometry?.type === "MultiLineString"
     ? geometry.coordinates
@@ -198,14 +336,15 @@ function localRoadFeature(row) {
       ? [geometry.coordinates]
       : [];
   if (!paths.length) return null;
-  const layerByClass = { primary: 0, secondary: 1, local: 2 };
   return {
     attributes: {
-      NAME: row.name,
+      NAME: row.name || row.route_name,
       BASENAME: row.base_name,
+      AADT: row.current_aadt,
+      SOURCE_DATE: row.source_date,
+      TXDOT_ROUTE_NAME: row.route_name,
     },
     geometry: { paths },
-    road_layer: layerByClass[row.road_class] ?? 2,
   };
 }
 
@@ -224,33 +363,66 @@ function boundaryStreetResult(features, ring, { source, now }) {
   };
 }
 
-async function queryLocalBoundaryRoads(pool, geometry) {
+function trafficBoundaryStreetResult(features, ring, { now }) {
+  const cardinalBoundaries = summarizeBusyCardinalBoundaries(features, ring);
+  return {
+    street_names: [...new Set(CARDINAL_SIDES
+      .map((side) => cardinalBoundaries[side].primary_street)
+      .filter(Boolean))],
+    cardinal_boundaries: cardinalBoundaries,
+    summary: cardinalSummary(cardinalBoundaries),
+    source: "Local TxDOT AADT mirror with Census road names",
+    retrieved_at: now().toISOString(),
+    minimum_aadt: MIN_MAJOR_ROAD_AADT,
+    major_road_search_meters: MAJOR_ROAD_SEARCH_METERS,
+    review_required: true,
+  };
+}
+
+async function queryLocalTrafficBoundaryRoads(pool, geometry) {
   const { rows } = await pool.query(
     `WITH boundary AS (
        SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
+     ), traffic AS (
+       SELECT segment.route_name, segment.current_aadt, segment.source_date, segment.geom
+       FROM gis.traffic_volume_segments segment
+       CROSS JOIN boundary
+       WHERE segment.current_aadt >= $2
+         AND segment.geom && ST_Expand(
+           ST_Envelope(boundary.geom),
+           $3::double precision / 111320.0
+         )
+         AND ST_DWithin(
+           segment.geom::geography,
+           boundary.geom::geography,
+           $3::double precision
+         )
      )
-     SELECT road.name, road.base_name, road.road_class,
-            ST_AsGeoJSON(road.geom)::jsonb AS geometry
-     FROM gis.road_segments road
-     CROSS JOIN boundary
-     WHERE road.road_class IN ('primary', 'secondary', 'local')
-       AND road.geom && ST_Expand(
-         ST_Envelope(boundary.geom),
-         $2::double precision / 111320.0
-       )
-       AND ST_DWithin(
-         road.geom::geography,
-         ST_Boundary(boundary.geom)::geography,
-         $2::double precision
-       )
-     ORDER BY
-       CASE road.road_class WHEN 'primary' THEN 0 WHEN 'secondary' THEN 1 ELSE 2 END,
-       road.name NULLS LAST,
-       road.source_object_id
-     LIMIT 5000`,
-    [JSON.stringify(geometry), BOUNDARY_BUFFER_METERS],
+     SELECT COALESCE(named.name, traffic.route_name) AS name,
+            named.base_name,
+            traffic.route_name,
+            traffic.current_aadt,
+            traffic.source_date,
+            ST_AsGeoJSON(traffic.geom)::jsonb AS geometry
+     FROM traffic
+     LEFT JOIN LATERAL (
+       SELECT road.name, road.base_name
+       FROM gis.road_segments road
+       WHERE road.road_class IN ('primary', 'secondary')
+         AND road.name IS NOT NULL
+         AND road.geom && ST_Expand(ST_Envelope(traffic.geom), 0.00125)
+         AND ST_DWithin(road.geom::geography, traffic.geom::geography, 140)
+       ORDER BY ST_Distance(road.geom::geography, traffic.geom::geography),
+                CASE road.road_class WHEN 'primary' THEN 0 ELSE 1 END,
+                road.source_object_id
+       LIMIT 1
+     ) named ON TRUE
+     WHERE COALESCE(named.name, traffic.route_name) IS NOT NULL
+     ORDER BY traffic.current_aadt DESC, COALESCE(named.name, traffic.route_name)
+     LIMIT 6000`,
+    [JSON.stringify(geometry), MIN_MAJOR_ROAD_AADT, MAJOR_ROAD_SEARCH_METERS],
   );
-  return rows.map(localRoadFeature).filter(Boolean);
+  return rows.map(trafficRoadFeature).filter(Boolean);
 }
 
 async function queryRoadLayer(layer, ring, fetchImpl) {
@@ -309,10 +481,10 @@ export async function fetchBoundaryStreetNames(
 }
 
 /**
- * Resolve cardinal boundary roads from the local PostGIS mirror first. The
- * remote TIGERweb request remains a temporary fallback while the county road
- * synchronization is being validated; request-time failures never invalidate
- * locally stored last-known-good data.
+ * Resolve automatic cardinal boundaries from the local TxDOT AADT mirror.
+ * Census road geometry is used only to turn TxDOT route codes into readable
+ * road names. The engine disables remote fallback so a data outage produces a
+ * visible review warning instead of silently substituting a neighborhood road.
  */
 export async function loadBoundaryStreetNames(
   pool,
@@ -320,25 +492,22 @@ export async function loadBoundaryStreetNames(
   {
     fetchImpl = globalThis.fetch,
     now = () => new Date(),
-    allowRemoteFallback = true,
+    allowRemoteFallback = false,
   } = {},
 ) {
   const ring = normalizedRing(geometry);
   try {
-    const features = await queryLocalBoundaryRoads(pool, geometry);
+    const features = await queryLocalTrafficBoundaryRoads(pool, geometry);
     if (features.length) {
       return {
-        ...boundaryStreetResult(features, ring, {
-          source: "Local Census TIGER road mirror",
-          now,
-        }),
+        ...trafficBoundaryStreetResult(features, ring, { now }),
         served_from_local_mirror: true,
       };
     }
   } catch (error) {
     if (!allowRemoteFallback) throw error;
   }
-  if (!allowRemoteFallback) throw new Error("local_boundary_roads_unavailable");
+  if (!allowRemoteFallback) throw new Error("local_txdot_boundary_roads_unavailable");
   const fallback = await fetchBoundaryStreetNames(geometry, { fetchImpl, now });
   return {
     ...fallback,
@@ -346,3 +515,4 @@ export async function loadBoundaryStreetNames(
     fallback_reason: "local_boundary_roads_unavailable",
   };
 }
+

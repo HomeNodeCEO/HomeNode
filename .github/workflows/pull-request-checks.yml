@@ -1,0 +1,97 @@
+name: Pull request checks
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pull-request-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-tests:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci
+      - name: Run backend test suite
+        run: npm test
+
+  frontend-validation:
+    name: Frontend validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dcad-frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dcad-frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Build frontend
+        run: npm run build
+      - name: Test comparable adjustments
+        run: npm run test:adjustments
+      - name: Test condition and quality ratings
+        run: npm run test:ratings
+      - name: Test neighborhood automation
+        run: npm run test:neighborhood
+
+  change-safety:
+    name: Change safety
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out full pull-request history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reject committed secrets and production exports
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only --diff-filter=ACMRT \
+            "origin/${{ github.base_ref }}...HEAD" > /tmp/changed-files.txt
+
+          if grep -E '(^|/)(\.env($|\.)|.*\.pem$|.*\.key$|.*\.p12$|.*\.pfx$)' /tmp/changed-files.txt; then
+            echo "Secret-bearing files may not be committed."
+            exit 1
+          fi
+
+          if grep -E '\.(dump|backup|bak)$' /tmp/changed-files.txt; then
+            echo "Database exports and backups may not be committed."
+            exit 1
+          fi
+
+          echo "Changed-file safety check passed."

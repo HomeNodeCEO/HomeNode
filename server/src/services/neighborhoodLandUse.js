@@ -35,7 +35,10 @@ const DCAD_FIELDS = [
   "RESSTRTYP",
   "BLDGAREA",
   "RESFLRAREA",
+  "RESYRBLT",
+  "LNDVALUE",
   "IMPVALUE",
+  "CNTASSDVAL",
   "LASTUPDATE",
 ].join(",");
 const MAX_PARCELS = 25_000;
@@ -437,6 +440,88 @@ function rounded(value, digits = 1) {
   return Math.round((Number(value) || 0) * factor) / factor;
 }
 
+function positiveMetric(...values) {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
+function summarizeMetric(values, digits = 0) {
+  const sorted = values
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((left, right) => left - right);
+  if (!sorted.length) {
+    return { count: 0, low: null, high: null, predominant: null };
+  }
+  const midpoint = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2
+    ? sorted[midpoint]
+    : (sorted[midpoint - 1] + sorted[midpoint]) / 2;
+  return {
+    count: sorted.length,
+    low: rounded(sorted[0], digits),
+    high: rounded(sorted[sorted.length - 1], digits),
+    predominant: rounded(median, digits),
+  };
+}
+
+/**
+ * Describe the complete one-unit housing stock inside the saved boundary.
+ * Unlike the market study, this population includes properties that did not sell.
+ */
+export function buildNeighborhoodPropertyProfile(classifiedParcels, {
+  asOfYear = new Date().getUTCFullYear(),
+} = {}) {
+  const oneUnitParcels = classifiedParcels.filter(
+    (parcel) => parcel.classification?.category === "one_unit" && parcel.built_up,
+  );
+  const marketValues = [];
+  const livingAreas = [];
+  const ages = [];
+  const pricesPerSquareFoot = [];
+  for (const parcel of oneUnitParcels) {
+    const attributes = parcel.attributes || {};
+    const marketValue = positiveMetric(
+      attributes.CNTASSDVAL,
+      attributes.current_market_value,
+      parcel.current_market_value,
+    );
+    const livingArea = positiveMetric(
+      attributes.RESFLRAREA,
+      attributes.residential_area_sqft,
+      parcel.residential_area_sqft,
+      attributes.BLDGAREA,
+      attributes.building_area_sqft,
+      parcel.building_area_sqft,
+    );
+    const yearBuilt = positiveMetric(
+      attributes.RESYRBLT,
+      attributes.residential_year_built,
+      parcel.residential_year_built,
+    );
+    if (marketValue !== null) marketValues.push(marketValue);
+    if (livingArea !== null) livingAreas.push(livingArea);
+    if (yearBuilt !== null && yearBuilt <= asOfYear) ages.push(asOfYear - yearBuilt);
+    if (marketValue !== null && livingArea !== null) {
+      pricesPerSquareFoot.push(marketValue / livingArea);
+    }
+  }
+  return {
+    population: "all_one_unit_properties",
+    property_count: oneUnitParcels.length,
+    house_price: summarizeMetric(marketValues, 0),
+    price_per_square_foot: summarizeMetric(pricesPerSquareFoot, 2),
+    age: summarizeMetric(ages, 0),
+    living_area: summarizeMetric(livingAreas, 0),
+    value_basis: "Dallas CAD current market value",
+    denominator_note:
+      "All improved one-unit properties intersecting the defined neighborhood are included whether or not they sold. Price and price-per-square-foot use current Dallas CAD market value; age and GLA use Dallas CAD parcel attributes.",
+  };
+}
+
 function normalizedAccountId(value) {
   return String(value || "").replace(/[^0-9A-Za-z]/g, "").replace(/^0+/, "");
 }
@@ -461,6 +546,8 @@ export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
        parcel.structure_type,
        parcel.building_area_sqft,
        parcel.residential_area_sqft,
+       parcel.residential_year_built,
+       parcel.current_market_value,
        parcel.improvement_value,
        parcel.source_updated_at,
        parcel.source_attributes,
@@ -490,6 +577,8 @@ export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
       RESSTRTYP: row.structure_type,
       BLDGAREA: row.building_area_sqft,
       RESFLRAREA: row.residential_area_sqft,
+      RESYRBLT: row.residential_year_built,
+      CNTASSDVAL: row.current_market_value,
       IMPVALUE: row.improvement_value,
     };
     return {
@@ -505,6 +594,10 @@ export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
       source_updated_at: row.source_updated_at,
       attributes,
       geometry: row.geometry,
+      building_area_sqft: row.building_area_sqft,
+      residential_area_sqft: row.residential_area_sqft,
+      residential_year_built: row.residential_year_built,
+      current_market_value: row.current_market_value,
     };
   });
 }
@@ -609,7 +702,7 @@ export async function buildNeighborhoodLandUseAnalysis(
       pool,
       `land_use:${cacheKey}`,
     ).catch(() => null);
-    if (persistentCached?.result) {
+    if (persistentCached?.result?.property_profile) {
       return {
         ...persistentCached.result,
         cache_hit: true,
@@ -686,6 +779,9 @@ export async function buildNeighborhoodLandUseAnalysis(
     (metrics.parcel_areas || []).map((item) => [Number(item.source_index), Number(item.full_area_sqft) || 0]),
   );
   const siteSizeReview = evaluateSubjectSiteSize(accountId, classifiedParcels, fullAreaByIndex);
+  const propertyProfile = buildNeighborhoodPropertyProfile(classifiedParcels, {
+    asOfYear: new Date(analysisStartedAt).getUTCFullYear(),
+  });
   const categoryAreas = Object.fromEntries(
     LAND_USE_CATEGORIES.map(({ key }) => [key, Number(metrics.category_areas?.[key]) || 0]),
   );
@@ -753,7 +849,7 @@ export async function buildNeighborhoodLandUseAnalysis(
     source_mode: sourceMode,
     source_health: sourceHealth,
     analyzed_at: new Date().toISOString(),
-    methodology_version: 1,
+    methodology_version: 2,
     boundary,
     boundary_signature: boundarySignature,
     boundary_area_acres: rounded(boundaryArea / SQ_FEET_PER_ACRE, 2),
@@ -779,6 +875,7 @@ export async function buildNeighborhoodLandUseAnalysis(
       area_acres: rounded(categoryAreas[key] / SQ_FEET_PER_ACRE, 2),
       percentage: percentages[key],
     })),
+    property_profile: propertyProfile,
     review_parcels: reviewParcels.slice(0, 250),
     review_parcels_truncated: reviewParcels.length > 250,
     warnings,

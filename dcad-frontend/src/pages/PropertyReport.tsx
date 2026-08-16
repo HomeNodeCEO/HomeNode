@@ -46,9 +46,12 @@ import {
   type MarketConditionsDraft,
 } from "@/lib/marketConditionsDraft";
 import {
+  calculateNeighborhoodRepresentativeness,
+  DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
   neighborhoodBoundaryReadinessErrors,
   neighborhoodLandUseTotal,
+  NEIGHBORHOOD_ALL_PROPERTY_ROWS,
   NEIGHBORHOOD_CITY_AVERAGE_ROWS,
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
@@ -416,6 +419,25 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_gla_low: value?.neighborhood_gla_low ?? "",
     neighborhood_gla_high: value?.neighborhood_gla_high ?? "",
     neighborhood_gla_predominant: value?.neighborhood_gla_predominant ?? "",
+    neighborhood_sale_count: value?.neighborhood_sale_count ?? "",
+    neighborhood_all_property_count: value?.neighborhood_all_property_count ?? "",
+    neighborhood_all_house_price_low: value?.neighborhood_all_house_price_low ?? "",
+    neighborhood_all_house_price_high: value?.neighborhood_all_house_price_high ?? "",
+    neighborhood_all_house_price_predominant:
+      value?.neighborhood_all_house_price_predominant ?? "",
+    neighborhood_all_ppsf_low: value?.neighborhood_all_ppsf_low ?? "",
+    neighborhood_all_ppsf_high: value?.neighborhood_all_ppsf_high ?? "",
+    neighborhood_all_ppsf_predominant: value?.neighborhood_all_ppsf_predominant ?? "",
+    neighborhood_all_age_low: value?.neighborhood_all_age_low ?? "",
+    neighborhood_all_age_high: value?.neighborhood_all_age_high ?? "",
+    neighborhood_all_age_predominant: value?.neighborhood_all_age_predominant ?? "",
+    neighborhood_all_gla_low: value?.neighborhood_all_gla_low ?? "",
+    neighborhood_all_gla_high: value?.neighborhood_all_gla_high ?? "",
+    neighborhood_all_gla_predominant: value?.neighborhood_all_gla_predominant ?? "",
+    neighborhood_all_value_count: value?.neighborhood_all_value_count ?? "",
+    neighborhood_all_ppsf_count: value?.neighborhood_all_ppsf_count ?? "",
+    neighborhood_all_age_count: value?.neighborhood_all_age_count ?? "",
+    neighborhood_all_gla_count: value?.neighborhood_all_gla_count ?? "",
     neighborhood_city_name: value?.neighborhood_city_name || "",
     neighborhood_city_sale_count: value?.neighborhood_city_sale_count ?? "",
     neighborhood_city_average_sale_price: value?.neighborhood_city_average_sale_price ?? "",
@@ -432,7 +454,10 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_boundary_east: value?.neighborhood_boundary_east || "",
     neighborhood_boundary_south: value?.neighborhood_boundary_south || "",
     neighborhood_boundary_west: value?.neighborhood_boundary_west || "",
-    neighborhood_boundary_exclusions: value?.neighborhood_boundary_exclusions || "",
+    neighborhood_boundary_exclusions:
+      typeof value?.neighborhood_boundary_exclusions === "string"
+        ? value.neighborhood_boundary_exclusions
+        : DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
     neighborhood_boundary_streets_source: value?.neighborhood_boundary_streets_source || "",
     neighborhood_boundary_streets_retrieved_at:
       value?.neighborhood_boundary_streets_retrieved_at || "",
@@ -786,6 +811,65 @@ function sellerComparisonSummary(contractSeller: unknown, publicOwner: unknown):
       };
 }
 
+type NeighborhoodRangeRowDefinition = {
+  label: string;
+  low: keyof AssignmentDetails;
+  high: keyof AssignmentDetails;
+  predominant: keyof AssignmentDetails;
+  format: string;
+};
+
+function NeighborhoodRangeGrid({
+  rows,
+  assignment,
+  readOnly = false,
+  onChange,
+}: {
+  rows: readonly NeighborhoodRangeRowDefinition[];
+  assignment: AssignmentDetails;
+  readOnly?: boolean;
+  onChange: <K extends keyof AssignmentDetails>(key: K, value: AssignmentDetails[K]) => void;
+}) {
+  return (
+    <div className="mt-2 min-w-[510px]">
+      <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 border-b border-slate-300 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+        <div>Measure</div><div>Low</div><div>High</div><div>Predominant</div>
+      </div>
+      {rows.map((row) => (
+        <div key={row.label} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] items-center gap-2 border-b border-slate-100 py-1 last:border-0">
+          <div className="text-xs font-medium text-slate-800">{row.label}</div>
+          {[row.low, row.high, row.predominant].map((field) => {
+            const isMoney = row.format === "money";
+            const isPricePerSquareFoot = /Sq\. Ft\./.test(row.label);
+            return (
+              <div key={field} className="relative">
+                {isMoney ? (
+                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-600">$</span>
+                ) : null}
+                <input
+                  type="number"
+                  min="0"
+                  step={row.label === "Age" ? "1" : "0.01"}
+                  readOnly={readOnly}
+                  aria-readonly={readOnly}
+                  className={`input input-bordered input-xs w-full ${readOnly ? "bg-slate-50 text-slate-700" : "bg-white"} ${isMoney ? "pl-5" : ""} ${isPricePerSquareFoot ? "pr-8" : ""}`}
+                  value={(assignment[field] as string | number | undefined) ?? ""}
+                  onChange={(event) => {
+                    if (!readOnly) onChange(field, event.target.value);
+                  }}
+                />
+                {isPricePerSquareFoot ? (
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">/SF</span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function NeighborhoodCharacteristicsContent({
   accountId,
   assignmentFileId,
@@ -897,6 +981,10 @@ function NeighborhoodCharacteristicsContent({
     valuePositionContext.subjectGla,
     valuePositionContext.subjectQuality,
   ]);
+  const representativeness = useMemo(
+    () => calculateNeighborhoodRepresentativeness(assignmentDraft),
+    [assignmentDraft],
+  );
   const valuePositionSignature = useMemo(() => JSON.stringify({
     concludedValue: effectiveConcludedValue,
     predominantValue: assignmentDraft.neighborhood_house_price_predominant,
@@ -999,6 +1087,34 @@ function NeighborhoodCharacteristicsContent({
     onAssignmentChange("neighborhood_land_use_review_count", result.review_required_count);
     onAssignmentChange("neighborhood_land_use_coverage_percent", result.coverage_percent);
     onAssignmentChange("neighborhood_land_use_confidence", result.confidence);
+    if (result.property_profile) {
+      onAssignmentChange("neighborhood_all_property_count", result.property_profile.property_count);
+      onAssignmentChange("neighborhood_all_house_price_low", result.property_profile.house_price.low ?? "");
+      onAssignmentChange("neighborhood_all_house_price_high", result.property_profile.house_price.high ?? "");
+      onAssignmentChange(
+        "neighborhood_all_house_price_predominant",
+        result.property_profile.house_price.predominant ?? "",
+      );
+      onAssignmentChange("neighborhood_all_ppsf_low", result.property_profile.price_per_square_foot.low ?? "");
+      onAssignmentChange("neighborhood_all_ppsf_high", result.property_profile.price_per_square_foot.high ?? "");
+      onAssignmentChange(
+        "neighborhood_all_ppsf_predominant",
+        result.property_profile.price_per_square_foot.predominant ?? "",
+      );
+      onAssignmentChange("neighborhood_all_age_low", result.property_profile.age.low ?? "");
+      onAssignmentChange("neighborhood_all_age_high", result.property_profile.age.high ?? "");
+      onAssignmentChange("neighborhood_all_age_predominant", result.property_profile.age.predominant ?? "");
+      onAssignmentChange("neighborhood_all_gla_low", result.property_profile.living_area.low ?? "");
+      onAssignmentChange("neighborhood_all_gla_high", result.property_profile.living_area.high ?? "");
+      onAssignmentChange(
+        "neighborhood_all_gla_predominant",
+        result.property_profile.living_area.predominant ?? "",
+      );
+      onAssignmentChange("neighborhood_all_value_count", result.property_profile.house_price.count);
+      onAssignmentChange("neighborhood_all_ppsf_count", result.property_profile.price_per_square_foot.count);
+      onAssignmentChange("neighborhood_all_age_count", result.property_profile.age.count);
+      onAssignmentChange("neighborhood_all_gla_count", result.property_profile.living_area.count);
+    }
     onAssignmentChange("neighborhood_built_up", result.built_up_band);
     onAssignmentChange("neighborhood_built_up_pct", result.built_up_percent);
     if (locationType) onAssignmentChange("neighborhood_location_type", locationType);
@@ -1042,7 +1158,7 @@ function NeighborhoodCharacteristicsContent({
           : result.processing_duration_ms > 0
             ? ` in ${(result.processing_duration_ms / 1000).toFixed(1)} seconds`
             : ""
-      }. Land-use percentages, ${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.`,
+      }. Land-use percentages, ${result.property_profile ? "the all-property neighborhood profile, " : ""}${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.`,
     );
   };
   const updateBoundarySide = (
@@ -1385,8 +1501,8 @@ function NeighborhoodCharacteristicsContent({
       </section>
       </div>
 
-      <section className="grid gap-3 lg:grid-cols-[1fr_2fr]">
-        <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <section className="grid gap-3 lg:grid-cols-2">
+        <div className="order-2 rounded-xl border border-slate-200 bg-white p-3 lg:col-span-2">
           <div className="flex items-start justify-between gap-2">
             <div>
               <h3 className="text-sm font-semibold text-slate-900">Unemployment Comparison</h3>
@@ -1464,40 +1580,80 @@ function NeighborhoodCharacteristicsContent({
           ) : null}
         </div>
 
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
-          <h3 className="text-sm font-semibold text-slate-900">Neighborhood Property Ranges</h3>
-          <p className="mt-0.5 text-xs text-slate-500 lg:hidden">Low, high, and predominant (median) values from the defined market area.</p>
-          <div className="mt-2 min-w-[540px]">
-            <div className="grid grid-cols-[1.2fr_1fr_1fr_1fr] gap-2 border-b border-slate-300 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-              <div>Measure</div><div>Low</div><div>High</div><div>Predominant</div>
-            </div>
-            {NEIGHBORHOOD_RANGE_ROWS.map((row) => (
-              <div key={row.label} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] items-center gap-2 border-b border-slate-100 py-1 last:border-0">
-                <div className="text-xs font-medium text-slate-800">{row.label}</div>
-                {[row.low, row.high, row.predominant].map((field) => {
-                  const isMoney = row.format === "money";
-                  const isPricePerSquareFoot = row.label === "Price per Sq. Ft.";
-                  return (
-                    <div key={field} className="relative">
-                      {isMoney ? (
-                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-600">$</span>
-                      ) : null}
-                      <input
-                        type="number"
-                        min="0"
-                        step={row.label === "Age" ? "1" : "0.01"}
-                        className={`input input-bordered input-xs w-full bg-white ${isMoney ? "pl-5" : ""} ${isPricePerSquareFoot ? "pr-8" : ""}`}
-                        value={assignmentDraft[field] ?? ""}
-                        onChange={(event) => onAssignmentChange(field, event.target.value)}
-                      />
-                      {isPricePerSquareFoot ? (
-                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">/SF</span>
-                      ) : null}
-                    </div>
-                  );
-                })}
+        <div className="order-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-3 lg:col-span-2">
+          <div className="grid gap-3 xl:grid-cols-2">
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Neighborhood Sales Data (only includes sales)</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">Closed-sale low, high, and predominant medians from the selected market period and defined neighborhood.</p>
+                </div>
+                <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-800">
+                  {assignmentDraft.neighborhood_sale_count === "" || assignmentDraft.neighborhood_sale_count == null
+                    ? "Sales pending"
+                    : `${formatNumber(assignmentDraft.neighborhood_sale_count)} sales`}
+                </span>
               </div>
-            ))}
+              <NeighborhoodRangeGrid
+                rows={NEIGHBORHOOD_RANGE_ROWS}
+                assignment={assignmentDraft}
+                onChange={onAssignmentChange}
+              />
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Neighborhood Profile (All properties, sold and unsold)</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">All improved one-unit properties within the same boundary; values use current Dallas CAD market value.</p>
+                </div>
+                <span className="rounded-full bg-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700">
+                  {assignmentDraft.neighborhood_all_property_count === "" || assignmentDraft.neighborhood_all_property_count == null
+                    ? "Analyze land use"
+                    : `${formatNumber(assignmentDraft.neighborhood_all_property_count)} properties`}
+                </span>
+              </div>
+              <NeighborhoodRangeGrid
+                rows={NEIGHBORHOOD_ALL_PROPERTY_ROWS}
+                assignment={assignmentDraft}
+                readOnly
+                onChange={onAssignmentChange}
+              />
+              <p className="mt-2 text-[10px] leading-4 text-slate-500">
+                Data coverage — value: {formatNumber(assignmentDraft.neighborhood_all_value_count)}; $/SF: {formatNumber(assignmentDraft.neighborhood_all_ppsf_count)}; age: {formatNumber(assignmentDraft.neighborhood_all_age_count)}; GLA: {formatNumber(assignmentDraft.neighborhood_all_gla_count)}. Refreshes with Analyze Present Land Use.
+              </p>
+            </div>
+          </div>
+
+          <div className={`mt-3 rounded-xl border p-3 ${
+            representativeness.score === null
+              ? "border-slate-200 bg-slate-50"
+              : representativeness.score >= 80
+                ? "border-emerald-200 bg-emerald-50"
+                : representativeness.score >= 65
+                  ? "border-amber-200 bg-amber-50"
+                  : "border-rose-200 bg-rose-50"
+          }`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">Sales Sample Representativeness</h4>
+                <p className="mt-0.5 text-xs text-slate-600">Equal-weight comparison of predominant sale price/value, price/value per square foot, age, and GLA.</p>
+              </div>
+              <span className="rounded-full bg-white px-3 py-1 text-sm font-bold text-slate-900 shadow-sm">
+                {representativeness.score === null ? "Pending" : `${representativeness.score.toFixed(1)}%`} · {representativeness.label}
+              </span>
+            </div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {representativeness.factors.map((factor) => (
+                <div key={factor.key} className="rounded-lg border border-white/80 bg-white p-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{factor.label}</div>
+                  <div className="mt-0.5 text-sm font-bold text-slate-900">{factor.similarityScore.toFixed(1)}% similar</div>
+                  <div className="text-[10px] text-slate-500">{factor.deviationPercent.toFixed(1)}% median deviation</div>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-700">{representativeness.narrative}</p>
+            <p className="mt-1 text-[10px] leading-4 text-slate-500">This is a descriptive sample check, not a substitute for appraiser review. CAD market values and MLS sale prices have different valuation bases, so their comparison is shown transparently.</p>
           </div>
           <div className={`mt-3 rounded-xl border p-3 ${
             valuePosition.ready
@@ -1742,8 +1898,8 @@ function NeighborhoodCharacteristicsContent({
           <label className="mt-2 block">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Exclusions / Irregular Areas</span>
             <textarea
-              rows={1}
-              className="textarea textarea-bordered mt-0.5 min-h-9 w-full bg-white py-1 text-xs"
+              rows={5}
+              className="textarea textarea-bordered mt-0.5 min-h-24 w-full bg-white py-2 text-xs leading-5"
               value={assignmentDraft.neighborhood_boundary_exclusions || ""}
               onChange={(event) => onAssignmentChange("neighborhood_boundary_exclusions", event.target.value)}
               placeholder="Describe excluded subdivisions, pockets, or irregular boundary sections"
@@ -3572,6 +3728,7 @@ function AddressHero({
           neighborhood_gla_low: summary.minimum_living_area ?? "",
           neighborhood_gla_high: summary.maximum_living_area ?? "",
           neighborhood_gla_predominant: summary.median_living_area ?? "",
+          neighborhood_sale_count: customStudy.population.eligible_sale_count ?? "",
           neighborhood_market_trend:
             marketTrendFromChange(customStudy.statistics.annualized_change_percent) ||
             current.neighborhood_market_trend || "",
@@ -3592,9 +3749,9 @@ function AddressHero({
           neighborhood_boundary_east: east,
           neighborhood_boundary_south: south,
           neighborhood_boundary_west: west,
-          neighborhood_boundary_exclusions: geometryChanged
-            ? ""
-            : current.neighborhood_boundary_exclusions || "",
+          neighborhood_boundary_exclusions:
+            current.neighborhood_boundary_exclusions ||
+            DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
           neighborhood_boundary_streets_source:
             boundaryStreets?.source || current.neighborhood_boundary_streets_source || "",
           neighborhood_boundary_streets_retrieved_at:

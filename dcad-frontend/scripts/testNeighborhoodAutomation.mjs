@@ -8,6 +8,10 @@ import {
   marketingTimeFromMedianDom,
   zoningCompatibility,
 } from '../src/lib/neighborhoodAutomation.ts';
+import {
+  calculateNeighborhoodRepresentativeness,
+  DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
+} from '../src/lib/neighborhoodCharacteristics.ts';
 
 assert.equal(locationTypeFromLandUse({ oneUnit: 10, twoToFourUnit: 0, multifamily: 0, commercial: 45, otherVacant: 45 }), 'urban');
 assert.equal(locationTypeFromLandUse({ oneUnit: 60, twoToFourUnit: 0, multifamily: 0, commercial: 10, otherVacant: 30 }), 'suburban');
@@ -90,5 +94,28 @@ const pendingValue = determineNeighborhoodValuePosition({
 });
 assert.equal(pendingValue.ready, false);
 assert.equal(pendingValue.relationship, 'pending');
+
+const representativeSales = calculateNeighborhoodRepresentativeness({
+  neighborhood_house_price_predominant: 310_000,
+  neighborhood_all_house_price_predominant: 300_000,
+  neighborhood_ppsf_predominant: 205,
+  neighborhood_all_ppsf_predominant: 200,
+  neighborhood_age_predominant: 28,
+  neighborhood_all_age_predominant: 30,
+  neighborhood_gla_predominant: 1_850,
+  neighborhood_all_gla_predominant: 1_800,
+});
+assert.equal(representativeSales.label, 'Highly representative');
+assert.equal(representativeSales.factors.length, 4);
+assert.equal(representativeSales.score, 96.2);
+assert.match(representativeSales.narrative, /sales-only predominant characteristics/);
+
+const insufficientProfile = calculateNeighborhoodRepresentativeness({
+  neighborhood_age_predominant: 30,
+  neighborhood_all_age_predominant: 32,
+});
+assert.equal(insufficientProfile.score, null);
+assert.equal(insufficientProfile.label, 'Insufficient data');
+assert.match(DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE, /intentionally broad/);
 
 console.log('Neighborhood automation rules passed.');

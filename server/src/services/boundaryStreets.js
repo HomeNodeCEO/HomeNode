@@ -7,7 +7,6 @@ const MAJOR_ROAD_SEARCH_METERS = 3219;
 const MIN_MAJOR_ROAD_AADT = 10000;
 const FULL_MAJOR_ROAD_AADT_SCORE = 50000;
 const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
-const PERIMETER_BAND_METERS = 1200;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const cache = new Map();
@@ -204,6 +203,9 @@ function usableTrafficRoadName(name) {
   const value = String(name || "").trim();
   if (!value || /^\d+$/.test(value)) return false;
   if (/^(?:CS|ON SYSTEM|OFF SYSTEM)$/i.test(value)) return false;
+  if (/^(?:State|US) Hwy|Interstate|Turnpike|Tollway|President George Bush/i.test(value)) {
+    return false;
+  }
   return !/^(?:IH|US|SH|SL|FM|RM|BS|BI|BU|LP|SP|PR)\d/i.test(value.replace(/[\s-]/g, ""));
 }
 
@@ -323,14 +325,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
   }
 
   return Object.fromEntries(CARDINAL_SIDES.map((side) => {
-    const allGroups = [...grouped.get(side).values()];
-    const nearestCenterDistance = Math.min(
-      ...allGroups.map((group) => group.min_center_distance_meters),
-      Number.POSITIVE_INFINITY,
-    );
-    const groups = allGroups.filter((group) =>
-      group.min_center_distance_meters <= nearestCenterDistance + PERIMETER_BAND_METERS,
-    );
+    const groups = [...grouped.get(side).values()];
     const maxLength = Math.max(...groups.map((group) => group.length), 1);
     const candidates = groups.map((group) => {
       const averageAadt = group.length
@@ -341,13 +336,13 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
       // multiples higher than the major road that actually borders the area.
       const trafficScore = Math.min(group.max_aadt / FULL_MAJOR_ROAD_AADT_SCORE, 1);
       const proximityScore = 1 - Math.min(
-        (group.min_center_distance_meters - nearestCenterDistance) / PERIMETER_BAND_METERS,
+        group.min_center_distance_meters / MAJOR_ROAD_SEARCH_METERS,
         1,
       );
       const continuityScore = Math.min(group.length / maxLength, 1);
       return {
         name: group.name,
-        score: Number((trafficScore * 0.65 + proximityScore * 0.25 + continuityScore * 0.10).toFixed(4)),
+        score: Number((trafficScore * 0.55 + proximityScore * 0.35 + continuityScore * 0.10).toFixed(4)),
         annual_average_daily_traffic: Math.round(averageAadt),
         peak_segment_aadt: Math.round(group.max_aadt),
         distance_to_analysis_center_miles: Number((group.min_center_distance_meters / 1609.344).toFixed(2)),
@@ -414,7 +409,6 @@ function trafficBoundaryStreetResult(features, ring, { now, centerPoint }) {
     retrieved_at: now().toISOString(),
     minimum_aadt: MIN_MAJOR_ROAD_AADT,
     major_road_search_meters: MAJOR_ROAD_SEARCH_METERS,
-    perimeter_band_meters: PERIMETER_BAND_METERS,
     review_required: true,
   };
 }

@@ -132,6 +132,7 @@ test("uses busy TxDOT perimeter roads and excludes local neighborhood streets", 
   assert.equal(result.south.primary_street, "Belt Line Rd");
   assert.equal(result.west.primary_street, "S Jupiter Rd");
   assert.equal(result.north.candidates.some(({ name }) => name === "Holford Rd"), false);
+  assert.equal(result.north.candidates.some(({ name }) => name === "State Hwy 190"), false);
   assert.equal(result.south.candidates.some(({ name }) => name === "Kingsbridge Rd"), false);
   assert.equal(result.south.candidates.some(({ name }) => name === "261590"), false);
   assert.equal(result.north.candidates[0].annual_average_daily_traffic, 42_000);

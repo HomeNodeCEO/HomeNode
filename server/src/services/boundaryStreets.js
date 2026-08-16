@@ -4,10 +4,10 @@ const ROAD_LAYERS = [0, 1, 2];
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BOUNDARY_BUFFER_METERS = 75;
 const MAJOR_ROAD_SEARCH_METERS = 3219;
-const MAJOR_ROAD_INWARD_TOLERANCE_METERS = 350;
 const MIN_MAJOR_ROAD_AADT = 10000;
 const FULL_MAJOR_ROAD_AADT_SCORE = 50000;
 const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
+const PERIMETER_BAND_METERS = 1200;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const cache = new Map();
@@ -207,6 +207,13 @@ function usableTrafficRoadName(name) {
   return !/^(?:IH|US|SH|SL|FM|RM|BS|BI|BU|LP|SP|PR)\d/i.test(value.replace(/[\s-]/g, ""));
 }
 
+function displayTrafficRoadName(name, side) {
+  const value = String(name || "").replace(/\s+/g, " ").trim();
+  return side === "north" || side === "south"
+    ? value.replace(/^[EW]\s+/i, "")
+    : value;
+}
+
 function sideEdgeDistance(side, midpoint, bounds) {
   if (side === "north") return midpoint[1] - bounds.maxY;
   if (side === "south") return bounds.minY - midpoint[1];
@@ -232,7 +239,7 @@ function confidenceForMajorRoad(top, second) {
  * continuity keep a distant freeway from displacing the road that actually
  * borders the selected area.
  */
-export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
+export function summarizeBusyCardinalBoundaries(features = [], ring = [], { centerPoint = null } = {}) {
   const empty = Object.fromEntries(CARDINAL_SIDES.map((side) => [side, {
     primary_street: null,
     confidence: "unavailable",
@@ -248,13 +255,18 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
     minY: Math.min(...boundary.map((point) => point[1])),
     maxY: Math.max(...boundary.map((point) => point[1])),
   };
-  const center = [(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2];
+  const requestedCenter = centerPoint?.type === "Point" && Array.isArray(centerPoint.coordinates)
+    ? projectedPoint(centerPoint.coordinates, originLatitude)
+    : null;
+  const center = requestedCenter && requestedCenter.every(Number.isFinite)
+    ? requestedCenter
+    : [(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2];
   const grouped = new Map(CARDINAL_SIDES.map((side) => [side, new Map()]));
 
   for (const feature of features) {
-    const name = normalizeBoundaryStreetNames([feature])[0];
+    const rawName = normalizeBoundaryStreetNames([feature])[0];
     const aadt = trafficValue(feature);
-    if (!usableTrafficRoadName(name) || aadt < MIN_MAJOR_ROAD_AADT) continue;
+    if (!usableTrafficRoadName(rawName) || aadt < MIN_MAJOR_ROAD_AADT) continue;
     for (const path of feature?.geometry?.paths || []) {
       for (let index = 1; index < path.length; index += 1) {
         const start = projectedPoint(path[index - 1], originLatitude);
@@ -273,11 +285,15 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
           ? horizontalAlignment
           : verticalAlignment;
         if (alignment < MIN_MAJOR_ROAD_ALIGNMENT) continue;
+        const name = displayTrafficRoadName(rawName, side);
         const signedEdgeDistance = sideEdgeDistance(side, midpoint, bounds);
-        if (
-          signedEdgeDistance < -MAJOR_ROAD_INWARD_TOLERANCE_METERS ||
-          signedEdgeDistance > MAJOR_ROAD_SEARCH_METERS
-        ) continue;
+        const centerDistance = segmentDistanceAndAlignment(
+          center,
+          [deltaX, deltaY],
+          start,
+          end,
+        ).distance;
+        if (centerDistance > MAJOR_ROAD_SEARCH_METERS) continue;
 
         const sideGroups = grouped.get(side);
         const current = sideGroups.get(name) || {
@@ -286,6 +302,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
           traffic_weighted_length: 0,
           length: 0,
           min_edge_distance_meters: Number.POSITIVE_INFINITY,
+          min_center_distance_meters: Number.POSITIVE_INFINITY,
           source_date: feature?.attributes?.SOURCE_DATE || null,
         };
         current.max_aadt = Math.max(current.max_aadt, aadt);
@@ -295,6 +312,10 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
           current.min_edge_distance_meters,
           Math.max(0, signedEdgeDistance),
         );
+        current.min_center_distance_meters = Math.min(
+          current.min_center_distance_meters,
+          centerDistance,
+        );
         current.source_date ||= feature?.attributes?.SOURCE_DATE || null;
         sideGroups.set(name, current);
       }
@@ -302,7 +323,14 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
   }
 
   return Object.fromEntries(CARDINAL_SIDES.map((side) => {
-    const groups = [...grouped.get(side).values()];
+    const allGroups = [...grouped.get(side).values()];
+    const nearestCenterDistance = Math.min(
+      ...allGroups.map((group) => group.min_center_distance_meters),
+      Number.POSITIVE_INFINITY,
+    );
+    const groups = allGroups.filter((group) =>
+      group.min_center_distance_meters <= nearestCenterDistance + PERIMETER_BAND_METERS,
+    );
     const maxLength = Math.max(...groups.map((group) => group.length), 1);
     const candidates = groups.map((group) => {
       const averageAadt = group.length
@@ -313,7 +341,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
       // multiples higher than the major road that actually borders the area.
       const trafficScore = Math.min(group.max_aadt / FULL_MAJOR_ROAD_AADT_SCORE, 1);
       const proximityScore = 1 - Math.min(
-        group.min_edge_distance_meters / MAJOR_ROAD_SEARCH_METERS,
+        (group.min_center_distance_meters - nearestCenterDistance) / PERIMETER_BAND_METERS,
         1,
       );
       const continuityScore = Math.min(group.length / maxLength, 1);
@@ -322,6 +350,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
         score: Number((trafficScore * 0.65 + proximityScore * 0.25 + continuityScore * 0.10).toFixed(4)),
         annual_average_daily_traffic: Math.round(averageAadt),
         peak_segment_aadt: Math.round(group.max_aadt),
+        distance_to_analysis_center_miles: Number((group.min_center_distance_meters / 1609.344).toFixed(2)),
         distance_to_analysis_edge_miles: Number((group.min_edge_distance_meters / 1609.344).toFixed(2)),
         source_date: group.source_date,
       };
@@ -373,8 +402,8 @@ function boundaryStreetResult(features, ring, { source, now }) {
   };
 }
 
-function trafficBoundaryStreetResult(features, ring, { now }) {
-  const cardinalBoundaries = summarizeBusyCardinalBoundaries(features, ring);
+function trafficBoundaryStreetResult(features, ring, { now, centerPoint }) {
+  const cardinalBoundaries = summarizeBusyCardinalBoundaries(features, ring, { centerPoint });
   return {
     street_names: [...new Set(CARDINAL_SIDES
       .map((side) => cardinalBoundaries[side].primary_street)
@@ -385,6 +414,7 @@ function trafficBoundaryStreetResult(features, ring, { now }) {
     retrieved_at: now().toISOString(),
     minimum_aadt: MIN_MAJOR_ROAD_AADT,
     major_road_search_meters: MAJOR_ROAD_SEARCH_METERS,
+    perimeter_band_meters: PERIMETER_BAND_METERS,
     review_required: true,
   };
 }
@@ -525,6 +555,7 @@ export async function loadBoundaryStreetNames(
     fetchImpl = globalThis.fetch,
     now = () => new Date(),
     allowRemoteFallback = false,
+    centerPoint = null,
   } = {},
 ) {
   const ring = normalizedRing(geometry);
@@ -532,7 +563,7 @@ export async function loadBoundaryStreetNames(
     const features = await queryLocalTrafficBoundaryRoads(pool, geometry);
     if (features.length) {
       return {
-        ...trafficBoundaryStreetResult(features, ring, { now }),
+        ...trafficBoundaryStreetResult(features, ring, { now, centerPoint }),
         served_from_local_mirror: true,
       };
     }

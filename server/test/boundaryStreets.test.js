@@ -120,7 +120,7 @@ test("uses busy TxDOT perimeter roads and excludes local neighborhood streets", 
     { attributes: { NAME: "Apollo Rd", AADT: 18_000 }, geometry: { paths: [[[-96.68, 32.984], [-96.62, 32.984]]] } },
     { attributes: { NAME: "N Garland Ave", AADT: 38_000 }, geometry: { paths: [[[-96.625, 32.94], [-96.625, 33.00]]] } },
     { attributes: { NAME: "Belt Line Rd", AADT: 40_000 }, geometry: { paths: [[[-96.68, 32.946], [-96.62, 32.946]]] } },
-    { attributes: { NAME: "S Jupiter Rd", AADT: 34_000 }, geometry: { paths: [[[-96.675, 32.94], [-96.675, 33.00]]] } },
+    { attributes: { NAME: "N Jupiter Rd", AADT: 34_000 }, geometry: { paths: [[[-96.675, 32.94], [-96.675, 33.00]]] } },
     { attributes: { NAME: "State Hwy 190", AADT: 110_000 }, geometry: { paths: [[[-96.68, 33.008], [-96.62, 33.008]]] } },
     { attributes: { NAME: "261590", AADT: 65_000 }, geometry: { paths: [[[-96.68, 32.95], [-96.62, 32.95]]] } },
     { attributes: { NAME: "Holford Rd", AADT: 7_000 }, geometry: { paths: [[[-96.68, 32.982], [-96.62, 32.982]]] } },
@@ -131,6 +131,7 @@ test("uses busy TxDOT perimeter roads and excludes local neighborhood streets", 
   assert.equal(result.east.primary_street, "N Garland Ave");
   assert.equal(result.south.primary_street, "Belt Line Rd");
   assert.equal(result.west.primary_street, "S Jupiter Rd");
+  assert.deepEqual(result.west.candidates[0].source_road_names, ["N Jupiter Rd"]);
   assert.equal(result.north.candidates.some(({ name }) => name === "Holford Rd"), false);
   assert.equal(result.north.candidates.some(({ name }) => name === "State Hwy 190"), false);
   assert.equal(result.south.candidates.some(({ name }) => name === "Kingsbridge Rd"), false);

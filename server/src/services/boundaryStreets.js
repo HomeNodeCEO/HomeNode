@@ -393,17 +393,17 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
   const { rows } = await pool.query(
     `WITH boundary AS (
        SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
-     ), traffic AS (
+     ), traffic_source AS (
        SELECT segment.route_name,
               segment.current_aadt,
               segment.source_date,
-              ST_Multi(ST_CollectionExtract(
+              ST_CollectionExtract(
                 ST_Intersection(
                   segment.geom,
                   ST_Buffer(boundary.geom::geography, $3::double precision)::geometry
                 ),
                 2
-              )) AS geom
+              ) AS geom
        FROM gis.traffic_volume_segments segment
        CROSS JOIN boundary
        WHERE segment.current_aadt >= $2
@@ -416,6 +416,14 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
            boundary.geom::geography,
            $3::double precision
          )
+     ), traffic AS (
+       SELECT source.route_name,
+              source.current_aadt,
+              source.source_date,
+              dumped.geom
+       FROM traffic_source source
+       CROSS JOIN LATERAL ST_Dump(source.geom) dumped
+       WHERE NOT ST_IsEmpty(dumped.geom)
      )
      SELECT COALESCE(named.name, traffic.route_name) AS name,
             named.base_name,
@@ -427,8 +435,7 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
      LEFT JOIN LATERAL (
        SELECT road.name, road.base_name
        FROM gis.road_segments road
-       WHERE road.road_class IN ('primary', 'secondary')
-         AND road.name IS NOT NULL
+       WHERE road.name IS NOT NULL
          AND road.geom && ST_Expand(ST_Envelope(traffic.geom), 0.00125)
          AND ST_DWithin(road.geom::geography, traffic.geom::geography, 140)
        ORDER BY ST_Length(
@@ -438,7 +445,7 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
                   )::geography
                 ) DESC,
                 ST_Distance(road.geom::geography, traffic.geom::geography),
-                CASE road.road_class WHEN 'primary' THEN 0 ELSE 1 END,
+                CASE WHEN road.name ~* '^(State Hwy|US Hwy|Interstate)' THEN 1 ELSE 0 END,
                 road.source_object_id
        LIMIT 1
      ) named ON TRUE

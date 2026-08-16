@@ -167,6 +167,7 @@ test("uses the local TxDOT AADT mirror before TIGERweb", async () => {
   assert.equal(result.cardinal_boundaries.south.primary_street, "Road 1");
   assert.equal(statements.length, 1);
   assert.match(statements[0].sql, /gis\.traffic_volume_segments/);
+  assert.match(statements[0].sql, /ST_Dump/);
   assert.match(statements[0].sql, /ST_DWithin/);
   assert.match(statements[0].sql, /current_aadt >= \$2/);
   assert.doesNotMatch(statements[0].sql, /road_class IN \('primary', 'secondary', 'local'\)/);

@@ -27,7 +27,10 @@ function numericArgument(name) {
 async function fetchPage(offset, limit) {
   const url = new URL(`https://data.texas.gov/resource/${DATASET_ID}.json`);
   url.searchParams.set("$select", "propid,geoid,situsconcat,propyear");
-  url.searchParams.set("$where", "propid is not null and geoid is not null");
+  url.searchParams.set(
+    "$where",
+    "propid is not null and geoid like 'R%'",
+  );
   url.searchParams.set("$order", "propid");
   url.searchParams.set("$limit", String(limit));
   url.searchParams.set("$offset", String(offset));
@@ -42,41 +45,58 @@ async function fetchPage(offset, limit) {
   return response.json();
 }
 
-async function loadOfficialCrosswalk(maximumRows = null) {
+async function fetchCrosswalkStats() {
+  const url = new URL(`https://data.texas.gov/resource/${DATASET_ID}.json`);
+  url.searchParams.set(
+    "$select",
+    "count(*) as total, count(distinct propid) as distinct_propid, count(distinct geoid) as distinct_geoid",
+  );
+  url.searchParams.set(
+    "$where",
+    "propid is not null and geoid like 'R%'",
+  );
+  const headers = {};
+  if (process.env.SOCRATA_APP_TOKEN) {
+    headers["X-App-Token"] = process.env.SOCRATA_APP_TOKEN;
+  }
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    throw new Error(`collin_cad_open_data_stats_${response.status}`);
+  }
+  const [stats] = await response.json();
+  return {
+    total: Number(stats?.total) || 0,
+    distinctPropertyIds: Number(stats?.distinct_propid) || 0,
+    distinctGeoIds: Number(stats?.distinct_geoid) || 0,
+  };
+}
+
+function normalizeOfficialPage(sourceRows) {
   const byPropertyId = new Map();
   const geoIdOwners = new Map();
   const conflicts = [];
-  let offset = 0;
-  while (maximumRows == null || offset < maximumRows) {
-    const limit = maximumRows == null
-      ? PAGE_SIZE
-      : Math.min(PAGE_SIZE, maximumRows - offset);
-    const rows = await fetchPage(offset, limit);
-    for (const row of rows) {
-      const propertyId = String(row.propid || "").trim();
-      const geoId = String(row.geoid || "").trim();
-      if (!propertyId || !/^R/i.test(geoId)) continue;
-      const normalizedGeoId = normalizedCountyAccountKey(geoId, "COLLIN");
-      const existingGeoId = byPropertyId.get(propertyId)?.native_account_id;
-      const existingPropertyId = geoIdOwners.get(normalizedGeoId);
-      if (
-        (existingGeoId && existingGeoId !== geoId) ||
-        (existingPropertyId && existingPropertyId !== propertyId)
-      ) {
-        conflicts.push({ property_id: propertyId, geo_id: geoId });
-        continue;
-      }
-      geoIdOwners.set(normalizedGeoId, propertyId);
-      byPropertyId.set(propertyId, {
-        property_id: propertyId,
-        native_account_id: geoId,
-        normalized_account_id: normalizedGeoId,
-        situs_address: String(row.situsconcat || "").trim() || null,
-        property_year: Number(row.propyear) || null,
-      });
+  for (const row of sourceRows) {
+    const propertyId = String(row.propid || "").trim();
+    const geoId = String(row.geoid || "").trim();
+    if (!propertyId || !/^R/i.test(geoId)) continue;
+    const normalizedGeoId = normalizedCountyAccountKey(geoId, "COLLIN");
+    const existingGeoId = byPropertyId.get(propertyId)?.native_account_id;
+    const existingPropertyId = geoIdOwners.get(normalizedGeoId);
+    if (
+      (existingGeoId && existingGeoId !== geoId) ||
+      (existingPropertyId && existingPropertyId !== propertyId)
+    ) {
+      conflicts.push({ property_id: propertyId, geo_id: geoId });
+      continue;
     }
-    offset += rows.length;
-    if (rows.length < limit) break;
+    geoIdOwners.set(normalizedGeoId, propertyId);
+    byPropertyId.set(propertyId, {
+      property_id: propertyId,
+      native_account_id: geoId,
+      normalized_account_id: normalizedGeoId,
+      situs_address: String(row.situsconcat || "").trim() || null,
+      property_year: Number(row.propyear) || null,
+    });
   }
   return { rows: [...byPropertyId.values()], conflicts };
 }
@@ -101,15 +121,12 @@ async function matchingHomeNodeAccounts(pool, crosswalk) {
   return matched;
 }
 
-async function upsertCrosswalk(pool, crosswalk) {
+async function upsertCrosswalk(queryable, crosswalk) {
   let written = 0;
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    for (let start = 0; start < crosswalk.length; start += 2_000) {
-      const batch = crosswalk.slice(start, start + 2_000);
-      const { rowCount } = await client.query(
-        `
+  for (let start = 0; start < crosswalk.length; start += 2_000) {
+    const batch = crosswalk.slice(start, start + 2_000);
+    const { rowCount } = await queryable.query(
+      `
         INSERT INTO app.county_account_identifiers (
           county, normalized_account_id, native_account_id, account_id,
           verification_source, reviewer, verified_at, updated_at
@@ -133,19 +150,12 @@ async function upsertCrosswalk(pool, crosswalk) {
             updated_at = now()
         WHERE app.county_account_identifiers.account_id = EXCLUDED.account_id
       `,
-        [JSON.stringify(batch)],
-      );
-      if (rowCount !== batch.length) {
-        throw new Error("collin_cad_existing_identifier_conflict");
-      }
-      written += rowCount;
+      [JSON.stringify(batch)],
+    );
+    if (rowCount !== batch.length) {
+      throw new Error("collin_cad_existing_identifier_conflict");
     }
-    await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
+    written += rowCount;
   }
   return written;
 }
@@ -159,29 +169,69 @@ async function main() {
     max: 2,
     application_name: "homenode-collin-account-id-sync",
   });
+  let client = null;
   try {
     await ensureSalesReconciliationSchema(pool);
-    const official = await loadOfficialCrosswalk(maximumRows);
-    if (official.conflicts.length) {
-      throw new Error(`collin_cad_crosswalk_conflicts:${official.conflicts.length}`);
+    const stats = await fetchCrosswalkStats();
+    if (
+      stats.total !== stats.distinctPropertyIds ||
+      stats.total !== stats.distinctGeoIds
+    ) {
+      throw new Error("collin_cad_official_identifier_conflict");
     }
-    const matchedAccountIds = await matchingHomeNodeAccounts(pool, official.rows);
-    const matchedRows = official.rows
-      .map((row) => ({
-        ...row,
-        account_id: homeNodeCollinAccountIdFromPropertyId(row.property_id),
-      }))
-      .filter((row) => row.account_id && matchedAccountIds.has(row.account_id));
     const summary = {
       mode: apply ? "apply" : "dry_run",
       dataset_id: DATASET_ID,
-      official_rows: official.rows.length,
-      matched_homenode_accounts: matchedRows.length,
-      official_rows_without_homenode_account: official.rows.length - matchedRows.length,
-      written: apply ? await upsertCrosswalk(pool, matchedRows) : 0,
+      official_rows: 0,
+      matched_homenode_accounts: 0,
+      official_rows_without_homenode_account: 0,
+      written: 0,
     };
+
+    const queryable = apply ? await pool.connect() : pool;
+    if (apply) {
+      client = queryable;
+      await client.query("BEGIN");
+    }
+    let offset = 0;
+    while (maximumRows == null || offset < maximumRows) {
+      const limit = maximumRows == null
+        ? PAGE_SIZE
+        : Math.min(PAGE_SIZE, maximumRows - offset);
+      const sourceRows = await fetchPage(offset, limit);
+      const official = normalizeOfficialPage(sourceRows);
+      if (official.conflicts.length) {
+        throw new Error(`collin_cad_crosswalk_conflicts:${official.conflicts.length}`);
+      }
+      const matchedAccountIds = await matchingHomeNodeAccounts(queryable, official.rows);
+      const matchedRows = official.rows
+        .map((row) => ({
+          ...row,
+          account_id: homeNodeCollinAccountIdFromPropertyId(row.property_id),
+        }))
+        .filter((row) => row.account_id && matchedAccountIds.has(row.account_id));
+      summary.official_rows += official.rows.length;
+      summary.matched_homenode_accounts += matchedRows.length;
+      summary.official_rows_without_homenode_account +=
+        official.rows.length - matchedRows.length;
+      if (apply && matchedRows.length) {
+        summary.written += await upsertCrosswalk(queryable, matchedRows);
+      }
+      offset += sourceRows.length;
+      if (sourceRows.length < limit) break;
+    }
+    if (maximumRows == null && summary.official_rows !== stats.total) {
+      throw new Error(
+        `collin_cad_row_count_changed:${stats.total}:${summary.official_rows}`,
+      );
+    }
+    if (apply) await client.query("COMMIT");
     process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    throw error;
   } finally {
+    client?.release();
     await pool.end();
   }
 }

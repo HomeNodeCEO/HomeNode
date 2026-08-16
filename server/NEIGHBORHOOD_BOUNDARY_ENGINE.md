@@ -83,5 +83,41 @@ needed.
 - Cardinal boundary-road descriptions now read the synchronized PostGIS road
   mirror first. TIGERweb remains a temporary fallback only when the local mirror
   has no usable boundary roads.
-- Broad boundary generation, contiguous-pocket classification, persistence,
-  map/report review, and Dallas County calibration remain subsequent phases.
+- Broad descriptive boundary generation now uses the saved property-complexity
+  profile to select a discovery radius, forms a simplified parcel-center hull,
+  confirms that the subject remains inside it, and attaches local cardinal-road
+  and official-zoning evidence. Request-time generation never requires a remote
+  road or zoning service.
+- Each generated result is stored in
+  `app.neighborhood_boundary_assessments` with the assignment-file scope,
+  methodology version, input signature, source state, confidence, warnings,
+  geometry, and appraiser confirmation. Re-running unchanged evidence reuses
+  the same auditable version; a changed source snapshot creates a new one.
+- The Property Report can generate and apply a suggested boundary, populate the
+  four editable road fields, and preserve the appraiser confirmation separately
+  from source data. The report prints the boundary/relevance distinction.
+- The relevant-property pass now scores up to 5,000 locally mirrored parcels
+  inside that broad boundary. Same-use eligibility is a prerequisite; the
+  remaining score is age 40%, site size 30%, proximity 20%, and unadjusted
+  recent-sale price 10%. Missing sale prices do not create a penalty.
+- A sub-20 score with at least 70% input coverage is excluded under the approved
+  baseline. Other statistically dissimilar parcels are excluded only when at
+  least three form a contiguous pocket within the saved parcel geometry. Every
+  candidate, factor score, reason, point, and cluster is stored in normalized
+  assessment/candidate tables for map display and calibration.
+- A map overlay and Dallas County calibration remain the next phases.
+
+## Boundary API
+
+- `GET /api/accounts/:id/neighborhood-boundary` loads the latest result for an
+  assignment file, falling back to the property-level result.
+- `POST /api/accounts/:id/neighborhood-boundary/generate` generates and saves a
+  result from local PostGIS mirrors. `assignment_file_id` and `search_profile`
+  are optional; otherwise the saved complexity assessment chooses the profile.
+- `PATCH /api/accounts/:id/neighborhood-boundary/:assessmentId` records or
+  removes the appraisal-file confirmation without rewriting parcel, road, or
+  zoning source data.
+- `GET /api/accounts/:id/neighborhood-relevance` loads the latest saved
+  relevance-population summary for an assignment file.
+- `POST /api/accounts/:id/neighborhood-relevance/generate` scores and stores the
+  parcel population tied to the latest boundary assessment.

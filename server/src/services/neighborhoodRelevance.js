@@ -226,6 +226,17 @@ export function scoreNeighborhoodCandidate({
         : "relevant_candidate";
   return {
     candidate_id: candidate.account_id ?? candidate.id ?? null,
+    parcel_object_id: candidate.parcel_object_id == null
+      ? null
+      : Number(candidate.parcel_object_id),
+    account_id: candidate.account_id ?? null,
+    address: candidate.address ?? null,
+    land_use_category: candidate.land_use_category ?? null,
+    point: candidate.point ?? null,
+    distance_miles: normalized.distance_miles,
+    year_built: normalized.year_built,
+    site_area_sqft: normalized.site_area_sqft,
+    sale_price: normalized.sale_price,
     score: rounded(weightedScore, 1),
     available_weight_percent: rounded(availableWeight * 100, 0),
     factors: Object.fromEntries(Object.entries(factors).map(([key, result]) => [key, {

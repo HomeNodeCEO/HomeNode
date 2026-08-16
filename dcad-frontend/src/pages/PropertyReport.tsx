@@ -14,6 +14,9 @@ import {
   getCensusCityProfile,
   getCensusZipProfile,
   getNeighborhoodProfile,
+  generateNeighborhoodBoundary as runNeighborhoodBoundaryGeneration,
+  generateNeighborhoodRelevance as runNeighborhoodRelevanceGeneration,
+  reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getPropertyContextAssessment,
   runNeighborhoodLandUseAnalysis,
   getAssignmentFiles,
@@ -28,6 +31,8 @@ import {
   type AssignmentDocumentType,
   type AssignmentDetailsPayload,
   type NeighborhoodProfileResponse,
+  type NeighborhoodBoundaryAssessment,
+  type NeighborhoodRelevanceAssessment,
   type NeighborhoodLandUseAnalysisResponse,
   type PropertyComplexityAssessment,
   type PropertyComplexityLevel,
@@ -433,6 +438,35 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
       value?.neighborhood_boundary_streets_retrieved_at || "",
     neighborhood_boundary_confirmed: Boolean(value?.neighborhood_boundary_confirmed),
     neighborhood_boundary_confirmed_at: value?.neighborhood_boundary_confirmed_at || "",
+    neighborhood_boundary_engine_assessment_id:
+      value?.neighborhood_boundary_engine_assessment_id ?? "",
+    neighborhood_boundary_engine_assignment_file_id:
+      value?.neighborhood_boundary_engine_assignment_file_id ?? "",
+    neighborhood_boundary_engine_methodology_version:
+      value?.neighborhood_boundary_engine_methodology_version ?? "",
+    neighborhood_boundary_engine_confidence:
+      value?.neighborhood_boundary_engine_confidence || "",
+    neighborhood_boundary_engine_disclosure:
+      value?.neighborhood_boundary_engine_disclosure || "",
+    neighborhood_boundary_engine_warnings: cloneEditorValue(
+      value?.neighborhood_boundary_engine_warnings || [],
+    ),
+    neighborhood_relevance_assessment_id:
+      value?.neighborhood_relevance_assessment_id ?? "",
+    neighborhood_relevance_methodology_version:
+      value?.neighborhood_relevance_methodology_version ?? "",
+    neighborhood_relevance_confidence:
+      value?.neighborhood_relevance_confidence || "",
+    neighborhood_relevance_candidate_count:
+      value?.neighborhood_relevance_candidate_count ?? "",
+    neighborhood_relevance_included_count:
+      value?.neighborhood_relevance_included_count ?? "",
+    neighborhood_relevance_excluded_count:
+      value?.neighborhood_relevance_excluded_count ?? "",
+    neighborhood_relevance_insufficient_data_count:
+      value?.neighborhood_relevance_insufficient_data_count ?? "",
+    neighborhood_relevance_generated_at:
+      value?.neighborhood_relevance_generated_at || "",
     highest_best_use_conclusion: value?.highest_best_use_conclusion || "",
     highest_best_use_summary: value?.highest_best_use_summary || "",
     highest_best_use_zoning_compatible:
@@ -754,6 +788,7 @@ function sellerComparisonSummary(contractSeller: unknown, publicOwner: unknown):
 
 function NeighborhoodCharacteristicsContent({
   accountId,
+  assignmentFileId,
   assignmentDraft,
   postalCode,
   unemploymentLoading,
@@ -777,6 +812,7 @@ function NeighborhoodCharacteristicsContent({
   onSave,
 }: {
   accountId?: string;
+  assignmentFileId?: number | null;
   assignmentDraft: AssignmentDetails;
   postalCode: string;
   unemploymentLoading: boolean;
@@ -814,6 +850,12 @@ function NeighborhoodCharacteristicsContent({
   const [landUseAnalysis, setLandUseAnalysis] = useState<NeighborhoodLandUseAnalysisResponse | null>(null);
   const [landUseAnalysisLoading, setLandUseAnalysisLoading] = useState(false);
   const [landUseAnalysisMessage, setLandUseAnalysisMessage] = useState("");
+  const [generatedBoundary, setGeneratedBoundary] = useState<NeighborhoodBoundaryAssessment | null>(null);
+  const [generatedBoundaryLoading, setGeneratedBoundaryLoading] = useState(false);
+  const [generatedBoundaryMessage, setGeneratedBoundaryMessage] = useState("");
+  const [relevanceAssessment, setRelevanceAssessment] = useState<NeighborhoodRelevanceAssessment | null>(null);
+  const [relevanceLoading, setRelevanceLoading] = useState(false);
+  const [relevanceMessage, setRelevanceMessage] = useState("");
   const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
@@ -1018,6 +1060,128 @@ function NeighborhoodCharacteristicsContent({
     ].filter(([, street]) => String(street || "").trim())
       .map(([side, street]) => `${side}: ${String(street).trim()}`)
       .join("; "));
+  };
+
+  const generateSuggestedBoundary = async () => {
+    if (!accountId || generatedBoundaryLoading) return;
+    setGeneratedBoundaryLoading(true);
+    setGeneratedBoundaryMessage("Generating a broad neighborhood from saved parcel, road, and zoning data...");
+    try {
+      const result = await runNeighborhoodBoundaryGeneration(accountId, {
+        assignmentFileId: assignmentFileId || null,
+      });
+      const cardinal = result.evidence.roads?.cardinal_boundaries;
+      const north = cardinal?.north?.primary_street || "";
+      const east = cardinal?.east?.primary_street || "";
+      const south = cardinal?.south?.primary_street || "";
+      const west = cardinal?.west?.primary_street || "";
+      const streetSummary = [
+        ["North", north],
+        ["East", east],
+        ["South", south],
+        ["West", west],
+      ].filter(([, street]) => street)
+        .map(([side, street]) => `${side}: ${street}`)
+        .join("; ");
+      onAssignmentChange("neighborhood_boundary_geometry", result.boundary);
+      onAssignmentChange("neighborhood_boundary_label", "Automatically generated broad neighborhood");
+      onAssignmentChange(
+        "neighborhood_boundary_source",
+        `neighborhood_boundary_engine_v${result.methodology_version}`,
+      );
+      onAssignmentChange("neighborhood_boundary_saved_at", result.generated_at);
+      onAssignmentChange("neighborhood_boundary_streets", streetSummary);
+      onAssignmentChange("neighborhood_boundary_north", north);
+      onAssignmentChange("neighborhood_boundary_east", east);
+      onAssignmentChange("neighborhood_boundary_south", south);
+      onAssignmentChange("neighborhood_boundary_west", west);
+      onAssignmentChange("neighborhood_boundary_streets_source", result.evidence.roads?.source || "");
+      onAssignmentChange("neighborhood_boundary_streets_retrieved_at", result.evidence.roads?.retrieved_at || "");
+      onAssignmentChange("neighborhood_boundary_confirmed", false);
+      onAssignmentChange("neighborhood_boundary_confirmed_at", "");
+      onAssignmentChange("neighborhood_boundary_engine_assessment_id", result.id);
+      onAssignmentChange(
+        "neighborhood_boundary_engine_assignment_file_id",
+        result.assignment_file_id ?? "",
+      );
+      onAssignmentChange("neighborhood_boundary_engine_methodology_version", result.methodology_version);
+      onAssignmentChange("neighborhood_boundary_engine_confidence", result.confidence);
+      onAssignmentChange("neighborhood_boundary_engine_disclosure", result.evidence.disclosure || "");
+      onAssignmentChange("neighborhood_boundary_engine_warnings", result.evidence.warnings || []);
+      onAssignmentChange("neighborhood_relevance_assessment_id", "");
+      onAssignmentChange("neighborhood_relevance_methodology_version", "");
+      onAssignmentChange("neighborhood_relevance_confidence", "");
+      onAssignmentChange("neighborhood_relevance_candidate_count", "");
+      onAssignmentChange("neighborhood_relevance_included_count", "");
+      onAssignmentChange("neighborhood_relevance_excluded_count", "");
+      onAssignmentChange("neighborhood_relevance_insufficient_data_count", "");
+      onAssignmentChange("neighborhood_relevance_generated_at", "");
+      setRelevanceAssessment(null);
+      setRelevanceMessage("");
+      setGeneratedBoundary(result);
+      const discovery = result.evidence.discovery;
+      setGeneratedBoundaryMessage(
+        `Suggested boundary generated from ${Number(discovery?.candidate_count || 0).toLocaleString()} parcels inside the ${discovery?.profile_label || result.search_profile} discovery area. Review and confirm it for this appraisal file.`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Neighborhood boundary generation failed.";
+      setGeneratedBoundaryMessage(
+        /subject_parcel_geometry_unavailable/i.test(message)
+          ? "A saved Dallas parcel geometry is required before the automatic boundary can run."
+          : message,
+      );
+    } finally {
+      setGeneratedBoundaryLoading(false);
+    }
+  };
+
+  const analyzeRelevantPropertyDataset = async () => {
+    if (!accountId || relevanceLoading) return;
+    const boundaryAssessmentId = Number(
+      assignmentDraft.neighborhood_boundary_engine_assessment_id,
+    );
+    if (!Number.isSafeInteger(boundaryAssessmentId) || boundaryAssessmentId <= 0) {
+      setRelevanceMessage("Generate a suggested boundary before analyzing the relevant property dataset.");
+      return;
+    }
+    const boundaryAssignmentFileId = Number(
+      assignmentDraft.neighborhood_boundary_engine_assignment_file_id,
+    );
+    setRelevanceLoading(true);
+    setRelevanceMessage("Scoring parcels for age, site size, proximity, and unadjusted sale-price relevance...");
+    try {
+      const result = await runNeighborhoodRelevanceGeneration(accountId, {
+        assignmentFileId: Number.isSafeInteger(boundaryAssignmentFileId) &&
+          boundaryAssignmentFileId > 0
+          ? boundaryAssignmentFileId
+          : null,
+        boundaryAssessmentId,
+      });
+      onAssignmentChange("neighborhood_relevance_assessment_id", result.id);
+      onAssignmentChange("neighborhood_relevance_methodology_version", result.methodology_version);
+      onAssignmentChange("neighborhood_relevance_confidence", result.confidence.confidence || "limited");
+      onAssignmentChange("neighborhood_relevance_candidate_count", result.summary.candidate_count);
+      onAssignmentChange("neighborhood_relevance_included_count", result.summary.included_count);
+      onAssignmentChange("neighborhood_relevance_excluded_count", result.summary.excluded_count);
+      onAssignmentChange(
+        "neighborhood_relevance_insufficient_data_count",
+        result.summary.insufficient_data_count,
+      );
+      onAssignmentChange("neighborhood_relevance_generated_at", result.generated_at);
+      setRelevanceAssessment(result);
+      setRelevanceMessage(
+        `${result.summary.included_count.toLocaleString()} of ${result.summary.candidate_count.toLocaleString()} parcels remain in the relevant dataset; ${result.summary.excluded_count.toLocaleString()} were excluded and ${result.summary.insufficient_data_count.toLocaleString()} remain visible for insufficient-data review.`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Relevant-property analysis failed.";
+      setRelevanceMessage(
+        /neighborhood_boundary_required/i.test(message)
+          ? "Generate a suggested boundary before analyzing the relevant property dataset."
+          : message,
+      );
+    } finally {
+      setRelevanceLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -1469,6 +1633,25 @@ function NeighborhoodCharacteristicsContent({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              className="btn btn-neutral btn-sm normal-case rounded-lg text-white"
+              onClick={() => void generateSuggestedBoundary()}
+              disabled={!accountId || generatedBoundaryLoading}
+            >
+              {generatedBoundaryLoading ? "Generating..." : "Generate Suggested Boundary"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-neutral btn-sm normal-case rounded-lg text-white"
+              onClick={() => void analyzeRelevantPropertyDataset()}
+              disabled={
+                !accountId || relevanceLoading ||
+                !assignmentDraft.neighborhood_boundary_engine_assessment_id
+              }
+            >
+              {relevanceLoading ? "Analyzing..." : "Analyze Relevant Properties"}
+            </button>
+            <button
+              type="button"
               className="btn btn-outline btn-sm normal-case"
               onClick={onRefreshBoundary}
               disabled={!customAreaAvailable || profileLoading}
@@ -1477,6 +1660,53 @@ function NeighborhoodCharacteristicsContent({
             </button>
           </div>
         </div>
+        {generatedBoundaryMessage ? (
+          <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+            generatedBoundary
+              ? "border-blue-200 bg-blue-50 text-blue-950"
+              : "border-amber-200 bg-amber-50 text-amber-950"
+          }`}>
+            <div className="font-medium">{generatedBoundaryMessage}</div>
+            {generatedBoundary ? (
+              <>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                  <span>Confidence: <strong className="capitalize">{generatedBoundary.confidence}</strong></span>
+                  <span>Profile: <strong>{generatedBoundary.evidence.discovery?.profile_label || generatedBoundary.search_profile}</strong></span>
+                  <span>Radius: <strong>{generatedBoundary.discovery_radius_miles} miles</strong></span>
+                </div>
+                {(generatedBoundary.evidence.warnings || []).length ? (
+                  <ul className="mt-1 list-disc pl-4 text-[11px]">
+                    {(generatedBoundary.evidence.warnings || []).map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {generatedBoundary.evidence.disclosure ? (
+                  <p className="mt-1 text-[10px] leading-4 text-blue-900">
+                    {generatedBoundary.evidence.disclosure}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        ) : null}
+        {relevanceMessage ? (
+          <div className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+            relevanceAssessment
+              ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+              : "border-amber-200 bg-amber-50 text-amber-950"
+          }`}>
+            <div className="font-medium">{relevanceMessage}</div>
+            {relevanceAssessment ? (
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+                <span>Confidence: <strong className="capitalize">{relevanceAssessment.confidence.confidence || "limited"}</strong></span>
+                <span>Low-score exclusions: <strong>{relevanceAssessment.summary.low_relevance_excluded_count}</strong></span>
+                <span>Dissimilar-pocket exclusions: <strong>{relevanceAssessment.summary.dissimilar_pocket_excluded_count}</strong></span>
+                <span>Sale prices time-adjusted: <strong>No</strong></span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="mt-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Appraisal Boundary Summary</span>
           <div className="mt-1 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -3270,7 +3500,8 @@ function AddressHero({
   }, [customMarketStudy, marketConditionsDraft?.savedAt]);
 
   const refreshNeighborhoodProfile = useCallback(async () => {
-    const geometry = customMarketStudy?.market.custom_geometry;
+    const geometry = assignmentDraft.neighborhood_boundary_geometry ||
+      customMarketStudy?.market.custom_geometry;
     if (!accountId || !geometry || !marketConditionsDraft || neighborhoodProfileLoading) {
       if (!geometry) {
         setNeighborhoodProfileMessage("Run and save an Appraiser-Defined Area in the Market Conditions Analysis below first.");
@@ -3386,6 +3617,7 @@ function AddressHero({
     }
   }, [
     accountId,
+    assignmentDraft.neighborhood_boundary_geometry,
     customMarketStudy,
     detail?.property_location?.city,
     marketConditionsDraft,
@@ -3400,6 +3632,25 @@ function AddressHero({
     }));
     setAssignmentDirty(true);
     setAssignmentSaveMessage("");
+    const assessmentId = Number(assignmentDraft.neighborhood_boundary_engine_assessment_id);
+    const boundaryAssignmentFileId = Number(
+      assignmentDraft.neighborhood_boundary_engine_assignment_file_id,
+    );
+    if (accountId && Number.isSafeInteger(assessmentId) && assessmentId > 0) {
+      void saveNeighborhoodBoundaryReview(accountId, assessmentId, {
+        assignmentFileId: Number.isSafeInteger(boundaryAssignmentFileId) &&
+          boundaryAssignmentFileId > 0
+          ? boundaryAssignmentFileId
+          : null,
+        confirmed: checked,
+      }).catch((error) => {
+        setAssignmentSaveMessage(
+          error instanceof Error
+            ? `Boundary confirmation needs to be retried: ${error.message}`
+            : "Boundary confirmation needs to be retried.",
+        );
+      });
+    }
   };
 
   const lookupUnemploymentComparison = useCallback(async () => {
@@ -3457,10 +3708,14 @@ function AddressHero({
   useEffect(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
     if (!geometry || assignmentFilesLoading || !assignmentFilesLoaded) return;
+    if (/^neighborhood_boundary_engine_v\d+$/i.test(
+      String(assignmentDraft.neighborhood_boundary_source || ""),
+    )) return;
     if (JSON.stringify(assignmentDraft.neighborhood_boundary_geometry) === JSON.stringify(geometry)) return;
     importCustomMarketArea();
   }, [
     assignmentDraft.neighborhood_boundary_geometry,
+    assignmentDraft.neighborhood_boundary_source,
     assignmentFilesLoading,
     assignmentFilesLoaded,
     customMarketStudy,
@@ -5335,6 +5590,7 @@ function AddressHero({
             >
               <NeighborhoodCharacteristicsContent
               accountId={accountId}
+              assignmentFileId={activeAssignmentFile?.id || null}
               assignmentDraft={assignmentDraft}
               postalCode={censusZip}
               unemploymentLoading={unemploymentLookupLoading}
@@ -5342,7 +5598,10 @@ function AddressHero({
               profileLoading={neighborhoodProfileLoading}
               profileMessage={neighborhoodProfileMessage}
               boundarySuggestions={neighborhoodBoundarySuggestions}
-              customAreaAvailable={Boolean(customMarketStudy?.market.custom_geometry)}
+              customAreaAvailable={Boolean(
+                assignmentDraft.neighborhood_boundary_geometry ||
+                customMarketStudy?.market.custom_geometry
+              )}
               assignmentDirty={assignmentDirty}
               assignmentSaveMessage={assignmentSaveMessage}
               assignmentSaveDisabled={assignmentSaveDisabled}

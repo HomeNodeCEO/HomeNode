@@ -1408,7 +1408,7 @@ export default function AppraisalReport() {
           </section>
 
           <section className="report-section">
-            <h2 className="report-section-title">Appraiser-Defined Neighborhood Boundary</h2>
+            <h2 className="report-section-title">Neighborhood Boundary</h2>
             <div className="report-facts">
               <Fact label="Boundary" value={neighborhoodDetails.neighborhood_boundary_label} wide />
               <Fact label="Source" value={neighborhoodDetails.neighborhood_boundary_source} />
@@ -1421,7 +1421,35 @@ export default function AppraisalReport() {
               <Fact label="Street Source" value={neighborhoodDetails.neighborhood_boundary_streets_source} wide />
               <Fact label="Appraiser Confirmed" value={neighborhoodDetails.neighborhood_boundary_confirmed ? "Yes" : "No"} />
               <Fact label="Confirmed At" value={dateText(neighborhoodDetails.neighborhood_boundary_confirmed_at)} />
+              <Fact
+                label="Automated Boundary Confidence"
+                value={neighborhoodDetails.neighborhood_boundary_engine_confidence}
+              />
+              <Fact
+                label="Relevant Dataset Confidence"
+                value={neighborhoodDetails.neighborhood_relevance_confidence}
+              />
+              <Fact
+                label="Relevant Parcels"
+                value={neighborhoodDetails.neighborhood_relevance_included_count}
+              />
+              <Fact
+                label="Excluded Parcels"
+                value={neighborhoodDetails.neighborhood_relevance_excluded_count}
+              />
+              <Fact
+                label="Insufficient-Data Review"
+                value={neighborhoodDetails.neighborhood_relevance_insufficient_data_count}
+              />
             </div>
+            {neighborhoodDetails.neighborhood_boundary_engine_disclosure ? (
+              <div className="report-note" style={{ marginTop: 8 }}>
+                <strong>Boundary and Data-Relevance Distinction</strong>
+                <div style={{ marginTop: 4 }}>
+                  {String(neighborhoodDetails.neighborhood_boundary_engine_disclosure)}
+                </div>
+              </div>
+            ) : null}
           </section>
           <PageFooter generatedAt={generatedAt} />
         </article>

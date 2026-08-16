@@ -139,6 +139,16 @@ export function validateAssignmentDetails(value) {
   ) {
     throw new Error("invalid_neighborhood_boundary_confirmation");
   }
+  if (
+    value.neighborhood_boundary_engine_warnings !== undefined &&
+    (!Array.isArray(value.neighborhood_boundary_engine_warnings) ||
+      value.neighborhood_boundary_engine_warnings.length > 20 ||
+      value.neighborhood_boundary_engine_warnings.some(
+        (warning) => typeof warning !== "string" || warning.length > 1000,
+      ))
+  ) {
+    throw new Error("invalid_neighborhood_boundary_engine_warnings");
+  }
   const pud = value.pud === true;
   const hoaFrequency = text(value.hoa_frequency).toLowerCase();
   const hoaExplanation = text(value.hoa_explanation);
@@ -182,6 +192,8 @@ export function validateAssignmentDetails(value) {
     ["neighborhood_boundary_streets_source", 500],
     ["neighborhood_boundary_streets_retrieved_at", 100],
     ["neighborhood_boundary_confirmed_at", 100],
+    ["neighborhood_boundary_engine_confidence", 20],
+    ["neighborhood_boundary_engine_disclosure", 5000],
     ["neighborhood_land_use_analysis_source", 500],
     ["neighborhood_land_use_analyzed_at", 100],
     ["neighborhood_land_use_boundary_signature", 128],

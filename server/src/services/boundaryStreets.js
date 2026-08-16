@@ -6,6 +6,7 @@ const BOUNDARY_BUFFER_METERS = 75;
 const MAJOR_ROAD_SEARCH_METERS = 3219;
 const MAJOR_ROAD_INWARD_TOLERANCE_METERS = 350;
 const MIN_MAJOR_ROAD_AADT = 10000;
+const FULL_MAJOR_ROAD_AADT_SCORE = 50000;
 const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
@@ -199,6 +200,13 @@ function trafficValue(feature) {
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+function usableTrafficRoadName(name) {
+  const value = String(name || "").trim();
+  if (!value || /^\d+$/.test(value)) return false;
+  if (/^(?:CS|ON SYSTEM|OFF SYSTEM)$/i.test(value)) return false;
+  return !/^(?:IH|US|SH|SL|FM|RM|BS|BI|BU|LP|SP|PR)\d/i.test(value.replace(/[\s-]/g, ""));
+}
+
 function sideEdgeDistance(side, midpoint, bounds) {
   if (side === "north") return midpoint[1] - bounds.maxY;
   if (side === "south") return bounds.minY - midpoint[1];
@@ -246,7 +254,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
   for (const feature of features) {
     const name = normalizeBoundaryStreetNames([feature])[0];
     const aadt = trafficValue(feature);
-    if (!name || aadt < MIN_MAJOR_ROAD_AADT) continue;
+    if (!usableTrafficRoadName(name) || aadt < MIN_MAJOR_ROAD_AADT) continue;
     for (const path of feature?.geometry?.paths || []) {
       for (let index = 1; index < path.length; index += 1) {
         const start = projectedPoint(path[index - 1], originLatitude);
@@ -295,13 +303,15 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = []) {
 
   return Object.fromEntries(CARDINAL_SIDES.map((side) => {
     const groups = [...grouped.get(side).values()];
-    const maxAadt = Math.max(...groups.map((group) => group.max_aadt), 1);
     const maxLength = Math.max(...groups.map((group) => group.length), 1);
     const candidates = groups.map((group) => {
       const averageAadt = group.length
         ? group.traffic_weighted_length / group.length
         : group.max_aadt;
-      const trafficScore = group.max_aadt / maxAadt;
+      // Cap the AADT component at a strong urban arterial. This keeps a more
+      // distant freeway from winning solely because its volume is several
+      // multiples higher than the major road that actually borders the area.
+      const trafficScore = Math.min(group.max_aadt / FULL_MAJOR_ROAD_AADT_SCORE, 1);
       const proximityScore = 1 - Math.min(
         group.min_edge_distance_meters / MAJOR_ROAD_SEARCH_METERS,
         1,
@@ -384,7 +394,16 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
     `WITH boundary AS (
        SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
      ), traffic AS (
-       SELECT segment.route_name, segment.current_aadt, segment.source_date, segment.geom
+       SELECT segment.route_name,
+              segment.current_aadt,
+              segment.source_date,
+              ST_Multi(ST_CollectionExtract(
+                ST_Intersection(
+                  segment.geom,
+                  ST_Buffer(boundary.geom::geography, $3::double precision)::geometry
+                ),
+                2
+              )) AS geom
        FROM gis.traffic_volume_segments segment
        CROSS JOIN boundary
        WHERE segment.current_aadt >= $2
@@ -412,7 +431,13 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
          AND road.name IS NOT NULL
          AND road.geom && ST_Expand(ST_Envelope(traffic.geom), 0.00125)
          AND ST_DWithin(road.geom::geography, traffic.geom::geography, 140)
-       ORDER BY ST_Distance(road.geom::geography, traffic.geom::geography),
+       ORDER BY ST_Length(
+                  ST_Intersection(
+                    traffic.geom,
+                    ST_Buffer(road.geom::geography, 35)::geometry
+                  )::geography
+                ) DESC,
+                ST_Distance(road.geom::geography, traffic.geom::geography),
                 CASE road.road_class WHEN 'primary' THEN 0 ELSE 1 END,
                 road.source_object_id
        LIMIT 1

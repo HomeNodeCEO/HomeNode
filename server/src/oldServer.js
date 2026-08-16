@@ -62,7 +62,7 @@ import {
   fetchCensusCityProfile,
   fetchCensusZipProfile,
 } from "./services/censusZipProfile.js";
-import { fetchBoundaryStreetNames } from "./services/boundaryStreets.js";
+import { loadBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
   buildNeighborhoodLandUseAnalysis,
   neighborhoodLandUseErrorStatus,
@@ -129,6 +129,7 @@ import {
   getPropertyInfluenceContexts,
 } from "./services/propertyInfluenceStore.js";
 import { getRecentScheduledMaintenanceRuns } from "./services/scheduledMaintenance.js";
+import { getNeighborhoodEngineReadiness } from "./services/neighborhoodEngineReadiness.js";
 import {
   createRequestPerformanceMonitor,
   environmentFlag,
@@ -4537,7 +4538,7 @@ app.post("/api/sales/neighborhood-profile", async (req, res) => {
     let boundaryStreets = null;
     let boundaryStreetWarning = null;
     try {
-      boundaryStreets = await fetchBoundaryStreetNames(customGeometry);
+      boundaryStreets = await loadBoundaryStreetNames(pool, customGeometry);
     } catch (error) {
       boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
       console.warn("/api/sales/neighborhood-profile street lookup failed", error);
@@ -4593,6 +4594,27 @@ app.get("/api/property-context/status", async (_req, res) => {
   } catch (error) {
     console.error("/api/property-context/status failed", error);
     res.status(500).json({ error: "property_context_status_failed" });
+  }
+});
+
+/**
+ * GET /api/neighborhood-engine/readiness
+ *
+ * Audits locally stored Dallas County inputs for the broad-boundary and
+ * independent relevance-selection engines. It never contacts a remote source.
+ */
+app.get("/api/neighborhood-engine/readiness", async (req, res) => {
+  try {
+    await ensurePropertyContextAvailable();
+    res.json(await getNeighborhoodEngineReadiness(pool, {
+      county: req.query.county || "Dallas",
+    }));
+  } catch (error) {
+    console.error("/api/neighborhood-engine/readiness failed", error);
+    if (error?.message === "neighborhood_engine_county_not_configured") {
+      return res.status(400).json({ error: error.message });
+    }
+    res.status(500).json({ error: "neighborhood_engine_readiness_failed" });
   }
 });
 

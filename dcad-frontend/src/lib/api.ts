@@ -1598,6 +1598,48 @@ export interface PropertyContextStatusResponse {
   checked_at: string;
 }
 
+export interface NeighborhoodEngineReadinessResponse {
+  county: string;
+  measured_at: string;
+  prototype_ready: boolean;
+  production_ready: boolean;
+  prototype_blockers: string[];
+  production_blockers: string[];
+  accounts: {
+    total_accounts: number;
+    parcel_accounts: number;
+    year_built_accounts: number;
+    site_size_accounts: number;
+    coordinate_accounts: number;
+    coverage: {
+      parcel_geometry_percent: number;
+      year_built_percent: number;
+      site_size_percent: number;
+      coordinate_percent: number;
+    };
+  };
+  sales: {
+    usable_sales: number;
+    distinct_sale_accounts: number;
+    coordinate_percent: number;
+    year_built_percent: number;
+    site_size_percent: number;
+    price_percent: number;
+  };
+  roads: {
+    segment_counts: Record<string, number>;
+    required_roads_available: boolean;
+    traffic_available: boolean;
+  };
+  zoning: {
+    provider_count: number;
+    district_count: number;
+    available: boolean;
+  };
+  source_health: PropertyContextSourceHealth[];
+  warnings: string[];
+}
+
 export interface ZoningEvidenceDocument {
   id: number;
   provider_key: string;
@@ -2367,6 +2409,15 @@ export async function savePropertyContextReview(
 /** Show local source freshness without calling Dallas CAD or Census services. */
 export async function getPropertyContextStatus(): Promise<PropertyContextStatusResponse> {
   return fetchJSON<PropertyContextStatusResponse>(makeUrl('/api/property-context/status'));
+}
+
+/** Audit locally stored inputs before enabling automated neighborhood generation. */
+export async function getNeighborhoodEngineReadiness(
+  county = 'Dallas',
+): Promise<NeighborhoodEngineReadinessResponse> {
+  return fetchJSON<NeighborhoodEngineReadinessResponse>(makeUrl('/api/neighborhood-engine/readiness', {
+    county,
+  }));
 }
 
 /** Build current one-year bathroom, garage, pool, and living-area grouped adjustment studies. */

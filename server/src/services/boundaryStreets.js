@@ -190,6 +190,69 @@ function cardinalSummary(cardinal) {
     .join("; ");
 }
 
+function localRoadFeature(row) {
+  const geometry = row?.geometry;
+  const paths = geometry?.type === "MultiLineString"
+    ? geometry.coordinates
+    : geometry?.type === "LineString"
+      ? [geometry.coordinates]
+      : [];
+  if (!paths.length) return null;
+  const layerByClass = { primary: 0, secondary: 1, local: 2 };
+  return {
+    attributes: {
+      NAME: row.name,
+      BASENAME: row.base_name,
+    },
+    geometry: { paths },
+    road_layer: layerByClass[row.road_class] ?? 2,
+  };
+}
+
+function boundaryStreetResult(features, ring, { source, now }) {
+  const cardinalBoundaries = summarizeCardinalBoundaries(features, ring);
+  return {
+    street_names: [...new Set(CARDINAL_SIDES
+      .map((side) => cardinalBoundaries[side].primary_street)
+      .filter(Boolean))],
+    cardinal_boundaries: cardinalBoundaries,
+    summary: cardinalSummary(cardinalBoundaries),
+    source,
+    retrieved_at: now().toISOString(),
+    boundary_buffer_meters: BOUNDARY_BUFFER_METERS,
+    review_required: true,
+  };
+}
+
+async function queryLocalBoundaryRoads(pool, geometry) {
+  const { rows } = await pool.query(
+    `WITH boundary AS (
+       SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
+     )
+     SELECT road.name, road.base_name, road.road_class,
+            ST_AsGeoJSON(road.geom)::jsonb AS geometry
+     FROM gis.road_segments road
+     CROSS JOIN boundary
+     WHERE road.road_class IN ('primary', 'secondary', 'local')
+       AND road.geom && ST_Expand(
+         ST_Envelope(boundary.geom),
+         $2::double precision / 111320.0
+       )
+       AND ST_DWithin(
+         road.geom::geography,
+         ST_Boundary(boundary.geom)::geography,
+         $2::double precision
+       )
+     ORDER BY
+       CASE road.road_class WHEN 'primary' THEN 0 WHEN 'secondary' THEN 1 ELSE 2 END,
+       road.name NULLS LAST,
+       road.source_object_id
+     LIMIT 5000`,
+    [JSON.stringify(geometry), BOUNDARY_BUFFER_METERS],
+  );
+  return rows.map(localRoadFeature).filter(Boolean);
+}
+
 async function queryRoadLayer(layer, ring, fetchImpl) {
   const url = new URL(`${TIGERWEB_TRANSPORTATION_URL}/${layer}/query`);
   url.search = new URLSearchParams({
@@ -237,18 +300,49 @@ export async function fetchBoundaryStreetNames(
   if (!features.length && results.every((result) => result.status === "rejected")) {
     throw new Error("boundary_street_lookup_failed");
   }
-  const cardinalBoundaries = summarizeCardinalBoundaries(features, ring);
-  const value = {
-    street_names: [...new Set(CARDINAL_SIDES
-      .map((side) => cardinalBoundaries[side].primary_street)
-      .filter(Boolean))],
-    cardinal_boundaries: cardinalBoundaries,
-    summary: cardinalSummary(cardinalBoundaries),
+  const value = boundaryStreetResult(features, ring, {
     source: "U.S. Census Bureau TIGERweb Transportation",
-    retrieved_at: now().toISOString(),
-    boundary_buffer_meters: BOUNDARY_BUFFER_METERS,
-    review_required: true,
-  };
+    now,
+  });
   cache.set(cacheKey, { cachedAt: now().getTime(), value });
   return value;
+}
+
+/**
+ * Resolve cardinal boundary roads from the local PostGIS mirror first. The
+ * remote TIGERweb request remains a temporary fallback while the county road
+ * synchronization is being validated; request-time failures never invalidate
+ * locally stored last-known-good data.
+ */
+export async function loadBoundaryStreetNames(
+  pool,
+  geometry,
+  {
+    fetchImpl = globalThis.fetch,
+    now = () => new Date(),
+    allowRemoteFallback = true,
+  } = {},
+) {
+  const ring = normalizedRing(geometry);
+  try {
+    const features = await queryLocalBoundaryRoads(pool, geometry);
+    if (features.length) {
+      return {
+        ...boundaryStreetResult(features, ring, {
+          source: "Local Census TIGER road mirror",
+          now,
+        }),
+        served_from_local_mirror: true,
+      };
+    }
+  } catch (error) {
+    if (!allowRemoteFallback) throw error;
+  }
+  if (!allowRemoteFallback) throw new Error("local_boundary_roads_unavailable");
+  const fallback = await fetchBoundaryStreetNames(geometry, { fetchImpl, now });
+  return {
+    ...fallback,
+    served_from_local_mirror: false,
+    fallback_reason: "local_boundary_roads_unavailable",
+  };
 }

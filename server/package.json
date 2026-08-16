@@ -19,6 +19,8 @@
         "maintenance:zoning-documents": "node scripts/syncZoningEvidenceDocuments.js",
         "maintenance:documents": "node scripts/runScheduledMaintenance.js --task=documents",
         "maintenance:influences": "node scripts/runScheduledMaintenance.js --task=influences",
+        "sync:collin-account-ids": "node scripts/syncCollinAccountIdentifiers.js",
+        "backfill:collin-sales": "node scripts/backfillCollinSales.js",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"
     },

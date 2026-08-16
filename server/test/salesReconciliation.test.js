@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   countyFromNativeAccountId,
   findAccountByCountyIdentifier,
+  homeNodeCollinAccountIdFromPropertyId,
   normalizedCountyAccountKey,
   normalizeSalesReconciliationUpdate,
   salesSourceLocationEvidence,
@@ -52,6 +53,18 @@ test("sales reconciliation preserves authoritative Collin CAD punctuation", () =
     normalizedCountyAccountKey("R1374300L09001", "Collin"),
     "1374300L09001",
   );
+});
+
+test("Collin open-data property IDs map to the existing zero-padded HomeNode key", () => {
+  assert.equal(
+    homeNodeCollinAccountIdFromPropertyId("37"),
+    "00000000000000037",
+  );
+  assert.equal(
+    homeNodeCollinAccountIdFromPropertyId("00000000002965620"),
+    "00000000002965620",
+  );
+  assert.equal(homeNodeCollinAccountIdFromPropertyId("R-0002-00A-0030-1"), null);
 });
 
 test("county rules keep Dallas strict and require the Collin R prefix", () => {

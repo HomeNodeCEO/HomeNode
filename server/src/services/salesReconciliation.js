@@ -26,6 +26,12 @@ export function normalizedCountyAccountKey(value, county = null) {
   return key;
 }
 
+export function homeNodeCollinAccountIdFromPropertyId(value) {
+  const propertyId = String(value ?? "").trim();
+  if (!/^\d{1,17}$/.test(propertyId)) return null;
+  return propertyId.padStart(17, "0");
+}
+
 export function validateSalesReconciliationAccountId(value, county = null) {
   const accountId = String(value ?? "").trim();
   if (!NATIVE_ACCOUNT_ID_PATTERN.test(accountId)) {

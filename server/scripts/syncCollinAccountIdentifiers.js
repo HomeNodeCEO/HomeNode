@@ -3,6 +3,7 @@ import pg from "pg";
 
 import {
   ensureSalesReconciliationSchema,
+  homeNodeCollinAccountIdFromPropertyId,
   normalizedCountyAccountKey,
 } from "../src/services/salesReconciliation.js";
 
@@ -81,9 +82,11 @@ async function loadOfficialCrosswalk(maximumRows = null) {
 }
 
 async function matchingHomeNodeAccounts(pool, crosswalk) {
-  const propertyIds = crosswalk.map((row) => row.property_id);
+  const accountIds = crosswalk
+    .map((row) => homeNodeCollinAccountIdFromPropertyId(row.property_id))
+    .filter(Boolean);
   const matched = new Set();
-  for (let start = 0; start < propertyIds.length; start += 10_000) {
+  for (let start = 0; start < accountIds.length; start += 10_000) {
     const { rows } = await pool.query(
       `
         SELECT account_id
@@ -91,7 +94,7 @@ async function matchingHomeNodeAccounts(pool, crosswalk) {
         WHERE county ILIKE '%collin%'
           AND account_id = ANY($1::text[])
       `,
-      [propertyIds.slice(start, start + 10_000)],
+      [accountIds.slice(start, start + 10_000)],
     );
     for (const row of rows) matched.add(String(row.account_id));
   }
@@ -113,10 +116,10 @@ async function upsertCrosswalk(pool, crosswalk) {
         )
         SELECT
           'COLLIN', value.normalized_account_id, value.native_account_id,
-          value.property_id, 'collin_cad_open_data',
+          value.account_id, 'collin_cad_open_data',
           'Automated Collin CAD Open Data sync', now(), now()
         FROM JSONB_TO_RECORDSET($1::jsonb) AS value(
-          property_id text,
+          account_id text,
           native_account_id text,
           normalized_account_id text
         )
@@ -163,7 +166,12 @@ async function main() {
       throw new Error(`collin_cad_crosswalk_conflicts:${official.conflicts.length}`);
     }
     const matchedAccountIds = await matchingHomeNodeAccounts(pool, official.rows);
-    const matchedRows = official.rows.filter((row) => matchedAccountIds.has(row.property_id));
+    const matchedRows = official.rows
+      .map((row) => ({
+        ...row,
+        account_id: homeNodeCollinAccountIdFromPropertyId(row.property_id),
+      }))
+      .filter((row) => row.account_id && matchedAccountIds.has(row.account_id));
     const summary = {
       mode: apply ? "apply" : "dry_run",
       dataset_id: DATASET_ID,

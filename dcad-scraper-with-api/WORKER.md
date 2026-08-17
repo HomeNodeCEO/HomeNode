@@ -26,6 +26,11 @@ both processes and stops the service if either process exits unexpectedly.
    one leased recovery probe, and resumes automatically after a successful or
    otherwise reachable DCAD response. Invalid-property and database errors do
    not count as DCAD outages.
+8. Completed accounts missing owner, land, or GLA can be placed in a separate
+   field-repair queue. By default the worker processes one repair after every
+   100 normal campaign accounts, so repair work does not materially delay the
+   missing-first campaign. A successful DCAD response that still omits a field
+   is classified as `source_missing` rather than retried forever.
 
 The residential target table—not `core.accounts.county`—controls selection.
 Collin County rows already present elsewhere in the database have no effect on
@@ -42,6 +47,8 @@ python -m dcad.import_residential_targets "C:\path\to\DCAD Accounts.csv"
 python -m dcad.import_sales "C:\path\to\sales.csv" --source-name "Garland MLS two-year sales" --dry-run
 python -m dcad.worker --once
 python -m dcad.worker
+python ..\tools\queue_field_repairs.py
+python ..\tools\queue_field_repairs.py --apply
 ```
 
 See `SALES_IMPORT.md` for the full sales-source, parcel-link, and enriched-view
@@ -63,6 +70,11 @@ The outage circuit defaults can be tuned with
 `SCRAPE_OUTAGE_FAILURE_THRESHOLD` (default `5`) and
 `SCRAPE_OUTAGE_PAUSE_SECONDS` (default `300`). The defaults are intentionally
 conservative so an individual bad account cannot pause the campaign.
+
+`SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS` controls the repair cadence and defaults
+to `100`. The queue audit is rollback-only unless `--apply` is supplied. Use
+`--fields owner land gla` to select fields and `--limit N` for a controlled
+sample.
 
 Campaign progress is available from the public API at `/scrape/status`.
 
@@ -100,4 +112,12 @@ SELECT upstream_failure_count, outage_pause_started_at, outage_paused_until,
        outage_count, outage_probe_worker_id, left(outage_last_error, 200)
 FROM app.dcad_residential_campaign
 WHERE campaign_key = 'dallas_residential';
+
+SELECT status, count(*),
+       count(*) FILTER (WHERE 'owner' = ANY(remaining_fields)) AS owner_missing,
+       count(*) FILTER (WHERE 'land' = ANY(remaining_fields)) AS land_missing,
+       count(*) FILTER (WHERE 'gla' = ANY(remaining_fields)) AS gla_missing
+FROM app.dcad_field_repair_queue
+GROUP BY status
+ORDER BY status;
 ```

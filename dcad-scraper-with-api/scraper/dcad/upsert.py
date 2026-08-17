@@ -333,6 +333,7 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
             owner = (detail or {}).get("owner") or {}
             owner_name = to_text_or_none(owner.get("owner_name"))
             mailing_address = to_text_or_none(owner.get("mailing_address"))
+            owner_parties = owner.get("multi_owner") or []
             if tax_year:
                 s.execute(
                     text(
@@ -351,25 +352,32 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
                         "mailing_address": mailing_address,
                     },
                 )
-                s.execute(
-                    text(f"DELETE FROM {_tbl('owner_parties')} WHERE account_id = :account_id AND tax_year = :tax_year"),
-                    {"account_id": account_id, "tax_year": tax_year},
-                )
-                for p in (owner.get("multi_owner") or []):
+                # owner_parties is a current-owner projection. Its production
+                # uniqueness constraint intentionally omits tax_year, so only
+                # deleting the incoming year makes a new-year refresh collide
+                # with last year's otherwise-identical owner. Replace the
+                # account's projection whenever DCAD supplied a usable owner;
+                # leave existing parties untouched on a blank/transient parse.
+                if owner_name or owner_parties:
                     s.execute(
-                        text(
-                            f"""
-                            INSERT INTO {_tbl('owner_parties')} (account_id, tax_year, owner_name, ownership_pct)
-                            VALUES (:account_id, :tax_year, :owner_name, :ownership_pct)
-                            """
-                        ),
-                        {
-                            "account_id": account_id,
-                            "tax_year": tax_year,
-                            "owner_name": to_text_or_none(p.get("owner_name")) or (owner_name or ""),
-                            "ownership_pct": to_decimal_or_none(p.get("ownership_pct")),
-                        },
+                        text(f"DELETE FROM {_tbl('owner_parties')} WHERE account_id = :account_id"),
+                        {"account_id": account_id},
                     )
+                    for p in owner_parties:
+                        s.execute(
+                            text(
+                                f"""
+                                INSERT INTO {_tbl('owner_parties')} (account_id, tax_year, owner_name, ownership_pct)
+                                VALUES (:account_id, :tax_year, :owner_name, :ownership_pct)
+                                """
+                            ),
+                            {
+                                "account_id": account_id,
+                                "tax_year": tax_year,
+                                "owner_name": to_text_or_none(p.get("owner_name")) or (owner_name or ""),
+                                "ownership_pct": to_decimal_or_none(p.get("ownership_pct")),
+                            },
+                        )
 
             # ARB hearing
             arb = (detail or {}).get("arb_hearing") or {}
@@ -724,9 +732,12 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
                 tax_year = None
             et = (detail or {}).get("estimated_taxes") or {}
             if tax_year:
+                # estimated_taxes is also a current projection: the unique key
+                # is (account_id, jurisdiction_key), not tax year. Replacing all
+                # rows for the account keeps annual refreshes idempotent.
                 s.execute(
-                    text(f"DELETE FROM {_tbl('estimated_taxes')} WHERE account_id = :account_id AND tax_year = :tax_year"),
-                    {"account_id": account_id, "tax_year": tax_year},
+                    text(f"DELETE FROM {_tbl('estimated_taxes')} WHERE account_id = :account_id"),
+                    {"account_id": account_id},
                 )
                 ins = text(
                     f"""

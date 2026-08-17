@@ -259,7 +259,10 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
     await client.query(
       `INSERT INTO appraisal.uad_audit_events (
          workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data
-       ) VALUES ($1, $2, 'uad_workfile.created', 'uad_workfile', $1::text, $3::jsonb)`,
+       ) VALUES (
+         $1::uuid, $2::uuid, 'uad_workfile.created', 'uad_workfile',
+         ($1::uuid)::text, $3::jsonb
+       )`,
       [workfileId, appraiserUserId, JSON.stringify({ account_id: accountId, file_number: fileNumber })],
     );
 

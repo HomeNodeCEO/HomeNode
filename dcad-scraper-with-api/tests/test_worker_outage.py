@@ -15,6 +15,7 @@ sys.path.insert(0, str(SCRAPER_ROOT))
 
 from dcad.worker import (  # noqa: E402
     WorkerConfig,
+    fields_still_missing,
     is_upstream_outage_error,
     record_upstream_failure,
     reset_outage_circuit,
@@ -107,6 +108,7 @@ class OutageCircuitDecisionTests(unittest.TestCase):
             config = WorkerConfig.from_env()
         self.assertEqual(config.outage_failure_threshold, 5)
         self.assertEqual(config.outage_pause_seconds, 300)
+        self.assertEqual(config.field_repair_every_accounts, 100)
 
         with patch.dict(
             os.environ,
@@ -119,6 +121,22 @@ class OutageCircuitDecisionTests(unittest.TestCase):
             config = WorkerConfig.from_env()
         self.assertEqual(config.outage_failure_threshold, 2)
         self.assertEqual(config.outage_pause_seconds, 30)
+
+    def test_field_repair_interval_has_a_safe_minimum(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS": "0"},
+            clear=True,
+        ):
+            config = WorkerConfig.from_env()
+        self.assertEqual(config.field_repair_every_accounts, 1)
+
+    def test_only_requested_absent_fields_remain(self) -> None:
+        remaining = fields_still_missing(
+            ("owner", "land", "gla"),
+            {"owner": True, "land": False, "gla": True},
+        )
+        self.assertEqual(remaining, ("land",))
 
     def test_fifth_shared_upstream_failure_opens_the_pause(self) -> None:
         config = WorkerConfig.from_env()
@@ -171,4 +189,5 @@ class OutageCircuitDecisionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 

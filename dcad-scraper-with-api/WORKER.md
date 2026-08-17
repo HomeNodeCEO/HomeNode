@@ -121,4 +121,3 @@ FROM app.dcad_field_repair_queue
 GROUP BY status
 ORDER BY status;
 ```
-

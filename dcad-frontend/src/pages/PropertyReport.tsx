@@ -1221,6 +1221,7 @@ function NeighborhoodCharacteristicsContent({
         assignmentFileId: assignmentFileId || null,
       });
       const cardinal = result.evidence.roads?.cardinal_boundaries;
+      setNeighborhoodBoundarySuggestions(cardinal || null);
       const north = cardinal?.north?.primary_street || "";
       const east = cardinal?.east?.primary_street || "";
       const south = cardinal?.south?.primary_street || "";

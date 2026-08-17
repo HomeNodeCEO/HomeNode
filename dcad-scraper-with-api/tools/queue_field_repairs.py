@@ -53,10 +53,10 @@ WITH owner_present AS (
     SELECT account_id
     FROM core.land_detail
     GROUP BY account_id
-    HAVING bool_or(upper(state_code) LIKE '%VACANT%')
+    HAVING bool_or(position('VACANT' in upper(state_code)) > 0)
        AND NOT bool_or(
            NULLIF(btrim(state_code), '') IS NOT NULL
-           AND upper(state_code) NOT LIKE '%VACANT%'
+           AND position('VACANT' in upper(state_code)) = 0
        )
 ), vacant_land_by_values AS (
     SELECT value.account_id
@@ -232,3 +232,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

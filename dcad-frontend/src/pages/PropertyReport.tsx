@@ -455,7 +455,8 @@ function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails
     neighborhood_boundary_south: value?.neighborhood_boundary_south || "",
     neighborhood_boundary_west: value?.neighborhood_boundary_west || "",
     neighborhood_boundary_exclusions:
-      typeof value?.neighborhood_boundary_exclusions === "string"
+      typeof value?.neighborhood_boundary_exclusions === "string" &&
+      value.neighborhood_boundary_exclusions.trim()
         ? value.neighborhood_boundary_exclusions
         : DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
     neighborhood_boundary_streets_source: value?.neighborhood_boundary_streets_source || "",
@@ -3630,7 +3631,7 @@ function AddressHero({
       neighborhood_boundary_east: "",
       neighborhood_boundary_south: "",
       neighborhood_boundary_west: "",
-      neighborhood_boundary_exclusions: "",
+      neighborhood_boundary_exclusions: DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
       neighborhood_boundary_streets_source: "",
       neighborhood_boundary_streets_retrieved_at: "",
       neighborhood_boundary_confirmed: false,
@@ -6056,3 +6057,4 @@ export default function PropertyReport() {
     </div>
   );
 }
+

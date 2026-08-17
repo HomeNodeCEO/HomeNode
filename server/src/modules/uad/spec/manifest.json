@@ -1,0 +1,71 @@
+{
+  "releaseKey": "uad-3.6-2026-08-13-h1.5",
+  "uadVersion": "3.6",
+  "capturedOn": "2026-08-16",
+  "officialLandingPage": "https://singlefamily.fanniemae.com/delivering/uniform-mortgage-data-program/uniform-appraisal-dataset",
+  "components": [
+    {
+      "name": "Appendix A-1 URAR Delivery Specification",
+      "version": "1.4",
+      "url": "https://singlefamily.fanniemae.com/media/document/xlsx/appendix-1-urar-delivery-specification",
+      "fileName": "appendix-a-1-urar-delivery-specification.xlsx",
+      "sha256": "10f470ed53ee6f70404aad850f3f3c15aaee9489f654535ee0a3e5d1a8adee29"
+    },
+    {
+      "name": "Appendix B-1 URAR Implementation Guide",
+      "version": "1.4",
+      "url": "https://singlefamily.fanniemae.com/media/document/zip/appendix-b-1-urar-implementation-guide",
+      "fileName": "appendix-b-1-urar-implementation-guide.zip",
+      "sha256": "fbe2d8385766b30b583a534a5a98a1e9a5ab5782354aa7c4f3cc5f5206d36ffd"
+    },
+    {
+      "name": "Appendix C-1 URAR Layout",
+      "version": "1.3",
+      "url": "https://singlefamily.fanniemae.com/media/document/zip/appendix-c-1-urar-layout",
+      "fileName": "appendix-c-1-urar-layout.zip",
+      "sha256": "1b9deba062e76904996f4d84766d4160046df1d0508fad5953fea3c6a1a614a4"
+    },
+    {
+      "name": "Appendix D-1 URAR Sample Scenarios and XML Files",
+      "version": "1.3",
+      "url": "https://singlefamily.fanniemae.com/media/document/zip/appendix-d-1-urar-sample-scenarios-and-xml-files",
+      "fileName": "appendix-d-1-urar-sample-scenarios.zip",
+      "sha256": "9aa50fa479fc6bfd77694298c62947e112854a8c64fb05c8e81f77999df43b19"
+    },
+    {
+      "name": "Appendix E Report Style Guide",
+      "version": "1.5",
+      "url": "https://singlefamily.fanniemae.com/media/document/zip/appendix-e-report-style-guide",
+      "fileName": "appendix-e-report-style-guide.zip",
+      "sha256": "3e8d8b804c884ad67a124f2a2ce2c3a4e25c38f4f9b20c943a734d5fc24a1e6c"
+    },
+    {
+      "name": "Appendix F-1 URAR Reference Guide",
+      "version": "1.4",
+      "url": "https://singlefamily.fanniemae.com/media/document/zip/appendix-f-1-urar-reference-guide",
+      "fileName": "appendix-f-1-urar-reference-guide.zip",
+      "sha256": "e42ccb9d319653d74fb1b781f6dbb5731f6e333ed08f132f96e57a3061056439"
+    },
+    {
+      "name": "Appendix G-1 Redesigned to Legacy UAD Cross-Reference",
+      "version": "current-2026-08-16",
+      "url": "https://singlefamily.fanniemae.com/media/document/xlsx/appendix-g-1-redesign-legacy-uad-cross-reference-guide",
+      "fileName": "appendix-g-1-cross-reference.xlsx",
+      "sha256": "ca451db22f3306518ff2595cd93cd27633ad042d0fe79cb25c2257177c89c931"
+    },
+    {
+      "name": "Appendix H-1 UAD Compliance Rules",
+      "version": "1.5",
+      "url": "https://singlefamily.fanniemae.com/media/document/xlsm/appendix-h1-uad-compliance-rules-urar",
+      "fileName": "appendix-h-1-uad-compliance-rules.xlsm",
+      "sha256": "d34fb67a38d074979019ea46d4791256cad225e3ac48086b94d58cf3a0f95a5a"
+    },
+    {
+      "name": "UAD 3.6 Subschema",
+      "version": "1.3",
+      "url": "https://singlefamily.fanniemae.com/media/document/zip/uad-36-schema-zip-file",
+      "fileName": "uad-3.6-subschema.zip",
+      "sha256": "00a30dd88463653ac8eebf52ef23f96e71f1f16d8f8c09bf6c365a71c3e2eae8"
+    }
+  ]
+}

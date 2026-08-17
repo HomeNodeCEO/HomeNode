@@ -143,6 +143,8 @@ import {
   createRequestPerformanceMonitor,
   environmentFlag,
 } from "./util/requestPerformance.js";
+import { createUadRouter } from "./modules/uad/router.js";
+import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
 
 const app = express();
 const pool = new pg.Pool({
@@ -166,6 +168,13 @@ const corsOrigins = !corsEnv
       .map((s) => s.trim())
       .filter(Boolean);
 app.use(cors({ origin: corsOrigins }));
+
+const uadObjectStorage = createUadObjectStorage();
+app.use("/api/uad", createUadRouter({
+  pool,
+  storage: uadObjectStorage,
+  enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
+}));
 
 const trestleClient = new TrestleClient();
 

@@ -2,12 +2,22 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { getAccount } from "@/lib/api";
+import {
+  createUadWorkfile,
+  getUadCapabilities,
+  listUadWorkfiles,
+  type UadCapabilities,
+  type UadWorkfile,
+} from "../api";
 
 export default function UadWorkspaceEntry() {
   const { accountId = "" } = useParams();
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(Boolean(accountId));
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<UadCapabilities | null>(null);
+  const [workfiles, setWorkfiles] = useState<UadWorkfile[]>([]);
 
   useEffect(() => {
     if (!accountId) {
@@ -19,9 +29,15 @@ export default function UadWorkspaceEntry() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    getAccount(accountId)
-      .then((response) => {
-        if (!cancelled) setAddress(response.account?.address || "");
+    Promise.all([getAccount(accountId), getUadCapabilities()])
+      .then(async ([accountResponse, capabilityResponse]) => {
+        if (cancelled) return;
+        setAddress(accountResponse.account?.address || "");
+        setCapabilities(capabilityResponse);
+        if (capabilityResponse.enabled) {
+          const existingWorkfiles = await listUadWorkfiles(accountId);
+          if (!cancelled) setWorkfiles(existingWorkfiles);
+        }
       })
       .catch((reason: unknown) => {
         if (!cancelled) {
@@ -36,6 +52,22 @@ export default function UadWorkspaceEntry() {
       cancelled = true;
     };
   }, [accountId]);
+
+  async function handleCreateWorkfile() {
+    if (!accountId || creating) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const workfile = await createUadWorkfile(accountId, {
+        assignment_purpose: "Mortgage finance appraisal",
+      });
+      setWorkfiles((current) => [workfile, ...current.filter((item) => item.id !== workfile.id)]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The UAD workfile could not be created.");
+    } finally {
+      setCreating(false);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
@@ -57,14 +89,74 @@ export default function UadWorkspaceEntry() {
           </div>
         )}
 
-        <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-          <h2 className="font-semibold text-emerald-950">Workspace entry is ready</h2>
-          <p className="mt-2 text-sm leading-6 text-emerald-900">
-            This route is isolated from the Custom Appraisal and Property Tax Protest workspaces. The next UAD
-            foundation step will create the persistent UAD workfile, snapshot the subject data, and begin the
-            Assignment and Subject sections here.
-          </p>
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Property type</div>
+            <div className="mt-2 font-medium">Traditional single-family</div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">UAD baseline</div>
+            <div className="mt-2 break-words font-medium">
+              {capabilities?.specification_release_key || "Loading specification…"}
+            </div>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cloud assets</div>
+            <div className="mt-2 font-medium">
+              {capabilities?.object_storage.configured ? "R2 ready" : "R2 configuration pending"}
+            </div>
+          </div>
         </div>
+
+        {capabilities && !capabilities.enabled && (
+          <div className="mt-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+            The isolated UAD foundation is installed but not active in this environment. Activation requires the
+            additive UAD migration and the <code>UAD_WORKSPACE_ENABLED</code> feature flag. Custom Appraisal and
+            Property Tax Protest remain unchanged.
+          </div>
+        )}
+
+        {capabilities?.enabled && workfiles.length === 0 && (
+          <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+            <h2 className="font-semibold text-emerald-950">Start the first UAD workfile</h2>
+            <p className="mt-2 text-sm leading-6 text-emerald-900">
+              HomeNode will preserve an immutable snapshot of the current subject data and create the initial
+              property, dwelling, and unit records. Source data remains reviewable and never silently replaces an
+              appraiser-confirmed value.
+            </p>
+            <button
+              className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={creating}
+              onClick={handleCreateWorkfile}
+              type="button"
+            >
+              {creating ? "Creating workfile…" : "Create single-family UAD workfile"}
+            </button>
+          </div>
+        )}
+
+        {workfiles.length > 0 && (
+          <section className="mt-6">
+            <h2 className="text-lg font-semibold">UAD workfiles for this subject</h2>
+            <div className="mt-3 space-y-3">
+              {workfiles.map((workfile) => (
+                <article className="rounded-xl border border-slate-200 bg-white p-4" key={workfile.id}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">{workfile.file_number}</div>
+                      <div className="mt-1 text-xs text-slate-500">
+                        Revision {workfile.current_revision} · {workfile.inspection_method} inspection
+                      </div>
+                    </div>
+                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-900">
+                      {workfile.status}
+                    </span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className="mt-6 flex flex-wrap gap-3">
           <Link

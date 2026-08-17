@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 4:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 6:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -42,6 +42,13 @@ The editor currently implements Appendix A-1 v1.4 Sections 2 through 4:
   features, utilities, and defects.
 - Cross-record rules enforce parcel-count consistency and agreement between the
   site-defect indicator and defect records.
+- Disaster Mitigation captures the official multi-select feature list, enforces
+  the exclusive `None` state and `Other` description, and requires commentary
+  whenever Section 5 displays.
+- Energy Efficient and Green Features captures the three required known-feature
+  indicators, repeatable renewable components, building certifications and
+  efficiency ratings, impact to value/marketability, commentary, and Appendix
+  H conditional rules.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 
@@ -81,7 +88,8 @@ URL, upload directly, then verify. Uploads are limited to 50 MiB, must match the
 requested byte size and content type, and are rejected if object-store
 verification does not match. Official Site image categories include property
 access, property photo, influence, view, boundary, encroachment, waterfront,
-and site exhibit.
+and site exhibit. Sections 5 and 6 use the same private upload contract for
+optional disaster-mitigation and energy/green exhibits with free-form captions.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

@@ -62,7 +62,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -87,7 +87,7 @@ export interface UadFieldDefinition {
   uid: string;
   reportFieldId: string;
   label: string;
-  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "measurement" | "date" | "state" | "postal_code";
+  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "measurement" | "date" | "year" | "state" | "postal_code";
   entityType?: string;
   required?: boolean;
   maxLength?: number;
@@ -105,7 +105,7 @@ export interface UadEditorSection {
   key: UadSectionKey;
   title: string;
   officialSectionNumber: number;
-  groups: Array<{ name: string; fields: UadFieldDefinition[]; entityType?: string; addLabel?: string; minItems?: number }>;
+  groups: Array<{ name: string; fields: UadFieldDefinition[]; entityType?: string; addLabel?: string; minItems?: number; showWhen?: UadCondition }>;
 }
 
 export interface UadEntity {

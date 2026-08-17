@@ -22,6 +22,13 @@ interface Props {
 
 const inputClass = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";
 
+const SITE_CAPTIONS = [
+  "PropertyAccess", "PropertyPhoto", "SiteInfluence", "View", "SiteCharacteristic",
+  "PropertyBoundaries", "Encroachment", "WaterFrontage", "SiteExhibit",
+];
+const DISASTER_MITIGATION_CAPTIONS = ["DisasterMitigationFeature", "DisasterMitigationExhibit"];
+const ENERGY_GREEN_CAPTIONS = ["RenewableEnergyComponent", "BuildingCertification", "EfficiencyRating", "EnergyGreenExhibit"];
+
 function displayOption(value: string) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("REO", "REO");
 }
@@ -89,6 +96,10 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     () => new Map(editor?.values.map((item) => [fieldValueKey(item.context_key, item.uid, item.entity_id), item]) || []),
     [editor],
   );
+  const disasterFeatures = draft[fieldValueKey("disaster_mitigation", "3700.0002")];
+  const disasterSectionDisplays = Array.isArray(disasterFeatures) && disasterFeatures.length > 0 && !disasterFeatures.includes("None");
+  const energySectionDisplays = ["2600.0005", "2600.0004", "2600.0003"]
+    .some((uid) => draft[fieldValueKey("energy_green", uid)] === true);
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -293,7 +304,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <nav className="grid grid-cols-3 border-b border-slate-200 bg-white" aria-label="UAD workfile sections">
+      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white lg:grid-cols-5" aria-label="UAD workfile sections">
         {editor.sections.map((item) => {
           const completion = editor.completion[item.key];
           return (
@@ -314,6 +325,16 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             Site uses repeatable records for parcels, influences, views, utilities, encumbrances, features, and defects. This same entity model is reserved for future comparable-sales and market-analysis integration.
           </div>
         )}
+        {activeSection === "disaster_mitigation" && (
+          <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+            Select None by itself when the property has no disaster mitigation features. In that case, Section 5 will not display in the final URAR.
+          </div>
+        )}
+        {activeSection === "energy_green" && (
+          <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+            Sections for renewable components, certifications, and ratings appear only when the corresponding known-features answer is Yes. Add each known item as its own record.
+          </div>
+        )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
@@ -330,10 +351,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               );
             }
             const entities = entitiesFor(group.entityType);
+            const groupEnabled = !group.showWhen || evaluateCondition(group.showWhen, draftLookup(null));
+            if (!groupEnabled && !entities.length) return null;
             return (
               <fieldset className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5" key={group.name}>
                 <legend className="px-2 text-base font-semibold text-slate-900">{group.name}</legend>
                 <div className="mt-2 space-y-4">
+                  {!groupEnabled && entities.length > 0 && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                      Remove the saved record{entities.length === 1 ? "" : "s"} below before saving the corresponding known-features answer as No.
+                    </div>
+                  )}
                   {entities.map((entity) => (
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={entity.id}>
                       <div className="flex items-center justify-between gap-3">
@@ -344,12 +372,20 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                     </div>
                   ))}
                   {!entities.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added.</div>}
-                  <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
+                  {groupEnabled && <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>}
                 </div>
               </fieldset>
             );
           })}
-          {activeSection === "site" && <UadAssetPanel workfileId={workfileId} />}
+          {activeSection === "site" && (
+            <UadAssetPanel captionTypes={SITE_CAPTIONS} sectionNumber={4} title="Site photos, exhibits, and supporting files" workfileId={workfileId} />
+          )}
+          {activeSection === "disaster_mitigation" && disasterSectionDisplays && (
+            <UadAssetPanel captionTypes={DISASTER_MITIGATION_CAPTIONS} sectionNumber={5} title="Disaster mitigation exhibits" workfileId={workfileId} />
+          )}
+          {activeSection === "energy_green" && energySectionDisplays && (
+            <UadAssetPanel captionTypes={ENERGY_GREEN_CAPTIONS} sectionNumber={6} title="Energy efficient and green feature exhibits" workfileId={workfileId} />
+          )}
         </div>
 
         <div className="sticky bottom-3 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">

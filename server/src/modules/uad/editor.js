@@ -175,6 +175,47 @@ function validateCompleteSection(section, existingRows, submitted, entities) {
       errors.push(validationError(field, null, "site_defect_conflict", "Remove site defect records or change the site-defects answer to Yes."));
     }
   }
+
+  if (section === "disaster_mitigation") {
+    const rootLookup = valueLookup(merged);
+    const features = rootLookup("disaster_mitigation:3700.0002");
+    if (Array.isArray(features) && features.includes("None") && features.length > 1) {
+      const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "disaster_mitigation:3700.0002");
+      errors.push(validationError(field, null, "mitigation_none_conflict", "Select None by itself, or remove None before selecting disaster mitigation features."));
+    }
+  }
+
+  if (section === "energy_green") {
+    const rootLookup = valueLookup(merged);
+    const entityRequirements = [
+      {
+        key: "energy_green:2600.0005",
+        entityType: "renewable_energy_component",
+        label: "renewable energy component",
+      },
+      {
+        key: "energy_green:2600.0004",
+        entityType: "green_building_certification",
+        label: "building certification",
+      },
+      {
+        key: "energy_green:2600.0003",
+        entityType: "green_efficiency_rating",
+        label: "efficiency rating",
+      },
+    ];
+    for (const requirement of entityRequirements) {
+      const indicator = rootLookup(requirement.key);
+      const matchingEntities = entities.filter((entity) => entity.entity_type === requirement.entityType);
+      const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === requirement.key);
+      if (indicator === true && matchingEntities.length === 0) {
+        errors.push(validationError(field, null, "energy_detail_required", `Add at least one ${requirement.label} when the known-features answer is Yes.`));
+      }
+      if (indicator === false && matchingEntities.length > 0) {
+        errors.push(validationError(field, null, "energy_detail_conflict", `Remove ${requirement.label} records or change the known-features answer to Yes.`));
+      }
+    }
+  }
   return errors;
 }
 

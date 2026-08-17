@@ -2,32 +2,35 @@ import { useCallback, useEffect, useState } from "react";
 
 import { listUadAssets, uploadUadAsset, type UadAsset } from "../api";
 
-const SITE_CAPTIONS = [
-  "PropertyAccess", "PropertyPhoto", "SiteInfluence", "View", "SiteCharacteristic",
-  "PropertyBoundaries", "Encroachment", "WaterFrontage", "SiteExhibit",
-];
-
 function displayOption(value: string) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
-export default function UadAssetPanel({ workfileId }: { workfileId: string }) {
+interface Props {
+  workfileId: string;
+  sectionNumber: number;
+  title: string;
+  captionTypes: string[];
+}
+
+export default function UadAssetPanel({ workfileId, sectionNumber, title, captionTypes }: Props) {
   const [assets, setAssets] = useState<UadAsset[]>([]);
   const [file, setFile] = useState<File | null>(null);
-  const [captionType, setCaptionType] = useState("PropertyPhoto");
+  const [captionType, setCaptionType] = useState(captionTypes[0]);
   const [caption, setCaption] = useState("");
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      setAssets((await listUadAssets(workfileId)).filter((asset) => asset.section_number === 4));
+      setAssets((await listUadAssets(workfileId)).filter((asset) => asset.section_number === sectionNumber));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Site files could not be loaded.");
+      setError(reason instanceof Error ? reason.message : `${title} files could not be loaded.`);
     }
-  }, [workfileId]);
+  }, [sectionNumber, title, workfileId]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setCaptionType(captionTypes[0]); }, [captionTypes]);
 
   async function handleUpload() {
     if (!file || uploading) return;
@@ -44,17 +47,17 @@ export default function UadAssetPanel({ workfileId }: { workfileId: string }) {
             : "photo";
       await uploadUadAsset(workfileId, file, {
         asset_kind: assetKind,
-        section_number: 4,
+        section_number: sectionNumber,
         caption_type: captionType,
         caption: caption || displayOption(captionType),
       });
       setFile(null);
       setCaption("");
-      const picker = document.getElementById(`uad-site-asset-${workfileId}`) as HTMLInputElement | null;
+      const picker = document.getElementById(`uad-asset-${sectionNumber}-${workfileId}`) as HTMLInputElement | null;
       if (picker) picker.value = "";
       await load();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The site file could not be uploaded.");
+      setError(reason instanceof Error ? reason.message : `The ${title.toLowerCase()} file could not be uploaded.`);
     } finally {
       setUploading(false);
     }
@@ -62,7 +65,7 @@ export default function UadAssetPanel({ workfileId }: { workfileId: string }) {
 
   return (
     <fieldset className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
-      <legend className="px-2 text-base font-semibold text-slate-900">Site photos, exhibits, and supporting files</legend>
+      <legend className="px-2 text-base font-semibold text-slate-900">{title}</legend>
       <p className="mt-2 text-xs leading-5 text-slate-600">
         Files upload directly to private object storage through a short-lived URL, then HomeNode verifies the stored object. The same API is ready for the future mobile capture app.
       </p>
@@ -73,15 +76,15 @@ export default function UadAssetPanel({ workfileId }: { workfileId: string }) {
           <input
             accept="image/jpeg,image/png,image/webp,image/heic,image/heif,image/svg+xml,application/pdf,application/json"
             className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-            id={`uad-site-asset-${workfileId}`}
+            id={`uad-asset-${sectionNumber}-${workfileId}`}
             onChange={(event) => setFile(event.target.files?.[0] || null)}
             type="file"
           />
         </label>
         <label className="text-sm font-medium text-slate-800">
-          Official image category
+          Attachment category
           <select className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm" onChange={(event) => setCaptionType(event.target.value)} value={captionType}>
-            {SITE_CAPTIONS.map((option) => <option key={option} value={option}>{displayOption(option)}</option>)}
+            {captionTypes.map((option) => <option key={option} value={option}>{displayOption(option)}</option>)}
           </select>
         </label>
         <label className="text-sm font-medium text-slate-800 md:col-span-2">
@@ -95,7 +98,7 @@ export default function UadAssetPanel({ workfileId }: { workfileId: string }) {
         onClick={handleUpload}
         type="button"
       >
-        {uploading ? "Uploading and verifying…" : "Upload site file"}
+        {uploading ? "Uploading and verifying…" : "Upload file"}
       </button>
       <div className="mt-4 grid gap-2 sm:grid-cols-2">
         {assets.map((asset) => (
@@ -106,7 +109,7 @@ export default function UadAssetPanel({ workfileId }: { workfileId: string }) {
             </div>
           </div>
         ))}
-        {!assets.length && <div className="text-sm text-slate-500">No Site files uploaded yet.</div>}
+        {!assets.length && <div className="text-sm text-slate-500">No files uploaded for this section yet.</div>}
       </div>
     </fieldset>
   );

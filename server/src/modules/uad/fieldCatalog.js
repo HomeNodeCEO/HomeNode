@@ -1,4 +1,21 @@
+import {
+  UAD_DISASTER_ENERGY_ENTITY_GROUPS,
+  UAD_DISASTER_ENERGY_FIELDS,
+} from "./disasterEnergyCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
+
+export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
+  ...UAD_SITE_ENTITY_GROUPS,
+  ...UAD_DISASTER_ENERGY_ENTITY_GROUPS,
+});
+
+const UAD_EDITOR_SECTIONS = Object.freeze({
+  assignment: { title: "Assignment Information", officialSectionNumber: 2 },
+  subject: { title: "Subject Property", officialSectionNumber: 3 },
+  site: { title: "Site", officialSectionNumber: 4 },
+  disaster_mitigation: { title: "Disaster Mitigation", officialSectionNumber: 5 },
+  energy_green: { title: "Energy Efficient and Green Features", officialSectionNumber: 6 },
+});
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
 
@@ -463,6 +480,7 @@ const fields = [
     maxLength: 5000,
   },
   ...UAD_SITE_FIELDS,
+  ...UAD_DISASTER_ENERGY_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -477,7 +495,7 @@ export const UAD_PHASE_ONE_FIELDS = Object.freeze(fields.map((field, ordinal) =>
 
 const fieldByKey = new Map(UAD_PHASE_ONE_FIELDS.map((field) => [field.key, field]));
 
-export const UAD_EDITOR_SECTION_KEYS = Object.freeze(["assignment", "subject", "site"]);
+export const UAD_EDITOR_SECTION_KEYS = Object.freeze(Object.keys(UAD_EDITOR_SECTIONS));
 
 function valueAtPath(document, path) {
   return String(path || "").split(".").reduce((value, segment) => value?.[segment], document);
@@ -557,7 +575,7 @@ export function getUadEditorSections() {
     for (const field of sectionFields) {
       let group = groups.find((candidate) => candidate.name === field.group);
       if (!group) {
-        const repeatable = field.entityType ? UAD_SITE_ENTITY_GROUPS[field.entityType] : null;
+        const repeatable = field.entityType ? UAD_REPEATABLE_ENTITY_GROUPS[field.entityType] : null;
         group = {
           name: field.group,
           fields: [],
@@ -565,6 +583,7 @@ export function getUadEditorSections() {
             entityType: field.entityType,
             addLabel: repeatable.addLabel,
             minItems: repeatable.minItems,
+            showWhen: repeatable.showWhen,
           } : {}),
         };
         groups.push(group);
@@ -572,10 +591,11 @@ export function getUadEditorSections() {
       const { sourcePath: _sourcePath, fallbackValue: _fallbackValue, initialValue: _initialValue, ...publicField } = field;
       group.fields.push(publicField);
     }
+    const metadata = UAD_EDITOR_SECTIONS[sectionKey];
     sections.push({
       key: sectionKey,
-      title: sectionKey === "assignment" ? "Assignment Information" : sectionKey === "subject" ? "Subject Property" : "Site",
-      officialSectionNumber: sectionKey === "assignment" ? 2 : sectionKey === "subject" ? 3 : 4,
+      title: metadata.title,
+      officialSectionNumber: metadata.officialSectionNumber,
       groups,
     });
   }
@@ -643,6 +663,9 @@ export function normalizeAndValidateUadValue(field, rawValue) {
   }
   if (field.dataType === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return { value: null, error: invalid(field, "date", `${field.label} must use YYYY-MM-DD.`) };
+  }
+  if (field.dataType === "year" && !/^\d{4}$/.test(value)) {
+    return { value: null, error: invalid(field, "year", `${field.label} must use YYYY.`) };
   }
   if (field.dataType === "postal_code" && !/^\d{5}(?:-\d{4})?$/.test(value)) {
     return { value: null, error: invalid(field, "postal_code", `${field.label} must be a five-digit ZIP or ZIP+4.`) };

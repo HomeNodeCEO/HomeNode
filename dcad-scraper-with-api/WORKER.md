@@ -31,6 +31,9 @@ both processes and stops the service if either process exits unexpectedly.
    100 normal campaign accounts, so repair work does not materially delay the
    missing-first campaign. A successful DCAD response that still omits a field
    is classified as `source_missing` rather than retried forever.
+9. Every newly successful scrape runs a database-only owner, land, and GLA
+   presence check. Any remaining gap is added to the same throttled repair lane;
+   the check does not make an additional DCAD request.
 
 The residential target table—not `core.accounts.county`—controls selection.
 Collin County rows already present elsewhere in the database have no effect on

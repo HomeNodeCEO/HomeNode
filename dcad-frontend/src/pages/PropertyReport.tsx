@@ -1926,7 +1926,7 @@ function NeighborhoodCharacteristicsContent({
                     <option
                       key={candidate.name}
                       value={candidate.name}
-                      label={`Score ${candidate.score.toFixed(2)} · edge ${candidate.distance_to_analysis_edge_miles ?? "?"} mi`}
+                      label={`Score ${candidate.score.toFixed(2)} · ${candidate.analysis_edge_relation || "edge"} ${candidate.signed_distance_to_analysis_edge_miles ?? candidate.distance_to_analysis_edge_miles ?? "?"} mi`}
                     />
                   ))}
                 </datalist>

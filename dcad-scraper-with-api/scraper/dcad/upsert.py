@@ -79,6 +79,34 @@ def to_decimal_or_none(v: Any) -> Optional[Decimal]:
     except (InvalidOperation, ValueError, TypeError):
         return None
 
+
+def collapse_owner_parties(
+    parties: list[Dict[str, Any]], fallback_name: Optional[str]
+) -> list[tuple[str, Optional[Decimal]]]:
+    """Collapse repeated DCAD owner rows while preserving fractional shares.
+
+    DCAD sometimes emits the same party more than once (for example, two 50%
+    rows for a sole owner). The production table allows one row per owner name,
+    so repeated percentages are summed and capped at 100 rather than causing
+    the entire property transaction to roll back.
+    """
+    collapsed: dict[str, tuple[str, Optional[Decimal]]] = {}
+    for party in parties:
+        name = to_text_or_none(party.get("owner_name")) or fallback_name
+        if not name:
+            continue
+        key = " ".join(name.upper().split())
+        pct = to_decimal_or_none(party.get("ownership_pct"))
+        if key not in collapsed:
+            collapsed[key] = (name, pct)
+            continue
+        display_name, existing_pct = collapsed[key]
+        if existing_pct is None:
+            collapsed[key] = (display_name, pct)
+        elif pct is not None:
+            collapsed[key] = (display_name, min(Decimal("100"), existing_pct + pct))
+    return list(collapsed.values())
+
 def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, Any]) -> None:
     engine = get_engine()
     with get_session() as s:
@@ -363,7 +391,9 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
                         text(f"DELETE FROM {_tbl('owner_parties')} WHERE account_id = :account_id"),
                         {"account_id": account_id},
                     )
-                    for p in owner_parties:
+                    for party_name, ownership_pct in collapse_owner_parties(
+                        owner_parties, owner_name
+                    ):
                         s.execute(
                             text(
                                 f"""
@@ -374,8 +404,8 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
                             {
                                 "account_id": account_id,
                                 "tax_year": tax_year,
-                                "owner_name": to_text_or_none(p.get("owner_name")) or (owner_name or ""),
-                                "ownership_pct": to_decimal_or_none(p.get("ownership_pct")),
+                                "owner_name": party_name,
+                                "ownership_pct": ownership_pct,
                             },
                         )
 

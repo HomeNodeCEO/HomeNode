@@ -29,4 +29,3 @@ CREATE INDEX IF NOT EXISTS dcad_field_repair_queue_status_idx
 
 CREATE INDEX IF NOT EXISTS dcad_field_repair_queue_remaining_gin_idx
     ON app.dcad_field_repair_queue USING gin (remaining_fields);
-

@@ -2,6 +2,7 @@ import express from "express";
 
 import { createUadAssetUpload, verifyUadAssetUpload } from "./assets.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
+import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadWorkfile, getUadWorkfile, listUadWorkfiles } from "./workfiles.js";
 
 function errorStatus(error) {
@@ -18,7 +19,7 @@ function sendError(res, error) {
   const status = errorStatus(error);
   const code = status === 500 ? "uad_request_failed" : String(error?.message || "uad_request_failed").split(":")[0];
   if (status === 500) console.error("[uad] request failed", error);
-  res.status(status).json({ error: code });
+  res.status(status).json({ error: code, ...(error?.details ? { details: error.details } : {}) });
 }
 
 export function createUadRouter({ pool, storage, enabled = false }) {
@@ -66,6 +67,29 @@ export function createUadRouter({ pool, storage, enabled = false }) {
       return res.json({ workfile });
     } catch (error) {
       return sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/editor", async (req, res) => {
+    try {
+      const editor = await getUadEditor(pool, req.params.workfileId);
+      res.json(editor);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.patch("/workfiles/:workfileId/sections/:section", async (req, res) => {
+    try {
+      const result = await saveUadSection(
+        pool,
+        req.params.workfileId,
+        req.params.section,
+        req.body || {},
+      );
+      res.json(result);
+    } catch (error) {
+      sendError(res, error);
     }
   });
 

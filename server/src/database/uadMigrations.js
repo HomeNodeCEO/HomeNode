@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 
 const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIRECTORY = path.resolve(MODULE_DIRECTORY, "../..");
-const MIGRATIONS = Object.freeze(["20260816_uad_foundation.sql"]);
+const MIGRATIONS = Object.freeze([
+  "20260816_uad_foundation.sql",
+  "20260817_uad_assignment_subject.sql",
+]);
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 
 function checksum(contents) {

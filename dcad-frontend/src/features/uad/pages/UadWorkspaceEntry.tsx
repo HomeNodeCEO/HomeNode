@@ -9,6 +9,7 @@ import {
   type UadCapabilities,
   type UadWorkfile,
 } from "../api";
+import UadWorkfileEditor from "../components/UadWorkfileEditor";
 
 export default function UadWorkspaceEntry() {
   const { accountId = "" } = useParams();
@@ -18,6 +19,7 @@ export default function UadWorkspaceEntry() {
   const [error, setError] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState<UadCapabilities | null>(null);
   const [workfiles, setWorkfiles] = useState<UadWorkfile[]>([]);
+  const [activeWorkfileId, setActiveWorkfileId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!accountId) {
@@ -62,6 +64,7 @@ export default function UadWorkspaceEntry() {
         assignment_purpose: "Mortgage finance appraisal",
       });
       setWorkfiles((current) => [workfile, ...current.filter((item) => item.id !== workfile.id)]);
+      setActiveWorkfileId(workfile.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The UAD workfile could not be created.");
     } finally {
@@ -152,10 +155,25 @@ export default function UadWorkspaceEntry() {
                       {workfile.status}
                     </span>
                   </div>
+                  <button
+                    className="mt-3 rounded-lg border border-emerald-700 bg-white px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50"
+                    onClick={() => setActiveWorkfileId(workfile.id)}
+                    type="button"
+                  >
+                    {activeWorkfileId === workfile.id ? "Editor open" : "Open Assignment & Subject"}
+                  </button>
                 </article>
               ))}
             </div>
           </section>
+        )}
+
+        {activeWorkfileId && (
+          <UadWorkfileEditor
+            key={activeWorkfileId}
+            onClose={() => setActiveWorkfileId(null)}
+            workfileId={activeWorkfileId}
+          />
         )}
 
         <div className="mt-6 flex flex-wrap gap-3">

@@ -213,6 +213,14 @@ test("balances TxDOT traffic strength with an enclosing perimeter road", () => {
       attributes: { NAME: "N Hampton Rd", AADT: 20_000 },
       geometry: { paths: [[[-96.62, 32.94], [-96.62, 33.00]]] },
     },
+    {
+      attributes: { NAME: "Belt Line Rd", AADT: 40_000 },
+      geometry: { paths: [[[-96.68, 32.965], [-96.62, 32.965]]] },
+    },
+    {
+      attributes: { NAME: "Near Outside South Rd", AADT: 36_000 },
+      geometry: { paths: [[[-96.68, 32.957], [-96.62, 32.957]]] },
+    },
   ];
 
   const result = summarizeBusyCardinalBoundaries(trafficFeatures, geometry.coordinates[0]);
@@ -223,6 +231,8 @@ test("balances TxDOT traffic strength with an enclosing perimeter road", () => {
   assert.equal(result.east.candidates[0].analysis_edge_relation, "inside");
   assert.equal(result.east.candidates[1].analysis_edge_relation, "outside");
   assert.ok(result.east.candidates[1].selection_score > result.east.candidates[0].selection_score);
+  assert.equal(result.south.primary_street, "Belt Line Rd");
+  assert.equal(result.south.candidates[1].perimeter_bonus, 0);
 });
 
 test("uses the local TxDOT AADT mirror before TIGERweb", async () => {

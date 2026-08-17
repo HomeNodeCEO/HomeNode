@@ -1281,6 +1281,22 @@ function NeighborhoodCharacteristicsContent({
     setRelevanceAssessment(null);
     setRelevanceMessage("");
   }, [onAssignmentChange, onBoundarySuggestionsChange]);
+  const applyGeneratedBoundaryRef = useRef(applyGeneratedBoundary);
+  applyGeneratedBoundaryRef.current = applyGeneratedBoundary;
+  const automaticBoundaryContextRef = useRef({
+    geometry: assignmentDraft.neighborhood_boundary_geometry,
+    source: assignmentDraft.neighborhood_boundary_source,
+    savedCustomGeometry: marketConditionsDraft?.response.analyses.find(
+      (analysis) => analysis.market.key === "custom",
+    )?.market.custom_geometry || null,
+  });
+  automaticBoundaryContextRef.current = {
+    geometry: assignmentDraft.neighborhood_boundary_geometry,
+    source: assignmentDraft.neighborhood_boundary_source,
+    savedCustomGeometry: marketConditionsDraft?.response.analyses.find(
+      (analysis) => analysis.market.key === "custom",
+    )?.market.custom_geometry || null,
+  };
 
   const generateSuggestedBoundary = async () => {
     if (!accountId || generatedBoundaryLoading) return;
@@ -1318,14 +1334,14 @@ function NeighborhoodCharacteristicsContent({
     if (automaticBoundaryAttemptRef.current === attemptSignature) return;
     automaticBoundaryAttemptRef.current = attemptSignature;
     let cancelled = false;
-    const savedCustomGeometry = marketConditionsDraft?.response.analyses.find(
-      (analysis) => analysis.market.key === "custom",
-    )?.market.custom_geometry || null;
-    const currentGeometry = assignmentDraft.neighborhood_boundary_geometry ||
-      savedCustomGeometry;
+    const boundaryContext = automaticBoundaryContextRef.current;
+    const currentGeometry = boundaryContext.geometry ||
+      boundaryContext.savedCustomGeometry;
     const currentSource = String(
-      assignmentDraft.neighborhood_boundary_source ||
-        (savedCustomGeometry ? "sales_comparison_market_conditions" : ""),
+      boundaryContext.source ||
+        (boundaryContext.savedCustomGeometry
+          ? "sales_comparison_market_conditions"
+          : ""),
     ).toLowerCase();
     const appraiserCleared = currentSource.includes("cleared");
     const appraiserAreaPresent = Boolean(currentGeometry) &&
@@ -1358,7 +1374,7 @@ function NeighborhoodCharacteristicsContent({
           return;
         }
         const discovery = result.evidence.discovery;
-        applyGeneratedBoundary(result, {
+        applyGeneratedBoundaryRef.current(result, {
           overwriteGeometry: !currentGeometry && !appraiserCleared,
           message: appraiserAreaPresent
             ? "The saved automatic suggestion is available for comparison. The appraiser-defined area remains unchanged."
@@ -1384,14 +1400,7 @@ function NeighborhoodCharacteristicsContent({
     return () => {
       cancelled = true;
     };
-  }, [
-    accountId,
-    applyGeneratedBoundary,
-    assignmentDraft.neighborhood_boundary_geometry,
-    assignmentDraft.neighborhood_boundary_source,
-    assignmentFileId,
-    marketConditionsDraft,
-  ]);
+  }, [accountId, assignmentFileId]);
 
   const handleCustomGeometryChange = useCallback((
     geometry: AssignmentDetails["neighborhood_boundary_geometry"],

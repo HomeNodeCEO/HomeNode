@@ -20,6 +20,7 @@ from dcad.worker import (  # noqa: E402
     record_upstream_failure,
     reset_outage_circuit,
     should_pause_for_outage,
+    state_codes_describe_vacant_land,
 )
 
 
@@ -137,6 +138,18 @@ class OutageCircuitDecisionTests(unittest.TestCase):
             {"owner": True, "land": False, "gla": True},
         )
         self.assertEqual(remaining, ("land",))
+
+    def test_vacant_land_state_code_satisfies_gla_requirement(self) -> None:
+        self.assertTrue(
+            state_codes_describe_vacant_land(["SFR - Vacant Lots/Tracts"])
+        )
+
+    def test_mixed_vacant_and_improved_codes_still_require_gla(self) -> None:
+        self.assertFalse(
+            state_codes_describe_vacant_land(
+                ["SFR - Vacant Lots/Tracts", "SFR - Residential Improved"]
+            )
+        )
 
     def test_fifth_shared_upstream_failure_opens_the_pause(self) -> None:
         config = WorkerConfig.from_env()

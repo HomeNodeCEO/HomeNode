@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import { UAD_SITE_ENTITY_GROUPS } from "./siteCatalog.js";
+import { UAD_REPEATABLE_ENTITY_GROUPS } from "./fieldCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
-const EDITABLE_ENTITY_TYPES = new Set(Object.keys(UAD_SITE_ENTITY_GROUPS));
+const EDITABLE_ENTITY_TYPES = new Set(Object.keys(UAD_REPEATABLE_ENTITY_GROUPS));
 
 function entityResponse(row) {
   return {
@@ -57,7 +57,7 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
       [workfileId, entityType],
     );
     const ordinal = Number(ordinalResult.rows[0].ordinal);
-    const group = UAD_SITE_ENTITY_GROUPS[entityType];
+    const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
     const singular = group.title.replace(/ies$/, "y").replace(/s$/, "");
     const inserted = await client.query(
       `INSERT INTO appraisal.uad_entities (

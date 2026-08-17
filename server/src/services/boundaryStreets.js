@@ -8,6 +8,7 @@ const MIN_MAJOR_ROAD_AADT = 10000;
 const FULL_MAJOR_ROAD_AADT_SCORE = 50000;
 const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
 const MAX_MAJOR_ROAD_CANDIDATES_PER_SIDE = 5;
+const MAJOR_ROAD_ENCLOSURE_BONUS = 0.25;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const REPORT_CORRIDOR_ALIASES = new Map([
@@ -279,6 +280,9 @@ function compareBoundarySelections(left, right) {
   if (left.opposite_duplicate_count !== right.opposite_duplicate_count) {
     return right.opposite_duplicate_count - left.opposite_duplicate_count;
   }
+  if (left.total_selection_score !== right.total_selection_score) {
+    return left.total_selection_score - right.total_selection_score;
+  }
   if (left.total_score !== right.total_score) return left.total_score - right.total_score;
   return right.total_edge_distance - left.total_edge_distance;
 }
@@ -311,6 +315,10 @@ function selectJointCardinalCandidates(candidatesBySide) {
       duplicate_count: duplicateCount,
       opposite_duplicate_count: oppositeDuplicateCount,
       total_score: populatedSides.reduce((sum, side) => sum + selected[side].score, 0),
+      total_selection_score: populatedSides.reduce(
+        (sum, side) => sum + selected[side].selection_score,
+        0,
+      ),
       total_edge_distance: populatedSides.reduce(
         (sum, side) => sum + selected[side].distance_to_analysis_edge_miles,
         0,
@@ -471,10 +479,19 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         1,
       );
       const continuityScore = Math.min(group.length / maxLength, 1);
+      const analysisEdgeRelation = (group.closest_signed_edge_distance_meters || 0) >= 0
+        ? "outside"
+        : "inside";
+      const score = Number(
+        (trafficScore * 0.56 + proximityScore * 0.34 + continuityScore * 0.10).toFixed(4),
+      );
       return {
         name: chooseDisplayName(group.display_name_weights, group.name),
         corridor_key: group.corridor_key,
-        score: Number((trafficScore * 0.56 + proximityScore * 0.34 + continuityScore * 0.10).toFixed(4)),
+        score,
+        selection_score: Number(
+          (score + (analysisEdgeRelation === "outside" ? MAJOR_ROAD_ENCLOSURE_BONUS : 0)).toFixed(4),
+        ),
         annual_average_daily_traffic: Math.round(averageAadt),
         peak_segment_aadt: Math.round(group.max_aadt),
         source_road_names: [...group.source_names].sort(),
@@ -484,9 +501,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         signed_distance_to_analysis_edge_miles: Number(
           ((group.closest_signed_edge_distance_meters || 0) / 1609.344).toFixed(2),
         ),
-        analysis_edge_relation: (group.closest_signed_edge_distance_meters || 0) >= 0
-          ? "outside"
-          : "inside",
+        analysis_edge_relation: analysisEdgeRelation,
         source_date: group.source_date,
       };
     }).sort((left, right) =>
@@ -512,7 +527,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
       selection_reason: selected
         ? jointSelection.duplicateCorridorFallback
           ? "best_available_corridor_fallback"
-          : "joint_distinct_corridor_enclosure"
+          : "joint_distinct_corridor_perimeter"
         : "unavailable",
       candidates: candidates.map((candidate) => ({
         ...candidate,

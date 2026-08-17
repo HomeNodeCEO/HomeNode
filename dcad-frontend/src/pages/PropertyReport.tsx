@@ -6057,4 +6057,3 @@ export default function PropertyReport() {
     </div>
   );
 }
-

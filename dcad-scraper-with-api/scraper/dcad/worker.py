@@ -520,6 +520,72 @@ def reset_outage_circuit(engine: Engine, config: WorkerConfig) -> bool:
     return bool(row and row["recovered"])
 
 
+def queue_missing_fields_after_success(
+    conn,
+    config: WorkerConfig,
+    account_id: str,
+) -> None:
+    """Queue any owner, land, or GLA gap left by a successful scrape.
+
+    This is a database-only completeness check. It adds no DCAD request to the
+    normal campaign and the repair remains throttled by
+    ``SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS``.
+    """
+    queue = _field_repair_table(config)
+    conn.execute(
+        text(
+            f"""
+            WITH missing AS (
+                SELECT array_remove(ARRAY[
+                           CASE WHEN NOT EXISTS (
+                               SELECT 1
+                               FROM "{config.data_schema}"."owner_summary"
+                               WHERE account_id = :account_id
+                                 AND NULLIF(btrim(owner_name), '') IS NOT NULL
+                           ) THEN 'owner' END,
+                           CASE WHEN NOT EXISTS (
+                               SELECT 1
+                               FROM "{config.data_schema}"."land_detail"
+                               WHERE account_id = :account_id
+                           ) THEN 'land' END,
+                           CASE WHEN NOT EXISTS (
+                               SELECT 1
+                               FROM "{config.data_schema}"."primary_improvements"
+                               WHERE account_id = :account_id
+                                 AND living_area_sqft IS NOT NULL
+                                 AND living_area_sqft > 0
+                           ) THEN 'gla' END
+                       ], NULL)::text[] AS fields
+            )
+            INSERT INTO {queue} AS existing (
+                account_id, status, requested_fields, remaining_fields,
+                attempts, next_attempt_at, reason, last_error,
+                lease_expires_at, worker_id, updated_at
+            )
+            SELECT :account_id, 'pending', fields, fields,
+                   0, now(),
+                   'Successful scrape is missing required fields',
+                   NULL, NULL, NULL, now()
+            FROM missing
+            WHERE cardinality(fields) > 0
+            ON CONFLICT (account_id) DO UPDATE
+            SET status = 'pending',
+                requested_fields = EXCLUDED.requested_fields,
+                remaining_fields = EXCLUDED.remaining_fields,
+                attempts = 0,
+                next_attempt_at = now(),
+                reason = EXCLUDED.reason,
+                last_error = NULL,
+                lease_expires_at = NULL,
+                worker_id = NULL,
+                updated_at = now()
+            WHERE existing.status <> 'leased'
+            """
+        ),
+        {"account_id": account_id},
+    )
+
+
 def mark_success(
     engine: Engine,
     config: WorkerConfig,
@@ -573,6 +639,7 @@ def mark_success(
         """
     )
     with engine.begin() as conn:
+        queue_missing_fields_after_success(conn, config, account_id)
         params = {
             "account_id": account_id,
             "refresh_days": config.refresh_days,

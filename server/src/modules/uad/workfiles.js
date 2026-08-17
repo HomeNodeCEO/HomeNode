@@ -69,6 +69,19 @@ export async function listUadWorkfiles(pool, accountIdValue) {
   return rows.map(workfileResponse);
 }
 
+export async function getUadSubjectSummary(pool, accountIdValue) {
+  const accountId = normalizeUadAccountId(accountIdValue);
+  const { rows } = await pool.query(
+    `SELECT account_id, address, city, postal_code, county,
+            neighborhood_code, subdivision, legal_description
+       FROM core.accounts
+      WHERE account_id = $1`,
+    [accountId],
+  );
+  if (!rows.length) throw new Error("subject_account_not_found");
+  return rows[0];
+}
+
 export async function getUadWorkfile(pool, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const { rows } = await pool.query(

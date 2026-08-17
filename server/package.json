@@ -6,6 +6,7 @@
     "scripts": {
         "test": "node --test",
         "migrate:uad": "node scripts/runUadMigrations.js",
+        "prepare:staging:uad": "node scripts/prepareUadStagingDatabase.js",
         "test:uad-migration": "node scripts/prepareUadCiDatabase.js && node scripts/runUadMigrations.js && node --test test/uadMigration.integration.test.js",
         "backfill:locations": "node scripts/backfillAccountLocations.js",
         "backfill:census": "node scripts/backfillCensusGeographies.js",

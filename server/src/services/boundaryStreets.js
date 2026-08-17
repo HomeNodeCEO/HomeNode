@@ -9,6 +9,7 @@ const FULL_MAJOR_ROAD_AADT_SCORE = 50000;
 const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
 const MAX_MAJOR_ROAD_CANDIDATES_PER_SIDE = 5;
 const MAJOR_ROAD_ENCLOSURE_BONUS = 0.25;
+const MIN_BROAD_PERIMETER_GAP_METERS = 0.75 * 1609.344;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const REPORT_CORRIDOR_ALIASES = new Map([
@@ -486,13 +487,18 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
       const score = Number(
         (trafficScore * 0.56 + proximityScore * 0.34 + continuityScore * 0.10).toFixed(4),
       );
+      const perimeterBonus = analysisEdgeRelation === "outside" &&
+        group.min_edge_distance_meters >= MIN_BROAD_PERIMETER_GAP_METERS
+        ? MAJOR_ROAD_ENCLOSURE_BONUS
+        : 0;
       return {
         name: chooseDisplayName(group.display_name_weights, group.name),
         corridor_key: group.corridor_key,
         score,
         selection_score: Number(
-          (score + (analysisEdgeRelation === "outside" ? MAJOR_ROAD_ENCLOSURE_BONUS : 0)).toFixed(4),
+          (score + perimeterBonus).toFixed(4),
         ),
+        perimeter_bonus: perimeterBonus,
         annual_average_daily_traffic: Math.round(averageAadt),
         peak_segment_aadt: Math.round(group.max_aadt),
         source_road_names: [...group.source_names].sort(),

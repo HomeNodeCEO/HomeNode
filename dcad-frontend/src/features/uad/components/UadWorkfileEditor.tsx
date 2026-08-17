@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  createUadEntity,
+  deleteUadEntity,
   getUadEditor,
   saveUadSection,
+  type UadCondition,
   type UadEditorResponse,
+  type UadEntity,
   type UadFieldDefinition,
   type UadFieldValue,
+  type UadMeasurement,
+  type UadSectionKey,
 } from "../api";
+import UadAssetPanel from "./UadAssetPanel";
 
 interface Props {
   workfileId: string;
@@ -19,20 +26,39 @@ function displayOption(value: string) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("REO", "REO");
 }
 
-function fieldValueKey(contextKey: string, uid: string) {
-  return `${contextKey}:${uid}`;
+function fieldValueKey(contextKey: string, uid: string, entityId: string | null = null) {
+  return `${entityId || "root"}:${contextKey}:${uid}`;
 }
 
 function valueIsPresent(value: UadFieldValue | undefined) {
-  return value !== null && value !== undefined && value !== "" && (!Array.isArray(value) || value.length > 0);
+  if (value === null || value === undefined || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return value.amount !== null && value.amount !== undefined && Boolean(value.unit);
+  return true;
+}
+
+function evaluateCondition(condition: UadCondition | undefined, lookup: (key: string, uidOnly?: boolean) => UadFieldValue | undefined): boolean {
+  if (!condition) return true;
+  if (condition.all) return condition.all.every((item) => evaluateCondition(item, lookup));
+  if (condition.any) return condition.any.some((item) => evaluateCondition(item, lookup));
+  if (condition.not) return !evaluateCondition(condition.not, lookup);
+  const requestedKey = condition.key || condition.uid;
+  const value = requestedKey ? lookup(requestedKey, !condition.key && Boolean(condition.uid)) : undefined;
+  if (Object.hasOwn(condition, "equals")) return value === condition.equals;
+  if (Object.hasOwn(condition, "notEquals")) return value !== condition.notEquals;
+  if (Object.hasOwn(condition, "greaterThan")) return Number(value) > Number(condition.greaterThan);
+  if (Object.hasOwn(condition, "contains")) return Array.isArray(value) && value.includes(String(condition.contains));
+  if (Object.hasOwn(condition, "present")) return valueIsPresent(value) === condition.present;
+  return true;
 }
 
 export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const [editor, setEditor] = useState<UadEditorResponse | null>(null);
-  const [activeSection, setActiveSection] = useState<"assignment" | "subject">("assignment");
+  const [activeSection, setActiveSection] = useState<UadSectionKey>("assignment");
   const [draft, setDraft] = useState<Record<string, UadFieldValue>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [entityBusy, setEntityBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
@@ -43,7 +69,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     try {
       const response = await getUadEditor(workfileId);
       setEditor(response);
-      setDraft(Object.fromEntries(response.values.map((item) => [fieldValueKey(item.context_key, item.uid), item.value])));
+      setDraft(Object.fromEntries(response.values.map((item) => [fieldValueKey(item.context_key, item.uid, item.entity_id), item.value])));
       setDirty(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The UAD editor could not be loaded.");
@@ -52,9 +78,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     }
   }, [workfileId]);
 
-  useEffect(() => {
-    void loadEditor();
-  }, [loadEditor]);
+  useEffect(() => { void loadEditor(); }, [loadEditor]);
 
   const section = editor?.sections.find((item) => item.key === activeSection);
   const allFields = useMemo(
@@ -62,26 +86,94 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     [editor],
   );
   const savedByKey = useMemo(
-    () => new Map(editor?.values.map((item) => [fieldValueKey(item.context_key, item.uid), item]) || []),
+    () => new Map(editor?.values.map((item) => [fieldValueKey(item.context_key, item.uid, item.entity_id), item]) || []),
     [editor],
   );
 
-  function setValue(field: UadFieldDefinition, value: UadFieldValue) {
-    setDraft((current) => ({ ...current, [field.key]: value }));
+  function draftLookup(entityId: string | null) {
+    return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
+      if (uidOnly) {
+        const dependency = allFields.find((candidate) => candidate.uid === requestedKey);
+        if (!dependency) return undefined;
+        return draft[fieldValueKey(dependency.contextKey, dependency.uid, entityId)]
+          ?? draft[fieldValueKey(dependency.contextKey, dependency.uid)];
+      }
+      const [contextKey, uid] = requestedKey.split(":");
+      return draft[fieldValueKey(contextKey, uid, entityId)] ?? draft[fieldValueKey(contextKey, uid)];
+    };
+  }
+
+  function setValue(field: UadFieldDefinition, entityId: string | null, value: UadFieldValue) {
+    setDraft((current) => ({ ...current, [fieldValueKey(field.contextKey, field.uid, entityId)]: value }));
     setDirty(true);
     setSavedMessage(null);
   }
 
-  function isVisible(field: UadFieldDefinition) {
-    if (!field.showWhen) return true;
-    const dependency = allFields.find((candidate) => candidate.section === field.section && candidate.uid === field.showWhen?.uid);
-    return dependency ? draft[dependency.key] === field.showWhen.equals : true;
+  function isVisible(field: UadFieldDefinition, entityId: string | null = null) {
+    return evaluateCondition(field.showWhen, draftLookup(entityId));
+  }
+
+  function isRequired(field: UadFieldDefinition, entityId: string | null = null) {
+    return Boolean(field.required || (field.requiredWhen && evaluateCondition(field.requiredWhen, draftLookup(entityId))));
+  }
+
+  function entitiesFor(entityType?: string) {
+    return entityType ? editor?.entities.filter((entity) => entity.entity_type === entityType) || [] : [];
+  }
+
+  async function handleEntityAdd(entityType: string) {
+    if (entityBusy) return;
+    if (dirty) {
+      setError("Save this section before adding another repeatable record.");
+      return;
+    }
+    setEntityBusy(true);
+    setError(null);
+    try {
+      await createUadEntity(workfileId, entityType);
+      await loadEditor();
+      setSavedMessage("Record added to the UAD workfile.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The record could not be added.");
+    } finally {
+      setEntityBusy(false);
+    }
+  }
+
+  async function handleEntityDelete(entity: UadEntity) {
+    if (entityBusy) return;
+    if (dirty) {
+      setError("Save this section before removing a repeatable record.");
+      return;
+    }
+    if (!window.confirm(`Remove ${entity.label || "this UAD record"}? Its saved field values will also be removed.`)) return;
+    setEntityBusy(true);
+    setError(null);
+    try {
+      await deleteUadEntity(workfileId, entity.id);
+      await loadEditor();
+      setSavedMessage("Record removed from the UAD workfile and captured in its audit history.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The record could not be removed.");
+    } finally {
+      setEntityBusy(false);
+    }
   }
 
   async function handleSave() {
     if (!section || saving) return;
-    const fields = section.groups.flatMap((group) => group.fields).filter(isVisible);
-    const missing = fields.filter((field) => field.required && !valueIsPresent(draft[field.key]));
+    const submitted: Array<{ uid: string; context_key: string; entity_id?: string | null; value: UadFieldValue }> = [];
+    const missing: string[] = [];
+    for (const group of section.groups) {
+      const instances = group.entityType ? entitiesFor(group.entityType).map((entity) => entity.id) : [null];
+      for (const entityId of instances) {
+        for (const field of group.fields.filter((candidate) => isVisible(candidate, entityId))) {
+          const key = fieldValueKey(field.contextKey, field.uid, entityId);
+          if (isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
+          submitted.push({ uid: field.uid, context_key: field.contextKey, entity_id: entityId, value: draft[key] ?? null });
+        }
+      }
+    }
     if (missing.length) {
       setError(`Complete ${missing.length} required field${missing.length === 1 ? "" : "s"} before saving this section.`);
       return;
@@ -91,15 +183,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     setError(null);
     setSavedMessage(null);
     try {
-      await saveUadSection(
-        workfileId,
-        activeSection,
-        fields.map((field) => ({
-          uid: field.uid,
-          context_key: field.contextKey,
-          value: draft[field.key] ?? null,
-        })),
-      );
+      await saveUadSection(workfileId, activeSection, submitted);
       await loadEditor();
       setSavedMessage(`${section.title} saved and added to the workfile audit history.`);
     } catch (reason) {
@@ -109,24 +193,19 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     }
   }
 
-  function renderControl(field: UadFieldDefinition) {
-    const value = draft[field.key];
+  function renderControl(field: UadFieldDefinition, entityId: string | null) {
+    const key = fieldValueKey(field.contextKey, field.uid, entityId);
+    const value = draft[key];
     if (field.dataType === "boolean") {
       return (
-        <select
-          className={inputClass}
-          onChange={(event) => setValue(field, event.target.value === "" ? null : event.target.value === "true")}
-          value={value === true ? "true" : value === false ? "false" : ""}
-        >
-          <option value="">Select Yes or No</option>
-          <option value="true">Yes</option>
-          <option value="false">No</option>
+        <select className={inputClass} onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : event.target.value === "true")} value={value === true ? "true" : value === false ? "false" : ""}>
+          <option value="">Select Yes or No</option><option value="true">Yes</option><option value="false">No</option>
         </select>
       );
     }
     if (field.dataType === "enum") {
       return (
-        <select className={inputClass} onChange={(event) => setValue(field, event.target.value || null)} value={String(value ?? "")}>
+        <select className={inputClass} onChange={(event) => setValue(field, entityId, event.target.value || null)} value={String(value ?? "")}>
           <option value="">Select an option</option>
           {field.options?.map((option) => <option key={option} value={option}>{displayOption(option)}</option>)}
         </select>
@@ -138,45 +217,68 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {field.options?.map((option) => (
             <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm" key={option}>
-              <input
-                checked={selected.includes(option)}
-                onChange={(event) => setValue(field, event.target.checked ? [...selected, option] : selected.filter((item) => item !== option))}
-                type="checkbox"
-              />
+              <input checked={selected.includes(option)} onChange={(event) => setValue(field, entityId, event.target.checked ? [...selected, option] : selected.filter((item) => item !== option))} type="checkbox" />
               {displayOption(option)}
             </label>
           ))}
         </div>
       );
     }
-    if (field.dataType === "text") {
+    if (field.dataType === "measurement") {
+      const measurement = (typeof value === "object" && !Array.isArray(value) && value ? value : { amount: null, unit: "" }) as UadMeasurement;
       return (
-        <textarea
-          className={`${inputClass} min-h-24`}
-          maxLength={field.maxLength}
-          onChange={(event) => setValue(field, event.target.value)}
-          value={String(value ?? "")}
-        />
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(9rem,0.7fr)] gap-2">
+          <input className={inputClass} min={field.minimum ?? field.minimumExclusive ?? 0} onChange={(event) => setValue(field, entityId, { ...measurement, amount: event.target.value === "" ? null : Number(event.target.value) })} step="any" type="number" value={measurement.amount ?? ""} />
+          <select className={inputClass} onChange={(event) => setValue(field, entityId, { ...measurement, unit: event.target.value })} value={measurement.unit}>
+            <option value="">Unit</option>{field.units?.map((unit) => <option key={unit} value={unit}>{displayOption(unit)}</option>)}
+          </select>
+        </div>
       );
     }
+    if (field.dataType === "text") {
+      return <textarea className={`${inputClass} min-h-24`} maxLength={field.maxLength} onChange={(event) => setValue(field, entityId, event.target.value)} value={String(value ?? "")} />;
+    }
+    const numeric = field.dataType === "integer" || field.dataType === "percentage";
     return (
       <input
         className={inputClass}
+        max={field.maximum ?? (field.dataType === "percentage" ? 100 : undefined)}
         maxLength={field.maxLength}
-        min={field.dataType === "integer" ? 0 : undefined}
-        onChange={(event) => setValue(field, event.target.value === "" ? null : field.dataType === "integer" ? Number(event.target.value) : event.target.value)}
-        type={field.dataType === "integer" ? "number" : field.dataType === "date" ? "date" : "text"}
+        min={field.minimum ?? (numeric ? 0 : undefined)}
+        onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : numeric ? Number(event.target.value) : event.target.value)}
+        type={numeric ? "number" : field.dataType === "date" ? "date" : "text"}
         value={typeof value === "string" || typeof value === "number" ? value : ""}
       />
     );
   }
 
-  if (loading && !editor) {
-    return <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">Loading the UAD workfile editor…</div>;
+  function renderFields(fields: UadFieldDefinition[], entityId: string | null) {
+    return (
+      <div className="mt-2 grid gap-4 md:grid-cols-2">
+        {fields.filter((field) => isVisible(field, entityId)).map((field) => {
+          const key = fieldValueKey(field.contextKey, field.uid, entityId);
+          const saved = savedByKey.get(key);
+          const wide = field.dataType === "text" || Boolean(field.maxLength && field.maxLength > 100);
+          return (
+            <label className={wide ? "md:col-span-2" : ""} key={field.key}>
+              <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800">
+                {field.label}{isRequired(field, entityId) && <span className="text-red-700" title="Required">*</span>}
+              </span>
+              <span className="mt-0.5 block text-[11px] text-slate-500">Report field {field.reportFieldId} · UID {field.uid}</span>
+              {renderControl(field, entityId)}
+              <span className="mt-1 flex min-h-4 items-center gap-2 text-[11px] text-slate-500">
+                {saved && <span className={`rounded-full px-2 py-0.5 ${saved.is_appraiser_confirmed ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"}`}>{saved.is_appraiser_confirmed ? "Appraiser confirmed" : "HomeNode suggestion"}</span>}
+                {field.maxLength && <span>{String(draft[key] ?? "").length}/{field.maxLength}</span>}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    );
   }
-  if (!editor || !section) {
-    return <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">{error || "The UAD editor is unavailable."}</div>;
-  }
+
+  if (loading && !editor) return <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">Loading the UAD workfile editor…</div>;
+  if (!editor || !section) return <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">{error || "The UAD editor is unavailable."}</div>;
 
   return (
     <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
@@ -191,16 +293,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white" aria-label="UAD workfile sections">
+      <nav className="grid grid-cols-3 border-b border-slate-200 bg-white" aria-label="UAD workfile sections">
         {editor.sections.map((item) => {
           const completion = editor.completion[item.key];
           return (
-            <button
-              className={`px-4 py-4 text-left transition ${activeSection === item.key ? "border-b-2 border-emerald-700 bg-emerald-50" : "hover:bg-slate-50"}`}
-              key={item.key}
-              onClick={() => setActiveSection(item.key)}
-              type="button"
-            >
+            <button className={`px-3 py-4 text-left transition ${activeSection === item.key ? "border-b-2 border-emerald-700 bg-emerald-50" : "hover:bg-slate-50"}`} key={item.key} onClick={() => setActiveSection(item.key)} type="button">
               <div className="text-sm font-semibold">Section {item.officialSectionNumber}: {item.title}</div>
               <div className="mt-1 text-xs text-slate-500">{completion.completed} of {completion.required} required · {completion.percent}%</div>
             </button>
@@ -210,51 +307,54 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
 
       <div className="p-4 sm:p-6">
         <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
-          Fields and IDs follow the official UAD 3.6 Appendix A delivery specification and Appendix C URAR layout. HomeNode-prefilled values remain unconfirmed until you save this section.
+          Fields and IDs follow UAD 3.6 Appendix A-1 v1.4 and the Appendix C URAR layout. HomeNode data and automated location evidence remain suggestions until the appraiser saves them.
         </div>
+        {activeSection === "site" && (
+          <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+            Site uses repeatable records for parcels, influences, views, utilities, encumbrances, features, and defects. This same entity model is reserved for future comparable-sales and market-analysis integration.
+          </div>
+        )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
         <div className="space-y-5">
           {section.groups.map((group) => {
-            const visibleFields = group.fields.filter(isVisible);
-            if (!visibleFields.length) return null;
+            if (!group.entityType) {
+              const visibleFields = group.fields.filter((field) => isVisible(field));
+              if (!visibleFields.length) return null;
+              return (
+                <fieldset className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5" key={group.name}>
+                  <legend className="px-2 text-base font-semibold text-slate-900">{group.name}</legend>
+                  {renderFields(visibleFields, null)}
+                </fieldset>
+              );
+            }
+            const entities = entitiesFor(group.entityType);
             return (
               <fieldset className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5" key={group.name}>
                 <legend className="px-2 text-base font-semibold text-slate-900">{group.name}</legend>
-                <div className="mt-2 grid gap-4 md:grid-cols-2">
-                  {visibleFields.map((field) => {
-                    const saved = savedByKey.get(field.key);
-                    const wide = field.dataType === "text" || field.maxLength && field.maxLength > 100;
-                    return (
-                      <label className={wide ? "md:col-span-2" : ""} key={field.key}>
-                        <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800">
-                          {field.label}
-                          {field.required && <span className="text-red-700" title="Required">*</span>}
-                        </span>
-                        <span className="mt-0.5 block text-[11px] text-slate-500">Report field {field.reportFieldId} · UID {field.uid}</span>
-                        {renderControl(field)}
-                        <span className="mt-1 flex min-h-4 items-center gap-2 text-[11px] text-slate-500">
-                          {saved && <span className={`rounded-full px-2 py-0.5 ${saved.is_appraiser_confirmed ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"}`}>{saved.is_appraiser_confirmed ? "Appraiser confirmed" : "HomeNode prefill"}</span>}
-                          {field.maxLength && <span>{String(draft[field.key] ?? "").length}/{field.maxLength}</span>}
-                        </span>
-                      </label>
-                    );
-                  })}
+                <div className="mt-2 space-y-4">
+                  {entities.map((entity) => (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={entity.id}>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold text-slate-900">{entity.label || `${group.name} ${entity.ordinal}`}</div>
+                        <button className="text-xs font-semibold text-red-700 hover:text-red-900 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityDelete(entity)} type="button">Remove</button>
+                      </div>
+                      {renderFields(group.fields, entity.id)}
+                    </div>
+                  ))}
+                  {!entities.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added.</div>}
+                  <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
                 </div>
               </fieldset>
             );
           })}
+          {activeSection === "site" && <UadAssetPanel workfileId={workfileId} />}
         </div>
 
         <div className="sticky bottom-3 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
           <div className="text-xs text-slate-600">{dirty ? "Unsaved changes" : "All displayed changes saved"}</div>
-          <button
-            className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={saving || !dirty}
-            onClick={handleSave}
-            type="button"
-          >
+          <button className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving || !dirty} onClick={handleSave} type="button">
             {saving ? "Saving…" : `Save ${section.title}`}
           </button>
         </div>

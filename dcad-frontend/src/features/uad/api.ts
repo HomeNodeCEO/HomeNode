@@ -1,4 +1,28 @@
-import { fetchJSON, makeUrl } from "@/lib/api";
+import { makeUrl } from "@/lib/api";
+
+async function uadFetchJSON<T = unknown>(input: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), init?.timeoutMs ?? 25_000);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const isJson = (response.headers.get("content-type") || "").includes("application/json");
+    if (!response.ok) {
+      const body = isJson ? await response.json().catch(() => null) as {
+        error?: string;
+        message?: string;
+        details?: Array<{ message?: string }>;
+      } | null : null;
+      const details = body?.details?.map((detail) => detail.message).filter(Boolean) || [];
+      throw new Error(details.length ? details.join(" ") : body?.error || body?.message || `HTTP ${response.status}`);
+    }
+    return (isJson ? response.json() : response.text()) as Promise<T>;
+  } catch (reason) {
+    if (reason instanceof DOMException && reason.name === "AbortError") throw new Error("Request timed out");
+    throw reason;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 export interface UadCapabilities {
   enabled: boolean;
@@ -38,33 +62,68 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadFieldValue = string | number | boolean | string[] | null;
+export type UadSectionKey = "assignment" | "subject" | "site";
+export type UadMeasurement = { amount: number | null; unit: string };
+export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
+
+export interface UadCondition {
+  key?: string;
+  uid?: string;
+  equals?: UadFieldValue;
+  notEquals?: UadFieldValue;
+  greaterThan?: number;
+  contains?: string;
+  present?: boolean;
+  all?: UadCondition[];
+  any?: UadCondition[];
+  not?: UadCondition;
+}
 
 export interface UadFieldDefinition {
   key: string;
-  section: "assignment" | "subject";
+  section: UadSectionKey;
   group: string;
   contextKey: string;
   uid: string;
   reportFieldId: string;
   label: string;
-  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "date" | "state" | "postal_code";
+  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "measurement" | "date" | "state" | "postal_code";
+  entityType?: string;
   required?: boolean;
   maxLength?: number;
   options?: string[];
-  showWhen?: { uid: string; equals: UadFieldValue };
+  units?: string[];
+  minimum?: number;
+  maximum?: number;
+  minimumExclusive?: number;
+  showWhen?: UadCondition;
+  requiredWhen?: UadCondition;
   ordinal: number;
 }
 
 export interface UadEditorSection {
-  key: "assignment" | "subject";
+  key: UadSectionKey;
   title: string;
   officialSectionNumber: number;
-  groups: Array<{ name: string; fields: UadFieldDefinition[] }>;
+  groups: Array<{ name: string; fields: UadFieldDefinition[]; entityType?: string; addLabel?: string; minItems?: number }>;
+}
+
+export interface UadEntity {
+  id: string;
+  workfile_id: string;
+  parent_entity_id: string | null;
+  entity_type: string;
+  entity_identifier: string;
+  ordinal: number;
+  label: string | null;
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface UadSavedFieldValue {
   id: string;
+  entity_id: string | null;
   uid: string;
   context_key: string;
   report_field_id: string;
@@ -86,23 +145,41 @@ export interface UadSectionCompletion {
 export interface UadEditorResponse {
   workfile: Pick<UadWorkfile, "id" | "account_id" | "file_number" | "specification_release_key" | "status" | "current_revision" | "updated_at">;
   sections: UadEditorSection[];
+  entities: UadEntity[];
   values: UadSavedFieldValue[];
-  completion: Record<"assignment" | "subject", UadSectionCompletion>;
+  completion: Record<UadSectionKey, UadSectionCompletion>;
+}
+
+export interface UadAsset {
+  id: string;
+  entity_id: string | null;
+  asset_kind: string;
+  section_number: number | null;
+  caption_type: string | null;
+  caption: string | null;
+  original_file_name: string | null;
+  content_type: string;
+  byte_size: number | null;
+  status: string;
+  capture_metadata: Record<string, unknown>;
+  uploaded_at: string | null;
+  verified_at: string | null;
+  created_at: string;
 }
 
 export async function getUadCapabilities(): Promise<UadCapabilities> {
-  return fetchJSON<UadCapabilities>(makeUrl("/api/uad/capabilities"), { timeoutMs: 10_000 });
+  return uadFetchJSON<UadCapabilities>(makeUrl("/api/uad/capabilities"), { timeoutMs: 10_000 });
 }
 
 export async function getUadSubjectSummary(accountId: string): Promise<UadSubjectSummary> {
-  const response = await fetchJSON<{ subject: UadSubjectSummary }>(
+  const response = await uadFetchJSON<{ subject: UadSubjectSummary }>(
     makeUrl(`/api/uad/accounts/${encodeURIComponent(accountId)}/subject-summary`),
   );
   return response.subject;
 }
 
 export async function listUadWorkfiles(accountId: string): Promise<UadWorkfile[]> {
-  const response = await fetchJSON<{ workfiles: UadWorkfile[] }>(
+  const response = await uadFetchJSON<{ workfiles: UadWorkfile[] }>(
     makeUrl(`/api/uad/accounts/${encodeURIComponent(accountId)}/workfiles`),
   );
   return response.workfiles || [];
@@ -112,7 +189,7 @@ export async function createUadWorkfile(
   accountId: string,
   input: { file_number?: string; assignment_purpose?: string } = {},
 ): Promise<UadWorkfile> {
-  const response = await fetchJSON<{ workfile: UadWorkfile }>(
+  const response = await uadFetchJSON<{ workfile: UadWorkfile }>(
     makeUrl(`/api/uad/accounts/${encodeURIComponent(accountId)}/workfiles`),
     {
       method: "POST",
@@ -124,17 +201,81 @@ export async function createUadWorkfile(
 }
 
 export async function getUadEditor(workfileId: string): Promise<UadEditorResponse> {
-  return fetchJSON<UadEditorResponse>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/editor`));
+  return uadFetchJSON<UadEditorResponse>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/editor`));
 }
 
 export async function saveUadSection(
   workfileId: string,
-  section: "assignment" | "subject",
-  values: Array<{ uid: string; context_key: string; value: UadFieldValue }>,
+  section: UadSectionKey,
+  values: Array<{ uid: string; context_key: string; entity_id?: string | null; value: UadFieldValue }>,
 ): Promise<void> {
-  await fetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
+  await uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ values }),
   });
+}
+
+export async function createUadEntity(workfileId: string, entityType: string): Promise<UadEntity> {
+  const response = await uadFetchJSON<{ entity: UadEntity }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/entities`), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ entity_type: entityType }),
+  });
+  return response.entity;
+}
+
+export async function deleteUadEntity(workfileId: string, entityId: string): Promise<void> {
+  await uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/entities/${encodeURIComponent(entityId)}`), { method: "DELETE" });
+}
+
+export async function listUadAssets(workfileId: string): Promise<UadAsset[]> {
+  const response = await uadFetchJSON<{ assets: UadAsset[] }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/assets`));
+  return response.assets || [];
+}
+
+export async function uploadUadAsset(
+  workfileId: string,
+  file: File,
+  input: { asset_kind: string; section_number: number; caption_type?: string; caption?: string },
+): Promise<UadAsset> {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  const inferredContentType: Record<string, string> = {
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+    heic: "image/heic", heif: "image/heif", svg: "image/svg+xml", pdf: "application/pdf", json: "application/json",
+  };
+  const contentType = file.type || inferredContentType[extension || ""];
+  if (!contentType) throw new Error("This file type is not supported for UAD storage.");
+  const created = await uadFetchJSON<{
+    asset_id: string;
+    upload: { method: string; url: string; headers: Record<string, string> };
+  }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/assets/upload-url`), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...input,
+      file_name: file.name,
+      content_type: contentType,
+      byte_size: file.size,
+      capture_metadata: { source: "homenode_web" },
+    }),
+  });
+  const uploaded = await fetch(created.upload.url, {
+    method: created.upload.method,
+    headers: { ...created.upload.headers, "content-type": contentType },
+    body: file,
+  });
+  if (!uploaded.ok) throw new Error(`The file could not be uploaded to secure storage (${uploaded.status}).`);
+  const verified = await uadFetchJSON<{ asset: UadAsset }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/assets/${encodeURIComponent(created.asset_id)}/verify`),
+    { method: "POST" },
+  );
+  return verified.asset;
+}
+
+export async function getUadSharedData(workfileId: string): Promise<{
+  suggestions: { site_fields: unknown[]; site_entities: unknown[] };
+  adapters: Record<string, { ready: boolean; mode: string; enabled_in_uad_editor: boolean }>;
+}> {
+  return uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/shared-data`));
 }

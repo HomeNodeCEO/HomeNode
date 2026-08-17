@@ -32,6 +32,30 @@ for every edit.
 The UAD API is off by default. Apply the migration and set
 `UAD_WORKSPACE_ENABLED=true` only in the target environment after validation.
 
+## Current editor scope
+
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 4:
+
+- Assignment Information and Subject Property use isolated, context-aware UIDs.
+- Site includes conditional zoning, mixed-use, access, utility, and defect
+  questions plus repeatable parcels, influences, views, encumbrances, site
+  features, utilities, and defects.
+- Cross-record rules enforce parcel-count consistency and agreement between the
+  site-defect indicator and defect records.
+- All HomeNode-prefilled or automated values retain source provenance and stay
+  unconfirmed until the appraiser saves them.
+
+The Site migration expands the generic `appraisal.uad_entities` model rather
+than creating one table per report grid. The same model supports the later
+sales, rental, land, GRM, and analyzed-not-used comparable sections.
+
+`GET /api/uad/workfiles/:id/shared-data` is the compatibility boundary with
+the existing HomeNode services. It reads stored property context, official
+zoning evidence, location influences, and neighborhood boundaries without
+running a new analysis or changing a Custom Appraisal. Comparable search,
+market conditions, and neighborhood automation remain disabled in the UAD UI
+until their corresponding URAR sections and appraiser-review flow are ready.
+
 ## Staging strategy
 
 The first staging gate is the `UAD foundation` GitHub Actions workflow. It
@@ -51,6 +75,13 @@ Cloudflare R2 is the initial private object store. The Node API issues a
 short-lived, single-object presigned `PUT` URL. A mobile client uploads directly
 to R2 with the required content type and then asks the API to verify the object.
 R2 credentials are never sent to the mobile client.
+
+The web editor now uses the same upload contract planned for mobile: request a
+URL, upload directly, then verify. Uploads are limited to 50 MiB, must match the
+requested byte size and content type, and are rejected if object-store
+verification does not match. Official Site image categories include property
+access, property photo, influence, view, boundary, encroachment, waterfront,
+and site exhibit.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

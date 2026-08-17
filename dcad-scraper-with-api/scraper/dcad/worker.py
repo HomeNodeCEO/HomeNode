@@ -51,6 +51,16 @@ def fields_still_missing(
     )
 
 
+def state_codes_describe_vacant_land(state_codes: list[object]) -> bool:
+    """Return true when every usable CAD state code describes vacant land."""
+    normalized = [
+        str(value).strip().upper()
+        for value in state_codes
+        if value is not None and str(value).strip()
+    ]
+    return bool(normalized) and all("VACANT" in value for value in normalized)
+
+
 @dataclass(frozen=True)
 class WorkerConfig:
     data_schema: str
@@ -193,6 +203,7 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
             "012_dcad_market_value_rechecks.sql",
             "016_dcad_owner_recovery_queue.sql",
             "017_dcad_field_repair_queue.sql",
+            "018_vacant_land_gla_not_applicable.sql",
         ):
             migration = migration_root / migration_name
             conn.execute(text(migration.read_text(encoding="utf-8")))
@@ -554,6 +565,20 @@ def queue_missing_fields_after_success(
                                WHERE account_id = :account_id
                                  AND living_area_sqft IS NOT NULL
                                  AND living_area_sqft > 0
+                           ) AND NOT (
+                               EXISTS (
+                                   SELECT 1
+                                   FROM "{config.data_schema}"."land_detail"
+                                   WHERE account_id = :account_id
+                                     AND upper(state_code) LIKE '%VACANT%'
+                               )
+                               AND NOT EXISTS (
+                                   SELECT 1
+                                   FROM "{config.data_schema}"."land_detail"
+                                   WHERE account_id = :account_id
+                                     AND NULLIF(btrim(state_code), '') IS NOT NULL
+                                     AND upper(state_code) NOT LIKE '%VACANT%'
+                               )
                            ) THEN 'gla' END
                        ], NULL)::text[] AS fields
             )
@@ -759,6 +784,7 @@ def record_market_value_assessment(
         "quality_flags": "{" + ",".join(quality_flags) + "}",
     }
     with engine.begin() as conn:
+        queue_missing_fields_after_success(conn, config, account_id)
         conn.execute(
             text(
                 f"""
@@ -1248,7 +1274,12 @@ def missing_required_fields(
                            WHERE account_id = :account_id
                              AND living_area_sqft IS NOT NULL
                              AND living_area_sqft > 0
-                       ) AS gla_present
+                       ) AS gla_present,
+                       ARRAY(
+                           SELECT state_code
+                           FROM "{config.data_schema}"."land_detail"
+                           WHERE account_id = :account_id
+                       ) AS state_codes
                 """
             ),
             {"account_id": account_id},
@@ -1256,7 +1287,8 @@ def missing_required_fields(
     presence = {
         "owner": bool(row["owner_present"]),
         "land": bool(row["land_present"]),
-        "gla": bool(row["gla_present"]),
+        "gla": bool(row["gla_present"])
+        or state_codes_describe_vacant_land(list(row["state_codes"] or ())),
     }
     return fields_still_missing(requested_fields, presence)
 

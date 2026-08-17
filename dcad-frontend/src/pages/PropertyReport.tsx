@@ -14,6 +14,7 @@ import {
   getCensusCityProfile,
   getCensusZipProfile,
   getNeighborhoodProfile,
+  getNeighborhoodBoundary,
   generateNeighborhoodBoundary as runNeighborhoodBoundaryGeneration,
   generateNeighborhoodRelevance as runNeighborhoodRelevanceGeneration,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
@@ -68,6 +69,7 @@ import {
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
 import { UAD_CONDITION_RATINGS } from "@/lib/conditionQualityRatings";
+import type { MarketAreaOrigin } from "@/lib/marketAreaGeometry";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 import DeferredReportSection from "@/components/DeferredReportSection";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
@@ -947,6 +949,7 @@ function NeighborhoodCharacteristicsContent({
   const [relevanceLoading, setRelevanceLoading] = useState(false);
   const [relevanceMessage, setRelevanceMessage] = useState("");
   const automaticLandUseFingerprintRef = useRef("");
+  const automaticBoundaryAttemptRef = useRef("");
   const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
@@ -1216,6 +1219,69 @@ function NeighborhoodCharacteristicsContent({
       .join("; "));
   };
 
+  const applyGeneratedBoundary = useCallback((
+    result: NeighborhoodBoundaryAssessment,
+    options: { overwriteGeometry: boolean; message: string },
+  ) => {
+    const cardinal = result.evidence.roads?.cardinal_boundaries;
+    onBoundarySuggestionsChange(
+      (cardinal || null) as NonNullable<
+        NeighborhoodProfileResponse["boundary_streets"]
+      >["cardinal_boundaries"] | null,
+    );
+    setGeneratedBoundary(result);
+    setGeneratedBoundaryMessage(options.message);
+    if (!options.overwriteGeometry) return;
+
+    const north = cardinal?.north?.primary_street || "";
+    const east = cardinal?.east?.primary_street || "";
+    const south = cardinal?.south?.primary_street || "";
+    const west = cardinal?.west?.primary_street || "";
+    const streetSummary = [
+      ["North", north],
+      ["East", east],
+      ["South", south],
+      ["West", west],
+    ].filter(([, street]) => street)
+      .map(([side, street]) => `${side}: ${street}`)
+      .join("; ");
+    onAssignmentChange("neighborhood_boundary_geometry", result.boundary);
+    onAssignmentChange("neighborhood_boundary_label", "Automatically generated broad neighborhood");
+    onAssignmentChange(
+      "neighborhood_boundary_source",
+      `neighborhood_boundary_engine_v${result.methodology_version}`,
+    );
+    onAssignmentChange("neighborhood_boundary_saved_at", result.generated_at);
+    onAssignmentChange("neighborhood_boundary_streets", streetSummary);
+    onAssignmentChange("neighborhood_boundary_north", north);
+    onAssignmentChange("neighborhood_boundary_east", east);
+    onAssignmentChange("neighborhood_boundary_south", south);
+    onAssignmentChange("neighborhood_boundary_west", west);
+    onAssignmentChange("neighborhood_boundary_streets_source", result.evidence.roads?.source || "");
+    onAssignmentChange("neighborhood_boundary_streets_retrieved_at", result.evidence.roads?.retrieved_at || "");
+    onAssignmentChange("neighborhood_boundary_confirmed", false);
+    onAssignmentChange("neighborhood_boundary_confirmed_at", "");
+    onAssignmentChange("neighborhood_boundary_engine_assessment_id", result.id);
+    onAssignmentChange(
+      "neighborhood_boundary_engine_assignment_file_id",
+      result.assignment_file_id ?? "",
+    );
+    onAssignmentChange("neighborhood_boundary_engine_methodology_version", result.methodology_version);
+    onAssignmentChange("neighborhood_boundary_engine_confidence", result.confidence);
+    onAssignmentChange("neighborhood_boundary_engine_disclosure", result.evidence.disclosure || "");
+    onAssignmentChange("neighborhood_boundary_engine_warnings", result.evidence.warnings || []);
+    onAssignmentChange("neighborhood_relevance_assessment_id", "");
+    onAssignmentChange("neighborhood_relevance_methodology_version", "");
+    onAssignmentChange("neighborhood_relevance_confidence", "");
+    onAssignmentChange("neighborhood_relevance_candidate_count", "");
+    onAssignmentChange("neighborhood_relevance_included_count", "");
+    onAssignmentChange("neighborhood_relevance_excluded_count", "");
+    onAssignmentChange("neighborhood_relevance_insufficient_data_count", "");
+    onAssignmentChange("neighborhood_relevance_generated_at", "");
+    setRelevanceAssessment(null);
+    setRelevanceMessage("");
+  }, [onAssignmentChange, onBoundarySuggestionsChange]);
+
   const generateSuggestedBoundary = async () => {
     if (!accountId || generatedBoundaryLoading) return;
     setGeneratedBoundaryLoading(true);
@@ -1224,60 +1290,16 @@ function NeighborhoodCharacteristicsContent({
       const result = await runNeighborhoodBoundaryGeneration(accountId, {
         assignmentFileId: assignmentFileId || null,
       });
-      const cardinal = result.evidence.roads?.cardinal_boundaries;
-      onBoundarySuggestionsChange(cardinal || null);
-      const north = cardinal?.north?.primary_street || "";
-      const east = cardinal?.east?.primary_street || "";
-      const south = cardinal?.south?.primary_street || "";
-      const west = cardinal?.west?.primary_street || "";
-      const streetSummary = [
-        ["North", north],
-        ["East", east],
-        ["South", south],
-        ["West", west],
-      ].filter(([, street]) => street)
-        .map(([side, street]) => `${side}: ${street}`)
-        .join("; ");
-      onAssignmentChange("neighborhood_boundary_geometry", result.boundary);
-      onAssignmentChange("neighborhood_boundary_label", "Automatically generated broad neighborhood");
-      onAssignmentChange(
-        "neighborhood_boundary_source",
-        `neighborhood_boundary_engine_v${result.methodology_version}`,
-      );
-      onAssignmentChange("neighborhood_boundary_saved_at", result.generated_at);
-      onAssignmentChange("neighborhood_boundary_streets", streetSummary);
-      onAssignmentChange("neighborhood_boundary_north", north);
-      onAssignmentChange("neighborhood_boundary_east", east);
-      onAssignmentChange("neighborhood_boundary_south", south);
-      onAssignmentChange("neighborhood_boundary_west", west);
-      onAssignmentChange("neighborhood_boundary_streets_source", result.evidence.roads?.source || "");
-      onAssignmentChange("neighborhood_boundary_streets_retrieved_at", result.evidence.roads?.retrieved_at || "");
-      onAssignmentChange("neighborhood_boundary_confirmed", false);
-      onAssignmentChange("neighborhood_boundary_confirmed_at", "");
-      onAssignmentChange("neighborhood_boundary_engine_assessment_id", result.id);
-      onAssignmentChange(
-        "neighborhood_boundary_engine_assignment_file_id",
-        result.assignment_file_id ?? "",
-      );
-      onAssignmentChange("neighborhood_boundary_engine_methodology_version", result.methodology_version);
-      onAssignmentChange("neighborhood_boundary_engine_confidence", result.confidence);
-      onAssignmentChange("neighborhood_boundary_engine_disclosure", result.evidence.disclosure || "");
-      onAssignmentChange("neighborhood_boundary_engine_warnings", result.evidence.warnings || []);
-      onAssignmentChange("neighborhood_relevance_assessment_id", "");
-      onAssignmentChange("neighborhood_relevance_methodology_version", "");
-      onAssignmentChange("neighborhood_relevance_confidence", "");
-      onAssignmentChange("neighborhood_relevance_candidate_count", "");
-      onAssignmentChange("neighborhood_relevance_included_count", "");
-      onAssignmentChange("neighborhood_relevance_excluded_count", "");
-      onAssignmentChange("neighborhood_relevance_insufficient_data_count", "");
-      onAssignmentChange("neighborhood_relevance_generated_at", "");
-      setRelevanceAssessment(null);
-      setRelevanceMessage("");
-      setGeneratedBoundary(result);
       const discovery = result.evidence.discovery;
-      setGeneratedBoundaryMessage(
-        `Suggested boundary generated from ${Number(discovery?.candidate_count || 0).toLocaleString()} parcels inside the ${discovery?.profile_label || result.search_profile} discovery area. Review and confirm it for this appraisal file.`,
-      );
+      const source = String(assignmentDraft.neighborhood_boundary_source || "").toLowerCase();
+      const hasAppraiserGeometry = Boolean(assignmentDraft.neighborhood_boundary_geometry) &&
+        !/^neighborhood_boundary_engine_v\d+$/i.test(source);
+      applyGeneratedBoundary(result, {
+        overwriteGeometry: !hasAppraiserGeometry,
+        message: hasAppraiserGeometry
+          ? "A new suggested boundary is ready. The appraiser-defined area was preserved; use Reset to Suggested Area on the map to adopt it."
+          : `Suggested boundary generated from ${Number(discovery?.candidate_count || 0).toLocaleString()} parcels inside the ${discovery?.profile_label || result.search_profile} discovery area. It was loaded into the editable Appraiser-Defined Area for review.`,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Neighborhood boundary generation failed.";
       setGeneratedBoundaryMessage(
@@ -1289,6 +1311,153 @@ function NeighborhoodCharacteristicsContent({
       setGeneratedBoundaryLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!accountId) return;
+    const attemptSignature = `${accountId}:${assignmentFileId || "property"}`;
+    if (automaticBoundaryAttemptRef.current === attemptSignature) return;
+    automaticBoundaryAttemptRef.current = attemptSignature;
+    let cancelled = false;
+    const savedCustomGeometry = marketConditionsDraft?.response.analyses.find(
+      (analysis) => analysis.market.key === "custom",
+    )?.market.custom_geometry || null;
+    const currentGeometry = assignmentDraft.neighborhood_boundary_geometry ||
+      savedCustomGeometry;
+    const currentSource = String(
+      assignmentDraft.neighborhood_boundary_source ||
+        (savedCustomGeometry ? "sales_comparison_market_conditions" : ""),
+    ).toLowerCase();
+    const appraiserCleared = currentSource.includes("cleared");
+    const appraiserAreaPresent = Boolean(currentGeometry) &&
+      !/^neighborhood_boundary_engine_v\d+$/i.test(currentSource);
+
+    setGeneratedBoundaryLoading(true);
+    setGeneratedBoundaryMessage(
+      currentGeometry
+        ? "Loading the saved neighborhood suggestion for comparison..."
+        : "Loading the automatically suggested neighborhood area...",
+    );
+    void (async () => {
+      try {
+        let result = await getNeighborhoodBoundary(
+          accountId,
+          assignmentFileId || null,
+        );
+        if (!result && !appraiserCleared) {
+          result = await runNeighborhoodBoundaryGeneration(accountId, {
+            assignmentFileId: assignmentFileId || null,
+          });
+        }
+        if (cancelled) return;
+        if (!result) {
+          setGeneratedBoundaryMessage(
+            appraiserCleared
+              ? "The appraiser-defined area is intentionally cleared. Use Generate Suggested Boundary when a new suggestion is wanted."
+              : "No saved neighborhood suggestion is available yet.",
+          );
+          return;
+        }
+        const discovery = result.evidence.discovery;
+        applyGeneratedBoundary(result, {
+          overwriteGeometry: !currentGeometry && !appraiserCleared,
+          message: appraiserAreaPresent
+            ? "The saved automatic suggestion is available for comparison. The appraiser-defined area remains unchanged."
+            : appraiserCleared
+              ? "The saved automatic suggestion is available, but the appraiser-cleared area remains empty until Reset to Suggested Area is selected."
+              : `The suggested neighborhood loaded automatically from ${Number(discovery?.candidate_count || 0).toLocaleString()} candidate parcels and is ready for appraisal review.`,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error
+            ? error.message
+            : "The automatic neighborhood suggestion could not be loaded.";
+          setGeneratedBoundaryMessage(
+            /subject_parcel_geometry_unavailable/i.test(message)
+              ? "A saved parcel geometry is required before the automatic neighborhood area can load. Manual drawing remains available."
+              : message,
+          );
+        }
+      } finally {
+        if (!cancelled) setGeneratedBoundaryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    accountId,
+    applyGeneratedBoundary,
+    assignmentDraft.neighborhood_boundary_geometry,
+    assignmentDraft.neighborhood_boundary_source,
+    assignmentFileId,
+    marketConditionsDraft,
+  ]);
+
+  const handleCustomGeometryChange = useCallback((
+    geometry: AssignmentDetails["neighborhood_boundary_geometry"],
+    origin: MarketAreaOrigin,
+  ) => {
+    if (origin === "automatic" && generatedBoundary) {
+      applyGeneratedBoundary(generatedBoundary, {
+        overwriteGeometry: true,
+        message: "The automatically suggested neighborhood was restored and is ready for appraisal review.",
+      });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    onAssignmentChange("neighborhood_boundary_geometry", geometry);
+    onAssignmentChange(
+      "neighborhood_boundary_label",
+      origin === "cleared"
+        ? "Appraiser-defined market area cleared"
+        : "Appraiser-edited market area",
+    );
+    onAssignmentChange(
+      "neighborhood_boundary_source",
+      origin === "cleared"
+        ? "appraiser_defined_area_cleared"
+        : "appraiser_defined_area_manual_v1",
+    );
+    onAssignmentChange("neighborhood_boundary_saved_at", now);
+    onAssignmentChange("neighborhood_boundary_confirmed", false);
+    onAssignmentChange("neighborhood_boundary_confirmed_at", "");
+    onAssignmentChange("neighborhood_boundary_streets", "");
+    onAssignmentChange("neighborhood_boundary_north", "");
+    onAssignmentChange("neighborhood_boundary_east", "");
+    onAssignmentChange("neighborhood_boundary_south", "");
+    onAssignmentChange("neighborhood_boundary_west", "");
+    onAssignmentChange("neighborhood_boundary_streets_source", "");
+    onAssignmentChange("neighborhood_boundary_streets_retrieved_at", "");
+    onAssignmentChange("neighborhood_land_use_boundary_signature", "");
+    onAssignmentChange("neighborhood_boundary_engine_assessment_id", "");
+    onAssignmentChange("neighborhood_boundary_engine_assignment_file_id", "");
+    onAssignmentChange("neighborhood_boundary_engine_methodology_version", "");
+    onAssignmentChange("neighborhood_boundary_engine_confidence", "");
+    onAssignmentChange("neighborhood_boundary_engine_disclosure", "");
+    onAssignmentChange("neighborhood_boundary_engine_warnings", []);
+    onAssignmentChange("neighborhood_relevance_assessment_id", "");
+    onAssignmentChange("neighborhood_relevance_methodology_version", "");
+    onAssignmentChange("neighborhood_relevance_confidence", "");
+    onAssignmentChange("neighborhood_relevance_candidate_count", "");
+    onAssignmentChange("neighborhood_relevance_included_count", "");
+    onAssignmentChange("neighborhood_relevance_excluded_count", "");
+    onAssignmentChange("neighborhood_relevance_insufficient_data_count", "");
+    onAssignmentChange("neighborhood_relevance_generated_at", "");
+    onBoundarySuggestionsChange(null);
+    setRelevanceAssessment(null);
+    setRelevanceMessage("");
+    setGeneratedBoundaryMessage(
+      origin === "cleared"
+        ? "The automatic suggestion remains available, but the area will stay cleared until Reset to Suggested Area is selected."
+        : "Appraiser edit recorded in this assignment draft. Refresh Area Data to calculate road labels and neighborhood statistics for the revised polygon.",
+    );
+  }, [
+    applyGeneratedBoundary,
+    generatedBoundary,
+    onAssignmentChange,
+    onBoundarySuggestionsChange,
+  ]);
 
   const analyzeRelevantPropertyDataset = async () => {
     if (!accountId || relevanceLoading) return;
@@ -1819,7 +1988,7 @@ function NeighborhoodCharacteristicsContent({
             <p className="mt-0.5 text-xs text-slate-600">
               {assignmentDraft.neighborhood_boundary_geometry
                 ? `${assignmentDraft.neighborhood_boundary_label || "Appraiser-defined market area"} · ${Math.max(boundaryRing.length - 1, 0)} boundary vertices`
-                : "No appraiser-defined boundary has been imported."}
+                : "The automatic neighborhood suggestion is loading; manual drawing remains available if needed."}
             </p>
             {assignmentDraft.neighborhood_boundary_saved_at ? (
               <p className="mt-0.5 text-[10px] text-slate-500">Market study saved {formatDate(assignmentDraft.neighborhood_boundary_saved_at)}</p>
@@ -1832,7 +2001,7 @@ function NeighborhoodCharacteristicsContent({
               onClick={() => void generateSuggestedBoundary()}
               disabled={!accountId || generatedBoundaryLoading}
             >
-              {generatedBoundaryLoading ? "Generating..." : "Generate Suggested Boundary"}
+              {generatedBoundaryLoading ? "Loading..." : "Regenerate Suggested Boundary"}
             </button>
             <button
               type="button"
@@ -1984,6 +2153,10 @@ function NeighborhoodCharacteristicsContent({
             key={`property-report-market-conditions-${accountId}`}
             subjectAccountId={accountId}
             onCompletionChange={onMarketConditionsChange}
+            initialCustomGeometry={assignmentDraft.neighborhood_boundary_geometry}
+            initialCustomGeometrySource={assignmentDraft.neighborhood_boundary_source}
+            suggestedCustomGeometry={generatedBoundary?.boundary || null}
+            onCustomGeometryChange={handleCustomGeometryChange}
             embedded
           />
         </section>
@@ -3908,9 +4081,16 @@ function AddressHero({
   useEffect(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
     if (!geometry || assignmentFilesLoading || !assignmentFilesLoaded) return;
-    if (/^neighborhood_boundary_engine_v\d+$/i.test(
-      String(assignmentDraft.neighborhood_boundary_source || ""),
-    )) return;
+    const boundarySource = String(
+      assignmentDraft.neighborhood_boundary_source || "",
+    ).toLowerCase();
+    if (
+      /^neighborhood_boundary_engine_v\d+$/i.test(boundarySource) ||
+      boundarySource.includes("appraiser") ||
+      boundarySource.includes("sales_comparison_market_conditions") ||
+      boundarySource.includes("cleared") ||
+      assignmentDraft.neighborhood_boundary_geometry
+    ) return;
     if (JSON.stringify(assignmentDraft.neighborhood_boundary_geometry) === JSON.stringify(geometry)) return;
     importCustomMarketArea();
   }, [

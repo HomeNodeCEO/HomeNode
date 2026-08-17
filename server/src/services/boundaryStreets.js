@@ -13,6 +13,7 @@ const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const REPORT_CORRIDOR_ALIASES = new Map([
   ["west|N JUPITER RD", "S Jupiter Rd"],
+  ["east|N HAMPTON RD", "S Hampton Rd"],
 ]);
 const cache = new Map();
 

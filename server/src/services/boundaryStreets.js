@@ -416,6 +416,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           traffic_weighted_length: 0,
           length: 0,
           min_edge_distance_meters: Number.POSITIVE_INFINITY,
+          closest_signed_edge_distance_meters: null,
           min_center_distance_meters: Number.POSITIVE_INFINITY,
           source_date: feature?.attributes?.SOURCE_DATE || null,
           source_names: new Set(),
@@ -425,10 +426,17 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         current.max_aadt = Math.max(current.max_aadt, aadt);
         current.traffic_weighted_length += aadt * length;
         current.length += length;
+        const absoluteEdgeDistance = Math.abs(signedEdgeDistance);
         current.min_edge_distance_meters = Math.min(
           current.min_edge_distance_meters,
-          Math.max(0, signedEdgeDistance),
+          absoluteEdgeDistance,
         );
+        if (
+          current.closest_signed_edge_distance_meters === null ||
+          absoluteEdgeDistance < Math.abs(current.closest_signed_edge_distance_meters)
+        ) {
+          current.closest_signed_edge_distance_meters = signedEdgeDistance;
+        }
         current.min_center_distance_meters = Math.min(
           current.min_center_distance_meters,
           centerDistance,
@@ -473,6 +481,12 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         source_route_names: [...group.source_route_names].sort(),
         distance_to_analysis_center_miles: Number((group.min_center_distance_meters / 1609.344).toFixed(2)),
         distance_to_analysis_edge_miles: Number((group.min_edge_distance_meters / 1609.344).toFixed(2)),
+        signed_distance_to_analysis_edge_miles: Number(
+          ((group.closest_signed_edge_distance_meters || 0) / 1609.344).toFixed(2),
+        ),
+        analysis_edge_relation: (group.closest_signed_edge_distance_meters || 0) >= 0
+          ? "outside"
+          : "inside",
         source_date: group.source_date,
       };
     }).sort((left, right) =>

@@ -2,6 +2,9 @@
 import { useEffect, useRef, useState } from "react";
 import * as api from "@/lib/api"; // we'll safely probe for functions at runtime
 import SalesReconciliationQueue from "@/components/SalesReconciliationQueue";
+import ReportTypeChooser, {
+  type ReportTypeChooserSubject,
+} from "@/components/ReportTypeChooser";
 
 // MOOLAH_ADD_MV_TYPE_AND_FMT
 type ApiSearchRow = {
@@ -135,6 +138,7 @@ export default function PropertySearchPage() {
   const [results, setResults] = useState<SearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [selectedReportSubject, setSelectedReportSubject] = useState<ReportTypeChooserSubject | null>(null);
   const searchRequestRef = useRef(0);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -201,9 +205,18 @@ export default function PropertySearchPage() {
       ? (/^[0-9A-Za-z]{17}$/.test(query) ? items[0] : (exactFromApi || exactByAddress))
       : undefined;
 
-    if (exact) {
-      window.location.assign(`/report/${encodeURIComponent(exact.id)}`);
-    }
+    if (exact) openReportChooser(exact);
+  }
+
+  function openReportChooser(item: SearchItem) {
+    setSelectedReportSubject({
+      accountId: item.id,
+      address: api.formatSearchTileAddress(
+        item.raw?.address || item.raw?.situs_address || item.title,
+        item.raw?.city,
+      ),
+      ownerName: item.raw?.owner || null,
+    });
   }
 
   // A short debounce keeps autocomplete responsive without applying stale
@@ -310,7 +323,13 @@ export default function PropertySearchPage() {
               <a
                 key={r.id}
                 href={`/report/${encodeURIComponent(r.id)}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  openReportChooser(r);
+                }}
                 style={{
+                  width: "100%",
+                  textAlign: "left",
                   textDecoration: "none",
                   color: "inherit",
                   border: "1px solid #e5e7eb",
@@ -318,6 +337,8 @@ export default function PropertySearchPage() {
                   padding: 12,
                   display: "grid",
                   gap: 6,
+                  background: "white",
+                  cursor: "pointer",
                 }}
               >
                 {/* Address (primary) */}
@@ -385,6 +406,9 @@ export default function PropertySearchPage() {
                 <div style={{ fontSize: 12, opacity: 0.6 }}>
                   Market Value: {mvDisplay}
                 </div>
+                <div style={{ marginTop: 4, fontSize: 12, fontWeight: 600, color: "#1d4ed8" }}>
+                  Choose report type
+                </div>
               </a>
             );
           })}
@@ -397,6 +421,11 @@ export default function PropertySearchPage() {
       )}
 
       <SalesReconciliationQueue />
+
+      <ReportTypeChooser
+        subject={selectedReportSubject}
+        onClose={() => setSelectedReportSubject(null)}
+      />
 
       <style>{`
         .input {

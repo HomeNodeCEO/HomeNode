@@ -176,6 +176,32 @@ export function neighborhoodLandUseTotal(details?: AssignmentDetailsPayload | nu
   return values.reduce<number>((sum, value) => sum + (value || 0), 0);
 }
 
+export function hasSavedNeighborhoodLandUseProfile(
+  details?: AssignmentDetailsPayload | null,
+): boolean {
+  if (!isNeighborhoodBoundary(details?.neighborhood_boundary_geometry)) return false;
+
+  const total = neighborhoodLandUseTotal(details);
+  const parcelCount = numericValue(details?.neighborhood_land_use_parcel_count);
+  const propertyCount = numericValue(details?.neighborhood_all_property_count);
+  const signature = String(details?.neighborhood_land_use_boundary_signature || '').trim();
+  const analyzedAt = Date.parse(String(details?.neighborhood_land_use_analyzed_at || ''));
+  const boundarySavedAt = Date.parse(String(details?.neighborhood_boundary_saved_at || ''));
+
+  if (
+    !signature ||
+    !Number.isFinite(analyzedAt) ||
+    total === null ||
+    Math.abs(total - 100) > 0.1 ||
+    parcelCount === null ||
+    parcelCount <= 0 ||
+    propertyCount === null ||
+    propertyCount <= 0
+  ) return false;
+
+  return !Number.isFinite(boundarySavedAt) || analyzedAt >= boundarySavedAt;
+}
+
 export function isNeighborhoodBoundary(value: unknown): value is GeoJsonPolygon {
   if (!value || typeof value !== 'object') return false;
   const polygon = value as GeoJsonPolygon;
@@ -221,3 +247,4 @@ export function marketTrendFromChange(value: unknown): '' | 'increasing' | 'stab
   if (change <= -1) return 'declining';
   return 'stable';
 }
+

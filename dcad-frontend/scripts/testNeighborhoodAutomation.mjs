@@ -11,6 +11,7 @@ import {
 import {
   calculateNeighborhoodRepresentativeness,
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
+  hasSavedNeighborhoodLandUseProfile,
 } from '../src/lib/neighborhoodCharacteristics.ts';
 
 assert.equal(locationTypeFromLandUse({ oneUnit: 10, twoToFourUnit: 0, multifamily: 0, commercial: 45, otherVacant: 45 }), 'urban');
@@ -118,4 +119,32 @@ assert.equal(insufficientProfile.score, null);
 assert.equal(insufficientProfile.label, 'Insufficient data');
 assert.match(DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE, /intentionally broad/);
 
+const savedBoundary = {
+  type: 'Polygon',
+  coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 32.8], [-96.7, 32.9]]],
+};
+const completeSavedProfile = {
+  neighborhood_boundary_geometry: savedBoundary,
+  neighborhood_boundary_saved_at: '2026-08-15T12:00:00.000Z',
+  neighborhood_land_use_analyzed_at: '2026-08-15T12:01:00.000Z',
+  neighborhood_land_use_boundary_signature: 'saved-boundary-hash',
+  neighborhood_land_use_parcel_count: 3994,
+  neighborhood_land_use_one_unit_pct: 70,
+  neighborhood_land_use_two_to_four_unit_pct: 5,
+  neighborhood_land_use_multifamily_pct: 5,
+  neighborhood_land_use_commercial_pct: 10,
+  neighborhood_land_use_other_vacant_pct: 10,
+  neighborhood_all_property_count: 3120,
+};
+assert.equal(hasSavedNeighborhoodLandUseProfile(completeSavedProfile), true);
+assert.equal(hasSavedNeighborhoodLandUseProfile({
+  ...completeSavedProfile,
+  neighborhood_all_property_count: '',
+}), false);
+assert.equal(hasSavedNeighborhoodLandUseProfile({
+  ...completeSavedProfile,
+  neighborhood_boundary_saved_at: '2026-08-15T12:02:00.000Z',
+}), false);
+
 console.log('Neighborhood automation rules passed.');
+

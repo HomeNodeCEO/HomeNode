@@ -48,6 +48,7 @@ import {
 import {
   calculateNeighborhoodRepresentativeness,
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
+  hasSavedNeighborhoodLandUseProfile,
   marketTrendFromChange,
   neighborhoodBoundaryReadinessErrors,
   neighborhoodLandUseTotal,
@@ -941,6 +942,7 @@ function NeighborhoodCharacteristicsContent({
   const [relevanceAssessment, setRelevanceAssessment] = useState<NeighborhoodRelevanceAssessment | null>(null);
   const [relevanceLoading, setRelevanceLoading] = useState(false);
   const [relevanceMessage, setRelevanceMessage] = useState("");
+  const automaticLandUseFingerprintRef = useRef("");
   const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
@@ -1022,7 +1024,7 @@ function NeighborhoodCharacteristicsContent({
     JSON.stringify(landUseAnalysis.boundary.coordinates) ===
       JSON.stringify(assignmentDraft.neighborhood_boundary_geometry.coordinates),
   );
-  const analyzePresentLandUse = async () => {
+  const analyzePresentLandUse = async (automatic = false) => {
     if (!accountId || !assignmentDraft.neighborhood_boundary_geometry) {
       setLandUseAnalysisMessage(
         "Import or refresh the Appraiser-Defined Area before analyzing present land use.",
@@ -1030,7 +1032,11 @@ function NeighborhoodCharacteristicsContent({
       return;
     }
     setLandUseAnalysisLoading(true);
-    setLandUseAnalysisMessage("");
+    setLandUseAnalysisMessage(
+      automatic
+        ? "Loading present land use and the all-property neighborhood profile automatically..."
+        : "",
+    );
     try {
       const result = await runNeighborhoodLandUseAnalysis(
         accountId,
@@ -1162,6 +1168,33 @@ function NeighborhoodCharacteristicsContent({
       }. Land-use percentages, ${result.property_profile ? "the all-property neighborhood profile, " : ""}${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.`,
     );
   };
+  const analyzePresentLandUseRef = useRef(analyzePresentLandUse);
+  useEffect(() => {
+    analyzePresentLandUseRef.current = analyzePresentLandUse;
+  });
+  const automaticLandUseFingerprint = useMemo(() => {
+    const geometry = assignmentDraft.neighborhood_boundary_geometry;
+    return accountId && geometry
+      ? `${accountId}:${JSON.stringify(geometry.coordinates)}`
+      : "";
+  }, [accountId, assignmentDraft.neighborhood_boundary_geometry]);
+  const savedLandUseProfileIsComplete = hasSavedNeighborhoodLandUseProfile(assignmentDraft);
+  useEffect(() => {
+    if (
+      !automaticLandUseFingerprint ||
+      automaticLandUseFingerprintRef.current === automaticLandUseFingerprint
+    ) return;
+
+    automaticLandUseFingerprintRef.current = automaticLandUseFingerprint;
+    if (savedLandUseProfileIsComplete) {
+      setLandUseAnalysisMessage(
+        "Saved present land use and Sales Sample Representativeness data loaded automatically.",
+      );
+      return;
+    }
+
+    void analyzePresentLandUseRef.current(true);
+  }, [automaticLandUseFingerprint, savedLandUseProfileIsComplete]);
   const updateBoundarySide = (
     field: "neighborhood_boundary_north" | "neighborhood_boundary_east" |
       "neighborhood_boundary_south" | "neighborhood_boundary_west",
@@ -1363,7 +1396,7 @@ function NeighborhoodCharacteristicsContent({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Present Land Use</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Analyze all official DCAD parcels in the appraiser-defined area, or enter the allocation manually.</p>
+            <p className="mt-0.5 text-xs text-slate-500">Loads automatically from the appraiser-defined area; use the button to refresh or enter the allocation manually.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -1621,7 +1654,7 @@ function NeighborhoodCharacteristicsContent({
                 onChange={onAssignmentChange}
               />
               <p className="mt-2 text-[10px] leading-4 text-slate-500">
-                Data coverage — value: {formatNumber(assignmentDraft.neighborhood_all_value_count)}; $/SF: {formatNumber(assignmentDraft.neighborhood_all_ppsf_count)}; age: {formatNumber(assignmentDraft.neighborhood_all_age_count)}; GLA: {formatNumber(assignmentDraft.neighborhood_all_gla_count)}. Refreshes with Analyze Present Land Use.
+                Data coverage — value: {formatNumber(assignmentDraft.neighborhood_all_value_count)}; $/SF: {formatNumber(assignmentDraft.neighborhood_all_ppsf_count)}; age: {formatNumber(assignmentDraft.neighborhood_all_age_count)}; GLA: {formatNumber(assignmentDraft.neighborhood_all_gla_count)}. Loads automatically from the saved boundary; use Analyze Present Land Use to refresh.
               </p>
             </div>
           </div>
@@ -6057,3 +6090,4 @@ export default function PropertyReport() {
     </div>
   );
 }
+

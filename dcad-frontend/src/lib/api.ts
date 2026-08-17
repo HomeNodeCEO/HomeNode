@@ -1375,6 +1375,7 @@ export interface NeighborhoodProfileResponse extends MarketConditionsResponse {
         score: number;
         distance_to_analysis_center_miles?: number;
         distance_to_analysis_edge_miles?: number;
+        signed_distance_to_analysis_edge_miles?: number;
         analysis_edge_relation?: 'outside' | 'inside';
         corridor_key?: string;
         selected?: boolean;
@@ -1735,6 +1736,7 @@ export interface NeighborhoodBoundaryAssessment {
           score: number;
           distance_to_analysis_center_miles?: number;
           distance_to_analysis_edge_miles?: number;
+          signed_distance_to_analysis_edge_miles?: number;
           analysis_edge_relation?: 'outside' | 'inside';
           corridor_key?: string;
           selected?: boolean;

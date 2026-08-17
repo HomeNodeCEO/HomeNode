@@ -893,6 +893,7 @@ function NeighborhoodCharacteristicsContent({
   onAssignmentChange,
   onRefreshUnemployment,
   onRefreshBoundary,
+  onBoundarySuggestionsChange,
   onConfirmBoundary,
   onMarketConditionsChange,
   onSave,
@@ -929,6 +930,9 @@ function NeighborhoodCharacteristicsContent({
   ) => void;
   onRefreshUnemployment: () => void;
   onRefreshBoundary: () => void;
+  onBoundarySuggestionsChange: (
+    suggestions: NonNullable<NeighborhoodProfileResponse["boundary_streets"]>["cardinal_boundaries"] | null,
+  ) => void;
   onConfirmBoundary: (checked: boolean) => void;
   onMarketConditionsChange: (draft: MarketConditionsDraft | null) => void;
   onSave: () => void;
@@ -1221,7 +1225,7 @@ function NeighborhoodCharacteristicsContent({
         assignmentFileId: assignmentFileId || null,
       });
       const cardinal = result.evidence.roads?.cardinal_boundaries;
-      setNeighborhoodBoundarySuggestions(cardinal || null);
+      onBoundarySuggestionsChange(cardinal || null);
       const north = cardinal?.north?.primary_street || "";
       const east = cardinal?.east?.primary_street || "";
       const south = cardinal?.south?.primary_street || "";
@@ -1919,7 +1923,11 @@ function NeighborhoodCharacteristicsContent({
                 />
                 <datalist id={`boundary-${label.toLowerCase()}-candidates`}>
                   {boundarySuggestions?.[label.toLowerCase() as "north" | "east" | "south" | "west"]?.candidates.map((candidate) => (
-                    <option key={candidate.name} value={candidate.name} />
+                    <option
+                      key={candidate.name}
+                      value={candidate.name}
+                      label={`Score ${candidate.score.toFixed(2)} · edge ${candidate.distance_to_analysis_edge_miles ?? "?"} mi`}
+                    />
                   ))}
                 </datalist>
                 {boundarySuggestions?.[label.toLowerCase() as "north" | "east" | "south" | "west"]?.confidence ? (
@@ -5801,6 +5809,7 @@ function AddressHero({
               onAssignmentChange={updateAssignment}
               onRefreshUnemployment={() => void lookupUnemploymentComparison()}
               onRefreshBoundary={() => void refreshNeighborhoodProfile()}
+              onBoundarySuggestionsChange={setNeighborhoodBoundarySuggestions}
               onConfirmBoundary={confirmNeighborhoodBoundary}
               marketConditionsDraft={marketConditionsDraft}
               highestBestUseContext={{

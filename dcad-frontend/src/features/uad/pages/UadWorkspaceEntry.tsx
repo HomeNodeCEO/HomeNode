@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { getAccount } from "@/lib/api";
 import {
   createUadWorkfile,
   getUadCapabilities,
+  getUadSubjectSummary,
   listUadWorkfiles,
   type UadCapabilities,
   type UadWorkfile,
@@ -31,10 +31,10 @@ export default function UadWorkspaceEntry() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    Promise.all([getAccount(accountId), getUadCapabilities()])
-      .then(async ([accountResponse, capabilityResponse]) => {
+    Promise.all([getUadSubjectSummary(accountId), getUadCapabilities()])
+      .then(async ([subjectResponse, capabilityResponse]) => {
         if (cancelled) return;
-        setAddress(accountResponse.account?.address || "");
+        setAddress(subjectResponse.address || "");
         setCapabilities(capabilityResponse);
         if (capabilityResponse.enabled) {
           const existingWorkfiles = await listUadWorkfiles(accountId);

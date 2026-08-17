@@ -27,6 +27,17 @@ export interface UadWorkfile {
   updated_at: string;
 }
 
+export interface UadSubjectSummary {
+  account_id: string;
+  address: string | null;
+  city: string | null;
+  postal_code: string | null;
+  county: string | null;
+  neighborhood_code: string | null;
+  subdivision: string | null;
+  legal_description: string | null;
+}
+
 export type UadFieldValue = string | number | boolean | string[] | null;
 
 export interface UadFieldDefinition {
@@ -81,6 +92,13 @@ export interface UadEditorResponse {
 
 export async function getUadCapabilities(): Promise<UadCapabilities> {
   return fetchJSON<UadCapabilities>(makeUrl("/api/uad/capabilities"), { timeoutMs: 10_000 });
+}
+
+export async function getUadSubjectSummary(accountId: string): Promise<UadSubjectSummary> {
+  const response = await fetchJSON<{ subject: UadSubjectSummary }>(
+    makeUrl(`/api/uad/accounts/${encodeURIComponent(accountId)}/subject-summary`),
+  );
+  return response.subject;
 }
 
 export async function listUadWorkfiles(accountId: string): Promise<UadWorkfile[]> {

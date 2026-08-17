@@ -146,3 +146,15 @@ test("validates UAD values by official type, enumeration, and format", () => {
     /invalid_uad_field_values/,
   );
 });
+
+test("the staging bootstrap is guarded against production execution", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(
+    path.resolve(directory, "../scripts/prepareUadStagingDatabase.js"),
+    "utf8",
+  );
+  assert.match(source, /NODE_ENV !== "staging"/);
+  assert.match(source, /databaseName\.toLowerCase\(\)\.includes\("staging"\)/);
+  assert.match(source, /UAD-STAGING-SFR-0001/);
+  assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});

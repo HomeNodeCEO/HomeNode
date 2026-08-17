@@ -3,7 +3,12 @@ import express from "express";
 import { createUadAssetUpload, verifyUadAssetUpload } from "./assets.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
-import { createUadWorkfile, getUadWorkfile, listUadWorkfiles } from "./workfiles.js";
+import {
+  createUadWorkfile,
+  getUadSubjectSummary,
+  getUadWorkfile,
+  listUadWorkfiles,
+} from "./workfiles.js";
 
 function errorStatus(error) {
   const message = String(error?.message || "");
@@ -46,6 +51,15 @@ export function createUadRouter({ pool, storage, enabled = false }) {
     try {
       const workfiles = await listUadWorkfiles(pool, req.params.accountId);
       res.json({ account_id: req.params.accountId, workfiles });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/accounts/:accountId/subject-summary", async (req, res) => {
+    try {
+      const subject = await getUadSubjectSummary(pool, req.params.accountId);
+      res.json({ subject });
     } catch (error) {
       sendError(res, error);
     }

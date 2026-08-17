@@ -158,3 +158,12 @@ test("the staging bootstrap is guarded against production execution", () => {
   assert.match(source, /UAD-STAGING-SFR-0001/);
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
+
+test("casts the subject snapshot parameter before using PostgreSQL JSON operators", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(
+    path.resolve(directory, "../src/modules/uad/workfiles.js"),
+    "utf8",
+  );
+  assert.match(source, /\(\(\$3::jsonb\)->'account'->>'updated_at'\)::timestamptz/);
+});

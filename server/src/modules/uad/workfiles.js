@@ -178,7 +178,7 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
          id, workfile_id, snapshot_version, source_account_updated_at,
          source_manifest, subject_data, created_by_user_id
        ) VALUES (
-         $1, $2, 1, ($3->'account'->>'updated_at')::timestamptz,
+         $1, $2, 1, (($3::jsonb)->'account'->>'updated_at')::timestamptz,
          $4::jsonb, $3::jsonb, $5
        )`,
       [

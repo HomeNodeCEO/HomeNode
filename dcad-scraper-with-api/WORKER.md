@@ -34,6 +34,9 @@ both processes and stops the service if either process exits unexpectedly.
 9. Every newly successful scrape runs a database-only owner, land, and GLA
    presence check. Any remaining gap is added to the same throttled repair lane;
    the check does not make an additional DCAD request.
+10. GLA is not required when every usable CAD land state code describes the
+    account as vacant land. Mixed vacant and improved classifications continue
+    to require GLA so multi-parcel edge cases are not silently suppressed.
 
 The residential target table—not `core.accounts.county`—controls selection.
 Collin County rows already present elsewhere in the database have no effect on

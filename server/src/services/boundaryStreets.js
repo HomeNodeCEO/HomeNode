@@ -7,6 +7,7 @@ const MAJOR_ROAD_SEARCH_METERS = 3219;
 const MIN_MAJOR_ROAD_AADT = 10000;
 const FULL_MAJOR_ROAD_AADT_SCORE = 50000;
 const MIN_MAJOR_ROAD_ALIGNMENT = 0.72;
+const MAX_MAJOR_ROAD_CANDIDATES_PER_SIDE = 5;
 const CARDINAL_SIDES = ["north", "east", "south", "west"];
 const LAYER_WEIGHTS = new Map([[0, 1.55], [1, 1.3], [2, 1]]);
 const REPORT_CORRIDOR_ALIASES = new Map([
@@ -220,6 +221,111 @@ function displayTrafficRoadName(name, side) {
   return REPORT_CORRIDOR_ALIASES.get(`${side}|${directionalName.toUpperCase()}`) || directionalName;
 }
 
+function normalizedCorridorName(name) {
+  return String(name || "")
+    .toUpperCase()
+    .replace(/[.'’]/g, "")
+    .replace(/\bHIGHWAY\b/g, "HWY")
+    .replace(/\bFREEWAY\b/g, "FWY")
+    .replace(/\bPARKWAY\b/g, "PKWY")
+    .replace(/\bROAD\b/g, "RD")
+    .replace(/\bAVENUE\b/g, "AVE")
+    .replace(/\bBOULEVARD\b/g, "BLVD")
+    .replace(/\bSTREET\b/g, "ST")
+    .replace(/\bDRIVE\b/g, "DR")
+    .replace(/\bLANE\b/g, "LN")
+    .replace(/\b(?:NORTHBOUND|SOUTHBOUND|EASTBOUND|WESTBOUND)\b/g, "")
+    .replace(/^(?:NORTH|SOUTH|EAST|WEST|N|S|E|W)\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizedRouteCorridor(feature) {
+  const attributes = feature?.attributes || {};
+  const prefix = String(attributes.TXDOT_ROUTE_PREFIX || "")
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "");
+  const number = String(attributes.TXDOT_ROUTE_NUMBER ?? "")
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, "")
+    .replace(/^0+(?=\d)/, "");
+  if (/^(?:IH|US|SH|SL|FM|RM|BS|BI|BU|LP|SP|PR)$/.test(prefix) && number) {
+    return `route:${prefix}:${number}`;
+  }
+
+  const routeName = String(attributes.TXDOT_ROUTE_NAME || "")
+    .toUpperCase()
+    .trim();
+  const routeMatch = routeName.match(
+    /^(IH|US|SH|SL|FM|RM|BS|BI|BU|LP|SP|PR)\s*0*(\d+[A-Z]?)(?:[-\s]|$)/,
+  );
+  return routeMatch ? `route:${routeMatch[1]}:${routeMatch[2]}` : null;
+}
+
+function trafficCorridorKey(feature, displayName) {
+  return normalizedRouteCorridor(feature) || `name:${normalizedCorridorName(displayName)}`;
+}
+
+function chooseDisplayName(displayNameWeights, fallback) {
+  return [...displayNameWeights.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] || fallback;
+}
+
+function compareBoundarySelections(left, right) {
+  if (!right) return 1;
+  if (left.duplicate_count !== right.duplicate_count) {
+    return right.duplicate_count - left.duplicate_count;
+  }
+  if (left.opposite_duplicate_count !== right.opposite_duplicate_count) {
+    return right.opposite_duplicate_count - left.opposite_duplicate_count;
+  }
+  if (left.total_score !== right.total_score) return left.total_score - right.total_score;
+  return right.total_edge_distance - left.total_edge_distance;
+}
+
+function selectJointCardinalCandidates(candidatesBySide) {
+  const populatedSides = CARDINAL_SIDES.filter((side) => candidatesBySide[side]?.length);
+  if (!populatedSides.length) return { selected: {}, duplicateCorridorFallback: false };
+
+  let best = null;
+  const visit = (index, selected) => {
+    if (index < populatedSides.length) {
+      const side = populatedSides[index];
+      for (const candidate of candidatesBySide[side]) {
+        visit(index + 1, { ...selected, [side]: candidate });
+      }
+      return;
+    }
+
+    const corridors = populatedSides.map((side) => selected[side].corridor_key);
+    const duplicateCount = corridors.length - new Set(corridors).size;
+    const oppositeDuplicateCount = [
+      ["north", "south"],
+      ["east", "west"],
+    ].filter(([first, second]) =>
+      selected[first] && selected[second] &&
+      selected[first].corridor_key === selected[second].corridor_key,
+    ).length;
+    const selection = {
+      selected,
+      duplicate_count: duplicateCount,
+      opposite_duplicate_count: oppositeDuplicateCount,
+      total_score: populatedSides.reduce((sum, side) => sum + selected[side].score, 0),
+      total_edge_distance: populatedSides.reduce(
+        (sum, side) => sum + selected[side].distance_to_analysis_edge_miles,
+        0,
+      ),
+    };
+    if (compareBoundarySelections(selection, best) > 0) best = selection;
+  };
+  visit(0, {});
+
+  return {
+    selected: best?.selected || {},
+    duplicateCorridorFallback: Boolean(best?.duplicate_count),
+  };
+}
+
 function sideEdgeDistance(side, midpoint, bounds) {
   if (side === "north") return midpoint[1] - bounds.maxY;
   if (side === "south") return bounds.minY - midpoint[1];
@@ -292,6 +398,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           : verticalAlignment;
         if (alignment < MIN_MAJOR_ROAD_ALIGNMENT) continue;
         const name = displayTrafficRoadName(rawName, side);
+        const corridorKey = trafficCorridorKey(feature, name);
         const signedEdgeDistance = sideEdgeDistance(side, midpoint, bounds);
         const centerDistance = segmentDistanceAndAlignment(
           center,
@@ -302,8 +409,9 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         if (centerDistance > MAJOR_ROAD_SEARCH_METERS) continue;
 
         const sideGroups = grouped.get(side);
-        const current = sideGroups.get(name) || {
+        const current = sideGroups.get(corridorKey) || {
           name,
+          corridor_key: corridorKey,
           max_aadt: 0,
           traffic_weighted_length: 0,
           length: 0,
@@ -311,6 +419,8 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           min_center_distance_meters: Number.POSITIVE_INFINITY,
           source_date: feature?.attributes?.SOURCE_DATE || null,
           source_names: new Set(),
+          source_route_names: new Set(),
+          display_name_weights: new Map(),
         };
         current.max_aadt = Math.max(current.max_aadt, aadt);
         current.traffic_weighted_length += aadt * length;
@@ -325,12 +435,19 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         );
         current.source_date ||= feature?.attributes?.SOURCE_DATE || null;
         current.source_names.add(rawName);
-        sideGroups.set(name, current);
+        if (feature?.attributes?.TXDOT_ROUTE_NAME) {
+          current.source_route_names.add(String(feature.attributes.TXDOT_ROUTE_NAME));
+        }
+        current.display_name_weights.set(
+          name,
+          (current.display_name_weights.get(name) || 0) + length,
+        );
+        sideGroups.set(corridorKey, current);
       }
     }
   }
 
-  return Object.fromEntries(CARDINAL_SIDES.map((side) => {
+  const candidatesBySide = Object.fromEntries(CARDINAL_SIDES.map((side) => {
     const groups = [...grouped.get(side).values()];
     const maxLength = Math.max(...groups.map((group) => group.length), 1);
     const candidates = groups.map((group) => {
@@ -347,11 +464,13 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
       );
       const continuityScore = Math.min(group.length / maxLength, 1);
       return {
-        name: group.name,
+        name: chooseDisplayName(group.display_name_weights, group.name),
+        corridor_key: group.corridor_key,
         score: Number((trafficScore * 0.56 + proximityScore * 0.34 + continuityScore * 0.10).toFixed(4)),
         annual_average_daily_traffic: Math.round(averageAadt),
         peak_segment_aadt: Math.round(group.max_aadt),
         source_road_names: [...group.source_names].sort(),
+        source_route_names: [...group.source_route_names].sort(),
         distance_to_analysis_center_miles: Number((group.min_center_distance_meters / 1609.344).toFixed(2)),
         distance_to_analysis_edge_miles: Number((group.min_edge_distance_meters / 1609.344).toFixed(2)),
         source_date: group.source_date,
@@ -360,11 +479,31 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
       right.score - left.score ||
       right.peak_segment_aadt - left.peak_segment_aadt ||
       left.distance_to_analysis_edge_miles - right.distance_to_analysis_edge_miles,
-    ).slice(0, 3);
+    ).slice(0, MAX_MAJOR_ROAD_CANDIDATES_PER_SIDE);
+    return [side, candidates];
+  }));
+  const jointSelection = selectJointCardinalCandidates(candidatesBySide);
+
+  return Object.fromEntries(CARDINAL_SIDES.map((side) => {
+    const candidates = candidatesBySide[side];
+    const selected = jointSelection.selected[side] || candidates[0] || null;
+    const selectedRank = selected
+      ? candidates.findIndex((candidate) => candidate.corridor_key === selected.corridor_key)
+      : -1;
+    const alternatives = candidates.filter((candidate) => candidate.corridor_key !== selected?.corridor_key);
     return [side, {
-      primary_street: candidates[0]?.name || null,
-      confidence: confidenceForMajorRoad(candidates[0], candidates[1]),
-      candidates,
+      primary_street: selected?.name || null,
+      confidence: confidenceForMajorRoad(selected, alternatives[0]),
+      selected_candidate_rank: selectedRank >= 0 ? selectedRank + 1 : null,
+      selection_reason: selected
+        ? jointSelection.duplicateCorridorFallback
+          ? "best_available_corridor_fallback"
+          : "joint_distinct_corridor_enclosure"
+        : "unavailable",
+      candidates: candidates.map((candidate) => ({
+        ...candidate,
+        selected: candidate.corridor_key === selected?.corridor_key,
+      })),
     }];
   }));
 }
@@ -384,6 +523,8 @@ function trafficRoadFeature(row) {
       AADT: row.current_aadt,
       SOURCE_DATE: row.source_date,
       TXDOT_ROUTE_NAME: row.route_name,
+      TXDOT_ROUTE_PREFIX: row.route_prefix,
+      TXDOT_ROUTE_NUMBER: row.route_number,
     },
     geometry: { paths },
   };
@@ -426,6 +567,8 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
        SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
      ), traffic_source AS (
        SELECT segment.route_name,
+              segment.route_prefix,
+              segment.route_number,
               segment.current_aadt,
               segment.source_date,
               ST_CollectionExtract(
@@ -449,6 +592,8 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
          )
      ), traffic AS (
        SELECT source.route_name,
+              source.route_prefix,
+              source.route_number,
               source.current_aadt,
               source.source_date,
               dumped.geom
@@ -457,9 +602,11 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
        WHERE NOT ST_IsEmpty(dumped.geom)
      )
      SELECT COALESCE(named.name, traffic.route_name) AS name,
-            named.base_name,
-            traffic.route_name,
-            traffic.current_aadt,
+             named.base_name,
+             traffic.route_name,
+             traffic.route_prefix,
+             traffic.route_number,
+             traffic.current_aadt,
             traffic.source_date,
             ST_AsGeoJSON(traffic.geom)::jsonb AS geometry
      FROM traffic
@@ -579,4 +726,3 @@ export async function loadBoundaryStreetNames(
     fallback_reason: "local_boundary_roads_unavailable",
   };
 }
-

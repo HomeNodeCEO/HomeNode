@@ -189,10 +189,40 @@ test("selects four distinct corridors when one highway has different local names
   assert.equal(result.east.selected_candidate_rank, 2);
   assert.equal(result.east.candidates[1].selected, true);
   assert.equal(result.west.primary_street, "S G Alexander Fwy");
-  assert.equal(result.east.selection_reason, "joint_distinct_corridor_enclosure");
+  assert.equal(result.east.selection_reason, "joint_distinct_corridor_perimeter");
   assert.equal(result.east.candidates[0].corridor_key, "route:US:67");
   assert.equal(result.west.candidates[0].corridor_key, "route:US:67");
   assert.equal(result.south.primary_street, "Danieldale Rd");
+});
+
+test("balances TxDOT traffic strength with an enclosing perimeter road", () => {
+  const trafficFeatures = [
+    {
+      attributes: { NAME: "North Freeway", AADT: 50_000 },
+      geometry: { paths: [[[-96.68, 32.979], [-96.62, 32.979]]] },
+    },
+    {
+      attributes: { NAME: "Outer North Rd", AADT: 10_000 },
+      geometry: { paths: [[[-96.68, 32.994], [-96.62, 32.994]]] },
+    },
+    {
+      attributes: { NAME: "Internal East Rd", AADT: 18_000 },
+      geometry: { paths: [[[-96.645, 32.94], [-96.645, 33.00]]] },
+    },
+    {
+      attributes: { NAME: "Enclosing East Rd", AADT: 20_000 },
+      geometry: { paths: [[[-96.62, 32.94], [-96.62, 33.00]]] },
+    },
+  ];
+
+  const result = summarizeBusyCardinalBoundaries(trafficFeatures, geometry.coordinates[0]);
+
+  assert.equal(result.north.primary_street, "North Freeway");
+  assert.equal(result.east.primary_street, "Enclosing East Rd");
+  assert.equal(result.east.candidates[0].name, "Internal East Rd");
+  assert.equal(result.east.candidates[0].analysis_edge_relation, "inside");
+  assert.equal(result.east.candidates[1].analysis_edge_relation, "outside");
+  assert.ok(result.east.candidates[1].selection_score > result.east.candidates[0].selection_score);
 });
 
 test("uses the local TxDOT AADT mirror before TIGERweb", async () => {

@@ -784,4 +784,3 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
 
         s.commit()
         log.info("Upsert core estimated taxes complete for account_id=%s", account_id)
-

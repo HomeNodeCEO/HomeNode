@@ -210,7 +210,7 @@ test("balances TxDOT traffic strength with an enclosing perimeter road", () => {
       geometry: { paths: [[[-96.645, 32.94], [-96.645, 33.00]]] },
     },
     {
-      attributes: { NAME: "Enclosing East Rd", AADT: 20_000 },
+      attributes: { NAME: "N Hampton Rd", AADT: 20_000 },
       geometry: { paths: [[[-96.62, 32.94], [-96.62, 33.00]]] },
     },
   ];
@@ -218,7 +218,7 @@ test("balances TxDOT traffic strength with an enclosing perimeter road", () => {
   const result = summarizeBusyCardinalBoundaries(trafficFeatures, geometry.coordinates[0]);
 
   assert.equal(result.north.primary_street, "North Freeway");
-  assert.equal(result.east.primary_street, "Enclosing East Rd");
+  assert.equal(result.east.primary_street, "S Hampton Rd");
   assert.equal(result.east.candidates[0].name, "Internal East Rd");
   assert.equal(result.east.candidates[0].analysis_edge_relation, "inside");
   assert.equal(result.east.candidates[1].analysis_edge_relation, "outside");

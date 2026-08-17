@@ -1370,7 +1370,15 @@ export interface NeighborhoodProfileResponse extends MarketConditionsResponse {
     cardinal_boundaries: Record<'north' | 'east' | 'south' | 'west', {
       primary_street: string | null;
       confidence: 'high' | 'medium' | 'low' | 'unavailable';
-      candidates: Array<{ name: string; score: number }>;
+      candidates: Array<{
+        name: string;
+        score: number;
+        distance_to_analysis_center_miles?: number;
+        distance_to_analysis_edge_miles?: number;
+        analysis_edge_relation?: 'outside' | 'inside';
+        corridor_key?: string;
+        selected?: boolean;
+      }>;
     }>;
     summary: string;
     source: string;
@@ -1722,7 +1730,15 @@ export interface NeighborhoodBoundaryAssessment {
       cardinal_boundaries?: Record<'north' | 'east' | 'south' | 'west', {
         primary_street?: string | null;
         confidence?: string;
-        candidates?: Array<{ name: string; score: number }>;
+        candidates?: Array<{
+          name: string;
+          score: number;
+          distance_to_analysis_center_miles?: number;
+          distance_to_analysis_edge_miles?: number;
+          analysis_edge_relation?: 'outside' | 'inside';
+          corridor_key?: string;
+          selected?: boolean;
+        }>;
       }>;
     };
     zoning?: Record<string, unknown>;

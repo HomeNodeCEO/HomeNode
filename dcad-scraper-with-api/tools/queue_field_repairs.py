@@ -31,7 +31,25 @@ WITH owner_present AS (
     FROM core.primary_improvements
     GROUP BY account_id
     HAVING bool_or(living_area_sqft IS NOT NULL AND living_area_sqft > 0)
-), vacant_land AS (
+), main_improvement_present AS (
+    SELECT account_id
+    FROM core.primary_improvements
+    WHERE NULLIF(btrim(construction_type), '') IS NOT NULL
+       OR percent_complete IS NOT NULL
+       OR year_built IS NOT NULL
+       OR effective_year_built IS NOT NULL
+       OR actual_age IS NOT NULL
+       OR depreciation IS NOT NULL
+       OR NULLIF(btrim(desirability), '') IS NOT NULL
+       OR NULLIF(btrim(stories), '') IS NOT NULL
+       OR living_area_sqft IS NOT NULL
+       OR total_living_area IS NOT NULL
+       OR bedroom_count IS NOT NULL
+       OR bath_count IS NOT NULL
+       OR number_units IS NOT NULL
+       OR NULLIF(btrim(building_class), '') IS NOT NULL
+       OR total_area_sqft IS NOT NULL
+), vacant_land_by_state_code AS (
     SELECT account_id
     FROM core.land_detail
     GROUP BY account_id
@@ -40,6 +58,18 @@ WITH owner_present AS (
            NULLIF(btrim(state_code), '') IS NOT NULL
            AND upper(state_code) NOT LIKE '%VACANT%'
        )
+), vacant_land_by_values AS (
+    SELECT value.account_id
+    FROM core.value_summary_current value
+    LEFT JOIN main_improvement_present improvement USING (account_id)
+    WHERE improvement.account_id IS NULL
+      AND value.market_value IS NOT NULL
+      AND value.market_value > 0
+      AND value.land_value = value.market_value
+), vacant_land AS (
+    SELECT account_id FROM vacant_land_by_state_code
+    UNION
+    SELECT account_id FROM vacant_land_by_values
 )
 SELECT target.account_id,
        array_remove(ARRAY[

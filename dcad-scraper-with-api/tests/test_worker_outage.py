@@ -21,6 +21,7 @@ from dcad.worker import (  # noqa: E402
     reset_outage_circuit,
     should_pause_for_outage,
     state_codes_describe_vacant_land,
+    values_describe_vacant_land,
 )
 
 
@@ -150,6 +151,35 @@ class OutageCircuitDecisionTests(unittest.TestCase):
                 ["SFR - Vacant Lots/Tracts", "SFR - Residential Improved"]
             )
         )
+
+    def test_value_only_property_without_main_improvement_satisfies_gla(self) -> None:
+        self.assertTrue(
+            values_describe_vacant_land(
+                main_improvement_present=False,
+                land_value="375750.00",
+                market_value="375750.00",
+            )
+        )
+
+    def test_equal_values_do_not_override_main_improvement(self) -> None:
+        self.assertFalse(
+            values_describe_vacant_land(
+                main_improvement_present=True,
+                land_value=375750,
+                market_value=375750,
+            )
+        )
+
+    def test_missing_or_zero_values_do_not_classify_vacant_land(self) -> None:
+        for land_value, market_value in ((None, 10), (10, None), (0, 0), (9, 10)):
+            with self.subTest(land_value=land_value, market_value=market_value):
+                self.assertFalse(
+                    values_describe_vacant_land(
+                        main_improvement_present=False,
+                        land_value=land_value,
+                        market_value=market_value,
+                    )
+                )
 
     def test_fifth_shared_upstream_failure_opens_the_pause(self) -> None:
         config = WorkerConfig.from_env()

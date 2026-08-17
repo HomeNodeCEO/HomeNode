@@ -37,6 +37,10 @@ both processes and stops the service if either process exits unexpectedly.
 10. GLA is not required when every usable CAD land state code describes the
     account as vacant land. Mixed vacant and improved classifications continue
     to require GLA so multi-parcel edge cases are not silently suppressed.
+11. GLA is also not required when DCAD has no substantive Main Improvement
+    data and the current land value equals the total market value. This covers
+    vacant lots that retain a generic residential state code; a positive market
+    value and both signals are required to avoid hiding improved-property gaps.
 
 The residential target table—not `core.accounts.county`—controls selection.
 Collin County rows already present elsewhere in the database have no effect on

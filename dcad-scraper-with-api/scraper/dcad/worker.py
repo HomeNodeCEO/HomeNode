@@ -9,6 +9,7 @@ import signal
 import socket
 import time
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
@@ -59,6 +60,29 @@ def state_codes_describe_vacant_land(state_codes: list[object]) -> bool:
         if value is not None and str(value).strip()
     ]
     return bool(normalized) and all("VACANT" in value for value in normalized)
+
+
+def values_describe_vacant_land(
+    *,
+    main_improvement_present: bool,
+    land_value: object,
+    market_value: object,
+) -> bool:
+    """Recognize DCAD vacant land when its state code is not explicit.
+
+    DCAD sometimes labels vacant lots with a generic residential state code.
+    In that layout the Main Improvement section is empty and the entire market
+    value is allocated to land. Requiring both signals avoids treating an
+    improved property with a temporarily missing GLA as vacant land.
+    """
+    if main_improvement_present or land_value is None or market_value is None:
+        return False
+    try:
+        land = Decimal(str(land_value))
+        market = Decimal(str(market_value))
+    except (InvalidOperation, TypeError, ValueError):
+        return False
+    return market > 0 and land == market
 
 
 @dataclass(frozen=True)
@@ -204,6 +228,7 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
             "016_dcad_owner_recovery_queue.sql",
             "017_dcad_field_repair_queue.sql",
             "018_vacant_land_gla_not_applicable.sql",
+            "019_value_only_vacant_land_gla_not_applicable.sql",
         ):
             migration = migration_root / migration_name
             conn.execute(text(migration.read_text(encoding="utf-8")))
@@ -565,7 +590,7 @@ def queue_missing_fields_after_success(
                                WHERE account_id = :account_id
                                  AND living_area_sqft IS NOT NULL
                                  AND living_area_sqft > 0
-                           ) AND NOT (
+                            ) AND NOT (
                                EXISTS (
                                    SELECT 1
                                    FROM "{config.data_schema}"."land_detail"
@@ -578,8 +603,39 @@ def queue_missing_fields_after_success(
                                    WHERE account_id = :account_id
                                      AND NULLIF(btrim(state_code), '') IS NOT NULL
                                      AND upper(state_code) NOT LIKE '%VACANT%'
-                               )
-                           ) THEN 'gla' END
+                                )
+                            ) AND NOT (
+                                NOT EXISTS (
+                                    SELECT 1
+                                    FROM "{config.data_schema}"."primary_improvements" improvement
+                                    WHERE improvement.account_id = :account_id
+                                      AND (
+                                          NULLIF(btrim(improvement.construction_type), '') IS NOT NULL
+                                          OR improvement.percent_complete IS NOT NULL
+                                          OR improvement.year_built IS NOT NULL
+                                          OR improvement.effective_year_built IS NOT NULL
+                                          OR improvement.actual_age IS NOT NULL
+                                          OR improvement.depreciation IS NOT NULL
+                                          OR NULLIF(btrim(improvement.desirability), '') IS NOT NULL
+                                          OR NULLIF(btrim(improvement.stories), '') IS NOT NULL
+                                          OR improvement.living_area_sqft IS NOT NULL
+                                          OR improvement.total_living_area IS NOT NULL
+                                          OR improvement.bedroom_count IS NOT NULL
+                                          OR improvement.bath_count IS NOT NULL
+                                          OR improvement.number_units IS NOT NULL
+                                          OR NULLIF(btrim(improvement.building_class), '') IS NOT NULL
+                                          OR improvement.total_area_sqft IS NOT NULL
+                                      )
+                                )
+                                AND EXISTS (
+                                    SELECT 1
+                                    FROM "{config.data_schema}"."value_summary_current" value
+                                    WHERE value.account_id = :account_id
+                                      AND value.market_value IS NOT NULL
+                                      AND value.market_value > 0
+                                      AND value.land_value = value.market_value
+                                )
+                            ) THEN 'gla' END
                        ], NULL)::text[] AS fields
             )
             INSERT INTO {queue} AS existing (
@@ -1279,7 +1335,39 @@ def missing_required_fields(
                            SELECT state_code
                            FROM "{config.data_schema}"."land_detail"
                            WHERE account_id = :account_id
-                       ) AS state_codes
+                       ) AS state_codes,
+                       EXISTS (
+                           SELECT 1
+                           FROM "{config.data_schema}"."primary_improvements" improvement
+                           WHERE improvement.account_id = :account_id
+                             AND (
+                                 NULLIF(btrim(improvement.construction_type), '') IS NOT NULL
+                                 OR improvement.percent_complete IS NOT NULL
+                                 OR improvement.year_built IS NOT NULL
+                                 OR improvement.effective_year_built IS NOT NULL
+                                 OR improvement.actual_age IS NOT NULL
+                                 OR improvement.depreciation IS NOT NULL
+                                 OR NULLIF(btrim(improvement.desirability), '') IS NOT NULL
+                                 OR NULLIF(btrim(improvement.stories), '') IS NOT NULL
+                                 OR improvement.living_area_sqft IS NOT NULL
+                                 OR improvement.total_living_area IS NOT NULL
+                                 OR improvement.bedroom_count IS NOT NULL
+                                 OR improvement.bath_count IS NOT NULL
+                                 OR improvement.number_units IS NOT NULL
+                                 OR NULLIF(btrim(improvement.building_class), '') IS NOT NULL
+                                 OR improvement.total_area_sqft IS NOT NULL
+                             )
+                       ) AS main_improvement_present,
+                       (
+                           SELECT land_value
+                           FROM "{config.data_schema}"."value_summary_current"
+                           WHERE account_id = :account_id
+                       ) AS land_value,
+                       (
+                           SELECT market_value
+                           FROM "{config.data_schema}"."value_summary_current"
+                           WHERE account_id = :account_id
+                       ) AS market_value
                 """
             ),
             {"account_id": account_id},
@@ -1288,7 +1376,12 @@ def missing_required_fields(
         "owner": bool(row["owner_present"]),
         "land": bool(row["land_present"]),
         "gla": bool(row["gla_present"])
-        or state_codes_describe_vacant_land(list(row["state_codes"] or ())),
+        or state_codes_describe_vacant_land(list(row["state_codes"] or ()))
+        or values_describe_vacant_land(
+            main_improvement_present=bool(row["main_improvement_present"]),
+            land_value=row["land_value"],
+            market_value=row["market_value"],
+        ),
     }
     return fields_still_missing(requested_fields, presence)
 

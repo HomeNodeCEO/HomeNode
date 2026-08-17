@@ -1,3 +1,5 @@
+import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
+
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
 
 const fields = [
@@ -460,6 +462,7 @@ const fields = [
     dataType: "text",
     maxLength: 5000,
   },
+  ...UAD_SITE_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -474,12 +477,45 @@ export const UAD_PHASE_ONE_FIELDS = Object.freeze(fields.map((field, ordinal) =>
 
 const fieldByKey = new Map(UAD_PHASE_ONE_FIELDS.map((field) => [field.key, field]));
 
+export const UAD_EDITOR_SECTION_KEYS = Object.freeze(["assignment", "subject", "site"]);
+
 function valueAtPath(document, path) {
   return String(path || "").split(".").reduce((value, segment) => value?.[segment], document);
 }
 
 function isBlank(value) {
   return value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0);
+}
+
+export function evaluateUadCondition(requestedCondition, lookup) {
+  if (!requestedCondition) return true;
+  if (Array.isArray(requestedCondition.all)) {
+    return requestedCondition.all.every((item) => evaluateUadCondition(item, lookup));
+  }
+  if (Array.isArray(requestedCondition.any)) {
+    return requestedCondition.any.some((item) => evaluateUadCondition(item, lookup));
+  }
+  if (requestedCondition.not) return !evaluateUadCondition(requestedCondition.not, lookup);
+
+  const key = requestedCondition.key || (requestedCondition.uid ? requestedCondition.uid : null);
+  const value = key ? lookup(key) : undefined;
+  if (Object.hasOwn(requestedCondition, "equals")) return value === requestedCondition.equals;
+  if (Object.hasOwn(requestedCondition, "notEquals")) return value !== requestedCondition.notEquals;
+  if (Object.hasOwn(requestedCondition, "greaterThan")) return Number(value) > Number(requestedCondition.greaterThan);
+  if (Object.hasOwn(requestedCondition, "contains")) return Array.isArray(value) && value.includes(requestedCondition.contains);
+  if (Object.hasOwn(requestedCondition, "present")) return isBlank(value) !== Boolean(requestedCondition.present);
+  return true;
+}
+
+export function uadFieldIsVisible(field, lookup) {
+  return evaluateUadCondition(field.showWhen, (requestedKey) => {
+    if (requestedKey.includes(":")) return lookup(requestedKey);
+    return lookup(requestedKey, { uidOnly: true });
+  });
+}
+
+export function uadFieldIsRequired(field, lookup) {
+  return Boolean(field.required || (field.requiredWhen && evaluateUadCondition(field.requiredWhen, lookup)));
 }
 
 export function buildUadPrefillValues(subjectSnapshot) {
@@ -515,13 +551,22 @@ export function getUadField(contextKey, uid) {
 
 export function getUadEditorSections() {
   const sections = [];
-  for (const sectionKey of ["assignment", "subject"]) {
+  for (const sectionKey of UAD_EDITOR_SECTION_KEYS) {
     const sectionFields = UAD_PHASE_ONE_FIELDS.filter((field) => field.section === sectionKey);
     const groups = [];
     for (const field of sectionFields) {
       let group = groups.find((candidate) => candidate.name === field.group);
       if (!group) {
-        group = { name: field.group, fields: [] };
+        const repeatable = field.entityType ? UAD_SITE_ENTITY_GROUPS[field.entityType] : null;
+        group = {
+          name: field.group,
+          fields: [],
+          ...(repeatable ? {
+            entityType: field.entityType,
+            addLabel: repeatable.addLabel,
+            minItems: repeatable.minItems,
+          } : {}),
+        };
         groups.push(group);
       }
       const { sourcePath: _sourcePath, fallbackValue: _fallbackValue, initialValue: _initialValue, ...publicField } = field;
@@ -529,8 +574,8 @@ export function getUadEditorSections() {
     }
     sections.push({
       key: sectionKey,
-      title: sectionKey === "assignment" ? "Assignment Information" : "Subject Property",
-      officialSectionNumber: sectionKey === "assignment" ? 2 : 3,
+      title: sectionKey === "assignment" ? "Assignment Information" : sectionKey === "subject" ? "Subject Property" : "Site",
+      officialSectionNumber: sectionKey === "assignment" ? 2 : sectionKey === "subject" ? 3 : 4,
       groups,
     });
   }
@@ -557,9 +602,28 @@ export function normalizeAndValidateUadValue(field, rawValue) {
 
   if (field.dataType === "integer") {
     const value = typeof rawValue === "number" ? rawValue : Number(String(rawValue).trim());
-    return Number.isInteger(value) && value >= 0
+    const validMinimum = field.minimum == null || value >= field.minimum;
+    const validMaximum = field.maximum == null || value <= field.maximum;
+    return Number.isInteger(value) && validMinimum && validMaximum
       ? { value, error: null }
-      : { value: null, error: invalid(field, "integer", `${field.label} must be a whole number of zero or greater.`) };
+      : { value: null, error: invalid(field, "integer", `${field.label} must be a whole number in the supported range.`) };
+  }
+
+  if (field.dataType === "percentage") {
+    const value = typeof rawValue === "number" ? rawValue : Number(String(rawValue).trim());
+    return Number.isFinite(value) && value >= 0 && value <= 100
+      ? { value, error: null }
+      : { value: null, error: invalid(field, "percentage", `${field.label} must be between 0 and 100.`) };
+  }
+
+  if (field.dataType === "measurement") {
+    const amount = Number(rawValue?.amount);
+    const unit = String(rawValue?.unit || "").trim();
+    const minimumOk = field.minimum == null || amount >= field.minimum;
+    const exclusiveMinimumOk = field.minimumExclusive == null || amount > field.minimumExclusive;
+    return Number.isFinite(amount) && minimumOk && exclusiveMinimumOk && field.units.includes(unit)
+      ? { value: { amount, unit }, error: null }
+      : { value: null, error: invalid(field, "measurement", `${field.label} requires a valid amount and unit.`) };
   }
 
   if (field.dataType === "multi_enum") {
@@ -589,9 +653,9 @@ export function normalizeAndValidateUadValue(field, rawValue) {
   return { value, error: null };
 }
 
-export function validateUadSectionValues(section, submittedValues) {
-  if (!['assignment', 'subject'].includes(section)) throw new Error("invalid_uad_section");
-  if (!Array.isArray(submittedValues) || submittedValues.length > 200) {
+export function validateUadSectionValues(section, submittedValues, { entityTypesById = new Map() } = {}) {
+  if (!UAD_EDITOR_SECTION_KEYS.includes(section)) throw new Error("invalid_uad_section");
+  if (!Array.isArray(submittedValues) || submittedValues.length > 1000) {
     throw new Error("invalid_uad_field_values");
   }
 
@@ -600,13 +664,20 @@ export function validateUadSectionValues(section, submittedValues) {
   const seen = new Set();
   for (const submitted of submittedValues) {
     const field = getUadField(submitted?.context_key, submitted?.uid);
-    if (!field || field.section !== section || seen.has(field.key)) {
+    const entityId = submitted?.entity_id || null;
+    const submittedKey = `${entityId || "root"}:${field?.key || "unknown"}`;
+    const entityType = entityId ? entityTypesById.get(entityId) : null;
+    if (
+      !field || field.section !== section || seen.has(submittedKey) ||
+      (field.entityType && entityType !== field.entityType) ||
+      (!field.entityType && entityId)
+    ) {
       throw new Error("invalid_uad_field_values");
     }
-    seen.add(field.key);
+    seen.add(submittedKey);
     const result = normalizeAndValidateUadValue(field, submitted.value);
     if (result.error) errors.push(result.error);
-    normalized.push({ field, value: result.value });
+    normalized.push({ field, value: result.value, entityId });
   }
   return { normalized, errors };
 }

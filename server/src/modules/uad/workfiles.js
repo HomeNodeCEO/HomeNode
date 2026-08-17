@@ -142,6 +142,7 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
   const propertyEntityId = randomUUID();
   const dwellingEntityId = randomUUID();
   const unitEntityId = randomUUID();
+  const siteParcelEntityId = randomUUID();
   const revisionId = randomUUID();
   const fileNumber = normalizeUadFileNumber(input.file_number, { accountId, workfileId });
   const organizationId = input.organization_id || null;
@@ -206,8 +207,9 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
        ) VALUES
          ($1, $4, NULL, 'property', 'subject', 1, 'Subject Property'),
          ($2, $4, $1, 'dwelling', 'dwelling-1', 1, 'Dwelling 1'),
-         ($3, $4, $2, 'unit', 'unit-1', 1, 'Unit 1')`,
-      [propertyEntityId, dwellingEntityId, unitEntityId, workfileId],
+         ($3, $4, $2, 'unit', 'unit-1', 1, 'Unit 1'),
+         ($5, $4, $1, 'site_parcel', 'site-parcel-1', 1, 'Parcel 1')`,
+      [propertyEntityId, dwellingEntityId, unitEntityId, workfileId, siteParcelEntityId],
     );
 
     for (const { field, value, sourceReference } of buildUadPrefillValues(subjectData)) {
@@ -231,6 +233,18 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
     }
 
     await client.query(
+      `INSERT INTO appraisal.uad_field_values (
+         id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
+         source_type, source_reference, source_observed_at, is_appraiser_confirmed
+       ) VALUES
+         ($1, $3, NULL, 'site', '1500.0094', '4.002', '1'::jsonb,
+          'calculated', 'uad_workfile.initial_site_parcel_count', now(), false),
+         ($2, $3, $4, 'site_parcel', '1500.0027', '4.005', to_jsonb($5::text),
+          'public_record', 'subject_snapshot.account.account_id', now(), false)`,
+      [randomUUID(), randomUUID(), workfileId, siteParcelEntityId, accountId],
+    );
+
+    await client.query(
       `INSERT INTO appraisal.uad_revisions (
          id, workfile_id, revision_number, specification_release_key,
          document, change_summary, created_by_user_id
@@ -250,6 +264,7 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
             property: propertyEntityId,
             dwelling: dwellingEntityId,
             unit: unitEntityId,
+            site_parcel: siteParcelEntityId,
           },
         }),
         appraiserUserId,

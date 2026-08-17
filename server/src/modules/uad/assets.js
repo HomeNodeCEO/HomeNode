@@ -15,23 +15,67 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "application/json",
 ]);
 
+const MAX_UAD_ASSET_BYTES = 50 * 1024 * 1024;
+
+function assetResponse(row) {
+  return {
+    id: row.id,
+    entity_id: row.entity_id || null,
+    asset_kind: row.asset_kind,
+    section_number: row.section_number == null ? null : Number(row.section_number),
+    caption_type: row.caption_type || null,
+    caption: row.caption || null,
+    original_file_name: row.original_file_name || null,
+    content_type: row.content_type,
+    byte_size: row.byte_size == null ? null : Number(row.byte_size),
+    status: row.status,
+    capture_metadata: row.capture_metadata || {},
+    uploaded_at: row.uploaded_at || null,
+    verified_at: row.verified_at || null,
+    created_at: row.created_at,
+  };
+}
+
 function normalizeAssetInput(input = {}) {
   const kind = String(input.asset_kind || "").trim();
   const contentType = String(input.content_type || "").trim().toLowerCase();
   const fileName = String(input.file_name || "").trim();
+  const expectedByteSize = Number(input.byte_size);
   if (!UAD_ASSET_KINDS.includes(kind)) throw new Error("invalid_uad_asset_kind");
   if (!ALLOWED_CONTENT_TYPES.has(contentType)) throw new Error("invalid_uad_asset_content_type");
   if (!fileName || fileName.length > 255) throw new Error("invalid_uad_asset_file_name");
+  if (!Number.isInteger(expectedByteSize) || expectedByteSize <= 0 || expectedByteSize > MAX_UAD_ASSET_BYTES) {
+    throw new Error("invalid_uad_asset_byte_size");
+  }
+  const captionType = input.caption_type == null ? null : String(input.caption_type).trim();
+  const caption = input.caption == null ? null : String(input.caption).trim();
+  if (captionType && captionType.length > 80) throw new Error("invalid_uad_asset_caption_type");
+  if (caption && caption.length > 100) throw new Error("invalid_uad_asset_caption");
+  const sectionNumber = input.section_number == null ? null : Number(input.section_number);
+  if (sectionNumber != null && (!Number.isInteger(sectionNumber) || sectionNumber < 1 || sectionNumber > 99)) {
+    throw new Error("invalid_uad_asset_section");
+  }
   return {
     kind,
     contentType,
     fileName,
     entityId: input.entity_id || null,
-    sectionNumber: input.section_number == null ? null : Number(input.section_number),
-    captionType: input.caption_type || null,
-    caption: input.caption || null,
-    captureMetadata: input.capture_metadata || {},
+    sectionNumber,
+    captionType,
+    caption,
+    captureMetadata: { ...(input.capture_metadata || {}), expected_byte_size: expectedByteSize },
   };
+}
+
+export async function listUadAssets(pool, workfileIdValue) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  const { rows } = await pool.query(
+    `SELECT * FROM appraisal.uad_assets
+      WHERE workfile_id = $1 AND status <> 'deleted'
+      ORDER BY section_number NULLS LAST, created_at, id`,
+    [workfileId],
+  );
+  return rows.map(assetResponse);
 }
 
 export async function createUadAssetUpload(pool, storage, workfileIdValue, input) {
@@ -45,6 +89,13 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
     [workfileId],
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
+  if (normalized.entityId) {
+    const entityResult = await pool.query(
+      `SELECT id FROM appraisal.uad_entities WHERE id = $1 AND workfile_id = $2`,
+      [normalized.entityId, workfileId],
+    );
+    if (!entityResult.rows.length) throw new Error("uad_entity_not_found");
+  }
 
   const organizationId = workfileResult.rows[0].organization_id;
   const objectKey = buildUadObjectKey({
@@ -96,13 +147,29 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const assetId = normalizeUadWorkfileId(assetIdValue);
   const result = await pool.query(
-    `SELECT id, object_key
+    `SELECT id, object_key, content_type, capture_metadata
        FROM appraisal.uad_assets
       WHERE id = $1 AND workfile_id = $2 AND status IN ('pending_upload', 'uploaded')`,
     [assetId, workfileId],
   );
   if (!result.rows.length) throw new Error("uad_asset_not_found");
   const inspected = await storage.inspectObject({ objectKey: result.rows[0].object_key });
+  const expectedSize = Number(result.rows[0].capture_metadata?.expected_byte_size || 0);
+  const inspectedType = String(inspected.content_type || "").split(";", 1)[0].trim().toLowerCase();
+  if (
+    inspected.byte_size <= 0 || inspected.byte_size > MAX_UAD_ASSET_BYTES ||
+    (expectedSize && inspected.byte_size !== expectedSize) ||
+    (inspectedType && inspectedType !== result.rows[0].content_type)
+  ) {
+    await pool.query(
+      `UPDATE appraisal.uad_assets
+          SET status = 'rejected', updated_at = now(),
+              capture_metadata = capture_metadata || $3::jsonb
+        WHERE id = $1 AND workfile_id = $2`,
+      [assetId, workfileId, JSON.stringify({ verification_error: "uploaded_object_does_not_match_request", inspected })],
+    );
+    throw new Error("invalid_uad_uploaded_asset");
+  }
   const updated = await pool.query(
     `UPDATE appraisal.uad_assets
         SET status = 'verified',
@@ -112,8 +179,8 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
             updated_at = now(),
             capture_metadata = capture_metadata || jsonb_build_object('storage_etag', $4::text)
       WHERE id = $1 AND workfile_id = $2
-      RETURNING id, status, byte_size, verified_at`,
+      RETURNING *`,
     [assetId, workfileId, inspected.byte_size, inspected.etag],
   );
-  return updated.rows[0];
+  return assetResponse(updated.rows[0]);
 }

@@ -27,6 +27,58 @@ export interface UadWorkfile {
   updated_at: string;
 }
 
+export type UadFieldValue = string | number | boolean | string[] | null;
+
+export interface UadFieldDefinition {
+  key: string;
+  section: "assignment" | "subject";
+  group: string;
+  contextKey: string;
+  uid: string;
+  reportFieldId: string;
+  label: string;
+  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "date" | "state" | "postal_code";
+  required?: boolean;
+  maxLength?: number;
+  options?: string[];
+  showWhen?: { uid: string; equals: UadFieldValue };
+  ordinal: number;
+}
+
+export interface UadEditorSection {
+  key: "assignment" | "subject";
+  title: string;
+  officialSectionNumber: number;
+  groups: Array<{ name: string; fields: UadFieldDefinition[] }>;
+}
+
+export interface UadSavedFieldValue {
+  id: string;
+  uid: string;
+  context_key: string;
+  report_field_id: string;
+  value: UadFieldValue;
+  source_type: string;
+  source_reference: string | null;
+  is_appraiser_confirmed: boolean;
+  is_override: boolean;
+  override_reason: string | null;
+  updated_at: string;
+}
+
+export interface UadSectionCompletion {
+  completed: number;
+  required: number;
+  percent: number;
+}
+
+export interface UadEditorResponse {
+  workfile: Pick<UadWorkfile, "id" | "account_id" | "file_number" | "specification_release_key" | "status" | "current_revision" | "updated_at">;
+  sections: UadEditorSection[];
+  values: UadSavedFieldValue[];
+  completion: Record<"assignment" | "subject", UadSectionCompletion>;
+}
+
 export async function getUadCapabilities(): Promise<UadCapabilities> {
   return fetchJSON<UadCapabilities>(makeUrl("/api/uad/capabilities"), { timeoutMs: 10_000 });
 }
@@ -51,4 +103,20 @@ export async function createUadWorkfile(
     },
   );
   return response.workfile;
+}
+
+export async function getUadEditor(workfileId: string): Promise<UadEditorResponse> {
+  return fetchJSON<UadEditorResponse>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/editor`));
+}
+
+export async function saveUadSection(
+  workfileId: string,
+  section: "assignment" | "subject",
+  values: Array<{ uid: string; context_key: string; value: UadFieldValue }>,
+): Promise<void> {
+  await fetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values }),
+  });
 }

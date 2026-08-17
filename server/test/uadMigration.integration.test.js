@@ -39,6 +39,23 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND table_type = 'BASE TABLE'
     `);
     assert.ok(tableCount.rows[0].count >= 20);
+
+    const contextColumn = await pool.query(`
+      SELECT is_nullable, column_default
+        FROM information_schema.columns
+       WHERE table_schema = 'appraisal'
+         AND table_name = 'uad_field_values'
+         AND column_name = 'field_context'
+    `);
+    assert.equal(contextColumn.rows[0]?.is_nullable, "NO");
+
+    const phaseOneFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number IN (2, 3)
+    `);
+    assert.ok(phaseOneFields.rows[0].count >= 50);
   } finally {
     await pool.end();
   }

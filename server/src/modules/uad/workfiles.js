@@ -5,6 +5,7 @@ import {
   INITIAL_UAD_INSPECTION_METHOD,
   INITIAL_UAD_PROPERTY_TYPE,
 } from "./constants.js";
+import { buildUadPrefillValues } from "./fieldCatalog.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -195,6 +196,26 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
          ($3, $4, $2, 'unit', 'unit-1', 1, 'Unit 1')`,
       [propertyEntityId, dwellingEntityId, unitEntityId, workfileId],
     );
+
+    for (const { field, value, sourceReference } of buildUadPrefillValues(subjectData)) {
+      const sourceType = sourceReference?.startsWith("subject_snapshot.") ? "homenode" : "calculated";
+      await client.query(
+        `INSERT INTO appraisal.uad_field_values (
+           id, workfile_id, field_context, uad_uid, report_field_id, value,
+           source_type, source_reference, source_observed_at, is_appraiser_confirmed
+         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, now(), false)`,
+        [
+          randomUUID(),
+          workfileId,
+          field.contextKey,
+          field.uid,
+          field.reportFieldId,
+          JSON.stringify(value),
+          sourceType,
+          sourceReference,
+        ],
+      );
+    }
 
     await client.query(
       `INSERT INTO appraisal.uad_revisions (

@@ -21,6 +21,8 @@ try {
       account_id text PRIMARY KEY,
       county text,
       address text,
+      city text,
+      postal_code text,
       neighborhood_code text,
       subdivision text,
       legal_description text,
@@ -31,6 +33,7 @@ try {
       account_id text PRIMARY KEY REFERENCES core.accounts(account_id) ON DELETE CASCADE,
       latitude double precision,
       longitude double precision,
+      metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
       location_geom geometry(Point, 4326)
     );
     CREATE TABLE IF NOT EXISTS core.primary_improvements (

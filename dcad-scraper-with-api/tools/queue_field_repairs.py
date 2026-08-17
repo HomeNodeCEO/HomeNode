@@ -31,6 +31,15 @@ WITH owner_present AS (
     FROM core.primary_improvements
     GROUP BY account_id
     HAVING bool_or(living_area_sqft IS NOT NULL AND living_area_sqft > 0)
+), vacant_land AS (
+    SELECT account_id
+    FROM core.land_detail
+    GROUP BY account_id
+    HAVING bool_or(upper(state_code) LIKE '%VACANT%')
+       AND NOT bool_or(
+           NULLIF(btrim(state_code), '') IS NOT NULL
+           AND upper(state_code) NOT LIKE '%VACANT%'
+       )
 )
 SELECT target.account_id,
        array_remove(ARRAY[
@@ -38,7 +47,9 @@ SELECT target.account_id,
                 THEN 'owner' END,
            CASE WHEN land.account_id IS NULL AND 'land' = ANY(%(fields)s)
                 THEN 'land' END,
-           CASE WHEN gla.account_id IS NULL AND 'gla' = ANY(%(fields)s)
+           CASE WHEN gla.account_id IS NULL
+                     AND vacant.account_id IS NULL
+                     AND 'gla' = ANY(%(fields)s)
                 THEN 'gla' END
        ], NULL)::text[] AS missing_fields
 FROM app.dcad_residential_targets target
@@ -46,11 +57,16 @@ JOIN app.dcad_scrape_state state USING (account_id)
 LEFT JOIN owner_present owner USING (account_id)
 LEFT JOIN land_present land USING (account_id)
 LEFT JOIN gla_present gla USING (account_id)
+LEFT JOIN vacant_land vacant USING (account_id)
 WHERE state.status = 'succeeded'
   AND (
       (owner.account_id IS NULL AND 'owner' = ANY(%(fields)s))
       OR (land.account_id IS NULL AND 'land' = ANY(%(fields)s))
-      OR (gla.account_id IS NULL AND 'gla' = ANY(%(fields)s))
+      OR (
+          gla.account_id IS NULL
+          AND vacant.account_id IS NULL
+          AND 'gla' = ANY(%(fields)s)
+      )
   )
 """
 

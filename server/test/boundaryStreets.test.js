@@ -139,6 +139,62 @@ test("uses busy TxDOT perimeter roads and excludes local neighborhood streets", 
   assert.equal(result.north.candidates[0].annual_average_daily_traffic, 42_000);
 });
 
+test("selects four distinct corridors when one highway has different local names", () => {
+  const trafficFeatures = [
+    {
+      attributes: {
+        NAME: "Lyndon B Johnson Fwy",
+        AADT: 135_000,
+        TXDOT_ROUTE_NAME: "IH0020-KG",
+        TXDOT_ROUTE_PREFIX: "IH",
+        TXDOT_ROUTE_NUMBER: "0020",
+      },
+      geometry: { paths: [[[-96.69, 32.994], [-96.61, 32.994]]] },
+    },
+    {
+      attributes: {
+        NAME: "Marvin D Love Fwy",
+        AADT: 108_000,
+        TXDOT_ROUTE_NAME: "US0067-KG",
+        TXDOT_ROUTE_PREFIX: "US",
+        TXDOT_ROUTE_NUMBER: "0067",
+      },
+      geometry: { paths: [[[-96.626, 32.93], [-96.626, 33.01]]] },
+    },
+    {
+      attributes: {
+        NAME: "S G Alexander Fwy",
+        AADT: 108_000,
+        TXDOT_ROUTE_NAME: "US0067-KG",
+        TXDOT_ROUTE_PREFIX: "US",
+        TXDOT_ROUTE_NUMBER: "0067",
+      },
+      geometry: { paths: [[[-96.674, 32.93], [-96.674, 33.01]]] },
+    },
+    {
+      attributes: { NAME: "S Hampton Rd", AADT: 39_000, TXDOT_ROUTE_NAME: "CS" },
+      geometry: { paths: [[[-96.620, 32.93], [-96.620, 33.01]]] },
+    },
+    {
+      attributes: { NAME: "Danieldale Rd", AADT: 24_000, TXDOT_ROUTE_NAME: "CS" },
+      geometry: { paths: [[[-96.69, 32.946], [-96.61, 32.946]]] },
+    },
+  ];
+
+  const result = summarizeBusyCardinalBoundaries(trafficFeatures, geometry.coordinates[0]);
+
+  assert.equal(result.north.primary_street, "Lyndon B Johnson Fwy");
+  assert.equal(result.east.candidates[0].name, "Marvin D Love Fwy");
+  assert.equal(result.east.primary_street, "S Hampton Rd");
+  assert.equal(result.east.selected_candidate_rank, 2);
+  assert.equal(result.east.candidates[1].selected, true);
+  assert.equal(result.west.primary_street, "S G Alexander Fwy");
+  assert.equal(result.east.selection_reason, "joint_distinct_corridor_enclosure");
+  assert.equal(result.east.candidates[0].corridor_key, "route:US:67");
+  assert.equal(result.west.candidates[0].corridor_key, "route:US:67");
+  assert.equal(result.south.primary_street, "Danieldale Rd");
+});
+
 test("uses the local TxDOT AADT mirror before TIGERweb", async () => {
   const statements = [];
   const pool = {
@@ -197,4 +253,3 @@ test("falls back to TIGERweb only when explicitly enabled", async () => {
   assert.equal(result.source, "U.S. Census Bureau TIGERweb Transportation");
   assert.equal(result.fallback_reason, "local_boundary_roads_unavailable");
 });
-

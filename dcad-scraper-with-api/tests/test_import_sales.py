@@ -232,6 +232,7 @@ class MigrationBundleTests(unittest.TestCase):
         self.assertIn("sales_source_records_listing_id_unique_idx", sql)
         self.assertIn("manual_verified", sql)
         self.assertIn("sales_reconciliation_history", sql)
+        self.assertIn("app.location_backfill_queue", sql)
         self.assertIn("26262500020080000", sql)
         self.assertIn("26262500010210000", sql)
 

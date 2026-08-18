@@ -8,6 +8,11 @@ import {
   createReportFile,
   listReportFiles,
 } from "../src/modules/mobile/reportFiles.js";
+import {
+  getCustomAppraisalReview,
+  refreshCustomAppraisalProposals,
+  reviewCustomAppraisalProposal,
+} from "../src/modules/mobile/customAppraisal.js";
 import { getMobileProperty, searchMobileProperties } from "../src/modules/mobile/properties.js";
 import {
   createPhotoUploadBatch,
@@ -355,6 +360,126 @@ test("mobile report files preserve prior versions and allocate separate workflow
     const resolvedSnapshot = await getInspectionSnapshot(pool, auth, session.session.id);
     assert.equal(resolvedSnapshot.fields[0].state.value, "Different offline observation");
     assert.equal(resolvedSnapshot.conflicts.length, 0);
+
+    const customFieldSync = await syncInspectionOperations(pool, auth, session.session.id, {
+      operations: [
+        syncOperation("field.upsert", 4, {
+          field_path: "custom_appraisal.property_characteristics.main_improvement.foundation",
+          base: { exists: false },
+          value: "Slab",
+          source_type: "appraiser",
+          appraiser_confirmed: true,
+        }),
+        syncOperation("field.upsert", 4, {
+          field_path: "custom_appraisal.assignment_details.subject_condition_rating",
+          base: { exists: false },
+          value: "C3",
+          source_type: "appraiser",
+          appraiser_confirmed: true,
+        }),
+      ],
+    });
+    assert.equal(customFieldSync.session.revision, 6);
+    const refreshedProposals = await refreshCustomAppraisalProposals(pool, auth, session.session.id);
+    assert.ok(refreshedProposals.created.length >= 3);
+    const customReview = await getCustomAppraisalReview(pool, auth, session.session.id);
+    const foundationProposal = customReview.proposals.find((proposal) => (
+      proposal.field_path === "custom_appraisal.property_characteristics.main_improvement.foundation"
+      && proposal.status === "pending"
+    ));
+    const conditionProposal = customReview.proposals.find((proposal) => (
+      proposal.field_path === "custom_appraisal.assignment_details.subject_condition_rating"
+      && proposal.status === "pending"
+    ));
+    assert.ok(foundationProposal);
+    assert.ok(conditionProposal);
+    assert.equal(customReview.photos.verified_count, 0);
+
+    const foundationReviewOperationId = randomUUID();
+    const acceptedFoundation = await reviewCustomAppraisalProposal(
+      pool,
+      auth,
+      session.session.id,
+      foundationProposal.id,
+      { client_operation_id: foundationReviewOperationId, decision: "accept" },
+    );
+    assert.equal(acceptedFoundation.proposal.status, "accepted");
+    const retriedFoundation = await reviewCustomAppraisalProposal(
+      pool,
+      auth,
+      session.session.id,
+      foundationProposal.id,
+      { client_operation_id: foundationReviewOperationId, decision: "accept" },
+    );
+    assert.deepEqual(retriedFoundation, acceptedFoundation);
+    const acceptedCondition = await reviewCustomAppraisalProposal(
+      pool,
+      auth,
+      session.session.id,
+      conditionProposal.id,
+      { client_operation_id: randomUUID(), decision: "accept" },
+    );
+    assert.equal(acceptedCondition.proposal.status, "accepted");
+
+    const acceptedTargets = await pool.query(
+      `SELECT section.section_value, assignment.assignment_details
+         FROM app.report_files report_file
+         JOIN app.assignment_files assignment ON assignment.id = report_file.custom_assignment_file_id
+         JOIN app.custom_appraisal_sections section
+           ON section.assignment_file_id = assignment.id
+          AND section.section_key = 'report.property_characteristics'
+        WHERE report_file.id = $1`,
+      [secondCustom.reportFile.id],
+    );
+    assert.equal(acceptedTargets.rows[0].section_value.main_improvement.foundation, "Slab");
+    assert.equal(acceptedTargets.rows[0].assignment_details.subject_condition_rating, "C3");
+    const propertyWideOverride = await pool.query(
+      `SELECT count(*) FROM app.property_attribute_manual_values
+        WHERE account_id = $1 AND attribute_key = 'report.property_characteristics'`,
+      [accountId],
+    );
+    assert.equal(Number(propertyWideOverride.rows[0].count), 0);
+
+    const changedFoundation = await syncInspectionOperations(pool, auth, session.session.id, {
+      operations: [syncOperation("field.upsert", 6, {
+        field_path: "custom_appraisal.property_characteristics.main_improvement.foundation",
+        base: { exists: true, value: "Slab" },
+        value: "Pier and beam",
+        source_type: "appraiser",
+        appraiser_confirmed: true,
+      })],
+    });
+    assert.equal(changedFoundation.operations[0].status, "applied");
+    await refreshCustomAppraisalProposals(pool, auth, session.session.id);
+    const beforeConflict = await getCustomAppraisalReview(pool, auth, session.session.id);
+    const nextFoundationProposal = beforeConflict.proposals.find((proposal) => (
+      proposal.field_path === "custom_appraisal.property_characteristics.main_improvement.foundation"
+      && proposal.status === "pending"
+    ));
+    assert.ok(nextFoundationProposal);
+    await pool.query(
+      `UPDATE app.custom_appraisal_sections
+          SET section_value = jsonb_set(section_value, '{main_improvement,foundation}', '"Web edit"'::jsonb),
+              revision = revision + 1, updated_at = now()
+        WHERE assignment_file_id = $1 AND section_key = 'report.property_characteristics'`,
+      [secondCustom.reportFile.target_id],
+    );
+    const conflictResult = await reviewCustomAppraisalProposal(
+      pool,
+      auth,
+      session.session.id,
+      nextFoundationProposal.id,
+      { client_operation_id: randomUUID(), decision: "accept" },
+    );
+    assert.equal(conflictResult.proposal.status, "conflict");
+    assert.equal(conflictResult.proposal.current.value, "Web edit");
+    const conflictPreserved = await pool.query(
+      `SELECT section_value #>> '{main_improvement,foundation}' AS foundation
+         FROM app.custom_appraisal_sections
+        WHERE assignment_file_id = $1 AND section_key = 'report.property_characteristics'`,
+      [secondCustom.reportFile.target_id],
+    );
+    assert.equal(conflictPreserved.rows[0].foundation, "Web edit");
 
     const lineage = await pool.query(
       `SELECT prior.is_current AS prior_current,

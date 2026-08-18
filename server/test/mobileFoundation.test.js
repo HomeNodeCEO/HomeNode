@@ -11,6 +11,10 @@ import {
   parseBearerToken,
 } from "../src/modules/mobile/auth.js";
 import {
+  customAppraisalFieldCatalog,
+  normalizeCustomAppraisalFieldValue,
+} from "../src/modules/mobile/customAppraisal.js";
+import {
   formatReportFileNumber,
   normalizeWorkflowType,
 } from "../src/modules/mobile/fileNumbers.js";
@@ -118,6 +122,38 @@ test("canonicalizes and validates offline sync operations", () => {
       payload,
     }],
   }), /invalid_payload_sha256/);
+});
+
+test("custom appraisal adapter exposes only mapped, bounded assignment fields", () => {
+  const catalog = customAppraisalFieldCatalog();
+  assert.ok(catalog.length >= 30);
+  assert.ok(catalog.some((field) => field.field_path.endsWith(".foundation")));
+  assert.ok(catalog.some((field) => field.field_path.endsWith(".kitchen_countertop_type")));
+  assert.equal(
+    normalizeCustomAppraisalFieldValue(
+      "custom_appraisal.property_characteristics.main_improvement.living_area_sqft",
+      "2450",
+    ),
+    2450,
+  );
+  assert.equal(
+    normalizeCustomAppraisalFieldValue(
+      "custom_appraisal.assignment_details.subject_condition_rating",
+      "c4-c3",
+    ),
+    "C4-C3",
+  );
+  assert.throws(
+    () => normalizeCustomAppraisalFieldValue("report.property_characteristics.secret", "value"),
+    /invalid_custom_appraisal_field_path/,
+  );
+  assert.throws(
+    () => normalizeCustomAppraisalFieldValue(
+      "custom_appraisal.property_characteristics.main_improvement.bedroom_count",
+      1.5,
+    ),
+    /invalid_custom_appraisal_integer/,
+  );
 });
 
 test("manual sketch calculator requires closure before calculating square footage", () => {
@@ -285,4 +321,15 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(photoSource, /required_retention_years integer NOT NULL DEFAULT 5/);
   assert.match(photoSource, /retention_until >= retention_starts_at \+ interval '5 years'/);
   assert.doesNotMatch(photoSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const customSource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260824_mobile_custom_appraisal.sql"),
+    "utf8",
+  );
+  assert.match(customSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_sections/);
+  assert.match(customSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_proposals/);
+  assert.match(customSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_review_operations/);
+  assert.match(customSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_adapter_events/);
+  assert.match(customSource, /status IN \('pending', 'accepted', 'rejected', 'conflict', 'superseded'\)/);
+  assert.doesNotMatch(customSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

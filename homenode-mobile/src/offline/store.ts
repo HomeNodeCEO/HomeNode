@@ -3,6 +3,7 @@ import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 
 import type {
+  CustomAppraisalReview,
   InspectionConflict,
   InspectionSession,
   InspectionSnapshot,
@@ -19,6 +20,7 @@ import {
   stableJson,
   type FieldState,
   type JsonValue,
+  type LocalSyncState,
   type SyncOperationKind,
   type SyncOperationRequest,
 } from "./model";
@@ -45,7 +47,7 @@ type DraftRow = {
   server_value_json: string | null;
   local_exists: number;
   local_value_json: string | null;
-  state: string;
+  state: LocalSyncState;
   last_operation_id: string | null;
 };
 
@@ -262,6 +264,13 @@ async function initializeDatabase() {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (owner_user_id, session_id, field_path)
     );
+    CREATE TABLE IF NOT EXISTS custom_appraisal_cache (
+      owner_user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      review_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, session_id)
+    );
     CREATE TABLE IF NOT EXISTS sync_queue (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
       owner_user_id TEXT NOT NULL,
@@ -427,80 +436,165 @@ export class OfflineStore {
     }));
   }
 
-  async generalComments(ownerUserId: string, sessionId: string) {
-    const row = await this.database.getFirstAsync<DraftRow>(
-      `SELECT server_exists, server_value_json, local_exists, local_value_json, state, last_operation_id
-         FROM field_drafts WHERE owner_user_id = ? AND session_id = ? AND field_path = ?`,
+  async cacheCustomAppraisalReview(ownerUserId: string, sessionId: string, review: CustomAppraisalReview) {
+    await this.database.runAsync(
+      `INSERT INTO custom_appraisal_cache (owner_user_id, session_id, review_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (owner_user_id, session_id) DO UPDATE SET
+         review_json = excluded.review_json, updated_at = excluded.updated_at`,
       ownerUserId,
       sessionId,
-      GENERAL_COMMENTS_PATH,
+      JSON.stringify(review),
+      Date.now(),
     );
-    const local = fieldState(row, "local");
-    return { value: local.exists && typeof local.value === "string" ? local.value : "", state: row?.state || "synchronized" };
+  }
+
+  async cachedCustomAppraisalReview(ownerUserId: string, sessionId: string) {
+    const row = await this.database.getFirstAsync<{ review_json: string }>(
+      `SELECT review_json FROM custom_appraisal_cache
+        WHERE owner_user_id = ? AND session_id = ?`,
+      ownerUserId,
+      sessionId,
+    );
+    return row
+      ? parseJson<CustomAppraisalReview>(row.review_json, null as unknown as CustomAppraisalReview)
+      : null;
+  }
+
+  async generalComments(ownerUserId: string, sessionId: string) {
+    const drafts = await this.fieldDraftValues(ownerUserId, sessionId, [GENERAL_COMMENTS_PATH]);
+    const draft = drafts[GENERAL_COMMENTS_PATH];
+    return {
+      value: draft?.state.exists && typeof draft.state.value === "string" ? draft.state.value : "",
+      state: draft?.syncState || "synchronized",
+    };
   }
 
   async queueGeneralComments(ownerUserId: string, sessionId: string, value: string) {
-    const operationId = Crypto.randomUUID();
-    const now = Date.now();
+    return (await this.queueFieldValues(ownerUserId, sessionId, { [GENERAL_COMMENTS_PATH]: value }))[0];
+  }
+
+  async fieldDraftValues(ownerUserId: string, sessionId: string, fieldPaths: string[]) {
+    const result: Record<string, { state: FieldState; syncState: LocalSyncState }> = {};
+    for (const fieldPath of [...new Set(fieldPaths)]) {
+      const row = await this.database.getFirstAsync<DraftRow>(
+        `SELECT server_exists, server_value_json, local_exists, local_value_json, state, last_operation_id
+           FROM field_drafts WHERE owner_user_id = ? AND session_id = ? AND field_path = ?`,
+        ownerUserId,
+        sessionId,
+        fieldPath,
+      );
+      result[fieldPath] = {
+        state: fieldState(row, "local"),
+        syncState: row?.state || "synchronized",
+      };
+    }
+    return result;
+  }
+
+  async queueFieldValues(
+    ownerUserId: string,
+    sessionId: string,
+    values: Record<string, JsonValue>,
+    { sourceType = "appraiser", appraiserConfirmed = true } = {},
+  ) {
+    const changes = Object.fromEntries(
+      Object.entries(values).map(([fieldPath, value]) => [fieldPath, { exists: true, value }]),
+    ) as Record<string, FieldState>;
+    return this.queueFieldChanges(ownerUserId, sessionId, changes, { sourceType, appraiserConfirmed });
+  }
+
+  async queueFieldChanges(
+    ownerUserId: string,
+    sessionId: string,
+    changes: Record<string, FieldState>,
+    { sourceType = "appraiser", appraiserConfirmed = true } = {},
+  ) {
+    const entries = Object.entries(changes);
+    if (!entries.length || entries.length > 25) throw new Error("invalid_offline_field_batch");
     const session = await this.database.getFirstAsync<{ server_revision: number }>(
       `SELECT server_revision FROM cached_inspections WHERE owner_user_id = ? AND session_id = ?`,
       ownerUserId,
       sessionId,
     );
     if (!session) throw new Error("offline_inspection_not_found");
-    const current = await this.database.getFirstAsync<DraftRow>(
-      `SELECT server_exists, server_value_json, local_exists, local_value_json, state, last_operation_id
-         FROM field_drafts WHERE owner_user_id = ? AND session_id = ? AND field_path = ?`,
-      ownerUserId,
-      sessionId,
-      GENERAL_COMMENTS_PATH,
-    );
-    const payload = {
-      field_path: GENERAL_COMMENTS_PATH,
-      base: fieldState(current, "local"),
-      value,
-      source_type: "appraiser",
-      appraiser_confirmed: true,
-    } satisfies Record<string, JsonValue>;
-    const payloadJson = stableJson(payload);
-    const digest = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, payloadJson);
-    await this.database.withExclusiveTransactionAsync(async (transaction) => {
-      await transaction.runAsync(
-        `INSERT INTO sync_queue (
-           owner_user_id, session_id, client_operation_id, operation_kind,
-           base_session_revision, payload_sha256, payload_json, state,
-           attempts, next_attempt_at, created_at, updated_at
-         ) VALUES (?, ?, ?, 'field.upsert', ?, ?, ?, 'queued', 0, ?, ?, ?)`,
+    const prepared: Array<{
+      fieldPath: string;
+      change: FieldState;
+      current: DraftRow | null;
+      operationKind: SyncOperationKind;
+      operationId: string;
+      payloadJson: string;
+      digest: string;
+    }> = [];
+    for (const [fieldPath, change] of entries) {
+      const current = await this.database.getFirstAsync<DraftRow>(
+        `SELECT server_exists, server_value_json, local_exists, local_value_json, state, last_operation_id
+           FROM field_drafts WHERE owner_user_id = ? AND session_id = ? AND field_path = ?`,
         ownerUserId,
         sessionId,
-        operationId,
-        Number(session.server_revision),
-        digest,
+        fieldPath,
+      );
+      const payload = {
+        field_path: fieldPath,
+        base: fieldState(current, "local"),
+        ...(change.exists ? { value: change.value } : {}),
+        source_type: sourceType,
+        appraiser_confirmed: appraiserConfirmed,
+      } satisfies Record<string, JsonValue>;
+      const payloadJson = stableJson(payload);
+      prepared.push({
+        fieldPath,
+        change,
+        current,
+        operationKind: change.exists ? "field.upsert" as const : "field.delete" as const,
+        operationId: Crypto.randomUUID(),
         payloadJson,
-        now,
-        now,
-        now,
-      );
-      await transaction.runAsync(
-        `INSERT INTO field_drafts (
-           owner_user_id, session_id, field_path, server_exists, server_value_json,
-           local_exists, local_value_json, state, last_operation_id, updated_at
-         ) VALUES (?, ?, ?, ?, ?, 1, ?, 'queued', ?, ?)
-         ON CONFLICT (owner_user_id, session_id, field_path) DO UPDATE SET
-           local_exists = 1,
-           local_value_json = excluded.local_value_json,
-           state = 'queued',
-           last_operation_id = excluded.last_operation_id,
-           updated_at = excluded.updated_at`,
-        ownerUserId,
-        sessionId,
-        GENERAL_COMMENTS_PATH,
-        current?.server_exists || 0,
-        current?.server_value_json || null,
-        JSON.stringify(value),
-        operationId,
-        now,
-      );
+        digest: await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, payloadJson),
+      });
+    }
+    const now = Date.now();
+    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+      for (const item of prepared) {
+        await transaction.runAsync(
+          `INSERT INTO sync_queue (
+             owner_user_id, session_id, client_operation_id, operation_kind,
+             base_session_revision, payload_sha256, payload_json, state,
+             attempts, next_attempt_at, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, ?, ?)`,
+          ownerUserId,
+          sessionId,
+          item.operationId,
+          item.operationKind,
+          Number(session.server_revision),
+          item.digest,
+          item.payloadJson,
+          now,
+          now,
+          now,
+        );
+        await transaction.runAsync(
+          `INSERT INTO field_drafts (
+             owner_user_id, session_id, field_path, server_exists, server_value_json,
+             local_exists, local_value_json, state, last_operation_id, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)
+           ON CONFLICT (owner_user_id, session_id, field_path) DO UPDATE SET
+             local_exists = excluded.local_exists,
+             local_value_json = excluded.local_value_json,
+             state = 'queued',
+             last_operation_id = excluded.last_operation_id,
+             updated_at = excluded.updated_at`,
+          ownerUserId,
+          sessionId,
+          item.fieldPath,
+          item.current?.server_exists || 0,
+          item.current?.server_value_json || null,
+          item.change.exists ? 1 : 0,
+          item.change.exists ? JSON.stringify(item.change.value) : null,
+          item.operationId,
+          now,
+        );
+      }
       await transaction.runAsync(
         `UPDATE cached_inspections SET status = 'sync_pending', updated_at = ?
           WHERE owner_user_id = ? AND session_id = ?`,
@@ -509,7 +603,7 @@ export class OfflineStore {
         sessionId,
       );
     });
-    return operationId;
+    return prepared.map((item) => item.operationId);
   }
 
   async dueOperations(ownerUserId: string, limit = 25) {

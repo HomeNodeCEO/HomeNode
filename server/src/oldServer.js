@@ -1334,7 +1334,67 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
         [canonicalId],
       ),
     ]);
-    const files = rows.map(assignmentFileResponse);
+    const assignmentIds = rows.map((row) => Number(row.id));
+    let sectionRows = [];
+    let mobilePhotoRows = [];
+    if (assignmentIds.length) {
+      try {
+        [sectionRows, mobilePhotoRows] = await Promise.all([
+          pool.query(
+            `SELECT assignment_file_id, section_key, section_value, revision,
+                    last_applied_session_id, updated_at
+               FROM app.custom_appraisal_sections
+              WHERE assignment_file_id = ANY($1::bigint[])
+              ORDER BY assignment_file_id, section_key`,
+            [assignmentIds],
+          ).then((result) => result.rows),
+          pool.query(
+            `SELECT report_file.custom_assignment_file_id AS assignment_file_id,
+                    photo.id, photo.category, photo.room_ref, photo.room_label,
+                    photo.caption, photo.position, photo.verified_at,
+                    photo.retention_until, photo.required_retention_years
+               FROM app.report_files report_file
+               JOIN app.inspection_photos photo ON photo.report_file_id = report_file.id
+              WHERE report_file.custom_assignment_file_id = ANY($1::bigint[])
+                AND photo.status = 'verified'
+              ORDER BY report_file.custom_assignment_file_id, photo.position, photo.created_at, photo.id`,
+            [assignmentIds],
+          ).then((result) => result.rows),
+        ]);
+      } catch (error) {
+        if (error?.code !== "42P01") throw error;
+      }
+    }
+    const files = rows.map((row) => {
+      const response = assignmentFileResponse(row);
+      const customSections = Object.fromEntries(
+        sectionRows
+          .filter((section) => Number(section.assignment_file_id) === response.id)
+          .map((section) => [section.section_key, {
+            value: section.section_value,
+            revision: Number(section.revision),
+            last_applied_session_id: section.last_applied_session_id,
+            updated_at: section.updated_at,
+          }]),
+      );
+      return {
+        ...response,
+        custom_appraisal_sections: customSections,
+        mobile_inspection_photos: mobilePhotoRows
+          .filter((photo) => Number(photo.assignment_file_id) === response.id)
+          .map((photo) => ({
+            id: photo.id,
+            category: photo.category,
+            room_ref: photo.room_ref,
+            room_label: photo.room_label,
+            caption: photo.caption,
+            position: Number(photo.position),
+            verified_at: photo.verified_at,
+            retention_until: photo.retention_until,
+            required_retention_years: Number(photo.required_retention_years),
+          })),
+      };
+    });
     return res.json({
       account_id: canonicalId,
       files,

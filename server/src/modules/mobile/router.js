@@ -1,6 +1,11 @@
 import express from "express";
 
 import { createMobileAuthenticator } from "./auth.js";
+import {
+  getCustomAppraisalReview,
+  refreshCustomAppraisalProposals,
+  reviewCustomAppraisalProposal,
+} from "./customAppraisal.js";
 import { MOBILE_WORKFLOW_TYPES } from "./fileNumbers.js";
 import { calculateManualSketch } from "./manualSketch.js";
 import { getMobileProperty, searchMobileProperties } from "./properties.js";
@@ -86,6 +91,13 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
         display_derivative: true,
         retention_years: 5,
         custom_categories: CUSTOM_PHOTO_CATEGORIES,
+      },
+      custom_appraisal: {
+        assignment_scoped: true,
+        review_required_before_report_update: true,
+        sparse_updates: true,
+        exact_value_conflict_detection: true,
+        property_wide_overrides_mutated: false,
       },
     });
   });
@@ -193,6 +205,36 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
         pool,
         req.mobileAuth,
         req.params.sessionId,
+        req.body || {},
+      ));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.get("/inspection-sessions/:sessionId/custom-appraisal", async (req, res) => {
+    try {
+      return res.json(await getCustomAppraisalReview(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/custom-appraisal/proposals/refresh", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await refreshCustomAppraisalProposals(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/custom-appraisal/proposals/:proposalId/review", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await reviewCustomAppraisalProposal(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.params.proposalId,
         req.body || {},
       ));
     } catch (error) {

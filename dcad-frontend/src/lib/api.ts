@@ -359,6 +359,23 @@ export interface AppraisalAssignmentFile {
   revision: number;
   created_at: string;
   updated_at: string;
+  custom_appraisal_sections?: Record<string, {
+    value: Record<string, unknown>;
+    revision: number;
+    last_applied_session_id: string | null;
+    updated_at: string;
+  }>;
+  mobile_inspection_photos?: Array<{
+    id: string;
+    category: string;
+    room_ref: string | null;
+    room_label: string | null;
+    caption: string | null;
+    position: number;
+    verified_at: string;
+    retention_until: string;
+    required_retention_years: number;
+  }>;
 }
 
 export interface AssignmentFilesResponse {

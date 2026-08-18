@@ -43,6 +43,7 @@ const UNIT_INTERIOR_ROOM_CAPTIONS = [
 ];
 const UNIT_INTERIOR_FEATURE_CAPTIONS = ["Flooring", "WallsAndCeiling", "OtherInteriorFeature"];
 const UNIT_INTERIOR_DEFECT_CAPTIONS = ["UnitInteriorDefect"];
+const FUNCTIONAL_OBSOLESCENCE_CAPTIONS = ["FunctionalObsolescenceExhibit"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -384,6 +385,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             Section 10 repeats for every living unit and ADU. Record every level and room, reconcile the area and room counts, add Flooring and Walls and Ceiling features, and attach the required kitchen, bathroom, main-living-area, below-grade, update, ADU, and physical-defect images.
           </div>
         )}
+        {activeSection === "functional_obsolescence" && (
+          <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-950">
+            Select None by itself when there are no apparent functional issues. For any reported issue, explain its effect in the commentary. Section 11 exhibits are optional and may document the analysis when useful.
+          </div>
+        )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
@@ -577,6 +583,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               workfileId={workfileId}
             />
           ))}
+          {activeSection === "functional_obsolescence" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={FUNCTIONAL_OBSOLESCENCE_CAPTIONS}
+              description="Optional images may support the functional-obsolescence analysis. UAD 3.6 does not require a Section 11 photo."
+              emptyMessage="No optional functional-obsolescence exhibits uploaded."
+              sectionNumber={11}
+              title="Functional obsolescence exhibits"
+              workfileId={workfileId}
+            />
+          )}
           {activeSection === "unit_interior" && unitRooms.map((room) => (
             <UadAssetPanel
               accept={SKETCH_IMAGE_ACCEPT}

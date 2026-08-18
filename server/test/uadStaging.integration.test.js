@@ -121,6 +121,17 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(siteBuiltEditor.entities.filter((entity) => entity.entity_type === "unit_room").length >= 6);
     assert.ok(siteBuiltEditor.entities.some((entity) => entity.entity_type === "unit_interior_feature"));
     assert.ok(siteBuiltEditor.completion.unit_interior.required > 0);
+    const section11 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 11);
+    assert.equal(section11?.key, "functional_obsolescence");
+    assert.equal(section11?.applicable, true);
+    assert.equal(section11.groups.reduce((count, group) => count + group.fields.length, 0), 3);
+    assert.deepEqual(
+      siteBuiltEditor.values.find((value) => (
+        value.context_key === "functional_obsolescence" && value.uid === "3600.0002"
+      ))?.value,
+      ["None"],
+    );
+    assert.equal(siteBuiltEditor.completion.functional_obsolescence.percent, 100);
   } finally {
     await pool.end();
   }

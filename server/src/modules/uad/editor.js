@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { listUadAssets } from "./assets.js";
 import { isVerifiedDwellingFrontAsset } from "./dwellingExteriorCatalog.js";
+import { UAD_FUNCTIONAL_ISSUE_TYPES } from "./functionalObsolescenceCatalog.js";
 import { listUadEntities } from "./entities.js";
 import {
   UAD_EDITOR_SECTION_KEYS,
@@ -508,6 +509,38 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
         const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0016");
         errors.push(validationError(field, dwelling.id, "manufactured_home_year_mismatch", "The Date of Manufacture year must match Year Built in Dwelling Exterior."));
       }
+    }
+  }
+
+  if (section === "functional_obsolescence") {
+    const rootLookup = valueLookup(merged);
+    const issueTypes = rootLookup("functional_obsolescence:3600.0002");
+    const issueField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+      candidate.key === "functional_obsolescence:3600.0002"
+    ));
+    if (Array.isArray(issueTypes) && issueTypes.includes("None") && issueTypes.length > 1) {
+      errors.push(validationError(
+        issueField,
+        null,
+        "functional_issue_none_conflict",
+        "Select None by itself, or remove None before selecting functional issues.",
+      ));
+    }
+    if (Array.isArray(issueTypes) && issueTypes.length > 10) {
+      errors.push(validationError(
+        issueField,
+        null,
+        "functional_issue_limit",
+        "No more than 10 functional issues may be delivered for the subject property.",
+      ));
+    }
+    if (Array.isArray(issueTypes) && issueTypes.some((type) => !UAD_FUNCTIONAL_ISSUE_TYPES.includes(type))) {
+      errors.push(validationError(
+        issueField,
+        null,
+        "functional_issue_type",
+        "Functional issues contain an unsupported selection.",
+      ));
     }
   }
 

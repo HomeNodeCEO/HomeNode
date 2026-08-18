@@ -15,6 +15,7 @@ import {
   validateUadSectionValues,
 } from "./fieldCatalog.js";
 import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
+import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
 import { isVerifiedUnitInteriorAsset } from "./unitInteriorCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
@@ -184,6 +185,22 @@ function completionFor(values, entities, assets = []) {
       required += defects.length;
       completed += defects.filter((defect) => assets.some((asset) => (
         isVerifiedUnitInteriorAsset(asset, "UnitInteriorDefect", defect.id)
+      ))).length;
+    }
+    if (section === "outbuilding") {
+      const outbuildings = entities.filter((entity) => entity.entity_type === "outbuilding");
+      for (const outbuilding of outbuildings) {
+        for (const captionType of ["OutbuildingFront", "OutbuildingInterior"]) {
+          required += 1;
+          if (assets.some((asset) => isVerifiedOutbuildingAsset(asset, captionType, outbuilding.id))) {
+            completed += 1;
+          }
+        }
+      }
+      const defects = entities.filter((entity) => entity.entity_type === "outbuilding_defect");
+      required += defects.length;
+      completed += defects.filter((defect) => assets.some((asset) => (
+        isVerifiedOutbuildingAsset(asset, "OutbuildingDefect", defect.id)
       ))).length;
     }
     result[section] = {
@@ -544,9 +561,87 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
     }
   }
 
+  if (section === "outbuilding") {
+    const outbuildings = entities.filter((entity) => entity.entity_type === "outbuilding");
+    const outbuildingIds = new Set(outbuildings.map((entity) => entity.id));
+    const childTypes = new Set(["outbuilding_room", "outbuilding_defect"]);
+    const orphanedChildren = entities.filter((entity) => (
+      childTypes.has(entity.entity_type) && !outbuildingIds.has(entity.parent_entity_id)
+    ));
+    const baseField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0025");
+    if (orphanedChildren.length) {
+      errors.push(validationError(baseField, null, "outbuilding_parent_conflict", "Outbuilding room and defect records must belong to an outbuilding in this workfile."));
+    }
+
+    for (const outbuilding of outbuildings) {
+      const lookup = valueLookup(merged, outbuilding.id);
+      const rooms = entities.filter((entity) => entity.entity_type === "outbuilding_room" && entity.parent_entity_id === outbuilding.id);
+      const defects = entities.filter((entity) => entity.entity_type === "outbuilding_defect" && entity.parent_entity_id === outbuilding.id);
+      const units = entities.filter((entity) => entity.entity_type === "unit" && entity.parent_entity_id === outbuilding.id);
+      const realProperty = lookup("outbuilding:0300.0024");
+      const reportedUnits = Number(lookup("outbuilding:0300.0063"));
+      const finishedArea = Number(lookup("outbuilding:0300.0112")?.amount ?? 0);
+      const utilities = lookup("outbuilding:0300.0028");
+      const heating = lookup("outbuilding:0300.0088");
+      const outbuildingType = lookup("outbuilding:0300.0025");
+
+      for (const captionType of ["OutbuildingFront", "OutbuildingInterior"]) {
+        if (!assets.some((asset) => isVerifiedOutbuildingAsset(asset, captionType, outbuilding.id))) {
+          errors.push(validationError(baseField, outbuilding.id, "outbuilding_photo_required", `Upload and verify an ${captionType === "OutbuildingFront" ? "exterior/front" : "interior"} photo for this outbuilding.`));
+        }
+      }
+
+      if (realProperty === true && Number.isInteger(reportedUnits) && reportedUnits !== units.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0063");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_unit_count", `Units in structure must match the ${units.length} saved Unit Interior record${units.length === 1 ? "" : "s"} for this outbuilding.`));
+      }
+      if (realProperty === false && (units.length || rooms.length || defects.length)) {
+        errors.push(validationError(baseField, outbuilding.id, "outbuilding_real_property_conflict", "Remove unit, room, and defect detail records before marking this outbuilding as not real property."));
+      }
+      if (outbuildingType === "StandaloneADU" && (!Number.isInteger(reportedUnits) || reportedUnits < 1)) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0063");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_adu_unit_required", "A Standalone ADU must contain at least one living unit."));
+      }
+      if (Array.isArray(utilities) && utilities.includes("None") && utilities.length > 1) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0028");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_utility_none_conflict", "Select None by itself, or remove None before selecting utilities."));
+      }
+      if (Array.isArray(heating) && heating.includes("None") && heating.length > 1) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0088");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_heating_none_conflict", "Select None by itself, or remove None before selecting heating systems."));
+      }
+      if (realProperty === true && finishedArea > 0 && rooms.length === 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0112");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_room_required", "Add at least one room summary when the outbuilding has finished area."));
+      }
+      if (finishedArea === 0 && rooms.length > 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0112");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_room_conflict", "Remove finished room records or report finished outbuilding area greater than zero."));
+      }
+      const defectsExist = lookup("outbuilding:0300.0111");
+      if (defectsExist === true && defects.length === 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0111");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_defect_required", "Add at least one outbuilding defect when defects exist."));
+      }
+      if (defectsExist === false && defects.length > 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding:0300.0111");
+        errors.push(validationError(field, outbuilding.id, "outbuilding_defect_conflict", "Remove outbuilding defect records or change the defects answer to Yes."));
+      }
+      for (const defect of defects) {
+        if (!assets.some((asset) => isVerifiedOutbuildingAsset(asset, "OutbuildingDefect", defect.id))) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding_defect:3900.0164");
+          errors.push(validationError(field, defect.id, "outbuilding_defect_photo_required", "Upload and verify a photo documenting this outbuilding defect."));
+        }
+      }
+    }
+  }
+
   if (section === "unit_interior") {
     const units = entities.filter((entity) => entity.entity_type === "unit");
     const unitIds = new Set(units.map((entity) => entity.id));
+    const structures = new Map(entities.filter((entity) => (
+      entity.entity_type === "dwelling" || entity.entity_type === "outbuilding"
+    )).map((entity) => [entity.id, entity]));
     const childTypes = new Set([
       "unit_area_data_source",
       "unit_adu_data_source",
@@ -566,6 +661,10 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
     }
     if (orphanedChildren.length) {
       errors.push(validationError(baseField, null, "unit_interior_parent_conflict", "Unit Interior detail records must belong to a living unit in this workfile."));
+    }
+    const orphanedUnits = units.filter((unit) => !structures.has(unit.parent_entity_id));
+    if (orphanedUnits.length) {
+      errors.push(validationError(baseField, null, "unit_structure_parent_conflict", "Every living unit must belong to a dwelling or outbuilding in this workfile."));
     }
 
     for (const unit of units) {
@@ -595,6 +694,10 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
         errors.push(validationError(baseField, unit.id, "unit_area_source_required", "Add at least one source for the unit area measurements."));
       }
       const aduExists = lookup("unit:0700.0089");
+      if (structures.get(unit.parent_entity_id)?.entity_type === "outbuilding" && aduExists !== true) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0089");
+        errors.push(validationError(field, unit.id, "outbuilding_unit_must_be_adu", "Every living unit in an outbuilding must be identified as an ADU."));
+      }
       if (aduExists === true && !aduSources.length) {
         const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0089");
         errors.push(validationError(field, unit.id, "unit_adu_source_required", "Add at least one source supporting the ADU determination."));

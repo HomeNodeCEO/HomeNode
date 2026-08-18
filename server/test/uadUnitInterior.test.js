@@ -19,7 +19,7 @@ import { isVerifiedUnitInteriorAsset } from "../src/modules/uad/unitInteriorCata
 test("adds official always-displayed URAR Section 10", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "unit_interior");
-  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   assert.equal(section?.key, "unit_interior");
   assert.equal(section?.title, "Unit Interior");
   assert.equal(section?.appliesWhen, undefined);
@@ -31,7 +31,7 @@ test("adds official always-displayed URAR Section 10", () => {
 });
 
 test("models Section 10 levels, rooms, sources, features, and defects under each unit", () => {
-  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.unit.parentEntityType, "dwelling");
+  assert.deepEqual(UAD_REPEATABLE_ENTITY_GROUPS.unit.parentEntityTypes, ["dwelling", "outbuilding"]);
   for (const entityType of [
     "unit_area_data_source",
     "unit_adu_data_source",

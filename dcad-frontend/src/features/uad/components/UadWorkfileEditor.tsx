@@ -44,6 +44,11 @@ const UNIT_INTERIOR_ROOM_CAPTIONS = [
 const UNIT_INTERIOR_FEATURE_CAPTIONS = ["Flooring", "WallsAndCeiling", "OtherInteriorFeature"];
 const UNIT_INTERIOR_DEFECT_CAPTIONS = ["UnitInteriorDefect"];
 const FUNCTIONAL_OBSOLESCENCE_CAPTIONS = ["FunctionalObsolescenceExhibit"];
+const OUTBUILDING_GENERAL_CAPTIONS = [
+  "OutbuildingFront", "OutbuildingInterior", "OutbuildingRear", "OutbuildingRoom",
+  "ManufacturedHomeFoundation", "OutbuildingExhibit",
+];
+const OUTBUILDING_DEFECT_CAPTIONS = ["OutbuildingDefect"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -133,6 +138,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const unitRooms = editor?.entities.filter((entity) => entity.entity_type === "unit_room") || [];
   const unitInteriorFeatures = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_feature") || [];
   const unitInteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_defect") || [];
+  const outbuildings = editor?.entities.filter((entity) => entity.entity_type === "outbuilding") || [];
+  const outbuildingDefects = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_defect") || [];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -406,8 +413,10 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               );
             }
             const entities = entitiesFor(group.entityType);
-            if (group.parentEntityType) {
-              const parents = entitiesFor(group.parentEntityType);
+            const parentEntityTypes = group.parentEntityTypes
+              || (group.parentEntityType ? [group.parentEntityType] : []);
+            if (parentEntityTypes.length) {
+              const parents = editor?.entities.filter((entity) => parentEntityTypes.includes(entity.entity_type)) || [];
               const visibleParents = parents.filter((parent) => {
                 const children = entities.filter((entity) => entity.parent_entity_id === parent.id);
                 const enabled = !group.showWhen || evaluateCondition(group.showWhen, draftLookup(parent.id));
@@ -423,7 +432,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                       const parentGroupEnabled = !group.showWhen || evaluateCondition(group.showWhen, draftLookup(parent.id));
                       return (
                         <div className="rounded-xl border border-slate-200 p-4" key={parent.id}>
-                          <div className="text-sm font-semibold text-slate-900">{parent.label || `${group.parentEntityType} ${parent.ordinal}`}</div>
+                          <div className="text-sm font-semibold text-slate-900">{parent.label || `${parent.entity_type} ${parent.ordinal}`}</div>
                           <div className="mt-3 space-y-3">
                             {!parentGroupEnabled && children.length > 0 && (
                               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
@@ -439,7 +448,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                                 {renderFields(group.fields, entity.id)}
                               </div>
                             ))}
-                            {!children.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added for this dwelling.</div>}
+                            {!children.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added for this structure.</div>}
                             {parentGroupEnabled && group.createEnabled !== false && (
                               <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!, parent.id)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
                             )}
@@ -594,6 +603,34 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               workfileId={workfileId}
             />
           )}
+          {activeSection === "outbuilding" && outbuildings.map((outbuilding) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={OUTBUILDING_GENERAL_CAPTIONS}
+              description="A verified exterior/front photo and interior photo are required for every outbuilding. Rear, room, foundation, and exhibit images may be added when applicable."
+              emptyMessage="No verified outbuilding images uploaded yet."
+              entityId={outbuilding.id}
+              key={`outbuilding-${outbuilding.id}`}
+              sectionNumber={12}
+              title={`${outbuilding.label || `Outbuilding ${outbuilding.ordinal}`} photos and exhibits`}
+              visibleCaptionTypes={OUTBUILDING_GENERAL_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "outbuilding" && outbuildingDefects.map((defect) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={OUTBUILDING_DEFECT_CAPTIONS}
+              description="Upload and verify a photo documenting this physical outbuilding defect, damage, or deficiency."
+              emptyMessage="No verified outbuilding defect image uploaded yet."
+              entityId={defect.id}
+              key={`outbuilding-defect-${defect.id}`}
+              sectionNumber={12}
+              title={`${defect.label || `Outbuilding defect ${defect.ordinal}`} photo`}
+              visibleCaptionTypes={OUTBUILDING_DEFECT_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
           {activeSection === "unit_interior" && unitRooms.map((room) => (
             <UadAssetPanel
               accept={SKETCH_IMAGE_ACCEPT}

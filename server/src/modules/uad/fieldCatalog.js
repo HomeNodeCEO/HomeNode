@@ -12,6 +12,10 @@ import {
   UAD_MANUFACTURED_HOME_FIELDS,
   manufacturedDwelling,
 } from "./manufacturedHomeCatalog.js";
+import {
+  UAD_OUTBUILDING_ENTITY_GROUPS,
+  UAD_OUTBUILDING_FIELDS,
+} from "./outbuildingCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 import {
@@ -25,6 +29,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_DWELLING_EXTERIOR_ENTITY_GROUPS,
   ...UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
   ...UAD_UNIT_INTERIOR_ENTITY_GROUPS,
+  ...UAD_OUTBUILDING_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -43,6 +48,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   },
   unit_interior: { title: "Unit Interior", officialSectionNumber: 10 },
   functional_obsolescence: { title: "Functional Obsolescence", officialSectionNumber: 11 },
+  outbuilding: { title: "Outbuilding", officialSectionNumber: 12 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -514,6 +520,7 @@ const fields = [
   ...UAD_MANUFACTURED_HOME_FIELDS,
   ...UAD_UNIT_INTERIOR_FIELDS,
   ...UAD_FUNCTIONAL_OBSOLESCENCE_FIELDS,
+  ...UAD_OUTBUILDING_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -622,6 +629,7 @@ export function getUadEditorSections() {
             minItems: repeatable.minItems,
             createEnabled: repeatable.createEnabled,
             parentEntityType: repeatable.parentEntityType,
+            parentEntityTypes: repeatable.parentEntityTypes,
             showWhen: repeatable.showWhen,
           } : {}),
         };

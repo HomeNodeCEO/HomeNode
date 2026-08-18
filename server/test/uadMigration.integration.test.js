@@ -173,6 +173,34 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND (rule_id IN ('UAD1680', 'UAD1681') OR rule_id LIKE 'HN-UAD-FUNCTIONAL-%')
     `);
     assert.equal(functionalObsolescenceRules.rows[0].count, 4);
+
+    const outbuildingFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 12
+    `);
+    assert.equal(outbuildingFields.rows[0].count, 36);
+
+    const officialOutbuildingRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1047', 'UAD1055', 'UAD1056', 'UAD1057', 'UAD1058', 'UAD1059',
+           'UAD1083', 'UAD1084', 'UAD1089', 'UAD1094', 'UAD1095', 'UAD1096',
+           'UAD1103', 'UAD1692'
+         )
+    `);
+    assert.equal(officialOutbuildingRules.rows[0].count, 14);
+
+    const homeNodeOutbuildingRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-OUTBUILDING-%'
+    `);
+    assert.equal(homeNodeOutbuildingRules.rows[0].count, 8);
   } finally {
     await pool.end();
   }

@@ -202,6 +202,22 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     );
     assert.equal(siteBuiltEditor.completion.overall_quality_condition.required, 9);
     assert.equal(siteBuiltEditor.completion.overall_quality_condition.percent, 100);
+    const section16 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 16);
+    assert.equal(section16?.key, "highest_best_use");
+    assert.equal(section16?.applicable, true);
+    assert.equal(section16.groups.reduce((count, group) => count + group.fields.length, 0), 6);
+    for (const uid of ["3100.0004", "3100.0006", "3100.0003", "3100.0005", "3100.0007"]) {
+      assert.equal(
+        siteBuiltEditor.values.find((value) => (
+          value.entity_id === null
+          && value.context_key === "highest_best_use"
+          && value.uid === uid
+        ))?.value,
+        true,
+      );
+    }
+    assert.equal(siteBuiltEditor.completion.highest_best_use.required, 5);
+    assert.equal(siteBuiltEditor.completion.highest_best_use.percent, 100);
   } finally {
     await pool.end();
   }

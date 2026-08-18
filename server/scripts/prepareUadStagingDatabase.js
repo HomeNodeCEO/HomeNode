@@ -299,7 +299,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-15 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-16 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -466,6 +466,24 @@ try {
     "1600.0008",
     "15.010",
     "The Q3 and C3 overall ratings reconcile the dwelling exterior and non-ADU unit interior ratings.",
+  );
+  const highestBestUseValues = [
+    ["3100.0004", "16.000", true],
+    ["3100.0006", "16.001", true],
+    ["3100.0003", "16.002", true],
+    ["3100.0005", "16.003", true],
+    ["3100.0007", "16.004", true],
+  ];
+  for (const [uid, reportFieldId, value] of highestBestUseValues) {
+    await seedEntityValue(sfrWorkfileId, null, "highest_best_use", uid, reportFieldId, value);
+  }
+  await seedEntityValue(
+    sfrWorkfileId,
+    null,
+    "highest_best_use_commentary",
+    "3100.0010",
+    "16.005",
+    "The present single-family residential use is legally permissible, physically possible, financially feasible, and maximally productive.",
   );
 
   const areaSourceId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_area_data_source", "unit-area-source-1", 1, "Area Source 1");

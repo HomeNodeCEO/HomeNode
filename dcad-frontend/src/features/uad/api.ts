@@ -69,7 +69,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 

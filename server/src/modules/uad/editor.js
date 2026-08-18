@@ -17,6 +17,7 @@ import {
 } from "./fieldCatalog.js";
 import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
 import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
+import { UAD_HIGHEST_BEST_USE_FIELD_KEYS } from "./highestBestUseCatalog.js";
 import { UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS } from "./overallQualityConditionCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
 import {
@@ -979,6 +980,30 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
           `Complete the Section 10 interior condition rating for ${unit.label || `Unit ${unit.ordinal}`}.`,
         ));
       }
+    }
+  }
+
+  if (section === "highest_best_use") {
+    const lookup = valueLookup(merged);
+    const conclusionField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+      candidate.key === UAD_HIGHEST_BEST_USE_FIELD_KEYS.presentUseIsHighestBest
+    ));
+    const fourTestAnswers = [
+      UAD_HIGHEST_BEST_USE_FIELD_KEYS.legallyPermissible,
+      UAD_HIGHEST_BEST_USE_FIELD_KEYS.physicallyPossible,
+      UAD_HIGHEST_BEST_USE_FIELD_KEYS.financiallyFeasible,
+      UAD_HIGHEST_BEST_USE_FIELD_KEYS.maximallyProductive,
+    ].map((key) => lookup(key));
+    if (
+      lookup(UAD_HIGHEST_BEST_USE_FIELD_KEYS.presentUseIsHighestBest) === true
+      && fourTestAnswers.some((value) => value === false)
+    ) {
+      errors.push(validationError(
+        conclusionField,
+        null,
+        "highest_best_use_present_use_conflict",
+        "The present or proposed use cannot be concluded as highest and best when it fails one of the four tests.",
+      ));
     }
   }
 

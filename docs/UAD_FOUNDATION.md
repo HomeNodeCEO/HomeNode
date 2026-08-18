@@ -160,4 +160,3 @@ npm run migrate:uad
 The runner uses an advisory lock and records the migration checksum in
 `app.schema_migrations`. A changed migration that was already applied is
 rejected instead of silently rerun.
-

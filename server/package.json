@@ -3,11 +3,30 @@
     "version": "1.0.0",
     "description": "",
     "main": "index.js",
-  "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
+    "scripts": {
+        "test": "node --test",
+        "backfill:locations": "node scripts/backfillAccountLocations.js",
+        "backfill:census": "node scripts/backfillCensusGeographies.js",
+        "enrich:non-dallas": "node scripts/runNonDallasEnrichment.js",
+        "sync:property-context": "node scripts/syncPropertyContext.js",
+        "sync:property-context:full": "node scripts/syncPropertyContext.js --source=all --mode=full",
+        "maintenance:scheduled": "node scripts/runScheduledMaintenance.js --task=routine",
+        "maintenance:locations": "node scripts/runScheduledMaintenance.js --task=locations",
+        "maintenance:locations:drain": "node scripts/runScheduledMaintenance.js --task=locations --location-maximum-batches=100 --location-seed-limit=10000 --maximum-runtime-minutes=30",
+        "maintenance:roads": "node scripts/runScheduledMaintenance.js --task=roads",
+        "maintenance:traffic": "node scripts/runScheduledMaintenance.js --task=traffic",
+        "maintenance:context": "node scripts/runScheduledMaintenance.js --task=context",
+        "maintenance:floods": "node scripts/runScheduledMaintenance.js --task=floods",
+        "maintenance:zoning": "node scripts/runScheduledMaintenance.js --task=zoning",
+        "maintenance:zoning-documents": "node scripts/syncZoningEvidenceDocuments.js",
+        "maintenance:documents": "node scripts/runScheduledMaintenance.js --task=documents",
+        "maintenance:influences": "node scripts/runScheduledMaintenance.js --task=influences",
+        "sync:collin-account-ids": "node scripts/syncCollinAccountIdentifiers.js",
+        "backfill:collin-sales": "node scripts/backfillCollinSales.js",
+        "sync:trestle": "node scripts/runTrestleSync.js",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"
-  },
+    },
     "keywords": [],
     "author": "",
     "license": "ISC",
@@ -16,7 +35,11 @@
         "dotenv": "^17.2.2",
         "express": "^5.1.0",
         "nodemailer": "^6.9.15",
-        "pg": "^8.16.3"
+        "pg": "^8.16.3",
+        "unpdf": "1.8.1"
+    },
+    "engines": {
+        "node": ">=22"
     },
     "type": "module",
     "devDependencies": {

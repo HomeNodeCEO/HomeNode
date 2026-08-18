@@ -23,6 +23,7 @@ function errorStatus(error) {
   if (message.includes("not_found")) return 404;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
+  if (["uad_parent_entity_required", "uad_entity_minimum_required"].includes(message)) return 400;
   if (error?.code === "23505") return 409;
   if (error?.code === "23503") return 400;
   return 500;

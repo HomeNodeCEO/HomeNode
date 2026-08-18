@@ -62,7 +62,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -105,7 +105,16 @@ export interface UadEditorSection {
   key: UadSectionKey;
   title: string;
   officialSectionNumber: number;
-  groups: Array<{ name: string; fields: UadFieldDefinition[]; entityType?: string; addLabel?: string; minItems?: number; showWhen?: UadCondition }>;
+  groups: Array<{
+    name: string;
+    fields: UadFieldDefinition[];
+    entityType?: string;
+    addLabel?: string;
+    minItems?: number;
+    createEnabled?: boolean;
+    parentEntityType?: string;
+    showWhen?: UadCondition;
+  }>;
 }
 
 export interface UadEntity {
@@ -231,11 +240,11 @@ export async function saveUadSection(
   });
 }
 
-export async function createUadEntity(workfileId: string, entityType: string): Promise<UadEntity> {
+export async function createUadEntity(workfileId: string, entityType: string, parentEntityId?: string): Promise<UadEntity> {
   const response = await uadFetchJSON<{ entity: UadEntity }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/entities`), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ entity_type: entityType }),
+    body: JSON.stringify({ entity_type: entityType, parent_entity_id: parentEntityId || null }),
   });
   return response.entity;
 }
@@ -252,7 +261,7 @@ export async function listUadAssets(workfileId: string): Promise<UadAsset[]> {
 export async function uploadUadAsset(
   workfileId: string,
   file: File,
-  input: { asset_kind: string; section_number: number; caption_type?: string; caption?: string },
+  input: { asset_kind: string; section_number: number; entity_id?: string; caption_type?: string; caption?: string },
 ): Promise<UadAsset> {
   const extension = file.name.split(".").pop()?.toLowerCase();
   const inferredContentType: Record<string, string> = {

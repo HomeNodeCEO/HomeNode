@@ -31,6 +31,7 @@ const ENERGY_GREEN_CAPTIONS = ["EnergyEfficientAndGreenFeaturesExhibit"];
 const SKETCH_REPORT_CAPTIONS = ["SubjectPropertyImprovementSketch", "FloorPlan"];
 const SKETCH_SOURCE_CAPTIONS = ["MeasurementSource"];
 const SKETCH_IMAGE_ACCEPT = "image/avif,image/bmp,image/gif,image/heic,image/heif,image/jpeg,image/png,image/tiff,image/webp";
+const DWELLING_EXTERIOR_CAPTIONS = ["DwellingFront", "DwellingRear", "DwellingExteriorExhibit", "NoncontinuousArea"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -106,6 +107,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const energySectionDisplays = ["2600.0005", "2600.0004", "2600.0003"]
     .some((uid) => draft[fieldValueKey("energy_green", uid)] === true);
   const sketchProvided = draft[fieldValueKey("sketch", "3300.0002")];
+  const dwellings = editor?.entities.filter((entity) => entity.entity_type === "dwelling") || [];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -138,7 +140,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     return entityType ? editor?.entities.filter((entity) => entity.entity_type === entityType) || [] : [];
   }
 
-  async function handleEntityAdd(entityType: string) {
+  async function handleEntityAdd(entityType: string, parentEntityId?: string) {
     if (entityBusy) return;
     if (dirty) {
       setError("Save this section before adding another repeatable record.");
@@ -147,7 +149,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     setEntityBusy(true);
     setError(null);
     try {
-      await createUadEntity(workfileId, entityType);
+      await createUadEntity(workfileId, entityType, parentEntityId);
       await loadEditor();
       setSavedMessage("Record added to the UAD workfile.");
     } catch (reason) {
@@ -310,7 +312,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-6" aria-label="UAD workfile sections">
+      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-7" aria-label="UAD workfile sections">
         {editor.sections.map((item) => {
           const completion = editor.completion[item.key];
           return (
@@ -346,6 +348,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             Section 7 always displays. If a sketch or floor plan is provided, upload at least one verified report image and identify the measurement standard. If one is not available, explain why in Sketch Commentary.
           </div>
         )}
+        {activeSection === "dwelling_exterior" && (
+          <div className="mb-5 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950">
+            Section 8 repeats by dwelling. Complete the dwelling details, add the required exterior feature rows when the homeowner maintains the exterior, and keep noncontinuous-area and defect records consistent with their Yes/No answers. A verified front photo is required for every dwelling.
+          </div>
+        )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
@@ -364,6 +371,44 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             const entities = entitiesFor(group.entityType);
             const groupEnabled = !group.showWhen || evaluateCondition(group.showWhen, draftLookup(null));
             if (!groupEnabled && !entities.length) return null;
+            if (group.parentEntityType) {
+              const parents = entitiesFor(group.parentEntityType);
+              return (
+                <fieldset className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5" key={group.name}>
+                  <legend className="px-2 text-base font-semibold text-slate-900">{group.name}</legend>
+                  <div className="mt-2 space-y-5">
+                    {!groupEnabled && entities.length > 0 && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                        Remove the saved record{entities.length === 1 ? "" : "s"} below before saving the controlling answer as No.
+                      </div>
+                    )}
+                    {parents.map((parent) => {
+                      const children = entities.filter((entity) => entity.parent_entity_id === parent.id);
+                      return (
+                        <div className="rounded-xl border border-slate-200 p-4" key={parent.id}>
+                          <div className="text-sm font-semibold text-slate-900">{parent.label || `${group.parentEntityType} ${parent.ordinal}`}</div>
+                          <div className="mt-3 space-y-3">
+                            {children.map((entity) => (
+                              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={entity.id}>
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-sm font-semibold text-slate-900">{entity.label || `${group.name} ${entity.ordinal}`}</div>
+                                  <button className="text-xs font-semibold text-red-700 hover:text-red-900 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityDelete(entity)} type="button">Remove</button>
+                                </div>
+                                {renderFields(group.fields, entity.id)}
+                              </div>
+                            ))}
+                            {!children.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added for this dwelling.</div>}
+                            {groupEnabled && group.createEnabled !== false && (
+                              <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!, parent.id)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              );
+            }
             return (
               <fieldset className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5" key={group.name}>
                 <legend className="px-2 text-base font-semibold text-slate-900">{group.name}</legend>
@@ -377,13 +422,13 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                     <div className="rounded-xl border border-slate-200 bg-slate-50 p-4" key={entity.id}>
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold text-slate-900">{entity.label || `${group.name} ${entity.ordinal}`}</div>
-                        <button className="text-xs font-semibold text-red-700 hover:text-red-900 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityDelete(entity)} type="button">Remove</button>
+                        <button className="text-xs font-semibold text-red-700 hover:text-red-900 disabled:opacity-50" disabled={entityBusy || entities.length <= Number(group.minItems || 0)} onClick={() => void handleEntityDelete(entity)} type="button">Remove</button>
                       </div>
                       {renderFields(group.fields, entity.id)}
                     </div>
                   ))}
                   {!entities.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added.</div>}
-                  {groupEnabled && <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>}
+                  {groupEnabled && group.createEnabled !== false && <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>}
                 </div>
               </fieldset>
             );
@@ -422,6 +467,20 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               workfileId={workfileId}
             />
           )}
+          {activeSection === "dwelling_exterior" && dwellings.map((dwelling) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={DWELLING_EXTERIOR_CAPTIONS}
+              description="The front photo is required. Rear, noncontinuous-area, and other exterior images may be added as applicable. Files use the same private R2 upload contract planned for the HomeNode mobile capture app."
+              emptyMessage="No verified dwelling exterior images uploaded yet."
+              entityId={dwelling.id}
+              key={dwelling.id}
+              sectionNumber={8}
+              title={`${dwelling.label || `Dwelling ${dwelling.ordinal}`} photos and exhibits`}
+              visibleCaptionTypes={DWELLING_EXTERIOR_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
         </div>
 
         <div className="sticky bottom-3 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">

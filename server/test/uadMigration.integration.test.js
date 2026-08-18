@@ -88,6 +88,22 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND (rule_id IN ('UAD1676', 'UAD1677', 'UAD1678') OR rule_id LIKE 'HN-UAD-SKETCH-%')
     `);
     assert.equal(sketchRules.rows[0].count, 5);
+
+    const dwellingExteriorFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 8
+    `);
+    assert.ok(dwellingExteriorFields.rows[0].count >= 70);
+
+    const dwellingExteriorRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND (rule_id IN ('UAD1048', 'UAD1050', 'UAD1060', 'UAD1687') OR rule_id LIKE 'HN-UAD-DWELLING-%')
+    `);
+    assert.equal(dwellingExteriorRules.rows[0].count, 8);
   } finally {
     await pool.end();
   }

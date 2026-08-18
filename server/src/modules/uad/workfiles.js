@@ -150,6 +150,12 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
   const specificationReleaseKey = input.specification_release_key || CURRENT_UAD_RELEASE_KEY;
 
   const subjectData = await loadSubjectSnapshot(client, accountId);
+  const reportedLivingUnits = Number(subjectData?.primary_improvements?.number_units);
+  const dwellingLivingUnits = Number.isInteger(reportedLivingUnits) && reportedLivingUnits > 0 ? reportedLivingUnits : 1;
+  const reportedYearBuilt = Number(subjectData?.primary_improvements?.year_built);
+  const dwellingYearBuilt = Number.isInteger(reportedYearBuilt) && reportedYearBuilt >= 1000 && reportedYearBuilt <= 9999
+    ? String(reportedYearBuilt)
+    : null;
 
     const inserted = await client.query(
       `INSERT INTO appraisal.uad_workfiles (
@@ -240,6 +246,29 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
           'public_record', 'subject_snapshot.account.account_id', now(), false)`,
       [randomUUID(), randomUUID(), workfileId, siteParcelEntityId, accountId],
     );
+
+    await client.query(
+      `INSERT INTO appraisal.uad_field_values (
+         id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
+         source_type, source_reference, source_observed_at, is_appraiser_confirmed
+       ) VALUES (
+         $1, $2, $3, 'dwelling', '0300.0063', '8.001', $4::jsonb,
+         'public_record', 'subject_snapshot.primary_improvements.number_units', now(), false
+       )`,
+      [randomUUID(), workfileId, dwellingEntityId, JSON.stringify(dwellingLivingUnits)],
+    );
+    if (dwellingYearBuilt) {
+      await client.query(
+        `INSERT INTO appraisal.uad_field_values (
+           id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
+           source_type, source_reference, source_observed_at, is_appraiser_confirmed
+         ) VALUES (
+           $1, $2, $3, 'dwelling', '0300.0011', '8.010', $4::jsonb,
+           'public_record', 'subject_snapshot.primary_improvements.year_built', now(), false
+         )`,
+        [randomUUID(), workfileId, dwellingEntityId, JSON.stringify(dwellingYearBuilt)],
+      );
+    }
 
     await client.query(
       `INSERT INTO appraisal.uad_revisions (

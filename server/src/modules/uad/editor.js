@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { listUadAssets } from "./assets.js";
+import { isVerifiedDwellingFrontAsset } from "./dwellingExteriorCatalog.js";
 import { listUadEntities } from "./entities.js";
 import {
   UAD_EDITOR_SECTION_KEYS,
@@ -88,6 +89,11 @@ function completionFor(values, entities, assets = []) {
     if (section === "sketch" && byKey.get("root:sketch:3300.0002") === true) {
       required += 1;
       if (assets.some(isVerifiedSketchReportAsset)) completed += 1;
+    }
+    if (section === "dwelling_exterior") {
+      const dwellings = entities.filter((entity) => entity.entity_type === "dwelling");
+      required += dwellings.length;
+      completed += dwellings.filter((dwelling) => assets.some((asset) => isVerifiedDwellingFrontAsset(asset, dwelling.id))).length;
     }
     result[section] = {
       completed,
@@ -234,6 +240,75 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
     }
     if (sketchExists === false && reportAssets.length > 0) {
       errors.push(validationError(field, null, "sketch_asset_conflict", "Remove the saved sketch or floor plan images, or change the provided answer to Yes."));
+    }
+  }
+
+  if (section === "dwelling_exterior") {
+    const rootLookup = valueLookup(merged);
+    const dwellings = entities.filter((entity) => entity.entity_type === "dwelling");
+    const maintenance = rootLookup("subject:0100.0046");
+    const requiredFeatureTypes = ["ExteriorWallsAndTrim", "Foundation", "Roof", "Windows"];
+    const structureIdentifiers = new Set();
+    const baseField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:0300.0063");
+    if (!dwellings.length) {
+      errors.push(validationError(baseField, null, "dwelling_required", "Add at least one dwelling to the workfile."));
+    }
+    for (const dwelling of dwellings) {
+      const lookup = valueLookup(merged, dwelling.id);
+      const featureEntities = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature" && entity.parent_entity_id === dwelling.id);
+      const roomEntities = entities.filter((entity) => entity.entity_type === "dwelling_noncontinuous_room" && entity.parent_entity_id === dwelling.id);
+      const defectEntities = entities.filter((entity) => entity.entity_type === "dwelling_exterior_defect" && entity.parent_entity_id === dwelling.id);
+      const featureTypes = new Set(featureEntities.map((entity) => valueLookup(merged, entity.id)("dwelling_exterior_feature:0300.0055")));
+
+      if (maintenance === true) {
+        const missingTypes = requiredFeatureTypes.filter((type) => !featureTypes.has(type));
+        if (missingTypes.length) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:1600.0005");
+          errors.push(validationError(field, dwelling.id, "dwelling_feature_required", `Add the required exterior feature records: ${missingTypes.join(", ")}.`));
+        }
+      } else if (maintenance === false && featureEntities.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:1600.0005");
+        errors.push(validationError(field, dwelling.id, "dwelling_feature_conflict", "Remove exterior feature records or change exterior-maintenance responsibility to Yes in Subject Property."));
+      }
+
+      const noncontinuousExists = lookup("dwelling:0300.0114");
+      if (noncontinuousExists === true && roomEntities.length === 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:0300.0114");
+        errors.push(validationError(field, dwelling.id, "noncontinuous_room_required", "Add at least one room type for the noncontinuous finished area."));
+      }
+      if (noncontinuousExists === false && roomEntities.length > 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:0300.0114");
+        errors.push(validationError(field, dwelling.id, "noncontinuous_room_conflict", "Remove noncontinuous room records or change the noncontinuous-area answer to Yes."));
+      }
+
+      const defectsExist = lookup("dwelling:3900.0097");
+      if (defectsExist === true && defectEntities.length === 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:3900.0097");
+        errors.push(validationError(field, dwelling.id, "dwelling_defect_required", "Add at least one exterior defect when exterior defects exist."));
+      }
+      if (defectsExist === false && defectEntities.length > 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:3900.0097");
+        errors.push(validationError(field, dwelling.id, "dwelling_defect_conflict", "Remove exterior defect records or change the exterior-defects answer to Yes."));
+      }
+
+      const heatingSystems = lookup("dwelling:0300.0088");
+      if (Array.isArray(heatingSystems) && heatingSystems.includes("None") && heatingSystems.length > 1) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:0300.0088");
+        errors.push(validationError(field, dwelling.id, "heating_none_conflict", "Select None by itself, or remove None before selecting heating systems."));
+      }
+
+      if (!assets.some((asset) => isVerifiedDwellingFrontAsset(asset, dwelling.id))) {
+        errors.push(validationError(baseField, dwelling.id, "dwelling_front_photo_required", "Upload and verify a front photo for this dwelling."));
+      }
+
+      const structureIdentifier = lookup("dwelling:0300.0101");
+      if (structureIdentifier) {
+        if (structureIdentifiers.has(structureIdentifier)) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:0300.0101");
+          errors.push(validationError(field, dwelling.id, "duplicate_structure_identifier", "Structure identifiers must be unique within the workfile."));
+        }
+        structureIdentifiers.add(structureIdentifier);
+      }
     }
   }
   return errors;

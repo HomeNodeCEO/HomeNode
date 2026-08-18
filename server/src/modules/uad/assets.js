@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { UAD_ASSET_KINDS } from "./constants.js";
 import { buildUadObjectKey } from "./r2Storage.js";
 import {
+  UAD_DWELLING_EXTERIOR_CAPTION_TYPES,
+  UAD_DWELLING_EXTERIOR_IMAGE_CONTENT_TYPES,
+} from "./dwellingExteriorCatalog.js";
+import {
   UAD_SKETCH_REPORT_CAPTION_TYPES,
   UAD_SKETCH_REPORT_CONTENT_TYPES,
 } from "./sketchCatalog.js";
@@ -28,6 +32,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [5, new Set(["DisasterMitigationExhibit"])],
   [6, new Set(["EnergyEfficientAndGreenFeaturesExhibit"])],
   [7, new Set([...UAD_SKETCH_REPORT_CAPTION_TYPES, "MeasurementSource"])],
+  [8, new Set(UAD_DWELLING_EXTERIOR_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -85,6 +90,15 @@ function normalizeAssetInput(input = {}) {
       || (captionType === "MeasurementSource" && kind !== "measurement_source"))
   ) {
     throw new Error("invalid_uad_sketch_asset_kind");
+  }
+  if (
+    sectionNumber === 8
+    && !UAD_DWELLING_EXTERIOR_IMAGE_CONTENT_TYPES.includes(contentType)
+  ) {
+    throw new Error("invalid_uad_dwelling_exterior_content_type");
+  }
+  if (sectionNumber === 8 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_dwelling_exterior_asset_kind");
   }
   return {
     kind,

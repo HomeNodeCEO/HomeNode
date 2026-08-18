@@ -54,6 +54,9 @@ try {
     );
 
     ALTER TABLE core.account_locations
+      ADD COLUMN IF NOT EXISTS source_site_address text,
+      ADD COLUMN IF NOT EXISTS source_neighborhood_code text,
+      ADD COLUMN IF NOT EXISTS source_living_area_sqft integer,
       ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'matched',
       ADD COLUMN IF NOT EXISTS attempted_at timestamptz,
       ADD COLUMN IF NOT EXISTS resolved_at timestamptz,
@@ -70,6 +73,9 @@ try {
       construction_type text
     );
 
+    ALTER TABLE core.primary_improvements
+      ADD COLUMN IF NOT EXISTS construction_type text;
+
     CREATE TABLE IF NOT EXISTS core.land_detail (
       id bigserial PRIMARY KEY,
       account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
@@ -82,6 +88,14 @@ try {
       UNIQUE (account_id, tax_year, line_number)
     );
 
+    ALTER TABLE core.land_detail
+      ADD COLUMN IF NOT EXISTS zoning text,
+      ADD COLUMN IF NOT EXISTS frontage_ft numeric,
+      ADD COLUMN IF NOT EXISTS depth_ft numeric;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS uad_staging_land_detail_identity_idx
+      ON core.land_detail (account_id, tax_year, line_number);
+
     CREATE TABLE IF NOT EXISTS core.secondary_improvements (
       id bigserial PRIMARY KEY,
       account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
@@ -90,6 +104,9 @@ try {
       sec_imp_sqft integer,
       sec_imp_year_built integer
     );
+
+    ALTER TABLE core.secondary_improvements
+      ADD COLUMN IF NOT EXISTS sec_imp_year_built integer;
 
     -- The normal HomeNode search tile joins these optional enrichment sources.
     -- Empty staging-compatible relations keep that shared search path usable

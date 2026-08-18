@@ -21,8 +21,8 @@ importers:
         specifier: ~57.0.4
         version: 57.0.4(expo@57.0.13)(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))
       expo-image-manipulator:
-        specifier: ~57.0.10
-        version: 57.0.10(expo@57.0.13)
+        specifier: ~57.0.11
+        version: 57.0.11(expo@57.0.13)
       expo-image-picker:
         specifier: ~57.0.11
         version: 57.0.11(expo@57.0.13)
@@ -1263,8 +1263,8 @@ packages:
     peerDependencies:
       expo: '*'
 
-  expo-image-manipulator@57.0.10:
-    resolution: {integrity: sha512-KTxf31ozEJnnCHxpMz6Illg8SIswUyPgex4IT/YTCH8yvvBFw1Tc7YE90Tik1103gMUWn5crXq2om6iw1RLQHQ==}
+  expo-image-manipulator@57.0.11:
+    resolution: {integrity: sha512-SMl1X9Mu3qNwFPiiQx+JGsnrKD6F16owbMCTKb/bU8F4GNHy8Nx9SqKlwD7BhpwDYjg1bQt+WnvzKA7vGS1fgA==}
     peerDependencies:
       expo: '*'
 
@@ -3783,7 +3783,7 @@ snapshots:
     dependencies:
       expo: 57.0.13(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@57.0.1)(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
 
-  expo-image-manipulator@57.0.10(expo@57.0.13):
+  expo-image-manipulator@57.0.11(expo@57.0.13):
     dependencies:
       expo: 57.0.13(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@57.0.1)(react-native@0.86.2(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
       expo-image-loader: 57.0.1(expo@57.0.13)

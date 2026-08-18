@@ -17,8 +17,8 @@ import { isVerifiedDwellingFrontAsset } from "../src/modules/uad/dwellingExterio
 
 test("adds official URAR Section 8 after Sketch", () => {
   const sections = getUadEditorSections();
-  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8]);
-  assert.equal(sections.at(-1)?.key, "dwelling_exterior");
+  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(sections.find((section) => section.officialSectionNumber === 8)?.key, "dwelling_exterior");
   assert.ok(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "dwelling_exterior").length >= 65);
   assert.equal(getUadField("dwelling", "0300.0011")?.reportFieldId, "8.010");
   assert.equal(getUadField("dwelling", "3900.0097")?.reportFieldId, "8.055");

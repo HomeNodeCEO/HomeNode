@@ -6,12 +6,14 @@ import { listUadEntities } from "./entities.js";
 import {
   UAD_EDITOR_SECTION_KEYS,
   UAD_PHASE_ONE_FIELDS,
+  evaluateUadCondition,
   getUadEditorSections,
   normalizeAndValidateUadValue,
   uadFieldIsRequired,
   uadFieldIsVisible,
   validateUadSectionValues,
 } from "./fieldCatalog.js";
+import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
@@ -69,6 +71,17 @@ function valuesMap(values) {
   return new Map(values.map((value) => [valueKey(value), value.value]));
 }
 
+function sectionIsApplicable(section, valuesByKey, entities) {
+  if (!section.appliesWhen) return true;
+  const candidates = section.appliesToEntityType
+    ? entities.filter((entity) => entity.entity_type === section.appliesToEntityType).map((entity) => entity.id)
+    : [null];
+  return candidates.some((entityId) => evaluateUadCondition(
+    section.appliesWhen,
+    valueLookup(valuesByKey, entityId),
+  ));
+}
+
 function completionFor(values, entities, assets = []) {
   const byKey = valuesMap(values);
   const result = {};
@@ -94,6 +107,27 @@ function completionFor(values, entities, assets = []) {
       const dwellings = entities.filter((entity) => entity.entity_type === "dwelling");
       required += dwellings.length;
       completed += dwellings.filter((dwelling) => assets.some((asset) => isVerifiedDwellingFrontAsset(asset, dwelling.id))).length;
+    }
+    if (section === "manufactured_home") {
+      const manufacturedDwellings = entities.filter((entity) => (
+        entity.entity_type === "dwelling"
+        && valueLookup(byKey, entity.id)("dwelling:0300.0034") === "Manufactured"
+      ));
+      for (const dwelling of manufacturedDwellings) {
+        const lookup = valueLookup(byKey, dwelling.id);
+        if (lookup("manufactured_home:0500.0010") === true) {
+          required += 1;
+          if (assets.some((asset) => isVerifiedManufacturedHomeAsset(asset, "ManufacturedHomeHUDDataPlate", dwelling.id))) completed += 1;
+        }
+        const labels = entities.filter((entity) => entity.entity_type === "manufactured_home_hud_label" && entity.parent_entity_id === dwelling.id);
+        if (lookup("manufactured_home:0500.0009") === true || labels.length) {
+          required += Math.max(1, labels.length);
+          completed += labels.filter((label) => assets.some((asset) => isVerifiedManufacturedHomeAsset(asset, "ManufacturedHomeHUDCertificationLabel", label.id))).length;
+        }
+        const programs = entities.filter((entity) => entity.entity_type === "manufactured_home_financing_program" && entity.parent_entity_id === dwelling.id);
+        required += programs.length;
+        completed += programs.filter((program) => assets.some((asset) => isVerifiedManufacturedHomeAsset(asset, "ManufacturedHomeFinancingProgramEligibilityCertification", program.id))).length;
+      }
     }
     result[section] = {
       completed,
@@ -131,11 +165,17 @@ export async function getUadEditor(pool, workfileIdValue) {
     listUadEntities(pool, workfileId),
     listUadAssets(pool, workfileId),
   ]);
+  const sections = getUadEditorSections();
+  const responseRows = rows.map(responseValue);
+  const byKey = valuesMap(rows);
   return {
     workfile: { ...workfileResult.rows[0], current_revision: Number(workfileResult.rows[0].current_revision) },
-    sections: getUadEditorSections(),
+    sections: sections.map((section) => ({
+      ...section,
+      applicable: sectionIsApplicable(section, byKey, entities),
+    })),
     entities,
-    values: rows.map(responseValue),
+    values: responseRows,
     completion: completionFor(rows, entities, assets),
   };
 }
@@ -258,6 +298,14 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
       const featureEntities = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature" && entity.parent_entity_id === dwelling.id);
       const roomEntities = entities.filter((entity) => entity.entity_type === "dwelling_noncontinuous_room" && entity.parent_entity_id === dwelling.id);
       const defectEntities = entities.filter((entity) => entity.entity_type === "dwelling_exterior_defect" && entity.parent_entity_id === dwelling.id);
+      const manufacturedHomeEntities = entities.filter((entity) => (
+        [
+          "manufactured_home_skirting_material",
+          "manufactured_home_modification",
+          "manufactured_home_hud_label",
+          "manufactured_home_financing_program",
+        ].includes(entity.entity_type) && entity.parent_entity_id === dwelling.id
+      ));
       const featureTypes = new Set(featureEntities.map((entity) => valueLookup(merged, entity.id)("dwelling_exterior_feature:0300.0055")));
 
       if (maintenance === true) {
@@ -308,6 +356,101 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
           errors.push(validationError(field, dwelling.id, "duplicate_structure_identifier", "Structure identifiers must be unique within the workfile."));
         }
         structureIdentifiers.add(structureIdentifier);
+      }
+
+      if (lookup("dwelling:0300.0034") !== "Manufactured") {
+        const manufacturedEntityIds = new Set(manufacturedHomeEntities.map((entity) => entity.id));
+        const manufacturedAssets = assets.filter((asset) => (
+          asset.section_number === 9
+          && (asset.entity_id === dwelling.id || manufacturedEntityIds.has(asset.entity_id))
+        ));
+        if (manufacturedHomeEntities.length || manufacturedAssets.length) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:0300.0034");
+          errors.push(validationError(field, dwelling.id, "manufactured_home_data_conflict", "Remove the saved Manufactured Home records and exhibits before changing Construction Method from Manufactured."));
+        }
+      }
+    }
+  }
+
+  if (section === "manufactured_home") {
+    const manufacturedDwellings = entities.filter((entity) => (
+      entity.entity_type === "dwelling"
+      && valueLookup(merged, entity.id)("dwelling:0300.0034") === "Manufactured"
+    ));
+    const manufacturedDwellingIds = new Set(manufacturedDwellings.map((entity) => entity.id));
+    const childTypes = new Set([
+      "manufactured_home_skirting_material",
+      "manufactured_home_modification",
+      "manufactured_home_hud_label",
+      "manufactured_home_financing_program",
+    ]);
+    const orphanedChildren = entities.filter((entity) => (
+      childTypes.has(entity.entity_type) && !manufacturedDwellingIds.has(entity.parent_entity_id)
+    ));
+    const baseField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0017");
+    if (orphanedChildren.length) {
+      errors.push(validationError(baseField, null, "manufactured_home_parent_conflict", "Manufactured Home detail records must belong to a dwelling whose Construction Method is Manufactured."));
+    }
+
+    for (const dwelling of manufacturedDwellings) {
+      const lookup = valueLookup(merged, dwelling.id);
+      const skirtingMaterials = entities.filter((entity) => entity.entity_type === "manufactured_home_skirting_material" && entity.parent_entity_id === dwelling.id);
+      const modifications = entities.filter((entity) => entity.entity_type === "manufactured_home_modification" && entity.parent_entity_id === dwelling.id);
+      const hudLabels = entities.filter((entity) => entity.entity_type === "manufactured_home_hud_label" && entity.parent_entity_id === dwelling.id);
+      const financingPrograms = entities.filter((entity) => entity.entity_type === "manufactured_home_financing_program" && entity.parent_entity_id === dwelling.id);
+
+      const skirting = lookup("manufactured_home:0500.0030");
+      if (skirting === true && skirtingMaterials.length === 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0030");
+        errors.push(validationError(field, dwelling.id, "manufactured_home_skirting_required", "Add at least one skirting material when skirting exists."));
+      }
+      if (skirting === false && skirtingMaterials.length > 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0030");
+        errors.push(validationError(field, dwelling.id, "manufactured_home_skirting_conflict", "Remove skirting material records or change the skirting answer to Yes."));
+      }
+
+      const modificationsExist = lookup("manufactured_home:0500.0020");
+      if (modificationsExist === true && modifications.length === 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0020");
+        errors.push(validationError(field, dwelling.id, "manufactured_home_modification_required", "Add at least one modification, attachment, or addition record."));
+      }
+      if (modificationsExist === false && modifications.length > 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0020");
+        errors.push(validationError(field, dwelling.id, "manufactured_home_modification_conflict", "Remove modification records or change the modifications answer to Yes."));
+      }
+
+      const labelPresent = lookup("manufactured_home:0500.0009");
+      if (labelPresent === true && hudLabels.length === 0) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0009");
+        errors.push(validationError(field, dwelling.id, "manufactured_home_hud_label_required", "Add each HUD certification label and its certification number."));
+      }
+      for (const hudLabel of hudLabels) {
+        if (!assets.some((asset) => isVerifiedManufacturedHomeAsset(asset, "ManufacturedHomeHUDCertificationLabel", hudLabel.id))) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home_hud_label:0500.0037");
+          errors.push(validationError(field, hudLabel.id, "manufactured_home_hud_label_asset_required", "Upload and verify an image for this HUD certification label."));
+        }
+      }
+
+      if (
+        lookup("manufactured_home:0500.0010") === true
+        && !assets.some((asset) => isVerifiedManufacturedHomeAsset(asset, "ManufacturedHomeHUDDataPlate", dwelling.id))
+      ) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0010");
+        errors.push(validationError(field, dwelling.id, "manufactured_home_data_plate_asset_required", "Upload and verify an image of the HUD data plate or verification source."));
+      }
+
+      for (const program of financingPrograms) {
+        if (!assets.some((asset) => isVerifiedManufacturedHomeAsset(asset, "ManufacturedHomeFinancingProgramEligibilityCertification", program.id))) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home_financing_program:0500.0005");
+          errors.push(validationError(field, program.id, "manufactured_home_program_asset_required", "Upload and verify the certification image for this financing program."));
+        }
+      }
+
+      const manufactureDate = String(lookup("manufactured_home:0500.0016") || "");
+      const yearBuilt = String(lookup("dwelling:0300.0011") || "");
+      if (manufactureDate && yearBuilt && manufactureDate.slice(0, 4) !== yearBuilt) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0016");
+        errors.push(validationError(field, dwelling.id, "manufactured_home_year_mismatch", "The Date of Manufacture year must match Year Built in Dwelling Exterior."));
       }
     }
   }

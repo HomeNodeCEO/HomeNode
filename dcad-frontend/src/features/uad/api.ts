@@ -62,7 +62,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -105,6 +105,9 @@ export interface UadEditorSection {
   key: UadSectionKey;
   title: string;
   officialSectionNumber: number;
+  applicable?: boolean;
+  appliesToEntityType?: string;
+  appliesWhen?: UadCondition;
   groups: Array<{
     name: string;
     fields: UadFieldDefinition[];

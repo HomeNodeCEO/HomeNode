@@ -6,6 +6,11 @@ import {
   UAD_DWELLING_EXTERIOR_ENTITY_GROUPS,
   UAD_DWELLING_EXTERIOR_FIELDS,
 } from "./dwellingExteriorCatalog.js";
+import {
+  UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
+  UAD_MANUFACTURED_HOME_FIELDS,
+  manufacturedDwelling,
+} from "./manufacturedHomeCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 
@@ -13,6 +18,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_SITE_ENTITY_GROUPS,
   ...UAD_DISASTER_ENERGY_ENTITY_GROUPS,
   ...UAD_DWELLING_EXTERIOR_ENTITY_GROUPS,
+  ...UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -23,6 +29,12 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   energy_green: { title: "Energy Efficient and Green Features", officialSectionNumber: 6 },
   sketch: { title: "Sketch", officialSectionNumber: 7 },
   dwelling_exterior: { title: "Dwelling Exterior", officialSectionNumber: 8 },
+  manufactured_home: {
+    title: "Manufactured Home",
+    officialSectionNumber: 9,
+    appliesToEntityType: "dwelling",
+    appliesWhen: manufacturedDwelling,
+  },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -491,6 +503,7 @@ const fields = [
   ...UAD_DISASTER_ENERGY_FIELDS,
   ...UAD_SKETCH_FIELDS,
   ...UAD_DWELLING_EXTERIOR_FIELDS,
+  ...UAD_MANUFACTURED_HOME_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -609,6 +622,10 @@ export function getUadEditorSections() {
       key: sectionKey,
       title: metadata.title,
       officialSectionNumber: metadata.officialSectionNumber,
+      ...(metadata.appliesWhen ? {
+        appliesToEntityType: metadata.appliesToEntityType,
+        appliesWhen: metadata.appliesWhen,
+      } : {}),
       groups,
     });
   }

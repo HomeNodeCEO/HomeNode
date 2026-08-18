@@ -62,7 +62,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -167,6 +167,21 @@ export interface UadAsset {
   created_at: string;
 }
 
+export interface UadSketch {
+  id: string;
+  workfile_id: string;
+  entity_id: string | null;
+  schema_version: string;
+  geometry: Record<string, unknown>;
+  measurements: Record<string, unknown>;
+  calculated_areas: Record<string, unknown>;
+  area_overrides: Record<string, unknown>;
+  rendered_asset_id: string | null;
+  source: "homenode" | "mobile" | "imported" | "third_party";
+  created_at: string;
+  updated_at: string;
+}
+
 export async function getUadCapabilities(): Promise<UadCapabilities> {
   return uadFetchJSON<UadCapabilities>(makeUrl("/api/uad/capabilities"), { timeoutMs: 10_000 });
 }
@@ -241,8 +256,10 @@ export async function uploadUadAsset(
 ): Promise<UadAsset> {
   const extension = file.name.split(".").pop()?.toLowerCase();
   const inferredContentType: Record<string, string> = {
-    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
-    heic: "image/heic", heif: "image/heif", svg: "image/svg+xml", pdf: "application/pdf", json: "application/json",
+    avif: "image/avif", bmp: "image/bmp", gif: "image/gif", jpg: "image/jpeg",
+    jpeg: "image/jpeg", png: "image/png", tif: "image/tiff", tiff: "image/tiff",
+    webp: "image/webp", heic: "image/heic", heif: "image/heif", svg: "image/svg+xml",
+    pdf: "application/pdf", json: "application/json",
   };
   const contentType = file.type || inferredContentType[extension || ""];
   if (!contentType) throw new Error("This file type is not supported for UAD storage.");
@@ -271,6 +288,36 @@ export async function uploadUadAsset(
     { method: "POST" },
   );
   return verified.asset;
+}
+
+export async function deleteUadAsset(workfileId: string, assetId: string): Promise<void> {
+  await uadFetchJSON(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/assets/${encodeURIComponent(assetId)}`),
+    { method: "DELETE" },
+  );
+}
+
+export async function listUadSketches(workfileId: string): Promise<UadSketch[]> {
+  const response = await uadFetchJSON<{ sketches: UadSketch[] }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sketches`),
+  );
+  return response.sketches || [];
+}
+
+export async function saveUadSketch(
+  workfileId: string,
+  input: Pick<UadSketch, "schema_version" | "geometry" | "measurements" | "calculated_areas" | "area_overrides" | "source">
+    & Partial<Pick<UadSketch, "entity_id" | "rendered_asset_id">>,
+): Promise<UadSketch> {
+  const response = await uadFetchJSON<{ sketch: UadSketch }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sketches`),
+    {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return response.sketch;
 }
 
 export async function getUadSharedData(workfileId: string): Promise<{

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { listUadAssets } from "./assets.js";
 import { listUadEntities } from "./entities.js";
 import {
   UAD_EDITOR_SECTION_KEYS,
@@ -10,6 +11,7 @@ import {
   uadFieldIsVisible,
   validateUadSectionValues,
 } from "./fieldCatalog.js";
+import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 function responseValue(row) {
@@ -66,7 +68,7 @@ function valuesMap(values) {
   return new Map(values.map((value) => [valueKey(value), value.value]));
 }
 
-function completionFor(values, entities) {
+function completionFor(values, entities, assets = []) {
   const byKey = valuesMap(values);
   const result = {};
   for (const section of UAD_EDITOR_SECTION_KEYS) {
@@ -82,6 +84,10 @@ function completionFor(values, entities) {
         required += 1;
         if (isPresent(byKey.get(fieldValueKey(field, entityId)))) completed += 1;
       }
+    }
+    if (section === "sketch" && byKey.get("root:sketch:3300.0002") === true) {
+      required += 1;
+      if (assets.some(isVerifiedSketchReportAsset)) completed += 1;
     }
     result[section] = {
       completed,
@@ -114,16 +120,17 @@ export async function getUadEditor(pool, workfileIdValue) {
     [workfileId],
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
-  const [rows, entities] = await Promise.all([
+  const [rows, entities, assets] = await Promise.all([
     loadValues(pool, workfileId),
     listUadEntities(pool, workfileId),
+    listUadAssets(pool, workfileId),
   ]);
   return {
     workfile: { ...workfileResult.rows[0], current_revision: Number(workfileResult.rows[0].current_revision) },
     sections: getUadEditorSections(),
     entities,
     values: rows.map(responseValue),
-    completion: completionFor(rows, entities),
+    completion: completionFor(rows, entities, assets),
   };
 }
 
@@ -135,7 +142,7 @@ function validationError(field, entityId, code, message) {
   return { key: field.key, uid: field.uid, context_key: field.contextKey, entity_id: entityId, code, message };
 }
 
-function validateCompleteSection(section, existingRows, submitted, entities) {
+function validateCompleteSection(section, existingRows, submitted, entities, assets = []) {
   const merged = valuesMap(existingRows);
   for (const item of submitted) merged.set(fieldValueKey(item.field, item.entityId), item.value);
   const errors = [];
@@ -216,6 +223,19 @@ function validateCompleteSection(section, existingRows, submitted, entities) {
       }
     }
   }
+
+  if (section === "sketch") {
+    const rootLookup = valueLookup(merged);
+    const sketchExists = rootLookup("sketch:3300.0002");
+    const reportAssets = assets.filter(isVerifiedSketchReportAsset);
+    const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "sketch:3300.0002");
+    if (sketchExists === true && reportAssets.length === 0) {
+      errors.push(validationError(field, null, "sketch_asset_required", "Upload and verify at least one sketch or floor plan image."));
+    }
+    if (sketchExists === false && reportAssets.length > 0) {
+      errors.push(validationError(field, null, "sketch_asset_conflict", "Remove the saved sketch or floor plan images, or change the provided answer to Yes."));
+    }
+  }
   return errors;
 }
 
@@ -233,9 +253,10 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
 
-    const [existingRows, entities] = await Promise.all([
+    const [existingRows, entities, assets] = await Promise.all([
       loadValues(client, workfileId, "FOR UPDATE"),
       listUadEntities(client, workfileId),
+      listUadAssets(client, workfileId),
     ]);
     const entityTypesById = new Map(entities.map((entity) => [entity.id, entity.entity_type]));
     const validation = validateUadSectionValues(section, input.values, { entityTypesById });
@@ -244,7 +265,7 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
       error.details = validation.errors;
       throw error;
     }
-    const completeSectionErrors = validateCompleteSection(section, existingRows, validation.normalized, entities);
+    const completeSectionErrors = validateCompleteSection(section, existingRows, validation.normalized, entities, assets);
     if (completeSectionErrors.length) {
       const error = new Error("invalid_uad_field_values");
       error.details = completeSectionErrors;
@@ -330,7 +351,7 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
       saved_field_count: validation.normalized.length,
       changed_field_count: changed.length,
       values: allRows.map(responseValue),
-      completion: completionFor(allRows, entities),
+      completion: completionFor(allRows, entities, assets),
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

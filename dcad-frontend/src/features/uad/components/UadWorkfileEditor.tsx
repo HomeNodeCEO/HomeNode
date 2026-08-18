@@ -26,10 +26,15 @@ const SITE_CAPTIONS = [
   "PropertyAccess", "PropertyPhoto", "SiteInfluence", "View", "SiteCharacteristic",
   "PropertyBoundaries", "Encroachment", "WaterFrontage", "SiteExhibit",
 ];
-const DISASTER_MITIGATION_CAPTIONS = ["DisasterMitigationFeature", "DisasterMitigationExhibit"];
-const ENERGY_GREEN_CAPTIONS = ["RenewableEnergyComponent", "BuildingCertification", "EfficiencyRating", "EnergyGreenExhibit"];
+const DISASTER_MITIGATION_CAPTIONS = ["DisasterMitigationExhibit"];
+const ENERGY_GREEN_CAPTIONS = ["EnergyEfficientAndGreenFeaturesExhibit"];
+const SKETCH_REPORT_CAPTIONS = ["SubjectPropertyImprovementSketch", "FloorPlan"];
+const SKETCH_SOURCE_CAPTIONS = ["MeasurementSource"];
+const SKETCH_IMAGE_ACCEPT = "image/avif,image/bmp,image/gif,image/heic,image/heif,image/jpeg,image/png,image/tiff,image/webp";
 
 function displayOption(value: string) {
+  if (value === "AmericanNationalStandardsInstitute") return "ANSI";
+  if (value === "AmericanMeasurementStandard") return "AMS";
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("REO", "REO");
 }
 
@@ -100,6 +105,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const disasterSectionDisplays = Array.isArray(disasterFeatures) && disasterFeatures.length > 0 && !disasterFeatures.includes("None");
   const energySectionDisplays = ["2600.0005", "2600.0004", "2600.0003"]
     .some((uid) => draft[fieldValueKey("energy_green", uid)] === true);
+  const sketchProvided = draft[fieldValueKey("sketch", "3300.0002")];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -304,7 +310,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white lg:grid-cols-5" aria-label="UAD workfile sections">
+      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-6" aria-label="UAD workfile sections">
         {editor.sections.map((item) => {
           const completion = editor.completion[item.key];
           return (
@@ -333,6 +339,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "energy_green" && (
           <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
             Sections for renewable components, certifications, and ratings appear only when the corresponding known-features answer is Yes. Add each known item as its own record.
+          </div>
+        )}
+        {activeSection === "sketch" && (
+          <div className="mb-5 rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm leading-6 text-violet-950">
+            Section 7 always displays. If a sketch or floor plan is provided, upload at least one verified report image and identify the measurement standard. If one is not available, explain why in Sketch Commentary.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -385,6 +396,31 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           )}
           {activeSection === "energy_green" && energySectionDisplays && (
             <UadAssetPanel captionTypes={ENERGY_GREEN_CAPTIONS} sectionNumber={6} title="Energy efficient and green feature exhibits" workfileId={workfileId} />
+          )}
+          {activeSection === "sketch" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SKETCH_REPORT_CAPTIONS}
+              description="Upload the rendered sketch or floor plan image that will display in URAR Section 7. HomeNode accepts the image MIME types permitted by the UAD delivery specification."
+              emptyMessage="No verified sketch or floor plan image uploaded yet."
+              sectionNumber={7}
+              title="Report sketch or floor plan"
+              uploadEnabled={sketchProvided === true}
+              visibleCaptionTypes={SKETCH_REPORT_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "sketch" && sketchProvided === true && (
+            <UadAssetPanel
+              accept="application/json,application/pdf,image/svg+xml"
+              captionTypes={SKETCH_SOURCE_CAPTIONS}
+              description="Optional source geometry, measurement exports, and supporting diagrams remain in the private workfile for mobile synchronization and future sketch rendering; they do not replace the required report image."
+              emptyMessage="No supporting measurement source uploaded."
+              sectionNumber={7}
+              title="Structured measurement sources"
+              visibleCaptionTypes={SKETCH_SOURCE_CAPTIONS}
+              workfileId={workfileId}
+            />
           )}
         </div>
 

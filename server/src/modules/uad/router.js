@@ -1,10 +1,16 @@
 import express from "express";
 
-import { createUadAssetUpload, listUadAssets, verifyUadAssetUpload } from "./assets.js";
+import {
+  createUadAssetUpload,
+  deleteUadAsset,
+  listUadAssets,
+  verifyUadAssetUpload,
+} from "./assets.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { getUadSharedData } from "./sharedData.js";
+import { listUadSketches, saveUadSketch } from "./sketches.js";
 import {
   createUadWorkfile,
   getUadSubjectSummary,
@@ -117,6 +123,23 @@ export function createUadRouter({ pool, storage, enabled = false }) {
     }
   });
 
+  router.get("/workfiles/:workfileId/sketches", async (req, res) => {
+    try {
+      res.json({ sketches: await listUadSketches(pool, req.params.workfileId) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.put("/workfiles/:workfileId/sketches", async (req, res) => {
+    try {
+      const sketch = await saveUadSketch(pool, req.params.workfileId, req.body || {});
+      res.json({ sketch });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   router.post("/workfiles/:workfileId/entities", async (req, res) => {
     try {
       const entity = await createUadEntity(pool, req.params.workfileId, req.body || {});
@@ -161,6 +184,15 @@ export function createUadRouter({ pool, storage, enabled = false }) {
         req.params.assetId,
       );
       res.json({ asset });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.delete("/workfiles/:workfileId/assets/:assetId", async (req, res) => {
+    try {
+      await deleteUadAsset(pool, req.params.workfileId, req.params.assetId);
+      res.status(204).end();
     } catch (error) {
       sendError(res, error);
     }

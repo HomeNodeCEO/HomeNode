@@ -2,6 +2,7 @@ import {
   UAD_DISASTER_ENERGY_ENTITY_GROUPS,
   UAD_DISASTER_ENERGY_FIELDS,
 } from "./disasterEnergyCatalog.js";
+import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 
 export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
@@ -15,6 +16,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   site: { title: "Site", officialSectionNumber: 4 },
   disaster_mitigation: { title: "Disaster Mitigation", officialSectionNumber: 5 },
   energy_green: { title: "Energy Efficient and Green Features", officialSectionNumber: 6 },
+  sketch: { title: "Sketch", officialSectionNumber: 7 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -481,6 +483,7 @@ const fields = [
   },
   ...UAD_SITE_FIELDS,
   ...UAD_DISASTER_ENERGY_FIELDS,
+  ...UAD_SKETCH_FIELDS,
 ];
 
 function fieldKey(field) {

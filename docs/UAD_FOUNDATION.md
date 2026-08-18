@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 6:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 7:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -49,6 +49,9 @@ The editor currently implements Appendix A-1 v1.4 Sections 2 through 6:
   indicators, repeatable renewable components, building certifications and
   efficiency ratings, impact to value/marketability, commentary, and Appendix
   H conditional rules.
+- Sketch captures whether a sketch or floor plan is provided, the official
+  ANSI/AMS/Other measurement standard, conditional commentary, verified report
+  images, and private supporting measurement sources.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 
@@ -88,16 +91,22 @@ URL, upload directly, then verify. Uploads are limited to 50 MiB, must match the
 requested byte size and content type, and are rejected if object-store
 verification does not match. Official Site image categories include property
 access, property photo, influence, view, boundary, encroachment, waterfront,
-and site exhibit. Sections 5 and 6 use the same private upload contract for
-optional disaster-mitigation and energy/green exhibits with free-form captions.
+and site exhibit. Sections 5 and 6 use their official
+`DisasterMitigationExhibit` and `EnergyEfficientAndGreenFeaturesExhibit`
+categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
+keeps optional source JSON, PDF, or SVG files separate from the report image.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,
 and verification state. It does not store the image bytes.
 
-Sketch geometry, wall segments, dimensions, calculated ANSI areas, and
-appraiser overrides are structured JSON in `appraisal.uad_sketches`. Rendered
-SVG/PDF floor plans and supporting measurement files are private R2 assets.
+Sketch geometry, wall segments, dimensions, calculated areas, and appraiser
+overrides are structured JSON in `appraisal.uad_sketches`. Web and future
+mobile clients share `GET/PUT /api/uad/workfiles/:id/sketches`; payloads are
+bounded, source-labelled, and may reference only a verified Section 7 rendered
+asset in the same workfile. Report images and supporting measurement files are
+private R2 assets, and obsolete asset records can be removed without touching
+other appraisal workflows.
 
 Required server variables are documented in `server/.env.example`.
 

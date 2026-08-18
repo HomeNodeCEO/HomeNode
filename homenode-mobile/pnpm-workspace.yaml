@@ -1,4 +1,4 @@
 minimumReleaseAge: 720
 minimumReleaseAgeStrict: true
-onlyBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true

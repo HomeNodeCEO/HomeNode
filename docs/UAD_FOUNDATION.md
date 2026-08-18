@@ -90,6 +90,12 @@ without changing the SFR or copying production tax, owner, or sales data. CI
 runs the bootstrap twice and executes the same search joins to verify
 idempotency and schema compatibility.
 
+The Render UAD staging service must use `npm run start:staging:uad` as its
+start command. This intentionally applies all additive UAD migrations before
+seeding the deterministic fixtures, then starts the API. Reversing that order
+can make a new fixture entity type fail against the previous release's database
+constraint during a rolling deployment.
+
 ## Mobile photos and artifacts
 
 Cloudflare R2 is the initial private object store. The Node API issues a

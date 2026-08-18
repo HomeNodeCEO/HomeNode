@@ -8,6 +8,7 @@
         "migrate:uad": "node scripts/runUadMigrations.js",
         "migrate:mobile": "node scripts/runMobileMigrations.js",
         "prepare:staging:uad": "node scripts/prepareUadStagingDatabase.js",
+        "start:staging:uad": "npm run migrate:uad && npm run prepare:staging:uad && npm start",
         "test:uad-migration": "node scripts/prepareUadCiDatabase.js && node scripts/runUadMigrations.js && node --test test/uadMigration.integration.test.js",
         "test:mobile-migration": "node scripts/prepareUadCiDatabase.js && node scripts/runUadMigrations.js && node scripts/prepareMobileCiDatabase.js && node scripts/runMobileMigrations.js && node scripts/runMobileMigrations.js && node --test test/mobileMigration.integration.test.js",
         "provision:mobile-identity": "node scripts/provisionMobileOidcIdentity.js",

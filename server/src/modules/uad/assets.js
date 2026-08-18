@@ -11,6 +11,10 @@ import {
   UAD_MANUFACTURED_HOME_IMAGE_CONTENT_TYPES,
 } from "./manufacturedHomeCatalog.js";
 import {
+  UAD_OUTBUILDING_CAPTION_TYPES,
+  UAD_OUTBUILDING_IMAGE_CONTENT_TYPES,
+} from "./outbuildingCatalog.js";
+import {
   UAD_FUNCTIONAL_OBSOLESCENCE_CAPTION_TYPES,
   UAD_FUNCTIONAL_OBSOLESCENCE_IMAGE_CONTENT_TYPES,
 } from "./functionalObsolescenceCatalog.js";
@@ -48,6 +52,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [9, new Set(UAD_MANUFACTURED_HOME_CAPTION_TYPES)],
   [10, new Set(UAD_UNIT_INTERIOR_CAPTION_TYPES)],
   [11, new Set(UAD_FUNCTIONAL_OBSOLESCENCE_CAPTION_TYPES)],
+  [12, new Set(UAD_OUTBUILDING_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -135,6 +140,12 @@ function normalizeAssetInput(input = {}) {
   }
   if (sectionNumber === 11 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_functional_obsolescence_asset_kind");
+  }
+  if (sectionNumber === 12 && !UAD_OUTBUILDING_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_outbuilding_content_type");
+  }
+  if (sectionNumber === 12 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_outbuilding_asset_kind");
   }
   return {
     kind,

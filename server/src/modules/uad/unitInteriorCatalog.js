@@ -111,8 +111,8 @@ export const UAD_UNIT_INTERIOR_ENTITY_GROUPS = Object.freeze({
   unit: {
     title: "Living units",
     addLabel: "Add living unit",
-    minItems: 1,
-    parentEntityType: "dwelling",
+    minItems: 0,
+    parentEntityTypes: ["dwelling", "outbuilding"],
   },
   unit_area_data_source: {
     title: "Area data sources",

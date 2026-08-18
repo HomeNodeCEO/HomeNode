@@ -291,7 +291,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Section 10 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-12 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -312,6 +312,30 @@ try {
     "11.000",
     ["None"],
   );
+  const outbuildingId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "outbuilding",
+    "outbuilding-shed-1",
+    1,
+    "Shed 1",
+  );
+  const outbuildingValues = [
+    ["0300.0025", "12.001", "Shed"],
+    ["0300.0024", "12.002", true],
+    ["0300.0063", "12.003", 0],
+    ["0300.0060", "12.006", { amount: 240, unit: "SquareFeet" }],
+    ["0300.0023", "12.008", false],
+    ["0300.0022", "12.009 / 12.016", false],
+    ["0300.0028", "12.010", ["Electricity"]],
+    ["0300.0112", "12.011", { amount: 0, unit: "SquareFeet" }],
+    ["0300.0113", "12.013", { amount: 240, unit: "SquareFeet" }],
+    ["0300.0111", "12.019", false],
+    ["0300.0096", "12.025", "Detached storage shed included as real property."],
+  ];
+  for (const [uid, reportFieldId, value] of outbuildingValues) {
+    await seedEntityValue(sfrWorkfileId, outbuildingId, "outbuilding", uid, reportFieldId, value);
+  }
   const sfrUnitResult = await pool.query(
     `SELECT id
        FROM appraisal.uad_entities

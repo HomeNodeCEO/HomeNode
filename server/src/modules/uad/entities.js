@@ -52,13 +52,15 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
     const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
     let parentEntityId = input.parent_entity_id == null ? null : normalizeUadWorkfileId(input.parent_entity_id);
-    if (group.parentEntityType) {
+    const parentEntityTypes = group.parentEntityTypes
+      || (group.parentEntityType ? [group.parentEntityType] : []);
+    if (parentEntityTypes.length) {
       const parents = await client.query(
         `SELECT id
            FROM appraisal.uad_entities
-          WHERE workfile_id = $1 AND entity_type = $2
+          WHERE workfile_id = $1 AND entity_type = ANY($2::text[])
           ORDER BY ordinal, id`,
-        [workfileId, group.parentEntityType],
+        [workfileId, parentEntityTypes],
       );
       if (!parentEntityId && parents.rows.length === 1) parentEntityId = parents.rows[0].id;
       if (!parentEntityId) throw new Error("uad_parent_entity_required");

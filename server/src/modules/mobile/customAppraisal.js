@@ -222,6 +222,12 @@ async function loadPropertySection(client, session) {
   if (section.rows.length) {
     return { value: cloneObject(section.rows[0].section_value), revision: Number(section.rows[0].revision), source: "assignment_file" };
   }
+  const manualTable = await client.query(
+    "SELECT to_regclass('app.property_attribute_manual_values') IS NOT NULL AS available",
+  );
+  if (!manualTable.rows[0]?.available) {
+    return { value: {}, revision: 0, source: "empty_seed" };
+  }
   const fallback = await client.query(
     `SELECT attribute_value
        FROM app.property_attribute_manual_values

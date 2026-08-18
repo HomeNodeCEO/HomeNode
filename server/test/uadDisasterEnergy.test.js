@@ -15,8 +15,8 @@ import {
 
 test("adds official URAR Sections 5 and 6 after Site", () => {
   const sections = getUadEditorSections();
-  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6]);
-  assert.deepEqual(sections.slice(-2).map((section) => section.key), ["disaster_mitigation", "energy_green"]);
+  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(sections.slice(3, 5).map((section) => section.key), ["disaster_mitigation", "energy_green"]);
   assert.equal(getUadField("disaster_mitigation", "3700.0002")?.reportFieldId, "5.000");
   assert.equal(getUadField("disaster_mitigation_commentary", "3700.0004")?.reportFieldId, "5.001");
   assert.equal(getUadField("energy_green_commentary", "2600.0040")?.reportFieldId, "6.016");

@@ -2,11 +2,19 @@ import { randomUUID } from "node:crypto";
 
 import { UAD_ASSET_KINDS } from "./constants.js";
 import { buildUadObjectKey } from "./r2Storage.js";
+import {
+  UAD_SKETCH_REPORT_CAPTION_TYPES,
+  UAD_SKETCH_REPORT_CONTENT_TYPES,
+} from "./sketchCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const ALLOWED_CONTENT_TYPES = new Set([
+  "image/avif",
+  "image/bmp",
+  "image/gif",
   "image/jpeg",
   "image/png",
+  "image/tiff",
   "image/webp",
   "image/heic",
   "image/heif",
@@ -16,6 +24,11 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ]);
 
 const MAX_UAD_ASSET_BYTES = 50 * 1024 * 1024;
+const SECTION_CAPTION_TYPES = new Map([
+  [5, new Set(["DisasterMitigationExhibit"])],
+  [6, new Set(["EnergyEfficientAndGreenFeaturesExhibit"])],
+  [7, new Set([...UAD_SKETCH_REPORT_CAPTION_TYPES, "MeasurementSource"])],
+]);
 
 function assetResponse(row) {
   return {
@@ -54,6 +67,24 @@ function normalizeAssetInput(input = {}) {
   const sectionNumber = input.section_number == null ? null : Number(input.section_number);
   if (sectionNumber != null && (!Number.isInteger(sectionNumber) || sectionNumber < 1 || sectionNumber > 99)) {
     throw new Error("invalid_uad_asset_section");
+  }
+  const allowedCaptionTypes = SECTION_CAPTION_TYPES.get(sectionNumber);
+  if (allowedCaptionTypes && !allowedCaptionTypes.has(captionType)) {
+    throw new Error("invalid_uad_asset_caption_type");
+  }
+  if (
+    sectionNumber === 7 && UAD_SKETCH_REPORT_CAPTION_TYPES.includes(captionType)
+    && !UAD_SKETCH_REPORT_CONTENT_TYPES.includes(contentType)
+  ) {
+    throw new Error("invalid_uad_sketch_report_content_type");
+  }
+  if (
+    sectionNumber === 7
+    && ((captionType === "FloorPlan" && kind !== "floor_plan")
+      || (captionType === "SubjectPropertyImprovementSketch" && kind !== "sketch")
+      || (captionType === "MeasurementSource" && kind !== "measurement_source"))
+  ) {
+    throw new Error("invalid_uad_sketch_asset_kind");
   }
   return {
     kind,
@@ -183,4 +214,17 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     [assetId, workfileId, inspected.byte_size, inspected.etag],
   );
   return assetResponse(updated.rows[0]);
+}
+
+export async function deleteUadAsset(pool, workfileIdValue, assetIdValue) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  const assetId = normalizeUadWorkfileId(assetIdValue);
+  const deleted = await pool.query(
+    `UPDATE appraisal.uad_assets
+        SET status = 'deleted', updated_at = now()
+      WHERE id = $1 AND workfile_id = $2 AND status <> 'deleted'
+      RETURNING id`,
+    [assetId, workfileId],
+  );
+  if (!deleted.rows.length) throw new Error("uad_asset_not_found");
 }

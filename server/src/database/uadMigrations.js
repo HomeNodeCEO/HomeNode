@@ -10,6 +10,7 @@ const MIGRATIONS = Object.freeze([
   "20260817_uad_assignment_subject.sql",
   "20260818_uad_site.sql",
   "20260819_uad_disaster_energy.sql",
+  "20260820_uad_sketch.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 

@@ -576,7 +576,7 @@ def _address_resolutions(
             """
             SELECT account_id, county, address, city, postal_code
             FROM core.accounts
-            WHERE NULLIF(BTRIM(address…3293 tokens truncated…   typed["mls_status"],
+            WHERE NULLIF(BTRIM(address…3294 tokens truncated… typed["mls_status"],
                         typed["garage_spaces"],
                         typed["garage_yn"],
                         typed["pool_yn"],

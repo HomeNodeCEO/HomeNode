@@ -3124,10 +3124,13 @@ function AddressHero({
   const [neighborhoodProfileLoading, setNeighborhoodProfileLoading] = useState(false);
   const [neighborhoodSectionReady, setNeighborhoodSectionReady] = useState(false);
   const [neighborhoodProfileMessage, setNeighborhoodProfileMessage] = useState("");
+  const [neighborhoodProfileRetryNonce, setNeighborhoodProfileRetryNonce] = useState(0);
   const [neighborhoodBoundarySuggestions, setNeighborhoodBoundarySuggestions] = useState<
     NonNullable<NeighborhoodProfileResponse["boundary_streets"]>["cardinal_boundaries"] | null
   >(null);
   const neighborhoodProfileAttemptedSignature = useRef("");
+  const neighborhoodProfileRetryTimer = useRef<number | null>(null);
+  const neighborhoodProfileRetryAttempts = useRef<Record<string, number>>({});
   const [marketConditionsDraft, setMarketConditionsDraft] = useState<MarketConditionsDraft | null>(
     () => readMarketConditionsDraft(accountId || ""),
   );
@@ -4017,10 +4020,27 @@ function AddressHero({
           ? "Market ranges and city averages refreshed. Boundary streets could not be refreshed and still require review."
           : "Appraiser-defined ranges, city averages, and four-side boundary suggestions refreshed.",
       );
+      const signature = `${accountId}:${marketConditionsDraft.savedAt}:${JSON.stringify(geometry)}`;
+      delete neighborhoodProfileRetryAttempts.current[signature];
     } catch (error) {
       setNeighborhoodProfileMessage(
         error instanceof Error ? error.message : "The neighborhood profile could not be refreshed.",
       );
+      const signature = `${accountId}:${marketConditionsDraft.savedAt}:${JSON.stringify(geometry)}`;
+      const attempts = Number(neighborhoodProfileRetryAttempts.current[signature] || 0);
+      if (attempts < 2) {
+        neighborhoodProfileRetryAttempts.current[signature] = attempts + 1;
+        if (neighborhoodProfileRetryTimer.current !== null) {
+          window.clearTimeout(neighborhoodProfileRetryTimer.current);
+        }
+        neighborhoodProfileRetryTimer.current = window.setTimeout(() => {
+          if (neighborhoodProfileAttemptedSignature.current === signature) {
+            neighborhoodProfileAttemptedSignature.current = "";
+          }
+          neighborhoodProfileRetryTimer.current = null;
+          setNeighborhoodProfileRetryNonce((current) => current + 1);
+        }, 3_000 * 2 ** attempts);
+      }
     } finally {
       setNeighborhoodProfileLoading(false);
     }
@@ -4152,6 +4172,7 @@ function AddressHero({
       assignmentDraft.neighborhood_age_predominant,
       assignmentDraft.neighborhood_gla_predominant,
       assignmentDraft.neighborhood_city_average_sale_price,
+      assignmentDraft.neighborhood_sale_count,
     ].every(hasValue);
     if (profileValuesPresent) return;
     const signature = `${accountId}:${marketConditionsDraft.savedAt}:${JSON.stringify(geometry)}`;
@@ -4168,13 +4189,21 @@ function AddressHero({
     assignmentDraft.neighborhood_city_average_sale_price,
     assignmentDraft.neighborhood_gla_predominant,
     assignmentDraft.neighborhood_ppsf_predominant,
+    assignmentDraft.neighborhood_sale_count,
     assignmentFilesLoading,
     assignmentFilesLoaded,
     customMarketStudy,
     marketConditionsDraft,
     neighborhoodSectionReady,
+    neighborhoodProfileRetryNonce,
     refreshNeighborhoodProfile,
   ]);
+
+  useEffect(() => () => {
+    if (neighborhoodProfileRetryTimer.current !== null) {
+      window.clearTimeout(neighborhoodProfileRetryTimer.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (

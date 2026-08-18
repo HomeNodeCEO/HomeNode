@@ -49,6 +49,8 @@ const OUTBUILDING_GENERAL_CAPTIONS = [
   "ManufacturedHomeFoundation", "OutbuildingExhibit",
 ];
 const OUTBUILDING_DEFECT_CAPTIONS = ["OutbuildingDefect"];
+const VEHICLE_STORAGE_GENERAL_CAPTIONS = ["VehicleStorage", "VehicleStorageExhibit"];
+const VEHICLE_STORAGE_DEFECT_CAPTIONS = ["VehicleStorageDefect"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -140,6 +142,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const unitInteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_defect") || [];
   const outbuildings = editor?.entities.filter((entity) => entity.entity_type === "outbuilding") || [];
   const outbuildingDefects = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_defect") || [];
+  const vehicleStorages = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage") || [];
+  const vehicleStorageDefects = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage_defect") || [];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -215,10 +219,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     for (const group of section.groups) {
       const instances = group.entityType ? entitiesFor(group.entityType).map((entity) => entity.id) : [null];
       for (const entityId of instances) {
-        for (const field of group.fields.filter((candidate) => isVisible(candidate, entityId))) {
+        for (const field of group.fields) {
+          const visible = isVisible(field, entityId);
+          if (!visible && activeSection !== "vehicle_storage") continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
-          if (isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
-          submitted.push({ uid: field.uid, context_key: field.contextKey, entity_id: entityId, value: draft[key] ?? null });
+          if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
+          submitted.push({
+            uid: field.uid,
+            context_key: field.contextKey,
+            entity_id: entityId,
+            value: visible ? draft[key] ?? null : null,
+          });
         }
       }
     }
@@ -395,6 +406,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "functional_obsolescence" && (
           <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-950">
             Select None by itself when there are no apparent functional issues. For any reported issue, explain its effect in the commentary. Section 11 exhibits are optional and may document the analysis when useful.
+          </div>
+        )}
+        {activeSection === "vehicle_storage" && (
+          <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950">
+            Report every vehicle storage type. Select None as the only record when no storage is available. Garage and carport details, driveway space logic, shared-project assignments, defect relationships, and required physical-defect photos follow the official Section 13 rules.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -628,6 +644,34 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               sectionNumber={12}
               title={`${defect.label || `Outbuilding defect ${defect.ordinal}`} photo`}
               visibleCaptionTypes={OUTBUILDING_DEFECT_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "vehicle_storage" && vehicleStorages.map((vehicleStorage) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={VEHICLE_STORAGE_GENERAL_CAPTIONS}
+              description="Optional garage, carport, driveway, or parking images attach directly to this vehicle storage record and display in Vehicle Storage Exhibits."
+              emptyMessage="No optional vehicle storage images uploaded."
+              entityId={vehicleStorage.id}
+              key={`vehicle-storage-${vehicleStorage.id}`}
+              sectionNumber={13}
+              title={`${vehicleStorage.label || `Vehicle storage ${vehicleStorage.ordinal}`} photos and exhibits`}
+              visibleCaptionTypes={VEHICLE_STORAGE_GENERAL_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "vehicle_storage" && vehicleStorageDefects.map((defect) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={VEHICLE_STORAGE_DEFECT_CAPTIONS}
+              description="Upload and verify a photo documenting this physical vehicle storage defect, damage, or deficiency."
+              emptyMessage="No verified vehicle storage defect image uploaded yet."
+              entityId={defect.id}
+              key={`vehicle-storage-defect-${defect.id}`}
+              sectionNumber={13}
+              title={`${defect.label || `Vehicle storage defect ${defect.ordinal}`} photo`}
+              visibleCaptionTypes={VEHICLE_STORAGE_DEFECT_CAPTIONS}
               workfileId={workfileId}
             />
           ))}

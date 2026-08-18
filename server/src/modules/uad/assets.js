@@ -26,6 +26,10 @@ import {
   UAD_UNIT_INTERIOR_CAPTION_TYPES,
   UAD_UNIT_INTERIOR_IMAGE_CONTENT_TYPES,
 } from "./unitInteriorCatalog.js";
+import {
+  UAD_VEHICLE_STORAGE_CAPTION_TYPES,
+  UAD_VEHICLE_STORAGE_IMAGE_CONTENT_TYPES,
+} from "./vehicleStorageCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -53,6 +57,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [10, new Set(UAD_UNIT_INTERIOR_CAPTION_TYPES)],
   [11, new Set(UAD_FUNCTIONAL_OBSOLESCENCE_CAPTION_TYPES)],
   [12, new Set(UAD_OUTBUILDING_CAPTION_TYPES)],
+  [13, new Set(UAD_VEHICLE_STORAGE_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -146,6 +151,12 @@ function normalizeAssetInput(input = {}) {
   }
   if (sectionNumber === 12 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_outbuilding_asset_kind");
+  }
+  if (sectionNumber === 13 && !UAD_VEHICLE_STORAGE_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_vehicle_storage_content_type");
+  }
+  if (sectionNumber === 13 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_vehicle_storage_asset_kind");
   }
   return {
     kind,

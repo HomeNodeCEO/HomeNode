@@ -18,6 +18,7 @@ import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
 import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
 import { isVerifiedUnitInteriorAsset } from "./unitInteriorCatalog.js";
+import { isVerifiedVehicleStorageAsset } from "./vehicleStorageCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 function responseValue(row) {
@@ -201,6 +202,25 @@ function completionFor(values, entities, assets = []) {
       required += defects.length;
       completed += defects.filter((defect) => assets.some((asset) => (
         isVerifiedOutbuildingAsset(asset, "OutbuildingDefect", defect.id)
+      ))).length;
+    }
+    if (section === "vehicle_storage") {
+      const vehicleStorages = entities.filter((entity) => entity.entity_type === "vehicle_storage");
+      const storageTypes = vehicleStorages.map((entity) => (
+        valueLookup(byKey, entity.id)("vehicle_storage:3200.0006")
+      ));
+      if (storageTypes.some((type) => type && type !== "None")) {
+        required += 1;
+        if (isPresent(byKey.get("root:vehicle_storage:3200.0021"))) completed += 1;
+      }
+      if (storageTypes.includes("SharedDriveway")) {
+        required += 1;
+        if (isPresent(byKey.get("root:vehicle_storage_commentary:3200.0018"))) completed += 1;
+      }
+      const defects = entities.filter((entity) => entity.entity_type === "vehicle_storage_defect");
+      required += defects.length;
+      completed += defects.filter((defect) => assets.some((asset) => (
+        isVerifiedVehicleStorageAsset(asset, "VehicleStorageDefect", defect.id)
       ))).length;
     }
     result[section] = {
@@ -631,6 +651,80 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
         if (!assets.some((asset) => isVerifiedOutbuildingAsset(asset, "OutbuildingDefect", defect.id))) {
           const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "outbuilding_defect:3900.0164");
           errors.push(validationError(field, defect.id, "outbuilding_defect_photo_required", "Upload and verify a photo documenting this outbuilding defect."));
+        }
+      }
+    }
+  }
+
+  if (section === "vehicle_storage") {
+    const vehicleStorages = entities.filter((entity) => entity.entity_type === "vehicle_storage");
+    const vehicleStorageIds = new Set(vehicleStorages.map((entity) => entity.id));
+    const defects = entities.filter((entity) => entity.entity_type === "vehicle_storage_defect");
+    const baseField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "vehicle_storage:3200.0006");
+    const indicatorField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "vehicle_storage:3200.0021");
+
+    if (!vehicleStorages.length) {
+      errors.push(validationError(baseField, null, "vehicle_storage_required", "Add one vehicle storage record and select None when the property has no vehicle storage."));
+    }
+
+    const orphanedDefects = defects.filter((defect) => !vehicleStorageIds.has(defect.parent_entity_id));
+    if (orphanedDefects.length) {
+      errors.push(validationError(baseField, null, "vehicle_storage_parent_conflict", "Every vehicle storage defect must belong to a vehicle storage in this workfile."));
+    }
+
+    const storageTypes = vehicleStorages.map((entity) => ({
+      entity,
+      type: valueLookup(merged, entity.id)("vehicle_storage:3200.0006"),
+    }));
+    const noneStorages = storageTypes.filter(({ type }) => type === "None");
+    const reportedStorages = storageTypes.filter(({ type }) => type && type !== "None");
+    if (noneStorages.length && vehicleStorages.length > 1) {
+      errors.push(validationError(baseField, noneStorages[0].entity.id, "vehicle_storage_none_conflict", "Select None as the only vehicle storage record, or remove None before reporting other storage types."));
+    }
+
+    const rootLookup = valueLookup(merged);
+    const defectsExist = rootLookup("vehicle_storage:3200.0021");
+    if (reportedStorages.length && typeof defectsExist !== "boolean") {
+      errors.push(validationError(indicatorField, null, "vehicle_storage_defects_indicator_required", "Indicate whether any reported vehicle storage has defects, damages, or deficiencies."));
+    }
+    if (noneStorages.length && (defectsExist === true || defects.length)) {
+      errors.push(validationError(indicatorField, null, "vehicle_storage_none_defect_conflict", "A property with Vehicle Storage set to None cannot contain vehicle storage defects."));
+    }
+    if (defectsExist === true && defects.length === 0) {
+      errors.push(validationError(indicatorField, null, "vehicle_storage_defect_required", "Add at least one vehicle storage defect when defects exist."));
+    }
+    if (defectsExist === false && defects.length > 0) {
+      errors.push(validationError(indicatorField, null, "vehicle_storage_defect_conflict", "Remove vehicle storage defect records or change the defects answer to Yes."));
+    }
+
+    if (storageTypes.some(({ type }) => type === "SharedDriveway")) {
+      const commentaryField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+        candidate.key === "vehicle_storage_commentary:3200.0018"
+      ));
+      if (!isPresent(rootLookup("vehicle_storage_commentary:3200.0018"))) {
+        errors.push(validationError(commentaryField, null, "shared_driveway_commentary_required", "Explain the shared driveway in Vehicle Storage Commentary."));
+      }
+    }
+
+    for (const { entity, type } of storageTypes) {
+      const lookup = valueLookup(merged, entity.id);
+      if (["Driveway", "SharedDriveway"].includes(type)) {
+        const tenOrMore = lookup("vehicle_storage:3200.0011");
+        const parkingSpaces = lookup("vehicle_storage:3200.0010");
+        if (tenOrMore === false && (!Number.isInteger(parkingSpaces) || parkingSpaces < 1 || parkingSpaces > 9)) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "vehicle_storage:3200.0010");
+          errors.push(validationError(field, entity.id, "vehicle_storage_driveway_space_count", "Enter between 1 and 9 parking spaces when the driveway has fewer than ten spaces."));
+        }
+      }
+
+      const storageDefects = defects.filter((defect) => defect.parent_entity_id === entity.id);
+      if (type === "None" && storageDefects.length) {
+        errors.push(validationError(baseField, entity.id, "vehicle_storage_none_child_conflict", "Remove defect records from a Vehicle Storage record set to None."));
+      }
+      for (const defect of storageDefects) {
+        if (!assets.some((asset) => isVerifiedVehicleStorageAsset(asset, "VehicleStorageDefect", defect.id))) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "vehicle_storage_defect:3900.0181");
+          errors.push(validationError(field, defect.id, "vehicle_storage_defect_photo_required", "Upload and verify a photo documenting this vehicle storage defect."));
         }
       }
     }

@@ -22,6 +22,10 @@ import {
   UAD_UNIT_INTERIOR_ENTITY_GROUPS,
   UAD_UNIT_INTERIOR_FIELDS,
 } from "./unitInteriorCatalog.js";
+import {
+  UAD_VEHICLE_STORAGE_ENTITY_GROUPS,
+  UAD_VEHICLE_STORAGE_FIELDS,
+} from "./vehicleStorageCatalog.js";
 
 export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_SITE_ENTITY_GROUPS,
@@ -30,6 +34,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
   ...UAD_UNIT_INTERIOR_ENTITY_GROUPS,
   ...UAD_OUTBUILDING_ENTITY_GROUPS,
+  ...UAD_VEHICLE_STORAGE_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -49,6 +54,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   unit_interior: { title: "Unit Interior", officialSectionNumber: 10 },
   functional_obsolescence: { title: "Functional Obsolescence", officialSectionNumber: 11 },
   outbuilding: { title: "Outbuilding", officialSectionNumber: 12 },
+  vehicle_storage: { title: "Vehicle Storage", officialSectionNumber: 13 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -521,6 +527,7 @@ const fields = [
   ...UAD_UNIT_INTERIOR_FIELDS,
   ...UAD_FUNCTIONAL_OBSOLESCENCE_FIELDS,
   ...UAD_OUTBUILDING_FIELDS,
+  ...UAD_VEHICLE_STORAGE_FIELDS,
 ];
 
 function fieldKey(field) {

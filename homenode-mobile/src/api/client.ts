@@ -1,5 +1,6 @@
 import type { MobileConfig } from "../config";
 import type { WorkflowType } from "../domain/workflows";
+import type { FieldState, JsonValue, SyncOperationRequest } from "../offline/model";
 
 export type Organization = {
   organizationId: string;
@@ -62,6 +63,51 @@ export type InspectionSession = {
   revision: number;
 };
 
+export type InspectionField = {
+  field_path: string;
+  state: FieldState;
+  source_type: string;
+  appraiser_confirmed: boolean;
+  session_revision: number;
+  applied_at: string;
+};
+
+export type InspectionConflict = {
+  client_operation_id: string;
+  operation_kind: string;
+  base_session_revision: number;
+  conflict: {
+    field_path: string;
+    base: FieldState;
+    server: FieldState;
+    mobile: FieldState;
+    detected_at: string;
+    session_revision: number;
+  };
+  received_at: string;
+};
+
+export type InspectionSnapshot = {
+  session: InspectionSession;
+  fields: InspectionField[];
+  conflicts: InspectionConflict[];
+};
+
+export type SyncOperationResult = {
+  client_operation_id: string;
+  operation_kind: string;
+  status: "applied" | "conflict" | "rejected";
+  result: Record<string, JsonValue> | null;
+  conflict: InspectionConflict["conflict"] | null;
+  resolved_at?: string | null;
+  resolution?: string | null;
+};
+
+export type InspectionSyncResponse = {
+  session: InspectionSession;
+  operations: SyncOperationResult[];
+};
+
 export class ApiError extends Error {
   constructor(public readonly status: number, public readonly code: string) {
     super(code);
@@ -81,15 +127,20 @@ export class MobileApi {
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = await this.getAccessToken();
-    const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
-      ...init,
-      headers: {
-        accept: "application/json",
-        authorization: `Bearer ${token}`,
-        ...(init.body ? { "content-type": "application/json" } : {}),
-        ...init.headers,
-      },
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.apiBaseUrl}${path}`, {
+        ...init,
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+          ...(init.body ? { "content-type": "application/json" } : {}),
+          ...init.headers,
+        },
+      });
+    } catch {
+      throw new ApiError(0, "network_request_failed");
+    }
     const payload = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) throw new ApiError(response.status, payload.error || `http_${response.status}`);
     return payload as T;
@@ -137,6 +188,19 @@ export class MobileApi {
     return this.request<{ session: InspectionSession; created: boolean }>(
       "/api/mobile/inspection-sessions",
       { method: "POST", body: JSON.stringify({ report_file_id: reportFileId }) },
+    );
+  }
+
+  async inspectionSnapshot(sessionId: string) {
+    return this.request<InspectionSnapshot>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/snapshot`,
+    );
+  }
+
+  async syncInspection(sessionId: string, operations: SyncOperationRequest[]) {
+    return this.request<InspectionSyncResponse>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/sync`,
+      { method: "POST", body: JSON.stringify({ operations }) },
     );
   }
 }

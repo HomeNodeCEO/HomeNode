@@ -9,8 +9,23 @@ import {
   listReportFiles,
 } from "../src/modules/mobile/reportFiles.js";
 import { getMobileProperty, searchMobileProperties } from "../src/modules/mobile/properties.js";
+import {
+  getInspectionSnapshot,
+  syncInspectionOperations,
+  syncPayloadSha256,
+} from "../src/modules/mobile/sync.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+function syncOperation(operationKind, baseSessionRevision, payload, clientOperationId = randomUUID()) {
+  return {
+    client_operation_id: clientOperationId,
+    operation_kind: operationKind,
+    base_session_revision: baseSessionRevision,
+    payload_sha256: syncPayloadSha256(payload),
+    payload,
+  };
+}
 
 test("mobile report files preserve prior versions and allocate separate workflow sequences", {
   skip: !databaseUrl,
@@ -156,6 +171,54 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.equal(session.created, true);
     assert.equal(retriedSession.created, false);
     assert.equal(retriedSession.session.id, session.session.id);
+
+    const firstPayload = {
+      field_path: "inspection.general.appraiser_comments",
+      base: { exists: false },
+      value: "Observed on site",
+      source_type: "appraiser",
+      appraiser_confirmed: true,
+    };
+    const firstOperation = syncOperation("field.upsert", 1, firstPayload);
+    const firstSync = await syncInspectionOperations(pool, auth, session.session.id, {
+      operations: [firstOperation],
+    });
+    assert.equal(firstSync.session.revision, 2);
+    assert.equal(firstSync.operations[0].status, "applied");
+    const retriedSync = await syncInspectionOperations(pool, auth, session.session.id, {
+      operations: [firstOperation],
+    });
+    assert.equal(retriedSync.session.revision, 2);
+    assert.equal(retriedSync.operations[0].status, "applied");
+
+    const conflictingPayload = {
+      ...firstPayload,
+      value: "Different offline observation",
+    };
+    const conflictingOperation = syncOperation("field.upsert", 1, conflictingPayload);
+    const conflicted = await syncInspectionOperations(pool, auth, session.session.id, {
+      operations: [conflictingOperation],
+    });
+    assert.equal(conflicted.session.revision, 3);
+    assert.equal(conflicted.session.status, "review_required");
+    assert.equal(conflicted.operations[0].status, "conflict");
+
+    const conflictSnapshot = await getInspectionSnapshot(pool, auth, session.session.id);
+    assert.equal(conflictSnapshot.fields[0].state.value, "Observed on site");
+    assert.equal(conflictSnapshot.conflicts.length, 1);
+
+    const resolutionPayload = {
+      conflict_client_operation_id: conflictingOperation.client_operation_id,
+      resolution: "apply_mobile",
+    };
+    const resolved = await syncInspectionOperations(pool, auth, session.session.id, {
+      operations: [syncOperation("conflict.resolve", 3, resolutionPayload)],
+    });
+    assert.equal(resolved.session.revision, 4);
+    assert.equal(resolved.session.status, "synchronized");
+    const resolvedSnapshot = await getInspectionSnapshot(pool, auth, session.session.id);
+    assert.equal(resolvedSnapshot.fields[0].state.value, "Different offline observation");
+    assert.equal(resolvedSnapshot.conflicts.length, 0);
 
     const lineage = await pool.query(
       `SELECT prior.is_current AS prior_current,

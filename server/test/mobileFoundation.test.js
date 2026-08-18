@@ -16,6 +16,11 @@ import {
 } from "../src/modules/mobile/fileNumbers.js";
 import { calculateManualSketch } from "../src/modules/mobile/manualSketch.js";
 import { normalizePropertySearch } from "../src/modules/mobile/properties.js";
+import {
+  canonicalJson,
+  normalizeSyncBatch,
+  syncPayloadSha256,
+} from "../src/modules/mobile/sync.js";
 
 const ISSUER = "https://identity.example.test";
 const AUDIENCE = "https://api.homenode.test/mobile";
@@ -78,6 +83,36 @@ test("normalizes bounded mobile property searches", () => {
   assert.equal(normalizePropertySearch("  100   Test Street "), "100 Test Street");
   assert.throws(() => normalizePropertySearch("x"), /invalid_property_search_query/);
   assert.throws(() => normalizePropertySearch("x".repeat(121)), /invalid_property_search_query/);
+});
+
+test("canonicalizes and validates offline sync operations", () => {
+  const payload = {
+    value: "Observed condition",
+    field_path: "inspection.general.appraiser_comments",
+    base: { exists: false },
+    source_type: "appraiser",
+    appraiser_confirmed: true,
+  };
+  assert.equal(canonicalJson({ z: 1, a: [true, null] }), '{"a":[true,null],"z":1}');
+  const operations = normalizeSyncBatch({
+    operations: [{
+      client_operation_id: "10000000-0000-4000-8000-000000000001",
+      operation_kind: "field.upsert",
+      base_session_revision: 1,
+      payload_sha256: syncPayloadSha256(payload),
+      payload,
+    }],
+  });
+  assert.equal(operations[0].payload.field_path, "inspection.general.appraiser_comments");
+  assert.throws(() => normalizeSyncBatch({
+    operations: [{
+      client_operation_id: "10000000-0000-4000-8000-000000000001",
+      operation_kind: "field.upsert",
+      base_session_revision: 1,
+      payload_sha256: "0".repeat(64),
+      payload,
+    }],
+  }), /invalid_payload_sha256/);
 });
 
 test("manual sketch calculator requires closure before calculating square footage", () => {
@@ -154,4 +189,13 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(source, /CHECK \(required_retention_years = 5\)/);
   assert.match(source, /UNIQUE \(inspection_session_id, client_operation_id\)/);
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const offlineSource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260822_mobile_offline_sync.sql"),
+    "utf8",
+  );
+  assert.match(offlineSource, /ADD COLUMN IF NOT EXISTS client_operation_id uuid/);
+  assert.match(offlineSource, /ADD COLUMN IF NOT EXISTS is_tombstone boolean/);
+  assert.match(offlineSource, /mobile_sync_operations_unresolved_conflict_idx/);
+  assert.doesNotMatch(offlineSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

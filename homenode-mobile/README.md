@@ -1,6 +1,17 @@
 # HomeNode Appraiser mobile
 
-Private Expo/React Native client for HomeNode field appraisal. Phase 2 provides managed OIDC sign-in, secure native session storage, HomeNode property search, existing-file discovery, safe creation of separate report versions, and inspection-session routing.
+Private Expo/React Native client for HomeNode field appraisal. Phase 3 adds an encrypted offline inspection cache and durable synchronization queue to the managed sign-in, property search, version-safe report routing, and inspection-session foundation.
+
+## Offline inspection behavior
+
+- Inspection context and sparse field drafts persist across application restarts in SQLCipher-encrypted SQLite.
+- The database key is generated on the device and stored with `expo-secure-store`; cached work is scoped to the last authenticated HomeNode user and is not deleted merely because connectivity is unavailable.
+- Every edit receives a client UUID and SHA-256 payload digest. The API applies it once, returns the prior result on safe retry, and rejects reuse of the UUID with different content.
+- Queued work retries when connectivity returns, when the app becomes active, and on a bounded exponential-backoff timer.
+- A stale edit is automatically rebased only when its recorded field-level base still matches HomeNode. A different server value becomes an explicit conflict with **Use HomeNode value** and **Keep mobile value** actions.
+- Phase 3 stores synchronized inspection observations separately from authoritative Custom Appraisal and UAD fields. Their target-specific adapters are introduced in later phases, so no desktop value is silently overwritten.
+
+SQLCipher requires a development or internal native build and is not available in Expo Go.
 
 ## WorkOS activation
 
@@ -40,7 +51,7 @@ pnpm test
 pnpm run doctor
 ```
 
-Use a development build rather than Expo Go so the registered `homenode` callback scheme matches the WorkOS allowlist.
+Use a development build rather than Expo Go so the registered `homenode` callback scheme matches the WorkOS allowlist and the SQLCipher-enabled database is compiled into the application.
 
 ## Private installation
 
@@ -52,3 +63,4 @@ The `internal` EAS profile produces a directly installable Android APK. On iOS, 
 - Access and rotating refresh tokens are stored separately with `expo-secure-store`.
 - Property and report-file APIs require a verified bearer token and an active HomeNode organization membership.
 - Creating a new assignment uses an idempotency UUID and creates a new numbered file linked to its predecessor. It never overwrites the prior report.
+- Offline field payloads are encrypted at rest and remain organization/user scoped when synchronized.

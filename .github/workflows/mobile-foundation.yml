@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/mobile-foundation.yml"
       - "server/migrations/20260821_mobile_foundation.sql"
+      - "server/migrations/20260822_mobile_offline_sync.sql"
       - "server/scripts/*Mobile*.js"
       - "server/src/database/mobileMigrations.js"
       - "server/src/modules/mobile/**"
@@ -17,6 +18,7 @@ on:
     paths:
       - ".github/workflows/mobile-foundation.yml"
       - "server/migrations/20260821_mobile_foundation.sql"
+      - "server/migrations/20260822_mobile_offline_sync.sql"
       - "server/scripts/*Mobile*.js"
       - "server/src/database/mobileMigrations.js"
       - "server/src/modules/mobile/**"

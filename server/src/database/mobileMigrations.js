@@ -7,6 +7,7 @@ const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIRECTORY = path.resolve(MODULE_DIRECTORY, "../..");
 const MIGRATIONS = Object.freeze([
   "20260821_mobile_foundation.sql",
+  "20260822_mobile_offline_sync.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

@@ -7,7 +7,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const RECENT_FILE_DAYS = 30;
 const WRITE_ROLES = new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]);
 
-function normalizeUuid(value, code) {
+export function normalizeUuid(value, code) {
   const uuid = String(value || "").trim();
   if (!UUID_PATTERN.test(uuid)) throw new Error(code);
   return uuid.toLowerCase();
@@ -59,7 +59,7 @@ function reportFileResponse(row) {
   };
 }
 
-function sessionResponse(row) {
+export function sessionResponse(row) {
   return {
     id: row.id,
     report_file_id: row.report_file_id,

@@ -8,6 +8,7 @@ import {
   createReportFile,
   listReportFiles,
 } from "../src/modules/mobile/reportFiles.js";
+import { getMobileProperty, searchMobileProperties } from "../src/modules/mobile/properties.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -48,6 +49,19 @@ test("mobile report files preserve prior versions and allocate separate workflow
        VALUES ($1, '100 Test Street', 'Dallas', '75201')`,
       [accountId],
     );
+    const legacyAssignment = await pool.query(
+      `INSERT INTO app.assignment_files (account_id, file_number, assignment_details)
+       VALUES ($1, $2, '{"client_name":"Legacy preserved client"}'::jsonb)
+       RETURNING id`,
+      [accountId, `LEGACY-${userId.slice(0, 8)}`],
+    );
+    const legacyReportFileId = randomUUID();
+    await pool.query(
+      `INSERT INTO app.report_files (
+         id, account_id, workflow_type, file_number, custom_assignment_file_id, is_current
+       ) VALUES ($1, $2, 'custom_appraisal', $3, $4, true)`,
+      [legacyReportFileId, accountId, `LEGACY-${userId.slice(0, 8)}`, legacyAssignment.rows[0].id],
+    );
 
     const firstCustomRequest = randomUUID();
     const firstCustom = await createReportFile(pool, auth, {
@@ -58,6 +72,7 @@ test("mobile report files preserve prior versions and allocate separate workflow
     });
     assert.equal(firstCustom.created, true);
     assert.match(firstCustom.reportFile.file_number, /^HN-CA-\d{4}-000001$/);
+    assert.equal(firstCustom.reportFile.previous_report_file_id, legacyReportFileId);
 
     const retried = await createReportFile(pool, auth, {
       organization_id: organizationId,
@@ -116,10 +131,21 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.ok(Number(uadFoundation.rows[0].events) >= 1);
 
     const discovery = await listReportFiles(pool, auth, { accountId });
-    assert.equal(discovery.files.length, 4);
+    assert.equal(discovery.files.length, 5);
     assert.equal(discovery.recentlyCreated, true);
     assert.ok(discovery.files.some((file) => file.id === firstCustom.reportFile.id && !file.is_current));
     assert.ok(discovery.files.some((file) => file.id === secondCustom.reportFile.id && file.is_current));
+
+    const search = await searchMobileProperties(pool, auth, { query: "100 Test" });
+    assert.equal(search.results.length, 1);
+    assert.equal(search.results[0].account_id, accountId);
+    assert.equal(search.results[0].workflows.custom_appraisal.count, 3);
+    assert.equal(search.results[0].workflows.uad_3_6.count, 1);
+    assert.equal(search.results[0].workflows.property_tax_protest.count, 1);
+
+    const selected = await getMobileProperty(pool, auth, accountId);
+    assert.equal(selected.property.address, "100 Test Street");
+    assert.equal(selected.files.length, 5);
 
     const session = await createInspectionSession(pool, auth, {
       report_file_id: secondCustom.reportFile.id,

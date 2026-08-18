@@ -86,21 +86,20 @@ export async function listReportFiles(pool, auth, {
   const accountId = normalizeAccountId(accountIdValue);
   const workflowType = workflowTypeValue ? normalizeWorkflowType(workflowTypeValue) : null;
   const organizationIds = auth.organizations.map((item) => item.organizationId);
-  const platformAdmin = auth.organizations.some((item) => item.roles.includes("homenode_admin"));
   const boundedRecentDays = Math.max(1, Math.min(365, Number(recentDays) || RECENT_FILE_DAYS));
   const { rows } = await pool.query(
     `SELECT report_file.*, account.address, account.city, account.postal_code,
-            report_file.created_at >= now() - ($5::integer * interval '1 day') AS is_recent
+            report_file.created_at >= now() - ($4::integer * interval '1 day') AS is_recent
        FROM app.report_files report_file
        JOIN core.accounts account ON account.account_id = report_file.account_id
       WHERE report_file.account_id = $1
         AND ($2::text IS NULL OR report_file.workflow_type = $2)
         AND (
           report_file.organization_id = ANY($3::uuid[])
-          OR ($4::boolean = true AND report_file.organization_id IS NULL)
+          OR (report_file.organization_id IS NULL AND report_file.workflow_type = 'custom_appraisal')
         )
       ORDER BY report_file.is_current DESC, report_file.updated_at DESC, report_file.id`,
-    [accountId, workflowType, organizationIds, platformAdmin, boundedRecentDays],
+    [accountId, workflowType, organizationIds, boundedRecentDays],
   );
   const files = rows.map((row) => ({ ...reportFileResponse(row), is_recent: Boolean(row.is_recent) }));
   const recommended = files.find((file) => file.is_current && file.is_recent && file.ready_for_inspection)
@@ -213,9 +212,10 @@ export async function createReportFile(pool, auth, input = {}) {
     if (!account.rows.length) throw new Error("account_not_found");
     const previousResult = await client.query(
       `SELECT * FROM app.report_files
-        WHERE organization_id = $1 AND account_id = $2 AND workflow_type = $3
+        WHERE (organization_id = $1 OR (organization_id IS NULL AND workflow_type = 'custom_appraisal'))
+          AND account_id = $2 AND workflow_type = $3
           AND ($4::uuid IS NULL OR id = $4)
-        ORDER BY is_current DESC, updated_at DESC, id
+        ORDER BY (organization_id = $1) DESC, is_current DESC, updated_at DESC, id
         LIMIT 1
         FOR UPDATE`,
       [organizationId, accountId, workflowType, explicitPreviousId],

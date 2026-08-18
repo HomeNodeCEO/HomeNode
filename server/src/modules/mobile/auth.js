@@ -219,7 +219,8 @@ export function createMobileAuthenticator({ pool, verifier }) {
     try {
       const { rows } = await pool.query(
         `SELECT users.id AS user_id, users.email, users.display_name,
-                memberships.organization_id, roles.role_code
+                memberships.organization_id, organizations.display_name AS organization_display_name,
+                roles.role_code
            FROM app_auth.oidc_identities identities
            JOIN app_auth.users users
              ON users.id = identities.user_id AND users.active = true
@@ -228,6 +229,8 @@ export function createMobileAuthenticator({ pool, verifier }) {
            LEFT JOIN app_auth.membership_roles roles
              ON roles.organization_id = memberships.organization_id
             AND roles.user_id = memberships.user_id
+           LEFT JOIN app_auth.organizations organizations
+             ON organizations.id = memberships.organization_id
           WHERE identities.issuer = $1 AND identities.subject = $2
           ORDER BY memberships.organization_id, roles.role_code`,
         [claims.iss, claims.sub],
@@ -238,6 +241,7 @@ export function createMobileAuthenticator({ pool, verifier }) {
         if (!row.organization_id) continue;
         const organization = organizations.get(row.organization_id) || {
           organizationId: row.organization_id,
+          displayName: row.organization_display_name,
           roles: [],
         };
         if (row.role_code && !organization.roles.includes(row.role_code)) {
@@ -248,6 +252,12 @@ export function createMobileAuthenticator({ pool, verifier }) {
       if (!organizations.size) {
         return res.status(403).json({ error: "mobile_organization_membership_required" });
       }
+      await pool.query(
+        `UPDATE app_auth.oidc_identities
+            SET last_authenticated_at = now(), updated_at = now()
+          WHERE issuer = $1 AND subject = $2`,
+        [claims.iss, claims.sub],
+      );
       req.mobileAuth = Object.freeze({
         userId: rows[0].user_id,
         email: rows[0].email,

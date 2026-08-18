@@ -3,6 +3,7 @@ import express from "express";
 import { createMobileAuthenticator } from "./auth.js";
 import { MOBILE_WORKFLOW_TYPES } from "./fileNumbers.js";
 import { calculateManualSketch } from "./manualSketch.js";
+import { getMobileProperty, searchMobileProperties } from "./properties.js";
 import {
   createInspectionSession,
   createReportFile,
@@ -68,6 +69,26 @@ export function createMobileRouter({ pool, verifier, enabled = false, recentFile
 
   router.get("/me", (req, res) => {
     res.json({ user: req.mobileAuth });
+  });
+
+  router.get("/properties/search", async (req, res) => {
+    try {
+      const result = await searchMobileProperties(pool, req.mobileAuth, {
+        query: req.query.q,
+        limit: req.query.limit,
+      });
+      return res.json(result);
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.get("/properties/:accountId", async (req, res) => {
+    try {
+      return res.json(await getMobileProperty(pool, req.mobileAuth, req.params.accountId));
+    } catch (error) {
+      return sendError(res, error);
+    }
   });
 
   router.post("/sketches/calculate", requireWriteRole, (req, res) => {

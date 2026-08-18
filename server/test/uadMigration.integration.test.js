@@ -298,6 +298,43 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND rule_id LIKE 'HN-UAD-OVERALL-QC-%'
     `);
     assert.equal(homeNodeOverallQualityConditionRules.rows[0].count, 3);
+
+    const highestBestUseFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 16
+    `);
+    assert.equal(highestBestUseFields.rows[0].count, 8);
+
+    const highestBestUseLocations = await pool.query(`
+      SELECT count(*)::integer AS count,
+             count(*) FILTER (WHERE location_role = 'redisplay')::integer AS redisplay_count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND (
+           section_number = 16
+           OR metadata->>'source_report_field_id' = '16.004'
+         )
+    `);
+    assert.equal(highestBestUseLocations.rows[0].count, 9);
+    assert.equal(highestBestUseLocations.rows[0].redisplay_count, 1);
+
+    const officialHighestBestUseRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN ('UAD1659', 'UAD1660', 'UAD1661', 'UAD1662', 'UAD1663')
+    `);
+    assert.equal(officialHighestBestUseRules.rows[0].count, 5);
+
+    const homeNodeHighestBestUseRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-HIGHEST-BEST-USE-%'
+    `);
+    assert.equal(homeNodeHighestBestUseRules.rows[0].count, 2);
   } finally {
     await pool.end();
   }

@@ -19,6 +19,7 @@ const MIGRATIONS = Object.freeze([
   "20260826_uad_vehicle_storage.sql",
   "20260827_uad_subject_property_amenities.sql",
   "20260828_uad_overall_quality_condition.sql",
+  "20260829_uad_highest_best_use.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 

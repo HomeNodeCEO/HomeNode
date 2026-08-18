@@ -54,6 +54,7 @@ const VEHICLE_STORAGE_DEFECT_CAPTIONS = ["VehicleStorageDefect"];
 const SUBJECT_AMENITY_GENERAL_CAPTIONS = ["SubjectPropertyAmenitiesExhibit"];
 const SUBJECT_AMENITY_CAPTIONS = ["SubjectPropertyAmenity"];
 const SUBJECT_AMENITY_DEFECT_CAPTIONS = ["SubjectPropertyAmenityDefect"];
+const HIGHEST_BEST_USE_CAPTIONS = ["HighestAndBestUseExhibit"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -155,6 +156,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     const value = draft[fieldValueKey("unit", "0700.0089", unit.id)];
     return value !== true && value !== false;
   });
+  const highestBestUseHasNo = ["3100.0004", "3100.0006", "3100.0003", "3100.0005", "3100.0007"]
+    .some((uid) => draft[fieldValueKey("highest_best_use", uid)] === false);
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -439,6 +442,16 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "overall_quality_condition" && (
           <div className="mb-5 rounded-xl border border-lime-200 bg-lime-50 p-4 text-sm leading-6 text-lime-950">
             Reconcile the overall Q1-Q6 and C1-C6 conclusions from the Section 8 exterior ratings and each non-ADU Section 10 interior rating. For a subject-to appraisal, the overall condition reflects the property as if the required work were satisfactorily completed. UAD 3.6 associates no images with Section 15.
+          </div>
+        )}
+        {activeSection === "highest_best_use" && (
+          <div className="mb-5 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-sm leading-6 text-cyan-950">
+            Complete all four tests for the current improvements, or the proposed improvements in a subject-to appraisal, before concluding whether the present or proposed use is highest and best. Automated zoning and land-use screening may support the analysis, but these UAD answers remain appraiser-controlled. Supporting images are optional.
+          </div>
+        )}
+        {activeSection === "highest_best_use" && highestBestUseHasNo && (
+          <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+            One or more answers is No. Highest and Best Use Commentary is now required and must describe the supporting evidence and reasoning.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -800,6 +813,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               workfileId={workfileId}
             />
           ))}
+          {activeSection === "highest_best_use" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={HIGHEST_BEST_USE_CAPTIONS}
+              description="Optional photos or images may support the Section 16 analysis. Provide a descriptive caption for every exhibit so it can be identified in the URAR."
+              emptyMessage="No optional highest and best use exhibits uploaded."
+              sectionNumber={16}
+              title="Highest and best use exhibits"
+              workfileId={workfileId}
+            />
+          )}
           {activeSection === "unit_interior" && unitRooms.map((room) => (
             <UadAssetPanel
               accept={SKETCH_IMAGE_ACCEPT}

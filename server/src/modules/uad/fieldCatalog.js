@@ -7,6 +7,7 @@ import {
   UAD_DWELLING_EXTERIOR_FIELDS,
 } from "./dwellingExteriorCatalog.js";
 import { UAD_FUNCTIONAL_OBSOLESCENCE_FIELDS } from "./functionalObsolescenceCatalog.js";
+import { UAD_HIGHEST_BEST_USE_FIELDS } from "./highestBestUseCatalog.js";
 import {
   UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
   UAD_MANUFACTURED_HOME_FIELDS,
@@ -63,6 +64,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   vehicle_storage: { title: "Vehicle Storage", officialSectionNumber: 13 },
   subject_property_amenities: { title: "Subject Property Amenities", officialSectionNumber: 14 },
   overall_quality_condition: { title: "Overall Quality and Condition", officialSectionNumber: 15 },
+  highest_best_use: { title: "Highest and Best Use", officialSectionNumber: 16 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -538,6 +540,7 @@ const fields = [
   ...UAD_VEHICLE_STORAGE_FIELDS,
   ...UAD_SUBJECT_PROPERTY_AMENITIES_FIELDS,
   ...UAD_OVERALL_QUALITY_CONDITION_FIELDS,
+  ...UAD_HIGHEST_BEST_USE_FIELDS,
 ];
 
 function fieldKey(field) {

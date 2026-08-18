@@ -3433,6 +3433,7 @@ function AddressHero({
     ? assignmentAdditionalImprovements as DcadImprovementRow[]
     : detail?.additional_improvements || [];
   const mobileInspectionPhotos = activeAssignmentFile?.mobile_inspection_photos || [];
+  const mobileInspectionSketch = activeAssignmentFile?.mobile_inspection_sketch || null;
   const salesHistory = detail?.sales_history || [];
   const propertyActivityHistory = detail?.property_activity_history || salesHistory;
   const values = detail?.value_summary;
@@ -4263,6 +4264,7 @@ function AddressHero({
       const updatedFile = {
         ...response.assignment_file,
         custom_appraisal_sections: activeAssignmentFile.custom_appraisal_sections,
+        mobile_inspection_sketch: activeAssignmentFile.mobile_inspection_sketch,
         mobile_inspection_photos: activeAssignmentFile.mobile_inspection_photos,
       };
       setActiveAssignmentFile(updatedFile);
@@ -4452,6 +4454,7 @@ function AddressHero({
       const updatedFile = {
         ...response.assignment_file,
         custom_appraisal_sections: activeAssignmentFile.custom_appraisal_sections,
+        mobile_inspection_sketch: activeAssignmentFile.mobile_inspection_sketch,
         mobile_inspection_photos: activeAssignmentFile.mobile_inspection_photos,
       };
       setAssignmentDraft(assignmentDraftFromDetail(updatedFile.assignment_details));
@@ -5600,6 +5603,46 @@ function AddressHero({
                 {mobileInspectionPhotos.length
                   ? ` ${mobileInspectionPhotos.length} verified field photo${mobileInspectionPhotos.length === 1 ? " is" : "s are"} attached to this file and retained for five years.`
                   : " No verified mobile field photos are attached yet."}
+              </div>
+            ) : null}
+
+            {mobileInspectionSketch ? (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-900">Mobile measured sketch</div>
+                    <div className="mt-1 text-xs text-slate-600">
+                      {mobileInspectionSketch.measurement_standard === "ansi_z765_2021" ? "ANSI Z765-2021" : "Jurisdiction-required alternate standard"}
+                      {` · ${mobileInspectionSketch.measurement_method.replaceAll("_", " ")}`}
+                    </div>
+                  </div>
+                  <div className={`rounded-full px-3 py-1 text-xs font-semibold ${mobileInspectionSketch.review_status === "appraiser_confirmed" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                    {mobileInspectionSketch.review_status === "appraiser_confirmed" ? "Appraiser confirmed" : "Review pending"}
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Above-grade finished</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.above_grade_finished_sqft.toLocaleString()} sf</div></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Below-grade finished</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.below_grade_finished_sqft.toLocaleString()} sf</div></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Measured areas</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.area_count}</div></div>
+                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Room labels</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.room_count}</div></div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {mobileInspectionSketch.document.areas.map((area) => (
+                    <div className="rounded-lg border border-slate-200 px-3 py-2 text-xs" key={area.id}>
+                      <div className="font-semibold text-slate-800">{area.label} · {area.level_label}</div>
+                      <div className="mt-1 text-slate-600">
+                        {area.classification.replaceAll("_", " ")} · {area.calculation.reported_area_sqft?.toLocaleString() || "—"} sf · {area.calculation.perimeter_feet.toLocaleString()} ft perimeter
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {mobileInspectionSketch.document.rooms.length ? (
+                  <div className="mt-3 text-xs text-slate-600">
+                    Room-derived photo labels: {mobileInspectionSketch.document.rooms.map((room) => room.label).join(", ")}.
+                  </div>
+                ) : null}
+                {mobileInspectionSketch.document.review_notes ? <div className="mt-3 whitespace-pre-wrap text-xs text-slate-600">{mobileInspectionSketch.document.review_notes}</div> : null}
+                <div className="mt-3 text-[11px] leading-5 text-slate-500">The measured sketch is scoped to appraisal file {activeAssignmentFile?.file_number}. Geometric closure does not replace the appraiser’s ANSI classification and declaration review.</div>
               </div>
             ) : null}
 

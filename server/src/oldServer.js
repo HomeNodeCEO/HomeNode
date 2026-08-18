@@ -1337,9 +1337,10 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
     const assignmentIds = rows.map((row) => Number(row.id));
     let sectionRows = [];
     let mobilePhotoRows = [];
+    let mobileSketchRows = [];
     if (assignmentIds.length) {
       try {
-        [sectionRows, mobilePhotoRows] = await Promise.all([
+        [sectionRows, mobilePhotoRows, mobileSketchRows] = await Promise.all([
           pool.query(
             `SELECT assignment_file_id, section_key, section_value, revision,
                     last_applied_session_id, updated_at
@@ -1358,6 +1359,18 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
               WHERE report_file.custom_assignment_file_id = ANY($1::bigint[])
                 AND photo.status = 'verified'
               ORDER BY report_file.custom_assignment_file_id, photo.position, photo.created_at, photo.id`,
+            [assignmentIds],
+          ).then((result) => result.rows),
+          pool.query(
+            `SELECT DISTINCT ON (report_file.custom_assignment_file_id)
+                    report_file.custom_assignment_file_id AS assignment_file_id,
+                    sketch.id, sketch.revision, sketch.document, sketch.summary,
+                    sketch.measurement_standard, sketch.measurement_method,
+                    sketch.review_status, sketch.confirmed_at, sketch.updated_at
+               FROM app.report_files report_file
+               JOIN app.inspection_sketches sketch ON sketch.report_file_id = report_file.id
+              WHERE report_file.custom_assignment_file_id = ANY($1::bigint[])
+              ORDER BY report_file.custom_assignment_file_id, sketch.updated_at DESC, sketch.id DESC`,
             [assignmentIds],
           ).then((result) => result.rows),
         ]);
@@ -1380,6 +1393,19 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
       return {
         ...response,
         custom_appraisal_sections: customSections,
+        mobile_inspection_sketch: mobileSketchRows
+          .filter((sketch) => Number(sketch.assignment_file_id) === response.id)
+          .map((sketch) => ({
+            id: sketch.id,
+            revision: Number(sketch.revision),
+            document: sketch.document,
+            summary: sketch.summary,
+            measurement_standard: sketch.measurement_standard,
+            measurement_method: sketch.measurement_method,
+            review_status: sketch.review_status,
+            confirmed_at: sketch.confirmed_at,
+            updated_at: sketch.updated_at,
+          }))[0] || null,
         mobile_inspection_photos: mobilePhotoRows
           .filter((photo) => Number(photo.assignment_file_id) === response.id)
           .map((photo) => ({

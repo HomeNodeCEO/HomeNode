@@ -1,6 +1,6 @@
 # HomeNode Appraiser mobile
 
-Private Expo/React Native client for HomeNode field appraisal. Phase 5 adds an assignment-scoped Custom Appraisal adapter and review workflow to the encrypted offline inspection and private photo foundation.
+Private Expo/React Native client for HomeNode field appraisal. Phase 6 adds an offline manual measurement workspace with revision-safe HomeNode persistence, stable room markers, and automatic room-to-photo labeling.
 
 ## Offline inspection behavior
 
@@ -22,6 +22,17 @@ Private Expo/React Native client for HomeNode field appraisal. Phase 5 adds an a
 - The Custom Appraisal review also shows the count of verified photos attached to that exact report file.
 
 SQLCipher requires a development or internal native build and is not available in Expo Go.
+
+## Manual sketch and room labels
+
+- Enter wall length and bearing to draw multiple closed property areas without LiDAR.
+- Dimensions use 0.1-foot field precision; valid closed polygons calculate perimeter and reported whole-square-foot area.
+- Above-grade, below-grade, nonstandard, noncontinuous, unfinished, garage, porch, patio, deck, outbuilding, and other areas remain separate.
+- Sketch drafts use their own encrypted SQLite queue, optimistic revision, idempotency UUID, retry/backoff, and explicit conflict choices.
+- Room markers have stable references. Selecting a room makes it the automatic label for new photos, and room-generated captions follow later room renames while manual captions remain unchanged.
+- Appraiser confirmation is explicit. Polygon closure never substitutes for grade, finish, ceiling-height, access, declaration, or other professional review.
+
+The server stores every sketch revision and audit event on the existing typed report file. See `docs/MOBILE_MANUAL_SKETCH.md` for the API and data boundary.
 
 ## Photo capture and retention
 

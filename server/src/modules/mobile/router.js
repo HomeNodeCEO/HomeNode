@@ -24,6 +24,7 @@ import {
   getInspectionSession,
   listReportFiles,
 } from "./reportFiles.js";
+import { getInspectionSketch, saveInspectionSketch } from "./sketches.js";
 import { getInspectionSnapshot, syncInspectionOperations } from "./sync.js";
 
 const WRITE_ROLES = new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]);
@@ -74,6 +75,12 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
       sketch: {
         manual_measurement: true,
         lidar: false,
+        persisted: true,
+        offline_drafts: true,
+        multiple_areas: true,
+        room_photo_links: true,
+        measurement_standard: "ANSI Z765-2021",
+        appraiser_confirmation_required: true,
       },
       offline_sync: {
         durable_queue: true,
@@ -194,6 +201,27 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
   router.get("/inspection-sessions/:sessionId/snapshot", async (req, res) => {
     try {
       return res.json(await getInspectionSnapshot(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.get("/inspection-sessions/:sessionId/sketch", async (req, res) => {
+    try {
+      return res.json(await getInspectionSketch(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.put("/inspection-sessions/:sessionId/sketch", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await saveInspectionSketch(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.body || {},
+      ));
     } catch (error) {
       return sendError(res, error);
     }

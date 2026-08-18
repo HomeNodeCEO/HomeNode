@@ -25,6 +25,7 @@ import {
   normalizePhotoBatch,
 } from "../src/modules/mobile/photos.js";
 import { normalizePropertySearch } from "../src/modules/mobile/properties.js";
+import { normalizeManualSketchDocument } from "../src/modules/mobile/sketches.js";
 import {
   canonicalJson,
   normalizeSyncBatch,
@@ -194,6 +195,51 @@ test("manual sketch calculator rejects self-intersecting outlines", () => {
   assert.equal(result.calculated_area_sqft, null);
 });
 
+test("normalizes ANSI review areas, classifications, and stable room references", () => {
+  const areaId = "10000000-0000-4000-8000-000000000021";
+  const roomId = "10000000-0000-4000-8000-000000000022";
+  const sketch = normalizeManualSketchDocument({
+    measurement_standard: "ansi_z765_2021",
+    measurement_method: "exterior",
+    review_status: "appraiser_confirmed",
+    areas: [{
+      id: areaId,
+      label: "First floor",
+      level_label: "Level 1",
+      classification: "above_grade_finished",
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 40, y: 0 },
+        { x: 40, y: 30 },
+        { x: 0, y: 30 },
+        { x: 0, y: 0 },
+      ],
+    }],
+    rooms: [{
+      id: roomId,
+      area_id: areaId,
+      label: "Kitchen",
+      room_type: "kitchen",
+      anchor: { x: 20, y: 15 },
+    }],
+  });
+  assert.equal(sketch.summary.above_grade_finished_sqft, 1200);
+  assert.equal(sketch.summary.room_count, 1);
+  assert.equal(sketch.areas[0].calculation.segments[0].length_feet, 40);
+  assert.equal(sketch.areas[0].calculation.reported_area_sqft, 1200);
+  assert.equal(sketch.rooms[0].room_ref, `sketch-room:${roomId}`);
+  assert.equal(sketch.ansi_review_required, false);
+  assert.throws(() => normalizeManualSketchDocument({
+    review_status: "appraiser_confirmed",
+    areas: [{
+      id: areaId,
+      label: "Open outline",
+      vertices: [{ x: 0, y: 0 }, { x: 20, y: 0 }],
+    }],
+    rooms: [],
+  }), /sketch_not_ready_for_confirmation/);
+});
+
 test("normalizes room-labeled photo batches with original and display objects", () => {
   const photos = normalizePhotoBatch({
     photos: [{
@@ -332,4 +378,15 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(customSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_adapter_events/);
   assert.match(customSource, /status IN \('pending', 'accepted', 'rejected', 'conflict', 'superseded'\)/);
   assert.doesNotMatch(customSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const sketchSource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260825_mobile_manual_sketch.sql"),
+    "utf8",
+  );
+  assert.match(sketchSource, /CREATE TABLE IF NOT EXISTS app\.inspection_sketches/);
+  assert.match(sketchSource, /CREATE TABLE IF NOT EXISTS app\.inspection_sketch_rooms/);
+  assert.match(sketchSource, /CREATE TABLE IF NOT EXISTS app\.inspection_sketch_history/);
+  assert.match(sketchSource, /CREATE TABLE IF NOT EXISTS app\.inspection_sketch_operations/);
+  assert.match(sketchSource, /CREATE TABLE IF NOT EXISTS app\.inspection_sketch_events/);
+  assert.doesNotMatch(sketchSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

@@ -22,9 +22,9 @@ import {
 import {
   CUSTOM_PHOTO_CATEGORIES,
   remainingPhotoCapacity,
-  ROOM_PHOTO_LABELS,
 } from "./model";
 import { usePhotoSync } from "./sync";
+import type { SelectedSketchRoom } from "../sketch/SketchEditorPanel";
 
 function photoError(reason: unknown) {
   const code = reason instanceof Error ? reason.message : "mobile_photo_failed";
@@ -118,6 +118,7 @@ export function PhotoCapturePanel({
   sessionId,
   workflowType,
   online,
+  selectedSketchRoom,
 }: {
   api: MobileApi;
   store: OfflineStore;
@@ -125,10 +126,11 @@ export function PhotoCapturePanel({
   sessionId: string;
   workflowType: WorkflowType;
   online: boolean;
+  selectedSketchRoom: SelectedSketchRoom | null;
 }) {
   const [photos, setPhotos] = useState<LocalPhotoDraft[]>([]);
   const [category, setCategory] = useState<string>(CUSTOM_PHOTO_CATEGORIES[0]);
-  const [roomLabel, setRoomLabel] = useState<string | null>(null);
+  const [useSketchRoom, setUseSketchRoom] = useState(Boolean(selectedSketchRoom));
   const [captions, setCaptions] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,17 +151,21 @@ export function PhotoCapturePanel({
 
   useEffect(() => { void load(); }, [load, photoSync.summary.pending, photoSync.summary.synchronized]);
 
-  const label = useMemo(() => roomLabel ? {
-    category: roomLabel,
+  useEffect(() => {
+    if (selectedSketchRoom) setUseSketchRoom(true);
+  }, [selectedSketchRoom]);
+
+  const label = useMemo(() => useSketchRoom && selectedSketchRoom ? {
+    category: selectedSketchRoom.label,
     categorySource: "sketch_room" as const,
-    roomRef: `manual-room:${roomLabel.toLowerCase().replaceAll(" ", "-")}`,
-    roomLabel,
+    roomRef: selectedSketchRoom.roomRef,
+    roomLabel: selectedSketchRoom.label,
   } : {
     category,
     categorySource: workflowType === "custom_appraisal" ? "custom_catalog" as const : "manual" as const,
     roomRef: null,
     roomLabel: null,
-  }, [category, roomLabel, workflowType]);
+  }, [category, selectedSketchRoom, useSketchRoom, workflowType]);
 
   const prepare = useCallback(async (
     assets: Awaited<ReturnType<typeof captureCameraPhoto>>,
@@ -240,12 +246,13 @@ export function PhotoCapturePanel({
 
       <Text style={styles.label}>Sketch room label</Text>
       <View style={styles.choices}>
-        <Choice label="No room" selected={!roomLabel} onPress={() => setRoomLabel(null)} />
-        {ROOM_PHOTO_LABELS.map((room) => (
-          <Choice key={room} label={room} selected={roomLabel === room} onPress={() => setRoomLabel(room)} />
-        ))}
+        <Choice label="No room" selected={!useSketchRoom || !selectedSketchRoom} onPress={() => setUseSketchRoom(false)} />
+        {selectedSketchRoom ? (
+          <Choice label={selectedSketchRoom.label} selected={useSketchRoom} onPress={() => setUseSketchRoom(true)} />
+        ) : null}
       </View>
-      {!roomLabel ? <>
+      {!selectedSketchRoom ? <Text style={styles.help}>Tap a room marker in the measured sketch to make it available here.</Text> : null}
+      {!useSketchRoom || !selectedSketchRoom ? <>
         <Text style={styles.label}>Photo category</Text>
         <View style={styles.choices}>{CUSTOM_PHOTO_CATEGORIES.map((item) => (
           <Choice key={item} label={item} selected={category === item} onPress={() => setCategory(item)} />

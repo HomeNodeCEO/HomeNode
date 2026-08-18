@@ -452,6 +452,7 @@ def _migration_sql() -> str:
         root / "migrations" / "010_sales_media.sql",
         root / "migrations" / "013_sales_listing_identity.sql",
         root / "migrations" / "014_sales_reconciliation.sql",
+        root / "migrations" / "015_location_backfill_queue.sql",
         root / "migrations" / "017_native_county_account_identifiers.sql",
     )
     return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
@@ -1265,6 +1266,111 @@ def import_sales(
                     "existing_sales_already_linked": existing_sales_already_linked,
                 }
             )
+
+            # Every successfully matched Dallas County sale/listing is queued
+            # for location processing in the same transaction as the import.
+            # The import never waits on DCAD GIS.
+            cursor.execute(
+                "SELECT to_regclass('core.account_locations') IS NOT NULL"
+            )
+            locations_available = bool(cursor.fetchone()[0])
+            location_join = (
+                "LEFT JOIN core.account_locations location "
+                "ON location.account_id = account.account_id"
+                if locations_available
+                else ""
+            )
+            missing_location = (
+                "AND (location.account_id IS NULL "
+                "OR location.status <> 'matched' "
+                "OR location.latitude IS NULL "
+                "OR location.longitude IS NULL)"
+                if locations_available
+                else ""
+            )
+            cursor.execute(
+                f"""
+                WITH candidates AS (
+                    SELECT DISTINCT
+                        account.account_id,
+                        account.address,
+                        account.county,
+                        CASE
+                            WHEN COALESCE(
+                                source.close_date,
+                                source.listing_contract_date
+                            ) >= CURRENT_DATE - interval '1 year' THEN 80
+                            ELSE 40
+                        END AS priority
+                    FROM core.sales_source_records source
+                    JOIN core.accounts account
+                      ON account.account_id = source.primary_account_id
+                    {location_join}
+                    WHERE source.id = ANY(%s)
+                      AND (
+                        account.county IS NULL
+                        OR account.county ILIKE '%%dallas%%'
+                      )
+                      {missing_location}
+                ), queued AS (
+                    INSERT INTO app.location_backfill_queue (
+                        account_id, address, county, priority, status, reason,
+                        attempts, next_attempt_at, leased_at, worker_id,
+                        last_error, completed_at, updated_at
+                    )
+                    SELECT
+                        account_id, address, county, priority, 'pending',
+                        'sales_import', 0, now(), NULL, NULL, NULL, NULL, now()
+                    FROM candidates
+                    ON CONFLICT (account_id) DO UPDATE SET
+                        address = COALESCE(
+                            EXCLUDED.address,
+                            app.location_backfill_queue.address
+                        ),
+                        county = COALESCE(
+                            EXCLUDED.county,
+                            app.location_backfill_queue.county
+                        ),
+                        priority = GREATEST(
+                            app.location_backfill_queue.priority,
+                            EXCLUDED.priority
+                        ),
+                        status = CASE
+                            WHEN app.location_backfill_queue.status IN (
+                                'processing', 'manual_review'
+                            ) THEN app.location_backfill_queue.status
+                            ELSE 'pending'
+                        END,
+                        reason = EXCLUDED.reason,
+                        next_attempt_at = CASE
+                            WHEN app.location_backfill_queue.status IN (
+                                'processing', 'manual_review'
+                            ) THEN app.location_backfill_queue.next_attempt_at
+                            ELSE now()
+                        END,
+                        leased_at = CASE
+                            WHEN app.location_backfill_queue.status = 'processing'
+                                THEN app.location_backfill_queue.leased_at
+                            ELSE NULL
+                        END,
+                        worker_id = CASE
+                            WHEN app.location_backfill_queue.status = 'processing'
+                                THEN app.location_backfill_queue.worker_id
+                            ELSE NULL
+                        END,
+                        completed_at = CASE
+                            WHEN app.location_backfill_queue.status = 'manual_review'
+                                THEN app.location_backfill_queue.completed_at
+                            ELSE NULL
+                        END,
+                        updated_at = now()
+                    RETURNING account_id
+                )
+                SELECT COUNT(*)::integer FROM queued
+                """,
+                (source_record_ids,),
+            )
+            result["location_backfill_queued"] = int(cursor.fetchone()[0])
 
         connection.commit()
         return result

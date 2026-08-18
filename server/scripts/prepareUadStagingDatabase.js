@@ -1,5 +1,12 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import pg from "pg";
+
+import { createUadWorkfile } from "../src/modules/uad/workfiles.js";
+
+const SFR_ACCOUNT_ID = "UAD-STAGING-SFR-0001";
+const MANUFACTURED_HOME_ACCOUNT_ID = "UAD-STAGING-MH-0001";
+const MANUFACTURED_HOME_FILE_NUMBER = "HN-UAD-STAGING-MH-0001";
 
 if (process.env.NODE_ENV !== "staging") {
   throw new Error("prepareUadStagingDatabase may only run with NODE_ENV=staging");
@@ -159,43 +166,80 @@ try {
     INSERT INTO core.accounts (
       account_id, county, address, street_name, city, postal_code, neighborhood_code,
       subdivision, legal_description
-    ) VALUES (
-      'UAD-STAGING-SFR-0001', 'Dallas', '100 Test Subject Dr', 'TEST SUBJECT DR',
-      'Garland', '75044',
-      'STG-001', 'Test Estates', 'LOT 1 BLOCK A TEST ESTATES'
-    )
+    ) VALUES
+      (
+        'UAD-STAGING-SFR-0001', 'Dallas', '100 Test Subject Dr', 'TEST SUBJECT DR',
+        'Garland', '75044',
+        'STG-001', 'Test Estates', 'LOT 1 BLOCK A TEST ESTATES'
+      ),
+      (
+        'UAD-STAGING-MH-0001', 'Dallas', '200 Factory Home Way', 'FACTORY HOME WAY',
+        'Garland', '75044',
+        'STG-MH-001', 'Factory Home Estates', 'LOT 2 BLOCK M FACTORY HOME ESTATES'
+      )
     ON CONFLICT (account_id) DO UPDATE SET
-      street_name = EXCLUDED.street_name;
+      county = EXCLUDED.county,
+      address = EXCLUDED.address,
+      street_name = EXCLUDED.street_name,
+      city = EXCLUDED.city,
+      postal_code = EXCLUDED.postal_code,
+      neighborhood_code = EXCLUDED.neighborhood_code,
+      subdivision = EXCLUDED.subdivision,
+      legal_description = EXCLUDED.legal_description,
+      updated_at = now();
 
     INSERT INTO core.account_locations (
       account_id, latitude, longitude, source_site_address,
       source_neighborhood_code, source_living_area_sqft, metadata
-    ) VALUES (
-      'UAD-STAGING-SFR-0001', 32.9500, -96.6500, '100 Test Subject Dr',
-      'STG-001', 2100, '{"source_state":"TX","synthetic":true}'::jsonb
-    )
-    ON CONFLICT (account_id) DO NOTHING;
+    ) VALUES
+      (
+        'UAD-STAGING-SFR-0001', 32.9500, -96.6500, '100 Test Subject Dr',
+        'STG-001', 2100, '{"source_state":"TX","synthetic":true,"fixture_type":"site_built_sfr"}'::jsonb
+      ),
+      (
+        'UAD-STAGING-MH-0001', 32.9510, -96.6510, '200 Factory Home Way',
+        'STG-MH-001', 1600, '{"source_state":"TX","synthetic":true,"fixture_type":"manufactured_home"}'::jsonb
+      )
+    ON CONFLICT (account_id) DO UPDATE SET
+      latitude = EXCLUDED.latitude,
+      longitude = EXCLUDED.longitude,
+      source_site_address = EXCLUDED.source_site_address,
+      source_neighborhood_code = EXCLUDED.source_neighborhood_code,
+      source_living_area_sqft = EXCLUDED.source_living_area_sqft,
+      metadata = EXCLUDED.metadata,
+      status = 'matched',
+      updated_at = now();
 
     INSERT INTO core.primary_improvements (
       account_id, year_built, living_area_sqft, bedroom_count, bath_count,
       number_units, construction_type
-    ) VALUES (
-      'UAD-STAGING-SFR-0001', 2005, 2100, 3, 2.5, 1, 'Frame'
-    )
-    ON CONFLICT (account_id) DO NOTHING;
+    ) VALUES
+      ('UAD-STAGING-SFR-0001', 2005, 2100, 3, 2.5, 1, 'Frame'),
+      ('UAD-STAGING-MH-0001', 2024, 1600, 3, 2, 1, 'Manufactured')
+    ON CONFLICT (account_id) DO UPDATE SET
+      year_built = EXCLUDED.year_built,
+      living_area_sqft = EXCLUDED.living_area_sqft,
+      bedroom_count = EXCLUDED.bedroom_count,
+      bath_count = EXCLUDED.bath_count,
+      number_units = EXCLUDED.number_units,
+      construction_type = EXCLUDED.construction_type;
 
     INSERT INTO core.land_detail (
       account_id, tax_year, line_number, zoning, frontage_ft, depth_ft, area_sqft
-    ) VALUES (
-      'UAD-STAGING-SFR-0001', 2026, 1, 'SF-7', 70, 120, 8400
-    )
-    ON CONFLICT (account_id, tax_year, line_number) DO NOTHING;
+    ) VALUES
+      ('UAD-STAGING-SFR-0001', 2026, 1, 'SF-7', 70, 120, 8400),
+      ('UAD-STAGING-MH-0001', 2026, 1, 'MH', 60, 110, 6600)
+    ON CONFLICT (account_id, tax_year, line_number) DO UPDATE SET
+      zoning = EXCLUDED.zoning,
+      frontage_ft = EXCLUDED.frontage_ft,
+      depth_ft = EXCLUDED.depth_ft,
+      area_sqft = EXCLUDED.area_sqft;
 
     INSERT INTO core.value_summary_current (
       account_id, certified_year, market_value, improvement_value, land_value, capped_value
-    ) VALUES (
-      'UAD-STAGING-SFR-0001', 2026, 425000, 350000, 75000, 410000
-    )
+    ) VALUES
+      ('UAD-STAGING-SFR-0001', 2026, 425000, 350000, 75000, 410000),
+      ('UAD-STAGING-MH-0001', 2026, 240000, 190000, 50000, 230000)
     ON CONFLICT (account_id) DO UPDATE SET
       certified_year = EXCLUDED.certified_year,
       market_value = EXCLUDED.market_value,
@@ -204,10 +248,82 @@ try {
       capped_value = EXCLUDED.capped_value;
   `);
 
+  let manufacturedWorkfileResult = await pool.query(
+    `SELECT id
+       FROM appraisal.uad_workfiles
+      WHERE account_id = $1 AND lower(file_number) = lower($2)
+      ORDER BY created_at, id
+      LIMIT 1`,
+    [MANUFACTURED_HOME_ACCOUNT_ID, MANUFACTURED_HOME_FILE_NUMBER],
+  );
+  if (!manufacturedWorkfileResult.rows.length) {
+    await createUadWorkfile(pool, MANUFACTURED_HOME_ACCOUNT_ID, {
+      file_number: MANUFACTURED_HOME_FILE_NUMBER,
+      assignment_purpose: "Synthetic manufactured-home Section 9 staging validation",
+    });
+    manufacturedWorkfileResult = await pool.query(
+      `SELECT id
+         FROM appraisal.uad_workfiles
+        WHERE account_id = $1 AND lower(file_number) = lower($2)
+        ORDER BY created_at, id
+        LIMIT 1`,
+      [MANUFACTURED_HOME_ACCOUNT_ID, MANUFACTURED_HOME_FILE_NUMBER],
+    );
+  }
+
+  const manufacturedWorkfileId = manufacturedWorkfileResult.rows[0].id;
+  const manufacturedDwellingResult = await pool.query(
+    `SELECT id
+       FROM appraisal.uad_entities
+      WHERE workfile_id = $1 AND entity_type = 'dwelling'
+      ORDER BY ordinal, id
+      LIMIT 1`,
+    [manufacturedWorkfileId],
+  );
+  if (!manufacturedDwellingResult.rows.length) {
+    throw new Error("manufactured-home staging workfile is missing its dwelling entity");
+  }
+  const manufacturedDwellingId = manufacturedDwellingResult.rows[0].id;
+
+  await pool.query(
+    `UPDATE appraisal.uad_workfiles
+        SET property_type = 'manufactured_home', updated_at = now()
+      WHERE id = $1`,
+    [manufacturedWorkfileId],
+  );
+  await pool.query(
+    `INSERT INTO appraisal.uad_field_values (
+       id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
+       source_type, source_reference, source_observed_at, is_appraiser_confirmed
+     ) VALUES (
+       $1, $2, $3, 'dwelling', '0300.0034', '8.011', $4::jsonb,
+       'calculated', 'uad_staging_fixture.manufactured_construction', now(), false
+     )
+     ON CONFLICT DO NOTHING`,
+    [randomUUID(), manufacturedWorkfileId, manufacturedDwellingId, JSON.stringify("Manufactured")],
+  );
+  await pool.query(
+    `UPDATE appraisal.uad_field_values
+        SET value = $4::jsonb,
+            report_field_id = '8.011',
+            source_type = 'calculated',
+            source_reference = 'uad_staging_fixture.manufactured_construction',
+            source_observed_at = now(),
+            is_appraiser_confirmed = false,
+            updated_at = now()
+      WHERE workfile_id = $1
+        AND entity_id = $2
+        AND field_context = 'dwelling'
+        AND uad_uid = $3`,
+    [manufacturedWorkfileId, manufacturedDwellingId, "0300.0034", JSON.stringify("Manufactured")],
+  );
+
   console.log(JSON.stringify({
     prepared: true,
     database: databaseName,
-    synthetic_account_id: "UAD-STAGING-SFR-0001",
+    synthetic_account_id: SFR_ACCOUNT_ID,
+    synthetic_account_ids: [SFR_ACCOUNT_ID, MANUFACTURED_HOME_ACCOUNT_ID],
+    manufactured_home_workfile_id: manufacturedWorkfileId,
   }));
 } finally {
   await pool.end();

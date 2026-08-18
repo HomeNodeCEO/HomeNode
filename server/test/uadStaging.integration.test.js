@@ -147,6 +147,21 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       "Shed",
     );
     assert.ok(siteBuiltEditor.completion.outbuilding.required > 0);
+    const section13 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 13);
+    assert.equal(section13?.key, "vehicle_storage");
+    assert.equal(section13?.applicable, true);
+    assert.equal(section13.groups.reduce((count, group) => count + group.fields.length, 0), 16);
+    const stagingVehicleStorage = siteBuiltEditor.entities.find((entity) => entity.entity_type === "vehicle_storage");
+    assert.ok(stagingVehicleStorage);
+    assert.equal(
+      siteBuiltEditor.values.find((value) => (
+        value.entity_id === stagingVehicleStorage.id
+        && value.context_key === "vehicle_storage"
+        && value.uid === "3200.0006"
+      ))?.value,
+      "Garage",
+    );
+    assert.ok(siteBuiltEditor.completion.vehicle_storage.required > 0);
   } finally {
     await pool.end();
   }

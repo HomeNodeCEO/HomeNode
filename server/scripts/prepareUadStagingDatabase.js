@@ -291,7 +291,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-12 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-13 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -336,6 +336,31 @@ try {
   for (const [uid, reportFieldId, value] of outbuildingValues) {
     await seedEntityValue(sfrWorkfileId, outbuildingId, "outbuilding", uid, reportFieldId, value);
   }
+  const vehicleStorageId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "vehicle_storage",
+    "vehicle-storage-1",
+    1,
+    "Garage 1",
+  );
+  const vehicleStorageValues = [
+    ["3200.0006", "13.001", "Garage"],
+    ["3200.0010", "13.002", 2],
+    ["3200.0005", "13.003", "Attached"],
+    ["3200.0004", "13.003", { amount: 440, unit: "SquareFeet" }],
+  ];
+  for (const [uid, reportFieldId, value] of vehicleStorageValues) {
+    await seedEntityValue(sfrWorkfileId, vehicleStorageId, "vehicle_storage", uid, reportFieldId, value);
+  }
+  await seedEntityValue(
+    sfrWorkfileId,
+    null,
+    "vehicle_storage",
+    "3200.0021",
+    "13.004",
+    false,
+  );
   const sfrUnitResult = await pool.query(
     `SELECT id
        FROM appraisal.uad_entities

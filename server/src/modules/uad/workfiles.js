@@ -143,6 +143,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
   const dwellingEntityId = randomUUID();
   const unitEntityId = randomUUID();
   const siteParcelEntityId = randomUUID();
+  const vehicleStorageEntityId = randomUUID();
   const revisionId = randomUUID();
   const fileNumber = normalizeUadFileNumber(input.file_number, { accountId, workfileId });
   const organizationId = input.organization_id || null;
@@ -211,8 +212,16 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
          ($1, $4, NULL, 'property', 'subject', 1, 'Subject Property'),
          ($2, $4, $1, 'dwelling', 'dwelling-1', 1, 'Dwelling 1'),
          ($3, $4, $2, 'unit', 'unit-1', 1, 'Unit 1'),
-         ($5, $4, $1, 'site_parcel', 'site-parcel-1', 1, 'Parcel 1')`,
-      [propertyEntityId, dwellingEntityId, unitEntityId, workfileId, siteParcelEntityId],
+         ($5, $4, $1, 'site_parcel', 'site-parcel-1', 1, 'Parcel 1'),
+         ($6, $4, NULL, 'vehicle_storage', 'vehicle-storage-1', 1, 'Vehicle Storage 1')`,
+      [
+        propertyEntityId,
+        dwellingEntityId,
+        unitEntityId,
+        workfileId,
+        siteParcelEntityId,
+        vehicleStorageEntityId,
+      ],
     );
 
     for (const { field, value, sourceReference } of buildUadPrefillValues(subjectData)) {
@@ -291,6 +300,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
             dwelling: dwellingEntityId,
             unit: unitEntityId,
             site_parcel: siteParcelEntityId,
+            vehicle_storage: vehicleStorageEntityId,
           },
         }),
         appraiserUserId,

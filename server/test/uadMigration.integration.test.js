@@ -201,6 +201,45 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND rule_id LIKE 'HN-UAD-OUTBUILDING-%'
     `);
     assert.equal(homeNodeOutbuildingRules.rows[0].count, 8);
+
+    const vehicleStorageFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 13
+    `);
+    assert.equal(vehicleStorageFields.rows[0].count, 18);
+
+    const officialVehicleStorageRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1664', 'UAD1665', 'UAD1667', 'UAD1668', 'UAD1669', 'UAD1670',
+           'UAD1671', 'UAD1672', 'UAD1673', 'UAD1675', 'UAD1686', 'UAD1736'
+         )
+    `);
+    assert.equal(officialVehicleStorageRules.rows[0].count, 12);
+
+    const homeNodeVehicleStorageRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-VEHICLE-STORAGE-%'
+    `);
+    assert.equal(homeNodeVehicleStorageRules.rows[0].count, 6);
+
+    const unscaffoldedVehicleStorageWorkfiles = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM appraisal.uad_workfiles workfile
+       WHERE NOT EXISTS (
+         SELECT 1
+           FROM appraisal.uad_entities entity
+          WHERE entity.workfile_id = workfile.id
+            AND entity.entity_type = 'vehicle_storage'
+       )
+    `);
+    assert.equal(unscaffoldedVehicleStorageWorkfiles.rows[0].count, 0);
   } finally {
     await pool.end();
   }

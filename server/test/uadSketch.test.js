@@ -15,7 +15,7 @@ import { normalizeUadSketchInput } from "../src/modules/uad/sketches.js";
 
 test("adds official URAR Section 7 after Energy Efficient and Green Features", () => {
   const sections = getUadEditorSections();
-  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   assert.equal(sections.find((section) => section.officialSectionNumber === 7)?.key, "sketch");
   assert.equal(getUadField("sketch", "3300.0002")?.reportFieldId, "7.000");
   assert.equal(getUadField("sketch", "3300.0007")?.reportFieldId, "7.001");

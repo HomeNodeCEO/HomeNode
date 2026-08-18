@@ -79,6 +79,13 @@ staging service to `homenodedb`, and never copy owner/contact rows into staging.
 Render preview databases are not the default because they require a Pro
 workspace and incur per-preview resource charges.
 
+The guarded staging bootstrap also creates empty compatibility relations used
+by the shared HomeNode search tile and one synthetic value-summary row. This
+allows the search-tile → appraisal-type chooser → UAD workspace path to be
+tested without copying production tax, owner, or sales data. CI runs the
+bootstrap twice and executes the same search joins to verify idempotency and
+schema compatibility.
+
 ## Mobile photos and artifacts
 
 Cloudflare R2 is the initial private object store. The Node API issues a

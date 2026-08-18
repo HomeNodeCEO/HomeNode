@@ -12,8 +12,10 @@ from dcad.import_sales import (  # noqa: E402
     BASE_HEADERS,
     _classify_structural_style,
     _migration_sql,
+    _normalize_situs_address,
     _parcel_links,
     _parcel_variants,
+    _prepare_sales,
     _source_record_hash,
     _stable_hash,
     _typed_values,
@@ -163,6 +165,61 @@ class CollinParcelMatchingTests(unittest.TestCase):
         self.assertEqual(link.account_id, "2965620")
         self.assertEqual(link.parcel_number_raw, "R1374300L09001")
         self.assertEqual(link.match_method, "punctuation_normalized")
+
+
+class AddressFallbackMatchingTests(unittest.TestCase):
+    def test_normalizes_suffixes_directions_and_unit_markers(self) -> None:
+        self.assertEqual(
+            _normalize_situs_address("611 North Oriole Boulevard #1404"),
+            "611 N ORIOLE BLVD UNIT 1404",
+        )
+        self.assertEqual(
+            _normalize_situs_address("611 N ORIOLE BLVD APT 1404, DUNCANVILLE"),
+            "611 N ORIOLE BLVD UNIT 1404",
+        )
+
+    def test_unique_address_is_used_only_when_parcel_is_unresolved(self) -> None:
+        raw = source_row(
+            ParcelNumber="NOT-A-DCAD-ID",
+            Address="1909 Snowmass Lane",
+        )
+        account = {
+            "account_id": "26272500060150000",
+            "county": "Dallas",
+            "address": "1909 SNOWMASS LN",
+            "city": "Garland",
+            "postal_code": "75044",
+        }
+        prepared = _prepare_sales(
+            [(2, raw)],
+            {},
+            {2: {"status": "matched", "account": account}},
+        )[0]
+        self.assertEqual(prepared.primary_account_id, account["account_id"])
+        self.assertEqual(prepared.match_status, "address")
+        self.assertIn("address_fallback_match", prepared.data_quality_flags)
+        self.assertIn("unresolved_parcel_number", prepared.data_quality_flags)
+
+    def test_valid_parcel_match_takes_priority_over_address_fallback(self) -> None:
+        parcel_account = {
+            "account_id": "26272500060150000",
+            "county": "Dallas",
+            "address": "1909 SNOWMASS LN",
+        }
+        conflicting_address_account = {
+            "account_id": "22001500000030000",
+            "county": "Dallas",
+            "address": "102 OTHER ST",
+        }
+        raw = source_row(ParcelNumber=parcel_account["account_id"])
+        prepared = _prepare_sales(
+            [(2, raw)],
+            {parcel_account["account_id"]: parcel_account},
+            {2: {"status": "matched", "account": conflicting_address_account}},
+        )[0]
+        self.assertEqual(prepared.primary_account_id, parcel_account["account_id"])
+        self.assertEqual(prepared.match_status, "exact")
+        self.assertNotIn("address_fallback_match", prepared.data_quality_flags)
 
 
 class MigrationBundleTests(unittest.TestCase):

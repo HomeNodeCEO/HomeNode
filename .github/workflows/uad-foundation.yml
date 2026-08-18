@@ -55,13 +55,13 @@ jobs:
       postgres:
         image: postgis/postgis:17-3.5
         env:
-          POSTGRES_DB: homenode_test
+          POSTGRES_DB: homenode_staging_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres -d homenode_test"
+          --health-cmd "pg_isready -U postgres -d homenode_staging_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
@@ -70,7 +70,7 @@ jobs:
         working-directory: server
     env:
       NODE_ENV: test
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/homenode_test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/homenode_staging_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,3 +82,8 @@ jobs:
       - run: npm run test:uad-migration
       - name: Verify migration is idempotent
         run: npm run migrate:uad
+      - name: Verify guarded staging bootstrap and shared search contract
+        run: |
+          NODE_ENV=staging npm run prepare:staging:uad
+          NODE_ENV=staging npm run prepare:staging:uad
+          node --test test/uadStaging.integration.test.js

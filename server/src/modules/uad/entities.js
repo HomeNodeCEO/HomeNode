@@ -50,6 +50,22 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
       [workfileId],
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+    const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
+    let parentEntityId = input.parent_entity_id == null ? null : normalizeUadWorkfileId(input.parent_entity_id);
+    if (group.parentEntityType) {
+      const parents = await client.query(
+        `SELECT id
+           FROM appraisal.uad_entities
+          WHERE workfile_id = $1 AND entity_type = $2
+          ORDER BY ordinal, id`,
+        [workfileId, group.parentEntityType],
+      );
+      if (!parentEntityId && parents.rows.length === 1) parentEntityId = parents.rows[0].id;
+      if (!parentEntityId) throw new Error("uad_parent_entity_required");
+      if (!parents.rows.some((row) => row.id === parentEntityId)) throw new Error("invalid_uad_parent_entity");
+    } else if (parentEntityId) {
+      throw new Error("invalid_uad_parent_entity");
+    }
     const ordinalResult = await client.query(
       `SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal
          FROM appraisal.uad_entities
@@ -57,16 +73,16 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
       [workfileId, entityType],
     );
     const ordinal = Number(ordinalResult.rows[0].ordinal);
-    const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
     const singular = group.title.replace(/ies$/, "y").replace(/s$/, "");
     const inserted = await client.query(
       `INSERT INTO appraisal.uad_entities (
-         id, workfile_id, entity_type, entity_identifier, ordinal, label, data
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+         id, workfile_id, parent_entity_id, entity_type, entity_identifier, ordinal, label, data
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
        RETURNING *`,
       [
         id,
         workfileId,
+        parentEntityId,
         entityType,
         `${entityType.replaceAll("_", "-")}-${ordinal}`,
         ordinal,
@@ -105,6 +121,18 @@ export async function deleteUadEntity(pool, workfileIdValue, entityIdValue) {
     );
     if (!selected.rows.length) throw new Error("uad_entity_not_found");
     if (!EDITABLE_ENTITY_TYPES.has(selected.rows[0].entity_type)) throw new Error("invalid_uad_entity_type");
+    const group = UAD_REPEATABLE_ENTITY_GROUPS[selected.rows[0].entity_type];
+    if (Number(group.minItems || 0) > 0) {
+      const siblings = await client.query(
+        `SELECT count(*)::integer AS count
+           FROM appraisal.uad_entities
+          WHERE workfile_id = $1
+            AND entity_type = $2
+            AND parent_entity_id IS NOT DISTINCT FROM $3::uuid`,
+        [workfileId, selected.rows[0].entity_type, selected.rows[0].parent_entity_id],
+      );
+      if (Number(siblings.rows[0].count) <= Number(group.minItems)) throw new Error("uad_entity_minimum_required");
+    }
     await client.query("DELETE FROM appraisal.uad_entities WHERE id = $1", [entityId]);
     await client.query(
       `INSERT INTO appraisal.uad_audit_events (

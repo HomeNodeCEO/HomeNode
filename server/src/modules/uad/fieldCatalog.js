@@ -2,12 +2,17 @@ import {
   UAD_DISASTER_ENERGY_ENTITY_GROUPS,
   UAD_DISASTER_ENERGY_FIELDS,
 } from "./disasterEnergyCatalog.js";
+import {
+  UAD_DWELLING_EXTERIOR_ENTITY_GROUPS,
+  UAD_DWELLING_EXTERIOR_FIELDS,
+} from "./dwellingExteriorCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 
 export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_SITE_ENTITY_GROUPS,
   ...UAD_DISASTER_ENERGY_ENTITY_GROUPS,
+  ...UAD_DWELLING_EXTERIOR_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -17,6 +22,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   disaster_mitigation: { title: "Disaster Mitigation", officialSectionNumber: 5 },
   energy_green: { title: "Energy Efficient and Green Features", officialSectionNumber: 6 },
   sketch: { title: "Sketch", officialSectionNumber: 7 },
+  dwelling_exterior: { title: "Dwelling Exterior", officialSectionNumber: 8 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -484,6 +490,7 @@ const fields = [
   ...UAD_SITE_FIELDS,
   ...UAD_DISASTER_ENERGY_FIELDS,
   ...UAD_SKETCH_FIELDS,
+  ...UAD_DWELLING_EXTERIOR_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -542,6 +549,7 @@ export function uadFieldIsRequired(field, lookup) {
 export function buildUadPrefillValues(subjectSnapshot) {
   const values = [];
   for (const field of UAD_PHASE_ONE_FIELDS) {
+    if (field.entityType) continue;
     let value = field.sourcePath ? valueAtPath(subjectSnapshot, field.sourcePath) : undefined;
     let sourceReference = field.sourcePath ? `subject_snapshot.${field.sourcePath}` : null;
 
@@ -586,6 +594,8 @@ export function getUadEditorSections() {
             entityType: field.entityType,
             addLabel: repeatable.addLabel,
             minItems: repeatable.minItems,
+            createEnabled: repeatable.createEnabled,
+            parentEntityType: repeatable.parentEntityType,
             showWhen: repeatable.showWhen,
           } : {}),
         };

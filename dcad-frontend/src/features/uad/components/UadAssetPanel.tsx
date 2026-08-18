@@ -18,6 +18,7 @@ interface Props {
   emptyMessage?: string;
   uploadEnabled?: boolean;
   visibleCaptionTypes?: string[];
+  entityId?: string;
 }
 
 export default function UadAssetPanel({
@@ -30,6 +31,7 @@ export default function UadAssetPanel({
   emptyMessage = "No files uploaded for this section yet.",
   uploadEnabled = true,
   visibleCaptionTypes,
+  entityId,
 }: Props) {
   const [assets, setAssets] = useState<UadAsset[]>([]);
   const [file, setFile] = useState<File | null>(null);
@@ -43,12 +45,13 @@ export default function UadAssetPanel({
     try {
       setAssets((await listUadAssets(workfileId)).filter((asset) => (
         asset.section_number === sectionNumber
+        && (!entityId || asset.entity_id === entityId)
         && (!visibleCaptionTypes || visibleCaptionTypes.includes(asset.caption_type || ""))
       )));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : `${title} files could not be loaded.`);
     }
-  }, [sectionNumber, title, visibleCaptionTypes, workfileId]);
+  }, [entityId, sectionNumber, title, visibleCaptionTypes, workfileId]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { setCaptionType(captionTypes[0]); }, [captionTypes]);
@@ -75,12 +78,13 @@ export default function UadAssetPanel({
       await uploadUadAsset(workfileId, file, {
         asset_kind: assetKind,
         section_number: sectionNumber,
+        entity_id: entityId,
         caption_type: captionType,
         caption: caption || displayOption(captionType),
       });
       setFile(null);
       setCaption("");
-      const picker = document.getElementById(`uad-asset-${sectionNumber}-${workfileId}`) as HTMLInputElement | null;
+      const picker = document.getElementById(`uad-asset-${sectionNumber}-${entityId || "root"}-${workfileId}`) as HTMLInputElement | null;
       if (picker) picker.value = "";
       await load();
     } catch (reason) {
@@ -116,7 +120,7 @@ export default function UadAssetPanel({
             accept={accept}
             className="mt-1 block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
             disabled={!uploadEnabled}
-            id={`uad-asset-${sectionNumber}-${workfileId}`}
+            id={`uad-asset-${sectionNumber}-${entityId || "root"}-${workfileId}`}
             onChange={(event) => setFile(event.target.files?.[0] || null)}
             type="file"
           />

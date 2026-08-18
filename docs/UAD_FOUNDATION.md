@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 7:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 8:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -101,7 +101,12 @@ access, property photo, influence, view, boundary, encroachment, waterfront,
 and site exhibit. Sections 5 and 6 use their official
 `DisasterMitigationExhibit` and `EnergyEfficientAndGreenFeaturesExhibit`
 categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
-keeps optional source JSON, PDF, or SVG files separate from the report image.
+  keeps optional source JSON, PDF, or SVG files separate from the report image.
+- Dwelling Exterior repeats by dwelling and captures structure/design,
+  construction, exterior quality and condition, required feature details,
+  noncontinuous finished rooms, mechanical systems, exterior defects,
+  commentary, and verified front/rear/exhibit images. Child records retain the
+  dwelling parent identifier needed for future multi-dwelling reports.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,
@@ -116,6 +121,8 @@ private R2 assets, and obsolete asset records can be removed without touching
 other appraisal workflows.
 
 Required server variables are documented in `server/.env.example`.
+Compliance credential ownership and onboarding gates are documented in
+`docs/UAD_COMPLIANCE_API.md`; credentials are never committed to the repository.
 
 ## Applying the migration
 

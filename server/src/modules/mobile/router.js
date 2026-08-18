@@ -5,6 +5,15 @@ import { MOBILE_WORKFLOW_TYPES } from "./fileNumbers.js";
 import { calculateManualSketch } from "./manualSketch.js";
 import { getMobileProperty, searchMobileProperties } from "./properties.js";
 import {
+  createPhotoUploadBatch,
+  CUSTOM_PHOTO_CATEGORIES,
+  listInspectionPhotos,
+  MAX_MOBILE_PHOTOS_PER_INSPECTION,
+  removeInspectionPhoto,
+  updateInspectionPhoto,
+  verifyInspectionPhoto,
+} from "./photos.js";
+import {
   createInspectionSession,
   createReportFile,
   getInspectionSession,
@@ -20,6 +29,8 @@ function errorStatus(error) {
   if (message.endsWith("_not_found")) return 404;
   if (message.endsWith("_access_denied")) return 403;
   if (message.endsWith("_conflict")) return 409;
+  if (message.endsWith("_not_configured")) return 503;
+  if (message.endsWith("_verification_failed")) return 502;
   if (message.startsWith("invalid_")) return 400;
   if (error?.code === "23505") return 409;
   if (error?.code === "23503") return 400;
@@ -42,7 +53,7 @@ function requireWriteRole(req, res, next) {
   return next();
 }
 
-export function createMobileRouter({ pool, verifier, enabled = false, recentFileDays = 30 }) {
+export function createMobileRouter({ pool, verifier, storage, enabled = false, recentFileDays = 30 }) {
   const router = express.Router();
 
   router.get("/capabilities", (_req, res) => {
@@ -63,6 +74,18 @@ export function createMobileRouter({ pool, verifier, enabled = false, recentFile
         durable_queue: true,
         maximum_batch_size: 25,
         conflict_resolution: ["accept_server", "apply_mobile"],
+      },
+      photos: {
+        enabled: Boolean(storage?.configured),
+        storage_provider: storage?.provider || null,
+        maximum_per_inspection: MAX_MOBILE_PHOTOS_PER_INSPECTION,
+        bulk_selection_limit: MAX_MOBILE_PHOTOS_PER_INSPECTION,
+        sources: ["camera", "library"],
+        states: ["local", "queued", "uploading", "verifying", "synchronized", "failed"],
+        original_retained: true,
+        display_derivative: true,
+        retention_years: 5,
+        custom_categories: CUSTOM_PHOTO_CATEGORIES,
       },
     });
   });
@@ -170,6 +193,70 @@ export function createMobileRouter({ pool, verifier, enabled = false, recentFile
         pool,
         req.mobileAuth,
         req.params.sessionId,
+        req.body || {},
+      ));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.get("/inspection-sessions/:sessionId/photos", async (req, res) => {
+    try {
+      return res.json(await listInspectionPhotos(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/photos/upload-requests", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await createPhotoUploadBatch(
+        pool,
+        storage,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.body || {},
+      ));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/photos/:photoId/verify", requireWriteRole, async (req, res) => {
+    try {
+      return res.json({ photo: await verifyInspectionPhoto(
+        pool,
+        storage,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.params.photoId,
+      ) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.patch("/inspection-sessions/:sessionId/photos/:photoId", requireWriteRole, async (req, res) => {
+    try {
+      return res.json({ photo: await updateInspectionPhoto(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.params.photoId,
+        req.body || {},
+      ) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.delete("/inspection-sessions/:sessionId/photos/:photoId", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await removeInspectionPhoto(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.params.photoId,
         req.body || {},
       ));
     } catch (error) {

@@ -187,6 +187,7 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
 app.use("/api/mobile", createMobileRouter({
   pool,
   verifier: mobileOidcVerifier,
+  storage: uadObjectStorage,
   enabled: environmentFlag(process.env.MOBILE_INSPECTION_ENABLED),
   recentFileDays: Number(process.env.MOBILE_RECENT_FILE_DAYS || 30),
 }));

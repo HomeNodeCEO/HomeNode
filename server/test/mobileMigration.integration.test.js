@@ -10,6 +10,13 @@ import {
 } from "../src/modules/mobile/reportFiles.js";
 import { getMobileProperty, searchMobileProperties } from "../src/modules/mobile/properties.js";
 import {
+  createPhotoUploadBatch,
+  listInspectionPhotos,
+  removeInspectionPhoto,
+  updateInspectionPhoto,
+  verifyInspectionPhoto,
+} from "../src/modules/mobile/photos.js";
+import {
   getInspectionSnapshot,
   syncInspectionOperations,
   syncPayloadSha256,
@@ -171,6 +178,135 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.equal(session.created, true);
     assert.equal(retriedSession.created, false);
     assert.equal(retriedSession.session.id, session.session.id);
+
+    const photoClientId = randomUUID();
+    const photoStorage = {
+      configured: true,
+      provider: "r2",
+      bucket: "mobile-photo-test",
+      createUploadUrl({ objectKey, contentType }) {
+        return {
+          method: "PUT",
+          url: `https://uploads.example.test/${encodeURIComponent(objectKey)}`,
+          headers: { "content-type": contentType },
+          expires_in_seconds: 900,
+        };
+      },
+      async inspectObject({ objectKey }) {
+        const original = objectKey.includes("/original/");
+        return {
+          byte_size: original ? 4_000 : 1_200,
+          etag: original ? "original-etag" : "display-etag",
+          content_type: "image/jpeg",
+        };
+      },
+    };
+    const photoRequest = {
+      photos: [{
+        client_photo_id: photoClientId,
+        category: "Kitchen",
+        category_source: "sketch_room",
+        room_ref: "room-kitchen",
+        room_label: "Kitchen",
+        source: "camera",
+        captured_at: "2026-08-23T12:00:00.000Z",
+        capture_metadata: { orientation: "portrait", source_device: "integration-test" },
+        objects: [
+          {
+            client_object_id: randomUUID(),
+            variant: "original",
+            file_name: "kitchen.jpg",
+            content_type: "image/jpeg",
+            byte_size: 4_000,
+            width: 3000,
+            height: 2000,
+          },
+          {
+            client_object_id: randomUUID(),
+            variant: "display",
+            file_name: "kitchen-display.jpg",
+            content_type: "image/jpeg",
+            byte_size: 1_200,
+            width: 2048,
+            height: 1365,
+          },
+        ],
+      }],
+    };
+    const uploadBatch = await createPhotoUploadBatch(
+      pool,
+      photoStorage,
+      auth,
+      session.session.id,
+      photoRequest,
+    );
+    assert.equal(uploadBatch.photos.length, 1);
+    assert.equal(uploadBatch.photos[0].uploads.length, 2);
+    assert.equal(uploadBatch.photos[0].photo.caption, "Kitchen");
+    const retriedPhotoBatch = await createPhotoUploadBatch(
+      pool,
+      photoStorage,
+      auth,
+      session.session.id,
+      photoRequest,
+    );
+    assert.equal(retriedPhotoBatch.photos[0].photo.id, uploadBatch.photos[0].photo.id);
+
+    const verifiedPhoto = await verifyInspectionPhoto(
+      pool,
+      photoStorage,
+      auth,
+      session.session.id,
+      uploadBatch.photos[0].photo.id,
+    );
+    assert.equal(verifiedPhoto.status, "verified");
+    assert.equal(verifiedPhoto.required_retention_years, 5);
+    assert.ok(verifiedPhoto.retention_until);
+    assert.ok(verifiedPhoto.objects.every((object) => object.status === "verified"));
+
+    const captionOperationId = randomUUID();
+    const updatedPhoto = await updateInspectionPhoto(
+      pool,
+      auth,
+      session.session.id,
+      verifiedPhoto.id,
+      {
+        client_operation_id: captionOperationId,
+        base_revision: verifiedPhoto.revision,
+        caption: "Updated kitchen with quartz countertops",
+      },
+    );
+    assert.equal(updatedPhoto.caption, "Updated kitchen with quartz countertops");
+    assert.equal(updatedPhoto.caption_source, "manual");
+    const retriedUpdate = await updateInspectionPhoto(
+      pool,
+      auth,
+      session.session.id,
+      verifiedPhoto.id,
+      {
+        client_operation_id: captionOperationId,
+        base_revision: verifiedPhoto.revision,
+        caption: "Updated kitchen with quartz countertops",
+      },
+    );
+    assert.equal(retriedUpdate.revision, updatedPhoto.revision);
+
+    const removedPhoto = await removeInspectionPhoto(
+      pool,
+      auth,
+      session.session.id,
+      updatedPhoto.id,
+      {
+        client_operation_id: randomUUID(),
+        base_revision: updatedPhoto.revision,
+      },
+    );
+    assert.equal(removedPhoto.disposition, "excluded_retained");
+    assert.equal(removedPhoto.photo.status, "excluded");
+    assert.ok(removedPhoto.photo.retention_until);
+    const listedPhotos = await listInspectionPhotos(pool, auth, session.session.id);
+    assert.equal(listedPhotos.photos.length, 1);
+    assert.equal(listedPhotos.photos[0].status, "excluded");
 
     const firstPayload = {
       field_path: "inspection.general.appraiser_comments",

@@ -8,6 +8,7 @@ const SERVER_DIRECTORY = path.resolve(MODULE_DIRECTORY, "../..");
 const MIGRATIONS = Object.freeze([
   "20260821_mobile_foundation.sql",
   "20260822_mobile_offline_sync.sql",
+  "20260823_mobile_photos.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

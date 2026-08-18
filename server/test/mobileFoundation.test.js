@@ -15,6 +15,11 @@ import {
   normalizeWorkflowType,
 } from "../src/modules/mobile/fileNumbers.js";
 import { calculateManualSketch } from "../src/modules/mobile/manualSketch.js";
+import {
+  availableMobilePhotoPositions,
+  buildMobilePhotoObjectKey,
+  normalizePhotoBatch,
+} from "../src/modules/mobile/photos.js";
 import { normalizePropertySearch } from "../src/modules/mobile/properties.js";
 import {
   canonicalJson,
@@ -153,6 +158,77 @@ test("manual sketch calculator rejects self-intersecting outlines", () => {
   assert.equal(result.calculated_area_sqft, null);
 });
 
+test("normalizes room-labeled photo batches with original and display objects", () => {
+  const photos = normalizePhotoBatch({
+    photos: [{
+      client_photo_id: "10000000-0000-4000-8000-000000000010",
+      room_ref: "sketch-room-kitchen",
+      room_label: "Kitchen",
+      source: "camera",
+      captured_at: "2026-08-23T12:00:00.000Z",
+      objects: [
+        {
+          client_object_id: "10000000-0000-4000-8000-000000000011",
+          variant: "original",
+          file_name: "IMG 0001.HEIC",
+          content_type: "image/heic",
+          byte_size: 4_000,
+          width: 4032,
+          height: 3024,
+        },
+        {
+          client_object_id: "10000000-0000-4000-8000-000000000012",
+          variant: "display",
+          file_name: "IMG 0001-display.jpg",
+          content_type: "image/jpeg",
+          byte_size: 1_200,
+          width: 2048,
+          height: 1536,
+        },
+      ],
+    }],
+  });
+  assert.equal(photos[0].category, "Kitchen");
+  assert.equal(photos[0].categorySource, "sketch_room");
+  assert.equal(photos[0].caption, "Kitchen");
+  assert.equal(photos[0].captionSource, "room_auto");
+  assert.match(photos[0].requestSha256, /^[a-f0-9]{64}$/);
+  assert.throws(() => normalizePhotoBatch({
+    photos: [{
+      client_photo_id: "10000000-0000-4000-8000-000000000010",
+      category: "Other",
+      objects: [{
+        client_object_id: "10000000-0000-4000-8000-000000000011",
+        variant: "original",
+        file_name: "IMG.HEIC",
+        content_type: "image/heic",
+        byte_size: 4_000,
+      }],
+    }],
+  }), /mobile_photo_display_derivative_required/);
+  assert.throws(
+    () => normalizePhotoBatch({ photos: Array.from({ length: 101 }, () => ({})) }),
+    /invalid_mobile_photo_batch/,
+  );
+});
+
+test("builds private report-file scoped mobile photo object keys", () => {
+  assert.equal(buildMobilePhotoObjectKey({
+    organizationId: "org-1",
+    reportFileId: "file-1",
+    photoId: "photo-1",
+    objectId: "object-1",
+    variant: "original",
+    fileName: "Front view #1.heic",
+  }), "organizations/org-1/mobile/report-files/file-1/photos/photo-1/original/object-1/Front-view-1.heic");
+});
+
+test("mobile photo positions reuse an excluded slot before exceeding 100", () => {
+  const occupied = Array.from({ length: 100 }, (_unused, index) => index + 1)
+    .filter((position) => position !== 37);
+  assert.deepEqual(availableMobilePhotoPositions(occupied), [37]);
+});
+
 test("accepts only a bounded bearer token and HTTPS OIDC issuer", () => {
   assert.equal(parseBearerToken("Bearer abc.def.ghi"), "abc.def.ghi");
   assert.throws(() => parseBearerToken("Basic abc"), /invalid_access_token/);
@@ -198,4 +274,15 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(offlineSource, /ADD COLUMN IF NOT EXISTS is_tombstone boolean/);
   assert.match(offlineSource, /mobile_sync_operations_unresolved_conflict_idx/);
   assert.doesNotMatch(offlineSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const photoSource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260823_mobile_photos.sql"),
+    "utf8",
+  );
+  assert.match(photoSource, /CREATE TABLE IF NOT EXISTS app\.inspection_photos/);
+  assert.match(photoSource, /CREATE TABLE IF NOT EXISTS app\.inspection_photo_objects/);
+  assert.match(photoSource, /CREATE TABLE IF NOT EXISTS app\.inspection_photo_events/);
+  assert.match(photoSource, /required_retention_years integer NOT NULL DEFAULT 5/);
+  assert.match(photoSource, /retention_until >= retention_starts_at \+ interval '5 years'/);
+  assert.doesNotMatch(photoSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

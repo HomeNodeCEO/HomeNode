@@ -9,13 +9,16 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/config.test.ts test/offline-sync.test.ts test/workflows.test.ts",
+    "test": "tsx --test test/config.test.ts test/offline-sync.test.ts test/photos.test.ts test/workflows.test.ts",
     "doctor": "expo-doctor"
   },
   "dependencies": {
     "expo": "57.0.13",
     "expo-auth-session": "~57.0.7",
     "expo-crypto": "~57.0.1",
+    "expo-file-system": "~57.0.4",
+    "expo-image-manipulator": "~57.0.11",
+    "expo-image-picker": "~57.0.11",
     "expo-network": "~57.0.1",
     "expo-secure-store": "~57.0.1",
     "expo-sqlite": "~57.0.1",

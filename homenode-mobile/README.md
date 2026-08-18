@@ -1,6 +1,6 @@
 # HomeNode Appraiser mobile
 
-Private Expo/React Native client for HomeNode field appraisal. Phase 3 adds an encrypted offline inspection cache and durable synchronization queue to the managed sign-in, property search, version-safe report routing, and inspection-session foundation.
+Private Expo/React Native client for HomeNode field appraisal. Phase 4 adds labeled camera and bulk-library capture, durable private R2 uploads, original/display variants, and five-year evidence retention to the encrypted offline inspection foundation.
 
 ## Offline inspection behavior
 
@@ -12,6 +12,16 @@ Private Expo/React Native client for HomeNode field appraisal. Phase 3 adds an e
 - Phase 3 stores synchronized inspection observations separately from authoritative Custom Appraisal and UAD fields. Their target-specific adapters are introduced in later phases, so no desktop value is silently overwritten.
 
 SQLCipher requires a development or internal native build and is not available in Expo Go.
+
+## Photo capture and retention
+
+- Camera captures and as many as 100 library selections per inspection are copied into app-private durable storage before the picker cache can be cleared.
+- Selecting a room produces an automatic room label; the appraiser can instead choose a report category and can edit the caption under every image.
+- Every photo receives client-generated photo/object IDs. Retrying registration returns the same server record rather than creating a duplicate.
+- Originals are preserved. A browser-compatible JPEG display derivative is created on-device, including for HEIC/HEIF originals.
+- The encrypted SQLite queue restores interrupted registration, upload, and verification work after restart and retries with bounded exponential backoff.
+- The mobile client uploads directly to short-lived, object-specific R2 URLs. R2 credentials never reach the device, and a photo is not synchronized until the backend verifies every object with `HEAD`.
+- Empty local placeholders can be removed immediately. Removing a verified photo excludes it from the active report but retains its private objects and audit record for five years.
 
 ## WorkOS activation
 

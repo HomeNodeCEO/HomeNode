@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 8:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 9:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -107,6 +107,12 @@ categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
   noncontinuous finished rooms, mechanical systems, exterior defects,
   commentary, and verified front/rear/exhibit images. Child records retain the
   dwelling parent identifier needed for future multi-dwelling reports.
+- Manufactured Home displays only for a dwelling whose Section 8 Construction
+  Method is `Manufactured`. It captures installation and foundation details,
+  skirting, structural modifications, HUD data-plate and certification-label
+  information, eligible financing programs, new-construction invoices, and
+  commentary. Required Section 9 images are private, verified R2 assets linked
+  to the exact dwelling, HUD label, or program record.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

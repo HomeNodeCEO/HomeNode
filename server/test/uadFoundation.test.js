@@ -156,6 +156,9 @@ test("the staging bootstrap is guarded against production execution", () => {
   assert.match(source, /NODE_ENV !== "staging"/);
   assert.match(source, /databaseName\.toLowerCase\(\)\.includes\("staging"\)/);
   assert.match(source, /UAD-STAGING-SFR-0001/);
+  assert.match(source, /UAD-STAGING-MH-0001/);
+  assert.match(source, /HN-UAD-STAGING-MH-0001/);
+  assert.match(source, /uad_staging_fixture\.manufactured_construction/);
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

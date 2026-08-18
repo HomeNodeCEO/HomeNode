@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import pg from "pg";
 
+import { getUadEditor } from "../src/modules/uad/editor.js";
+
 const databaseUrl = process.env.DATABASE_URL;
 
-test("UAD staging bootstrap supports the shared search-tile contract", {
+test("UAD staging bootstrap supports site-built and manufactured-home search tiles", {
   skip: !databaseUrl || !databaseUrl.toLowerCase().includes("staging"),
 }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
@@ -54,20 +56,54 @@ test("UAD staging bootstrap supports the shared search-tile contract", {
          ORDER BY raw.tax_year DESC, raw.fetched_at DESC
          LIMIT 1
       ) raw_record ON TRUE
-      WHERE a.account_id = 'UAD-STAGING-SFR-0001'
+      WHERE a.account_id IN ('UAD-STAGING-SFR-0001', 'UAD-STAGING-MH-0001')
+      ORDER BY a.account_id
     `);
 
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].address, "100 Test Subject Dr");
-    assert.equal(rows[0].street_name, "TEST SUBJECT DR");
-    assert.equal(rows[0].latest_tax_year, 2026);
-    assert.equal(Number(rows[0].latest_market_value), 425000);
+    assert.equal(rows.length, 2);
+    const byAccount = new Map(rows.map((row) => [row.account_id, row]));
+    assert.equal(byAccount.get("UAD-STAGING-SFR-0001")?.address, "100 Test Subject Dr");
+    assert.equal(byAccount.get("UAD-STAGING-SFR-0001")?.street_name, "TEST SUBJECT DR");
+    assert.equal(byAccount.get("UAD-STAGING-SFR-0001")?.latest_tax_year, 2026);
+    assert.equal(Number(byAccount.get("UAD-STAGING-SFR-0001")?.latest_market_value), 425000);
+    assert.equal(byAccount.get("UAD-STAGING-MH-0001")?.address, "200 Factory Home Way");
+    assert.equal(byAccount.get("UAD-STAGING-MH-0001")?.street_name, "FACTORY HOME WAY");
+    assert.equal(byAccount.get("UAD-STAGING-MH-0001")?.latest_tax_year, 2026);
+    assert.equal(Number(byAccount.get("UAD-STAGING-MH-0001")?.latest_market_value), 240000);
 
     const realRows = await pool.query(
-      "SELECT count(*)::integer AS count FROM core.accounts WHERE account_id <> $1",
-      ["UAD-STAGING-SFR-0001"],
+      `SELECT count(*)::integer AS count
+         FROM core.accounts
+        WHERE NOT (account_id = ANY($1::text[]))`,
+      [["UAD-STAGING-SFR-0001", "UAD-STAGING-MH-0001"]],
     );
     assert.equal(realRows.rows[0].count, 0);
+
+    const manufacturedWorkfile = await pool.query(
+      `SELECT w.id, w.file_number, w.property_type, v.value #>> '{}' AS construction_method
+         FROM appraisal.uad_workfiles w
+         JOIN appraisal.uad_entities dwelling
+           ON dwelling.workfile_id = w.id
+          AND dwelling.entity_type = 'dwelling'
+          AND dwelling.ordinal = 1
+         JOIN appraisal.uad_field_values v
+           ON v.workfile_id = w.id
+          AND v.entity_id = dwelling.id
+          AND v.field_context = 'dwelling'
+          AND v.uad_uid = '0300.0034'
+        WHERE w.account_id = 'UAD-STAGING-MH-0001'
+          AND lower(w.file_number) = lower('HN-UAD-STAGING-MH-0001')`,
+    );
+    assert.equal(manufacturedWorkfile.rows.length, 1);
+    assert.equal(manufacturedWorkfile.rows[0].property_type, "manufactured_home");
+    assert.equal(manufacturedWorkfile.rows[0].construction_method, "Manufactured");
+
+    const editor = await getUadEditor(pool, manufacturedWorkfile.rows[0].id);
+    const section9 = editor.sections.find((section) => section.officialSectionNumber === 9);
+    assert.equal(section9?.key, "manufactured_home");
+    assert.equal(section9?.applicable, true);
+    assert.ok(section9.groups.reduce((count, group) => count + group.fields.length, 0) >= 32);
+    assert.ok(editor.completion.manufactured_home.required > 0);
   } finally {
     await pool.end();
   }

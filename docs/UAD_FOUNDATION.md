@@ -80,11 +80,13 @@ Render preview databases are not the default because they require a Pro
 workspace and incur per-preview resource charges.
 
 The guarded staging bootstrap also creates empty compatibility relations used
-by the shared HomeNode search tile and one synthetic value-summary row. This
-allows the search-tile → appraisal-type chooser → UAD workspace path to be
-tested without copying production tax, owner, or sales data. CI runs the
-bootstrap twice and executes the same search joins to verify idempotency and
-schema compatibility.
+by the shared HomeNode search tile and two synthetic value-summary rows. The
+site-built SFR fixture verifies that Section 9 remains hidden; the separate
+manufactured-home fixture includes a deterministic UAD workfile whose Section 8
+Construction Method is `Manufactured`, allowing Section 9 to be exercised
+without changing the SFR or copying production tax, owner, or sales data. CI
+runs the bootstrap twice and executes the same search joins to verify
+idempotency and schema compatibility.
 
 ## Mobile photos and artifacts
 

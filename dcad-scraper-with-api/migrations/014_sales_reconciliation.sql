@@ -8,7 +8,7 @@ ALTER TABLE core.sales_source_records
     ADD CONSTRAINT sales_source_records_match_status_check
     CHECK (match_status IN (
         'exact', 'normalized', 'secondary', 'multiple', 'unmatched',
-        'manual_verified'
+        'address', 'manual_verified'
     ));
 
 ALTER TABLE core.sale_parcels

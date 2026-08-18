@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS core.sales_source_records (
     CONSTRAINT sales_source_records_match_status_check
         CHECK (match_status IN (
             'exact', 'normalized', 'secondary', 'multiple', 'unmatched',
-            'manual_verified'
+            'address', 'manual_verified'
         )),
     CONSTRAINT sales_source_records_multi_status_check
         CHECK (multi_parcel_status IN ('single', 'possible', 'confirmed')),
@@ -358,10 +358,26 @@ SELECT
     COALESCE(NULLIF(btrim(s.account_id), ''), src.primary_account_id)
         AS primary_account_id,
     a.county,
-    COALESCE(s.address, a.address) AS address,
-    s.city,
+    COALESCE(
+        NULLIF(btrim(s.address), ''),
+        NULLIF(btrim(a.address), ''),
+        NULLIF(btrim(src.raw_payload ->> 'Address'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'UnparsedAddress'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'PropertyAddress'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'StreetAddress'), '')
+    ) AS address,
+    COALESCE(
+        NULLIF(btrim(s.city), ''),
+        NULLIF(btrim(a.city), ''),
+        NULLIF(btrim(src.raw_payload ->> 'City'), '')
+    ) AS city,
     s.state,
-    s.zip,
+    COALESCE(
+        NULLIF(btrim(s.zip), ''),
+        NULLIF(btrim(a.postal_code), ''),
+        NULLIF(btrim(src.raw_payload ->> 'PostalCode'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'Zip'), '')
+    ) AS zip,
     COALESCE(s.closing_date, src.close_date) AS closing_date,
     COALESCE(s.sale_price, src.current_price) AS sale_price,
     COALESCE(s.days_on_market, src.days_on_market) AS days_on_market,

@@ -18,19 +18,27 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 
-async function ensureEntity(workfileId, parentEntityId, entityType, entityIdentifier, ordinal, label) {
+async function ensureEntity(workfileId, parentEntityId, entityType, entityIdentifier, ordinal, label, data = {}) {
   const existing = await pool.query(
     `SELECT id FROM appraisal.uad_entities
       WHERE workfile_id = $1 AND entity_type = $2 AND entity_identifier = $3`,
     [workfileId, entityType, entityIdentifier],
   );
-  if (existing.rows.length) return existing.rows[0].id;
+  if (existing.rows.length) {
+    if (Object.keys(data).length) {
+      await pool.query(
+        `UPDATE appraisal.uad_entities SET data = data || $2::jsonb, updated_at = now() WHERE id = $1`,
+        [existing.rows[0].id, JSON.stringify(data)],
+      );
+    }
+    return existing.rows[0].id;
+  }
   const id = randomUUID();
   await pool.query(
     `INSERT INTO appraisal.uad_entities (
-       id, workfile_id, parent_entity_id, entity_type, entity_identifier, ordinal, label
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [id, workfileId, parentEntityId, entityType, entityIdentifier, ordinal, label],
+       id, workfile_id, parent_entity_id, entity_type, entity_identifier, ordinal, label, data
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+    [id, workfileId, parentEntityId, entityType, entityIdentifier, ordinal, label, JSON.stringify(data)],
   );
   return id;
 }
@@ -291,7 +299,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-13 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-14 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -359,6 +367,40 @@ try {
     "vehicle_storage",
     "3200.0021",
     "13.004",
+    false,
+  );
+  await seedEntityValue(
+    sfrWorkfileId,
+    null,
+    "subject_property_amenities",
+    "0200.0015",
+    "14.000",
+    true,
+  );
+  const amenityId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "amenity",
+    "amenity-outdoor-living-deck-1",
+    1,
+    "Outdoor Living 1",
+    { amenity_category: "OutdoorLiving" },
+  );
+  const amenityValues = [
+    ["0200.0017", "14.001", "OutdoorLiving"],
+    ["0200.0023", "14.002 / 14.006", "Deck"],
+    ["0200.0021", "14.003", "Wood"],
+    ["0200.0025", "14.004", { amount: 240, unit: "SquareFeet" }],
+  ];
+  for (const [uid, reportFieldId, value] of amenityValues) {
+    await seedEntityValue(sfrWorkfileId, amenityId, "amenity_outdoor_living", uid, reportFieldId, value);
+  }
+  await seedEntityValue(
+    sfrWorkfileId,
+    null,
+    "subject_property_amenities",
+    "0200.0053",
+    "14.005",
     false,
   );
   const sfrUnitResult = await pool.query(

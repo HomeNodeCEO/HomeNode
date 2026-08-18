@@ -240,6 +240,30 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        )
     `);
     assert.equal(unscaffoldedVehicleStorageWorkfiles.rows[0].count, 0);
+
+    const subjectAmenityFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 14
+    `);
+    assert.equal(subjectAmenityFields.rows[0].count, 48);
+
+    const officialSubjectAmenityRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN ('UAD1045', 'UAD1046', 'UAD1685', 'UAD1739')
+    `);
+    assert.equal(officialSubjectAmenityRules.rows[0].count, 4);
+
+    const homeNodeSubjectAmenityRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-SUBJECT-AMENITIES-%'
+    `);
+    assert.equal(homeNodeSubjectAmenityRules.rows[0].count, 8);
   } finally {
     await pool.end();
   }

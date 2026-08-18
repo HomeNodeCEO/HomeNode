@@ -10,6 +10,7 @@ import {
   evaluateUadCondition,
   getUadEditorSections,
   normalizeAndValidateUadValue,
+  uadFieldAppliesToEntity,
   uadFieldIsRequired,
   uadFieldIsVisible,
   validateUadSectionValues,
@@ -17,6 +18,12 @@ import {
 import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
 import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
+import {
+  UAD_SUBJECT_AMENITY_CATEGORIES,
+  UAD_SUBJECT_AMENITY_CATEGORY_LIMITS,
+  UAD_SUBJECT_AMENITY_FIELD_KEYS,
+  isVerifiedSubjectPropertyAmenitiesAsset,
+} from "./subjectPropertyAmenitiesCatalog.js";
 import { isVerifiedUnitInteriorAsset } from "./unitInteriorCatalog.js";
 import { isVerifiedVehicleStorageAsset } from "./vehicleStorageCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
@@ -100,6 +107,15 @@ function unitRoomRequiresPhoto(room, valuesByKey, entities) {
   ));
 }
 
+function workfileHasManufacturedHome(valuesByKey, entities) {
+  return entities.some((entity) => (
+    (entity.entity_type === "dwelling"
+      && valueLookup(valuesByKey, entity.id)("dwelling:0300.0034") === "Manufactured")
+    || (entity.entity_type === "outbuilding"
+      && valueLookup(valuesByKey, entity.id)("outbuilding:0300.0025") === "ManufacturedHome")
+  ));
+}
+
 function sectionIsApplicable(section, valuesByKey, entities) {
   if (!section.appliesWhen) return true;
   const candidates = section.appliesToEntityType
@@ -119,7 +135,7 @@ function completionFor(values, entities, assets = []) {
     let completed = 0;
     for (const field of UAD_PHASE_ONE_FIELDS.filter((candidate) => candidate.section === section)) {
       const instances = field.entityType
-        ? entities.filter((entity) => entity.entity_type === field.entityType).map((entity) => entity.id)
+        ? entities.filter((entity) => uadFieldAppliesToEntity(field, entity)).map((entity) => entity.id)
         : [null];
       for (const entityId of instances) {
         const lookup = valueLookup(byKey, entityId);
@@ -223,6 +239,31 @@ function completionFor(values, entities, assets = []) {
         isVerifiedVehicleStorageAsset(asset, "VehicleStorageDefect", defect.id)
       ))).length;
     }
+    if (section === "subject_property_amenities") {
+      const amenities = entities.filter((entity) => entity.entity_type === "amenity");
+      const amenitiesExist = byKey.get("root:subject_property_amenities:0200.0015");
+      if (amenitiesExist === true) {
+        required += 1;
+        if (amenities.length) completed += 1;
+      }
+      if (workfileHasManufacturedHome(byKey, entities)) {
+        for (const amenity of amenities.filter((entity) => entity.data?.amenity_category === "OutdoorLiving")) {
+          const lookup = valueLookup(byKey, amenity.id);
+          const type = lookup(UAD_SUBJECT_AMENITY_FIELD_KEYS.OutdoorLiving.type);
+          if (["Deck", "Gazebo", "Porch", "Portico"].includes(type)) {
+            required += 1;
+            if (isPresent(lookup(UAD_SUBJECT_AMENITY_FIELD_KEYS.OutdoorLiving.attachedToManufacturedHome))) {
+              completed += 1;
+            }
+          }
+        }
+      }
+      const defects = entities.filter((entity) => entity.entity_type === "amenity_defect");
+      required += defects.length;
+      completed += defects.filter((defect) => assets.some((asset) => (
+        isVerifiedSubjectPropertyAmenitiesAsset(asset, "SubjectPropertyAmenityDefect", defect.id)
+      ))).length;
+    }
     result[section] = {
       completed,
       required,
@@ -288,7 +329,7 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
   const errors = [];
   for (const field of UAD_PHASE_ONE_FIELDS.filter((candidate) => candidate.section === section)) {
     const instances = field.entityType
-      ? entities.filter((entity) => entity.entity_type === field.entityType).map((entity) => entity.id)
+      ? entities.filter((entity) => uadFieldAppliesToEntity(field, entity)).map((entity) => entity.id)
       : [null];
     for (const entityId of instances) {
       const lookup = valueLookup(merged, entityId);
@@ -730,6 +771,104 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
     }
   }
 
+  if (section === "subject_property_amenities") {
+    const rootLookup = valueLookup(merged);
+    const amenitiesExist = rootLookup("subject_property_amenities:0200.0015");
+    const defectsExist = rootLookup("subject_property_amenities:0200.0053");
+    const amenities = entities.filter((entity) => entity.entity_type === "amenity");
+    const amenityIds = new Set(amenities.map((entity) => entity.id));
+    const defects = entities.filter((entity) => entity.entity_type === "amenity_defect");
+    const baseField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+      candidate.key === "subject_property_amenities:0200.0015"
+    ));
+    const indicatorField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+      candidate.key === "subject_property_amenities:0200.0053"
+    ));
+
+    if (amenitiesExist === true && !amenities.length) {
+      errors.push(validationError(baseField, null, "subject_amenity_required", "Add at least one subject property amenity when Property Amenities Exist is Yes."));
+    }
+    if (amenitiesExist === false && (amenities.length || defects.length || defectsExist === true)) {
+      errors.push(validationError(baseField, null, "subject_amenity_none_conflict", "Remove amenity and defect records before changing Property Amenities Exist to No."));
+    }
+
+    for (const category of UAD_SUBJECT_AMENITY_CATEGORIES) {
+      const categoryAmenities = amenities.filter((entity) => entity.data?.amenity_category === category);
+      if (categoryAmenities.length > UAD_SUBJECT_AMENITY_CATEGORY_LIMITS[category]) {
+        errors.push(validationError(
+          baseField,
+          null,
+          "subject_amenity_category_limit",
+          `${category.replace(/([a-z])([A-Z])/g, "$1 $2")} supports no more than ${UAD_SUBJECT_AMENITY_CATEGORY_LIMITS[category]} amenity records.`,
+        ));
+      }
+    }
+
+    const manufacturedHomePresent = workfileHasManufacturedHome(merged, entities);
+    for (const amenity of amenities) {
+      const category = amenity.data?.amenity_category;
+      const keys = UAD_SUBJECT_AMENITY_FIELD_KEYS[category];
+      if (!keys) {
+        errors.push(validationError(baseField, amenity.id, "subject_amenity_category_invalid", "The amenity record must use one of the five supported UAD amenity categories."));
+        continue;
+      }
+      const lookup = valueLookup(merged, amenity.id);
+      const categoryField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === keys.category);
+      if (isPresent(lookup(keys.category)) && lookup(keys.category) !== category) {
+        errors.push(validationError(categoryField, amenity.id, "subject_amenity_category_conflict", "The selected amenity category must match the category of this amenity record."));
+      }
+
+      const type = lookup(keys.type);
+      if (
+        manufacturedHomePresent
+        && category === "OutdoorLiving"
+        && ["Deck", "Gazebo", "Porch", "Portico"].includes(type)
+        && !isPresent(lookup(keys.attachedToManufacturedHome))
+      ) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+          candidate.key === keys.attachedToManufacturedHome
+        ));
+        errors.push(validationError(field, amenity.id, "subject_amenity_manufactured_attachment_required", "Indicate whether this amenity is permanently attached to the manufactured home."));
+      }
+
+      const amenityImages = assets.filter((asset) => (
+        isVerifiedSubjectPropertyAmenitiesAsset(asset, "SubjectPropertyAmenity", amenity.id)
+      ));
+      if (amenityImages.length > 2) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === keys.type);
+        errors.push(validationError(field, amenity.id, "subject_amenity_photo_limit", "No more than two report images may be attached to one amenity."));
+      }
+    }
+
+    const orphanedDefects = defects.filter((defect) => !amenityIds.has(defect.parent_entity_id));
+    if (orphanedDefects.length) {
+      errors.push(validationError(baseField, null, "subject_amenity_defect_parent_conflict", "Every amenity defect must belong to a subject property amenity in this workfile."));
+    }
+    if (defects.length > 6) {
+      errors.push(validationError(indicatorField, null, "subject_amenity_defect_limit", "No more than six amenity defects may be delivered."));
+    }
+    if (defectsExist === true && !defects.length) {
+      errors.push(validationError(indicatorField, null, "subject_amenity_defect_required", "Add at least one amenity defect when defects exist."));
+    }
+    if (defectsExist === false && defects.length) {
+      errors.push(validationError(indicatorField, null, "subject_amenity_defect_conflict", "Remove amenity defect records or change the defects answer to Yes."));
+    }
+    for (const defect of defects) {
+      const defectImages = assets.filter((asset) => (
+        isVerifiedSubjectPropertyAmenitiesAsset(asset, "SubjectPropertyAmenityDefect", defect.id)
+      ));
+      const field = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+        candidate.key === "subject_property_amenity_defect:3900.0139"
+      ));
+      if (!defectImages.length) {
+        errors.push(validationError(field, defect.id, "subject_amenity_defect_photo_required", "Upload and verify a photo documenting this physical amenity defect."));
+      }
+      if (defectImages.length > 4) {
+        errors.push(validationError(field, defect.id, "subject_amenity_defect_photo_limit", "No more than four report images may be attached to one amenity defect."));
+      }
+    }
+  }
+
   if (section === "unit_interior") {
     const units = entities.filter((entity) => entity.entity_type === "unit");
     const unitIds = new Set(units.map((entity) => entity.id));
@@ -971,7 +1110,8 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
       listUadAssets(client, workfileId),
     ]);
     const entityTypesById = new Map(entities.map((entity) => [entity.id, entity.entity_type]));
-    const validation = validateUadSectionValues(section, input.values, { entityTypesById });
+    const entityDataById = new Map(entities.map((entity) => [entity.id, entity.data]));
+    const validation = validateUadSectionValues(section, input.values, { entityTypesById, entityDataById });
     if (validation.errors.length) {
       const error = new Error("invalid_uad_field_values");
       error.details = validation.errors;

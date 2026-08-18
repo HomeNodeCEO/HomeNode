@@ -23,6 +23,11 @@ import {
   UAD_SKETCH_REPORT_CONTENT_TYPES,
 } from "./sketchCatalog.js";
 import {
+  UAD_SUBJECT_PROPERTY_AMENITIES_CAPTION_TYPES,
+  UAD_SUBJECT_PROPERTY_AMENITIES_IMAGE_CONTENT_TYPES,
+  UAD_SUBJECT_PROPERTY_AMENITIES_MAX_IMAGES,
+} from "./subjectPropertyAmenitiesCatalog.js";
+import {
   UAD_UNIT_INTERIOR_CAPTION_TYPES,
   UAD_UNIT_INTERIOR_IMAGE_CONTENT_TYPES,
 } from "./unitInteriorCatalog.js";
@@ -58,6 +63,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [11, new Set(UAD_FUNCTIONAL_OBSOLESCENCE_CAPTION_TYPES)],
   [12, new Set(UAD_OUTBUILDING_CAPTION_TYPES)],
   [13, new Set(UAD_VEHICLE_STORAGE_CAPTION_TYPES)],
+  [14, new Set(UAD_SUBJECT_PROPERTY_AMENITIES_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -158,6 +164,12 @@ function normalizeAssetInput(input = {}) {
   if (sectionNumber === 13 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_vehicle_storage_asset_kind");
   }
+  if (sectionNumber === 14 && !UAD_SUBJECT_PROPERTY_AMENITIES_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_subject_property_amenities_content_type");
+  }
+  if (sectionNumber === 14 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_subject_property_amenities_asset_kind");
+  }
   return {
     kind,
     contentType,
@@ -192,12 +204,43 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
     [workfileId],
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
+  let entityType = null;
   if (normalized.entityId) {
     const entityResult = await pool.query(
-      `SELECT id FROM appraisal.uad_entities WHERE id = $1 AND workfile_id = $2`,
+      `SELECT id, entity_type FROM appraisal.uad_entities WHERE id = $1 AND workfile_id = $2`,
       [normalized.entityId, workfileId],
     );
     if (!entityResult.rows.length) throw new Error("uad_entity_not_found");
+    entityType = entityResult.rows[0].entity_type;
+  }
+  if (normalized.sectionNumber === 14) {
+    const requiredEntityType = normalized.captionType === "SubjectPropertyAmenity"
+      ? "amenity"
+      : normalized.captionType === "SubjectPropertyAmenityDefect"
+        ? "amenity_defect"
+        : null;
+    if (
+      (requiredEntityType && entityType !== requiredEntityType)
+      || (!requiredEntityType && normalized.entityId)
+    ) {
+      throw new Error("invalid_uad_subject_property_amenities_asset_entity");
+    }
+    const maximum = UAD_SUBJECT_PROPERTY_AMENITIES_MAX_IMAGES[normalized.captionType];
+    if (maximum) {
+      const existingImages = await pool.query(
+        `SELECT count(*)::integer AS count
+           FROM appraisal.uad_assets
+          WHERE workfile_id = $1
+            AND entity_id = $2
+            AND section_number = 14
+            AND caption_type = $3
+            AND status NOT IN ('deleted', 'rejected')`,
+        [workfileId, normalized.entityId, normalized.captionType],
+      );
+      if (Number(existingImages.rows[0].count) >= maximum) {
+        throw new Error("invalid_uad_subject_property_amenities_asset_limit");
+      }
+    }
   }
 
   const organizationId = workfileResult.rows[0].organization_id;

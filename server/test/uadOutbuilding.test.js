@@ -23,7 +23,7 @@ import {
 test("adds official always-displayed URAR Section 12", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "outbuilding");
-  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
   assert.equal(section?.title, "Outbuilding");
   assert.equal(section?.appliesWhen, undefined);
   assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "outbuilding").length, 34);

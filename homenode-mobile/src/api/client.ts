@@ -108,6 +108,87 @@ export type InspectionSyncResponse = {
   operations: SyncOperationResult[];
 };
 
+export type MobilePhotoObject = {
+  id: string;
+  client_object_id: string;
+  variant: "original" | "display";
+  file_name: string;
+  content_type: string;
+  expected_byte_size: number;
+  byte_size: number | null;
+  width: number | null;
+  height: number | null;
+  status: "pending_upload" | "verified" | "rejected";
+  uploaded_at: string | null;
+  verified_at: string | null;
+};
+
+export type MobilePhoto = {
+  id: string;
+  inspection_session_id: string;
+  report_file_id: string;
+  client_photo_id: string;
+  workflow_type: WorkflowType;
+  category: string;
+  category_source: "custom_catalog" | "uad_catalog" | "sketch_room" | "manual";
+  room_ref: string | null;
+  room_label: string | null;
+  caption: string | null;
+  caption_source: "category" | "room_auto" | "manual";
+  source: "camera" | "library";
+  position: number;
+  captured_at: string | null;
+  capture_metadata: Record<string, JsonValue>;
+  status: "pending_upload" | "verifying" | "verified" | "failed" | "excluded";
+  revision: number;
+  retention_starts_at: string | null;
+  retention_until: string | null;
+  required_retention_years: number;
+  legal_hold: boolean;
+  verified_at: string | null;
+  excluded_at: string | null;
+  objects: MobilePhotoObject[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type PhotoObjectUploadRequest = {
+  client_object_id: string;
+  variant: "original" | "display";
+  file_name: string;
+  content_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+};
+
+export type PhotoUploadRequest = {
+  client_photo_id: string;
+  category: string;
+  category_source: "custom_catalog" | "uad_catalog" | "sketch_room" | "manual";
+  room_ref: string | null;
+  room_label: string | null;
+  caption: string | null;
+  source: "camera" | "library";
+  captured_at: string;
+  capture_metadata: Record<string, JsonValue>;
+  objects: PhotoObjectUploadRequest[];
+};
+
+export type PresignedPhotoUpload = {
+  object_id: string;
+  variant: "original" | "display";
+  method: "PUT";
+  url: string;
+  headers: Record<string, string>;
+  expires_in_seconds: number;
+};
+
+export type PhotoUploadBatchItem = {
+  photo: MobilePhoto;
+  uploads: PresignedPhotoUpload[];
+};
+
 export class ApiError extends Error {
   constructor(public readonly status: number, public readonly code: string) {
     super(code);
@@ -201,6 +282,64 @@ export class MobileApi {
     return this.request<InspectionSyncResponse>(
       `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/sync`,
       { method: "POST", body: JSON.stringify({ operations }) },
+    );
+  }
+
+  async listPhotos(sessionId: string) {
+    return (await this.request<{ photos: MobilePhoto[] }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/photos`,
+    )).photos;
+  }
+
+  async createPhotoUploadRequests(sessionId: string, photos: PhotoUploadRequest[]) {
+    return this.request<{ photos: PhotoUploadBatchItem[] }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/photos/upload-requests`,
+      { method: "POST", body: JSON.stringify({ photos }) },
+    );
+  }
+
+  async verifyPhoto(sessionId: string, photoId: string) {
+    return (await this.request<{ photo: MobilePhoto }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/photos/${encodeURIComponent(photoId)}/verify`,
+      { method: "POST", body: JSON.stringify({}) },
+    )).photo;
+  }
+
+  async updatePhoto(sessionId: string, photoId: string, input: {
+    clientOperationId: string;
+    baseRevision: number;
+    category?: string;
+    categorySource?: MobilePhoto["category_source"];
+    roomRef?: string | null;
+    roomLabel?: string | null;
+    caption?: string | null;
+    position?: number;
+  }) {
+    return (await this.request<{ photo: MobilePhoto }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/photos/${encodeURIComponent(photoId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          client_operation_id: input.clientOperationId,
+          base_revision: input.baseRevision,
+          ...(input.category === undefined ? {} : { category: input.category }),
+          ...(input.categorySource === undefined ? {} : { category_source: input.categorySource }),
+          ...(input.roomRef === undefined ? {} : { room_ref: input.roomRef }),
+          ...(input.roomLabel === undefined ? {} : { room_label: input.roomLabel }),
+          ...(input.caption === undefined ? {} : { caption: input.caption }),
+          ...(input.position === undefined ? {} : { position: input.position }),
+        }),
+      },
+    )).photo;
+  }
+
+  async removePhoto(sessionId: string, photoId: string, clientOperationId: string, baseRevision: number) {
+    return this.request<{ photo: MobilePhoto; disposition: "excluded_retained" | "placeholder_deleted" }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/photos/${encodeURIComponent(photoId)}`,
+      {
+        method: "DELETE",
+        body: JSON.stringify({ client_operation_id: clientOperationId, base_revision: baseRevision }),
+      },
     );
   }
 }

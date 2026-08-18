@@ -32,6 +32,14 @@
           "enableFTS": false,
           "useSQLCipher": true
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow HomeNode Appraiser to capture appraisal evidence photos.",
+          "photosPermission": "Allow HomeNode Appraiser to import appraisal evidence photos.",
+          "microphonePermission": false
+        }
       ]
     ]
   }

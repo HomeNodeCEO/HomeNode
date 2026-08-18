@@ -7,10 +7,13 @@ import type {
   InspectionSession,
   InspectionSnapshot,
   InspectionSyncResponse,
+  MobilePhoto,
   MobileUser,
+  PhotoUploadRequest,
   PropertyResult,
   ReportFile,
 } from "../api/client";
+import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
 import {
   retryDelayMs,
   stableJson,
@@ -55,6 +58,45 @@ type InspectionRow = {
   updated_at: number;
 };
 
+type PhotoDraftRow = {
+  client_photo_id: string;
+  session_id: string;
+  server_photo_id: string | null;
+  server_revision: number | null;
+  server_photo_json: string | null;
+  category: string;
+  category_source: PreparedPhoto["categorySource"];
+  room_ref: string | null;
+  room_label: string | null;
+  caption: string;
+  source: PreparedPhoto["source"];
+  captured_at: string;
+  capture_metadata_json: string;
+  original_client_object_id: string;
+  original_uri: string;
+  original_file_name: string;
+  original_content_type: string;
+  original_byte_size: number;
+  original_width: number | null;
+  original_height: number | null;
+  display_client_object_id: string;
+  display_uri: string;
+  display_file_name: string;
+  display_content_type: string;
+  display_byte_size: number;
+  display_width: number | null;
+  display_height: number | null;
+  position: number;
+  state: LocalPhotoState;
+  attempts: number;
+  next_attempt_at: number | null;
+  error_code: string | null;
+  metadata_operation_id: string | null;
+  remove_operation_id: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
 export type CachedInspection = Readonly<{
   property: PropertyResult;
   file: ReportFile;
@@ -75,6 +117,39 @@ export type LocalConflict = Readonly<{
   conflict: InspectionConflict["conflict"];
 }>;
 
+export type LocalPhotoDraft = Readonly<{
+  clientPhotoId: string;
+  sessionId: string;
+  serverPhotoId: string | null;
+  serverRevision: number | null;
+  serverPhoto: MobilePhoto | null;
+  category: string;
+  categorySource: PreparedPhoto["categorySource"];
+  roomRef: string | null;
+  roomLabel: string | null;
+  caption: string;
+  source: PreparedPhoto["source"];
+  capturedAt: string;
+  captureMetadata: PreparedPhoto["captureMetadata"];
+  objects: PreparedPhoto["objects"];
+  position: number;
+  state: LocalPhotoState;
+  attempts: number;
+  nextAttemptAt: number | null;
+  errorCode: string | null;
+  metadataOperationId: string | null;
+  removeOperationId: string | null;
+  createdAt: number;
+  updatedAt: number;
+}>;
+
+export type PhotoQueueSummary = Readonly<{
+  total: number;
+  pending: number;
+  synchronized: number;
+  failed: number;
+}>;
+
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -89,6 +164,55 @@ function fieldState(row: DraftRow | null, side: "server" | "local"): FieldState 
   return {
     exists: true,
     value: parseJson<JsonValue>(row[`${side}_value_json`], null),
+  };
+}
+
+function localPhoto(row: PhotoDraftRow): LocalPhotoDraft {
+  return {
+    clientPhotoId: row.client_photo_id,
+    sessionId: row.session_id,
+    serverPhotoId: row.server_photo_id,
+    serverRevision: row.server_revision == null ? null : Number(row.server_revision),
+    serverPhoto: parseJson<MobilePhoto | null>(row.server_photo_json, null),
+    category: row.category,
+    categorySource: row.category_source,
+    roomRef: row.room_ref,
+    roomLabel: row.room_label,
+    caption: row.caption,
+    source: row.source,
+    capturedAt: row.captured_at,
+    captureMetadata: parseJson<PreparedPhoto["captureMetadata"]>(row.capture_metadata_json, {}),
+    objects: [
+      {
+        clientObjectId: row.original_client_object_id,
+        variant: "original",
+        uri: row.original_uri,
+        fileName: row.original_file_name,
+        contentType: row.original_content_type,
+        byteSize: Number(row.original_byte_size),
+        width: row.original_width == null ? null : Number(row.original_width),
+        height: row.original_height == null ? null : Number(row.original_height),
+      },
+      {
+        clientObjectId: row.display_client_object_id,
+        variant: "display",
+        uri: row.display_uri,
+        fileName: row.display_file_name,
+        contentType: row.display_content_type,
+        byteSize: Number(row.display_byte_size),
+        width: row.display_width == null ? null : Number(row.display_width),
+        height: row.display_height == null ? null : Number(row.display_height),
+      },
+    ],
+    position: Number(row.position),
+    state: row.state,
+    attempts: Number(row.attempts),
+    nextAttemptAt: row.next_attempt_at == null ? null : Number(row.next_attempt_at),
+    errorCode: row.error_code,
+    metadataOperationId: row.metadata_operation_id,
+    removeOperationId: row.remove_operation_id,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at),
   };
 }
 
@@ -160,10 +284,60 @@ async function initializeDatabase() {
       ON sync_queue (owner_user_id, state, next_attempt_at, sequence);
     CREATE INDEX IF NOT EXISTS sync_queue_session_idx
       ON sync_queue (owner_user_id, session_id, sequence);
+    CREATE TABLE IF NOT EXISTS photo_drafts (
+      owner_user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      client_photo_id TEXT NOT NULL,
+      server_photo_id TEXT,
+      server_revision INTEGER,
+      server_photo_json TEXT,
+      category TEXT NOT NULL,
+      category_source TEXT NOT NULL,
+      room_ref TEXT,
+      room_label TEXT,
+      caption TEXT NOT NULL,
+      source TEXT NOT NULL,
+      captured_at TEXT NOT NULL,
+      capture_metadata_json TEXT NOT NULL,
+      original_client_object_id TEXT NOT NULL,
+      original_uri TEXT NOT NULL,
+      original_file_name TEXT NOT NULL,
+      original_content_type TEXT NOT NULL,
+      original_byte_size INTEGER NOT NULL,
+      original_width INTEGER,
+      original_height INTEGER,
+      display_client_object_id TEXT NOT NULL,
+      display_uri TEXT NOT NULL,
+      display_file_name TEXT NOT NULL,
+      display_content_type TEXT NOT NULL,
+      display_byte_size INTEGER NOT NULL,
+      display_width INTEGER,
+      display_height INTEGER,
+      position INTEGER NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER,
+      error_code TEXT,
+      metadata_operation_id TEXT,
+      remove_operation_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, session_id, client_photo_id)
+    );
+    CREATE INDEX IF NOT EXISTS photo_drafts_due_idx
+      ON photo_drafts (owner_user_id, state, next_attempt_at, created_at);
+    CREATE INDEX IF NOT EXISTS photo_drafts_session_idx
+      ON photo_drafts (owner_user_id, session_id, position, created_at);
   `);
   await database.runAsync(
     `UPDATE sync_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
       WHERE state = 'uploading'`,
+    Date.now(),
+    Date.now(),
+  );
+  await database.runAsync(
+    `UPDATE photo_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
+      WHERE state IN ('registering', 'uploading', 'verifying')`,
     Date.now(),
     Date.now(),
   );
@@ -640,6 +814,326 @@ export class OfflineStore {
       now,
     );
     return operationId;
+  }
+
+  async cachePreparedPhotos(
+    ownerUserId: string,
+    sessionId: string,
+    photos: PreparedPhoto[],
+  ) {
+    if (!photos.length) return;
+    const inspection = await this.database.getFirstAsync<{ session_id: string }>(
+      `SELECT session_id FROM cached_inspections WHERE owner_user_id = ? AND session_id = ?`,
+      ownerUserId,
+      sessionId,
+    );
+    if (!inspection) throw new Error("offline_inspection_not_found");
+    const capacity = await this.database.getFirstAsync<{ count: number }>(
+      `SELECT count(*) AS count
+         FROM photo_drafts
+        WHERE owner_user_id = ? AND session_id = ? AND state <> 'excluded'`,
+      ownerUserId,
+      sessionId,
+    );
+    const occupiedRows = await this.database.getAllAsync<{ position: number }>(
+      `SELECT position FROM photo_drafts
+        WHERE owner_user_id = ? AND session_id = ? AND state <> 'excluded'`,
+      ownerUserId,
+      sessionId,
+    );
+    const existingIds = await this.database.getAllAsync<{ client_photo_id: string }>(
+      `SELECT client_photo_id FROM photo_drafts
+        WHERE owner_user_id = ? AND session_id = ? AND client_photo_id IN (${photos.map(() => "?").join(",")})`,
+      ownerUserId,
+      sessionId,
+      ...photos.map((photo) => photo.clientPhotoId),
+    );
+    const existing = new Set(existingIds.map((row) => row.client_photo_id));
+    const newPhotos = photos.filter((photo) => !existing.has(photo.clientPhotoId));
+    if (Number(capacity?.count || 0) + newPhotos.length > 100) throw new Error("mobile_photo_limit_conflict");
+    const availablePositions = availablePhotoPositions(
+      occupiedRows.map((row) => Number(row.position)),
+    );
+    const now = Date.now();
+    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+      for (const photo of newPhotos) {
+        const original = photo.objects.find((object) => object.variant === "original");
+        const display = photo.objects.find((object) => object.variant === "display");
+        if (!original || !display || original.byteSize <= 0 || display.byteSize <= 0) {
+          throw new Error("empty_mobile_photo_file");
+        }
+        const position = availablePositions.shift();
+        if (!position) throw new Error("mobile_photo_limit_conflict");
+        await transaction.runAsync(
+          `INSERT INTO photo_drafts (
+             owner_user_id, session_id, client_photo_id,
+             category, category_source, room_ref, room_label, caption, source,
+             captured_at, capture_metadata_json,
+             original_client_object_id, original_uri, original_file_name,
+             original_content_type, original_byte_size, original_width, original_height,
+             display_client_object_id, display_uri, display_file_name,
+             display_content_type, display_byte_size, display_width, display_height,
+             position, state, attempts, next_attempt_at, created_at, updated_at
+           ) VALUES (
+             ?, ?, ?,
+             ?, ?, ?, ?, ?, ?,
+             ?, ?,
+             ?, ?, ?,
+             ?, ?, ?, ?,
+             ?, ?, ?,
+             ?, ?, ?, ?,
+             ?, 'queued', 0, ?, ?, ?
+           )`,
+          ownerUserId,
+          sessionId,
+          photo.clientPhotoId,
+          photo.category,
+          photo.categorySource,
+          photo.roomRef,
+          photo.roomLabel,
+          photo.caption,
+          photo.source,
+          photo.capturedAt,
+          JSON.stringify(photo.captureMetadata),
+          original.clientObjectId,
+          original.uri,
+          original.fileName,
+          original.contentType,
+          original.byteSize,
+          original.width,
+          original.height,
+          display.clientObjectId,
+          display.uri,
+          display.fileName,
+          display.contentType,
+          display.byteSize,
+          display.width,
+          display.height,
+          position,
+          now,
+          now,
+          now,
+        );
+      }
+    });
+  }
+
+  async photoDrafts(ownerUserId: string, sessionId: string) {
+    const rows = await this.database.getAllAsync<PhotoDraftRow>(
+      `SELECT * FROM photo_drafts
+        WHERE owner_user_id = ? AND session_id = ?
+        ORDER BY position, created_at, client_photo_id`,
+      ownerUserId,
+      sessionId,
+    );
+    return rows.map(localPhoto);
+  }
+
+  async duePhotoDrafts(ownerUserId: string, limit = 10) {
+    const rows = await this.database.getAllAsync<PhotoDraftRow>(
+      `SELECT * FROM photo_drafts
+        WHERE owner_user_id = ?
+          AND state IN ('queued', 'failed', 'metadata_pending', 'remove_pending')
+          AND COALESCE(next_attempt_at, 0) <= ?
+        ORDER BY created_at, client_photo_id LIMIT ?`,
+      ownerUserId,
+      Date.now(),
+      limit,
+    );
+    return rows.map(localPhoto);
+  }
+
+  async markPhotoDraftState(
+    ownerUserId: string,
+    clientPhotoId: string,
+    state: LocalPhotoState,
+    { incrementAttempts = false }: { incrementAttempts?: boolean } = {},
+  ) {
+    await this.database.runAsync(
+      `UPDATE photo_drafts
+          SET state = ?, attempts = attempts + ?, error_code = NULL,
+              next_attempt_at = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND client_photo_id = ?`,
+      state,
+      incrementAttempts ? 1 : 0,
+      Date.now(),
+      ownerUserId,
+      clientPhotoId,
+    );
+  }
+
+  async recordPhotoFailure(ownerUserId: string, photo: LocalPhotoDraft, errorCode: string) {
+    const attempt = photo.attempts + 1;
+    const now = Date.now();
+    await this.database.runAsync(
+      `UPDATE photo_drafts
+          SET state = 'failed', attempts = ?, error_code = ?, next_attempt_at = ?, updated_at = ?
+        WHERE owner_user_id = ? AND client_photo_id = ?`,
+      attempt,
+      errorCode,
+      now + retryDelayMs(attempt, Math.random()),
+      now,
+      ownerUserId,
+      photo.clientPhotoId,
+    );
+  }
+
+  async cacheRegisteredPhoto(ownerUserId: string, clientPhotoId: string, photo: MobilePhoto) {
+    await this.database.runAsync(
+      `UPDATE photo_drafts
+          SET server_photo_id = ?, server_revision = ?, server_photo_json = ?,
+              state = 'uploading', error_code = NULL, next_attempt_at = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND client_photo_id = ?`,
+      photo.id,
+      photo.revision,
+      JSON.stringify(photo),
+      Date.now(),
+      ownerUserId,
+      clientPhotoId,
+    );
+  }
+
+  async applyServerPhoto(ownerUserId: string, clientPhotoId: string, photo: MobilePhoto) {
+    const state: LocalPhotoState = photo.status === "excluded" ? "excluded" : "synchronized";
+    await this.database.runAsync(
+      `UPDATE photo_drafts
+          SET server_photo_id = ?, server_revision = ?, server_photo_json = ?,
+              caption = COALESCE(?, caption), state = ?, attempts = 0,
+              next_attempt_at = NULL, error_code = NULL,
+              metadata_operation_id = NULL, remove_operation_id = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND client_photo_id = ?`,
+      photo.id,
+      photo.revision,
+      JSON.stringify(photo),
+      photo.caption,
+      state,
+      Date.now(),
+      ownerUserId,
+      clientPhotoId,
+    );
+  }
+
+  async queuePhotoCaption(ownerUserId: string, clientPhotoId: string, caption: string) {
+    const row = await this.database.getFirstAsync<PhotoDraftRow>(
+      "SELECT * FROM photo_drafts WHERE owner_user_id = ? AND client_photo_id = ?",
+      ownerUserId,
+      clientPhotoId,
+    );
+    if (!row) throw new Error("offline_photo_not_found");
+    const normalized = caption.trim().slice(0, 200);
+    const operationId = row.server_photo_id ? Crypto.randomUUID() : null;
+    await this.database.runAsync(
+      `UPDATE photo_drafts
+          SET caption = ?, state = ?, metadata_operation_id = ?,
+              next_attempt_at = ?, error_code = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND client_photo_id = ?`,
+      normalized || row.room_label || row.category,
+      row.server_photo_id ? "metadata_pending" : "queued",
+      operationId,
+      Date.now(),
+      Date.now(),
+      ownerUserId,
+      clientPhotoId,
+    );
+  }
+
+  async queuePhotoRemoval(ownerUserId: string, clientPhotoId: string) {
+    const row = await this.database.getFirstAsync<PhotoDraftRow>(
+      "SELECT * FROM photo_drafts WHERE owner_user_id = ? AND client_photo_id = ?",
+      ownerUserId,
+      clientPhotoId,
+    );
+    if (!row) throw new Error("offline_photo_not_found");
+    if (!row.server_photo_id) {
+      await this.database.runAsync(
+        "DELETE FROM photo_drafts WHERE owner_user_id = ? AND client_photo_id = ?",
+        ownerUserId,
+        clientPhotoId,
+      );
+      return { localOnly: true, photo: localPhoto(row) };
+    }
+    await this.database.runAsync(
+      `UPDATE photo_drafts
+          SET state = 'remove_pending', remove_operation_id = ?,
+              next_attempt_at = ?, error_code = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND client_photo_id = ?`,
+      Crypto.randomUUID(),
+      Date.now(),
+      Date.now(),
+      ownerUserId,
+      clientPhotoId,
+    );
+    return { localOnly: false, photo: localPhoto(row) };
+  }
+
+  async pruneEmptyPhotoPlaceholders(ownerUserId: string, sessionId: string) {
+    const rows = await this.database.getAllAsync<PhotoDraftRow>(
+      `SELECT * FROM photo_drafts
+        WHERE owner_user_id = ? AND session_id = ? AND server_photo_id IS NULL
+          AND (
+            trim(original_uri) = '' OR original_byte_size <= 0
+            OR trim(display_uri) = '' OR display_byte_size <= 0
+          )`,
+      ownerUserId,
+      sessionId,
+    );
+    await this.database.runAsync(
+      `DELETE FROM photo_drafts
+        WHERE owner_user_id = ? AND session_id = ? AND server_photo_id IS NULL
+          AND (
+            trim(original_uri) = '' OR original_byte_size <= 0
+            OR trim(display_uri) = '' OR display_byte_size <= 0
+          )`,
+      ownerUserId,
+      sessionId,
+    );
+    return rows.map(localPhoto);
+  }
+
+  async photoQueueSummary(ownerUserId: string, sessionId: string): Promise<PhotoQueueSummary> {
+    const row = await this.database.getFirstAsync<{
+      total: number;
+      pending: number;
+      synchronized: number;
+      failed: number;
+    }>(
+      `SELECT count(*) AS total,
+              COALESCE(sum(CASE WHEN state IN ('queued', 'registering', 'uploading', 'verifying', 'metadata_pending', 'remove_pending') THEN 1 ELSE 0 END), 0) AS pending,
+              COALESCE(sum(CASE WHEN state = 'synchronized' THEN 1 ELSE 0 END), 0) AS synchronized,
+              COALESCE(sum(CASE WHEN state = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+         FROM photo_drafts WHERE owner_user_id = ? AND session_id = ? AND state <> 'excluded'`,
+      ownerUserId,
+      sessionId,
+    );
+    return {
+      total: Number(row?.total || 0),
+      pending: Number(row?.pending || 0),
+      synchronized: Number(row?.synchronized || 0),
+      failed: Number(row?.failed || 0),
+    };
+  }
+
+  photoUploadRequest(photo: LocalPhotoDraft): PhotoUploadRequest {
+    return {
+      client_photo_id: photo.clientPhotoId,
+      category: photo.category,
+      category_source: photo.categorySource,
+      room_ref: photo.roomRef,
+      room_label: photo.roomLabel,
+      caption: photo.caption,
+      source: photo.source,
+      captured_at: photo.capturedAt,
+      capture_metadata: photo.captureMetadata,
+      objects: photo.objects.map((object) => ({
+        client_object_id: object.clientObjectId,
+        variant: object.variant,
+        file_name: object.fileName,
+        content_type: object.contentType,
+        byte_size: object.byteSize,
+        width: object.width,
+        height: object.height,
+      })),
+    };
   }
 
   operationRequest(row: QueueRow): SyncOperationRequest {

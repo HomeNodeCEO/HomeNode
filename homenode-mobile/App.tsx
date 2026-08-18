@@ -32,6 +32,7 @@ import {
   type LocalConflict,
   type QueueSummary,
 } from "./src/offline/store";
+import { PhotoCapturePanel } from "./src/photos/PhotoCapturePanel";
 
 function friendlyError(reason: unknown) {
   const code = reason instanceof ApiError ? reason.code : reason instanceof Error ? reason.message : "request_failed";
@@ -327,6 +328,7 @@ function AssignmentScreen({ api, property, workflow, user, onBack, onInspect }: 
 
 function InspectionScreen({
   property,
+  api,
   file,
   session,
   store,
@@ -339,6 +341,7 @@ function InspectionScreen({
   onBack,
 }: {
   property: PropertyResult;
+  api: MobileApi;
   file: ReportFile;
   session: InspectionSession;
   store: OfflineStore;
@@ -443,7 +446,14 @@ function InspectionScreen({
           </View>
         ))}
       </View> : null}
-      <Text style={styles.notice}>Phase 3 stores encrypted drafts and a durable retry queue. Photo capture and verified R2 upload will use this queue in Phase 4.</Text>
+      <PhotoCapturePanel
+        api={api}
+        store={store}
+        ownerUserId={ownerUserId}
+        sessionId={session.id}
+        workflowType={file.workflow_type}
+        online={online}
+      />
       <Button title="Return to property" secondary onPress={onBack} />
     </ScrollView>
   );
@@ -516,6 +526,7 @@ function SignedInApp({ config }: { config: MobileConfig }) {
   if (error) return <SafeAreaView style={styles.safe}><View style={styles.signIn}><Text style={styles.error}>{error}</Text><Button title="Sign out" onPress={() => void auth.signOut()} /></View></SafeAreaView>;
   if (!initialized || !user || !store) return <SafeAreaView style={styles.safe}><Loading label="Opening encrypted field drafts…" /></SafeAreaView>;
   if (property && inspection) return <InspectionScreen
+    api={api}
     property={property}
     file={inspection.file}
     session={inspection.session}

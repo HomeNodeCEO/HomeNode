@@ -46,10 +46,54 @@ EXPECTED_HEADERS = BASE_HEADERS + STYLE_HEADERS
 OPTIONAL_SOURCE_HEADERS = [
     "ListingKey",
     "ListingId",
+    "Address",
+    "UnparsedAddress",
+    "PropertyAddress",
+    "StreetAddress",
+    "City",
+    "State",
+    "StateOrProvince",
+    "PostalCode",
+    "Zip",
+    "County",
+    "CountyOrParish",
 ]
 ACCOUNT_PATTERN = re.compile(r"^[A-Z0-9]{17}$")
 EMBEDDED_ACCOUNT_PATTERN = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{17})(?![A-Z0-9])")
 COLLIN_VARIANT_PREFIX = "COLLIN:"
+ADDRESS_FIELDS = ("Address", "UnparsedAddress", "PropertyAddress", "StreetAddress")
+CITY_FIELDS = ("City",)
+COUNTY_FIELDS = ("County", "CountyOrParish")
+ADDRESS_TOKEN_ALIASES = {
+    "ALLEY": "ALY",
+    "AVENUE": "AVE",
+    "BOULEVARD": "BLVD",
+    "CIRCLE": "CIR",
+    "COURT": "CT",
+    "DRIVE": "DR",
+    "EXPRESSWAY": "EXPY",
+    "FREEWAY": "FWY",
+    "HIGHWAY": "HWY",
+    "LANE": "LN",
+    "NORTH": "N",
+    "NORTHEAST": "NE",
+    "NORTHWEST": "NW",
+    "PARKWAY": "PKWY",
+    "PLACE": "PL",
+    "ROAD": "RD",
+    "SOUTH": "S",
+    "SOUTHEAST": "SE",
+    "SOUTHWEST": "SW",
+    "SQUARE": "SQ",
+    "STREET": "ST",
+    "TERRACE": "TER",
+    "TRAIL": "TRL",
+    "WEST": "W",
+    "APARTMENT": "UNIT",
+    "APT": "UNIT",
+    "SUITE": "UNIT",
+    "STE": "UNIT",
+}
 
 
 @dataclass
@@ -86,6 +130,25 @@ def _clean(value: str | None) -> str:
 
 def _clean_account(value: str | None) -> str:
     return _clean(value).upper()
+
+
+def _first_value(raw: dict[str, str], fields: tuple[str, ...]) -> str:
+    return next((_clean(raw.get(field)) for field in fields if _clean(raw.get(field))), "")
+
+
+def _normalize_place(value: object) -> str:
+    text = re.sub(r"[^A-Z0-9]+", " ", _clean(str(value or "")).upper())
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_situs_address(value: object) -> str:
+    """Normalize an MLS or CAD situs line for conservative exact matching."""
+
+    text = _clean(str(value or "")).upper().split(",", 1)[0]
+    text = re.sub(r"#\s*([A-Z0-9-]+)", r" UNIT \1", text)
+    tokens = re.sub(r"[^A-Z0-9]+", " ", text).split()
+    normalized = [ADDRESS_TOKEN_ALIASES.get(token, token) for token in tokens]
+    return " ".join(normalized)
 
 
 def _source_sha256(path: Path) -> str:
@@ -482,276 +545,38 @@ def _account_map(connection, variants: set[str]) -> dict[str, dict[str, Any]]:
     return accounts
 
 
-def _parcel_links(
-    raw: dict[str, str], accounts: dict[str, dict[str, Any]]
-) -> list[ParcelLink]:
-    links: list[ParcelLink] = []
-    for source_position, field in ((1, "ParcelNumber"), (2, "ParcelNumber2")):
-        raw_value = raw[field]
-        if not raw_value:
-            continue
-
-        matched: list[tuple[str, str]] = []
-        for candidate, method in _parcel_variants(raw_value):
-            if candidate not in accounts:
-                continue
-            account_id = accounts[candidate]["account_id"]
-            if account_id not in {item[0] for item in matched}:
-                matched.append((account_id, method))
-
-        if matched:
-            for parcel_sequence, (account_id, method) in enumerate(matched, start=1):
-                links.append(
-                    ParcelLink(
-                        source_position=source_position,
-                        parcel_sequence=parcel_sequence,
-                        parcel_role="primary" if source_position == 1 else "additional",
-                        parcel_number_raw=raw_value,
-                        parcel_number_normalized=account_id,
-                        account_id=account_id,
-                        match_method=method,
-                    )
-                )
-        else:
-            normalized = next(
-                (candidate for candidate, _ in _parcel_variants(raw_value)), None
-            )
-            links.append(
-                ParcelLink(
-                    source_position=source_position,
-                    parcel_sequence=1,
-                    parcel_role="primary" if source_position == 1 else "additional",
-                    parcel_number_raw=raw_value,
-                    parcel_number_normalized=normalized,
-                    account_id=None,
-                    match_method="unmatched",
-                )
-            )
-    return links
-
-
-def _prepare_sales(
+def _address_resolutions(
+    connection,
     rows: list[tuple[int, dict[str, str]]],
-    accounts: dict[str, dict[str, Any]],
-) -> list[PreparedSale]:
-    prepared: list[PreparedSale] = []
+    default_city: str | None = None,
+    default_county: str | None = None,
+) -> dict[int, dict[str, Any]]:
+    """Resolve only unique exact normalized situs-address matches.
+
+    Address matching is deliberately a fallback. A city is required from the
+    row or the import command, and ambiguity leaves the row unresolved for
+    manual review rather than guessing.
+    """
+
+    requested: list[tuple[int, str, str, str]] = []
+    cities: set[str] = set()
     for source_row_number, raw in rows:
-        typed, flags = _typed_values(raw)
-        links = _parcel_links(raw, accounts)
-        resolved_accounts = list(
-            dict.fromkeys(link.account_id for link in links if link.account_id)
-        )
-        primary_links = [
-            link for link in links if link.source_position == 1 and link.account_id
-        ]
-        secondary_links = [
-            link for link in links if link.source_position == 2 and link.account_id
-        ]
-        primary_account_id = (
-            primary_links[0].account_id
-            if primary_links
-            else (secondary_links[0].account_id if secondary_links else None)
-        )
+        address = _normalize_situs_address(_first_value(raw, ADDRESS_FIELDS))
+        city = _normalize_place(_first_value(raw, CITY_FIELDS) or default_city)
+        county = _normalize_place(_first_value(raw, COUNTY_FIELDS) or default_county)
+        if not address or not city:
+            continue
+        requested.append((source_row_number, address, city, county))
+        cities.add(city)
+    if not requested:
+        return {}
 
-        if not resolved_accounts:
-            match_status = "unmatched"
-        elif len(resolved_accounts) > 1:
-            match_status = "multiple"
-        elif primary_links and primary_links[0].match_method == "exact":
-            match_status = "exact"
-        elif primary_links:
-            match_status = "normalized"
-        else:
-            match_status = "secondary"
-
-        has_second_field = bool(raw["ParcelNumber2"])
-        has_multiple_numbers = has_second_field or any(
-            link.parcel_sequence > 1 for link in links
-        )
-        if len(resolved_accounts) > 1:
-            multi_parcel_status = "confirmed"
-            flags.append("confirmed_multi_parcel_sale")
-        elif has_multiple_numbers:
-            multi_parcel_status = "possible"
-            flags.append("possible_multi_parcel_sale")
-        else:
-            multi_parcel_status = "single"
-
-        has_unresolved = any(not link.account_id for link in links)
-        if has_unresolved:
-            flags.append("unresolved_parcel_number")
-
-        flags = list(dict.fromkeys(flags))
-        fingerprint_parcels = (
-            sorted(resolved_accounts)
-            if resolved_accounts
-            else sorted(
-                value
-                for value in (
-                    _clean_account(raw["ParcelNumber"]),
-                    _clean_account(raw["ParcelNumber2"]),
-                )
-                if value
-            )
-        )
-        transaction_fingerprint = _stable_hash(
-            {
-                "parcels": fingerprint_parcels,
-                "close_date": str(typed["close_date"] or ""),
-                "sale_price": str(typed["current_price"] or ""),
-            }
-        )
-
-        prepared.append(
-            PreparedSale(
-                source_row_number=source_row_number,
-                raw_payload=raw,
-                source_record_hash=_source_record_hash(raw),
-                transaction_fingerprint=transaction_fingerprint,
-                typed=typed,
-                parcel_links=links,
-                primary_account_id=primary_account_id,
-                match_status=match_status,
-                has_multiple_parcel_numbers=has_multiple_numbers,
-                multi_parcel_status=multi_parcel_status,
-                has_unresolved_parcel=has_unresolved,
-                requires_additional_review=bool(flags),
-                data_quality_flags=flags,
-            )
-        )
-    return prepared
-
-
-def _summary(
-    prepared: list[PreparedSale],
-    accounts: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    match_counts = Counter(row.match_status for row in prepared)
-    multi_counts = Counter(row.multi_parcel_status for row in prepared)
-    flag_counts = Counter(
-        flag for row in prepared for flag in row.data_quality_flags
-    )
-    resolved_accounts = {
-        link.account_id
-        for row in prepared
-        for link in row.parcel_links
-        if link.account_id
-    }
-    county_counts = Counter(
-        (accounts[account_id]["county"] or "<blank county>")
-        for row in prepared
-        for account_id in [row.primary_account_id]
-        if account_id
-    )
-    record_type_counts = Counter(row.typed["record_type"] for row in prepared)
-    attachment_counts = Counter(
-        row.typed["attachment_type"] for row in prepared
-    )
-    return {
-        "source_rows": len(prepared),
-        "match_status": dict(match_counts),
-        "multi_parcel_status": dict(multi_counts),
-        "rows_with_primary_account": sum(
-            1 for row in prepared if row.primary_account_id
-        ),
-        "rows_without_primary_account": sum(
-            1 for row in prepared if not row.primary_account_id
-        ),
-        "distinct_resolved_accounts": len(resolved_accounts),
-        "county_rows": dict(county_counts),
-        "record_type": dict(record_type_counts),
-        "attachment_type": dict(attachment_counts),
-        "parcel_link_rows": sum(len(row.parcel_links) for row in prepared),
-        "resolved_parcel_links": sum(
-            1 for row in prepared for link in row.parcel_links if link.account_id
-        ),
-        "unresolved_parcel_links": sum(
-            1 for row in prepared for link in row.parcel_links if not link.account_id
-        ),
-        "rows_requiring_review": sum(
-            1 for row in prepared if row.requires_additional_review
-        ),
-        "quality_flags": dict(flag_counts),
-    }
-
-
-def import_sales(
-    path: Path, source_name: str, dry_run: bool = False
-) -> dict[str, Any]:
-    import psycopg2
-    from psycopg2.extras import Json, execute_batch, execute_values
-
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        raise RuntimeError("DATABASE_URL is not set")
-
-    source_sha256 = _source_sha256(path)
-    rows = _load_rows(path)
-    all_variants = {
-        candidate
-        for _, raw in rows
-        for field in ("ParcelNumber", "ParcelNumber2")
-        for candidate, _ in _parcel_variants(raw[field])
-    }
-
-    connection = psycopg2.connect(database_url)
-    try:
-        accounts = _account_map(connection, all_variants)
-        prepared = _prepare_sales(rows, accounts)
-        existing_hashes = _existing_hashes_by_listing_id(
-            connection,
-            {
-                _clean(row.typed.get("listing_id")).upper()
-                for row in prepared
-                if _clean(row.typed.get("listing_id"))
-            },
-        )
-        for row in prepared:
-            listing_id = _clean(row.typed.get("listing_id")).upper()
-            if listing_id in existing_hashes:
-                row.source_record_hash = existing_hashes[listing_id]
-        result = {
-            "source_name": source_name,
-            "source_filename": path.name,
-            "source_sha256": source_sha256,
-            "dry_run": dry_run,
-            **_summary(prepared, accounts),
-        }
-        if dry_run:
-            connection.rollback()
-            return result
-
-        with connection.cursor() as cursor:
-            cursor.execute(_migration_sql())
-
-            source_values = []
-            for row in prepared:
-                typed = row.typed
-                source_values.append(
-                    (
-                        source_name,
-                        path.name,
-                        [path.name],
-                        source_sha256,
-                        row.source_row_number,
-                        row.source_record_hash,
-                        row.transaction_fingerprint,
-                        typed["bedrooms_total"],
-                        typed["bathrooms_total_integer"],
-                        typed["bathrooms_full"],
-                        typed["bathrooms_half"],
-                        typed["living_area"],
-                        typed["lot_size_area"],
-                        typed["current_price"],
-                        typed["ratio_current_price_by_living_area"],
-                        typed["ratio_close_price_by_list_price"],
-                        typed["ratio_close_price_by_original_list_price"],
-                        typed["ratio_close_price_by_living_area"],
-                        typed["days_on_market"],
-                        typed["year_built"],
-                        typed["close_date"],
-                        typed["seller_contributions"],
-                        typed["mls_status"],
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT account_id, county, address, city, postal_code
+            FROM core.accounts
+            WHERE NULLIF(BTRIM(address…3293 tokens truncated…   typed["mls_status"],
                         typed["garage_spaces"],
                         typed["garage_yn"],
                         typed["pool_yn"],
@@ -812,34 +637,42 @@ def import_sales(
                     source_sha256 = EXCLUDED.source_sha256,
                     source_row_number = EXCLUDED.source_row_number,
                     transaction_fingerprint = EXCLUDED.transaction_fingerprint,
-                    bedrooms_total = EXCLUDED.bedrooms_total,
-                    bathrooms_total_integer = EXCLUDED.bathrooms_total_integer,
-                    bathrooms_full = EXCLUDED.bathrooms_full,
-                    bathrooms_half = EXCLUDED.bathrooms_half,
-                    living_area = EXCLUDED.living_area,
-                    lot_size_area = EXCLUDED.lot_size_area,
-                    current_price = EXCLUDED.current_price,
-                    ratio_current_price_by_living_area = EXCLUDED.ratio_current_price_by_living_area,
-                    ratio_close_price_by_list_price = EXCLUDED.ratio_close_price_by_list_price,
-                    ratio_close_price_by_original_list_price = EXCLUDED.ratio_close_price_by_original_list_price,
-                    ratio_close_price_by_living_area = EXCLUDED.ratio_close_price_by_living_area,
-                    days_on_market = EXCLUDED.days_on_market,
-                    year_built = EXCLUDED.year_built,
-                    close_date = EXCLUDED.close_date,
-                    seller_contributions = EXCLUDED.seller_contributions,
-                    mls_status = EXCLUDED.mls_status,
-                    garage_spaces = EXCLUDED.garage_spaces,
-                    garage_yn = EXCLUDED.garage_yn,
-                    pool_yn = EXCLUDED.pool_yn,
-                    listing_contract_date = EXCLUDED.listing_contract_date,
-                    parcel_number_raw = EXCLUDED.parcel_number_raw,
-                    parcel_number2_raw = EXCLUDED.parcel_number2_raw,
-                    buyer_financing = EXCLUDED.buyer_financing,
-                    record_type = EXCLUDED.record_type,
-                    structural_style = EXCLUDED.structural_style,
-                    housing_type = EXCLUDED.housing_type,
-                    attachment_type = EXCLUDED.attachment_type,
-                    architectural_style = EXCLUDED.architectural_style,
+                    bedrooms_total = COALESCE(EXCLUDED.bedrooms_total, core.sales_source_records.bedrooms_total),
+                    bathrooms_total_integer = COALESCE(EXCLUDED.bathrooms_total_integer, core.sales_source_records.bathrooms_total_integer),
+                    bathrooms_full = COALESCE(EXCLUDED.bathrooms_full, core.sales_source_records.bathrooms_full),
+                    bathrooms_half = COALESCE(EXCLUDED.bathrooms_half, core.sales_source_records.bathrooms_half),
+                    living_area = COALESCE(EXCLUDED.living_area, core.sales_source_records.living_area),
+                    lot_size_area = COALESCE(EXCLUDED.lot_size_area, core.sales_source_records.lot_size_area),
+                    current_price = COALESCE(EXCLUDED.current_price, core.sales_source_records.current_price),
+                    ratio_current_price_by_living_area = COALESCE(EXCLUDED.ratio_current_price_by_living_area, core.sales_source_records.ratio_current_price_by_living_area),
+                    ratio_close_price_by_list_price = COALESCE(EXCLUDED.ratio_close_price_by_list_price, core.sales_source_records.ratio_close_price_by_list_price),
+                    ratio_close_price_by_original_list_price = COALESCE(EXCLUDED.ratio_close_price_by_original_list_price, core.sales_source_records.ratio_close_price_by_original_list_price),
+                    ratio_close_price_by_living_area = COALESCE(EXCLUDED.ratio_close_price_by_living_area, core.sales_source_records.ratio_close_price_by_living_area),
+                    days_on_market = COALESCE(EXCLUDED.days_on_market, core.sales_source_records.days_on_market),
+                    year_built = COALESCE(EXCLUDED.year_built, core.sales_source_records.year_built),
+                    close_date = COALESCE(EXCLUDED.close_date, core.sales_source_records.close_date),
+                    seller_contributions = COALESCE(EXCLUDED.seller_contributions, core.sales_source_records.seller_contributions),
+                    mls_status = COALESCE(EXCLUDED.mls_status, core.sales_source_records.mls_status),
+                    garage_spaces = COALESCE(EXCLUDED.garage_spaces, core.sales_source_records.garage_spaces),
+                    garage_yn = COALESCE(EXCLUDED.garage_yn, core.sales_source_records.garage_yn),
+                    pool_yn = COALESCE(EXCLUDED.pool_yn, core.sales_source_records.pool_yn),
+                    listing_contract_date = COALESCE(EXCLUDED.listing_contract_date, core.sales_source_records.listing_contract_date),
+                    parcel_number_raw = COALESCE(EXCLUDED.parcel_number_raw, core.sales_source_records.parcel_number_raw),
+                    parcel_number2_raw = COALESCE(EXCLUDED.parcel_number2_raw, core.sales_source_records.parcel_number2_raw),
+                    buyer_financing = COALESCE(EXCLUDED.buyer_financing, core.sales_source_records.buyer_financing),
+                    record_type = CASE
+                        WHEN EXCLUDED.mls_status IS NULL
+                            THEN core.sales_source_records.record_type
+                        ELSE EXCLUDED.record_type
+                    END,
+                    structural_style = COALESCE(EXCLUDED.structural_style, core.sales_source_records.structural_style),
+                    housing_type = COALESCE(EXCLUDED.housing_type, core.sales_source_records.housing_type),
+                    attachment_type = CASE
+                        WHEN EXCLUDED.structural_style IS NULL
+                            THEN core.sales_source_records.attachment_type
+                        ELSE EXCLUDED.attachment_type
+                    END,
+                    architectural_style = COALESCE(EXCLUDED.architectural_style, core.sales_source_records.architectural_style),
                     listing_key = COALESCE(
                         NULLIF(EXCLUDED.listing_key, ''),
                         core.sales_source_records.listing_key
@@ -851,10 +684,18 @@ def import_sales(
                     primary_account_id = CASE
                         WHEN core.sales_source_records.match_status = 'manual_verified'
                             THEN core.sales_source_records.primary_account_id
+                        WHEN core.sales_source_records.primary_account_id IS NOT NULL
+                             AND core.sales_source_records.match_status <> 'unmatched'
+                             AND EXCLUDED.match_status IN ('unmatched', 'address')
+                            THEN core.sales_source_records.primary_account_id
                         ELSE EXCLUDED.primary_account_id
                     END,
                     match_status = CASE
                         WHEN core.sales_source_records.match_status = 'manual_verified'
+                            THEN core.sales_source_records.match_status
+                        WHEN core.sales_source_records.primary_account_id IS NOT NULL
+                             AND core.sales_source_records.match_status <> 'unmatched'
+                             AND EXCLUDED.match_status IN ('unmatched', 'address')
                             THEN core.sales_source_records.match_status
                         ELSE EXCLUDED.match_status
                     END,
@@ -888,17 +729,37 @@ def import_sales(
 
             cursor.execute(
                 """
-                SELECT id
+                SELECT id, primary_account_id, match_status
                 FROM core.sales_source_records
-                WHERE id = ANY(%s) AND match_status = 'manual_verified'
+                WHERE id = ANY(%s)
                 """,
                 (source_record_ids,),
             )
-            manually_verified_ids = {row[0] for row in cursor.fetchall()}
+            stored_matches = {
+                record_id: (primary_account_id, match_status)
+                for record_id, primary_account_id, match_status in cursor.fetchall()
+            }
+            prepared_by_record_id = {
+                record_ids[row.source_record_hash]: row for row in prepared
+            }
+            manually_verified_ids = {
+                record_id
+                for record_id, (_, match_status) in stored_matches.items()
+                if match_status == "manual_verified"
+            }
+            protected_source_record_ids = {
+                record_id
+                for record_id, (stored_account_id, stored_match_status) in stored_matches.items()
+                if record_id in manually_verified_ids
+                or stored_account_id
+                != prepared_by_record_id[record_id].primary_account_id
+                or stored_match_status
+                != prepared_by_record_id[record_id].match_status
+            }
             replaceable_source_record_ids = [
                 source_record_id
                 for source_record_id in source_record_ids
-                if source_record_id not in manually_verified_ids
+                if source_record_id not in protected_source_record_ids
             ]
 
             if replaceable_source_record_ids:
@@ -909,7 +770,7 @@ def import_sales(
             parcel_values = []
             for row in prepared:
                 source_record_id = record_ids[row.source_record_hash]
-                if source_record_id in manually_verified_ids:
+                if source_record_id in protected_source_record_ids:
                     continue
                 for link in row.parcel_links:
                     parcel_values.append(
@@ -942,7 +803,7 @@ def import_sales(
             matched_rows = [
                 row
                 for row in prepared
-                if record_ids[row.source_record_hash] not in manually_verified_ids
+                if record_ids[row.source_record_hash] not in protected_source_record_ids
                 and row.primary_account_id
                 and row.typed["record_type"] == "closed_sale"
                 and row.typed["close_date"] is not None
@@ -1087,9 +948,21 @@ def main() -> int:
         action="store_true",
         help="Analyze and match rows without changing the database",
     )
+    parser.add_argument(
+        "--default-city",
+        help="City used for exact address fallback when the CSV omits a city column",
+    )
+    parser.add_argument(
+        "--default-county",
+        help="County used to constrain exact address fallback matches",
+    )
     args = parser.parse_args()
     result = import_sales(
-        args.csv_path.resolve(), args.source_name.strip(), dry_run=args.dry_run
+        args.csv_path.resolve(),
+        args.source_name.strip(),
+        dry_run=args.dry_run,
+        default_city=args.default_city,
+        default_county=args.default_county,
     )
     print(json.dumps(result, indent=2, default=str))
     return 0

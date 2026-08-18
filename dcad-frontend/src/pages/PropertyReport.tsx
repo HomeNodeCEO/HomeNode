@@ -3913,21 +3913,25 @@ function AddressHero({
   const refreshNeighborhoodProfile = useCallback(async () => {
     const geometry = assignmentDraft.neighborhood_boundary_geometry ||
       customMarketStudy?.market.custom_geometry;
-    if (!accountId || !geometry || !marketConditionsDraft || neighborhoodProfileLoading) {
+    if (!accountId || !geometry || neighborhoodProfileLoading) {
       if (!geometry) {
-        setNeighborhoodProfileMessage("Run and save an Appraiser-Defined Area in the Market Conditions Analysis below first.");
+        setNeighborhoodProfileMessage("Generate or draw a neighborhood boundary before refreshing area data.");
       }
       return;
     }
+    const profileAsOf = marketConditionsDraft?.asOfDate || new Date().toISOString().slice(0, 10);
+    const profilePeriodMonths = marketConditionsDraft?.periodMonths || 12;
+    const profileContextOverride = marketConditionsDraft?.contextOverride || null;
+    const profileVersion = marketConditionsDraft?.savedAt || profileAsOf;
     setNeighborhoodProfileLoading(true);
     setNeighborhoodProfileMessage("Refreshing market-area ranges, city averages, and boundary streets...");
     try {
       const profile = await getNeighborhoodProfile({
         subjectAccountId: accountId,
-        asOf: marketConditionsDraft.asOfDate,
-        periodMonths: marketConditionsDraft.periodMonths,
+        asOf: profileAsOf,
+        periodMonths: profilePeriodMonths,
         customGeometry: geometry,
-        contextOverride: marketConditionsDraft.contextOverride || null,
+        contextOverride: profileContextOverride,
       });
       const customStudy = profile.analyses.find((analysis) => analysis.market.key === "custom");
       const cityStudy = profile.analyses.find((analysis) => analysis.market.key === "city");
@@ -3964,7 +3968,7 @@ function AddressHero({
           neighborhood_boundary_label:
             customStudy.market.label || "Appraiser-defined market area",
           neighborhood_boundary_source: "sales_comparison_market_conditions",
-          neighborhood_boundary_saved_at: marketConditionsDraft.savedAt || new Date().toISOString(),
+          neighborhood_boundary_saved_at: marketConditionsDraft?.savedAt || new Date().toISOString(),
           neighborhood_boundary_confirmed: geometryChanged
             ? false
             : current.neighborhood_boundary_confirmed,
@@ -3997,7 +4001,7 @@ function AddressHero({
           neighborhood_city_average_age: cityStudy?.summary.average_age ?? "",
           neighborhood_city_average_gla: cityStudy?.summary.average_living_area ?? "",
           neighborhood_city_comparison_as_of:
-            cityStudy?.period.end || marketConditionsDraft.asOfDate || "",
+            cityStudy?.period.end || profileAsOf,
           neighborhood_boundary_streets:
             boundarySummary || current.neighborhood_boundary_streets || "",
           neighborhood_boundary_north: north,
@@ -4020,13 +4024,13 @@ function AddressHero({
           ? "Market ranges and city averages refreshed. Boundary streets could not be refreshed and still require review."
           : "Appraiser-defined ranges, city averages, and four-side boundary suggestions refreshed.",
       );
-      const signature = `${accountId}:${marketConditionsDraft.savedAt}:${JSON.stringify(geometry)}`;
+      const signature = `${accountId}:${profileVersion}:${JSON.stringify(geometry)}`;
       delete neighborhoodProfileRetryAttempts.current[signature];
     } catch (error) {
       setNeighborhoodProfileMessage(
         error instanceof Error ? error.message : "The neighborhood profile could not be refreshed.",
       );
-      const signature = `${accountId}:${marketConditionsDraft.savedAt}:${JSON.stringify(geometry)}`;
+      const signature = `${accountId}:${profileVersion}:${JSON.stringify(geometry)}`;
       const attempts = Number(neighborhoodProfileRetryAttempts.current[signature] || 0);
       if (attempts < 2) {
         neighborhoodProfileRetryAttempts.current[signature] = attempts + 1;
@@ -4159,8 +4163,9 @@ function AddressHero({
   ]);
 
   useEffect(() => {
-    const geometry = customMarketStudy?.market.custom_geometry;
-    if (!neighborhoodSectionReady || !geometry || !accountId || !marketConditionsDraft || assignmentFilesLoading || !assignmentFilesLoaded) return;
+    const geometry = assignmentDraft.neighborhood_boundary_geometry ||
+      customMarketStudy?.market.custom_geometry;
+    if (!neighborhoodSectionReady || !geometry || !accountId || assignmentFilesLoading || !assignmentFilesLoaded) return;
     const structuredBoundariesPresent = [
       assignmentDraft.neighborhood_boundary_north,
       assignmentDraft.neighborhood_boundary_east,
@@ -4175,7 +4180,8 @@ function AddressHero({
       assignmentDraft.neighborhood_sale_count,
     ].every(hasValue);
     if (profileValuesPresent) return;
-    const signature = `${accountId}:${marketConditionsDraft.savedAt}:${JSON.stringify(geometry)}`;
+    const profileVersion = marketConditionsDraft?.savedAt || new Date().toISOString().slice(0, 10);
+    const signature = `${accountId}:${profileVersion}:${JSON.stringify(geometry)}`;
     if (neighborhoodProfileAttemptedSignature.current === signature) return;
     neighborhoodProfileAttemptedSignature.current = signature;
     void refreshNeighborhoodProfile();

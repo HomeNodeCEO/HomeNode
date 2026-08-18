@@ -6,6 +6,7 @@ import {
   UAD_DWELLING_EXTERIOR_ENTITY_GROUPS,
   UAD_DWELLING_EXTERIOR_FIELDS,
 } from "./dwellingExteriorCatalog.js";
+import { UAD_FUNCTIONAL_OBSOLESCENCE_FIELDS } from "./functionalObsolescenceCatalog.js";
 import {
   UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
   UAD_MANUFACTURED_HOME_FIELDS,
@@ -41,6 +42,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
     appliesWhen: manufacturedDwelling,
   },
   unit_interior: { title: "Unit Interior", officialSectionNumber: 10 },
+  functional_obsolescence: { title: "Functional Obsolescence", officialSectionNumber: 11 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -511,6 +513,7 @@ const fields = [
   ...UAD_DWELLING_EXTERIOR_FIELDS,
   ...UAD_MANUFACTURED_HOME_FIELDS,
   ...UAD_UNIT_INTERIOR_FIELDS,
+  ...UAD_FUNCTIONAL_OBSOLESCENCE_FIELDS,
 ];
 
 function fieldKey(field) {

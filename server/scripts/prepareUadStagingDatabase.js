@@ -42,7 +42,7 @@ async function seedEntityValue(workfileId, entityId, context, uid, reportFieldId
        source_type, source_reference, source_observed_at, is_appraiser_confirmed
      ) VALUES (
        $1, $2, $3, $4, $5, $6, $7::jsonb,
-       'calculated', 'uad_staging_fixture.unit_interior', now(), false
+       'calculated', 'uad_staging_fixture', now(), false
      )
      ON CONFLICT DO NOTHING`,
     [randomUUID(), workfileId, entityId, context, uid, reportFieldId, JSON.stringify(value)],
@@ -304,6 +304,14 @@ try {
   }
 
   const sfrWorkfileId = sfrWorkfileResult.rows[0].id;
+  await seedEntityValue(
+    sfrWorkfileId,
+    null,
+    "functional_obsolescence",
+    "3600.0002",
+    "11.000",
+    ["None"],
+  );
   const sfrUnitResult = await pool.query(
     `SELECT id
        FROM appraisal.uad_entities

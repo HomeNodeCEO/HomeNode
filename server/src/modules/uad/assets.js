@@ -11,6 +11,10 @@ import {
   UAD_MANUFACTURED_HOME_IMAGE_CONTENT_TYPES,
 } from "./manufacturedHomeCatalog.js";
 import {
+  UAD_FUNCTIONAL_OBSOLESCENCE_CAPTION_TYPES,
+  UAD_FUNCTIONAL_OBSOLESCENCE_IMAGE_CONTENT_TYPES,
+} from "./functionalObsolescenceCatalog.js";
+import {
   UAD_SKETCH_REPORT_CAPTION_TYPES,
   UAD_SKETCH_REPORT_CONTENT_TYPES,
 } from "./sketchCatalog.js";
@@ -43,6 +47,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [8, new Set(UAD_DWELLING_EXTERIOR_CAPTION_TYPES)],
   [9, new Set(UAD_MANUFACTURED_HOME_CAPTION_TYPES)],
   [10, new Set(UAD_UNIT_INTERIOR_CAPTION_TYPES)],
+  [11, new Set(UAD_FUNCTIONAL_OBSOLESCENCE_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -124,6 +129,12 @@ function normalizeAssetInput(input = {}) {
   }
   if (sectionNumber === 10 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_unit_interior_asset_kind");
+  }
+  if (sectionNumber === 11 && !UAD_FUNCTIONAL_OBSOLESCENCE_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_functional_obsolescence_content_type");
+  }
+  if (sectionNumber === 11 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_functional_obsolescence_asset_kind");
   }
   return {
     kind,

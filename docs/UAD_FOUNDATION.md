@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 10:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 11:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -52,6 +52,10 @@ The editor currently implements Appendix A-1 v1.4 Sections 2 through 10:
 - Sketch captures whether a sketch or floor plan is provided, the official
   ANSI/AMS/Other measurement standard, conditional commentary, verified report
   images, and private supporting measurement sources.
+- Functional Obsolescence captures the exact functional-issue enumeration,
+  enforces an exclusive `None` selection, requires the 33-character `Other`
+  description and issue commentary when applicable, and accepts optional image
+  exhibits without treating them as a UAD photo requirement.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 
@@ -83,7 +87,8 @@ The guarded staging bootstrap also creates empty compatibility relations used
 by the shared HomeNode search tile and two synthetic value-summary rows. The
 site-built SFR fixture includes a deterministic UAD workfile with a
 representative Section 10 unit, area source, level, rooms, and interior
-features while verifying that Section 9 remains hidden; the separate
+features plus a deterministic Section 11 `None` answer while verifying that
+Section 9 remains hidden; the separate
 manufactured-home fixture includes a deterministic UAD workfile whose Section 8
 Construction Method is `Manufactured`, allowing Section 9 to be exercised
 without changing the SFR or copying production tax, owner, or sales data. CI
@@ -131,6 +136,10 @@ categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
   each kitchen, bathroom, and reported physical interior defect. General,
   room, feature, and defect images use the same private R2/mobile contract and
   remain linked to their exact Section 10 entity.
+- Functional Obsolescence always displays as a property-level Section 11. Its
+  controlled issue selections and commentary map directly to the UAD 3.6
+  `FUNCTIONAL_ISSUE` and `PROPERTY_DETAIL` paths. Optional exhibits use the
+  same verified private R2/mobile contract but do not affect completion.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

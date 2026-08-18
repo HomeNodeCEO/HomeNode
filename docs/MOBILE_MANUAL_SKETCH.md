@@ -1,8 +1,9 @@
 # Mobile manual sketch workspace
 
-Status: Phase 6 implements manual measurement, durable offline drafts, server
-revision history, room markers, and room-derived photo labels. LiDAR capture and
-final sketch image/PDF rendering remain deferred.
+Status: Phase 7 adds report-ready SVG/PDF rendering and desktop review to the
+Phase 6 manual measurement, offline draft, revision-history, room-marker, and
+room-derived photo-label foundation. LiDAR capture remains deferred.
+
 
 ## Field workflow
 
@@ -73,6 +74,24 @@ Deleting a marker soft-deletes the room record for history and prevents new
 photos from using that marker; retained appraisal-file photo evidence is not
 deleted.
 
+## Desktop review and report exhibits
+
+The Property Report sketch panel edits area labels, levels, classifications,
+notes, corner coordinates, room labels, room types, photo anchors, and display
+order. The live browser drawing is a draft preview. Every save is normalized and
+recalculated on the server, requires the expected sketch revision, and appends
+history and audit events instead of replacing an earlier revision.
+
+The server renders one landscape letter PDF page per measured area. Each page
+includes the appraisal file number, property address, sketch revision, wall
+dimensions to 0.1 foot, room labels, area classification, square footage,
+perimeter, measurement method, standard, and the appraiser-review disclaimer.
+The SVG uses the same geometry and labels for scalable browser review.
+
+Desktop room renames keep automatic photo captions synchronized while preserving
+captions that an appraiser entered manually.
+
+
 ## API
 
 - `GET /api/mobile/inspection-sessions/:id/sketch` returns the current sketch,
@@ -82,15 +101,19 @@ deleted.
   `base_revision`.
 - `POST /api/mobile/sketches/calculate` remains available as a stateless polygon
   calculator.
+- PATCH /api/accounts/:id/assignment-files/:fileId/mobile-sketch saves the next
+  desktop-reviewed sketch revision using expected_revision.
+- GET .../mobile-sketch/preview.svg returns the scalable review exhibit.
+- GET .../mobile-sketch/report.pdf downloads the report-ready PDF exhibit.
 
-The existing Custom Appraisal property report exposes the latest mobile sketch
-as a read-only review card. Accepting mobile property observations and editing a
-sketch are separate operations.
+
+The existing Custom Appraisal Property Report exposes the latest mobile sketch
+as an editable, file-scoped review workspace. Accepting mobile property
+observations and reviewing a sketch remain separate actions. Custom Appraisal,
+UAD 3.6, and Property Tax Protest file sequences remain isolated.
 
 ## Deferred work
 
-- Render a report-ready sketch image/PDF with full dimension and area labeling.
-- Add desktop relabel/reorder and geometry review tools.
 - Run physical-device usability testing on representative simple, irregular,
   multi-level, below-grade, and nonstandard properties.
 - Add LiDAR as an optional measurement source without making it authoritative.

@@ -390,17 +390,40 @@ export interface AppraisalAssignmentFile {
       by_classification: Record<string, number>;
     };
     document: {
+      schema_version: string;
+      source: 'manual';
+      units: 'feet';
+      dimension_precision_feet: number;
+      measurement_standard: 'ansi_z765_2021' | 'jurisdiction_required_other';
+      alternate_standard_name: string | null;
+      measurement_method: 'exterior' | 'interior_perimeter' | 'plans' | 'mixed';
+      review_status: 'draft' | 'appraiser_confirmed';
+      ansi_review_required: boolean;
       review_notes: string | null;
       areas: Array<{
         id: string;
         label: string;
         level_label: string;
         classification: string;
+        notes: string | null;
+        vertices: Array<{ x: number; y: number }>;
+        position: number;
         calculation: {
           closed: boolean;
           self_intersecting: boolean;
           perimeter_feet: number;
           reported_area_sqft: number | null;
+          closure_gap_feet: number;
+          calculated_area_sqft: number | null;
+          ready_for_area_classification: boolean;
+          bounds: { min_x: number; min_y: number; max_x: number; max_y: number };
+          centroid: { x: number; y: number } | null;
+          segments: Array<{
+            index: number;
+            from: { x: number; y: number };
+            to: { x: number; y: number };
+            length_feet: number;
+          }>;
         };
       }>;
       rooms: Array<{
@@ -409,6 +432,9 @@ export interface AppraisalAssignmentFile {
         area_id: string;
         label: string;
         room_type: string;
+        level_label: string;
+        anchor: { x: number; y: number };
+        position: number;
       }>;
     };
   } | null;
@@ -2286,6 +2312,42 @@ export async function updateAssignmentFile(
   return fetchJSON(
     makeUrl(
       `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}`,
+    ),
+    {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'x-homenode-editor-key': editorKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+/** Save a desktop review as the next immutable mobile-sketch revision. */
+export async function updateMobileInspectionSketch(
+  accountId: string,
+  assignmentFileId: number,
+  input: {
+    sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>['document'];
+    expected_revision: number;
+    reviewer?: string;
+    client_operation_id?: string;
+  },
+  editorKey: string,
+): Promise<{
+  ok: true;
+  sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
+  report_registry_revision: number;
+}> {
+  const id = (accountId || '').trim();
+  return fetchJSON(
+    makeUrl(
+      '/api/accounts/'
+        + encodeURIComponent(id)
+        + '/assignment-files/'
+        + encodeURIComponent(String(assignmentFileId))
+        + '/mobile-sketch',
     ),
     {
       method: 'PATCH',

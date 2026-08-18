@@ -73,6 +73,7 @@ import type { MarketAreaOrigin } from "@/lib/marketAreaGeometry";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 import DeferredReportSection from "@/components/DeferredReportSection";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
+import MobileSketchReview from "@/components/MobileSketchReview";
 
 type DcadOwner = {
   owner_name?: string;
@@ -5606,44 +5607,22 @@ function AddressHero({
               </div>
             ) : null}
 
-            {mobileInspectionSketch ? (
-              <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-900">Mobile measured sketch</div>
-                    <div className="mt-1 text-xs text-slate-600">
-                      {mobileInspectionSketch.measurement_standard === "ansi_z765_2021" ? "ANSI Z765-2021" : "Jurisdiction-required alternate standard"}
-                      {` · ${mobileInspectionSketch.measurement_method.replaceAll("_", " ")}`}
-                    </div>
-                  </div>
-                  <div className={`rounded-full px-3 py-1 text-xs font-semibold ${mobileInspectionSketch.review_status === "appraiser_confirmed" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
-                    {mobileInspectionSketch.review_status === "appraiser_confirmed" ? "Appraiser confirmed" : "Review pending"}
-                  </div>
-                </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Above-grade finished</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.above_grade_finished_sqft.toLocaleString()} sf</div></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Below-grade finished</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.below_grade_finished_sqft.toLocaleString()} sf</div></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Measured areas</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.area_count}</div></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-slate-500">Room labels</div><div className="mt-1 text-base font-semibold text-slate-900">{mobileInspectionSketch.summary.room_count}</div></div>
-                </div>
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                  {mobileInspectionSketch.document.areas.map((area) => (
-                    <div className="rounded-lg border border-slate-200 px-3 py-2 text-xs" key={area.id}>
-                      <div className="font-semibold text-slate-800">{area.label} · {area.level_label}</div>
-                      <div className="mt-1 text-slate-600">
-                        {area.classification.replaceAll("_", " ")} · {area.calculation.reported_area_sqft?.toLocaleString() || "—"} sf · {area.calculation.perimeter_feet.toLocaleString()} ft perimeter
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {mobileInspectionSketch.document.rooms.length ? (
-                  <div className="mt-3 text-xs text-slate-600">
-                    Room-derived photo labels: {mobileInspectionSketch.document.rooms.map((room) => room.label).join(", ")}.
-                  </div>
-                ) : null}
-                {mobileInspectionSketch.document.review_notes ? <div className="mt-3 whitespace-pre-wrap text-xs text-slate-600">{mobileInspectionSketch.document.review_notes}</div> : null}
-                <div className="mt-3 text-[11px] leading-5 text-slate-500">The measured sketch is scoped to appraisal file {activeAssignmentFile?.file_number}. Geometric closure does not replace the appraiser’s ANSI classification and declaration review.</div>
-              </div>
+            {mobileInspectionSketch && activeAssignmentFile && accountId ? (
+              <MobileSketchReview
+                accountId={accountId}
+                assignmentFile={activeAssignmentFile}
+                getEditorKey={editorKeyForSave}
+                onSaved={(savedSketch) => {
+                  const updatedFile = {
+                    ...activeAssignmentFile,
+                    mobile_inspection_sketch: savedSketch,
+                  };
+                  setActiveAssignmentFile(updatedFile);
+                  setAssignmentFiles((current) => current.map((file) =>
+                    file.id === updatedFile.id ? updatedFile : file
+                  ));
+                }}
+              />
             ) : null}
 
             <div className="mt-5 border-t border-slate-200 pt-4">

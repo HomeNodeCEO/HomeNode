@@ -10,6 +10,7 @@ import {
   getInspectionSession,
   listReportFiles,
 } from "./reportFiles.js";
+import { getInspectionSnapshot, syncInspectionOperations } from "./sync.js";
 
 const WRITE_ROLES = new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]);
 
@@ -57,6 +58,11 @@ export function createMobileRouter({ pool, verifier, enabled = false, recentFile
       sketch: {
         manual_measurement: true,
         lidar: false,
+      },
+      offline_sync: {
+        durable_queue: true,
+        maximum_batch_size: 25,
+        conflict_resolution: ["accept_server", "apply_mobile"],
       },
     });
   });
@@ -145,6 +151,27 @@ export function createMobileRouter({ pool, verifier, enabled = false, recentFile
       const session = await getInspectionSession(pool, req.mobileAuth, req.params.sessionId);
       if (!session) return res.status(404).json({ error: "inspection_session_not_found" });
       return res.json({ session });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.get("/inspection-sessions/:sessionId/snapshot", async (req, res) => {
+    try {
+      return res.json(await getInspectionSnapshot(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/sync", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await syncInspectionOperations(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.body || {},
+      ));
     } catch (error) {
       return sendError(res, error);
     }

@@ -5,6 +5,7 @@ import * as WebBrowser from "expo-web-browser";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import type { MobileConfig } from "../config";
+import { clearActiveOfflineUser } from "../offline/store";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -108,19 +109,20 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
   useEffect(() => {
     let active = true;
     void (async () => {
-      try {
-        const [resolvedDiscovery, stored] = await Promise.all([
-          AuthSession.fetchDiscoveryAsync(config.oidcIssuer),
-          loadStoredSession(),
-        ]);
-        if (!active) return;
-        setDiscovery(resolvedDiscovery);
-        setSession(stored);
-      } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : "oidc_discovery_failed");
-      } finally {
-        if (active) setReady(true);
+      const [storedResult, discoveryResult] = await Promise.allSettled([
+        loadStoredSession(),
+        AuthSession.fetchDiscoveryAsync(config.oidcIssuer),
+      ]);
+      if (!active) return;
+      if (storedResult.status === "fulfilled") setSession(storedResult.value);
+      if (discoveryResult.status === "fulfilled") {
+        setDiscovery(discoveryResult.value);
+      } else if (storedResult.status !== "fulfilled" || !storedResult.value) {
+        setError(discoveryResult.reason instanceof Error
+          ? discoveryResult.reason.message
+          : "oidc_discovery_failed");
       }
+      setReady(true);
     })();
     return () => { active = false; };
   }, [config.oidcIssuer]);
@@ -203,7 +205,7 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
     const prior = session;
     setSession(null);
     setError(null);
-    await clearStoredSession();
+    await Promise.all([clearStoredSession(), clearActiveOfflineUser()]);
     if (prior && discovery?.revocationEndpoint) {
       await AuthSession.revokeAsync({
         clientId: config.clientId,

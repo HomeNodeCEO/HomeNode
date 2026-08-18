@@ -2,7 +2,7 @@
   "expo": {
     "name": "HomeNode Appraiser",
     "slug": "homenode-appraiser",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "orientation": "portrait",
     "scheme": "homenode",
     "userInterfaceStyle": "light",
@@ -24,6 +24,13 @@
         "expo-secure-store",
         {
           "configureAndroidBackup": true
+        }
+      ],
+      [
+        "expo-sqlite",
+        {
+          "enableFTS": false,
+          "useSQLCipher": true
         }
       ]
     ]

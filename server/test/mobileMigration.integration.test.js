@@ -433,12 +433,17 @@ test("mobile report files preserve prior versions and allocate separate workflow
     );
     assert.equal(acceptedTargets.rows[0].section_value.main_improvement.foundation, "Slab");
     assert.equal(acceptedTargets.rows[0].assignment_details.subject_condition_rating, "C3");
-    const propertyWideOverride = await pool.query(
-      `SELECT count(*) FROM app.property_attribute_manual_values
-        WHERE account_id = $1 AND attribute_key = 'report.property_characteristics'`,
-      [accountId],
+    const manualTable = await pool.query(
+      "SELECT to_regclass('app.property_attribute_manual_values') IS NOT NULL AS available",
     );
-    assert.equal(Number(propertyWideOverride.rows[0].count), 0);
+    const propertyWideOverrideCount = manualTable.rows[0].available
+      ? Number((await pool.query(
+          `SELECT count(*) FROM app.property_attribute_manual_values
+            WHERE account_id = $1 AND attribute_key = 'report.property_characteristics'`,
+          [accountId],
+        )).rows[0].count)
+      : 0;
+    assert.equal(propertyWideOverrideCount, 0);
 
     const changedFoundation = await syncInspectionOperations(pool, auth, session.session.id, {
       operations: [syncOperation("field.upsert", 6, {

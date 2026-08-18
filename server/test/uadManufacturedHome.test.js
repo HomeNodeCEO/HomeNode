@@ -19,8 +19,8 @@ import { isVerifiedManufacturedHomeAsset } from "../src/modules/uad/manufactured
 
 test("adds official URAR Section 9 as a manufactured-dwelling-only section", () => {
   const sections = getUadEditorSections();
-  const section = sections.at(-1);
-  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9]);
+  const section = sections.find((item) => item.key === "manufactured_home");
+  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10]);
   assert.equal(section?.key, "manufactured_home");
   assert.equal(section?.appliesToEntityType, "dwelling");
   assert.equal(evaluateUadCondition(section?.appliesWhen, (key) => key === "dwelling:0300.0034" ? "Manufactured" : undefined), true);

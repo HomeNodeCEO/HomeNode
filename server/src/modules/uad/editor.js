@@ -15,6 +15,7 @@ import {
 } from "./fieldCatalog.js";
 import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
+import { isVerifiedUnitInteriorAsset } from "./unitInteriorCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 function responseValue(row) {
@@ -69,6 +70,31 @@ function valueLookup(valuesByKey, entityId = null) {
 
 function valuesMap(values) {
   return new Map(values.map((value) => [valueKey(value), value.value]));
+}
+
+const REQUIRED_UNIT_INTERIOR_ROOM_PHOTO_TYPES = new Set([
+  "Bedroom",
+  "DiningRoom",
+  "FamilyRoom",
+  "FullBathroom",
+  "HalfBathroom",
+  "Kitchen",
+  "LivingRoom",
+]);
+
+function unitRoomRequiresPhoto(room, valuesByKey, entities) {
+  const lookup = valueLookup(valuesByKey, room.id);
+  const roomType = lookup("unit_room:0700.0035");
+  if (REQUIRED_UNIT_INTERIOR_ROOM_PHOTO_TYPES.has(roomType)) return true;
+  const roomLevel = lookup("unit_room:0700.0121");
+  return entities.some((entity) => (
+    entity.entity_type === "unit_level"
+    && entity.parent_entity_id === room.parent_entity_id
+    && valueLookup(valuesByKey, entity.id)("unit_level:0700.0030") === roomLevel
+    && ["FullyBelowGrade", "PartiallyBelowGrade"].includes(
+      valueLookup(valuesByKey, entity.id)("unit_level:0700.0029"),
+    )
+  ));
 }
 
 function sectionIsApplicable(section, valuesByKey, entities) {
@@ -128,6 +154,36 @@ function completionFor(values, entities, assets = []) {
         required += programs.length;
         completed += programs.filter((program) => assets.some((asset) => isVerifiedManufacturedHomeAsset(asset, "ManufacturedHomeFinancingProgramEligibilityCertification", program.id))).length;
       }
+    }
+    if (section === "unit_interior") {
+      const rooms = entities.filter((entity) => entity.entity_type === "unit_room");
+      for (const room of rooms) {
+        const roomType = valueLookup(byKey, room.id)("unit_room:0700.0035");
+        if (unitRoomRequiresPhoto(room, byKey, entities)) {
+          required += 1;
+          if (assets.some((asset) => isVerifiedUnitInteriorAsset(asset, roomType, room.id))) completed += 1;
+        }
+      }
+      const units = entities.filter((entity) => entity.entity_type === "unit");
+      for (const unit of units) {
+        const flooringUpdated = valueLookup(byKey, unit.id)("unit:0700.0122");
+        if (flooringUpdated && flooringUpdated !== "NotUpdated") {
+          const flooringFeatures = entities.filter((entity) => (
+            entity.entity_type === "unit_interior_feature"
+            && entity.parent_entity_id === unit.id
+            && valueLookup(byKey, entity.id)("unit_interior_feature:0700.0046") === "Flooring"
+          ));
+          required += 1;
+          if (flooringFeatures.some((feature) => assets.some((asset) => (
+            isVerifiedUnitInteriorAsset(asset, "Flooring", feature.id)
+          )))) completed += 1;
+        }
+      }
+      const defects = entities.filter((entity) => entity.entity_type === "unit_interior_defect");
+      required += defects.length;
+      completed += defects.filter((defect) => assets.some((asset) => (
+        isVerifiedUnitInteriorAsset(asset, "UnitInteriorDefect", defect.id)
+      ))).length;
     }
     result[section] = {
       completed,
@@ -451,6 +507,214 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
       if (manufactureDate && yearBuilt && manufactureDate.slice(0, 4) !== yearBuilt) {
         const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "manufactured_home:0500.0016");
         errors.push(validationError(field, dwelling.id, "manufactured_home_year_mismatch", "The Date of Manufacture year must match Year Built in Dwelling Exterior."));
+      }
+    }
+  }
+
+  if (section === "unit_interior") {
+    const units = entities.filter((entity) => entity.entity_type === "unit");
+    const unitIds = new Set(units.map((entity) => entity.id));
+    const childTypes = new Set([
+      "unit_area_data_source",
+      "unit_adu_data_source",
+      "unit_level",
+      "unit_room",
+      "unit_interior_feature",
+      "unit_interior_defect",
+    ]);
+    const baseField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0140");
+    const identifiers = new Set();
+    const amount = (value) => Number(value?.amount ?? 0);
+    const orphanedChildren = entities.filter((entity) => (
+      childTypes.has(entity.entity_type) && !unitIds.has(entity.parent_entity_id)
+    ));
+    if (!units.length) {
+      errors.push(validationError(baseField, null, "unit_required", "Add at least one living unit to the workfile."));
+    }
+    if (orphanedChildren.length) {
+      errors.push(validationError(baseField, null, "unit_interior_parent_conflict", "Unit Interior detail records must belong to a living unit in this workfile."));
+    }
+
+    for (const unit of units) {
+      const lookup = valueLookup(merged, unit.id);
+      const areaSources = entities.filter((entity) => entity.entity_type === "unit_area_data_source" && entity.parent_entity_id === unit.id);
+      const aduSources = entities.filter((entity) => entity.entity_type === "unit_adu_data_source" && entity.parent_entity_id === unit.id);
+      const levels = entities.filter((entity) => entity.entity_type === "unit_level" && entity.parent_entity_id === unit.id);
+      const rooms = entities.filter((entity) => entity.entity_type === "unit_room" && entity.parent_entity_id === unit.id);
+      const features = entities.filter((entity) => entity.entity_type === "unit_interior_feature" && entity.parent_entity_id === unit.id);
+      const defects = entities.filter((entity) => entity.entity_type === "unit_interior_defect" && entity.parent_entity_id === unit.id);
+
+      const unitIdentifier = String(lookup("unit:0700.0114") || "").trim();
+      if ((units.length > 1 || lookup("unit:0700.0089") === true) && !unitIdentifier) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0114");
+        errors.push(validationError(field, unit.id, "unit_identifier_required", "Provide a unique identifier for every multi-unit dwelling unit and ADU."));
+      }
+      if (unitIdentifier) {
+        const normalizedIdentifier = unitIdentifier.toLowerCase();
+        if (identifiers.has(normalizedIdentifier)) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0114");
+          errors.push(validationError(field, unit.id, "duplicate_unit_identifier", "Unit identifiers must be unique within the workfile."));
+        }
+        identifiers.add(normalizedIdentifier);
+      }
+
+      if (!areaSources.length) {
+        errors.push(validationError(baseField, unit.id, "unit_area_source_required", "Add at least one source for the unit area measurements."));
+      }
+      const aduExists = lookup("unit:0700.0089");
+      if (aduExists === true && !aduSources.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0089");
+        errors.push(validationError(field, unit.id, "unit_adu_source_required", "Add at least one source supporting the ADU determination."));
+      }
+      if (aduExists === false && aduSources.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0089");
+        errors.push(validationError(field, unit.id, "unit_adu_source_conflict", "Remove ADU source records or change the ADU answer to Yes."));
+      }
+
+      const reportedLevelCount = Number(lookup("unit:0700.0063"));
+      if (!levels.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0063");
+        errors.push(validationError(field, unit.id, "unit_level_required", "Add every above-grade and below-grade level in this unit."));
+      } else if (Number.isInteger(reportedLevelCount) && reportedLevelCount !== levels.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0063");
+        errors.push(validationError(field, unit.id, "unit_level_count", `Number of levels must match the ${levels.length} saved level record${levels.length === 1 ? "" : "s"}.`));
+      }
+
+      let aboveFinished = 0;
+      let aboveUnfinished = 0;
+      let belowFinished = 0;
+      let belowUnfinished = 0;
+      const levelTypes = new Set();
+      for (const level of levels) {
+        const levelLookup = valueLookup(merged, level.id);
+        const levelType = levelLookup("unit_level:0700.0030");
+        if (levelType) levelTypes.add(levelType);
+        const below = ["FullyBelowGrade", "PartiallyBelowGrade"].includes(levelLookup("unit_level:0700.0029"));
+        if (below) {
+          belowFinished += amount(levelLookup("unit_level:0700.0137"));
+          belowUnfinished += amount(levelLookup("unit_level:0700.0138"));
+        } else {
+          aboveFinished += amount(levelLookup("unit_level:0700.0137"));
+          aboveUnfinished += amount(levelLookup("unit_level:0700.0138"));
+        }
+      }
+      const reportedAboveFinished = amount(lookup("unit:0700.0140")) + amount(lookup("unit:0700.0141"));
+      const reportedBelowFinished = amount(lookup("unit:0700.0143")) + amount(lookup("unit:1800.0398"));
+      const areaChecks = [
+        [aboveFinished, reportedAboveFinished, "above-grade finished"],
+        [aboveUnfinished, amount(lookup("unit:0700.0142")), "above-grade unfinished"],
+        [belowFinished, reportedBelowFinished, "below-grade finished"],
+        [belowUnfinished, amount(lookup("unit:0700.0144")), "below-grade unfinished"],
+      ];
+      for (const [levelTotal, reportedTotal, label] of areaChecks) {
+        if (Math.abs(levelTotal - reportedTotal) > 0.01) {
+          errors.push(validationError(baseField, unit.id, "unit_area_reconciliation", `The ${label} level total (${levelTotal} sq ft) must equal the unit area total (${reportedTotal} sq ft).`));
+        }
+      }
+
+      const roomTypes = rooms.map((room) => valueLookup(merged, room.id)("unit_room:0700.0035"));
+      if (!roomTypes.includes("Kitchen")) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit_room:0700.0035");
+        errors.push(validationError(field, unit.id, "unit_kitchen_required", "Add at least one kitchen for each living unit."));
+      }
+      const roomCountChecks = [
+        ["Bedroom", "unit:0700.0118", "bedroom"],
+        ["FullBathroom", "unit:0700.0119", "full bathroom"],
+        ["HalfBathroom", "unit:0700.0120", "half bathroom"],
+      ];
+      for (const [roomType, fieldKey, label] of roomCountChecks) {
+        const actual = roomTypes.filter((type) => type === roomType).length;
+        const reported = Number(lookup(fieldKey));
+        if (Number.isInteger(reported) && reported !== actual) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === fieldKey);
+          errors.push(validationError(field, unit.id, "unit_room_count", `The ${label} count must match the ${actual} saved ${label} record${actual === 1 ? "" : "s"}.`));
+        }
+      }
+      for (const room of rooms) {
+        const roomLookup = valueLookup(merged, room.id);
+        const roomType = roomLookup("unit_room:0700.0035");
+        const roomLevel = roomLookup("unit_room:0700.0121");
+        if (roomLevel && !levelTypes.has(roomLevel)) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit_room:0700.0121");
+          errors.push(validationError(field, room.id, "unit_room_level_conflict", "Room level must match one of this unit's saved level records."));
+        }
+        if (unitRoomRequiresPhoto(room, merged, entities)
+          && !assets.some((asset) => isVerifiedUnitInteriorAsset(asset, roomType, room.id))) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit_room:0700.0035");
+          const roomLabel = String(roomType || "room").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+          errors.push(validationError(field, room.id, "unit_room_photo_required", `Upload and verify a photo for this ${roomLabel}.`));
+        }
+      }
+
+      const featureTypes = features.map((feature) => valueLookup(merged, feature.id)("unit_interior_feature:0700.0046"));
+      for (const requiredFeature of ["Flooring", "WallsAndCeiling"]) {
+        if (!featureTypes.includes(requiredFeature)) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit_interior_feature:0700.0046");
+          errors.push(validationError(field, unit.id, "unit_interior_feature_required", `Add the required ${requiredFeature.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase()} feature record.`));
+        }
+      }
+      const flooringUpdated = lookup("unit:0700.0122");
+      if (flooringUpdated && flooringUpdated !== "NotUpdated") {
+        const flooringFeatures = features.filter((feature) => (
+          valueLookup(merged, feature.id)("unit_interior_feature:0700.0046") === "Flooring"
+        ));
+        if (!flooringFeatures.some((feature) => assets.some((asset) => (
+          isVerifiedUnitInteriorAsset(asset, "Flooring", feature.id)
+        )))) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0122");
+          errors.push(validationError(field, unit.id, "unit_flooring_update_photo_required", "Upload and verify a photo documenting the reported flooring update."));
+        }
+      }
+
+      const accessibility = lookup("unit_accessibility:0700.0005");
+      if (Array.isArray(accessibility) && accessibility.includes("None") && accessibility.length > 1) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit_accessibility:0700.0005");
+        errors.push(validationError(field, unit.id, "unit_accessibility_none_conflict", "Select None by itself, or remove None before selecting accessibility features."));
+      }
+
+      const defectsExist = lookup("unit:3900.0107");
+      if (defectsExist === true && !defects.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:3900.0107");
+        errors.push(validationError(field, unit.id, "unit_interior_defect_required", "Add every apparent interior defect, damage, or deficiency requiring action."));
+      }
+      if (defectsExist === false && defects.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:3900.0107");
+        errors.push(validationError(field, unit.id, "unit_interior_defect_conflict", "Remove interior defect records or change the interior-defects answer to Yes."));
+      }
+      for (const defect of defects) {
+        if (!assets.some((asset) => isVerifiedUnitInteriorAsset(asset, "UnitInteriorDefect", defect.id))) {
+          const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit_interior_defect:3900.0130");
+          errors.push(validationError(field, defect.id, "unit_interior_defect_photo_required", "Upload and verify a photo documenting this interior defect."));
+        }
+      }
+    }
+
+    const dwellings = entities.filter((entity) => entity.entity_type === "dwelling");
+    for (const dwelling of dwellings) {
+      const dwellingUnits = units.filter((unit) => unit.parent_entity_id === dwelling.id);
+      const reportedDwellingUnits = Number(valueLookup(merged, dwelling.id)("dwelling:0300.0063"));
+      if (Number.isInteger(reportedDwellingUnits) && reportedDwellingUnits !== dwellingUnits.length) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "dwelling:0300.0063");
+        errors.push(validationError(field, dwelling.id, "dwelling_unit_count", `Subject property units in structure must match the ${dwellingUnits.length} saved living unit record${dwellingUnits.length === 1 ? "" : "s"}.`));
+      }
+      const hasPrimaryUnit = dwellingUnits.some((unit) => valueLookup(merged, unit.id)("unit:0700.0089") === false);
+      if (!hasPrimaryUnit) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0089");
+        errors.push(validationError(field, dwelling.id, "dwelling_primary_unit_required", "Each dwelling must contain at least one living unit that is not an ADU."));
+      }
+    }
+    const primaryUnitCount = units.filter((unit) => valueLookup(merged, unit.id)("unit:0700.0089") === false).length;
+    const aduCount = units.filter((unit) => valueLookup(merged, unit.id)("unit:0700.0089") === true).length;
+    const subjectCountChecks = [
+      ["subject:0100.0022", primaryUnitCount, "Living units excluding ADUs"],
+      ["subject:0100.0019", aduCount, "Accessory dwelling units"],
+      ["subject:0100.0021", dwellings.filter((dwelling) => units.some((unit) => unit.parent_entity_id === dwelling.id)).length, "Dwellings containing units"],
+    ];
+    for (const [fieldKey, actual, label] of subjectCountChecks) {
+      const reported = Number(valueLookup(merged)(fieldKey));
+      if (Number.isInteger(reported) && reported !== actual) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === fieldKey);
+        errors.push(validationError(field, null, "subject_unit_count", `${label} must match the ${actual} saved Unit Interior record${actual === 1 ? "" : "s"}.`));
       }
     }
   }

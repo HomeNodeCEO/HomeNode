@@ -123,6 +123,40 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          )
     `);
     assert.equal(manufacturedHomeRules.rows[0].count, 12);
+
+    const unitInteriorFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 10
+    `);
+    assert.ok(unitInteriorFields.rows[0].count >= 75);
+
+    const unitInteriorRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-UNIT-%'
+    `);
+    assert.equal(unitInteriorRules.rows[0].count, 8);
+
+    const officialUnitInteriorRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1138', 'UAD1139', 'UAD1140', 'UAD1141', 'UAD1142', 'UAD1143',
+           'UAD1144', 'UAD1145', 'UAD1146', 'UAD1147', 'UAD1148', 'UAD1149',
+           'UAD1150', 'UAD1151', 'UAD1152', 'UAD1153', 'UAD1154', 'UAD1155',
+           'UAD1156', 'UAD1157', 'UAD1158', 'UAD1160', 'UAD1161', 'UAD1162',
+           'UAD1163', 'UAD1164', 'UAD1165', 'UAD1166', 'UAD1167', 'UAD1168',
+           'UAD1169', 'UAD1170', 'UAD1171', 'UAD1173', 'UAD1174', 'UAD1175',
+           'UAD1176', 'UAD1177', 'UAD1178', 'UAD1182', 'UAD1184', 'UAD1185',
+           'UAD1186', 'UAD1187', 'UAD1188', 'UAD1189', 'UAD1190', 'UAD1484',
+           'UAD1688', 'UAD1694', 'UAD1730', 'UAD1764'
+         )
+    `);
+    assert.equal(officialUnitInteriorRules.rows[0].count, 52);
   } finally {
     await pool.end();
   }

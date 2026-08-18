@@ -35,6 +35,14 @@ const DWELLING_EXTERIOR_CAPTIONS = ["DwellingFront", "DwellingRear", "DwellingEx
 const MANUFACTURED_HOME_GENERAL_CAPTIONS = ["ManufacturedHomeHUDDataPlate", "ManufacturedHomeExhibit"];
 const MANUFACTURED_HOME_HUD_LABEL_CAPTIONS = ["ManufacturedHomeHUDCertificationLabel"];
 const MANUFACTURED_HOME_PROGRAM_CAPTIONS = ["ManufacturedHomeFinancingProgramEligibilityCertification"];
+const UNIT_INTERIOR_GENERAL_CAPTIONS = ["UnitInteriorExhibit"];
+const UNIT_INTERIOR_ROOM_CAPTIONS = [
+  "Bedroom", "BreakfastRoom", "Den", "DiningRoom", "FamilyRoom", "FullBathroom", "HalfBathroom",
+  "Kitchen", "LaundryRoom", "LivingRoom", "Loft", "MediaRoom", "Mudroom", "Other", "RecreationRoom",
+  "Sunroom", "UtilityRoom", "WalkInPantry", "Workshop",
+];
+const UNIT_INTERIOR_FEATURE_CAPTIONS = ["Flooring", "WallsAndCeiling", "OtherInteriorFeature"];
+const UNIT_INTERIOR_DEFECT_CAPTIONS = ["UnitInteriorDefect"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -62,7 +70,10 @@ function evaluateCondition(condition: UadCondition | undefined, lookup: (key: st
   const value = requestedKey ? lookup(requestedKey, !condition.key && Boolean(condition.uid)) : undefined;
   if (Object.hasOwn(condition, "equals")) return value === condition.equals;
   if (Object.hasOwn(condition, "notEquals")) return value !== condition.notEquals;
-  if (Object.hasOwn(condition, "greaterThan")) return Number(value) > Number(condition.greaterThan);
+  if (Object.hasOwn(condition, "greaterThan")) {
+    const numericValue = typeof value === "object" && value && !Array.isArray(value) ? value.amount : value;
+    return Number(numericValue) > Number(condition.greaterThan);
+  }
   if (Object.hasOwn(condition, "contains")) return Array.isArray(value) && value.includes(String(condition.contains));
   if (Object.hasOwn(condition, "present")) return valueIsPresent(value) === condition.present;
   return true;
@@ -117,6 +128,10 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   ));
   const manufacturedHomeHudLabels = editor?.entities.filter((entity) => entity.entity_type === "manufactured_home_hud_label") || [];
   const manufacturedHomePrograms = editor?.entities.filter((entity) => entity.entity_type === "manufactured_home_financing_program") || [];
+  const units = editor?.entities.filter((entity) => entity.entity_type === "unit") || [];
+  const unitRooms = editor?.entities.filter((entity) => entity.entity_type === "unit_room") || [];
+  const unitInteriorFeatures = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_feature") || [];
+  const unitInteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_defect") || [];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -318,7 +333,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-8" aria-label="UAD workfile sections">
+      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-5" aria-label="UAD workfile sections">
         {editor.sections.filter((item) => item.applicable !== false).map((item) => {
           const completion = editor.completion[item.key];
           return (
@@ -362,6 +377,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "manufactured_home" && (
           <div className="mb-5 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm leading-6 text-orange-950">
             Section 9 repeats only for dwellings whose Section 8 Construction Method is Manufactured. Record each skirting material, modification, HUD label, and certification program separately so the workfile can map cleanly into MISMO 3.6.
+          </div>
+        )}
+        {activeSection === "unit_interior" && (
+          <div className="mb-5 rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm leading-6 text-teal-950">
+            Section 10 repeats for every living unit and ADU. Record every level and room, reconcile the area and room counts, add Flooring and Walls and Ceiling features, and attach the required kitchen, bathroom, main-living-area, below-grade, update, ADU, and physical-defect images.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -540,6 +560,62 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               sectionNumber={9}
               title={`${program.label || `Certification program ${program.ordinal}`} image`}
               visibleCaptionTypes={MANUFACTURED_HOME_PROGRAM_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "unit_interior" && units.map((unit) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={UNIT_INTERIOR_GENERAL_CAPTIONS}
+              description="Optional general interior exhibits attach to this living unit. Room, feature, and defect images are attached to their specific records below so the XML relationship remains explicit."
+              emptyMessage="No general unit interior exhibits uploaded."
+              entityId={unit.id}
+              key={`unit-interior-${unit.id}`}
+              sectionNumber={10}
+              title={`${unit.label || `Unit ${unit.ordinal}`} interior exhibits`}
+              visibleCaptionTypes={UNIT_INTERIOR_GENERAL_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "unit_interior" && unitRooms.map((room) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={UNIT_INTERIOR_ROOM_CAPTIONS}
+              description="Verified images are required for every kitchen and bathroom; bedrooms and primary living, family, and dining areas; and every applicable below-grade area. Other room photos may be added when useful."
+              emptyMessage="No verified room image uploaded yet."
+              entityId={room.id}
+              key={`unit-room-${room.id}`}
+              sectionNumber={10}
+              title={`${room.label || `Room ${room.ordinal}`} photo`}
+              visibleCaptionTypes={UNIT_INTERIOR_ROOM_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "unit_interior" && unitInteriorFeatures.map((feature) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={UNIT_INTERIOR_FEATURE_CAPTIONS}
+              description="Optional feature images attach directly to the flooring, walls and ceiling, or other feature record."
+              emptyMessage="No feature image uploaded."
+              entityId={feature.id}
+              key={`unit-feature-${feature.id}`}
+              sectionNumber={10}
+              title={`${feature.label || `Interior feature ${feature.ordinal}`} image`}
+              visibleCaptionTypes={UNIT_INTERIOR_FEATURE_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "unit_interior" && unitInteriorDefects.map((defect) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={UNIT_INTERIOR_DEFECT_CAPTIONS}
+              description="Upload and verify a photo documenting this physical defect, damage, or deficiency."
+              emptyMessage="No verified defect image uploaded yet."
+              entityId={defect.id}
+              key={`unit-defect-${defect.id}`}
+              sectionNumber={10}
+              title={`${defect.label || `Interior defect ${defect.ordinal}`} photo`}
+              visibleCaptionTypes={UNIT_INTERIOR_DEFECT_CAPTIONS}
               workfileId={workfileId}
             />
           ))}

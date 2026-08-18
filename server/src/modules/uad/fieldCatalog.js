@@ -13,12 +13,17 @@ import {
 } from "./manufacturedHomeCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
+import {
+  UAD_UNIT_INTERIOR_ENTITY_GROUPS,
+  UAD_UNIT_INTERIOR_FIELDS,
+} from "./unitInteriorCatalog.js";
 
 export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_SITE_ENTITY_GROUPS,
   ...UAD_DISASTER_ENERGY_ENTITY_GROUPS,
   ...UAD_DWELLING_EXTERIOR_ENTITY_GROUPS,
   ...UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
+  ...UAD_UNIT_INTERIOR_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -35,6 +40,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
     appliesToEntityType: "dwelling",
     appliesWhen: manufacturedDwelling,
   },
+  unit_interior: { title: "Unit Interior", officialSectionNumber: 10 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -504,6 +510,7 @@ const fields = [
   ...UAD_SKETCH_FIELDS,
   ...UAD_DWELLING_EXTERIOR_FIELDS,
   ...UAD_MANUFACTURED_HOME_FIELDS,
+  ...UAD_UNIT_INTERIOR_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -542,7 +549,10 @@ export function evaluateUadCondition(requestedCondition, lookup) {
   const value = key ? lookup(key) : undefined;
   if (Object.hasOwn(requestedCondition, "equals")) return value === requestedCondition.equals;
   if (Object.hasOwn(requestedCondition, "notEquals")) return value !== requestedCondition.notEquals;
-  if (Object.hasOwn(requestedCondition, "greaterThan")) return Number(value) > Number(requestedCondition.greaterThan);
+  if (Object.hasOwn(requestedCondition, "greaterThan")) {
+    const numericValue = value && typeof value === "object" && !Array.isArray(value) ? value.amount : value;
+    return Number(numericValue) > Number(requestedCondition.greaterThan);
+  }
   if (Object.hasOwn(requestedCondition, "contains")) return Array.isArray(value) && value.includes(requestedCondition.contains);
   if (Object.hasOwn(requestedCondition, "present")) return isBlank(value) !== Boolean(requestedCondition.present);
   return true;

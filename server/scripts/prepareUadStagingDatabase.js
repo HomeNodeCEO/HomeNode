@@ -299,7 +299,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-14 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-15 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -312,6 +312,26 @@ try {
   }
 
   const sfrWorkfileId = sfrWorkfileResult.rows[0].id;
+  await seedEntityValue(
+    sfrWorkfileId,
+    null,
+    "subject",
+    "0100.0046",
+    "3.016",
+    true,
+  );
+  const sfrDwellingResult = await pool.query(
+    `SELECT id
+       FROM appraisal.uad_entities
+      WHERE workfile_id = $1 AND entity_type = 'dwelling'
+      ORDER BY ordinal, id
+      LIMIT 1`,
+    [sfrWorkfileId],
+  );
+  if (!sfrDwellingResult.rows.length) throw new Error("site-built staging workfile is missing its dwelling entity");
+  const sfrDwellingId = sfrDwellingResult.rows[0].id;
+  await seedEntityValue(sfrWorkfileId, sfrDwellingId, "dwelling", "1600.0005", "8.022", "Q3");
+  await seedEntityValue(sfrWorkfileId, sfrDwellingId, "dwelling", "1600.0004", "8.023", "C3");
   await seedEntityValue(
     sfrWorkfileId,
     null,
@@ -437,6 +457,16 @@ try {
   for (const [context, uid, reportFieldId, value] of unitValues) {
     await seedEntityValue(sfrWorkfileId, sfrUnitId, context, uid, reportFieldId, value);
   }
+  await seedEntityValue(sfrWorkfileId, null, "subject", "1600.0007", "15.000", "Q3");
+  await seedEntityValue(sfrWorkfileId, null, "subject", "1600.0006", "15.005", "C3");
+  await seedEntityValue(
+    sfrWorkfileId,
+    null,
+    "overall_quality_condition_commentary",
+    "1600.0008",
+    "15.010",
+    "The Q3 and C3 overall ratings reconcile the dwelling exterior and non-ADU unit interior ratings.",
+  );
 
   const areaSourceId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_area_data_source", "unit-area-source-1", 1, "Area Source 1");
   await seedEntityValue(sfrWorkfileId, areaSourceId, "unit_area_data_source", "0700.0125", "10.009", "PhysicalMeasurement");

@@ -16,7 +16,7 @@ import {
 
 test("adds official UAD Site as Section 4 without colliding with Assignment or Subject contexts", () => {
   const sections = getUadEditorSections();
-  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+  assert.deepEqual(sections.map((section) => section.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
   assert.equal(sections[2].key, "site");
   assert.ok(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "site").length >= 50);
   assert.equal(new Set(UAD_PHASE_ONE_FIELDS.map((field) => field.key)).size, UAD_PHASE_ONE_FIELDS.length);

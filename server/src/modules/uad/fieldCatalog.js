@@ -16,6 +16,7 @@ import {
   UAD_OUTBUILDING_ENTITY_GROUPS,
   UAD_OUTBUILDING_FIELDS,
 } from "./outbuildingCatalog.js";
+import { UAD_OVERALL_QUALITY_CONDITION_FIELDS } from "./overallQualityConditionCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 import {
@@ -61,6 +62,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   outbuilding: { title: "Outbuilding", officialSectionNumber: 12 },
   vehicle_storage: { title: "Vehicle Storage", officialSectionNumber: 13 },
   subject_property_amenities: { title: "Subject Property Amenities", officialSectionNumber: 14 },
+  overall_quality_condition: { title: "Overall Quality and Condition", officialSectionNumber: 15 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -535,6 +537,7 @@ const fields = [
   ...UAD_OUTBUILDING_FIELDS,
   ...UAD_VEHICLE_STORAGE_FIELDS,
   ...UAD_SUBJECT_PROPERTY_AMENITIES_FIELDS,
+  ...UAD_OVERALL_QUALITY_CONDITION_FIELDS,
 ];
 
 function fieldKey(field) {

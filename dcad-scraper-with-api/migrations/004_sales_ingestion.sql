@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS core.sales_source_records (
     close_date                              date,
     seller_contributions                    numeric,
     mls_status                              text,
+    record_type                             text NOT NULL DEFAULT 'closed_sale',
+    structural_style                        text,
+    housing_type                            text,
+    attachment_type                         text NOT NULL DEFAULT 'unknown',
+    architectural_style                     text,
     garage_spaces                           numeric,
     garage_yn                               boolean,
     pool_yn                                 boolean,
@@ -49,12 +54,51 @@ CREATE TABLE IF NOT EXISTS core.sales_source_records (
     CONSTRAINT sales_source_records_source_row_unique
         UNIQUE (source_sha256, source_row_number),
     CONSTRAINT sales_source_records_match_status_check
-        CHECK (match_status IN ('exact', 'normalized', 'secondary', 'multiple', 'unmatched')),
+        CHECK (match_status IN (
+            'exact', 'normalized', 'secondary', 'multiple', 'unmatched',
+            'address', 'manual_verified'
+        )),
     CONSTRAINT sales_source_records_multi_status_check
         CHECK (multi_parcel_status IN ('single', 'possible', 'confirmed')),
+    CONSTRAINT sales_source_records_record_type_check
+        CHECK (record_type IN ('closed_sale', 'listing')),
+    CONSTRAINT sales_source_records_attachment_type_check
+        CHECK (attachment_type IN ('detached', 'attached', 'mixed', 'unknown')),
     CONSTRAINT sales_source_records_flags_array_check
         CHECK (jsonb_typeof(data_quality_flags) = 'array')
 );
+
+ALTER TABLE core.sales_source_records
+    ADD COLUMN IF NOT EXISTS record_type text NOT NULL DEFAULT 'closed_sale',
+    ADD COLUMN IF NOT EXISTS structural_style text,
+    ADD COLUMN IF NOT EXISTS housing_type text,
+    ADD COLUMN IF NOT EXISTS attachment_type text NOT NULL DEFAULT 'unknown',
+    ADD COLUMN IF NOT EXISTS architectural_style text;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'sales_source_records_record_type_check'
+          AND conrelid = 'core.sales_source_records'::regclass
+    ) THEN
+        ALTER TABLE core.sales_source_records
+            ADD CONSTRAINT sales_source_records_record_type_check
+            CHECK (record_type IN ('closed_sale', 'listing'));
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'sales_source_records_attachment_type_check'
+          AND conrelid = 'core.sales_source_records'::regclass
+    ) THEN
+        ALTER TABLE core.sales_source_records
+            ADD CONSTRAINT sales_source_records_attachment_type_check
+            CHECK (attachment_type IN ('detached', 'attached', 'mixed', 'unknown'));
+    END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS sales_source_records_primary_account_idx
     ON core.sales_source_records (primary_account_id);
@@ -67,6 +111,163 @@ CREATE INDEX IF NOT EXISTS sales_source_records_fingerprint_idx
 
 CREATE INDEX IF NOT EXISTS sales_source_records_review_idx
     ON core.sales_source_records (requires_additional_review, close_date DESC);
+
+CREATE INDEX IF NOT EXISTS sales_source_records_record_type_idx
+    ON core.sales_source_records (
+        record_type,
+        COALESCE(close_date, listing_contract_date) DESC
+    );
+
+CREATE INDEX IF NOT EXISTS sales_source_records_housing_idx
+    ON core.sales_source_records (
+        attachment_type,
+        housing_type
+    );
+
+CREATE TABLE IF NOT EXISTS core.account_housing_profiles (
+    account_id               text PRIMARY KEY
+                             REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+    structural_style         text,
+    housing_type             text,
+    attachment_type          text NOT NULL DEFAULT 'unknown',
+    architectural_style      text,
+    source_name              text NOT NULL,
+    source_url               text,
+    source_record_reference  text,
+    observed_at              timestamptz,
+    confidence               numeric(4, 3) NOT NULL DEFAULT 1.000,
+    notes                    text,
+    created_at               timestamptz NOT NULL DEFAULT now(),
+    updated_at               timestamptz NOT NULL DEFAULT now(),
+
+    CONSTRAINT account_housing_profiles_attachment_type_check
+        CHECK (attachment_type IN ('detached', 'attached', 'mixed', 'unknown')),
+    CONSTRAINT account_housing_profiles_confidence_check
+        CHECK (confidence >= 0 AND confidence <= 1),
+    CONSTRAINT account_housing_profiles_value_check
+        CHECK (
+            NULLIF(btrim(structural_style), '') IS NOT NULL
+            OR NULLIF(btrim(architectural_style), '') IS NOT NULL
+        )
+);
+
+COMMENT ON TABLE core.account_housing_profiles IS
+    'Curated, source-attributed account-level housing and architectural classifications. Used only as a fallback when an individual MLS source row omits the field.';
+
+CREATE OR REPLACE VIEW core.v_account_housing_profiles AS
+WITH account_ids AS (
+    SELECT DISTINCT primary_account_id AS account_id
+    FROM core.sales_source_records
+    WHERE primary_account_id IS NOT NULL
+    UNION
+    SELECT account_id
+    FROM core.account_housing_profiles
+),
+latest_structural AS (
+    SELECT DISTINCT ON (primary_account_id)
+        primary_account_id AS account_id,
+        structural_style,
+        housing_type,
+        attachment_type,
+        source_name,
+        COALESCE(close_date, listing_contract_date)::timestamptz AS observed_at
+    FROM core.sales_source_records
+    WHERE primary_account_id IS NOT NULL
+      AND NULLIF(btrim(structural_style), '') IS NOT NULL
+    ORDER BY
+        primary_account_id,
+        COALESCE(close_date, listing_contract_date) DESC NULLS LAST,
+        updated_at DESC,
+        id DESC
+),
+latest_architectural AS (
+    SELECT DISTINCT ON (primary_account_id)
+        primary_account_id AS account_id,
+        architectural_style,
+        source_name,
+        COALESCE(close_date, listing_contract_date)::timestamptz AS observed_at
+    FROM core.sales_source_records
+    WHERE primary_account_id IS NOT NULL
+      AND NULLIF(btrim(architectural_style), '') IS NOT NULL
+    ORDER BY
+        primary_account_id,
+        COALESCE(close_date, listing_contract_date) DESC NULLS LAST,
+        updated_at DESC,
+        id DESC
+)
+SELECT
+    ids.account_id,
+    COALESCE(
+        NULLIF(btrim(curated.structural_style), ''),
+        structural.structural_style
+    ) AS structural_style,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+            THEN curated.housing_type
+        ELSE structural.housing_type
+    END AS housing_type,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+            THEN curated.attachment_type
+        ELSE COALESCE(structural.attachment_type, 'unknown')
+    END AS attachment_type,
+    COALESCE(
+        NULLIF(btrim(curated.architectural_style), ''),
+        architectural.architectural_style
+    ) AS architectural_style,
+    COALESCE(
+        CASE
+            WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+              OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+                THEN curated.source_name
+        END,
+        structural.source_name,
+        architectural.source_name
+    ) AS source_name,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.source_url
+    END AS source_url,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.source_record_reference
+    END AS source_record_reference,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.observed_at
+        ELSE GREATEST(structural.observed_at, architectural.observed_at)
+    END AS observed_at,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN curated.confidence
+        ELSE 1.000::numeric
+    END AS confidence,
+    CASE
+        WHEN NULLIF(btrim(curated.structural_style), '') IS NOT NULL
+          OR NULLIF(btrim(curated.architectural_style), '') IS NOT NULL
+            THEN 'verified_override'
+        ELSE 'mls_source_record'
+    END AS profile_source
+FROM account_ids ids
+LEFT JOIN latest_structural structural
+    ON structural.account_id = ids.account_id
+LEFT JOIN latest_architectural architectural
+    ON architectural.account_id = ids.account_id
+LEFT JOIN core.account_housing_profiles curated
+    ON curated.account_id = ids.account_id
+WHERE COALESCE(
+    NULLIF(btrim(curated.structural_style), ''),
+    structural.structural_style,
+    NULLIF(btrim(curated.architectural_style), ''),
+    architectural.architectural_style
+) IS NOT NULL;
+
+COMMENT ON VIEW core.v_account_housing_profiles IS
+    'One field-complete housing profile per account. Curated verified values take precedence; otherwise each field uses its latest nonblank MLS observation independently.';
 
 CREATE TABLE IF NOT EXISTS core.sale_parcels (
     id                       bigserial PRIMARY KEY,
@@ -91,7 +292,7 @@ CREATE TABLE IF NOT EXISTS core.sale_parcels (
     CONSTRAINT sale_parcels_match_method_check
         CHECK (match_method IN (
             'exact', 'punctuation_normalized', 'embedded_full_id',
-            'concatenated_full_ids', 'unmatched'
+            'concatenated_full_ids', 'unmatched', 'manual_verified'
         )),
     CONSTRAINT sale_parcels_source_unique
         UNIQUE (source_record_id, source_position, parcel_sequence)
@@ -157,10 +358,26 @@ SELECT
     COALESCE(NULLIF(btrim(s.account_id), ''), src.primary_account_id)
         AS primary_account_id,
     a.county,
-    COALESCE(s.address, a.address) AS address,
-    s.city,
+    COALESCE(
+        NULLIF(btrim(s.address), ''),
+        NULLIF(btrim(a.address), ''),
+        NULLIF(btrim(src.raw_payload ->> 'Address'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'UnparsedAddress'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'PropertyAddress'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'StreetAddress'), '')
+    ) AS address,
+    COALESCE(
+        NULLIF(btrim(s.city), ''),
+        NULLIF(btrim(a.city), ''),
+        NULLIF(btrim(src.raw_payload ->> 'City'), '')
+    ) AS city,
     s.state,
-    s.zip,
+    COALESCE(
+        NULLIF(btrim(s.zip), ''),
+        NULLIF(btrim(a.postal_code), ''),
+        NULLIF(btrim(src.raw_payload ->> 'PostalCode'), ''),
+        NULLIF(btrim(src.raw_payload ->> 'Zip'), '')
+    ) AS zip,
     COALESCE(s.closing_date, src.close_date) AS closing_date,
     COALESCE(s.sale_price, src.current_price) AS sale_price,
     COALESCE(s.days_on_market, src.days_on_market) AS days_on_market,
@@ -227,7 +444,26 @@ SELECT
     value_current.improvement_value AS cad_improvement_value,
     value_current.market_value AS cad_market_value,
     src.raw_payload,
-    COALESCE(src.loaded_at, s.loaded_at) AS loaded_at
+    COALESCE(src.loaded_at, s.loaded_at) AS loaded_at,
+    COALESCE(src.record_type, 'closed_sale') AS record_type,
+    COALESCE(
+        NULLIF(btrim(src.structural_style), ''),
+        housing_profile.structural_style
+    ) AS structural_style,
+    CASE
+        WHEN NULLIF(btrim(src.structural_style), '') IS NOT NULL
+            THEN src.housing_type
+        ELSE housing_profile.housing_type
+    END AS housing_type,
+    CASE
+        WHEN NULLIF(btrim(src.structural_style), '') IS NOT NULL
+            THEN COALESCE(src.attachment_type, 'unknown')
+        ELSE COALESCE(housing_profile.attachment_type, 'unknown')
+    END AS attachment_type,
+    COALESCE(
+        NULLIF(btrim(src.architectural_style), ''),
+        housing_profile.architectural_style
+    ) AS architectural_style
 FROM core.sales s
 FULL OUTER JOIN core.sales_source_records src
     ON src.id = s.source_record_id
@@ -235,6 +471,11 @@ LEFT JOIN parcel_rollup pr
     ON pr.source_record_id = src.id
 LEFT JOIN core.accounts a
     ON a.account_id = COALESCE(NULLIF(btrim(s.account_id), ''), src.primary_account_id)
+LEFT JOIN core.v_account_housing_profiles housing_profile
+    ON housing_profile.account_id = COALESCE(
+        NULLIF(btrim(s.account_id), ''),
+        src.primary_account_id
+    )
 LEFT JOIN core.primary_improvements pi
     ON pi.account_id = COALESCE(NULLIF(btrim(s.account_id), ''), src.primary_account_id)
 LEFT JOIN core.value_summary_current value_current
@@ -244,4 +485,4 @@ LEFT JOIN core.value_summary_current value_current
     );
 
 COMMENT ON VIEW core.v_sales_enriched IS
-    'One row per sale transaction. Includes legacy sales, all imported source rows, linked parcel flags, MLS snapshots, and current CAD characteristics. Multi-parcel prices remain transaction-level and must not be summed once per parcel.';
+    'One row per closed sale or listing record. Includes legacy sales, all imported source rows, linked parcel flags, MLS snapshots, housing/architectural style, and current CAD characteristics. Multi-parcel prices remain transaction-level and must not be summed once per parcel.';

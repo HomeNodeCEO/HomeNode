@@ -149,6 +149,12 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const vehicleStorageDefects = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage_defect") || [];
   const subjectAmenities = editor?.entities.filter((entity) => entity.entity_type === "amenity") || [];
   const subjectAmenityDefects = editor?.entities.filter((entity) => entity.entity_type === "amenity_defect") || [];
+  const homeownerMaintainsExterior = draft[fieldValueKey("subject", "0100.0046")];
+  const nonAduUnits = units.filter((unit) => draft[fieldValueKey("unit", "0700.0089", unit.id)] === false);
+  const unclassifiedUnits = units.filter((unit) => {
+    const value = draft[fieldValueKey("unit", "0700.0089", unit.id)];
+    return value !== true && value !== false;
+  });
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -336,6 +342,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               </span>
               <span className="mt-0.5 block text-[11px] text-slate-500">Report field {field.reportFieldId} · UID {field.uid}</span>
               {renderControl(field, entityId)}
+              {field.guidance && <span className="mt-1 block text-xs leading-5 text-slate-600">{field.guidance}</span>}
               <span className="mt-1 flex min-h-4 items-center gap-2 text-[11px] text-slate-500">
                 {saved && <span className={`rounded-full px-2 py-0.5 ${saved.is_appraiser_confirmed ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"}`}>{saved.is_appraiser_confirmed ? "Appraiser confirmed" : "HomeNode suggestion"}</span>}
                 {field.maxLength && <span>{String(draft[key] ?? "").length}/{field.maxLength}</span>}
@@ -429,10 +436,75 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             Start with Property Amenities Exist. Add each amenity in its official category so the same record can flow into the Sales Comparison Approach later. Amenity images are optional (up to two each); every reported physical defect requires a verified image and is linked to its amenity.
           </div>
         )}
+        {activeSection === "overall_quality_condition" && (
+          <div className="mb-5 rounded-xl border border-lime-200 bg-lime-50 p-4 text-sm leading-6 text-lime-950">
+            Reconcile the overall Q1-Q6 and C1-C6 conclusions from the Section 8 exterior ratings and each non-ADU Section 10 interior rating. For a subject-to appraisal, the overall condition reflects the property as if the required work were satisfactorily completed. UAD 3.6 associates no images with Section 15.
+          </div>
+        )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
         <div className="space-y-5">
+          {activeSection === "overall_quality_condition" && (
+            <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+              <h3 className="text-base font-semibold text-slate-900">Ratings redisplayed from the workfile</h3>
+              <p className="mt-1 text-sm text-slate-600">These values remain editable in their source sections, so Section 15 and the future submission XML cannot drift apart.</p>
+
+              <div className="mt-4">
+                <h4 className="text-sm font-semibold text-slate-800">Exterior quality and condition · Section 8</h4>
+                {homeownerMaintainsExterior === false && (
+                  <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">Not applicable because Section 3 indicates the homeowner is not responsible for exterior maintenance.</div>
+                )}
+                {homeownerMaintainsExterior !== true && homeownerMaintainsExterior !== false && (
+                  <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">Complete Homeowner Responsible for Exterior Maintenance in Section 3 to determine whether exterior ratings display.</div>
+                )}
+                {homeownerMaintainsExterior === true && (
+                  <div className="mt-2 grid gap-3 md:grid-cols-2">
+                    {dwellings.map((dwelling) => {
+                      const quality = draft[fieldValueKey("dwelling", "1600.0005", dwelling.id)];
+                      const condition = draft[fieldValueKey("dwelling", "1600.0004", dwelling.id)];
+                      const identifier = draft[fieldValueKey("dwelling", "0300.0101", dwelling.id)];
+                      return (
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3" key={`overall-exterior-${dwelling.id}`}>
+                          <div className="text-sm font-semibold text-slate-900">{String(identifier || dwelling.label || `Dwelling ${dwelling.ordinal}`)}</div>
+                          <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                            <span className={`rounded-full px-2.5 py-1 font-semibold ${quality ? "bg-blue-100 text-blue-900" : "bg-amber-100 text-amber-900"}`}>Exterior quality 15.002: {String(quality || "Incomplete")}</span>
+                            <span className={`rounded-full px-2.5 py-1 font-semibold ${condition ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"}`}>Exterior condition 15.007: {String(condition || "Incomplete")}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5">
+                <h4 className="text-sm font-semibold text-slate-800">Interior quality and condition · Section 10 non-ADU units</h4>
+                {unclassifiedUnits.length > 0 && (
+                  <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                    Complete the Section 10 ADU answer for {unclassifiedUnits.map((unit) => unit.label || `Unit ${unit.ordinal}`).join(", ")} before saving Section 15.
+                  </div>
+                )}
+                <div className="mt-2 grid gap-3 md:grid-cols-2">
+                  {nonAduUnits.map((unit) => {
+                    const quality = draft[fieldValueKey("unit", "0700.0067", unit.id)];
+                    const condition = draft[fieldValueKey("unit", "0700.0066", unit.id)];
+                    const identifier = draft[fieldValueKey("unit", "0700.0114", unit.id)];
+                    return (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3" key={`overall-interior-${unit.id}`}>
+                        <div className="text-sm font-semibold text-slate-900">{String(identifier || unit.label || `Unit ${unit.ordinal}`)}</div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                          <span className={`rounded-full px-2.5 py-1 font-semibold ${quality ? "bg-blue-100 text-blue-900" : "bg-amber-100 text-amber-900"}`}>Interior quality 15.004: {String(quality || "Incomplete")}</span>
+                          <span className={`rounded-full px-2.5 py-1 font-semibold ${condition ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-900"}`}>Interior condition 15.009: {String(condition || "Incomplete")}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {!nonAduUnits.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No living unit is currently classified as a non-ADU. Verify the Section 10 ADU answers before saving this section.</div>}
+                </div>
+              </div>
+            </section>
+          )}
           {section.groups.map((group) => {
             if (!group.entityType) {
               const visibleFields = group.fields.filter((field) => isVisible(field));

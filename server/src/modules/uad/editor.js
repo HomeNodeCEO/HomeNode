@@ -17,6 +17,7 @@ import {
 } from "./fieldCatalog.js";
 import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
 import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
+import { UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS } from "./overallQualityConditionCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
 import {
   UAD_SUBJECT_AMENITY_CATEGORIES,
@@ -114,6 +115,24 @@ function workfileHasManufacturedHome(valuesByKey, entities) {
     || (entity.entity_type === "outbuilding"
       && valueLookup(valuesByKey, entity.id)("outbuilding:0300.0025") === "ManufacturedHome")
   ));
+}
+
+function overallQualityConditionSources(valuesByKey, entities) {
+  const rootLookup = valueLookup(valuesByKey);
+  const dwellings = entities.filter((entity) => entity.entity_type === "dwelling");
+  const units = entities.filter((entity) => entity.entity_type === "unit").map((unit) => ({
+    ...unit,
+    accessoryDwellingUnit: valueLookup(valuesByKey, unit.id)(
+      UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.accessoryDwellingUnit,
+    ),
+  }));
+  return {
+    homeownerMaintainsExterior: rootLookup(
+      UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.homeownerMaintainsExterior,
+    ),
+    dwellings,
+    units,
+  };
 }
 
 function sectionIsApplicable(section, valuesByKey, entities) {
@@ -263,6 +282,29 @@ function completionFor(values, entities, assets = []) {
       completed += defects.filter((defect) => assets.some((asset) => (
         isVerifiedSubjectPropertyAmenitiesAsset(asset, "SubjectPropertyAmenityDefect", defect.id)
       ))).length;
+    }
+    if (section === "overall_quality_condition") {
+      const source = overallQualityConditionSources(byKey, entities);
+      required += 1;
+      if (isPresent(source.homeownerMaintainsExterior)) completed += 1;
+      if (source.homeownerMaintainsExterior === true) {
+        for (const dwelling of source.dwellings) {
+          const lookup = valueLookup(byKey, dwelling.id);
+          required += 2;
+          if (isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.exteriorQuality))) completed += 1;
+          if (isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.exteriorCondition))) completed += 1;
+        }
+      }
+      for (const unit of source.units) {
+        required += 1;
+        if (isPresent(unit.accessoryDwellingUnit)) completed += 1;
+        if (unit.accessoryDwellingUnit === false) {
+          const lookup = valueLookup(byKey, unit.id);
+          required += 2;
+          if (isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.interiorQuality))) completed += 1;
+          if (isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.interiorCondition))) completed += 1;
+        }
+      }
     }
     result[section] = {
       completed,
@@ -865,6 +907,77 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
       }
       if (defectImages.length > 4) {
         errors.push(validationError(field, defect.id, "subject_amenity_defect_photo_limit", "No more than four report images may be attached to one amenity defect."));
+      }
+    }
+  }
+
+  if (section === "overall_quality_condition") {
+    const source = overallQualityConditionSources(merged, entities);
+    const overallQualityField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+      candidate.key === UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.overallQuality
+    ));
+    const overallConditionField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+      candidate.key === UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.overallCondition
+    ));
+
+    if (!isPresent(source.homeownerMaintainsExterior)) {
+      errors.push(validationError(
+        overallQualityField,
+        null,
+        "overall_qc_exterior_responsibility_required",
+        "Complete Homeowner Responsible for Exterior Maintenance in Section 3 before reconciling overall quality and condition.",
+      ));
+    }
+
+    if (source.homeownerMaintainsExterior === true) {
+      for (const dwelling of source.dwellings) {
+        const lookup = valueLookup(merged, dwelling.id);
+        if (!isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.exteriorQuality))) {
+          errors.push(validationError(
+            overallQualityField,
+            dwelling.id,
+            "overall_qc_exterior_quality_required",
+            `Complete the Section 8 exterior quality rating for ${dwelling.label || `Dwelling ${dwelling.ordinal}`}.`,
+          ));
+        }
+        if (!isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.exteriorCondition))) {
+          errors.push(validationError(
+            overallConditionField,
+            dwelling.id,
+            "overall_qc_exterior_condition_required",
+            `Complete the Section 8 exterior condition rating for ${dwelling.label || `Dwelling ${dwelling.ordinal}`}.`,
+          ));
+        }
+      }
+    }
+
+    for (const unit of source.units) {
+      if (!isPresent(unit.accessoryDwellingUnit)) {
+        errors.push(validationError(
+          overallQualityField,
+          unit.id,
+          "overall_qc_adu_classification_required",
+          `Complete the Section 10 accessory-dwelling-unit answer for ${unit.label || `Unit ${unit.ordinal}`}.`,
+        ));
+        continue;
+      }
+      if (unit.accessoryDwellingUnit === true) continue;
+      const lookup = valueLookup(merged, unit.id);
+      if (!isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.interiorQuality))) {
+        errors.push(validationError(
+          overallQualityField,
+          unit.id,
+          "overall_qc_interior_quality_required",
+          `Complete the Section 10 interior quality rating for ${unit.label || `Unit ${unit.ordinal}`}.`,
+        ));
+      }
+      if (!isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.interiorCondition))) {
+        errors.push(validationError(
+          overallConditionField,
+          unit.id,
+          "overall_qc_interior_condition_required",
+          `Complete the Section 10 interior condition rating for ${unit.label || `Unit ${unit.ordinal}`}.`,
+        ));
       }
     }
   }

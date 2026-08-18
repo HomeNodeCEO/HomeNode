@@ -264,6 +264,40 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND rule_id LIKE 'HN-UAD-SUBJECT-AMENITIES-%'
     `);
     assert.equal(homeNodeSubjectAmenityRules.rows[0].count, 8);
+
+    const overallQualityConditionFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 15
+    `);
+    assert.equal(overallQualityConditionFields.rows[0].count, 3);
+
+    const overallQualityConditionLocations = await pool.query(`
+      SELECT count(*)::integer AS count,
+             count(*) FILTER (WHERE location_role = 'redisplay')::integer AS redisplay_count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 15
+    `);
+    assert.equal(overallQualityConditionLocations.rows[0].count, 11);
+    assert.equal(overallQualityConditionLocations.rows[0].redisplay_count, 8);
+
+    const officialOverallQualityConditionRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN ('UAD1384', 'UAD1385', 'UAD1387')
+    `);
+    assert.equal(officialOverallQualityConditionRules.rows[0].count, 3);
+
+    const homeNodeOverallQualityConditionRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-OVERALL-QC-%'
+    `);
+    assert.equal(homeNodeOverallQualityConditionRules.rows[0].count, 3);
   } finally {
     await pool.end();
   }

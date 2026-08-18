@@ -1,6 +1,7 @@
 import type { MobileConfig } from "../config";
 import type { WorkflowType } from "../domain/workflows";
 import type { FieldState, JsonValue, SyncOperationRequest } from "../offline/model";
+import type { ManualSketchApiDocument } from "../sketch/model";
 
 export type Organization = {
   organizationId: string;
@@ -170,6 +171,51 @@ export type CustomAppraisalReview = {
       verified_at: string;
     }>;
   };
+};
+
+export type InspectionSketchSummary = {
+  area_count: number;
+  room_count: number;
+  all_areas_closed: boolean;
+  any_self_intersections: boolean;
+  above_grade_finished_sqft: number;
+  below_grade_finished_sqft: number;
+  above_grade_nonstandard_finished_sqft: number;
+  below_grade_nonstandard_finished_sqft: number;
+  above_grade_noncontinuous_finished_sqft: number;
+  above_grade_unfinished_sqft: number;
+  below_grade_unfinished_sqft: number;
+  garage_sqft: number;
+  porch_patio_deck_sqft: number;
+  by_classification: Record<string, number>;
+};
+
+export type InspectionSketch = {
+  id: string;
+  client_sketch_id: string;
+  inspection_session_id: string;
+  report_file_id: string;
+  workflow_type: WorkflowType;
+  revision: number;
+  document: ManualSketchApiDocument;
+  summary: InspectionSketchSummary;
+  review_status: "draft" | "appraiser_confirmed";
+  ansi_review_required: boolean;
+  confirmed_by_user_id: string | null;
+  confirmed_at: string | null;
+  rooms: Array<{
+    id: string;
+    room_ref: string;
+    area_id: string;
+    label: string;
+    room_type: string;
+    level_label: string;
+    anchor: { x: number; y: number };
+    position: number;
+    photo_count: number;
+  }>;
+  created_at: string;
+  updated_at: string;
 };
 
 export type MobilePhotoObject = {
@@ -376,6 +422,36 @@ export class MobileApi {
       {
         method: "POST",
         body: JSON.stringify({ client_operation_id: clientOperationId, decision }),
+      },
+    );
+  }
+
+  async inspectionSketch(sessionId: string) {
+    return this.request<{ session: InspectionSession; sketch: InspectionSketch | null }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/sketch`,
+    );
+  }
+
+  async saveInspectionSketch(sessionId: string, input: {
+    clientOperationId: string;
+    clientSketchId: string;
+    baseRevision: number;
+    sketch: ManualSketchApiDocument;
+  }) {
+    return this.request<{
+      session: InspectionSession;
+      sketch: InspectionSketch;
+      report_registry_revision: number;
+    }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/sketch`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          client_operation_id: input.clientOperationId,
+          client_sketch_id: input.clientSketchId,
+          base_revision: input.baseRevision,
+          sketch: input.sketch,
+        }),
       },
     );
   }

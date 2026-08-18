@@ -34,6 +34,7 @@ import {
   type QueueSummary,
 } from "./src/offline/store";
 import { PhotoCapturePanel } from "./src/photos/PhotoCapturePanel";
+import { SketchEditorPanel, type SelectedSketchRoom } from "./src/sketch/SketchEditorPanel";
 
 function friendlyError(reason: unknown) {
   const code = reason instanceof ApiError ? reason.code : reason instanceof Error ? reason.message : "request_failed";
@@ -360,6 +361,7 @@ function InspectionScreen({
   const [summary, setSummary] = useState<QueueSummary>({ pending: 0, conflicts: 0, synchronized: 0 });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSketchRoom, setSelectedSketchRoom] = useState<SelectedSketchRoom | null>(null);
 
   const loadLocal = useCallback(async () => {
     const [draft, nextConflicts, nextSummary] = await Promise.all([
@@ -374,6 +376,7 @@ function InspectionScreen({
   }, [ownerUserId, session.id, store]);
 
   useEffect(() => { void loadLocal(); }, [globalSummary, loadLocal, syncing]);
+  useEffect(() => { setSelectedSketchRoom(null); }, [session.id]);
 
   const save = async () => {
     setSaving(true);
@@ -447,6 +450,15 @@ function InspectionScreen({
           </View>
         ))}
       </View> : null}
+      <SketchEditorPanel
+        api={api}
+        store={store}
+        ownerUserId={ownerUserId}
+        sessionId={session.id}
+        online={online}
+        selectedRoomId={selectedSketchRoom?.id || null}
+        onSelectRoom={setSelectedSketchRoom}
+      />
       {file.workflow_type === "custom_appraisal" ? <CustomAppraisalPanel
         api={api}
         store={store}
@@ -462,6 +474,7 @@ function InspectionScreen({
         sessionId={session.id}
         workflowType={file.workflow_type}
         online={online}
+        selectedSketchRoom={selectedSketchRoom}
       />
       <Button title="Return to property" secondary onPress={onBack} />
     </ScrollView>

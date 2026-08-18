@@ -365,6 +365,53 @@ export interface AppraisalAssignmentFile {
     last_applied_session_id: string | null;
     updated_at: string;
   }>;
+  mobile_inspection_sketch?: {
+    id: string;
+    revision: number;
+    measurement_standard: 'ansi_z765_2021' | 'jurisdiction_required_other';
+    measurement_method: 'exterior' | 'interior_perimeter' | 'plans' | 'mixed';
+    review_status: 'draft' | 'appraiser_confirmed';
+    confirmed_at: string | null;
+    updated_at: string;
+    summary: {
+      area_count: number;
+      room_count: number;
+      all_areas_closed: boolean;
+      any_self_intersections: boolean;
+      above_grade_finished_sqft: number;
+      below_grade_finished_sqft: number;
+      above_grade_nonstandard_finished_sqft: number;
+      below_grade_nonstandard_finished_sqft: number;
+      above_grade_noncontinuous_finished_sqft: number;
+      above_grade_unfinished_sqft: number;
+      below_grade_unfinished_sqft: number;
+      garage_sqft: number;
+      porch_patio_deck_sqft: number;
+      by_classification: Record<string, number>;
+    };
+    document: {
+      review_notes: string | null;
+      areas: Array<{
+        id: string;
+        label: string;
+        level_label: string;
+        classification: string;
+        calculation: {
+          closed: boolean;
+          self_intersecting: boolean;
+          perimeter_feet: number;
+          reported_area_sqft: number | null;
+        };
+      }>;
+      rooms: Array<{
+        id: string;
+        room_ref: string;
+        area_id: string;
+        label: string;
+        room_type: string;
+      }>;
+    };
+  } | null;
   mobile_inspection_photos?: Array<{
     id: string;
     category: string;

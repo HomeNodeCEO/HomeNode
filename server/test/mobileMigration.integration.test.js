@@ -21,6 +21,7 @@ import {
   updateInspectionPhoto,
   verifyInspectionPhoto,
 } from "../src/modules/mobile/photos.js";
+import { getInspectionSketch, saveInspectionSketch } from "../src/modules/mobile/sketches.js";
 import {
   getInspectionSnapshot,
   syncInspectionOperations,
@@ -184,6 +185,56 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.equal(retriedSession.created, false);
     assert.equal(retriedSession.session.id, session.session.id);
 
+    const sketchAreaId = randomUUID();
+    const sketchRoomId = randomUUID();
+    const sketchOperationId = randomUUID();
+    const sketchRequest = {
+      client_operation_id: sketchOperationId,
+      client_sketch_id: randomUUID(),
+      base_revision: 0,
+      sketch: {
+        measurement_standard: "ansi_z765_2021",
+        measurement_method: "exterior",
+        review_status: "appraiser_confirmed",
+        review_notes: "Exterior dimensions reviewed on site.",
+        areas: [{
+          id: sketchAreaId,
+          label: "First floor",
+          level_label: "Level 1",
+          classification: "above_grade_finished",
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 40, y: 0 },
+            { x: 40, y: 30 },
+            { x: 0, y: 30 },
+            { x: 0, y: 0 },
+          ],
+        }],
+        rooms: [{
+          id: sketchRoomId,
+          area_id: sketchAreaId,
+          label: "Kitchen",
+          room_type: "kitchen",
+          anchor: { x: 20, y: 15 },
+        }],
+      },
+    };
+    const savedSketch = await saveInspectionSketch(pool, auth, session.session.id, sketchRequest);
+    assert.equal(savedSketch.sketch.revision, 1);
+    assert.equal(savedSketch.sketch.summary.above_grade_finished_sqft, 1200);
+    assert.equal(savedSketch.sketch.rooms[0].photo_count, 0);
+    const retriedSketch = await saveInspectionSketch(pool, auth, session.session.id, sketchRequest);
+    assert.deepEqual(retriedSketch, savedSketch);
+    const loadedSketch = await getInspectionSketch(pool, auth, session.session.id);
+    assert.equal(loadedSketch.sketch.review_status, "appraiser_confirmed");
+    await assert.rejects(
+      () => saveInspectionSketch(pool, auth, session.session.id, {
+        ...sketchRequest,
+        client_operation_id: randomUUID(),
+      }),
+      /sketch_revision_conflict/,
+    );
+
     const photoClientId = randomUUID();
     const photoStorage = {
       configured: true,
@@ -211,7 +262,7 @@ test("mobile report files preserve prior versions and allocate separate workflow
         client_photo_id: photoClientId,
         category: "Kitchen",
         category_source: "sketch_room",
-        room_ref: "room-kitchen",
+        room_ref: `sketch-room:${sketchRoomId}`,
         room_label: "Kitchen",
         source: "camera",
         captured_at: "2026-08-23T12:00:00.000Z",

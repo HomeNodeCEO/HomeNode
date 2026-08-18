@@ -9,7 +9,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/config.test.ts test/custom-appraisal.test.ts test/offline-sync.test.ts test/photos.test.ts test/workflows.test.ts",
+    "test": "tsx --test test/config.test.ts test/custom-appraisal.test.ts test/offline-sync.test.ts test/photos.test.ts test/sketch.test.ts test/workflows.test.ts",
     "doctor": "expo-doctor"
   },
   "dependencies": {

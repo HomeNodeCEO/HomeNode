@@ -6,6 +6,7 @@ import type {
   CustomAppraisalReview,
   InspectionConflict,
   InspectionSession,
+  InspectionSketch,
   InspectionSnapshot,
   InspectionSyncResponse,
   MobilePhoto,
@@ -15,6 +16,7 @@ import type {
   ReportFile,
 } from "../api/client";
 import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
+import { draftFromApiDocument, type ManualSketchDraft } from "../sketch/model";
 import {
   retryDelayMs,
   stableJson,
@@ -99,6 +101,20 @@ type PhotoDraftRow = {
   updated_at: number;
 };
 
+type SketchDraftRow = {
+  session_id: string;
+  client_sketch_id: string;
+  server_sketch_json: string | null;
+  draft_json: string;
+  base_revision: number;
+  state: SketchSyncState;
+  client_operation_id: string;
+  attempts: number;
+  next_attempt_at: number | null;
+  error_code: string | null;
+  updated_at: number;
+};
+
 export type CachedInspection = Readonly<{
   property: PropertyResult;
   file: ReportFile;
@@ -150,6 +166,22 @@ export type PhotoQueueSummary = Readonly<{
   pending: number;
   synchronized: number;
   failed: number;
+}>;
+
+export type SketchSyncState = "pending" | "synchronizing" | "synchronized" | "conflict" | "failed";
+
+export type LocalSketchDraft = Readonly<{
+  sessionId: string;
+  clientSketchId: string;
+  serverSketch: InspectionSketch | null;
+  draft: ManualSketchDraft;
+  baseRevision: number;
+  state: SketchSyncState;
+  clientOperationId: string;
+  attempts: number;
+  nextAttemptAt: number | null;
+  errorCode: string | null;
+  updatedAt: number;
 }>;
 
 function parseJson<T>(value: string | null, fallback: T): T {
@@ -218,6 +250,22 @@ function localPhoto(row: PhotoDraftRow): LocalPhotoDraft {
   };
 }
 
+function localSketch(row: SketchDraftRow): LocalSketchDraft {
+  return {
+    sessionId: row.session_id,
+    clientSketchId: row.client_sketch_id,
+    serverSketch: parseJson<InspectionSketch | null>(row.server_sketch_json, null),
+    draft: parseJson<ManualSketchDraft>(row.draft_json, null as unknown as ManualSketchDraft),
+    baseRevision: Number(row.base_revision),
+    state: row.state,
+    clientOperationId: row.client_operation_id,
+    attempts: Number(row.attempts),
+    nextAttemptAt: row.next_attempt_at == null ? null : Number(row.next_attempt_at),
+    errorCode: row.error_code,
+    updatedAt: Number(row.updated_at),
+  };
+}
+
 async function databasePassword() {
   const existing = await SecureStore.getItemAsync(DATABASE_KEY);
   if (existing && /^[a-f0-9]{64}$/.test(existing)) return existing;
@@ -271,6 +319,23 @@ async function initializeDatabase() {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (owner_user_id, session_id)
     );
+    CREATE TABLE IF NOT EXISTS sketch_drafts (
+      owner_user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      client_sketch_id TEXT NOT NULL,
+      server_sketch_json TEXT,
+      draft_json TEXT NOT NULL,
+      base_revision INTEGER NOT NULL DEFAULT 0,
+      state TEXT NOT NULL DEFAULT 'pending',
+      client_operation_id TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER,
+      error_code TEXT,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, session_id)
+    );
+    CREATE INDEX IF NOT EXISTS sketch_drafts_due_idx
+      ON sketch_drafts (owner_user_id, state, next_attempt_at, updated_at);
     CREATE TABLE IF NOT EXISTS sync_queue (
       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
       owner_user_id TEXT NOT NULL,
@@ -347,6 +412,12 @@ async function initializeDatabase() {
   await database.runAsync(
     `UPDATE photo_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
       WHERE state IN ('registering', 'uploading', 'verifying')`,
+    Date.now(),
+    Date.now(),
+  );
+  await database.runAsync(
+    `UPDATE sketch_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
+      WHERE state = 'synchronizing'`,
     Date.now(),
     Date.now(),
   );
@@ -459,6 +530,183 @@ export class OfflineStore {
     return row
       ? parseJson<CustomAppraisalReview>(row.review_json, null as unknown as CustomAppraisalReview)
       : null;
+  }
+
+  async sketchDraft(ownerUserId: string, sessionId: string) {
+    const row = await this.database.getFirstAsync<SketchDraftRow>(
+      "SELECT * FROM sketch_drafts WHERE owner_user_id = ? AND session_id = ?",
+      ownerUserId,
+      sessionId,
+    );
+    return row ? localSketch(row) : null;
+  }
+
+  async cacheServerSketch(ownerUserId: string, sessionId: string, sketch: InspectionSketch) {
+    const existing = await this.database.getFirstAsync<SketchDraftRow>(
+      "SELECT * FROM sketch_drafts WHERE owner_user_id = ? AND session_id = ?",
+      ownerUserId,
+      sessionId,
+    );
+    const now = Date.now();
+    await this.database.runAsync(
+      `INSERT INTO sketch_drafts (
+         owner_user_id, session_id, client_sketch_id, server_sketch_json, draft_json,
+         base_revision, state, client_operation_id, attempts, next_attempt_at,
+         error_code, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, 'synchronized', ?, 0, NULL, NULL, ?)
+       ON CONFLICT (owner_user_id, session_id) DO UPDATE SET
+         client_sketch_id = CASE WHEN sketch_drafts.state IN ('pending', 'synchronizing', 'failed', 'conflict')
+           THEN sketch_drafts.client_sketch_id ELSE excluded.client_sketch_id END,
+         server_sketch_json = excluded.server_sketch_json,
+         draft_json = CASE WHEN sketch_drafts.state IN ('pending', 'synchronizing', 'failed', 'conflict')
+           THEN sketch_drafts.draft_json ELSE excluded.draft_json END,
+         base_revision = excluded.base_revision,
+         state = CASE WHEN sketch_drafts.state IN ('pending', 'synchronizing', 'failed', 'conflict')
+           THEN sketch_drafts.state ELSE 'synchronized' END,
+         updated_at = excluded.updated_at`,
+      ownerUserId,
+      sessionId,
+      sketch.client_sketch_id,
+      JSON.stringify(sketch),
+      JSON.stringify(draftFromApiDocument(sketch.document)),
+      sketch.revision,
+      existing?.client_operation_id || Crypto.randomUUID(),
+      now,
+    );
+    return this.sketchDraft(ownerUserId, sessionId);
+  }
+
+  async queueSketchDraft(
+    ownerUserId: string,
+    sessionId: string,
+    clientSketchId: string,
+    draft: ManualSketchDraft,
+  ) {
+    const existing = await this.database.getFirstAsync<SketchDraftRow>(
+      "SELECT * FROM sketch_drafts WHERE owner_user_id = ? AND session_id = ?",
+      ownerUserId,
+      sessionId,
+    );
+    if (existing && existing.client_sketch_id !== clientSketchId) throw new Error("sketch_identity_conflict");
+    const now = Date.now();
+    const operationId = Crypto.randomUUID();
+    await this.database.runAsync(
+      `INSERT INTO sketch_drafts (
+         owner_user_id, session_id, client_sketch_id, server_sketch_json, draft_json,
+         base_revision, state, client_operation_id, attempts, next_attempt_at,
+         error_code, updated_at
+       ) VALUES (?, ?, ?, NULL, ?, 0, 'pending', ?, 0, ?, NULL, ?)
+       ON CONFLICT (owner_user_id, session_id) DO UPDATE SET
+         draft_json = excluded.draft_json,
+         state = 'pending',
+         client_operation_id = excluded.client_operation_id,
+         attempts = 0,
+         next_attempt_at = excluded.next_attempt_at,
+         error_code = NULL,
+         updated_at = excluded.updated_at`,
+      ownerUserId,
+      sessionId,
+      clientSketchId,
+      JSON.stringify(draft),
+      operationId,
+      now,
+      now,
+    );
+    return this.sketchDraft(ownerUserId, sessionId);
+  }
+
+  async dueSketchDrafts(ownerUserId: string, sessionId?: string) {
+    const rows = await this.database.getAllAsync<SketchDraftRow>(
+      `SELECT * FROM sketch_drafts
+        WHERE owner_user_id = ?
+          AND (? IS NULL OR session_id = ?)
+          AND state IN ('pending', 'failed')
+          AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+        ORDER BY updated_at LIMIT 10`,
+      ownerUserId,
+      sessionId || null,
+      sessionId || null,
+      Date.now(),
+    );
+    return rows.map(localSketch);
+  }
+
+  async markSketchSynchronizing(ownerUserId: string, sessionId: string) {
+    await this.database.runAsync(
+      `UPDATE sketch_drafts SET state = 'synchronizing', attempts = attempts + 1,
+              error_code = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND session_id = ?`,
+      Date.now(),
+      ownerUserId,
+      sessionId,
+    );
+  }
+
+  async applyServerSketch(ownerUserId: string, sessionId: string, sketch: InspectionSketch) {
+    await this.database.runAsync(
+      `UPDATE sketch_drafts
+          SET server_sketch_json = ?, draft_json = ?, base_revision = ?,
+              state = 'synchronized', attempts = 0, next_attempt_at = NULL,
+              error_code = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND session_id = ?`,
+      JSON.stringify(sketch),
+      JSON.stringify(draftFromApiDocument(sketch.document)),
+      sketch.revision,
+      Date.now(),
+      ownerUserId,
+      sessionId,
+    );
+  }
+
+  async recordSketchFailure(ownerUserId: string, draft: LocalSketchDraft, errorCode: string) {
+    const attempts = draft.attempts + 1;
+    await this.database.runAsync(
+      `UPDATE sketch_drafts SET state = 'failed', error_code = ?, next_attempt_at = ?, updated_at = ?
+        WHERE owner_user_id = ? AND session_id = ?`,
+      errorCode,
+      Date.now() + retryDelayMs(attempts),
+      Date.now(),
+      ownerUserId,
+      draft.sessionId,
+    );
+  }
+
+  async markSketchConflict(ownerUserId: string, sessionId: string, serverSketch: InspectionSketch) {
+    await this.database.runAsync(
+      `UPDATE sketch_drafts
+          SET server_sketch_json = ?, base_revision = ?, state = 'conflict',
+              error_code = 'sketch_revision_conflict', next_attempt_at = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND session_id = ?`,
+      JSON.stringify(serverSketch),
+      serverSketch.revision,
+      Date.now(),
+      ownerUserId,
+      sessionId,
+    );
+  }
+
+  async acceptServerSketch(ownerUserId: string, sessionId: string) {
+    const current = await this.sketchDraft(ownerUserId, sessionId);
+    if (!current?.serverSketch) throw new Error("server_sketch_not_found");
+    await this.applyServerSketch(ownerUserId, sessionId, current.serverSketch);
+    return this.sketchDraft(ownerUserId, sessionId);
+  }
+
+  async retryLocalSketch(ownerUserId: string, sessionId: string) {
+    const current = await this.sketchDraft(ownerUserId, sessionId);
+    if (!current) throw new Error("offline_sketch_not_found");
+    await this.database.runAsync(
+      `UPDATE sketch_drafts
+          SET state = 'pending', client_operation_id = ?, attempts = 0,
+              next_attempt_at = ?, error_code = NULL, updated_at = ?
+        WHERE owner_user_id = ? AND session_id = ?`,
+      Crypto.randomUUID(),
+      Date.now(),
+      Date.now(),
+      ownerUserId,
+      sessionId,
+    );
+    return this.sketchDraft(ownerUserId, sessionId);
   }
 
   async generalComments(ownerUserId: string, sessionId: string) {

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { sanitizeUadFileName } from "../uad/r2Storage.js";
 import { normalizeUuid } from "./reportFiles.js";
+import { validateSketchRoom } from "./sketches.js";
 import { canonicalJson } from "./sync.js";
 
 export const MAX_MOBILE_PHOTOS_PER_INSPECTION = 100;
@@ -120,6 +121,12 @@ function normalizePhoto(input) {
   );
   const categorySource = String(input.category_source || (roomLabel ? "sketch_room" : "manual"));
   if (!CATEGORY_SOURCES.has(categorySource)) throw new Error("invalid_mobile_photo_category_source");
+  if (categorySource === "sketch_room" && (!roomRef || !roomLabel)) {
+    throw new Error("invalid_mobile_photo_sketch_room");
+  }
+  if (categorySource !== "sketch_room" && (roomRef || roomLabel)) {
+    throw new Error("invalid_mobile_photo_sketch_room");
+  }
   const source = String(input.source || "camera");
   if (!PHOTO_SOURCES.has(source)) throw new Error("invalid_mobile_photo_source");
   const manualCaption = input.caption == null ? "" : String(input.caption).trim();
@@ -317,6 +324,16 @@ export async function createPhotoUploadBatch(pool, storage, auth, sessionIdValue
     const availablePositions = availableMobilePhotoPositions(activeCountResult.rows[0].positions || []);
     const results = [];
     for (const normalized of normalizedPhotos) {
+      const verifiedRoom = normalized.categorySource === "sketch_room"
+        ? await validateSketchRoom(client, sessionId, normalized.roomRef, normalized.roomLabel)
+        : null;
+      const effective = verifiedRoom ? {
+        ...normalized,
+        category: verifiedRoom.roomLabel,
+        roomRef: verifiedRoom.roomRef,
+        roomLabel: verifiedRoom.roomLabel,
+        caption: normalized.captionSource === "room_auto" ? verifiedRoom.roomLabel : normalized.caption,
+      } : normalized;
       let photoRow = existingByClientId.get(normalized.clientPhotoId);
       if (!photoRow) {
         const photoId = randomUUID();
@@ -343,20 +360,20 @@ export async function createPhotoUploadBatch(pool, storage, auth, sessionIdValue
             normalized.clientPhotoId,
             normalized.requestSha256,
             session.workflow_type,
-            normalized.category,
-            normalized.categorySource,
-            normalized.roomRef,
-            normalized.roomLabel,
-            normalized.caption,
-            normalized.captionSource,
-            normalized.source,
+            effective.category,
+            effective.categorySource,
+            effective.roomRef,
+            effective.roomLabel,
+            effective.caption,
+            effective.captionSource,
+            effective.source,
             position,
-            normalized.capturedAt,
-            JSON.stringify(normalized.captureMetadata),
+            effective.capturedAt,
+            JSON.stringify(effective.captureMetadata),
           ],
         );
         photoRow = inserted.rows[0];
-        for (const object of normalized.objects) {
+        for (const object of effective.objects) {
           const objectId = randomUUID();
           const objectKey = buildMobilePhotoObjectKey({
             organizationId: session.organization_id,
@@ -393,9 +410,10 @@ export async function createPhotoUploadBatch(pool, storage, auth, sessionIdValue
              photo_id, inspection_session_id, actor_user_id, event_type, next_revision, metadata
            ) VALUES ($1, $2, $3, 'photo.created', 1, $4::jsonb)`,
           [photoId, sessionId, auth.userId, JSON.stringify({
-            client_photo_id: normalized.clientPhotoId,
-            category: normalized.category,
-            object_count: normalized.objects.length,
+            client_photo_id: effective.clientPhotoId,
+            category: effective.category,
+            room_ref: effective.roomRef,
+            object_count: effective.objects.length,
           })],
         );
       }
@@ -685,6 +703,17 @@ export async function updateInspectionPhoto(pool, auth, sessionIdValue, photoIdV
       roomLabel: Object.hasOwn(operation.changes, "room_label") ? operation.changes.room_label : photo.room_label,
       position: Object.hasOwn(operation.changes, "position") ? operation.changes.position : Number(photo.position),
     };
+    const changesRoomLink = ["category_source", "room_ref", "room_label"]
+      .some((key) => Object.hasOwn(operation.changes, key));
+    if (changesRoomLink && next.categorySource === "sketch_room") {
+      const verifiedRoom = await validateSketchRoom(client, sessionId, next.roomRef, next.roomLabel);
+      next.category = verifiedRoom.roomLabel;
+      next.roomRef = verifiedRoom.roomRef;
+      next.roomLabel = verifiedRoom.roomLabel;
+    } else if (changesRoomLink && next.categorySource !== "sketch_room") {
+      next.roomRef = null;
+      next.roomLabel = null;
+    }
     const manualCaption = Object.hasOwn(operation.changes, "caption") ? operation.changes.caption : null;
     const caption = manualCaption !== null
       ? (manualCaption || next.roomLabel || next.category)

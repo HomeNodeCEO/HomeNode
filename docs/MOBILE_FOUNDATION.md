@@ -1,7 +1,9 @@
 # HomeNode mobile inspection foundation
 
-Status: Phase 1 foundation. The mobile API remains disabled by default and no
-identity-provider purchase or production migration is part of this change.
+Status: Phase 6 field foundation. Offline synchronization, private photo capture,
+the Custom Appraisal review adapter, and the manual sketch workspace are built.
+The mobile API remains disabled by default and no identity-provider purchase or
+production migration is part of this work.
 
 ## Boundaries
 
@@ -91,15 +93,22 @@ Official pricing references:
 - <https://clerk.com/pricing>
 - <https://aws.amazon.com/cognito/pricing/>
 
-## Sketch foundation
+## Manual sketch workspace
 
 `POST /api/mobile/sketches/calculate` accepts a measured outline in feet. It
 checks closure within a bounded tolerance, rejects self-intersecting outlines,
-and calculates perimeter and square feet only for a valid closed polygon. The
-result always sets `ansi_review_required: true`: geometric closure alone does
-not establish ANSI eligibility. Story classification, above/below-grade rules,
-ceiling-height treatment, stairs, openings, labels, persistence, and rendered
-artifacts belong in the shared sketch phase and require appraiser review.
+and calculates perimeter and square feet only for a valid closed polygon.
+
+The mobile workspace now persists multiple measured areas, classifications,
+room markers, appraiser confirmation, revisions, and audit history. Drafts save
+to encrypted SQLite and synchronize independently from sparse property edits.
+Room references produce automatic photo labels; renaming a room updates only
+room-generated photo captions and preserves manual captions. See
+`docs/MOBILE_MANUAL_SKETCH.md` for the complete boundary and workflow.
+
+Geometric closure alone does not establish ANSI eligibility. Above/below-grade
+status, ceiling-height treatment, access, finish, declarations, and any required
+alternate standard remain subject to documented appraiser review.
 
 LiDAR is deliberately reported as unavailable in this phase. The structured
 geometry contract allows a future LiDAR source without making LiDAR-derived
@@ -148,6 +157,10 @@ Official distribution references:
 - `POST /api/mobile/report-files` — idempotently create a new versioned file.
 - `POST /api/mobile/inspection-sessions` — resume or create one active session.
 - `GET /api/mobile/inspection-sessions/:id` — retrieve an owned session.
+- `GET /api/mobile/inspection-sessions/:id/sketch` — retrieve its current sketch
+  and active room markers.
+- `PUT /api/mobile/inspection-sessions/:id/sketch` — idempotently save a
+  revision-checked full manual sketch.
 - `POST /api/mobile/sketches/calculate` — validate closure and calculate area.
 
 Run UAD migrations first, then `npm run migrate:mobile`. The new API stays dark
@@ -156,15 +169,15 @@ are deliberately deployed.
 
 ## Next phases
 
-1. Approve/configure managed OIDC; build the Expo/React Native sign-in and
-   assignment picker against this API.
-2. Add encrypted local drafts, durable operation queue, retry/backoff, device
-   registration, and conflict review.
-3. Add the common photo capture pipeline and separate Custom/UAD/Tax adapters,
-   including verified R2 archive assembly.
-4. Add full manual sketch editing, ANSI classification and audit, persistence,
-   rendering, room links, and room-derived photo labels. Add LiDAR later.
-5. Add desktop review/relabel/reorder/conflict tools and physical-device staging.
+1. Approve and configure managed OIDC; the provider-neutral Expo PKCE and server
+   verification paths are ready but intentionally inactive.
+2. Complete report-ready sketch rendering plus desktop geometry/relabel/reorder
+   review tools.
+3. Add the separate UAD 3.6 and Property Tax Protest field adapters without
+   changing their canonical workflows.
+4. Run physical-device staging across iPhone and Android, including offline and
+   100-photo inspections.
+5. Add optional LiDAR capture after the manual workflow is field-tested.
 
 Before production UAD delivery, separately confirm all required UAD compliance,
 submission credentials, approved endpoints, and certification/testing status.

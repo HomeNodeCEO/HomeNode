@@ -7,9 +7,18 @@ import {
   getUadSubjectSummary,
   listUadWorkfiles,
   type UadCapabilities,
+  type UadPropertyType,
   type UadWorkfile,
 } from "../api";
 import UadWorkfileEditor from "../components/UadWorkfileEditor";
+
+const PROPERTY_TYPE_LABELS: Record<UadPropertyType, string> = {
+  traditional_single_family: "Traditional single-family",
+  manufactured_home: "Manufactured home",
+  two_to_four_unit: "Two-to-four-unit",
+  condominium: "Condominium",
+  cooperative: "Cooperative",
+};
 
 export default function UadWorkspaceEntry() {
   const { accountId = "" } = useParams();
@@ -20,6 +29,8 @@ export default function UadWorkspaceEntry() {
   const [capabilities, setCapabilities] = useState<UadCapabilities | null>(null);
   const [workfiles, setWorkfiles] = useState<UadWorkfile[]>([]);
   const [activeWorkfileId, setActiveWorkfileId] = useState<string | null>(null);
+  const displayedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId) || workfiles[0];
+  const displayedPropertyType = displayedWorkfile?.property_type || capabilities?.initial_property_type;
 
   useEffect(() => {
     if (!accountId) {
@@ -95,7 +106,9 @@ export default function UadWorkspaceEntry() {
         <div className="mt-6 grid gap-4 md:grid-cols-3">
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Property type</div>
-            <div className="mt-2 font-medium">Traditional single-family</div>
+            <div className="mt-2 font-medium">
+              {displayedPropertyType ? PROPERTY_TYPE_LABELS[displayedPropertyType] : "Loading property type…"}
+            </div>
           </div>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">UAD baseline</div>
@@ -148,7 +161,8 @@ export default function UadWorkspaceEntry() {
                     <div>
                       <div className="font-semibold">{workfile.file_number}</div>
                       <div className="mt-1 text-xs text-slate-500">
-                        Revision {workfile.current_revision} · {workfile.inspection_method} inspection
+                        {PROPERTY_TYPE_LABELS[workfile.property_type]} · Revision {workfile.current_revision} ·{" "}
+                        {workfile.inspection_method} inspection
                       </div>
                     </div>
                     <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-900">

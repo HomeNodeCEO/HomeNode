@@ -24,10 +24,17 @@ async function uadFetchJSON<T = unknown>(input: string, init?: RequestInit & { t
   }
 }
 
+export type UadPropertyType =
+  | "traditional_single_family"
+  | "manufactured_home"
+  | "two_to_four_unit"
+  | "condominium"
+  | "cooperative";
+
 export interface UadCapabilities {
   enabled: boolean;
   specification_release_key: string;
-  initial_property_type: "traditional_single_family";
+  initial_property_type: UadPropertyType;
   object_storage: {
     provider: string;
     configured: boolean;
@@ -41,7 +48,7 @@ export interface UadWorkfile {
   file_number: string;
   specification_release_key: string;
   status: string;
-  property_type: string;
+  property_type: UadPropertyType;
   inspection_method: string;
   assignment_purpose: string | null;
   assigned_appraiser_user_id: string | null;

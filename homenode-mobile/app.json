@@ -1,0 +1,31 @@
+{
+  "expo": {
+    "name": "HomeNode Appraiser",
+    "slug": "homenode-appraiser",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "homenode",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.homenode.appraiser",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.homenode.appraiser",
+      "adaptiveIcon": {
+        "backgroundColor": "#f4f7f3"
+      }
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ]
+    ]
+  }
+}

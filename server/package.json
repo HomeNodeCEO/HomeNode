@@ -10,6 +10,7 @@
         "prepare:staging:uad": "node scripts/prepareUadStagingDatabase.js",
         "test:uad-migration": "node scripts/prepareUadCiDatabase.js && node scripts/runUadMigrations.js && node --test test/uadMigration.integration.test.js",
         "test:mobile-migration": "node scripts/prepareUadCiDatabase.js && node scripts/runUadMigrations.js && node scripts/prepareMobileCiDatabase.js && node scripts/runMobileMigrations.js && node scripts/runMobileMigrations.js && node --test test/mobileMigration.integration.test.js",
+        "provision:mobile-identity": "node scripts/provisionMobileOidcIdentity.js",
         "backfill:locations": "node scripts/backfillAccountLocations.js",
         "backfill:census": "node scripts/backfillCensusGeographies.js",
         "enrich:non-dallas": "node scripts/runNonDallasEnrichment.js",

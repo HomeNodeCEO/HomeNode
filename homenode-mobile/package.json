@@ -1,0 +1,42 @@
+{
+  "name": "homenode-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/config.test.ts test/workflows.test.ts",
+    "doctor": "expo-doctor"
+  },
+  "dependencies": {
+    "expo": "57.0.13",
+    "expo-auth-session": "~57.0.7",
+    "expo-crypto": "~57.0.1",
+    "expo-secure-store": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "expo-web-browser": "~57.0.2",
+    "react": "19.2.3",
+    "react-native": "0.86.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "~19.2.18",
+    "expo-doctor": "^1.18.1",
+    "tsx": "^4.20.6",
+    "typescript": "~6.0.3"
+  },
+  "expo": {
+    "install": {
+      "exclude": [
+        "expo"
+      ]
+    }
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -15,6 +15,7 @@ import {
   normalizeWorkflowType,
 } from "../src/modules/mobile/fileNumbers.js";
 import { calculateManualSketch } from "../src/modules/mobile/manualSketch.js";
+import { normalizePropertySearch } from "../src/modules/mobile/properties.js";
 
 const ISSUER = "https://identity.example.test";
 const AUDIENCE = "https://api.homenode.test/mobile";
@@ -71,6 +72,12 @@ test("formats independent, recognizable report-file sequences", () => {
     sequenceNumber: 1,
   }), "HN-PTP-2026-000001");
   assert.throws(() => normalizeWorkflowType("uploaded_jpeg"), /invalid_workflow_type/);
+});
+
+test("normalizes bounded mobile property searches", () => {
+  assert.equal(normalizePropertySearch("  100   Test Street "), "100 Test Street");
+  assert.throws(() => normalizePropertySearch("x"), /invalid_property_search_query/);
+  assert.throws(() => normalizePropertySearch("x".repeat(121)), /invalid_property_search_query/);
 });
 
 test("manual sketch calculator requires closure before calculating square footage", () => {

@@ -145,6 +145,8 @@ import {
 } from "./util/requestPerformance.js";
 import { createUadRouter } from "./modules/uad/router.js";
 import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
+import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
+import { createMobileRouter } from "./modules/mobile/router.js";
 
 const app = express();
 const pool = new pg.Pool({
@@ -174,6 +176,19 @@ app.use("/api/uad", createUadRouter({
   pool,
   storage: uadObjectStorage,
   enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
+}));
+
+const mobileOidcVerifier = createOidcAccessTokenVerifier({
+  issuer: process.env.OIDC_ISSUER,
+  audience: process.env.OIDC_AUDIENCE,
+  jwksUri: process.env.OIDC_JWKS_URI,
+  clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
+});
+app.use("/api/mobile", createMobileRouter({
+  pool,
+  verifier: mobileOidcVerifier,
+  enabled: environmentFlag(process.env.MOBILE_INSPECTION_ENABLED),
+  recentFileDays: Number(process.env.MOBILE_RECENT_FILE_DAYS || 30),
 }));
 
 const trestleClient = new TrestleClient();

@@ -1,0 +1,61 @@
+name: Mobile foundation
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/mobile-foundation.yml"
+      - "server/migrations/20260821_mobile_foundation.sql"
+      - "server/scripts/*Mobile*.js"
+      - "server/src/database/mobileMigrations.js"
+      - "server/src/modules/mobile/**"
+      - "server/src/oldServer.js"
+      - "server/test/mobile*.test.js"
+      - "server/package*.json"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/mobile-foundation.yml"
+      - "server/migrations/20260821_mobile_foundation.sql"
+      - "server/scripts/*Mobile*.js"
+      - "server/src/database/mobileMigrations.js"
+      - "server/src/modules/mobile/**"
+      - "server/src/oldServer.js"
+      - "server/test/mobile*.test.js"
+      - "server/package*.json"
+
+permissions:
+  contents: read
+
+jobs:
+  mobile-migration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_DB: homenode_mobile_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d homenode_mobile_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: server
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/homenode_mobile_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run test:mobile-migration

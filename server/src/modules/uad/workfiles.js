@@ -135,7 +135,7 @@ async function loadSubjectSnapshot(client, accountId) {
   return rows[0];
 }
 
-export async function createUadWorkfile(pool, accountIdValue, input = {}) {
+export async function createUadWorkfileWithClient(client, accountIdValue, input = {}) {
   const accountId = normalizeUadAccountId(accountIdValue);
   const workfileId = randomUUID();
   const snapshotId = randomUUID();
@@ -149,10 +149,7 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
   const appraiserUserId = input.assigned_appraiser_user_id || null;
   const specificationReleaseKey = input.specification_release_key || CURRENT_UAD_RELEASE_KEY;
 
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const subjectData = await loadSubjectSnapshot(client, accountId);
+  const subjectData = await loadSubjectSnapshot(client, accountId);
 
     const inserted = await client.query(
       `INSERT INTO appraisal.uad_workfiles (
@@ -281,10 +278,18 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
       [workfileId, appraiserUserId, JSON.stringify({ account_id: accountId, file_number: fileNumber })],
     );
 
+  return workfileResponse(inserted.rows[0]);
+}
+
+export async function createUadWorkfile(pool, accountIdValue, input = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const workfile = await createUadWorkfileWithClient(client, accountIdValue, input);
     await client.query("COMMIT");
-    return workfileResponse(inserted.rows[0]);
+    return workfile;
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();

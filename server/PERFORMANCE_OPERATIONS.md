@@ -16,6 +16,8 @@ scheduled processes instead:
 
 ```text
 npm run maintenance:scheduled
+npm run maintenance:locations
+npm run maintenance:locations:drain
 npm run maintenance:roads
 ```
 
@@ -23,6 +25,11 @@ Recommended Render schedules:
 
 - Routine maintenance: daily during low traffic, command
   `npm run maintenance:scheduled` from the `server` root.
+- Sale-coordinate maintenance: every 5-15 minutes while imports are active,
+  command `npm run maintenance:locations`. CSV imports now enqueue matched
+  Dallas County accounts in the same database transaction as the sale import.
+  `npm run maintenance:locations:drain` is the bounded catch-up command after a
+  large import; it does not run inside the web process.
 - Road-context refresh: monthly during low traffic, command
   `npm run maintenance:roads` from the `server` root.
 
@@ -47,6 +54,11 @@ roll. Before treating a DFW county as covered:
    still requires a compatible county parcel source or a manual-review path.
 5. Run the Census and parcel-context maintenance queues, then confirm county
    coverage and review counts independently.
+
+The database-backed `app.parcel_match_cache` is the fast path for MLS/provider
+matching. Populate it from the reconciled CAD inventories before enabling a
+licensed feed. It stores only join keys, normalized addresses, and the latest
+known coordinates, so matching does not make a GIS request per listing.
 
 Do not describe Census or parcel coverage as "all DFW" until Dallas, Collin,
 Denton, Tarrant, Rockwall, and every other county in the intended product scope

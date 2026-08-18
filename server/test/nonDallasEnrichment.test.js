@@ -58,6 +58,9 @@ test("Trestle is disabled until credentials and explicit activation exist", () =
     clientSecret: "",
     scope: "api",
     originatingSystemName: "",
+    pageSize: 1000,
+    requestTimeoutMs: 45000,
+    maximumRetries: 4,
   });
 });
 
@@ -97,5 +100,41 @@ test("ListingKey is preferred and a non-unique ListingId is rejected", async () 
   await assert.rejects(
     client.findProperty({ listingId: "123" }),
     /ambiguous_listing_id/,
+  );
+});
+
+test("incremental property pages use the configured MLS scope and watermark", async () => {
+  const client = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_ORIGINATING_SYSTEM_NAME: "NTREIS",
+    },
+  });
+  let captured = null;
+  client.request = async (path, params) => {
+    captured = { path, params };
+    return { value: [] };
+  };
+  await client.propertyPage({ modifiedAfter: "2026-08-18T12:00:00Z" });
+  assert.equal(captured.path, "Property");
+  assert.match(captured.params.$filter, /ModificationTimestamp gt 2026-08-18T12:00:00.000Z/);
+  assert.match(captured.params.$filter, /OriginatingSystemName eq 'NTREIS'/);
+  assert.equal(captured.params.$top, 1000);
+  assert.equal(captured.params.PrettyEnums, "true");
+});
+
+test("Trestle next links cannot send the bearer token to another host", () => {
+  const client = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+    },
+  });
+  assert.throws(
+    () => client.requestUrl("https://attacker.example/steal"),
+    /trestle_untrusted_next_link/,
   );
 });

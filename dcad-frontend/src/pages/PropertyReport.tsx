@@ -3400,10 +3400,36 @@ function AddressHero({
     ? legalLines.join("\n")
     : "No legal description is available for this parcel.";
   const deedTransferDate = detail?.legal_description?.deed_transfer_date;
-  const improvement = detail?.main_improvement;
-  const housing = detail?.housing_profile;
+  const assignmentPropertyCharacteristics = activeAssignmentFile
+    ?.custom_appraisal_sections?.["report.property_characteristics"]?.value;
+  const assignmentMainImprovement = assignmentPropertyCharacteristics?.main_improvement;
+  const assignmentHousingProfile = assignmentPropertyCharacteristics?.housing_profile;
+  const assignmentInspectionDetails = assignmentPropertyCharacteristics?.inspection_details;
+  const improvement: DcadMainImprovement | undefined = detail?.main_improvement || assignmentMainImprovement
+    ? {
+        ...(detail?.main_improvement || {}),
+        ...(assignmentMainImprovement && typeof assignmentMainImprovement === "object" && !Array.isArray(assignmentMainImprovement)
+          ? assignmentMainImprovement
+          : {}),
+      }
+    : undefined;
+  const housing: DcadHousingProfile | undefined = detail?.housing_profile || assignmentHousingProfile
+    ? {
+        ...(detail?.housing_profile || {}),
+        ...(assignmentHousingProfile && typeof assignmentHousingProfile === "object" && !Array.isArray(assignmentHousingProfile)
+          ? assignmentHousingProfile
+          : {}),
+      }
+    : undefined;
+  const inspectionDetails = assignmentInspectionDetails && typeof assignmentInspectionDetails === "object" && !Array.isArray(assignmentInspectionDetails)
+    ? assignmentInspectionDetails as Record<string, unknown>
+    : {};
   const landRows = detail?.land_detail || [];
-  const additionalImprovements = detail?.additional_improvements || [];
+  const assignmentAdditionalImprovements = assignmentPropertyCharacteristics?.additional_improvements;
+  const additionalImprovements = Array.isArray(assignmentAdditionalImprovements)
+    ? assignmentAdditionalImprovements as DcadImprovementRow[]
+    : detail?.additional_improvements || [];
+  const mobileInspectionPhotos = activeAssignmentFile?.mobile_inspection_photos || [];
   const salesHistory = detail?.sales_history || [];
   const propertyActivityHistory = detail?.property_activity_history || salesHistory;
   const values = detail?.value_summary;
@@ -3486,39 +3512,40 @@ function AddressHero({
       case "report.property_characteristics":
         return {
           main_improvement: {
-            living_area_sqft: detail?.main_improvement?.living_area_sqft || "",
-            total_area_sqft: detail?.main_improvement?.total_area_sqft || "",
-            bedroom_count: detail?.main_improvement?.bedroom_count || "",
-            bath_count: detail?.main_improvement?.bath_count || "",
-            baths_full: detail?.main_improvement?.baths_full || "",
-            baths_half: detail?.main_improvement?.baths_half || "",
-            stories: detail?.main_improvement?.stories || "",
-            year_built: detail?.main_improvement?.year_built || "",
-            effective_year_built: detail?.main_improvement?.effective_year_built || "",
-            actual_age: detail?.main_improvement?.actual_age || "",
-            building_class: detail?.main_improvement?.building_class || "",
-            desirability: detail?.main_improvement?.desirability || "",
-            construction_type: detail?.main_improvement?.construction_type || "",
-            foundation: detail?.main_improvement?.foundation || "",
-            exterior_material: detail?.main_improvement?.exterior_material || "",
-            roof_type: detail?.main_improvement?.roof_type || "",
-            roof_material: detail?.main_improvement?.roof_material || "",
-            heating: detail?.main_improvement?.heating || "",
-            air_conditioning: detail?.main_improvement?.air_conditioning || "",
-            fireplaces: detail?.main_improvement?.fireplaces || "",
-            kitchens: detail?.main_improvement?.kitchens || "",
-            wetbars: detail?.main_improvement?.wetbars || "",
-            pool: detail?.main_improvement?.pool ?? "",
-            sprinkler: detail?.main_improvement?.sprinkler ?? "",
-            fence_type: detail?.main_improvement?.fence_type || "",
+            living_area_sqft: improvement?.living_area_sqft || "",
+            total_area_sqft: improvement?.total_area_sqft || "",
+            bedroom_count: improvement?.bedroom_count || "",
+            bath_count: improvement?.bath_count || "",
+            baths_full: improvement?.baths_full || "",
+            baths_half: improvement?.baths_half || "",
+            stories: improvement?.stories || "",
+            year_built: improvement?.year_built || "",
+            effective_year_built: improvement?.effective_year_built || "",
+            actual_age: improvement?.actual_age || "",
+            building_class: improvement?.building_class || "",
+            desirability: improvement?.desirability || "",
+            construction_type: improvement?.construction_type || "",
+            foundation: improvement?.foundation || "",
+            exterior_material: improvement?.exterior_material || "",
+            roof_type: improvement?.roof_type || "",
+            roof_material: improvement?.roof_material || "",
+            heating: improvement?.heating || "",
+            air_conditioning: improvement?.air_conditioning || "",
+            fireplaces: improvement?.fireplaces || "",
+            kitchens: improvement?.kitchens || "",
+            wetbars: improvement?.wetbars || "",
+            pool: improvement?.pool ?? "",
+            sprinkler: improvement?.sprinkler ?? "",
+            fence_type: improvement?.fence_type || "",
           },
           housing_profile: {
-            structural_style: detail?.housing_profile?.structural_style || "",
-            housing_type: detail?.housing_profile?.housing_type || "",
-            attachment_type: detail?.housing_profile?.attachment_type || "unknown",
-            architectural_style: detail?.housing_profile?.architectural_style || "",
+            structural_style: housing?.structural_style || "",
+            housing_type: housing?.housing_type || "",
+            attachment_type: housing?.attachment_type || "unknown",
+            architectural_style: housing?.architectural_style || "",
           },
-          additional_improvements: cloneEditorValue(detail?.additional_improvements || []),
+          inspection_details: cloneEditorValue(inspectionDetails),
+          additional_improvements: cloneEditorValue(additionalImprovements),
         };
       case "report.land_details":
         return { land_detail: cloneEditorValue(detail?.land_detail || []) };
@@ -4198,9 +4225,14 @@ function AddressHero({
         },
         editorKey,
       );
-      setActiveAssignmentFile(response.assignment_file);
+      const updatedFile = {
+        ...response.assignment_file,
+        custom_appraisal_sections: activeAssignmentFile.custom_appraisal_sections,
+        mobile_inspection_photos: activeAssignmentFile.mobile_inspection_photos,
+      };
+      setActiveAssignmentFile(updatedFile);
       setAssignmentFiles((current) => current.map((file) =>
-        file.id === response.assignment_file.id ? response.assignment_file : file
+        file.id === updatedFile.id ? updatedFile : file
       ));
       setAssignmentDirty(false);
       setAssignmentSaveMessage(`Saved to file ${response.assignment_file.file_number}.`);
@@ -4382,10 +4414,15 @@ function AddressHero({
         },
         editorKey,
       );
-      setAssignmentDraft(assignmentDraftFromDetail(response.assignment_file.assignment_details));
-      setActiveAssignmentFile(response.assignment_file);
+      const updatedFile = {
+        ...response.assignment_file,
+        custom_appraisal_sections: activeAssignmentFile.custom_appraisal_sections,
+        mobile_inspection_photos: activeAssignmentFile.mobile_inspection_photos,
+      };
+      setAssignmentDraft(assignmentDraftFromDetail(updatedFile.assignment_details));
+      setActiveAssignmentFile(updatedFile);
       setAssignmentFiles((current) => current.map((file) =>
-        file.id === response.assignment_file.id ? response.assignment_file : file
+        file.id === updatedFile.id ? updatedFile : file
       ));
       setAssignmentDirty(false);
       setAssignmentSaveMessage(
@@ -5406,7 +5443,9 @@ function AddressHero({
 
           <SummarySection
             title="Property Characteristics"
-            subtitle="Auto-populated appraisal-district and verified MLS characteristics"
+            subtitle={assignmentPropertyCharacteristics
+              ? `Appraisal-district, verified MLS, and accepted mobile observations for ${activeAssignmentFile?.file_number}`
+              : "Auto-populated appraisal-district and verified MLS characteristics"}
             {...sectionEditProps("report.property_characteristics")}
             className="order-2"
           >
@@ -5483,6 +5522,22 @@ function AddressHero({
                 value={formatReportedBoolean(improvement?.sprinkler)}
               />
               <SummaryField label="Fence" value={displayValue(improvement?.fence_type)} />
+              {Object.keys(inspectionDetails).length ? <>
+                <SummaryField label="Skirting" value={displayValue(inspectionDetails.skirting)} />
+                <SummaryField label="Window Type" value={displayValue(inspectionDetails.window_type)} />
+                <SummaryField label="Interior Floor" value={displayValue(inspectionDetails.interior_floor_type)} />
+                <SummaryField label="Bath Floor" value={displayValue(inspectionDetails.bath_floor_type)} />
+                <SummaryField label="Kitchen Countertops" value={displayValue(inspectionDetails.kitchen_countertop_type)} />
+                <SummaryField label="Interior Walls" value={displayValue(inspectionDetails.interior_wall_type)} />
+                <SummaryField label="Garage / Carport" value={displayValue(inspectionDetails.garage_carport)} />
+                <SummaryField label="Pool / Amenities" value={displayValue(inspectionDetails.pool_amenities)} />
+                <SummaryField label="Updates / Remodeling" value={displayValue(inspectionDetails.updates_remodeling)} />
+                <SummaryField label="Additions" value={displayValue(inspectionDetails.additions)} />
+                <SummaryField label="Defects / Deferred Maintenance" value={displayValue(inspectionDetails.defects_deferred_maintenance)} />
+                <SummaryField label="Repair Cost to Cure" value={displayValue(inspectionDetails.repair_cost_to_cure)} />
+                <SummaryField label="Additional Improvements" value={displayValue(inspectionDetails.additional_improvements_notes)} />
+                <SummaryField label="Field Comments" value={displayValue(inspectionDetails.appraiser_comments)} />
+              </> : null}
               {additionalImprovements.map((row, index) => (
                 <SummaryField
                   key={`${row.number || index}-${row.improvement_type || "improvement"}`}
@@ -5503,6 +5558,15 @@ function AddressHero({
                 />
               ))}
             </div>
+
+            {assignmentPropertyCharacteristics || mobileInspectionPhotos.length ? (
+              <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs leading-5 text-emerald-900">
+                Accepted mobile observations are scoped to appraisal file {activeAssignmentFile?.file_number}.
+                {mobileInspectionPhotos.length
+                  ? ` ${mobileInspectionPhotos.length} verified field photo${mobileInspectionPhotos.length === 1 ? " is" : "s are"} attached to this file and retained for five years.`
+                  : " No verified mobile field photos are attached yet."}
+              </div>
+            ) : null}
 
             <div className="mt-5 border-t border-slate-200 pt-4">
               <div className="flex flex-wrap items-start justify-between gap-3">

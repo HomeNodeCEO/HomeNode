@@ -1,6 +1,6 @@
 # HomeNode Appraiser mobile
 
-Private Expo/React Native client for HomeNode field appraisal. Phase 4 adds labeled camera and bulk-library capture, durable private R2 uploads, original/display variants, and five-year evidence retention to the encrypted offline inspection foundation.
+Private Expo/React Native client for HomeNode field appraisal. Phase 5 adds an assignment-scoped Custom Appraisal adapter and review workflow to the encrypted offline inspection and private photo foundation.
 
 ## Offline inspection behavior
 
@@ -9,7 +9,17 @@ Private Expo/React Native client for HomeNode field appraisal. Phase 4 adds labe
 - Every edit receives a client UUID and SHA-256 payload digest. The API applies it once, returns the prior result on safe retry, and rejects reuse of the UUID with different content.
 - Queued work retries when connectivity returns, when the app becomes active, and on a bounded exponential-backoff timer.
 - A stale edit is automatically rebased only when its recorded field-level base still matches HomeNode. A different server value becomes an explicit conflict with **Use HomeNode value** and **Keep mobile value** actions.
-- Phase 3 stores synchronized inspection observations separately from authoritative Custom Appraisal and UAD fields. Their target-specific adapters are introduced in later phases, so no desktop value is silently overwritten.
+- Custom Appraisal observations synchronize separately, then require per-field **Accept into this appraisal file** or **Keep inspection-only** review. Acceptance uses an exact-value conflict check and never mutates the property-wide manual record.
+
+## Custom Appraisal field review
+
+- Property fields are grouped into Basics, Exterior, Interior, Systems & Amenities, and Condition & Repairs rather than presented as one oversized form.
+- Structured values and explicit clears save to encrypted SQLite first and use the existing durable operation queue.
+- The server maps only allowlisted field paths. Unmapped inspection data cannot reach a report target.
+- Accepted fields update only the selected assignment file, create audit/version history, and increment its report-file registry revision.
+- A same-field report change becomes a visible conflict; unrelated report changes remain untouched.
+- The latest field catalog and review snapshot are cached so an already-opened assignment remains usable offline. Final report acceptance requires a connection to authoritative PostgreSQL.
+- The Custom Appraisal review also shows the count of verified photos attached to that exact report file.
 
 SQLCipher requires a development or internal native build and is not available in Expo Go.
 

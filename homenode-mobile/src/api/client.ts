@@ -108,6 +108,70 @@ export type InspectionSyncResponse = {
   operations: SyncOperationResult[];
 };
 
+export type CustomAppraisalFieldDefinition = {
+  field_path: string;
+  group: string;
+  label: string;
+  target_kind: "assignment_details" | "report_section";
+  section_key: "report.assignment_details" | "report.property_characteristics";
+  target_path: string[];
+  value_type: "text" | "number" | "integer" | "boolean" | "condition";
+  minimum: number | null;
+  maximum: number | null;
+  maximum_length: number | null;
+  multiline: boolean;
+};
+
+export type CustomAppraisalProposal = {
+  id: string;
+  field_edit_id: string;
+  field_path: string;
+  label: string;
+  group: string;
+  target_kind: "assignment_details" | "report_section";
+  section_key: string;
+  target_path: string[];
+  base_target_revision: number;
+  base: FieldState;
+  proposed: FieldState;
+  current: FieldState | null;
+  source_type: string;
+  appraiser_confirmed: boolean;
+  status: "pending" | "accepted" | "rejected" | "conflict" | "superseded";
+  conflict: { base: FieldState; current: FieldState; detected_at: string } | null;
+  reviewed_at: string | null;
+  applied_target_revision: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomAppraisalReview = {
+  session: InspectionSession;
+  report_file: {
+    id: string;
+    account_id: string;
+    file_number: string;
+    registry_revision: number;
+    assignment_file_id: number;
+  };
+  catalog: CustomAppraisalFieldDefinition[];
+  sections: Record<string, { value: Record<string, JsonValue>; revision: number; source: string }>;
+  proposals: CustomAppraisalProposal[];
+  photos: {
+    verified_count: number;
+    items: Array<{
+      id: string;
+      category: string;
+      room_ref: string | null;
+      room_label: string | null;
+      caption: string | null;
+      position: number;
+      retention_until: string;
+      verified_at: string;
+    }>;
+  };
+};
+
 export type MobilePhotoObject = {
   id: string;
   client_object_id: string;
@@ -282,6 +346,37 @@ export class MobileApi {
     return this.request<InspectionSyncResponse>(
       `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/sync`,
       { method: "POST", body: JSON.stringify({ operations }) },
+    );
+  }
+
+  async customAppraisalReview(sessionId: string) {
+    return this.request<CustomAppraisalReview>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/custom-appraisal`,
+    );
+  }
+
+  async refreshCustomAppraisalProposals(sessionId: string) {
+    return this.request<{
+      created: CustomAppraisalProposal[];
+      invalid_fields: Array<{ field_path: string; error: string }>;
+    }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/custom-appraisal/proposals/refresh`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async reviewCustomAppraisalProposal(
+    sessionId: string,
+    proposalId: string,
+    decision: "accept" | "reject",
+    clientOperationId: string,
+  ) {
+    return this.request<{ proposal: CustomAppraisalProposal; report_registry_revision: number }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/custom-appraisal/proposals/${encodeURIComponent(proposalId)}/review`,
+      {
+        method: "POST",
+        body: JSON.stringify({ client_operation_id: clientOperationId, decision }),
+      },
     );
   }
 

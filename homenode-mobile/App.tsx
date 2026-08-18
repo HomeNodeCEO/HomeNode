@@ -23,6 +23,7 @@ import {
 } from "./src/api/client";
 import { AuthProvider, useAuth } from "./src/auth/session";
 import { loadMobileConfig, type MobileConfig } from "./src/config";
+import { CustomAppraisalPanel } from "./src/customAppraisal/CustomAppraisalPanel";
 import { WORKFLOWS, type WorkflowType, workflowTitle } from "./src/domain/workflows";
 import type { FieldState } from "./src/offline/model";
 import { useOfflineSync } from "./src/offline/syncEngine";
@@ -446,6 +447,14 @@ function InspectionScreen({
           </View>
         ))}
       </View> : null}
+      {file.workflow_type === "custom_appraisal" ? <CustomAppraisalPanel
+        api={api}
+        store={store}
+        ownerUserId={ownerUserId}
+        sessionId={session.id}
+        online={online}
+        onSync={onSync}
+      /> : null}
       <PhotoCapturePanel
         api={api}
         store={store}

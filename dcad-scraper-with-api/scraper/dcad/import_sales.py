@@ -576,7 +576,349 @@ def _address_resolutions(
             """
             SELECT account_id, county, address, city, postal_code
             FROM core.accounts
-            WHERE NULLIF(BTRIM(address…3294 tokens truncated… typed["mls_status"],
+            WHERE NULLIF(BTRIM(address), '') IS NOT NULL
+              AND UPPER(
+                    REGEXP_REPLACE(BTRIM(COALESCE(city, '')), '[^A-Z0-9]+', ' ', 'g')
+                  ) = ANY(%s)
+            """,
+            (list(cities),),
+        )
+        candidates = cursor.fetchall()
+
+    by_address: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for account_id, county, address, city, postal_code in candidates:
+        record = {
+            "account_id": account_id,
+            "county": county,
+            "address": address,
+            "city": city,
+            "postal_code": postal_code,
+        }
+        key = (_normalize_place(city), _normalize_situs_address(address))
+        by_address.setdefault(key, []).append(record)
+
+    resolutions: dict[int, dict[str, Any]] = {}
+    for source_row_number, address, city, county in requested:
+        matches = by_address.get((city, address), [])
+        if county:
+            matches = [
+                match
+                for match in matches
+                if _normalize_place(match.get("county")) in {county, f"{county} COUNTY"}
+                or county in {
+                    _normalize_place(match.get("county")),
+                    f"{_normalize_place(match.get('county'))} COUNTY",
+                }
+            ]
+        unique = {
+            match["account_id"]: match
+            for match in matches
+            if _clean(match.get("account_id"))
+        }
+        if len(unique) == 1:
+            resolutions[source_row_number] = {
+                "status": "matched",
+                "account": next(iter(unique.values())),
+            }
+        elif len(unique) > 1:
+            resolutions[source_row_number] = {
+                "status": "ambiguous",
+                "candidate_count": len(unique),
+            }
+    return resolutions
+
+
+def _parcel_links(
+    raw: dict[str, str], accounts: dict[str, dict[str, Any]]
+) -> list[ParcelLink]:
+    links: list[ParcelLink] = []
+    for source_position, field in ((1, "ParcelNumber"), (2, "ParcelNumber2")):
+        raw_value = raw[field]
+        if not raw_value:
+            continue
+
+        matched: list[tuple[str, str]] = []
+        for candidate, method in _parcel_variants(raw_value):
+            if candidate not in accounts:
+                continue
+            account_id = accounts[candidate]["account_id"]
+            if account_id not in {item[0] for item in matched}:
+                matched.append((account_id, method))
+
+        if matched:
+            for parcel_sequence, (account_id, method) in enumerate(matched, start=1):
+                links.append(
+                    ParcelLink(
+                        source_position=source_position,
+                        parcel_sequence=parcel_sequence,
+                        parcel_role="primary" if source_position == 1 else "additional",
+                        parcel_number_raw=raw_value,
+                        parcel_number_normalized=account_id,
+                        account_id=account_id,
+                        match_method=method,
+                    )
+                )
+        else:
+            normalized = next(
+                (candidate for candidate, _ in _parcel_variants(raw_value)), None
+            )
+            links.append(
+                ParcelLink(
+                    source_position=source_position,
+                    parcel_sequence=1,
+                    parcel_role="primary" if source_position == 1 else "additional",
+                    parcel_number_raw=raw_value,
+                    parcel_number_normalized=normalized,
+                    account_id=None,
+                    match_method="unmatched",
+                )
+            )
+    return links
+
+
+def _prepare_sales(
+    rows: list[tuple[int, dict[str, str]]],
+    accounts: dict[str, dict[str, Any]],
+    address_resolutions: dict[int, dict[str, Any]] | None = None,
+) -> list[PreparedSale]:
+    prepared: list[PreparedSale] = []
+    address_resolutions = address_resolutions or {}
+    for source_row_number, raw in rows:
+        typed, flags = _typed_values(raw)
+        links = _parcel_links(raw, accounts)
+        resolved_accounts = list(
+            dict.fromkeys(link.account_id for link in links if link.account_id)
+        )
+        primary_links = [
+            link for link in links if link.source_position == 1 and link.account_id
+        ]
+        secondary_links = [
+            link for link in links if link.source_position == 2 and link.account_id
+        ]
+        primary_account_id = (
+            primary_links[0].account_id
+            if primary_links
+            else (secondary_links[0].account_id if secondary_links else None)
+        )
+
+        address_resolution = address_resolutions.get(source_row_number, {})
+        if not resolved_accounts and address_resolution.get("status") == "matched":
+            address_account = address_resolution["account"]
+            primary_account_id = address_account["account_id"]
+            resolved_accounts.append(primary_account_id)
+            accounts.setdefault(primary_account_id, address_account)
+            flags.append("address_fallback_match")
+        elif not resolved_accounts and address_resolution.get("status") == "ambiguous":
+            flags.append("ambiguous_address_match")
+
+        if not resolved_accounts:
+            match_status = "unmatched"
+        elif not primary_links and not secondary_links and address_resolution.get("status") == "matched":
+            match_status = "address"
+        elif len(resolved_accounts) > 1:
+            match_status = "multiple"
+        elif primary_links and primary_links[0].match_method == "exact":
+            match_status = "exact"
+        elif primary_links:
+            match_status = "normalized"
+        else:
+            match_status = "secondary"
+
+        has_second_field = bool(raw["ParcelNumber2"])
+        has_multiple_numbers = has_second_field or any(
+            link.parcel_sequence > 1 for link in links
+        )
+        if len(resolved_accounts) > 1:
+            multi_parcel_status = "confirmed"
+            flags.append("confirmed_multi_parcel_sale")
+        elif has_multiple_numbers:
+            multi_parcel_status = "possible"
+            flags.append("possible_multi_parcel_sale")
+        else:
+            multi_parcel_status = "single"
+
+        has_unresolved = any(not link.account_id for link in links)
+        if has_unresolved:
+            flags.append("unresolved_parcel_number")
+
+        flags = list(dict.fromkeys(flags))
+        fingerprint_parcels = (
+            sorted(resolved_accounts)
+            if resolved_accounts
+            else sorted(
+                value
+                for value in (
+                    _clean_account(raw["ParcelNumber"]),
+                    _clean_account(raw["ParcelNumber2"]),
+                )
+                if value
+            )
+        )
+        transaction_fingerprint = _stable_hash(
+            {
+                "parcels": fingerprint_parcels,
+                "close_date": str(typed["close_date"] or ""),
+                "sale_price": str(typed["current_price"] or ""),
+            }
+        )
+
+        prepared.append(
+            PreparedSale(
+                source_row_number=source_row_number,
+                raw_payload=raw,
+                source_record_hash=_source_record_hash(raw),
+                transaction_fingerprint=transaction_fingerprint,
+                typed=typed,
+                parcel_links=links,
+                primary_account_id=primary_account_id,
+                match_status=match_status,
+                has_multiple_parcel_numbers=has_multiple_numbers,
+                multi_parcel_status=multi_parcel_status,
+                has_unresolved_parcel=has_unresolved,
+                requires_additional_review=bool(flags),
+                data_quality_flags=flags,
+            )
+        )
+    return prepared
+
+
+def _summary(
+    prepared: list[PreparedSale],
+    accounts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    match_counts = Counter(row.match_status for row in prepared)
+    multi_counts = Counter(row.multi_parcel_status for row in prepared)
+    flag_counts = Counter(
+        flag for row in prepared for flag in row.data_quality_flags
+    )
+    resolved_accounts = {
+        row.primary_account_id for row in prepared if row.primary_account_id
+    }
+    county_counts = Counter(
+        (accounts[account_id]["county"] or "<blank county>")
+        for row in prepared
+        for account_id in [row.primary_account_id]
+        if account_id
+    )
+    record_type_counts = Counter(row.typed["record_type"] for row in prepared)
+    attachment_counts = Counter(
+        row.typed["attachment_type"] for row in prepared
+    )
+    return {
+        "source_rows": len(prepared),
+        "match_status": dict(match_counts),
+        "multi_parcel_status": dict(multi_counts),
+        "rows_with_primary_account": sum(
+            1 for row in prepared if row.primary_account_id
+        ),
+        "rows_without_primary_account": sum(
+            1 for row in prepared if not row.primary_account_id
+        ),
+        "distinct_resolved_accounts": len(resolved_accounts),
+        "county_rows": dict(county_counts),
+        "record_type": dict(record_type_counts),
+        "attachment_type": dict(attachment_counts),
+        "parcel_link_rows": sum(len(row.parcel_links) for row in prepared),
+        "resolved_parcel_links": sum(
+            1 for row in prepared for link in row.parcel_links if link.account_id
+        ),
+        "unresolved_parcel_links": sum(
+            1 for row in prepared for link in row.parcel_links if not link.account_id
+        ),
+        "rows_requiring_review": sum(
+            1 for row in prepared if row.requires_additional_review
+        ),
+        "quality_flags": dict(flag_counts),
+    }
+
+
+def import_sales(
+    path: Path,
+    source_name: str,
+    dry_run: bool = False,
+    default_city: str | None = None,
+    default_county: str | None = None,
+) -> dict[str, Any]:
+    import psycopg2
+    from psycopg2.extras import Json, execute_batch, execute_values
+
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is not set")
+
+    source_sha256 = _source_sha256(path)
+    rows = _load_rows(path)
+    all_variants = {
+        candidate
+        for _, raw in rows
+        for field in ("ParcelNumber", "ParcelNumber2")
+        for candidate, _ in _parcel_variants(raw[field])
+    }
+
+    connection = psycopg2.connect(database_url)
+    try:
+        accounts = _account_map(connection, all_variants)
+        address_resolutions = _address_resolutions(
+            connection,
+            rows,
+            default_city=default_city,
+            default_county=default_county,
+        )
+        prepared = _prepare_sales(rows, accounts, address_resolutions)
+        existing_hashes = _existing_hashes_by_listing_id(
+            connection,
+            {
+                _clean(row.typed.get("listing_id")).upper()
+                for row in prepared
+                if _clean(row.typed.get("listing_id"))
+            },
+        )
+        for row in prepared:
+            listing_id = _clean(row.typed.get("listing_id")).upper()
+            if listing_id in existing_hashes:
+                row.source_record_hash = existing_hashes[listing_id]
+        result = {
+            "source_name": source_name,
+            "source_filename": path.name,
+            "source_sha256": source_sha256,
+            "dry_run": dry_run,
+            **_summary(prepared, accounts),
+        }
+        if dry_run:
+            connection.rollback()
+            return result
+
+        with connection.cursor() as cursor:
+            cursor.execute(_migration_sql())
+
+            source_values = []
+            for row in prepared:
+                typed = row.typed
+                source_values.append(
+                    (
+                        source_name,
+                        path.name,
+                        [path.name],
+                        source_sha256,
+                        row.source_row_number,
+                        row.source_record_hash,
+                        row.transaction_fingerprint,
+                        typed["bedrooms_total"],
+                        typed["bathrooms_total_integer"],
+                        typed["bathrooms_full"],
+                        typed["bathrooms_half"],
+                        typed["living_area"],
+                        typed["lot_size_area"],
+                        typed["current_price"],
+                        typed["ratio_current_price_by_living_area"],
+                        typed["ratio_close_price_by_list_price"],
+                        typed["ratio_close_price_by_original_list_price"],
+                        typed["ratio_close_price_by_living_area"],
+                        typed["days_on_market"],
+                        typed["year_built"],
+                        typed["close_date"],
+                        typed["seller_contributions"],
+                        typed["mls_status"],
                         typed["garage_spaces"],
                         typed["garage_yn"],
                         typed["pool_yn"],

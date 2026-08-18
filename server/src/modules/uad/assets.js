@@ -14,6 +14,10 @@ import {
   UAD_SKETCH_REPORT_CAPTION_TYPES,
   UAD_SKETCH_REPORT_CONTENT_TYPES,
 } from "./sketchCatalog.js";
+import {
+  UAD_UNIT_INTERIOR_CAPTION_TYPES,
+  UAD_UNIT_INTERIOR_IMAGE_CONTENT_TYPES,
+} from "./unitInteriorCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -38,6 +42,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [7, new Set([...UAD_SKETCH_REPORT_CAPTION_TYPES, "MeasurementSource"])],
   [8, new Set(UAD_DWELLING_EXTERIOR_CAPTION_TYPES)],
   [9, new Set(UAD_MANUFACTURED_HOME_CAPTION_TYPES)],
+  [10, new Set(UAD_UNIT_INTERIOR_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -113,6 +118,12 @@ function normalizeAssetInput(input = {}) {
   }
   if (sectionNumber === 9 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_manufactured_home_asset_kind");
+  }
+  if (sectionNumber === 10 && !UAD_UNIT_INTERIOR_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_unit_interior_content_type");
+  }
+  if (sectionNumber === 10 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_unit_interior_asset_kind");
   }
   return {
     kind,

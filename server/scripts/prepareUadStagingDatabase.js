@@ -5,6 +5,7 @@ import pg from "pg";
 import { createUadWorkfile } from "../src/modules/uad/workfiles.js";
 
 const SFR_ACCOUNT_ID = "UAD-STAGING-SFR-0001";
+const SFR_FILE_NUMBER = "HN-UAD-STAGING-SFR-0001";
 const MANUFACTURED_HOME_ACCOUNT_ID = "UAD-STAGING-MH-0001";
 const MANUFACTURED_HOME_FILE_NUMBER = "HN-UAD-STAGING-MH-0001";
 
@@ -16,6 +17,37 @@ if (!process.env.DATABASE_URL) {
 }
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+
+async function ensureEntity(workfileId, parentEntityId, entityType, entityIdentifier, ordinal, label) {
+  const existing = await pool.query(
+    `SELECT id FROM appraisal.uad_entities
+      WHERE workfile_id = $1 AND entity_type = $2 AND entity_identifier = $3`,
+    [workfileId, entityType, entityIdentifier],
+  );
+  if (existing.rows.length) return existing.rows[0].id;
+  const id = randomUUID();
+  await pool.query(
+    `INSERT INTO appraisal.uad_entities (
+       id, workfile_id, parent_entity_id, entity_type, entity_identifier, ordinal, label
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [id, workfileId, parentEntityId, entityType, entityIdentifier, ordinal, label],
+  );
+  return id;
+}
+
+async function seedEntityValue(workfileId, entityId, context, uid, reportFieldId, value) {
+  await pool.query(
+    `INSERT INTO appraisal.uad_field_values (
+       id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
+       source_type, source_reference, source_observed_at, is_appraiser_confirmed
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7::jsonb,
+       'calculated', 'uad_staging_fixture.unit_interior', now(), false
+     )
+     ON CONFLICT DO NOTHING`,
+    [randomUUID(), workfileId, entityId, context, uid, reportFieldId, JSON.stringify(value)],
+  );
+}
 try {
   const identity = await pool.query("SELECT current_database() AS database_name");
   const databaseName = String(identity.rows[0]?.database_name || "");
@@ -248,6 +280,104 @@ try {
       capped_value = EXCLUDED.capped_value;
   `);
 
+  let sfrWorkfileResult = await pool.query(
+    `SELECT id
+       FROM appraisal.uad_workfiles
+      WHERE account_id = $1 AND lower(file_number) = lower($2)
+      ORDER BY created_at, id
+      LIMIT 1`,
+    [SFR_ACCOUNT_ID, SFR_FILE_NUMBER],
+  );
+  if (!sfrWorkfileResult.rows.length) {
+    await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
+      file_number: SFR_FILE_NUMBER,
+      assignment_purpose: "Synthetic site-built Section 10 staging validation",
+    });
+    sfrWorkfileResult = await pool.query(
+      `SELECT id
+         FROM appraisal.uad_workfiles
+        WHERE account_id = $1 AND lower(file_number) = lower($2)
+        ORDER BY created_at, id
+        LIMIT 1`,
+      [SFR_ACCOUNT_ID, SFR_FILE_NUMBER],
+    );
+  }
+
+  const sfrWorkfileId = sfrWorkfileResult.rows[0].id;
+  const sfrUnitResult = await pool.query(
+    `SELECT id
+       FROM appraisal.uad_entities
+      WHERE workfile_id = $1 AND entity_type = 'unit'
+      ORDER BY ordinal, id
+      LIMIT 1`,
+    [sfrWorkfileId],
+  );
+  if (!sfrUnitResult.rows.length) throw new Error("site-built staging workfile is missing its unit entity");
+  const sfrUnitId = sfrUnitResult.rows[0].id;
+
+  const unitValues = [
+    ["unit", "0700.0140", "10.003", { amount: 2100, unit: "SquareFeet" }],
+    ["unit", "0700.0141", "10.004", { amount: 0, unit: "SquareFeet" }],
+    ["unit", "0700.0142", "10.005", { amount: 0, unit: "SquareFeet" }],
+    ["unit", "0700.0143", "10.006", { amount: 0, unit: "SquareFeet" }],
+    ["unit", "1800.0398", "10.007", { amount: 0, unit: "SquareFeet" }],
+    ["unit", "0700.0144", "10.008", { amount: 0, unit: "SquareFeet" }],
+    ["unit", "0700.0089", "10.011", false],
+    ["unit", "0700.0063", "10.017", 1],
+    ["unit", "0700.0070", "10.020", "OwnerOccupied"],
+    ["unit", "0700.0118", "10.023", 3],
+    ["unit", "0700.0119", "10.024", 2],
+    ["unit", "0700.0120", "10.025", 0],
+    ["unit", "0700.0067", "10.034", "Q3"],
+    ["unit", "0700.0066", "10.035", "C3"],
+    ["unit", "0700.0117", "10.043", "NotUpdated"],
+    ["unit", "0700.0122", "10.049", "NotUpdated"],
+    ["unit_accessibility", "0700.0005", "10.050", ["None"]],
+    ["unit", "3900.0107", "10.055", false],
+  ];
+  for (const [context, uid, reportFieldId, value] of unitValues) {
+    await seedEntityValue(sfrWorkfileId, sfrUnitId, context, uid, reportFieldId, value);
+  }
+
+  const areaSourceId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_area_data_source", "unit-area-source-1", 1, "Area Source 1");
+  await seedEntityValue(sfrWorkfileId, areaSourceId, "unit_area_data_source", "0700.0125", "10.009", "PhysicalMeasurement");
+  const levelId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_level", "unit-level-1", 1, "Level 1");
+  await seedEntityValue(sfrWorkfileId, levelId, "unit_level", "0700.0030", "10.029", "LevelOne");
+  await seedEntityValue(sfrWorkfileId, levelId, "unit_level", "0700.0029", "10.030", "AboveGrade");
+  await seedEntityValue(sfrWorkfileId, levelId, "unit_level", "0700.0137", "10.032", { amount: 2100, unit: "SquareFeet" });
+  await seedEntityValue(sfrWorkfileId, levelId, "unit_level", "0700.0138", "10.032", { amount: 0, unit: "SquareFeet" });
+
+  const roomFixtures = [
+    ["unit-room-bedroom-1", 1, "Bedroom 1", "Bedroom"],
+    ["unit-room-bedroom-2", 2, "Bedroom 2", "Bedroom"],
+    ["unit-room-bedroom-3", 3, "Bedroom 3", "Bedroom"],
+    ["unit-room-full-bath-1", 4, "Full Bathroom 1", "FullBathroom"],
+    ["unit-room-full-bath-2", 5, "Full Bathroom 2", "FullBathroom"],
+    ["unit-room-kitchen-1", 6, "Kitchen 1", "Kitchen"],
+  ];
+  for (const [identifier, ordinal, label, roomType] of roomFixtures) {
+    const roomId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_room", identifier, ordinal, label);
+    await seedEntityValue(sfrWorkfileId, roomId, "unit_room", "0700.0035", "10.033", roomType);
+    await seedEntityValue(sfrWorkfileId, roomId, "unit_room", "0700.0121", "10.037", "LevelOne");
+    if (["FullBathroom", "HalfBathroom", "Kitchen"].includes(roomType)) {
+      await seedEntityValue(sfrWorkfileId, roomId, "unit_room", "0700.0036", "10.038", "NotUpdated");
+      await seedEntityValue(sfrWorkfileId, roomId, "unit_room", "0700.0044", "10.040", "Typical quality for the market");
+      await seedEntityValue(sfrWorkfileId, roomId, "unit_room", "0700.0033", "10.041", "TypicalWearAndTear");
+    }
+  }
+
+  const flooringId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_interior_feature", "unit-feature-flooring-1", 1, "Flooring 1");
+  await seedEntityValue(sfrWorkfileId, flooringId, "unit_interior_feature", "0700.0046", "10.044", "Flooring");
+  await seedEntityValue(sfrWorkfileId, flooringId, "unit_interior_feature", "0700.0041", "10.045", "Carpet");
+  await seedEntityValue(sfrWorkfileId, flooringId, "unit_interior_feature", "0700.0106", "10.046", "Typical quality for the market");
+  await seedEntityValue(sfrWorkfileId, flooringId, "unit_interior_feature", "0700.0104", "10.047", "TypicalWearAndTear");
+  const wallsId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_interior_feature", "unit-feature-walls-1", 2, "Walls and Ceiling 1");
+  await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0046", "10.044", "WallsAndCeiling");
+  await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0050", "10.044", "EightFeet");
+  await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0108", "10.044", "Flat");
+  await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0107", "10.044", "Typical quality for the market");
+  await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0045", "10.044", "TypicalWearAndTear");
+
   let manufacturedWorkfileResult = await pool.query(
     `SELECT id
        FROM appraisal.uad_workfiles
@@ -323,6 +453,7 @@ try {
     database: databaseName,
     synthetic_account_id: SFR_ACCOUNT_ID,
     synthetic_account_ids: [SFR_ACCOUNT_ID, MANUFACTURED_HOME_ACCOUNT_ID],
+    site_built_workfile_id: sfrWorkfileId,
     manufactured_home_workfile_id: manufacturedWorkfileId,
   }));
 } finally {

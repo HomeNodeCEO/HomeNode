@@ -104,6 +104,23 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.equal(section9?.applicable, true);
     assert.ok(section9.groups.reduce((count, group) => count + group.fields.length, 0) >= 32);
     assert.ok(editor.completion.manufactured_home.required > 0);
+
+    const siteBuiltWorkfile = await pool.query(
+      `SELECT id
+         FROM appraisal.uad_workfiles
+        WHERE account_id = 'UAD-STAGING-SFR-0001'
+          AND lower(file_number) = lower('HN-UAD-STAGING-SFR-0001')`,
+    );
+    assert.equal(siteBuiltWorkfile.rows.length, 1);
+    const siteBuiltEditor = await getUadEditor(pool, siteBuiltWorkfile.rows[0].id);
+    const section10 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 10);
+    assert.equal(section10?.key, "unit_interior");
+    assert.equal(section10?.applicable, true);
+    assert.ok(section10.groups.reduce((count, group) => count + group.fields.length, 0) >= 70);
+    assert.ok(siteBuiltEditor.entities.some((entity) => entity.entity_type === "unit_level"));
+    assert.ok(siteBuiltEditor.entities.filter((entity) => entity.entity_type === "unit_room").length >= 6);
+    assert.ok(siteBuiltEditor.entities.some((entity) => entity.entity_type === "unit_interior_feature"));
+    assert.ok(siteBuiltEditor.completion.unit_interior.required > 0);
   } finally {
     await pool.end();
   }

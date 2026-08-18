@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 9:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 10:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -81,7 +81,9 @@ workspace and incur per-preview resource charges.
 
 The guarded staging bootstrap also creates empty compatibility relations used
 by the shared HomeNode search tile and two synthetic value-summary rows. The
-site-built SFR fixture verifies that Section 9 remains hidden; the separate
+site-built SFR fixture includes a deterministic UAD workfile with a
+representative Section 10 unit, area source, level, rooms, and interior
+features while verifying that Section 9 remains hidden; the separate
 manufactured-home fixture includes a deterministic UAD workfile whose Section 8
 Construction Method is `Manufactured`, allowing Section 9 to be exercised
 without changing the SFR or copying production tax, owner, or sales data. CI
@@ -115,6 +117,14 @@ categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
   information, eligible financing programs, new-construction invoices, and
   commentary. Required Section 9 images are private, verified R2 assets linked
   to the exact dwelling, HUD label, or program record.
+- Unit Interior always displays and repeats by living unit or ADU. It captures
+  the official area breakdown and sources, unit/ADU characteristics, levels,
+  rooms, quality and condition, flooring, walls and ceilings, accessibility,
+  defects, and commentary. Server validation reconciles level areas and room
+  counts, requires the official feature rows, and requires verified images for
+  each kitchen, bathroom, and reported physical interior defect. General,
+  room, feature, and defect images use the same private R2/mobile contract and
+  remain linked to their exact Section 10 entity.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

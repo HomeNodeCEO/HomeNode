@@ -147,6 +147,11 @@ import { createUadRouter } from "./modules/uad/router.js";
 import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
 import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
+import {
+  getAssignmentInspectionSketch,
+  saveAssignmentInspectionSketch,
+} from "./modules/mobile/desktopSketches.js";
+import { renderSketchPdf, renderSketchSvg } from "./modules/mobile/sketchArtifacts.js";
 
 const app = express();
 const pool = new pg.Pool({
@@ -160,7 +165,7 @@ pool.on("error", (error) => {
 });
 const requestPerformance = createRequestPerformanceMonitor({ pool });
 app.use(requestPerformance.middleware);
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 // Support comma-separated list in CORS_ORIGIN env (e.g. "http://localhost:5173,http://127.0.0.1:5173")
 const corsEnv = process.env.CORS_ORIGIN;
 const corsOrigins = !corsEnv
@@ -1430,6 +1435,109 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
   } catch (error) {
     console.error("assignment file list failed", error);
     return res.status(500).json({ error: "assignment_file_list_failed" });
+  }
+});
+
+/** Download or embed the current report-file sketch as a scalable vector exhibit. */
+app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  let assignmentFileId;
+  try {
+    assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const result = await getAssignmentInspectionSketch(pool, canonicalId, assignmentFileId);
+    if (!result) return res.status(404).json({ error: "assignment_sketch_not_found" });
+    const fileName = (result.artifact_options.fileNumber || "homenode")
+      .replace(/[^A-Za-z0-9._-]/g, "_");
+    const svg = renderSketchSvg(result.sketch, result.artifact_options);
+    return res
+      .set("Cache-Control", "no-store")
+      .set("Content-Disposition", 'inline; filename="' + fileName + '-measured-sketch.svg"')
+      .type("image/svg+xml")
+      .send(svg);
+  } catch (error) {
+    if (error?.message === "invalid_assignment_file_id") {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("assignment sketch SVG failed", error);
+    return res.status(500).json({ error: "assignment_sketch_svg_failed" });
+  }
+});
+
+/** Download the current report-file sketch as a report-ready PDF exhibit. */
+app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/report.pdf", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  let assignmentFileId;
+  try {
+    assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const result = await getAssignmentInspectionSketch(pool, canonicalId, assignmentFileId);
+    if (!result) return res.status(404).json({ error: "assignment_sketch_not_found" });
+    const fileName = (result.artifact_options.fileNumber || "homenode")
+      .replace(/[^A-Za-z0-9._-]/g, "_");
+    const pdf = await renderSketchPdf(result.sketch, result.artifact_options);
+    return res
+      .set("Cache-Control", "no-store")
+      .set("Content-Disposition", 'attachment; filename="' + fileName + '-measured-sketch.pdf"')
+      .type("application/pdf")
+      .send(pdf);
+  } catch (error) {
+    if (error?.message === "invalid_assignment_file_id") {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("assignment sketch PDF failed", error);
+    return res.status(500).json({ error: "assignment_sketch_pdf_failed" });
+  }
+});
+
+/** Review a mobile sketch on desktop without overwriting an earlier revision. */
+app.patch("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  let assignmentFileId;
+  try {
+    assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const result = await saveAssignmentInspectionSketch(
+      pool,
+      canonicalId,
+      assignmentFileId,
+      req.body,
+    );
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error?.message === "assignment_sketch_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error?.message === "sketch_revision_conflict") {
+      return res.status(409).json({
+        error: error.message,
+        current_revision: error.currentRevision,
+      });
+    }
+    if (
+      String(error?.message || "").startsWith("invalid_")
+      || String(error?.message || "").startsWith("duplicate_")
+      || error?.message === "sketch_not_ready_for_confirmation"
+      || error?.message === "sketch_operation_conflict"
+    ) {
+      return res.status(error?.message === "sketch_operation_conflict" ? 409 : 400)
+        .json({ error: error.message });
+    }
+    console.error("assignment sketch desktop review failed", error);
+    return res.status(500).json({ error: "assignment_sketch_update_failed" });
   }
 });
 

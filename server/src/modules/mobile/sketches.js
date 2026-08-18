@@ -246,7 +246,7 @@ function normalizedTimestamp(value) {
   return value instanceof Date ? value.toISOString() : value;
 }
 
-function sketchResponse(row, rooms = []) {
+export function sketchResponse(row, rooms = []) {
   return Object.freeze({
     id: row.id,
     client_sketch_id: row.client_sketch_id,
@@ -276,7 +276,7 @@ function sketchResponse(row, rooms = []) {
   });
 }
 
-async function activeRooms(client, sketchId) {
+export async function activeRooms(client, sketchId) {
   const { rows } = await client.query(
     `SELECT room.*,
             count(photo.id) FILTER (WHERE photo.status NOT IN ('excluded', 'deleted')) AS photo_count
@@ -310,7 +310,7 @@ export async function getInspectionSketch(pool, auth, sessionIdValue) {
   }
 }
 
-async function synchronizeRooms(client, sketchRow, document) {
+export async function synchronizeRooms(client, sketchRow, document) {
   const roomIds = document.rooms.map((room) => room.id);
   await client.query(
     `UPDATE app.inspection_sketch_rooms

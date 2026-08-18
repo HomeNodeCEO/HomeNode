@@ -163,6 +163,12 @@ function proposalState(row, prefix) {
   return Object.freeze({ exists: true, value: row[`${prefix}_value`] });
 }
 
+function timestamp(value) {
+  if (value == null) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
 function proposalResponse(row, current = null) {
   return {
     id: row.id,
@@ -181,10 +187,10 @@ function proposalResponse(row, current = null) {
     appraiser_confirmed: Boolean(row.appraiser_confirmed),
     status: row.status,
     conflict: row.conflict || null,
-    reviewed_at: row.reviewed_at || null,
+    reviewed_at: timestamp(row.reviewed_at),
     applied_target_revision: row.applied_target_revision == null ? null : Number(row.applied_target_revision),
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    created_at: timestamp(row.created_at),
+    updated_at: timestamp(row.updated_at),
   };
 }
 

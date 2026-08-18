@@ -51,6 +51,9 @@ const OUTBUILDING_GENERAL_CAPTIONS = [
 const OUTBUILDING_DEFECT_CAPTIONS = ["OutbuildingDefect"];
 const VEHICLE_STORAGE_GENERAL_CAPTIONS = ["VehicleStorage", "VehicleStorageExhibit"];
 const VEHICLE_STORAGE_DEFECT_CAPTIONS = ["VehicleStorageDefect"];
+const SUBJECT_AMENITY_GENERAL_CAPTIONS = ["SubjectPropertyAmenitiesExhibit"];
+const SUBJECT_AMENITY_CAPTIONS = ["SubjectPropertyAmenity"];
+const SUBJECT_AMENITY_DEFECT_CAPTIONS = ["SubjectPropertyAmenityDefect"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -144,6 +147,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const outbuildingDefects = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_defect") || [];
   const vehicleStorages = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage") || [];
   const vehicleStorageDefects = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage_defect") || [];
+  const subjectAmenities = editor?.entities.filter((entity) => entity.entity_type === "amenity") || [];
+  const subjectAmenityDefects = editor?.entities.filter((entity) => entity.entity_type === "amenity_defect") || [];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -172,17 +177,21 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     return Boolean(field.required || (field.requiredWhen && evaluateCondition(field.requiredWhen, draftLookup(entityId))));
   }
 
-  function entitiesFor(entityType?: string) {
-    return entityType ? editor?.entities.filter((entity) => entity.entity_type === entityType) || [] : [];
+  function entitiesFor(entityType?: string, entityDataFilter?: Record<string, unknown>) {
+    if (!entityType) return [];
+    return editor?.entities.filter((entity) => (
+      entity.entity_type === entityType
+      && (!entityDataFilter || Object.entries(entityDataFilter).every(([key, value]) => entity.data?.[key] === value))
+    )) || [];
   }
 
-  async function handleEntityAdd(entityType: string, parentEntityId?: string) {
+  async function handleEntityAdd(entityType: string, parentEntityId?: string, data?: Record<string, unknown>) {
     if (entityBusy) return;
     const preservedDraft = dirty ? draft : undefined;
     setEntityBusy(true);
     setError(null);
     try {
-      await createUadEntity(workfileId, entityType, parentEntityId);
+      await createUadEntity(workfileId, entityType, parentEntityId, data);
       await loadEditor(preservedDraft);
       setSavedMessage(preservedDraft ? "Record added; your unsaved field changes were retained." : "Record added to the UAD workfile.");
     } catch (reason) {
@@ -217,11 +226,13 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     const submitted: Array<{ uid: string; context_key: string; entity_id?: string | null; value: UadFieldValue }> = [];
     const missing: string[] = [];
     for (const group of section.groups) {
-      const instances = group.entityType ? entitiesFor(group.entityType).map((entity) => entity.id) : [null];
+      const instances = group.entityType
+        ? entitiesFor(group.entityType, group.entityDataFilter).map((entity) => entity.id)
+        : [null];
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && activeSection !== "vehicle_storage") continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -287,7 +298,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       const measurement = (typeof value === "object" && !Array.isArray(value) && value ? value : { amount: null, unit: "" }) as UadMeasurement;
       return (
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(9rem,0.7fr)] gap-2">
-          <input className={inputClass} min={field.minimum ?? field.minimumExclusive ?? 0} onChange={(event) => setValue(field, entityId, { ...measurement, amount: event.target.value === "" ? null : Number(event.target.value) })} step="any" type="number" value={measurement.amount ?? ""} />
+          <input className={inputClass} max={field.maximum} min={field.minimum ?? field.minimumExclusive ?? 0} onChange={(event) => setValue(field, entityId, { ...measurement, amount: event.target.value === "" ? null : Number(event.target.value) })} step="any" type="number" value={measurement.amount ?? ""} />
           <select className={inputClass} onChange={(event) => setValue(field, entityId, { ...measurement, unit: event.target.value })} value={measurement.unit}>
             <option value="">Unit</option>{field.units?.map((unit) => <option key={unit} value={unit}>{displayOption(unit)}</option>)}
           </select>
@@ -413,6 +424,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             Report every vehicle storage type. Select None as the only record when no storage is available. Garage and carport details, driveway space logic, shared-project assignments, defect relationships, and required physical-defect photos follow the official Section 13 rules.
           </div>
         )}
+        {activeSection === "subject_property_amenities" && (
+          <div className="mb-5 rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-4 text-sm leading-6 text-fuchsia-950">
+            Start with Property Amenities Exist. Add each amenity in its official category so the same record can flow into the Sales Comparison Approach later. Amenity images are optional (up to two each); every reported physical defect requires a verified image and is linked to its amenity.
+          </div>
+        )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
@@ -428,7 +444,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                 </fieldset>
               );
             }
-            const entities = entitiesFor(group.entityType);
+            const entities = entitiesFor(group.entityType, group.entityDataFilter);
             const parentEntityTypes = group.parentEntityTypes
               || (group.parentEntityType ? [group.parentEntityType] : []);
             if (parentEntityTypes.length) {
@@ -466,7 +482,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                             ))}
                             {!children.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added for this structure.</div>}
                             {parentGroupEnabled && group.createEnabled !== false && (
-                              <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!, parent.id)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
+                              <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy || children.length >= Number(group.maxItems || Number.POSITIVE_INFINITY)} onClick={() => void handleEntityAdd(group.entityType!, parent.id, group.createData)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
                             )}
                           </div>
                         </div>
@@ -499,7 +515,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                     </div>
                   ))}
                   {!displayedEntities.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added.</div>}
-                  {groupEnabled && group.createEnabled !== false && <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy} onClick={() => void handleEntityAdd(group.entityType!)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>}
+                  {groupEnabled && group.createEnabled !== false && <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy || displayedEntities.length >= Number(group.maxItems || Number.POSITIVE_INFINITY)} onClick={() => void handleEntityAdd(group.entityType!, undefined, group.createData)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>}
                 </div>
               </fieldset>
             );
@@ -672,6 +688,43 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               sectionNumber={13}
               title={`${defect.label || `Vehicle storage defect ${defect.ordinal}`} photo`}
               visibleCaptionTypes={VEHICLE_STORAGE_DEFECT_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "subject_property_amenities" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SUBJECT_AMENITY_GENERAL_CAPTIONS}
+              description="Optional Section 14 exhibits that are not specific to one amenity may be added here. Provide a descriptive caption so the image can be identified in the report."
+              emptyMessage="No general subject property amenity exhibits uploaded."
+              sectionNumber={14}
+              title="Subject property amenities exhibits"
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "subject_property_amenities" && subjectAmenities.map((amenity) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SUBJECT_AMENITY_CAPTIONS}
+              description="Optional images attach directly to this amenity. UAD 3.6 permits up to two report images for each amenity."
+              emptyMessage="No optional amenity images uploaded."
+              entityId={amenity.id}
+              key={`subject-amenity-${amenity.id}`}
+              sectionNumber={14}
+              title={`${amenity.label || `Amenity ${amenity.ordinal}`} images`}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "subject_property_amenities" && subjectAmenityDefects.map((defect) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SUBJECT_AMENITY_DEFECT_CAPTIONS}
+              description="A verified image is required for this physical defect, damage, or deficiency. Up to four images may be attached to the defect."
+              emptyMessage="No verified amenity defect image uploaded yet."
+              entityId={defect.id}
+              key={`subject-amenity-defect-${defect.id}`}
+              sectionNumber={14}
+              title={`${defect.label || `Amenity defect ${defect.ordinal}`} images`}
               workfileId={workfileId}
             />
           ))}

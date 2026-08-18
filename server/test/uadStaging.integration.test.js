@@ -162,6 +162,24 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       "Garage",
     );
     assert.ok(siteBuiltEditor.completion.vehicle_storage.required > 0);
+    const section14 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 14);
+    assert.equal(section14?.key, "subject_property_amenities");
+    assert.equal(section14?.applicable, true);
+    assert.equal(section14.groups.reduce((count, group) => count + group.fields.length, 0), 41);
+    const stagingAmenity = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "amenity" && entity.data?.amenity_category === "OutdoorLiving"
+    ));
+    assert.ok(stagingAmenity);
+    assert.equal(
+      siteBuiltEditor.values.find((value) => (
+        value.entity_id === stagingAmenity.id
+        && value.context_key === "amenity_outdoor_living"
+        && value.uid === "0200.0023"
+      ))?.value,
+      "Deck",
+    );
+    assert.ok(siteBuiltEditor.completion.subject_property_amenities.required > 0);
+    assert.equal(siteBuiltEditor.completion.subject_property_amenities.percent, 100);
   } finally {
     await pool.end();
   }

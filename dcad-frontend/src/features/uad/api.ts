@@ -69,7 +69,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -121,10 +121,13 @@ export interface UadEditorSection {
     entityType?: string;
     addLabel?: string;
     minItems?: number;
+    maxItems?: number;
     createEnabled?: boolean;
     parentEntityType?: string;
     parentEntityTypes?: string[];
     showWhen?: UadCondition;
+    entityDataFilter?: Record<string, unknown>;
+    createData?: Record<string, unknown>;
   }>;
 }
 
@@ -251,11 +254,16 @@ export async function saveUadSection(
   });
 }
 
-export async function createUadEntity(workfileId: string, entityType: string, parentEntityId?: string): Promise<UadEntity> {
+export async function createUadEntity(
+  workfileId: string,
+  entityType: string,
+  parentEntityId?: string,
+  data?: Record<string, unknown>,
+): Promise<UadEntity> {
   const response = await uadFetchJSON<{ entity: UadEntity }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/entities`), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ entity_type: entityType, parent_entity_id: parentEntityId || null }),
+    body: JSON.stringify({ entity_type: entityType, parent_entity_id: parentEntityId || null, data: data || {} }),
   });
   return response.entity;
 }

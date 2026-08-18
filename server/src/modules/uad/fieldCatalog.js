@@ -19,6 +19,10 @@ import {
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 import {
+  UAD_SUBJECT_PROPERTY_AMENITIES_ENTITY_GROUPS,
+  UAD_SUBJECT_PROPERTY_AMENITIES_FIELDS,
+} from "./subjectPropertyAmenitiesCatalog.js";
+import {
   UAD_UNIT_INTERIOR_ENTITY_GROUPS,
   UAD_UNIT_INTERIOR_FIELDS,
 } from "./unitInteriorCatalog.js";
@@ -35,6 +39,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_UNIT_INTERIOR_ENTITY_GROUPS,
   ...UAD_OUTBUILDING_ENTITY_GROUPS,
   ...UAD_VEHICLE_STORAGE_ENTITY_GROUPS,
+  ...UAD_SUBJECT_PROPERTY_AMENITIES_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -55,6 +60,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   functional_obsolescence: { title: "Functional Obsolescence", officialSectionNumber: 11 },
   outbuilding: { title: "Outbuilding", officialSectionNumber: 12 },
   vehicle_storage: { title: "Vehicle Storage", officialSectionNumber: 13 },
+  subject_property_amenities: { title: "Subject Property Amenities", officialSectionNumber: 14 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -528,6 +534,7 @@ const fields = [
   ...UAD_FUNCTIONAL_OBSOLESCENCE_FIELDS,
   ...UAD_OUTBUILDING_FIELDS,
   ...UAD_VEHICLE_STORAGE_FIELDS,
+  ...UAD_SUBJECT_PROPERTY_AMENITIES_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -586,6 +593,19 @@ export function uadFieldIsRequired(field, lookup) {
   return Boolean(field.required || (field.requiredWhen && evaluateUadCondition(field.requiredWhen, lookup)));
 }
 
+function entityDataMatches(filter, data) {
+  if (!filter) return true;
+  return Object.entries(filter).every(([key, value]) => data?.[key] === value);
+}
+
+export function uadFieldAppliesToEntity(field, entity) {
+  return Boolean(
+    entity
+    && field.entityType === entity.entity_type
+    && entityDataMatches(field.entityDataFilter, entity.data),
+  );
+}
+
 export function buildUadPrefillValues(subjectSnapshot) {
   const values = [];
   for (const field of UAD_PHASE_ONE_FIELDS) {
@@ -627,17 +647,21 @@ export function getUadEditorSections() {
       let group = groups.find((candidate) => candidate.name === field.group);
       if (!group) {
         const repeatable = field.entityType ? UAD_REPEATABLE_ENTITY_GROUPS[field.entityType] : null;
+        const variant = repeatable?.variants?.[field.group] || null;
         group = {
           name: field.group,
           fields: [],
           ...(repeatable ? {
             entityType: field.entityType,
-            addLabel: repeatable.addLabel,
-            minItems: repeatable.minItems,
-            createEnabled: repeatable.createEnabled,
-            parentEntityType: repeatable.parentEntityType,
-            parentEntityTypes: repeatable.parentEntityTypes,
-            showWhen: repeatable.showWhen,
+            addLabel: variant?.addLabel ?? repeatable.addLabel,
+            minItems: variant?.minItems ?? repeatable.minItems,
+            maxItems: variant?.maxItems ?? repeatable.maxItems,
+            createEnabled: variant?.createEnabled ?? repeatable.createEnabled,
+            parentEntityType: variant?.parentEntityType ?? repeatable.parentEntityType,
+            parentEntityTypes: variant?.parentEntityTypes ?? repeatable.parentEntityTypes,
+            showWhen: variant?.showWhen ?? repeatable.showWhen,
+            entityDataFilter: variant?.entityDataFilter,
+            createData: variant?.createData,
           } : {}),
         };
         groups.push(group);
@@ -699,7 +723,8 @@ export function normalizeAndValidateUadValue(field, rawValue) {
     const unit = String(rawValue?.unit || "").trim();
     const minimumOk = field.minimum == null || amount >= field.minimum;
     const exclusiveMinimumOk = field.minimumExclusive == null || amount > field.minimumExclusive;
-    return Number.isFinite(amount) && minimumOk && exclusiveMinimumOk && field.units.includes(unit)
+    const maximumOk = field.maximum == null || amount <= field.maximum;
+    return Number.isFinite(amount) && minimumOk && exclusiveMinimumOk && maximumOk && field.units.includes(unit)
       ? { value: { amount, unit }, error: null }
       : { value: null, error: invalid(field, "measurement", `${field.label} requires a valid amount and unit.`) };
   }
@@ -734,7 +759,11 @@ export function normalizeAndValidateUadValue(field, rawValue) {
   return { value, error: null };
 }
 
-export function validateUadSectionValues(section, submittedValues, { entityTypesById = new Map() } = {}) {
+export function validateUadSectionValues(
+  section,
+  submittedValues,
+  { entityTypesById = new Map(), entityDataById = new Map() } = {},
+) {
   if (!UAD_EDITOR_SECTION_KEYS.includes(section)) throw new Error("invalid_uad_section");
   if (!Array.isArray(submittedValues) || submittedValues.length > 1000) {
     throw new Error("invalid_uad_field_values");
@@ -748,9 +777,11 @@ export function validateUadSectionValues(section, submittedValues, { entityTypes
     const entityId = submitted?.entity_id || null;
     const submittedKey = `${entityId || "root"}:${field?.key || "unknown"}`;
     const entityType = entityId ? entityTypesById.get(entityId) : null;
+    const entityData = entityId ? entityDataById.get(entityId) : null;
     if (
       !field || field.section !== section || seen.has(submittedKey) ||
       (field.entityType && entityType !== field.entityType) ||
+      (field.entityType && !entityDataMatches(field.entityDataFilter, entityData)) ||
       (!field.entityType && entityId)
     ) {
       throw new Error("invalid_uad_field_values");

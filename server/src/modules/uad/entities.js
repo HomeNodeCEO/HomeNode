@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { UAD_REPEATABLE_ENTITY_GROUPS } from "./fieldCatalog.js";
+import {
+  UAD_SUBJECT_AMENITY_CATEGORIES,
+  UAD_SUBJECT_AMENITY_CATEGORY_LIMITS,
+} from "./subjectPropertyAmenitiesCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const EDITABLE_ENTITY_TYPES = new Set(Object.keys(UAD_REPEATABLE_ENTITY_GROUPS));
@@ -51,6 +55,14 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
     const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
+    let entityData = { ...(input.data || {}) };
+    if (entityType === "amenity") {
+      const amenityCategory = String(entityData.amenity_category || "").trim();
+      if (!UAD_SUBJECT_AMENITY_CATEGORIES.includes(amenityCategory)) {
+        throw new Error("invalid_uad_amenity_category");
+      }
+      entityData = { amenity_category: amenityCategory };
+    }
     let parentEntityId = input.parent_entity_id == null ? null : normalizeUadWorkfileId(input.parent_entity_id);
     const parentEntityTypes = group.parentEntityTypes
       || (group.parentEntityType ? [group.parentEntityType] : []);
@@ -67,6 +79,41 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
       if (!parents.rows.some((row) => row.id === parentEntityId)) throw new Error("invalid_uad_parent_entity");
     } else if (parentEntityId) {
       throw new Error("invalid_uad_parent_entity");
+    }
+    if (Number(group.maxItems || 0) > 0 && !parentEntityId) {
+      const count = await client.query(
+        `SELECT count(*)::integer AS count
+           FROM appraisal.uad_entities
+          WHERE workfile_id = $1 AND entity_type = $2`,
+        [workfileId, entityType],
+      );
+      if (Number(count.rows[0].count) >= Number(group.maxItems)) {
+        throw new Error("invalid_uad_entity_maximum_reached");
+      }
+    }
+    if (entityType === "amenity") {
+      const categoryCount = await client.query(
+        `SELECT count(*)::integer AS count
+           FROM appraisal.uad_entities
+          WHERE workfile_id = $1
+            AND entity_type = 'amenity'
+            AND data->>'amenity_category' = $2`,
+        [workfileId, entityData.amenity_category],
+      );
+      if (Number(categoryCount.rows[0].count) >= UAD_SUBJECT_AMENITY_CATEGORY_LIMITS[entityData.amenity_category]) {
+        throw new Error("invalid_uad_amenity_category_maximum_reached");
+      }
+    }
+    if (entityType === "amenity_defect") {
+      const defectCount = await client.query(
+        `SELECT count(*)::integer AS count
+           FROM appraisal.uad_entities
+          WHERE workfile_id = $1 AND entity_type = 'amenity_defect'`,
+        [workfileId],
+      );
+      if (Number(defectCount.rows[0].count) >= 6) {
+        throw new Error("invalid_uad_amenity_defect_maximum_reached");
+      }
     }
     const ordinalResult = await client.query(
       `SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal
@@ -89,7 +136,7 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
         `${entityType.replaceAll("_", "-")}-${ordinal}`,
         ordinal,
         String(input.label || `${singular} ${ordinal}`).trim().slice(0, 120),
-        JSON.stringify(input.data || {}),
+        JSON.stringify(entityData),
       ],
     );
     await client.query(

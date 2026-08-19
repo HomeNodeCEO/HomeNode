@@ -328,6 +328,30 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     );
     assert.equal(siteBuiltEditor.completion.sales_contract.required, 11);
     assert.equal(siteBuiltEditor.completion.sales_contract.percent, 100);
+    const section21 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 21);
+    assert.equal(section21?.key, "prior_sale_transfer_history");
+    assert.equal(section21?.applicable, true);
+    assert.equal(section21.groups.reduce((count, group) => count + group.fields.length, 0), 27);
+    const subjectTransfer = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "subject_prior_transfer"
+      && entity.entity_identifier === "subject-prior-transfer-1"
+    ));
+    const subjectTransferSource = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "subject_prior_transfer_data_source"
+      && entity.parent_entity_id === subjectTransfer?.id
+    ));
+    assert.ok(subjectTransfer);
+    assert.ok(subjectTransferSource);
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === subjectTransfer.id
+        && item.context_key === "subject_prior_transfer"
+        && item.uid === "0800.0012"
+      ))?.value,
+      375000,
+    );
+    assert.equal(siteBuiltEditor.completion.prior_sale_transfer_history.required, 8);
+    assert.equal(siteBuiltEditor.completion.prior_sale_transfer_history.percent, 100);
   } finally {
     await pool.end();
   }

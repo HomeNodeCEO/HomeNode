@@ -359,7 +359,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-20 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-21 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -673,6 +673,36 @@ try {
   ];
   for (const [context, uid, reportFieldId, value] of salesContractValues) {
     await seedEntityValue(sfrWorkfileId, null, context, uid, reportFieldId, value);
+  }
+
+  const subjectPriorTransferId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "subject_prior_transfer",
+    "subject-prior-transfer-1",
+    1,
+    "Subject Prior Transfer 1",
+  );
+  const subjectPriorTransferSourceId = await ensureEntity(
+    sfrWorkfileId,
+    subjectPriorTransferId,
+    "subject_prior_transfer_data_source",
+    "subject-prior-transfer-source-1",
+    1,
+    "Subject Transfer Data Source 1",
+  );
+  const priorTransferValues = [
+    [null, "subject_prior_transfer_summary", "0800.0005", "21.000", true],
+    [subjectPriorTransferId, "subject_prior_transfer", "0800.0018", "21.002", "Sale"],
+    [subjectPriorTransferId, "subject_prior_transfer", "0800.0013", "21.002", "TypicallyMotivated"],
+    [subjectPriorTransferId, "subject_prior_transfer", "0800.0011", "21.003", "2025-08-01"],
+    [subjectPriorTransferId, "subject_prior_transfer", "0800.0012", "21.004", 375000],
+    [subjectPriorTransferSourceId, "subject_prior_transfer_data_source", "0700.0125", "21.005", "Deed"],
+    [null, "subject_prior_transfer_commentary", "1600.0008", "21.006", "The synthetic subject's prior arm's-length sale was researched through the recorded deed and analyzed against the current contract and market conditions."],
+    [null, "comparable_prior_transfer_commentary", "1600.0008", "21.012", "No sales comparables have been selected in the staging fixture. Comparable transfer histories will be analyzed when Section 22 comparable records are added."],
+  ];
+  for (const [entityId, context, uid, reportFieldId, value] of priorTransferValues) {
+    await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
   }
 
   const areaSourceId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_area_data_source", "unit-area-source-1", 1, "Area Source 1");

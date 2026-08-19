@@ -24,6 +24,7 @@ import {
   UAD_PROJECT_INFORMATION_FIELD_KEYS,
   isVerifiedProjectInformationAsset,
 } from "./projectInformationCatalog.js";
+import { UAD_PRIOR_TRANSFER_FIELD_KEYS } from "./priorSaleTransferCatalog.js";
 import {
   UAD_SALES_CONTRACT_FIELD_KEYS,
   isVerifiedSalesContractAsset,
@@ -1498,6 +1499,255 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         "sales_contract_known_amount_conflict",
         "Clear the total and market-typical answers or change Total sales concessions known to Yes.",
       ));
+    }
+  }
+
+  if (section === "prior_sale_transfer_history") {
+    const rootLookup = valueLookup(merged);
+    const priorField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+    const subjectHasTransfers = rootLookup(UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectHasTransfers);
+    const subjectTransfers = entities.filter((entity) => entity.entity_type === "subject_prior_transfer");
+    const subjectNoTransferSources = entities.filter((entity) => entity.entity_type === "subject_no_prior_transfer_data_source");
+    const subjectTransferSources = entities.filter((entity) => entity.entity_type === "subject_prior_transfer_data_source");
+    const salesComparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
+    const comparableNoTransferSources = entities.filter((entity) => entity.entity_type === "comparable_no_prior_transfer_data_source");
+    const comparableTransfers = entities.filter((entity) => entity.entity_type === "comparable_prior_transfer");
+    const comparableTransferSources = entities.filter((entity) => entity.entity_type === "comparable_prior_transfer_data_source");
+
+    const duplicateSourceErrors = (sourceEntities, fieldKey, entityId, code, message) => {
+      const selected = sourceEntities
+        .map((entity) => valueLookup(merged, entity.id)(fieldKey))
+        .filter(isPresent);
+      if (new Set(selected).size !== selected.length) {
+        errors.push(validationError(priorField(fieldKey), entityId, code, message));
+      }
+    };
+
+    const validateTransfer = ({
+      transfer,
+      sources,
+      transactionTypeKey,
+      saleTypeKey,
+      saleTypeOtherKey,
+      amountKey,
+      unavailableKey,
+      unavailableOtherKey,
+      sourceKey,
+      prefix,
+      ownerLabel,
+    }) => {
+      const transferLookup = valueLookup(merged, transfer.id);
+      const amount = transferLookup(amountKey);
+      const unavailable = transferLookup(unavailableKey);
+      const transactionType = transferLookup(transactionTypeKey);
+      if (isPresent(amount) === isPresent(unavailable)) {
+        errors.push(validationError(
+          priorField(amountKey),
+          transfer.id,
+          `${prefix}_amount_choice_required`,
+          `Provide either the ${ownerLabel} transfer amount or one reason it is unavailable, but not both.`,
+        ));
+      }
+      if (
+        transactionType !== "Sale"
+        && [saleTypeKey, saleTypeOtherKey].some((key) => isPresent(transferLookup(key)))
+      ) {
+        errors.push(validationError(
+          priorField(transactionTypeKey),
+          transfer.id,
+          `${prefix}_deed_sale_type_conflict`,
+          `Clear the prior sale type because this ${ownerLabel} record is a deed transfer only.`,
+        ));
+      }
+      if (unavailable !== "Other" && isPresent(transferLookup(unavailableOtherKey))) {
+        errors.push(validationError(
+          priorField(unavailableKey),
+          transfer.id,
+          `${prefix}_amount_reason_other_conflict`,
+          `Clear the other amount-unavailable description or select Other for this ${ownerLabel} transfer.`,
+        ));
+      }
+      if (!sources.length) {
+        errors.push(validationError(
+          priorField(sourceKey),
+          transfer.id,
+          `${prefix}_data_source_required`,
+          `Add at least one data source for this ${ownerLabel} prior sale or transfer.`,
+        ));
+      }
+      duplicateSourceErrors(
+        sources,
+        sourceKey,
+        transfer.id,
+        `${prefix}_data_source_duplicate`,
+        `Each data source may be selected only once for a given ${ownerLabel} transfer.`,
+      );
+    };
+
+    if (subjectHasTransfers === true && !subjectTransfers.length) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectTransactionType),
+        null,
+        "subject_prior_transfer_required",
+        "Add at least one subject prior sale or transfer.",
+      ));
+    }
+    if (subjectHasTransfers === true && subjectNoTransferSources.length) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectNoTransferDataSource),
+        null,
+        "subject_prior_transfer_no_source_conflict",
+        "Remove the no-transfer data sources or change Prior sales or transfers to No.",
+      ));
+    }
+    if (subjectHasTransfers === false && !subjectNoTransferSources.length) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectNoTransferDataSource),
+        null,
+        "subject_no_prior_transfer_data_source_required",
+        "Add at least one data source used to determine that the subject has no prior sale or transfer.",
+      ));
+    }
+    if (subjectHasTransfers === false && subjectTransfers.length) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectHasTransfers),
+        null,
+        "subject_prior_transfer_record_conflict",
+        "Remove the saved subject transfer records or change Prior sales or transfers to Yes.",
+      ));
+    }
+    duplicateSourceErrors(
+      subjectNoTransferSources,
+      UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectNoTransferDataSource,
+      null,
+      "subject_no_prior_transfer_data_source_duplicate",
+      "Each no-transfer subject data source may be selected only once.",
+    );
+
+    const subjectTransferIds = new Set(subjectTransfers.map((entity) => entity.id));
+    if (subjectTransferSources.some((entity) => !subjectTransferIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectTransferDataSource),
+        null,
+        "subject_prior_transfer_data_source_orphaned",
+        "Every subject transfer data source must be linked to a subject prior sale or transfer.",
+      ));
+    }
+    for (const transfer of subjectTransfers) {
+      validateTransfer({
+        transfer,
+        sources: subjectTransferSources.filter((source) => source.parent_entity_id === transfer.id),
+        transactionTypeKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectTransactionType,
+        saleTypeKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectSaleType,
+        saleTypeOtherKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectSaleTypeOther,
+        amountKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectAmount,
+        unavailableKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectAmountUnavailable,
+        unavailableOtherKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectAmountUnavailableOther,
+        sourceKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.subjectTransferDataSource,
+        prefix: "subject_prior_transfer",
+        ownerLabel: "subject",
+      });
+    }
+
+    const comparableOrdinals = new Set();
+    for (const comparable of salesComparables) {
+      const comparableLookup = valueLookup(merged, comparable.id);
+      const ordinal = comparableLookup(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableOrdinal);
+      if (isPresent(ordinal)) {
+        if (comparableOrdinals.has(ordinal)) {
+          errors.push(validationError(
+            priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableOrdinal),
+            comparable.id,
+            "comparable_ordinal_duplicate",
+            "Comparable numbers must be unique.",
+          ));
+        }
+        comparableOrdinals.add(ordinal);
+      }
+      const hasTransfers = comparableLookup(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableHasTransfers);
+      const transfers = comparableTransfers.filter((entity) => entity.parent_entity_id === comparable.id);
+      const noTransferSources = comparableNoTransferSources.filter((entity) => entity.parent_entity_id === comparable.id);
+      if (hasTransfers === true && !transfers.length) {
+        errors.push(validationError(
+          priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableTransactionType),
+          comparable.id,
+          "comparable_prior_transfer_required",
+          "Add at least one prior sale or transfer for this comparable.",
+        ));
+      }
+      if (hasTransfers === true && noTransferSources.length) {
+        errors.push(validationError(
+          priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableNoTransferDataSource),
+          comparable.id,
+          "comparable_prior_transfer_no_source_conflict",
+          "Remove this comparable's no-transfer data sources or change its prior-transfer answer to No.",
+        ));
+      }
+      if (hasTransfers === false && !noTransferSources.length) {
+        errors.push(validationError(
+          priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableNoTransferDataSource),
+          comparable.id,
+          "comparable_no_prior_transfer_data_source_required",
+          "Add at least one data source used to determine that this comparable has no prior sale or transfer.",
+        ));
+      }
+      if (hasTransfers === false && transfers.length) {
+        errors.push(validationError(
+          priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableHasTransfers),
+          comparable.id,
+          "comparable_prior_transfer_record_conflict",
+          "Remove this comparable's saved transfer records or change its prior-transfer answer to Yes.",
+        ));
+      }
+      duplicateSourceErrors(
+        noTransferSources,
+        UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableNoTransferDataSource,
+        comparable.id,
+        "comparable_no_prior_transfer_data_source_duplicate",
+        "Each no-transfer comparable data source may be selected only once.",
+      );
+    }
+
+    const comparableTransferIds = new Set(comparableTransfers.map((entity) => entity.id));
+    const salesComparableIds = new Set(salesComparables.map((entity) => entity.id));
+    if (comparableNoTransferSources.some((entity) => !salesComparableIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableNoTransferDataSource),
+        null,
+        "comparable_no_prior_transfer_data_source_orphaned",
+        "Every comparable no-transfer data source must be linked to a sales comparable.",
+      ));
+    }
+    if (comparableTransfers.some((entity) => !salesComparableIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableTransactionType),
+        null,
+        "comparable_prior_transfer_orphaned",
+        "Every comparable prior sale or transfer must be linked to a sales comparable.",
+      ));
+    }
+    if (comparableTransferSources.some((entity) => !comparableTransferIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        priorField(UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableTransferDataSource),
+        null,
+        "comparable_prior_transfer_data_source_orphaned",
+        "Every comparable transfer data source must be linked to a comparable prior sale or transfer.",
+      ));
+    }
+    for (const transfer of comparableTransfers) {
+      validateTransfer({
+        transfer,
+        sources: comparableTransferSources.filter((source) => source.parent_entity_id === transfer.id),
+        transactionTypeKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableTransactionType,
+        saleTypeKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableSaleType,
+        saleTypeOtherKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableSaleTypeOther,
+        amountKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableAmount,
+        unavailableKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableAmountUnavailable,
+        unavailableOtherKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableAmountUnavailableOther,
+        sourceKey: UAD_PRIOR_TRANSFER_FIELD_KEYS.comparableTransferDataSource,
+        prefix: "comparable_prior_transfer",
+        ownerLabel: "comparable",
+      });
     }
   }
 

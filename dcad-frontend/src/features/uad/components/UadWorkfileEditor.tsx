@@ -63,6 +63,7 @@ const PROJECT_INFORMATION_GENERAL_CAPTIONS = ["ProjectDeficiency", "ProjectExhib
 const PROJECT_AMENITY_CAPTIONS = ["ProjectAmenity"];
 const SUBJECT_LISTING_CAPTIONS = ["SubjectListingExhibit"];
 const SALES_CONTRACT_CAPTIONS = ["SalesContractExhibit"];
+const PRIOR_TRANSFER_CAPTIONS = ["PriorSaleAndTransferHistoryExhibit"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -222,17 +223,18 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
 
   async function handleEntityDelete(entity: UadEntity) {
     if (entityBusy) return;
-    if (dirty) {
-      setError("Save this section before removing a repeatable record.");
-      return;
-    }
     if (!window.confirm(`Remove ${entity.label || "this UAD record"}? Its saved field values will also be removed.`)) return;
+    const preservedDraft = dirty
+      ? Object.fromEntries(Object.entries(draft).filter(([key]) => !key.startsWith(`${entity.id}:`)))
+      : undefined;
     setEntityBusy(true);
     setError(null);
     try {
       await deleteUadEntity(workfileId, entity.id);
-      await loadEditor();
-      setSavedMessage("Record removed from the UAD workfile and captured in its audit history.");
+      await loadEditor(preservedDraft);
+      setSavedMessage(preservedDraft
+        ? "Record removed; your other unsaved field changes were retained."
+        : "Record removed from the UAD workfile and captured in its audit history.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The record could not be removed.");
     } finally {
@@ -251,7 +253,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract", "prior_sale_transfer_history"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -478,6 +480,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "sales_contract" && (
           <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-950">
             The report displays this section only when an active sales contract exists. If the contract was not analyzed, explain the information source, efforts to obtain it, and why it was unavailable. Personal property is excluded from the final opinion of value and must be described in the analysis.
+          </div>
+        )}
+        {activeSection === "prior_sale_transfer_history" && (
+          <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950">
+            Report every relevant subject transfer during the three years before the appraisal effective date. Comparable transfers use a one-year lookback and attach to the same comparable records that will be created in Section 22, so future comparable searching can populate reviewable suggestions without duplicating appraisal data.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -910,6 +917,18 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               title="Sales contract exhibits"
               uploadEnabled={salesContractExists === true}
               visibleCaptionTypes={SALES_CONTRACT_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "prior_sale_transfer_history" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={PRIOR_TRANSFER_CAPTIONS}
+              description="Upload optional photos or images relevant to the prior sale and transfer analysis. A descriptive caption is required, and each exhibit remains isolated to this UAD workfile."
+              emptyMessage="No optional prior sale and transfer history exhibits uploaded."
+              sectionNumber={21}
+              title="Prior sale and transfer history exhibits"
+              visibleCaptionTypes={PRIOR_TRANSFER_CAPTIONS}
               workfileId={workfileId}
             />
           )}

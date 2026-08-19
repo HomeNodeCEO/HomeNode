@@ -24,6 +24,10 @@ import {
   UAD_PROJECT_INFORMATION_FIELDS,
   projectOrPud,
 } from "./projectInformationCatalog.js";
+import {
+  UAD_PRIOR_SALE_TRANSFER_ENTITY_GROUPS,
+  UAD_PRIOR_SALE_TRANSFER_FIELDS,
+} from "./priorSaleTransferCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SALES_CONTRACT_FIELDS } from "./salesContractCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
@@ -56,6 +60,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_MARKET_ENTITY_GROUPS,
   ...UAD_PROJECT_INFORMATION_ENTITY_GROUPS,
   ...UAD_SUBJECT_LISTING_ENTITY_GROUPS,
+  ...UAD_PRIOR_SALE_TRANSFER_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -92,6 +97,10 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   sales_contract: {
     title: "Sales Contract",
     officialSectionNumber: 20,
+  },
+  prior_sale_transfer_history: {
+    title: "Prior Sale and Transfer History",
+    officialSectionNumber: 21,
   },
 });
 
@@ -573,6 +582,7 @@ const fields = [
   ...UAD_PROJECT_INFORMATION_FIELDS,
   ...UAD_SUBJECT_LISTING_FIELDS,
   ...UAD_SALES_CONTRACT_FIELDS,
+  ...UAD_PRIOR_SALE_TRANSFER_FIELDS,
 ];
 
 function fieldKey(field) {

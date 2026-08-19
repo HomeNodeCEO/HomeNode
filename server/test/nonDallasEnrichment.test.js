@@ -51,6 +51,8 @@ test("missing sources create review and GIS remains only a suggestion", () => {
 test("Trestle is disabled until credentials and explicit activation exist", () => {
   assert.deepEqual(trestleConfiguration({}), {
     enabled: false,
+    replicationEnabled: false,
+    mediaEnabled: false,
     configured: false,
     baseUrl: "https://api.cotality.com/trestle/odata",
     tokenUrl: "https://api.cotality.com/trestle/oidc/connect/token",
@@ -58,6 +60,14 @@ test("Trestle is disabled until credentials and explicit activation exist", () =
     clientSecret: "",
     scope: "api",
     originatingSystemName: "",
+    counties: [],
+    pageSize: 1000,
+    maximumPages: 25,
+    initialLookbackDays: 730,
+    overlapMinutes: 10,
+    requestTimeoutMs: 45000,
+    retryAttempts: 5,
+    retryBaseMs: 1000,
   });
 });
 
@@ -97,5 +107,54 @@ test("ListingKey is preferred and a non-unique ListingId is rejected", async () 
   await assert.rejects(
     client.findProperty({ listingId: "123" }),
     /ambiguous_listing_id/,
+  );
+});
+
+test("incremental Property queries use ModificationTimestamp and optional county scope", () => {
+  const client = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_COUNTIES: "Dallas, Collin",
+    },
+  });
+  assert.equal(
+    client.propertyChangesFilter({ modifiedAfter: "2026-08-01T00:00:00Z" }),
+    "ModificationTimestamp gt 2026-08-01T00:00:00.000Z and (CountyOrParish eq 'Dallas' or CountyOrParish eq 'Collin')",
+  );
+});
+
+test("Trestle retries quota responses and accepts only same-service next links", async () => {
+  const sleeps = [];
+  let attempts = 0;
+  const client = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_RETRY_ATTEMPTS: "3",
+    },
+    fetchImpl: async () => {
+      attempts += 1;
+      return {
+        ok: attempts > 1,
+        status: attempts > 1 ? 200 : 429,
+        headers: { get: (name) => name === "retry-after" ? "0" : null },
+        async json() { return { value: [] }; },
+      };
+    },
+    sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
+  });
+  client.token = "cached";
+  client.tokenExpiresAt = Date.now() + 3_600_000;
+  assert.deepEqual(await client.requestNextLink(
+    "https://api.cotality.com/trestle/odata/Property?$skip=1000",
+  ), { value: [] });
+  assert.equal(attempts, 2);
+  assert.deepEqual(sleeps, [0]);
+  await assert.rejects(
+    client.requestNextLink("https://example.com/steal-token"),
+    /trestle_untrusted_next_link/,
   );
 });

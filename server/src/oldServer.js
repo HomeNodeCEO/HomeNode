@@ -109,6 +109,7 @@ import {
   reconcileSalesSourceRecord,
 } from "./services/salesReconciliation.js";
 import { TrestleClient } from "./services/trestleClient.js";
+import { getTrestleReplicationStatus } from "./services/trestleReplication.js";
 import {
   countyGisConfiguration,
   fetchParcelAreaSuggestion,
@@ -2669,20 +2670,25 @@ async function getNonDallasAccount(client, accountId) {
 }
 
 /** Non-sensitive activation status for the additive non-Dallas pipeline. */
-app.get("/api/enrichment/status", (_req, res) => {
+app.get("/api/enrichment/status", async (_req, res) => {
   const gis = Object.fromEntries(
     NON_DALLAS_ENRICHMENT_COUNTIES.map((county) => {
       const configuration = countyGisConfiguration(county);
       return [county, { configured: configuration.configured }];
     }),
   );
-  return res.json({
-    dallas_county_isolated: true,
-    supported_counties: NON_DALLAS_ENRICHMENT_COUNTIES,
-    trestle: trestleClient.status(),
-    gis,
-    resolution_order: ["manual_verified", "trestle", "cad", "manual_review"],
-  });
+  try {
+    return res.json({
+      dallas_county_isolated: true,
+      supported_counties: NON_DALLAS_ENRICHMENT_COUNTIES,
+      trestle: await getTrestleReplicationStatus(pool, trestleClient.status()),
+      gis,
+      resolution_order: ["manual_verified", "trestle", "cad", "manual_review"],
+    });
+  } catch (error) {
+    console.error("enrichment status failed", error);
+    return res.status(500).json({ error: "enrichment_status_failed" });
+  }
 });
 
 /** Load verified overrides, review flags, and pending GIS suggestions for an account. */

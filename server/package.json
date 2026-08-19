@@ -17,6 +17,7 @@
         "backfill:locations": "node scripts/backfillAccountLocations.js",
         "backfill:census": "node scripts/backfillCensusGeographies.js",
         "enrich:non-dallas": "node scripts/runNonDallasEnrichment.js",
+        "sync:trestle": "node scripts/runTrestleReplication.js",
         "sync:property-context": "node scripts/syncPropertyContext.js",
         "sync:property-context:full": "node scripts/syncPropertyContext.js --source=all --mode=full",
         "maintenance:scheduled": "node scripts/runScheduledMaintenance.js --task=routine",

@@ -31,6 +31,10 @@ import {
   UAD_SUBJECT_PROPERTY_AMENITIES_FIELDS,
 } from "./subjectPropertyAmenitiesCatalog.js";
 import {
+  UAD_SUBJECT_LISTING_ENTITY_GROUPS,
+  UAD_SUBJECT_LISTING_FIELDS,
+} from "./subjectListingCatalog.js";
+import {
   UAD_UNIT_INTERIOR_ENTITY_GROUPS,
   UAD_UNIT_INTERIOR_FIELDS,
 } from "./unitInteriorCatalog.js";
@@ -50,6 +54,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_SUBJECT_PROPERTY_AMENITIES_ENTITY_GROUPS,
   ...UAD_MARKET_ENTITY_GROUPS,
   ...UAD_PROJECT_INFORMATION_ENTITY_GROUPS,
+  ...UAD_SUBJECT_LISTING_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -78,6 +83,10 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
     title: "Project Information",
     officialSectionNumber: 18,
     appliesWhen: projectOrPud,
+  },
+  subject_listing_information: {
+    title: "Subject Listing Information",
+    officialSectionNumber: 19,
   },
 });
 
@@ -557,6 +566,7 @@ const fields = [
   ...UAD_HIGHEST_BEST_USE_FIELDS,
   ...UAD_MARKET_FIELDS,
   ...UAD_PROJECT_INFORMATION_FIELDS,
+  ...UAD_SUBJECT_LISTING_FIELDS,
 ];
 
 function fieldKey(field) {

@@ -69,7 +69,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market" | "project_information";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market" | "project_information" | "subject_listing_information";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -350,7 +350,13 @@ export async function saveUadSketch(
 }
 
 export async function getUadSharedData(workfileId: string): Promise<{
-  suggestions: { site_fields: unknown[]; site_entities: unknown[]; market_fields: unknown[] };
+  suggestions: {
+    site_fields: unknown[];
+    site_entities: unknown[];
+    market_fields: unknown[];
+    subject_listing_fields: unknown[];
+    subject_listing_entities: unknown[];
+  };
   adapters: Record<string, { ready: boolean; mode: string; enabled_in_uad_editor: boolean }>;
 }> {
   return uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/shared-data`));

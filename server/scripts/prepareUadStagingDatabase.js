@@ -359,7 +359,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-18 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-19 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -629,6 +629,31 @@ try {
     [null, "project_information_commentary", "2500.0170", "18.095", "The synthetic subject is in a PUD with mandatory monthly association dues and common clubhouse access."],
   ];
   for (const [entityId, context, uid, reportFieldId, value] of projectValues) {
+    await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
+  }
+
+  const subjectListingId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "subject_listing",
+    "subject-listing-1",
+    1,
+    "Subject Listing 1",
+  );
+  const subjectListingValues = [
+    [null, "subject_listing_summary", "0900.0004", "19.000", true],
+    [subjectListingId, "subject_listing", "0900.0013", "19.002", "OffMarket"],
+    [subjectListingId, "subject_listing", "0900.0015", "19.003", "MLS"],
+    [subjectListingId, "subject_listing", "0900.0011", "19.004", "NTREIS-SYNTHETIC-19001"],
+    [subjectListingId, "subject_listing", "0900.0012", "19.005", "2026-06-01"],
+    [subjectListingId, "subject_listing", "0900.0010", "19.006", "2026-06-30"],
+    [subjectListingId, "subject_listing", "0900.0007", "19.007", 30],
+    [subjectListingId, "subject_listing", "0900.0009", "19.008", 449000],
+    [subjectListingId, "subject_listing", "0900.0008", "19.009", 435000],
+    [null, "subject_listing_summary", "0900.0003", "19.010", 30],
+    [null, "subject_listing_commentary", "0900.0020", "19.011", "The synthetic subject was exposed through one MLS listing for 30 days. The final list price was reduced from $449,000 to $435,000 before the listing was withdrawn without a settled sale."],
+  ];
+  for (const [entityId, context, uid, reportFieldId, value] of subjectListingValues) {
     await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
   }
 

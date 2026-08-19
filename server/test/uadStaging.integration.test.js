@@ -282,6 +282,30 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     );
     assert.equal(siteBuiltEditor.completion.project_information.required, 8);
     assert.equal(siteBuiltEditor.completion.project_information.percent, 100);
+    const section19 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 19);
+    assert.equal(section19?.key, "subject_listing_information");
+    assert.equal(section19?.applicable, true);
+    assert.equal(section19.groups.reduce((count, group) => count + group.fields.length, 0), 14);
+    const subjectListing = siteBuiltEditor.entities.find((entity) => entity.entity_type === "subject_listing");
+    assert.ok(subjectListing);
+    assert.equal(
+      siteBuiltEditor.values.find((value) => (
+        value.entity_id === subjectListing.id
+        && value.context_key === "subject_listing"
+        && value.uid === "0900.0011"
+      ))?.value,
+      "NTREIS-SYNTHETIC-19001",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((value) => (
+        value.entity_id === null
+        && value.context_key === "subject_listing_summary"
+        && value.uid === "0900.0003"
+      ))?.value,
+      30,
+    );
+    assert.equal(siteBuiltEditor.completion.subject_listing_information.required, 8);
+    assert.equal(siteBuiltEditor.completion.subject_listing_information.percent, 100);
   } finally {
     await pool.end();
   }

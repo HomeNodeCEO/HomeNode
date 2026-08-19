@@ -34,6 +34,7 @@ import {
   UAD_SUBJECT_AMENITY_FIELD_KEYS,
   isVerifiedSubjectPropertyAmenitiesAsset,
 } from "./subjectPropertyAmenitiesCatalog.js";
+import { UAD_SUBJECT_LISTING_FIELD_KEYS } from "./subjectListingCatalog.js";
 import { isVerifiedUnitInteriorAsset } from "./unitInteriorCatalog.js";
 import { isVerifiedVehicleStorageAsset } from "./vehicleStorageCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
@@ -347,6 +348,18 @@ function completionFor(values, entities, assets = []) {
         }
       }
     }
+    if (section === "subject_listing_information") {
+      const rootLookup = valueLookup(byKey);
+      const hasListings = rootLookup(UAD_SUBJECT_LISTING_FIELD_KEYS.relevantListings);
+      if (
+        hasListings === true
+        && !entities.some((entity) => entity.entity_type === "subject_listing")
+      ) required += 1;
+      if (
+        hasListings === false
+        && !entities.some((entity) => entity.entity_type === "subject_listing_data_source")
+      ) required += 1;
+    }
     result[section] = {
       completed,
       required,
@@ -406,7 +419,7 @@ function validationError(field, entityId, code, message) {
   return { key: field.key, uid: field.uid, context_key: field.contextKey, entity_id: entityId, code, message };
 }
 
-function validateCompleteSection(section, existingRows, submitted, entities, assets = []) {
+export function validateCompleteSection(section, existingRows, submitted, entities, assets = []) {
   const merged = valuesMap(existingRows);
   for (const item of submitted) merged.set(fieldValueKey(item.field, item.entityId), item.value);
   const errors = [];
@@ -1290,6 +1303,119 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
         null,
         "project_deficiency_asset_required",
         "Upload and verify a photo of the observed physical project deficiency.",
+      ));
+    }
+  }
+
+  if (section === "subject_listing_information") {
+    const lookup = valueLookup(merged);
+    const listingField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+    const hasListings = lookup(UAD_SUBJECT_LISTING_FIELD_KEYS.relevantListings);
+    const listings = entities
+      .filter((entity) => entity.entity_type === "subject_listing")
+      .sort((left, right) => left.ordinal - right.ordinal);
+    const dataSources = entities.filter((entity) => entity.entity_type === "subject_listing_data_source");
+
+    if (hasListings === true && !listings.length) {
+      errors.push(validationError(
+        listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.listingStatus),
+        null,
+        "subject_listing_required",
+        "Add at least one current or relevant listing.",
+      ));
+    }
+    if (hasListings === true && dataSources.length) {
+      errors.push(validationError(
+        listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.dataSource),
+        null,
+        "subject_listing_no_listing_source_conflict",
+        "Remove the no-listing data sources or change Current or relevant listings to No.",
+      ));
+    }
+    if (hasListings === false && !dataSources.length) {
+      errors.push(validationError(
+        listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.dataSource),
+        null,
+        "subject_listing_data_source_required",
+        "Add at least one data source used to determine that no current or relevant listings exist.",
+      ));
+    }
+    if (hasListings === false && listings.length) {
+      errors.push(validationError(
+        listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.relevantListings),
+        null,
+        "subject_listing_record_conflict",
+        "Remove the saved listing records or change Current or relevant listings to Yes.",
+      ));
+    }
+
+    const selectedSources = dataSources
+      .map((entity) => valueLookup(merged, entity.id)(UAD_SUBJECT_LISTING_FIELD_KEYS.dataSource))
+      .filter(isPresent);
+    if (new Set(selectedSources).size !== selectedSources.length) {
+      errors.push(validationError(
+        listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.dataSource),
+        null,
+        "subject_listing_data_source_duplicate",
+        "Each no-listing data source may be selected only once.",
+      ));
+    }
+
+    const listingIdentifiers = new Set();
+    let totalDaysOnMarket = 0;
+    for (const listing of listings) {
+      const entityLookup = valueLookup(merged, listing.id);
+      const identifier = String(entityLookup(UAD_SUBJECT_LISTING_FIELD_KEYS.listingId) || "").trim().toLowerCase();
+      if (identifier) {
+        if (listingIdentifiers.has(identifier)) {
+          errors.push(validationError(
+            listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.listingId),
+            listing.id,
+            "subject_listing_identifier_duplicate",
+            "Listing IDs must be unique within the subject listing history.",
+          ));
+        }
+        listingIdentifiers.add(identifier);
+      }
+
+      const startDate = entityLookup(UAD_SUBJECT_LISTING_FIELD_KEYS.listingStartDate);
+      const endDate = entityLookup(UAD_SUBJECT_LISTING_FIELD_KEYS.listingEndDate);
+      const daysOnMarket = Number(entityLookup(UAD_SUBJECT_LISTING_FIELD_KEYS.daysOnMarket));
+      if (Number.isFinite(daysOnMarket)) totalDaysOnMarket += daysOnMarket;
+      if (isPresent(startDate) && isPresent(endDate)) {
+        if (String(startDate) > String(endDate)) {
+          errors.push(validationError(
+            listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.listingStartDate),
+            listing.id,
+            "subject_listing_date_order",
+            "The listing start date cannot be after the listing end date.",
+          ));
+        } else {
+          const calculatedDays = Math.round(
+            (Date.parse(String(endDate)) - Date.parse(String(startDate))) / 86_400_000,
+          ) + 1;
+          if (Number.isFinite(daysOnMarket) && calculatedDays !== daysOnMarket) {
+            errors.push(validationError(
+              listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.daysOnMarket),
+              listing.id,
+              "subject_listing_dom_date_conflict",
+              `Days on market must equal ${calculatedDays} for the provided start and end dates.`,
+            ));
+          }
+        }
+      }
+    }
+
+    if (
+      hasListings === true
+      && listings.length
+      && Number(lookup(UAD_SUBJECT_LISTING_FIELD_KEYS.totalDaysOnMarket)) !== totalDaysOnMarket
+    ) {
+      errors.push(validationError(
+        listingField(UAD_SUBJECT_LISTING_FIELD_KEYS.totalDaysOnMarket),
+        null,
+        "subject_listing_total_dom_conflict",
+        `Total days on market must equal the ${totalDaysOnMarket} days reported across the listing rows.`,
       ));
     }
   }

@@ -23,6 +23,7 @@ import {
 } from "./src/api/client";
 import { AuthProvider, useAuth } from "./src/auth/session";
 import { loadMobileConfig, type MobileConfig } from "./src/config";
+import { InspectionCompletionPanel } from "./src/completion/InspectionCompletionPanel";
 import { CustomAppraisalPanel } from "./src/customAppraisal/CustomAppraisalPanel";
 import { WORKFLOWS, type WorkflowType, workflowTitle } from "./src/domain/workflows";
 import type { FieldState } from "./src/offline/model";
@@ -343,6 +344,7 @@ function InspectionScreen({
   onRefreshQueue,
   onSync,
   onBack,
+  onCompleted,
 }: {
   property: PropertyResult;
   api: MobileApi;
@@ -356,6 +358,7 @@ function InspectionScreen({
   onRefreshQueue: () => Promise<void>;
   onSync: () => Promise<void>;
   onBack: () => void;
+  onCompleted: (session: InspectionSession) => Promise<void>;
 }) {
   const [comments, setComments] = useState("");
   const [draftState, setDraftState] = useState("synchronized");
@@ -364,6 +367,7 @@ function InspectionScreen({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedSketchRoom, setSelectedSketchRoom] = useState<SelectedSketchRoom | null>(null);
+  const completed = session.status === "completed";
 
   const loadLocal = useCallback(async () => {
     const [draft, nextConflicts, nextSummary] = await Promise.all([
@@ -425,6 +429,7 @@ function InspectionScreen({
         <Text style={styles.label}>Inspection session</Text><Text style={styles.accountId}>{session.id}</Text>
         <Text style={styles.label}>Local draft</Text><Text style={styles.badge}>{draftState.replaceAll("_", " ")}</Text>
       </View>
+      {!completed ? <>
       <Text style={styles.sectionTitle}>Appraiser field comments</Text>
       <Text style={styles.muted}>Saved locally first. Synchronization never silently overwrites a different HomeNode value.</Text>
       <TextInput
@@ -495,6 +500,16 @@ function InspectionScreen({
         online={online}
         selectedSketchRoom={selectedSketchRoom}
       />
+      </> : <Text style={styles.notice}>This completed inspection is read-only on mobile. Start or resume another appraisal file to capture new field data.</Text>}
+      <InspectionCompletionPanel
+        api={api}
+        store={store}
+        ownerUserId={ownerUserId}
+        session={session}
+        online={online}
+        onSync={onSync}
+        onCompleted={onCompleted}
+      />
       <Button title="Return to property" secondary onPress={onBack} />
     </ScrollView>
   );
@@ -559,10 +574,15 @@ function SignedInApp({ config }: { config: MobileConfig }) {
     setInspection({ file: cached.file, session: cached.session });
   };
 
-  const syncAndReload = async () => {
+  const syncAndReload = useCallback(async () => {
     await offlineSync.syncNow();
     await reloadCached();
-  };
+  }, [offlineSync.syncNow, reloadCached]);
+
+  const inspectionCompleted = useCallback(async (nextSession: InspectionSession) => {
+    setInspection((current) => current ? { ...current, session: nextSession } : current);
+    await reloadCached();
+  }, [reloadCached]);
 
   if (error) return <SafeAreaView style={styles.safe}><View style={styles.signIn}><Text style={styles.error}>{error}</Text><Button title="Sign out" onPress={() => void auth.signOut()} /></View></SafeAreaView>;
   if (!initialized || !user || !store) return <SafeAreaView style={styles.safe}><Loading label="Opening encrypted field drafts…" /></SafeAreaView>;
@@ -578,6 +598,7 @@ function SignedInApp({ config }: { config: MobileConfig }) {
     globalSummary={offlineSync.summary}
     onRefreshQueue={offlineSync.refresh}
     onSync={syncAndReload}
+    onCompleted={inspectionCompleted}
     onBack={() => setInspection(null)}
   />;
   if (property && workflow) return <AssignmentScreen api={api} property={property} workflow={workflow} user={user} onBack={() => setWorkflow(null)} onInspect={(file, session) => void openInspection(file, session)} />;

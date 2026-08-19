@@ -18,6 +18,7 @@ import type {
   UadEntityReview,
   ReportFile,
 } from "../api/client";
+import { localInspectionCompletionReadiness } from "../completion/model";
 import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
 import { draftFromApiDocument, type ManualSketchDraft } from "../sketch/model";
 import {
@@ -539,6 +540,21 @@ export class OfflineStore {
       session.revision,
       session.status,
       now,
+    );
+  }
+
+  async cacheInspectionSession(ownerUserId: string, session: InspectionSession) {
+    await this.database.runAsync(
+      `UPDATE cached_inspections
+          SET session_json = ?, server_revision = MAX(server_revision, ?),
+              status = ?, updated_at = ?
+        WHERE owner_user_id = ? AND session_id = ?`,
+      JSON.stringify(session),
+      session.revision,
+      session.status,
+      Date.now(),
+      ownerUserId,
+      session.id,
     );
   }
 
@@ -1322,6 +1338,31 @@ export class OfflineStore {
     };
   }
 
+
+  async inspectionCompletionLocalReadiness(ownerUserId: string, sessionId: string) {
+    const [summary, photoRow, sketchRow] = await Promise.all([
+      this.queueSummary(ownerUserId, sessionId),
+      this.database.getFirstAsync<{ pending: number }>(
+        `SELECT count(*) AS pending FROM photo_drafts
+          WHERE owner_user_id = ? AND session_id = ?
+            AND state NOT IN ('synchronized', 'excluded')`,
+        ownerUserId,
+        sessionId,
+      ),
+      this.database.getFirstAsync<{ pending: number }>(
+        `SELECT count(*) AS pending FROM sketch_drafts
+          WHERE owner_user_id = ? AND session_id = ? AND state <> 'synchronized'`,
+        ownerUserId,
+        sessionId,
+      ),
+    ]);
+    return localInspectionCompletionReadiness({
+      pendingOperations: summary.pending,
+      conflicts: summary.conflicts,
+      pendingPhotos: Number(photoRow?.pending || 0),
+      pendingSketches: Number(sketchRow?.pending || 0),
+    });
+  }
   async conflicts(ownerUserId: string, sessionId: string): Promise<LocalConflict[]> {
     const rows = await this.database.getAllAsync<{
       client_operation_id: string;

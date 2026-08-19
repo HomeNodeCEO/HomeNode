@@ -109,6 +109,33 @@ export type InspectionSyncResponse = {
   operations: SyncOperationResult[];
 };
 
+export type InspectionCompletionCheck = {
+  key: string;
+  label: string;
+  required: boolean;
+  passed: boolean;
+  open_count: number;
+  detail: string;
+};
+
+export type InspectionCompletionReadiness = {
+  session: InspectionSession;
+  workflow_type: WorkflowType;
+  report_file: { id: string; file_number: string; registry_revision: number };
+  ready_to_complete: boolean;
+  completed: boolean;
+  checks: InspectionCompletionCheck[];
+  blockers: string[];
+};
+
+export type InspectionCompletionResponse = {
+  session: InspectionSession;
+  readiness: InspectionCompletionReadiness;
+  completed: boolean;
+  already_completed: boolean;
+  report_registry_revision: number;
+};
+
 export type CustomAppraisalFieldDefinition = {
   field_path: string;
   group: string;
@@ -444,7 +471,11 @@ export type PhotoUploadBatchItem = {
 };
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, public readonly code: string) {
+  constructor(
+    public readonly status: number,
+    public readonly code: string,
+    public readonly details: unknown = null,
+  ) {
     super(code);
   }
 }
@@ -476,8 +507,10 @@ export class MobileApi {
     } catch {
       throw new ApiError(0, "network_request_failed");
     }
-    const payload = await response.json().catch(() => ({})) as { error?: string };
-    if (!response.ok) throw new ApiError(response.status, payload.error || `http_${response.status}`);
+    const payload = await response.json().catch(() => ({})) as { error?: string; details?: unknown };
+    if (!response.ok) {
+      throw new ApiError(response.status, payload.error || `http_${response.status}`, payload.details);
+    }
     return payload as T;
   }
 
@@ -536,6 +569,28 @@ export class MobileApi {
     return this.request<InspectionSyncResponse>(
       `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/sync`,
       { method: "POST", body: JSON.stringify({ operations }) },
+    );
+  }
+
+  async inspectionCompletionReadiness(sessionId: string) {
+    return this.request<InspectionCompletionReadiness>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/completion-readiness`,
+    );
+  }
+
+  async completeInspection(sessionId: string, input: {
+    clientOperationId: string;
+    baseSessionRevision: number;
+  }) {
+    return this.request<InspectionCompletionResponse>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/complete`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          client_operation_id: input.clientOperationId,
+          base_session_revision: input.baseSessionRevision,
+        }),
+      },
     );
   }
 

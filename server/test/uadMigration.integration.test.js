@@ -551,8 +551,10 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    assert.equal(salesComparisonLocations.rows[0].count, 56);
-    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 2);
+    // Six subject/contract redisplays were seeded by their source-section
+    // migrations; Section 22A adds 56 canonical comparable/grid locations.
+    assert.equal(salesComparisonLocations.rows[0].count, 62);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 8);
 
     const officialSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count

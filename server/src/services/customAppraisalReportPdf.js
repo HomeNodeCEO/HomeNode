@@ -816,12 +816,15 @@ function approachPage(doc, meta, snapshot, property, type, page) {
       : "No replacement cost, site value, depreciation, or obsolescence inputs were saved. This approach receives no reconciliation weight.")), 58, 151, { width: 480, height: 45, ellipsis: true, lineGap: 2 });
   let y = sectionTitle(doc, developed ? "Developed Inputs" : "Required Inputs", 238);
   const cards = type === "income" ? [
-    ["Market Rent", section.market_rent],
+    ["Rental Data Source", section.rent_source_name],
+    ["Selected Rentals", count(section.selected_rental_count)],
+    ["Market Rent", money(section.market_rent)],
     ["Vacancy and Collection", section.vacancy_rate == null ? null : percent(section.vacancy_rate)],
+    ["Effective Gross Income", money(section.effective_gross_income)],
     ["Operating Expenses", money(section.operating_expenses)],
-    ["GRM / Cap Rate", section.cap_rate == null ? section.grm : percent(section.cap_rate)],
     ["Net Operating Income", money(section.net_operating_income)],
-    ["Income Indication", money(section.indicated_value)],
+    ["GRM / Cap Rate", section.cap_rate == null ? section.grm : `${cleanText(section.grm, "N/A")} / ${percent(section.cap_rate)}`],
+    ["Income Indication", money(section.rounded_indicated_value || section.indicated_value)],
     ["Reconciliation Weight", section.weight == null ? "0%" : percent(section.weight)],
     ["Status", developed ? "Developed" : "Not developed"],
   ] : [
@@ -860,7 +863,7 @@ function renderReconciliationPage(doc, meta, snapshot, property) {
   let y = sectionTitle(doc, "Approach Reconciliation", 90);
   y = factsGrid(doc, [
     { label: "Sales Comparison", value: money(sales.opinionOfValue) },
-    { label: "Income Approach", value: money(income.indicated_value) },
+    { label: "Income Approach", value: money(income.rounded_indicated_value || income.indicated_value) },
     { label: "Cost Approach", value: money(cost.rounded_indicated_value || cost.indicated_value) },
     { label: "Final Opinion of Value", value: money(finalValue) },
   ], y, 4);

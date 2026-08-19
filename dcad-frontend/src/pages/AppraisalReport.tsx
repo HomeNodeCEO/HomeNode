@@ -32,6 +32,7 @@ import {
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
 import type { CostApproachDraft } from "@/lib/costApproach";
+import type { IncomeApproachDraft } from "@/lib/incomeApproach";
 
 type Detail = {
   tax_year?: string | number;
@@ -325,6 +326,7 @@ export default function AppraisalReport() {
     () => readMarketConditionsDraft(propertyId),
   );
   const [costDraft, setCostDraft] = useState<CostApproachDraft | null>(null);
+  const [incomeDraft, setIncomeDraft] = useState<IncomeApproachDraft | null>(null);
   const [assignmentFile, setAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
   const [assignmentLoading, setAssignmentLoading] = useState(Boolean(propertyId));
   const [printBlocker, setPrintBlocker] = useState("");
@@ -349,6 +351,7 @@ export default function AppraisalReport() {
     setDraft(readAppraisalReportDraft(propertyId));
     setMarketDraft(readMarketConditionsDraft(propertyId));
     setCostDraft(null);
+    setIncomeDraft(null);
   }, [propertyId]);
 
   useEffect(() => {
@@ -380,6 +383,9 @@ export default function AppraisalReport() {
         );
         setCostDraft(
           (result.workfile.sections.cost_approach?.value as CostApproachDraft | undefined) || null,
+        );
+        setIncomeDraft(
+          (result.workfile.sections.income_approach?.value as IncomeApproachDraft | undefined) || null,
         );
       })
       .catch(() => {
@@ -496,6 +502,7 @@ export default function AppraisalReport() {
   ).length;
   const opinionOfValue = draft?.opinionOfValue ?? null;
   const costApproachDeveloped = Boolean(costDraft?.developed && costDraft.rounded_indicated_value > 0);
+  const incomeApproachDeveloped = Boolean(incomeDraft?.developed && incomeDraft.rounded_indicated_value > 0);
   const indicatedValues = comparables
     .map((comparable) => comparable.indicatedValue)
     .filter((value) => Number.isFinite(value) && value > 0);
@@ -1802,44 +1809,49 @@ export default function AppraisalReport() {
         <article className="report-page">
           <PageHeader page={7} title="Income Approach" address={address} />
           <section className="report-approach-hero">
-            <div className="report-status">Preliminary methodology scaffold</div>
-            <h2>Income Approach Not Yet Developed</h2>
-            <p>
-              This rough report reserves the income-approach section in the correct appraisal
-              sequence. No rental income, vacancy, operating expense, gross-rent multiplier, or
-              capitalization-rate assumptions have been entered, so no income indication is
-              reported.
-            </p>
+            <div className="report-status">
+              {incomeApproachDeveloped ? "Developed appraisal approach" : "Preliminary methodology scaffold"}
+            </div>
+            <h2>{incomeApproachDeveloped ? "Income Approach" : "Income Approach Not Yet Developed"}</h2>
+            <p>{incomeApproachDeveloped
+              ? text(incomeDraft?.summary || incomeDraft?.methodology)
+              : "No rental income, vacancy, operating expense, gross-rent multiplier, or capitalization-rate conclusion has been saved, so no Income Approach indication is reported."}</p>
           </section>
           <section className="report-section">
-            <h2 className="report-section-title">Inputs Required for Development</h2>
-            <div className="report-input-grid">
-              <div className="report-input-card">
-                <strong>Market Rent</strong>
-                <span>Comparable rental transactions, lease terms, concessions, and unit mix.</span>
-              </div>
-              <div className="report-input-card">
-                <strong>Vacancy and Collection Loss</strong>
-                <span>Market-supported stabilized vacancy and collection assumptions.</span>
-              </div>
-              <div className="report-input-card">
-                <strong>Operating Expenses</strong>
-                <span>Taxes, insurance, maintenance, management, utilities, and reserves.</span>
-              </div>
-              <div className="report-input-card">
-                <strong>Capitalization Method</strong>
-                <span>Direct capitalization rate or gross-rent multiplier supported by sales.</span>
-              </div>
+            <h2 className="report-section-title">Rental Support and Stabilized Income</h2>
+            <div className="report-facts">
+              <Fact label="Rental Data Source" value={incomeDraft?.rent_source_name} />
+              <Fact label="Effective Date" value={incomeDraft?.as_of_date} />
+              <Fact label="Selected Rentals" value={incomeDraft?.selected_rental_count} />
+              <Fact label="Median Rental Support" value={money(incomeDraft?.recommended_market_rent_median)} />
+              <Fact label="Monthly Market Rent" value={money(incomeDraft?.market_rent)} />
+              <Fact label="Potential Gross Income" value={money(incomeDraft?.potential_gross_income)} />
+              <Fact label="Vacancy / Collection" value={incomeDraft ? `${incomeDraft.vacancy_rate}% / ${money(incomeDraft.vacancy_collection_loss)}` : null} />
+              <Fact label="Effective Gross Income" value={money(incomeDraft?.effective_gross_income)} />
+            </div>
+          </section>
+          <section className="report-section">
+            <h2 className="report-section-title">Operating Expenses and Valuation</h2>
+            <div className="report-facts">
+              <Fact label="Operating Expenses" value={money(incomeDraft?.operating_expenses)} />
+              <Fact label="Net Operating Income" value={money(incomeDraft?.net_operating_income)} />
+              <Fact label="Gross Rent Multiplier" value={incomeDraft?.grm} />
+              <Fact label="GRM Indication" value={money(incomeDraft?.grm_indicated_value)} />
+              <Fact label="Capitalization Rate" value={incomeDraft ? `${text(incomeDraft.cap_rate)}%` : null} />
+              <Fact label="Direct Cap Indication" value={money(incomeDraft?.direct_cap_indicated_value)} />
+              <Fact label="Conclusion Method" value={incomeDraft?.conclusion_method?.replaceAll("_", " ")} />
+              <Fact label="Rounded Indication" value={money(incomeDraft?.rounded_indicated_value)} />
             </div>
           </section>
           <section className="report-section">
             <h2 className="report-section-title">Current Conclusion</h2>
             <div className="report-facts">
-              <Fact label="Approach Status" value="Not developed" />
-              <Fact label="Income Indication" value="Not reported" />
-              <Fact label="Reconciliation Weight" value="0% in this draft" />
-              <Fact label="Review Requirement" value="Income data required" />
+              <Fact label="Approach Status" value={incomeApproachDeveloped ? "Developed" : "Not developed"} />
+              <Fact label="Income Indication" value={money(incomeDraft?.rounded_indicated_value)} />
+              <Fact label="Reconciliation Weight" value={incomeDraft ? `${incomeDraft.weight}%` : "0% in this draft"} />
+              <Fact label="Review Requirement" value={incomeApproachDeveloped ? "Appraiser reconciliation required" : "Income data required"} />
             </div>
+            {incomeDraft?.methodology ? <p className="report-note">{incomeDraft.methodology}</p> : null}
           </section>
           <PageFooter generatedAt={generatedAt} />
         </article>

@@ -5646,9 +5646,13 @@ app.post(
         content: req.body,
         uploadedBy: decodedDocumentHeader(req, "x-document-uploaded-by"),
       });
-      void processAssignmentDocument(pool, document.id).catch((error) => {
-        console.warn("[documents] background extraction failed", error?.message || error);
-      });
+      if (document.processing_status === "uploaded") {
+        void processAssignmentDocument(pool, document.id).catch((error) => {
+          if (error?.message !== "document_processing_in_progress") {
+            console.warn("[documents] background extraction failed", error?.message || error);
+          }
+        });
+      }
       return res.status(201).json({ ok: true, account_id: accountId, document });
     } catch (error) {
       const message = error?.message || "assignment_document_upload_failed";
@@ -5709,11 +5713,17 @@ app.post("/api/documents/:id/reprocess", async (req, res) => {
   }
   try {
     await ensureAssignmentDocumentsAvailable();
-    const document = await processAssignmentDocument(pool, req.params.id);
+    const document = await processAssignmentDocument(pool, req.params.id, { force: true });
     return res.json({ ok: true, document });
   } catch (error) {
     const message = error?.message || "assignment_document_reprocess_failed";
-    return res.status(message === "document_not_found" ? 404 : 500).json({ error: message });
+    const clientErrors = new Set([
+      "invalid_document_id",
+      "document_processing_in_progress",
+      "document_retry_not_due",
+      "document_not_processable",
+    ]);
+    return res.status(message === "document_not_found" ? 404 : clientErrors.has(message) ? 409 : 500).json({ error: message });
   }
 });
 

@@ -3910,6 +3910,38 @@ function AddressHero({
     value: string,
     documentType: AssignmentDocumentType,
   ) => {
+    if (fieldKey === "assignment_type") {
+      const supportedTypes = new Set([
+        "purchase_transaction",
+        "refinance",
+        "heloc",
+        "rtl",
+        "rehab",
+        "bridge_loan",
+        "new_construction",
+        "dscr",
+      ]);
+      if (!supportedTypes.has(value)) {
+        setAssignmentSaveMessage("The confirmed assignment type remains attached as page-cited evidence for manual review.");
+        return;
+      }
+      setAssignmentDraft((current) => {
+        const types = new Set(current.assignment_types || []);
+        types.add(value);
+        return {
+          ...current,
+          assignment_types: Array.from(types),
+          subject_under_contract: value === "purchase_transaction"
+            ? true
+            : current.subject_under_contract,
+        };
+      });
+      setAssignmentDirty(true);
+      setAssignmentSaveMessage(
+        "Confirmed document evidence prefills the assignment type. Save Assignment Details to retain it.",
+      );
+      return;
+    }
     const assignmentFieldByCandidate: Record<string, keyof AssignmentDetails> = {
       lender_client_name: "lender_client_name",
       lender_client_address: "lender_client_address",

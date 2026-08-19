@@ -1,9 +1,10 @@
 # HomeNode mobile inspection foundation
 
-Status: Phase 6 field foundation. Offline synchronization, private photo capture,
-the Custom Appraisal review adapter, and the manual sketch workspace are built.
-The mobile API remains disabled by default and no identity-provider purchase or
-production migration is part of this work.
+Status: Phase 8 field foundation. Offline synchronization, private photo capture,
+the Custom Appraisal review adapter, the manual sketch workspace, and separate
+UAD 3.6 and Property Tax Protest target adapters are built. The mobile API
+remains disabled by default and no identity-provider purchase or production
+migration is part of this work.
 
 ## Boundaries
 
@@ -42,9 +43,12 @@ an inspection until explicitly assigned; the API does not guess ownership.
 Mobile edits are sparse records in `app.inspection_field_edits`. Only a field
 the appraiser explicitly submits can later be applied. Each edit retains its
 base value, entered value, author, source, session revision, and conflict state.
-`app.mobile_sync_operations` supplies operation-level idempotency. Applying
-those staged edits to the three canonical domains is intentionally a later
-adapter phase, with optimistic conflict checks rather than last-write-wins.
+`app.mobile_sync_operations` supplies operation-level idempotency. Custom
+Appraisal, UAD 3.6, and Property Tax Protest each have an allowlisted adapter
+into their own canonical target. A synchronized observation remains
+inspection-only until explicit acceptance. The adapter compares the exact
+canonical field value captured on the device, creates domain and registry
+history, and refuses a stale same-field overwrite.
 
 ## Authentication
 
@@ -114,6 +118,24 @@ LiDAR is deliberately reported as unavailable in this phase. The structured
 geometry contract allows a future LiDAR source without making LiDAR-derived
 measurements authoritative by default.
 
+## UAD 3.6 and Property Tax Protest adapters
+
+The shared mobile shell now loads a target-specific field catalog for those two
+workflows. UAD fields come from the locked official HomeNode UAD catalog and are
+scoped to the workfile's existing entities. Property Tax Protest uses a bounded
+catalog stored in its versioned JSON workfile. Neither adapter writes to the
+other workflow or to a property-wide override.
+
+The phone records the canonical target value and target revision it observed.
+Synchronization creates a proposal, not a report mutation. Accept and reject
+are explicit, idempotent review operations. A same-field canonical change
+creates a conflict; unrelated changes remain untouched. Accepted UAD values
+append a UAD revision and audit event. Accepted protest values append protest
+history and both adapters increment report registry history.
+
+See `docs/MOBILE_TARGET_FIELD_ADAPTERS.md` for the API, persistence, desktop
+review, and conflict boundary.
+
 ## Photo and appraisal-file retention
 
 Appraisal evidence is retained in a verified appraisal-file archive for five
@@ -162,6 +184,14 @@ Official distribution references:
 - `PUT /api/mobile/inspection-sessions/:id/sketch` — idempotently save a
   revision-checked full manual sketch.
 - `POST /api/mobile/sketches/calculate` — validate closure and calculate area.
+- `GET /api/mobile/inspection-sessions/:id/target-fields` — load the canonical
+  target catalog, values, existing entities, verified-photo index, and proposals.
+- `POST .../target-fields/proposals/refresh` — convert synchronized observations
+  into target-specific review proposals.
+- `POST .../target-fields/proposals/:proposalId/review` — idempotently accept or
+  reject one proposal with exact-value conflict detection.
+- `GET/PATCH /api/accounts/:id/property-tax-protest[...]` — load and save a
+  revision-guarded desktop Property Tax Protest workfile.
 
 Run UAD migrations first, then `npm run migrate:mobile`. The new API stays dark
 until the migration, identity provisioning, and `MOBILE_INSPECTION_ENABLED=true`
@@ -171,12 +201,11 @@ are deliberately deployed.
 
 1. Approve and configure managed OIDC; the provider-neutral Expo PKCE and server
    verification paths are ready but intentionally inactive.
-2. Complete report-ready sketch rendering plus desktop geometry/relabel/reorder
-   review tools.
-3. Add the separate UAD 3.6 and Property Tax Protest field adapters without
-   changing their canonical workflows.
-4. Run physical-device staging across iPhone and Android, including offline and
+2. Add mobile creation and review for repeatable UAD entities such as levels,
+   rooms, defects, outbuildings, and comparable records.
+3. Run physical-device staging across iPhone and Android, including offline and
    100-photo inspections.
+4. Approve the private iOS and Android distribution channels and device policy.
 5. Add optional LiDAR capture after the manual workflow is field-tested.
 
 Before production UAD delivery, separately confirm all required UAD compliance,

@@ -152,6 +152,10 @@ import {
   saveAssignmentInspectionSketch,
 } from "./modules/mobile/desktopSketches.js";
 import { renderSketchPdf, renderSketchSvg } from "./modules/mobile/sketchArtifacts.js";
+import {
+  getDesktopPropertyTaxFile,
+  saveDesktopPropertyTaxFile,
+} from "./modules/mobile/desktopPropertyTax.js";
 
 const app = express();
 const pool = new pg.Pool({
@@ -1538,6 +1542,58 @@ app.patch("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req
     }
     console.error("assignment sketch desktop review failed", error);
     return res.status(500).json({ error: "assignment_sketch_update_failed" });
+  }
+});
+
+/** Load the current canonical Property Tax Protest file and accepted mobile evidence. */
+app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    await Promise.all([accountQualityReady, propertyEnrichmentReady]);
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const file = await getDesktopPropertyTaxFile(pool, canonicalId, req.query.file_id || null);
+    return res.json({ account_id: canonicalId, file });
+  } catch (error) {
+    if (String(error?.message || "").startsWith("invalid_")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("property tax protest load failed", error);
+    return res.status(500).json({ error: "property_tax_protest_load_failed" });
+  }
+});
+
+/** Save a reviewed desktop protest revision without replacing prior history. */
+app.patch("/api/accounts/:id/property-tax-protest/:fileId", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    await Promise.all([accountQualityReady, propertyEnrichmentReady]);
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const file = await saveDesktopPropertyTaxFile(
+      pool,
+      canonicalId,
+      req.params.fileId,
+      req.body || {},
+    );
+    return res.json({ ok: true, file });
+  } catch (error) {
+    if (error?.message === "property_tax_protest_revision_conflict") {
+      return res.status(409).json({ error: error.message, current_revision: error.currentRevision });
+    }
+    if (error?.message === "property_tax_protest_file_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (String(error?.message || "").startsWith("invalid_")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("property tax protest save failed", error);
+    return res.status(500).json({ error: "property_tax_protest_save_failed" });
   }
 });
 

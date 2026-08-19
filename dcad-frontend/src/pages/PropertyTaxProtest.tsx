@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import * as api from '@/lib/api';
+import PropertyTaxWorkfileReview from '@/components/PropertyTaxWorkfileReview';
 import {
   readAppraisalReportDraft,
   saveAppraisalReportDraft,
@@ -224,6 +225,7 @@ export default function PropertyTaxProtest() {
           )}
         </header>
 
+        {propertyId && <PropertyTaxWorkfileReview accountId={propertyId} />}
         <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-xl font-semibold">Appraisal District Evidence Analysis</h2>
           <p className="mt-2 max-w-5xl text-sm text-slate-700">

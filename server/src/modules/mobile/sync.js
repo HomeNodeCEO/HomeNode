@@ -70,21 +70,34 @@ function normalizeFieldPath(value) {
 function normalizeFieldPayload(kind, payload) {
   exactKeys(payload, new Set([
     "field_path", "base", "value", "source_type", "appraiser_confirmed",
+    "target_base", "target_base_revision",
   ]));
   const fieldPath = normalizeFieldPath(payload.field_path);
   const base = normalizeFieldState(payload.base);
+  const hasTargetBase = Object.hasOwn(payload, "target_base");
+  if (hasTargetBase !== Object.hasOwn(payload, "target_base_revision")) throw new Error("invalid_sync_payload");
+  let target = {};
+  if (hasTargetBase) {
+    const targetBaseRevision = Number(payload.target_base_revision);
+    if (!Number.isInteger(targetBaseRevision) || targetBaseRevision < 1) throw new Error("invalid_sync_payload");
+    target = {
+      target_base: normalizeFieldState(payload.target_base),
+      target_base_revision: targetBaseRevision,
+    };
+  }
   const sourceType = payload.source_type == null ? "appraiser" : String(payload.source_type);
   if (!FIELD_SOURCES.has(sourceType)) throw new Error("invalid_field_source");
   const appraiserConfirmed = payload.appraiser_confirmed == null ? true : payload.appraiser_confirmed;
   if (typeof appraiserConfirmed !== "boolean") throw new Error("invalid_sync_payload");
   if (kind === "field.delete") {
     if (Object.hasOwn(payload, "value")) throw new Error("invalid_sync_payload");
-    return Object.freeze({ field_path: fieldPath, base, source_type: sourceType, appraiser_confirmed: appraiserConfirmed });
+    return Object.freeze({ field_path: fieldPath, base, ...target, source_type: sourceType, appraiser_confirmed: appraiserConfirmed });
   }
   if (!Object.hasOwn(payload, "value")) throw new Error("invalid_sync_payload");
   return Object.freeze({
     field_path: fieldPath,
     base,
+    ...target,
     value: normalizedJsonValue(payload.value),
     source_type: sourceType,
     appraiser_confirmed: appraiserConfirmed,
@@ -247,6 +260,8 @@ async function applyFieldOperation(client, auth, sessionId, operation, currentRe
       mobile: operation.operationKind === "field.delete"
         ? { exists: false }
         : { exists: true, value: operation.payload.value },
+      target_base: operation.payload.target_base || null,
+      target_base_revision: operation.payload.target_base_revision || null,
       detected_at: new Date().toISOString(),
       session_revision: nextRevision,
     };
@@ -284,14 +299,18 @@ async function applyFieldOperation(client, auth, sessionId, operation, currentRe
   await client.query(
     `INSERT INTO app.inspection_field_edits (
        inspection_session_id, client_operation_id, field_path, base_value,
+       target_base, target_base_revision,
        entered_value, is_tombstone, source_type, appraiser_confirmed,
        sync_status, session_revision, created_by_user_id, applied_at
-     ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8, 'applied', $9, $10, now())`,
+     ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::jsonb, $8, $9, $10,
+       'applied', $11, $12, now())`,
     [
       sessionId,
       syncOperationId,
       operation.payload.field_path,
       JSON.stringify(operation.payload.base),
+      operation.payload.target_base ? JSON.stringify(operation.payload.target_base) : null,
+      operation.payload.target_base_revision || null,
       operation.operationKind === "field.delete" ? null : JSON.stringify(operation.payload.value),
       operation.operationKind === "field.delete",
       operation.payload.source_type,
@@ -354,15 +373,18 @@ async function applyConflictResolution(client, auth, sessionId, operation, curre
     await client.query(
       `INSERT INTO app.inspection_field_edits (
          inspection_session_id, client_operation_id, field_path, base_value,
+         target_base, target_base_revision,
          entered_value, is_tombstone, source_type, appraiser_confirmed,
          sync_status, session_revision, created_by_user_id, applied_at
-       ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6,
-         'appraiser', true, 'applied', $7, $8, now())`,
+       ) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::jsonb, $8,
+         'appraiser', true, 'applied', $9, $10, now())`,
       [
         sessionId,
         resolutionSyncOperationId,
         originalPayload.field_path,
         JSON.stringify(server),
+        originalPayload.target_base ? JSON.stringify(originalPayload.target_base) : null,
+        originalPayload.target_base_revision || null,
         originalPayload.mobile.exists ? JSON.stringify(originalPayload.mobile.value) : null,
         !originalPayload.mobile.exists,
         nextRevision,
@@ -405,6 +427,9 @@ async function hasUnresolvedConflicts(client, sessionId) {
        UNION ALL
        SELECT 1 FROM app.custom_appraisal_proposals
         WHERE inspection_session_id = $1 AND status = 'pending'
+       UNION ALL
+       SELECT 1 FROM app.mobile_target_field_proposals
+        WHERE inspection_session_id = $1 AND status IN ('pending', 'conflict')
      ) AS has_conflicts`,
     [sessionId],
   );

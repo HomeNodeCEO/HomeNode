@@ -26,6 +26,12 @@ import {
 } from "./reportFiles.js";
 import { getInspectionSketch, saveInspectionSketch } from "./sketches.js";
 import { getInspectionSnapshot, syncInspectionOperations } from "./sync.js";
+import {
+  getTargetFieldReview,
+  refreshTargetFieldProposals,
+  reviewTargetFieldProposal,
+} from "./targetFields.js";
+
 
 const WRITE_ROLES = new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]);
 
@@ -105,6 +111,14 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
         sparse_updates: true,
         exact_value_conflict_detection: true,
         property_wide_overrides_mutated: false,
+      },
+      target_adapters: {
+        workflows: ["uad_3_6", "property_tax_protest"],
+        offline_sparse_updates: true,
+        review_required_before_report_update: true,
+        exact_value_conflict_detection: true,
+        uad_official_catalog: true,
+        property_tax_version_history: true,
       },
     });
   });
@@ -270,6 +284,36 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
     }
   });
 
+
+  router.get("/inspection-sessions/:sessionId/target-fields", async (req, res) => {
+    try {
+      return res.json(await getTargetFieldReview(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/target-fields/proposals/refresh", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await refreshTargetFieldProposals(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/target-fields/proposals/:proposalId/review", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await reviewTargetFieldProposal(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.params.proposalId,
+        req.body || {},
+      ));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
   router.get("/inspection-sessions/:sessionId/photos", async (req, res) => {
     try {
       return res.json(await listInspectionPhotos(pool, req.mobileAuth, req.params.sessionId));

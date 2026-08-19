@@ -32,6 +32,10 @@ import {
   syncPayloadSha256,
 } from "../src/modules/mobile/sync.js";
 
+import {
+  normalizePropertyTaxWorkfileData,
+  propertyTaxFieldCatalog,
+} from "../src/modules/mobile/targetFields.js";
 const ISSUER = "https://identity.example.test";
 const AUDIENCE = "https://api.homenode.test/mobile";
 const NOW = Date.parse("2026-08-21T12:00:00.000Z");
@@ -123,8 +127,60 @@ test("canonicalizes and validates offline sync operations", () => {
       payload,
     }],
   }), /invalid_payload_sha256/);
+  const targetPayload = {
+    value: "C3",
+    field_path: "property_tax_protest.subject.condition_rating",
+    base: { exists: false },
+    target_base: { exists: true, value: "C4" },
+    target_base_revision: 3,
+    source_type: "appraiser",
+    appraiser_confirmed: true,
+  };
+  const targetOperation = normalizeSyncBatch({
+    operations: [{
+      client_operation_id: "10000000-0000-4000-8000-000000000002",
+      operation_kind: "field.upsert",
+      base_session_revision: 1,
+      payload_sha256: syncPayloadSha256(targetPayload),
+      payload: targetPayload,
+    }],
+  })[0];
+  assert.deepEqual(targetOperation.payload.target_base, { exists: true, value: "C4" });
+  assert.equal(targetOperation.payload.target_base_revision, 3);
+
+  const incompleteTargetPayload = { ...targetPayload };
+  delete incompleteTargetPayload.target_base_revision;
+  assert.throws(() => normalizeSyncBatch({
+    operations: [{
+      client_operation_id: "10000000-0000-4000-8000-000000000003",
+      operation_kind: "field.upsert",
+      base_session_revision: 1,
+      payload_sha256: syncPayloadSha256(incompleteTargetPayload),
+      payload: incompleteTargetPayload,
+    }],
+  }), /invalid_sync_payload/);
 });
 
+test("property tax adapter exposes a bounded canonical field catalog", () => {
+  const catalog = propertyTaxFieldCatalog();
+  assert.equal(catalog.length, 18);
+  assert.equal(new Set(catalog.map((field) => field.field_path)).size, catalog.length);
+  assert.ok(catalog.every((field) => field.target_reference.kind === "property_tax_protest"));
+  assert.ok(catalog.some((field) => field.field_path.endsWith(".repair_cost_to_cure")));
+  assert.ok(catalog.some((field) => field.field_path.endsWith(".district_appraised_value")));
+  assert.ok(catalog.some((field) => field.field_path.endsWith(".protest_rationale")));
+  assert.ok(catalog.every((field) => !field.field_path.startsWith("custom_appraisal.")));
+  const normalized = normalizePropertyTaxWorkfileData({
+    subject: { condition_rating: "C4", living_area_sqft: "2450" },
+    unrelated: { preserved: true },
+  });
+  assert.equal(normalized.subject.living_area_sqft, 2450);
+  assert.deepEqual(normalized.unrelated, { preserved: true });
+  assert.throws(
+    () => normalizePropertyTaxWorkfileData({ subject: { condition_rating: "C7" } }),
+    /invalid_property_tax_protest_enum/,
+  );
+});
 test("custom appraisal adapter exposes only mapped, bounded assignment fields", () => {
   const catalog = customAppraisalFieldCatalog();
   assert.ok(catalog.length >= 30);
@@ -389,4 +445,15 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(sketchSource, /CREATE TABLE IF NOT EXISTS app\.inspection_sketch_operations/);
   assert.match(sketchSource, /CREATE TABLE IF NOT EXISTS app\.inspection_sketch_events/);
   assert.doesNotMatch(sketchSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const targetSource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260827_mobile_target_adapters.sql"),
+    "utf8",
+  );
+  assert.match(targetSource, /ADD COLUMN IF NOT EXISTS target_base jsonb/);
+  assert.match(targetSource, /CREATE TABLE IF NOT EXISTS app\.mobile_target_field_proposals/);
+  assert.match(targetSource, /CREATE TABLE IF NOT EXISTS app\.mobile_target_review_operations/);
+  assert.match(targetSource, /CREATE TABLE IF NOT EXISTS app\.mobile_target_adapter_events/);
+  assert.match(targetSource, /workflow_type IN \('uad_3_6', 'property_tax_protest'\)/);
+  assert.doesNotMatch(targetSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

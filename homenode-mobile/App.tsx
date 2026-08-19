@@ -35,6 +35,7 @@ import {
 } from "./src/offline/store";
 import { PhotoCapturePanel } from "./src/photos/PhotoCapturePanel";
 import { SketchEditorPanel, type SelectedSketchRoom } from "./src/sketch/SketchEditorPanel";
+import { TargetFieldPanel } from "./src/targetFields/TargetFieldPanel";
 
 function friendlyError(reason: unknown) {
   const code = reason instanceof ApiError ? reason.code : reason instanceof Error ? reason.message : "request_failed";
@@ -464,6 +465,15 @@ function InspectionScreen({
         store={store}
         ownerUserId={ownerUserId}
         sessionId={session.id}
+        online={online}
+        onSync={onSync}
+      /> : null}
+      {file.workflow_type !== "custom_appraisal" ? <TargetFieldPanel
+        api={api}
+        store={store}
+        ownerUserId={ownerUserId}
+        sessionId={session.id}
+        workflowType={file.workflow_type}
         online={online}
         onSync={onSync}
       /> : null}

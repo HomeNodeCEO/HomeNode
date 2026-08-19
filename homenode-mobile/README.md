@@ -1,6 +1,8 @@
 # HomeNode Appraiser mobile
 
-Private Expo/React Native client for HomeNode field appraisal. Phase 6 adds an offline manual measurement workspace with revision-safe HomeNode persistence, stable room markers, and automatic room-to-photo labeling.
+Private Expo/React Native client for HomeNode field appraisal. Phase 8 includes
+offline sparse inspection fields, private photos, manual measurement and room
+labels, plus separate reviewed adapters for all three canonical report types.
 
 ## Offline inspection behavior
 
@@ -20,6 +22,24 @@ Private Expo/React Native client for HomeNode field appraisal. Phase 6 adds an o
 - A same-field report change becomes a visible conflict; unrelated report changes remain untouched.
 - The latest field catalog and review snapshot are cached so an already-opened assignment remains usable offline. Final report acceptance requires a connection to authoritative PostgreSQL.
 - The Custom Appraisal review also shows the count of verified photos attached to that exact report file.
+
+## UAD 3.6 and Property Tax Protest review
+
+- The app loads a target-specific catalog only after an existing typed report
+  file and inspection session are selected.
+- UAD inputs use the locked official HomeNode field catalog and existing
+  workfile entities. Property Tax Protest uses its own bounded field catalog.
+- The catalog, canonical values, target revision, and proposal review state are
+  cached for offline use.
+- Each queued edit retains the canonical value/revision visible when the form
+  opened. Acceptance refuses to overwrite a same-field desktop change.
+- **Accept into report** appends the target's domain history and registry audit;
+  **Keep inspection-only** leaves the report unchanged.
+- Repeatable UAD entity creation remains a later phase. UAD submission
+  credentials and certification remain outside mobile authentication.
+
+See `docs/MOBILE_TARGET_FIELD_ADAPTERS.md` for the full persistence and API
+boundary.
 
 SQLCipher requires a development or internal native build and is not available in Expo Go.
 

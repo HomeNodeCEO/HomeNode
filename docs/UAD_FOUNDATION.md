@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 11:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 18:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -56,6 +56,21 @@ The editor currently implements Appendix A-1 v1.4 Sections 2 through 11:
   enforces an exclusive `None` selection, requires the 33-character `Other`
   description and issue commentary when applicable, and accepts optional image
   exhibits without treating them as a UAD photo requirement.
+- Outbuilding, Vehicle Storage, Subject Property Amenities, Overall Quality and
+  Condition, and Highest and Best Use use official conditional fields,
+  repeatable records where required, cross-section reconciliation, and verified
+  exhibits without duplicating the same appraisal fact.
+- Market captures the appraiser's market boundary and search criteria, active,
+  pending, and closed-sale metrics, price-trend sources, graph or commentary
+  support, supply, marketing time, and optional exhibits. Existing HomeNode
+  boundary and market tools remain suggestions behind the shared-data adapter.
+- Project Information displays only when Section 3 classifies the subject as a
+  PUD or as a condominium, cooperative, or condop. It captures repeatable data
+  sources, common amenities, included utilities, project/unit information,
+  project factors, incomplete components, up to four ordered cooperative
+  blanket-financing liens, commentary, and verified project exhibits. PUD and
+  project classifications are mutually exclusive, and calculated or constant
+  XML values are registered separately from appraiser-entered fields.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 
@@ -66,9 +81,10 @@ sales, rental, land, GRM, and analyzed-not-used comparable sections.
 `GET /api/uad/workfiles/:id/shared-data` is the compatibility boundary with
 the existing HomeNode services. It reads stored property context, official
 zoning evidence, location influences, and neighborhood boundaries without
-running a new analysis or changing a Custom Appraisal. Comparable search,
-market conditions, and neighborhood automation remain disabled in the UAD UI
-until their corresponding URAR sections and appraiser-review flow are ready.
+running a new analysis or changing a Custom Appraisal. Comparable search and
+influence-driven automation remain disabled in the UAD UI until their
+corresponding URAR sections and appraiser-review flow are ready. Section 17 now
+exposes the manual UAD market workflow behind that boundary.
 
 ## Staging strategy
 
@@ -87,8 +103,9 @@ The guarded staging bootstrap also creates empty compatibility relations used
 by the shared HomeNode search tile and two synthetic value-summary rows. The
 site-built SFR fixture includes a deterministic UAD workfile with a
 representative Section 10 unit, area source, level, rooms, and interior
-features plus a deterministic Section 11 `None` answer while verifying that
-Section 9 remains hidden; the separate
+features, a deterministic Section 11 `None` answer, Sections 12-17 fixtures,
+and a deterministic Section 18 PUD with data source, amenity, utility, dues,
+and project-factor answers while verifying that Section 9 remains hidden; the separate
 manufactured-home fixture includes a deterministic UAD workfile whose Section 8
 Construction Method is `Manufactured`, allowing Section 9 to be exercised
 without changing the SFR or copying production tax, owner, or sales data. CI
@@ -142,6 +159,11 @@ categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
   controlled issue selections and commentary map directly to the UAD 3.6
   `FUNCTIONAL_ISSUE` and `PROPERTY_DETAIL` paths. Optional exhibits use the
   same verified private R2/mobile contract but do not affect completion.
+- Project Information uses `ProjectAmenity`, `ProjectDeficiency`, and
+  `ProjectExhibit` image categories. Amenity images remain linked to the exact
+  repeatable amenity; deficiency and general project exhibits remain at the
+  workfile level. An observed physical project deficiency requires a verified
+  image before Section 18 can be saved.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

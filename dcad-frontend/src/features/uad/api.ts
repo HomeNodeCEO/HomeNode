@@ -69,7 +69,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market" | "project_information";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -94,7 +94,7 @@ export interface UadFieldDefinition {
   uid: string;
   reportFieldId: string;
   label: string;
-  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "currency" | "measurement" | "date" | "year" | "state" | "postal_code";
+  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "currency" | "measurement" | "date" | "month" | "year" | "state" | "postal_code";
   entityType?: string;
   required?: boolean;
   maxLength?: number;

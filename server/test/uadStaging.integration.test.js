@@ -262,6 +262,26 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     );
     assert.equal(siteBuiltEditor.completion.market.required, 18);
     assert.equal(siteBuiltEditor.completion.market.percent, 100);
+    const section18 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 18);
+    assert.equal(section18?.key, "project_information");
+    assert.equal(section18?.applicable, true);
+    assert.ok(section18.groups.reduce((count, group) => count + group.fields.length, 0) >= 80);
+    const projectDataSource = siteBuiltEditor.entities.find((entity) => entity.entity_type === "project_data_source");
+    const projectAmenity = siteBuiltEditor.entities.find((entity) => entity.entity_type === "project_amenity");
+    const projectUtility = siteBuiltEditor.entities.find((entity) => entity.entity_type === "project_utility");
+    assert.ok(projectDataSource);
+    assert.ok(projectAmenity);
+    assert.ok(projectUtility);
+    assert.equal(
+      siteBuiltEditor.values.find((value) => (
+        value.entity_id === projectDataSource.id
+        && value.context_key === "project_data_source"
+        && value.uid === "0700.0125"
+      ))?.value,
+      "HomeownersAssociation",
+    );
+    assert.equal(siteBuiltEditor.completion.project_information.required, 8);
+    assert.equal(siteBuiltEditor.completion.project_information.percent, 100);
   } finally {
     await pool.end();
   }

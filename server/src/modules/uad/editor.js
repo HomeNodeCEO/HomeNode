@@ -404,16 +404,16 @@ function completionFor(values, entities, assets = []) {
           }
         }
         const subjectUnits = entities.filter((entity) => entity.entity_type === "unit");
-        const subjectNonAduUnitIds = new Set(
+        const subjectInteriorUnitIds = new Set(
           subjectUnits
-            .filter((unit) => valueLookup(byKey, unit.id)("unit:0700.0089") === false)
+            .filter((unit) => typeof valueLookup(byKey, unit.id)("unit:0700.0089") === "boolean")
             .map((unit) => unit.id),
         );
         const subjectUnitSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_unit_interior_summary");
         const subjectKitchenSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_kitchen_summary");
         const subjectInteriorQualitySummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_interior_quality_summary");
         const subjectInteriorConditionSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_interior_condition_summary");
-        for (const unit of subjectUnits.filter((entity) => subjectNonAduUnitIds.has(entity.id))) {
+        for (const unit of subjectUnits.filter((entity) => subjectInteriorUnitIds.has(entity.id))) {
           const unitLookup = valueLookup(byKey, unit.id);
           if (
             Number(unitLookup("unit:0700.0119") || 0) + Number(unitLookup("unit:0700.0120") || 0) > 0
@@ -422,7 +422,7 @@ function completionFor(values, entities, assets = []) {
         }
         const subjectKitchens = entities.filter((entity) => (
           entity.entity_type === "unit_room"
-          && subjectNonAduUnitIds.has(entity.parent_entity_id)
+          && subjectInteriorUnitIds.has(entity.parent_entity_id)
           && valueLookup(byKey, entity.id)("unit_room:0700.0035") === "Kitchen"
         ));
         for (const kitchen of subjectKitchens) {
@@ -430,7 +430,7 @@ function completionFor(values, entities, assets = []) {
         }
         const subjectInteriorFeatures = entities.filter((entity) => (
           entity.entity_type === "unit_interior_feature"
-          && subjectNonAduUnitIds.has(entity.parent_entity_id)
+          && subjectInteriorUnitIds.has(entity.parent_entity_id)
         ));
         for (const feature of subjectInteriorFeatures) {
           const featureType = valueLookup(byKey, feature.id)("unit_interior_feature:0700.0046");
@@ -518,12 +518,12 @@ function completionFor(values, entities, assets = []) {
             }
           }
           const comparableStructureIds = new Set(comparableDwellings.map((dwelling) => dwelling.id));
-          const comparableNonAduUnits = entities.filter((entity) => (
+          const comparableInteriorUnits = entities.filter((entity) => (
             entity.entity_type === "sales_comparable_unit"
             && comparableStructureIds.has(entity.parent_entity_id)
-            && valueLookup(byKey, entity.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === false
+            && typeof valueLookup(byKey, entity.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === "boolean"
           ));
-          for (const unit of comparableNonAduUnits) {
+          for (const unit of comparableInteriorUnits) {
             const unitLookup = valueLookup(byKey, unit.id);
             required += 2;
             if (isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorQuality))) completed += 1;
@@ -2295,24 +2295,29 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       ));
     }
 
-    const subjectNonAduUnitIds = new Set(
-      subjectUnits
-        .filter((unit) => valueLookup(merged, unit.id)("unit:0700.0089") === false)
-        .map((unit) => unit.id),
+    const subjectUnitAduStatus = new Map(subjectUnits.map((unit) => [
+      unit.id,
+      valueLookup(merged, unit.id)("unit:0700.0089"),
+    ]));
+    const subjectInteriorUnitIds = new Set(
+      [...subjectUnitAduStatus.entries()]
+        .filter(([, isAdu]) => typeof isAdu === "boolean")
+        .map(([unitId]) => unitId),
     );
-    const subjectNonAduKitchens = subjectRooms.filter((room) => (
-      subjectNonAduUnitIds.has(room.parent_entity_id)
+    const subjectInteriorKitchens = subjectRooms.filter((room) => (
+      subjectInteriorUnitIds.has(room.parent_entity_id)
       && valueLookup(merged, room.id)("unit_room:0700.0035") === "Kitchen"
     ));
-    const subjectNonAduInteriorFeatures = subjectInteriorFeatures.filter((feature) => (
-      subjectNonAduUnitIds.has(feature.parent_entity_id)
+    const subjectComparisonInteriorFeatures = subjectInteriorFeatures.filter((feature) => (
+      subjectInteriorUnitIds.has(feature.parent_entity_id)
     ));
-    const subjectOtherInteriorLabels = new Set(
-      subjectNonAduInteriorFeatures
-        .filter((feature) => valueLookup(merged, feature.id)("unit_interior_feature:0700.0046") === "Other")
-        .map((feature) => String(valueLookup(merged, feature.id)("unit_interior_feature:0700.0047") || "").trim())
-        .filter(Boolean),
-    );
+    const subjectOtherInteriorLabelsByAduStatus = new Map([[false, new Set()], [true, new Set()]]);
+    for (const feature of subjectComparisonInteriorFeatures) {
+      if (valueLookup(merged, feature.id)("unit_interior_feature:0700.0046") !== "Other") continue;
+      const label = String(valueLookup(merged, feature.id)("unit_interior_feature:0700.0047") || "").trim();
+      const isAdu = subjectUnitAduStatus.get(feature.parent_entity_id);
+      if (label && typeof isAdu === "boolean") subjectOtherInteriorLabelsByAduStatus.get(isAdu).add(label);
+    }
     const subjectKitchenIds = new Set(subjectRooms
       .filter((room) => valueLookup(merged, room.id)("unit_room:0700.0035") === "Kitchen")
       .map((room) => room.id));
@@ -2368,36 +2373,39 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       ...subjectInteriorConditionSummaries,
     ];
     if (included === true) {
-      for (const unit of subjectUnits.filter((entity) => subjectNonAduUnitIds.has(entity.id))) {
+      for (const unit of subjectUnits.filter((entity) => subjectInteriorUnitIds.has(entity.id))) {
         const unitLookup = valueLookup(merged, unit.id);
+        const unitKind = subjectUnitAduStatus.get(unit.id) === true ? "ADU" : "non-ADU";
         if (Number(unitLookup("unit:0700.0119") || 0) + Number(unitLookup("unit:0700.0120") || 0) > 0) {
           requireOneSubjectSummary(
             subjectUnitInteriorSummaries,
             unit,
             UAD_SALES_COMPARISON_FIELD_KEYS.subjectOverallBathroomsQuality,
             "sales_comparison_subject_bathrooms_quality_summary",
-            "Section 22 overall bathrooms quality summary for this non-ADU subject unit",
+            `Section 22 overall bathrooms quality summary for this ${unitKind} subject unit`,
           );
         }
       }
-      for (const kitchen of subjectNonAduKitchens) {
+      for (const kitchen of subjectInteriorKitchens) {
+        const unitKind = subjectUnitAduStatus.get(kitchen.parent_entity_id) === true ? "ADU" : "non-ADU";
         requireOneSubjectSummary(
           subjectKitchenSummaries,
           kitchen,
           UAD_SALES_COMPARISON_FIELD_KEYS.subjectKitchenQualitySummary,
           "sales_comparison_subject_kitchen_quality_summary",
-          "Section 22 kitchen quality summary for this subject kitchen",
+          `Section 22 kitchen quality summary for this ${unitKind} subject kitchen`,
         );
       }
-      for (const feature of subjectNonAduInteriorFeatures) {
+      for (const feature of subjectComparisonInteriorFeatures) {
         const featureType = valueLookup(merged, feature.id)("unit_interior_feature:0700.0046");
+        const unitKind = subjectUnitAduStatus.get(feature.parent_entity_id) === true ? "ADU" : "non-ADU";
         if (["Flooring", "WallsAndCeiling", "Other"].includes(featureType)) {
           requireOneSubjectSummary(
             subjectInteriorQualitySummaries,
             feature,
             UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorQualitySummary,
             "sales_comparison_subject_interior_quality_summary",
-            `Section 22 quality summary for this ${featureType} subject feature`,
+            `Section 22 quality summary for this ${featureType} ${unitKind} subject feature`,
           );
         }
         if (["WallsAndCeiling", "Other"].includes(featureType)) {
@@ -2406,7 +2414,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
             feature,
             UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorConditionSummary,
             "sales_comparison_subject_interior_condition_summary",
-            `Section 22 condition summary for this ${featureType} subject feature`,
+            `Section 22 condition summary for this ${featureType} ${unitKind} subject feature`,
           );
         }
       }
@@ -3316,14 +3324,16 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
 
         const kitchens = comparableKitchens.filter((kitchen) => kitchen.parent_entity_id === unit.id);
         const interiorComponents = comparableInteriorComponents.filter((component) => component.parent_entity_id === unit.id);
-        const isAdu = unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === true;
-        if (!isAdu) {
+        const isAduValue = unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu);
+        const isAdu = isAduValue === true;
+        const unitKind = isAdu ? "ADU" : "non-ADU";
+        if (typeof isAduValue === "boolean") {
           if (!isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorQuality))) {
             errors.push(validationError(
               salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorQuality),
               unit.id,
               "sales_comparable_interior_quality_required",
-              "Provide the UAD interior quality rating for this non-ADU comparable unit.",
+              `Provide the UAD interior quality rating for this ${unitKind} comparable unit.`,
             ));
           }
           if (!isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorCondition))) {
@@ -3331,7 +3341,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
               salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorCondition),
               unit.id,
               "sales_comparable_interior_condition_required",
-              "Provide the UAD interior condition rating for this non-ADU comparable unit.",
+              `Provide the UAD interior condition rating for this ${unitKind} comparable unit.`,
             ));
           }
           if (!kitchens.length) {
@@ -3339,7 +3349,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
               salesField(UAD_SALES_COMPARISON_FIELD_KEYS.kitchenType),
               unit.id,
               "sales_comparable_kitchen_required",
-              "Add the Kitchen quality and update-status row for this non-ADU comparable unit.",
+              `Add the Kitchen quality and update-status row for this ${unitKind} comparable unit.`,
             ));
           }
           const bathroomCount = Number(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitFullBaths) || 0)
@@ -3413,6 +3423,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
           ]),
         };
         const otherInteriorLabels = [];
+        const subjectOtherInteriorLabels = subjectOtherInteriorLabelsByAduStatus.get(isAdu);
         for (const component of interiorComponents) {
           const componentLookup = valueLookup(merged, component.id);
           const componentType = componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentType);

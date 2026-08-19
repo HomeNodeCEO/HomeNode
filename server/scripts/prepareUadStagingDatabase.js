@@ -792,6 +792,10 @@ try {
   const salesComparableKitchenId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_kitchen", "sales-comparable-kitchen-1", 1, "Comparable Kitchen 1");
   const salesComparableFlooringId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_interior_component", "sales-comparable-interior-flooring-1", 1, "Comparable Flooring");
   const salesComparableWallsId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_interior_component", "sales-comparable-interior-walls-1", 2, "Comparable Walls and Ceiling");
+  const salesComparableAduId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_unit", "sales-comparable-adu-1", 2, "Comparable ADU 1");
+  const salesComparableAduKitchenId = await ensureEntity(sfrWorkfileId, salesComparableAduId, "sales_comparable_kitchen", "sales-comparable-adu-kitchen-1", 1, "Comparable ADU Kitchen 1");
+  const salesComparableAduFlooringId = await ensureEntity(sfrWorkfileId, salesComparableAduId, "sales_comparable_interior_component", "sales-comparable-adu-flooring-1", 1, "Comparable ADU Flooring");
+  const salesComparableAduWallsId = await ensureEntity(sfrWorkfileId, salesComparableAduId, "sales_comparable_interior_component", "sales-comparable-adu-walls-1", 2, "Comparable ADU Walls and Ceiling");
   const salesComparableExteriorWallId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-exterior-wall-1", 1, "Comparable Exterior Walls and Trim");
   const salesComparableFoundationId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-foundation-1", 2, "Comparable Foundation");
   const salesComparableRoofId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-roof-1", 3, "Comparable Roof");
@@ -813,7 +817,7 @@ try {
     [salesComparableId, "sales_comparable_address", "1800.0003", "22.01.17", "Garland"],
     [salesComparableId, "sales_comparable_address", "1800.0005", "22.01.17", "TX"],
     [salesComparableId, "sales_comparable_address", "1800.0004", "22.01.17", "75044"],
-    [salesComparableId, "sales_comparable_property", "0100.0059", "Does Not Display", 0],
+    [salesComparableId, "sales_comparable_property", "0100.0059", "Does Not Display", 1],
     [salesComparableId, "sales_comparable_property", "1800.0365", "Does Not Display", 1],
     [salesComparableId, "sales_comparable_property", "1800.0363", "Does Not Display", 1],
     [salesComparableId, "sales_comparable_property", "1800.0364", "Does Not Display", true],
@@ -861,7 +865,7 @@ try {
     [salesComparableEnvironmentalId, "sales_comparable_site_environmental", "1800.0116", "22.03.44", "None"],
     [salesComparableViewId, "sales_comparable_site_view", "1800.0243", "22.03.46", "Residential"],
     [salesComparableViewId, "sales_comparable_site_view", "1800.0242", "22.03.46", "Full"],
-    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0368", "Does Not Display", 1],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0368", "Does Not Display", 2],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0128", "22.05.21", "2004"],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0129", "22.05.21", false],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0125", "22.07.18", "Dwelling"],
@@ -898,6 +902,7 @@ try {
     [salesComparableEfficiencyRatingId, "sales_comparable_efficiency_rating", "1800.0112", "22.06.07", "62"],
     [salesComparableId, "sales_comparable_adjustment_energy_green", "1800.0317", "22.06.04", 0],
     [salesComparableUnitId, "sales_comparable_unit", "1800.0287", "Does Not Display", false],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0159", "22.07.17", "Primary Unit"],
     [salesComparableUnitId, "sales_comparable_unit", "1800.0330", "22.07.26", 3],
     [salesComparableUnitId, "sales_comparable_unit", "1800.0331", "22.07.28", 2],
     [salesComparableUnitId, "sales_comparable_unit", "1800.0332", "22.07.28", 1],
@@ -921,6 +926,27 @@ try {
     [salesComparableWallsId, "sales_comparable_interior_component", "1800.0147", "Does Not Display", "WallsAndCeiling"],
     [salesComparableWallsId, "sales_comparable_interior_component", "1800.0146", "22.09.23", "Painted drywall with flat ceilings"],
     [salesComparableWallsId, "sales_comparable_interior_component", "1800.0296", "22.09.29", "Typical wear with no material damage"],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0287", "Does Not Display", true],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0159", "22.07.17", "ADU 1"],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0330", "22.07.26", 1],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0331", "22.07.28", 1],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0332", "22.07.28", 0],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0390", "22.07.30", { amount: 575, unit: "SquareFeet" }],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0393", "22.07.36", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0394", "22.07.40", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0158", "22.10.17", "Q3"],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0157", "22.10.23", "C3"],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0329", "22.10.19", "Typical compact bathroom finishes"],
+    [salesComparableAduId, "sales_comparable_unit", "1800.0328", "22.10.25", "NotUpdated"],
+    [salesComparableAduKitchenId, "sales_comparable_kitchen", "1800.0325", "Does Not Display", "Kitchen"],
+    [salesComparableAduKitchenId, "sales_comparable_kitchen", "1800.0327", "22.10.18", "Typical compact kitchen finishes"],
+    [salesComparableAduKitchenId, "sales_comparable_kitchen", "1800.0326", "22.10.24", "NotUpdated"],
+    [salesComparableAduFlooringId, "sales_comparable_interior_component", "1800.0147", "Does Not Display", "Flooring"],
+    [salesComparableAduFlooringId, "sales_comparable_interior_component", "1800.0146", "22.10.20", "Luxury vinyl plank of typical quality"],
+    [salesComparableAduFlooringId, "sales_comparable_interior_component", "1800.0336", "22.10.26", "NotUpdated"],
+    [salesComparableAduWallsId, "sales_comparable_interior_component", "1800.0147", "Does Not Display", "WallsAndCeiling"],
+    [salesComparableAduWallsId, "sales_comparable_interior_component", "1800.0146", "22.10.21", "Painted drywall of typical quality"],
+    [salesComparableAduWallsId, "sales_comparable_interior_component", "1800.0296", "22.10.27", "Typical wear with no material damage"],
     [salesComparableExteriorWallId, "sales_comparable_exterior_component", "1800.0180", "Does Not Display", "ExteriorWallsAndTrim"],
     [salesComparableExteriorWallId, "sales_comparable_exterior_component", "0300.0042", "22.08.18", ["Brick"]],
     [salesComparableExteriorWallId, "sales_comparable_exterior_component", "1800.0179", "22.08.24", "TypicalWearAndTear"],

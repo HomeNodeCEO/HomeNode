@@ -297,14 +297,6 @@ const subjectExteriorFeatureTypeIs = (...values) => Object.freeze({
     equals: value,
   })),
 });
-const comparableUnitNotAdu = Object.freeze({
-  key: "sales_comparable_unit:1800.0287",
-  equals: false,
-});
-const subjectUnitNotAdu = Object.freeze({
-  key: "unit:0700.0089",
-  equals: false,
-});
 const subjectUnitHasBathroom = Object.freeze({
   any: [
     { key: "unit:0700.0119", greaterThan: 0 },
@@ -1326,21 +1318,17 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
 
   unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0158", "22.09.19", "Interior quality rating", "enum", {
     options: UAD_QUALITY_RATINGS,
-    showWhen: comparableUnitNotAdu,
-    guidance: "Use the UAD Q1–Q6 definitions. Any overall quality adjustment belongs in Section 22K, not in this subsection.",
+    guidance: "Use the UAD Q1–Q6 definitions. This appears in Section 22I for a primary unit and Section 22J for an ADU. Any overall quality adjustment belongs in Section 22K.",
   }),
   unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0157", "22.09.25", "Interior condition rating", "enum", {
     options: UAD_CONDITION_RATINGS,
-    showWhen: comparableUnitNotAdu,
-    guidance: "Use the UAD C1–C6 definitions. Any overall condition adjustment belongs in Section 22K, not in this subsection.",
+    guidance: "Use the UAD C1–C6 definitions. This appears in Section 22I for a primary unit and Section 22J for an ADU. Any overall condition adjustment belongs in Section 22K.",
   }),
   unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0329", "22.09.21", "Overall bathrooms quality summary", "string", {
     maxLength: 70,
-    showWhen: comparableUnitNotAdu,
   }),
   unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0328", "22.09.27", "Overall bathroom update status", "enum", {
     options: UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES,
-    showWhen: comparableUnitNotAdu,
   }),
   unitChild("Comparable kitchens", "sales_comparable_kitchen", "sales_comparable_kitchen", "1800.0325", "Does Not Display", "Room type", "enum", {
     options: ["Kitchen"],
@@ -1358,7 +1346,7 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   unitChild("Comparable interior components", "sales_comparable_interior_component", "sales_comparable_interior_component", "1800.0147", "Does Not Display", "Interior component", "enum", {
     options: UAD_INTERIOR_COMPONENT_TYPES,
     required: true,
-    guidance: "Add Flooring and Walls and Ceiling for each non-ADU comparable unit. Add matching Other rows only when the subject has them.",
+    guidance: "Add Flooring and Walls and Ceiling for every comparable unit, including ADUs. Add matching Other rows only when the corresponding subject unit type has them.",
   }),
   unitChild("Comparable interior components", "sales_comparable_interior_component", "sales_comparable_interior_component", "1800.0148", "22.09.08", "Other interior component", "string", {
     maxLength: 36,
@@ -1684,7 +1672,7 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     minItems: 0,
     maxItems: 23,
     parentEntityType: "sales_comparable_unit",
-    showWhen: Object.freeze({ all: [salesComparisonIncluded, comparableUnitNotAdu] }),
+    showWhen: salesComparisonIncluded,
   }),
   sales_comparable_interior_component: Object.freeze({
     title: "Comparable interior components",
@@ -1692,7 +1680,7 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     minItems: 0,
     maxItems: 7,
     parentEntityType: "sales_comparable_unit",
-    showWhen: Object.freeze({ all: [salesComparisonIncluded, comparableUnitNotAdu] }),
+    showWhen: salesComparisonIncluded,
   }),
   sales_comparison_subject_unit_interior_summary: Object.freeze({
     title: "Subject unit interior summaries",
@@ -1700,7 +1688,7 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     minItems: 0,
     maxItems: 1,
     parentEntityType: "unit",
-    showWhen: Object.freeze({ all: [salesComparisonIncluded, subjectUnitNotAdu, subjectUnitHasBathroom] }),
+    showWhen: Object.freeze({ all: [salesComparisonIncluded, subjectUnitHasBathroom] }),
   }),
   sales_comparison_subject_kitchen_summary: Object.freeze({
     title: "Subject kitchen quality summaries",

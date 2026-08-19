@@ -39,7 +39,7 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22I editor on canonical comparable entities", () => {
+test("adds the Section 22A-22J editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
@@ -491,6 +491,52 @@ test("validates Section 22I non-ADU ratings, kitchens, interior components, and 
   ]) assert.equal(codes.includes(code), true, code);
 });
 
+test("validates Section 22J ADU ratings, kitchens, interior components, and subject summaries", () => {
+  const comparable = { id: "130eae96-47b6-4e9e-a570-5b3d1d10a3f5", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const dwelling = { id: "45da925b-c675-43b9-a97d-6c9570937182", entity_type: "sales_comparable_dwelling", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const comparableAdu = { id: "af9782ca-a9c7-4b9f-94a4-772010bb33c4", entity_type: "sales_comparable_unit", parent_entity_id: dwelling.id, ordinal: 1, data: {} };
+  const subjectDwelling = { id: "70bd4e5f-02c8-47de-bbe7-bbb22feebc04", entity_type: "dwelling", parent_entity_id: null, ordinal: 1, data: {} };
+  const subjectAdu = { id: "e28311e3-3f59-4f02-a535-1745430833aa", entity_type: "unit", parent_entity_id: subjectDwelling.id, ordinal: 1, data: {} };
+  const subjectAduKitchen = { id: "d1314157-84f2-4dba-9bb8-676100f0cd21", entity_type: "unit_room", parent_entity_id: subjectAdu.id, ordinal: 1, data: {} };
+  const subjectAduFlooring = { id: "6f0eca58-53b9-4a3a-ad6e-2e3df04debd8", entity_type: "unit_interior_feature", parent_entity_id: subjectAdu.id, ordinal: 1, data: {} };
+  const subjectAduWalls = { id: "348ad141-451a-4709-b9d4-fe605366c50e", entity_type: "unit_interior_feature", parent_entity_id: subjectAdu.id, ordinal: 2, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(subjectAdu.id, "unit", "0700.0089", true),
+    value(subjectAdu.id, "unit", "0700.0119", 1),
+    value(subjectAdu.id, "unit", "0700.0120", 0),
+    value(subjectAduKitchen.id, "unit_room", "0700.0035", "Kitchen"),
+    value(subjectAduFlooring.id, "unit_interior_feature", "0700.0046", "Flooring"),
+    value(subjectAduWalls.id, "unit_interior_feature", "0700.0046", "WallsAndCeiling"),
+    value(comparableAdu.id, "sales_comparable_unit", "1800.0287", true),
+    value(comparableAdu.id, "sales_comparable_unit", "1800.0331", 1),
+    value(comparableAdu.id, "sales_comparable_unit", "1800.0332", 0),
+  ];
+  const errors = validateCompleteSection(
+    "sales_comparison",
+    [],
+    values,
+    [comparable, dwelling, comparableAdu, subjectDwelling, subjectAdu, subjectAduKitchen, subjectAduFlooring, subjectAduWalls],
+  );
+  const codes = errors.map((error) => error.code);
+  for (const code of [
+    "sales_comparison_subject_bathrooms_quality_summary_required",
+    "sales_comparison_subject_kitchen_quality_summary_required",
+    "sales_comparison_subject_interior_quality_summary_required",
+    "sales_comparison_subject_interior_condition_summary_required",
+    "sales_comparable_interior_quality_required",
+    "sales_comparable_interior_condition_required",
+    "sales_comparable_kitchen_required",
+    "sales_comparable_bathrooms_quality_summary_required",
+    "sales_comparable_bathrooms_update_required",
+    "sales_comparable_interior_component_required",
+  ]) assert.equal(codes.includes(code), true, code);
+  assert.match(
+    errors.find((error) => error.code === "sales_comparable_kitchen_required")?.message || "",
+    /ADU comparable unit/,
+  );
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -646,6 +692,20 @@ test("seeds Section 22I interior ratings, kitchen/component hierarchy, redisplay
   assert.match(sql, /ImprovementComponentConditionSummaryDescription/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-INTERIOR-006/);
   assert.match(runner, /20260912_uad_sales_comparison_interior_quality\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22J ADU interior report locations and shared official rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260913_uad_sales_comparison_adu_interior.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const ruleId of ["UAD1415", "UAD1419", "UAD1420"]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /AccessoryDwellingUnitIndicator = true/);
+  assert.match(sql, /'0300\.0009','sales_comparison_subject_improvement','22\.10\.01'/);
+  assert.match(sql, /'1800\.0158','sales_comparable_unit','22\.10\.17'/);
+  assert.match(sql, /'1800\.0296','sales_comparable_interior_component','22\.10\.28'/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-ADU-003/);
+  assert.match(runner, /20260913_uad_sales_comparison_adu_interior\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

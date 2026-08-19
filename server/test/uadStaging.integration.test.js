@@ -421,6 +421,12 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const salesComparableUnit = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable_unit"
       && entity.parent_entity_id === salesComparableDwelling?.id
+      && entity.entity_identifier === "sales-comparable-unit-1"
+    ));
+    const salesComparableAdu = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_unit"
+      && entity.parent_entity_id === salesComparableDwelling?.id
+      && entity.entity_identifier === "sales-comparable-adu-1"
     ));
     const salesComparableAccessibility = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable_unit_accessibility_feature"
@@ -451,6 +457,14 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_interior_component"
       && entity.parent_entity_id === salesComparableUnit?.id
     ));
+    const salesComparableAduKitchens = siteBuiltEditor.entities.filter((entity) => (
+      entity.entity_type === "sales_comparable_kitchen"
+      && entity.parent_entity_id === salesComparableAdu?.id
+    ));
+    const salesComparableAduInteriorComponents = siteBuiltEditor.entities.filter((entity) => (
+      entity.entity_type === "sales_comparable_interior_component"
+      && entity.parent_entity_id === salesComparableAdu?.id
+    ));
     const subjectUnitInteriorSummary = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparison_subject_unit_interior_summary"
     ));
@@ -479,12 +493,15 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(salesComparableGreenCertification);
     assert.ok(salesComparableEfficiencyRating);
     assert.ok(salesComparableUnit);
+    assert.ok(salesComparableAdu);
     assert.ok(salesComparableAccessibility);
     assert.equal(salesComparableExteriorComponents.length, 4);
     assert.ok(subjectWindows);
     assert.ok(subjectWindowsSummary);
     assert.equal(salesComparableKitchens.length, 1);
     assert.equal(salesComparableInteriorComponents.length, 2);
+    assert.equal(salesComparableAduKitchens.length, 1);
+    assert.equal(salesComparableAduInteriorComponents.length, 2);
     assert.ok(subjectUnitInteriorSummary);
     assert.ok(subjectKitchenSummary);
     assert.equal(subjectInteriorQualitySummaries.length, 2);
@@ -632,6 +649,30 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0186"
       ))?.value,
       "Q3",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableAdu.id
+        && item.context_key === "sales_comparable_unit"
+        && item.uid === "1800.0287"
+      ))?.value,
+      true,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableAdu.id
+        && item.context_key === "sales_comparable_unit"
+        && item.uid === "1800.0158"
+      ))?.value,
+      "Q3",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableAduKitchens[0].id
+        && item.context_key === "sales_comparable_kitchen"
+        && item.uid === "1800.0327"
+      ))?.value,
+      "Typical compact kitchen finishes",
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

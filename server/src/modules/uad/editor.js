@@ -2075,6 +2075,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableGreenCertifications = entities.filter((entity) => entity.entity_type === "sales_comparable_green_certification");
     const comparableEfficiencyRatings = entities.filter((entity) => entity.entity_type === "sales_comparable_efficiency_rating");
     const comparableOutbuildings = entities.filter((entity) => entity.entity_type === "sales_comparable_outbuilding");
+    const comparableOutbuildingRooms = entities.filter((entity) => entity.entity_type === "sales_comparable_outbuilding_room");
     const comparableUnits = entities.filter((entity) => entity.entity_type === "sales_comparable_unit");
     const comparableUnitAccessibility = entities.filter((entity) => entity.entity_type === "sales_comparable_unit_accessibility_feature");
     const comparableExteriorComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_exterior_component");
@@ -2230,6 +2231,14 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_unit_accessibility_orphaned",
         "Every comparable accessibility feature must be linked to a comparable unit.",
+      ));
+    }
+    if (comparableOutbuildingRooms.some((room) => !comparableOutbuildingIds.has(room.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingRoomType),
+        null,
+        "sales_comparable_outbuilding_room_orphaned",
+        "Every comparable outbuilding room summary must be linked to a comparable outbuilding.",
       ));
     }
     if (comparableAmenities.some((amenity) => !comparableIds.has(amenity.parent_entity_id))) {
@@ -3440,12 +3449,34 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       for (const outbuilding of outbuildings) {
         const outbuildingLookup = valueLookup(merged, outbuilding.id);
         const outbuildingUnits = units.filter((unit) => unit.parent_entity_id === outbuilding.id);
-        if (!outbuildingUnits.length || outbuildingUnits.some((unit) => valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) !== true)) {
+        const outbuildingRooms = comparableOutbuildingRooms.filter((room) => room.parent_entity_id === outbuilding.id);
+        const outbuildingType = outbuildingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingType);
+        const outbuildingOther = String(outbuildingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingOther) || "").trim();
+        const aduOnlyStructure = outbuildingType === "StandaloneADU"
+          || (outbuildingType === "Other" && outbuildingOther === "ADUGarage");
+        const reportedUnits = Number(outbuildingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUnits));
+        if (Number.isFinite(reportedUnits) && reportedUnits !== outbuildingUnits.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUnits),
+            outbuilding.id,
+            "sales_comparable_outbuilding_unit_count_mismatch",
+            `Units in structure must equal the saved outbuilding ADU count (${outbuildingUnits.length}).`,
+          ));
+        }
+        if (outbuildingUnits.some((unit) => valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) !== true)) {
           errors.push(validationError(
             salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu),
             outbuilding.id,
             "sales_comparable_outbuilding_adu_required",
-            "A comparable outbuilding in Unit(s) must contain at least one ADU and cannot contain a primary living unit.",
+            "Every living unit in a comparable outbuilding must be classified as an ADU.",
+          ));
+        }
+        if (aduOnlyStructure && !outbuildingUnits.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu),
+            outbuilding.id,
+            "sales_comparable_outbuilding_adu_required",
+            "A Standalone ADU or ADU/Garage outbuilding must contain at least one linked ADU.",
           ));
         }
         if (
@@ -3467,6 +3498,74 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
           "sales_comparable_outbuilding_other_conflict",
           "Clear the other outbuilding description or select Other.",
         );
+
+        const comparisonDetailKeys = [
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingArea,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingFinishedArea,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUnfinishedArea,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingVolume,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingHeatingExists,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingCoolingExists,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUtilities,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUtilitiesOther,
+        ];
+        if (aduOnlyStructure && (comparisonDetailKeys.some((key) => isPresent(outbuildingLookup(key))) || outbuildingRooms.length)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingType),
+            outbuilding.id,
+            "sales_comparable_outbuilding_comparison_detail_conflict",
+            "Standalone ADUs and ADU/Garage structures are compared in Unit(s), Vehicle Storage, and ADU Interior—not again in Outbuilding.",
+          ));
+          continue;
+        }
+
+        const utilities = outbuildingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUtilities);
+        if (Array.isArray(utilities) && utilities.includes("None") && utilities.length > 1) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUtilities),
+            outbuilding.id,
+            "sales_comparable_outbuilding_utility_none_conflict",
+            "Select None by itself, or remove None before adding another outbuilding utility.",
+          ));
+        }
+        if (Array.isArray(utilities) && !utilities.includes("Other") && isPresent(outbuildingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUtilitiesOther))) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUtilitiesOther),
+            outbuilding.id,
+            "sales_comparable_outbuilding_utility_other_conflict",
+            "Clear the other utility description or select Other.",
+          ));
+        }
+
+        const roomTypes = outbuildingRooms
+          .map((room) => valueLookup(merged, room.id)(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingRoomType))
+          .filter(isPresent);
+        if (new Set(roomTypes).size !== roomTypes.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingRoomType),
+            outbuilding.id,
+            "sales_comparable_outbuilding_room_duplicate",
+            "Add at most one Full Bathroom, Half Bathroom, and Kitchen summary for each comparable outbuilding.",
+          ));
+        }
+
+        const areaAmount = (key) => {
+          const measurement = outbuildingLookup(key);
+          return measurement && typeof measurement === "object" && !Array.isArray(measurement)
+            ? Number(measurement.amount)
+            : Number.NaN;
+        };
+        const grossArea = areaAmount(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingArea);
+        const finishedArea = areaAmount(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingFinishedArea);
+        const unfinishedArea = areaAmount(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingUnfinishedArea);
+        if (Number.isFinite(grossArea) && Number.isFinite(finishedArea) && Number.isFinite(unfinishedArea) && finishedArea + unfinishedArea > grossArea) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingArea),
+            outbuilding.id,
+            "sales_comparable_outbuilding_area_reconciliation",
+            "Finished plus unfinished area excluding vehicle storage and ADUs cannot exceed gross building area.",
+          ));
+        }
       }
 
       const structureIdentifiers = dwellings.map((structure) => ({

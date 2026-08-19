@@ -382,6 +382,30 @@ const comparableVehicleStorageOtherSurface = Object.freeze({
     { key: "sales_comparable_vehicle_storage:1800.0097", equals: "Other" },
   ],
 });
+const comparableOutbuildingAduOnly = Object.freeze({
+  any: [
+    { key: "sales_comparable_outbuilding:1800.0126", equals: "StandaloneADU" },
+    {
+      all: [
+        { key: "sales_comparable_outbuilding:1800.0126", equals: "Other" },
+        { key: "sales_comparable_outbuilding:1800.0127", equals: "ADUGarage" },
+      ],
+    },
+  ],
+});
+const comparableOutbuildingIncluded = Object.freeze({
+  all: [
+    salesComparisonIncluded,
+    { key: "sales_comparable_outbuilding:1800.0366", equals: true },
+    { not: comparableOutbuildingAduOnly },
+  ],
+});
+const comparableOutbuildingOtherUtility = Object.freeze({
+  all: [
+    comparableOutbuildingIncluded,
+    { key: "sales_comparable_outbuilding:1800.0132", contains: "Other" },
+  ],
+});
 const subjectMaintainsExterior = Object.freeze({
   key: "subject:0100.0046",
   equals: true,
@@ -579,6 +603,42 @@ const vehicleStorageChild = (uid, reportFieldId, label, dataType, options = {}) 
 );
 const vehicleStorageComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
   "Sales comparables — vehicle storage",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
+const outbuildingStructureChild = (uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — outbuilding structures",
+  "sales_comparable_outbuilding",
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable_outbuilding", ...options },
+);
+const outbuildingChild = (uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — outbuilding comparison",
+  "sales_comparable_outbuilding",
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable_outbuilding", ...options },
+);
+const outbuildingRoomChild = (uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — outbuilding room summaries",
+  "sales_comparable_outbuilding_room",
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable_outbuilding_room", ...options },
+);
+const outbuildingComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — outbuilding adjustment",
   contextKey,
   uid,
   reportFieldId,
@@ -1325,25 +1385,30 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     guidance: "Required for each dwelling when the comparable has more than one primary living unit.",
   }),
 
-  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0125", "22.07.18", "Improvement type", "enum", {
+  outbuildingStructureChild("1800.0125", "22.07.18", "Improvement type", "enum", {
     options: ["Outbuilding"],
     required: true,
     initialValue: "Outbuilding",
   }),
-  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0366", "Does Not Display", "Outbuilding is real property", "boolean", {
+  outbuildingStructureChild("1800.0366", "Does Not Display", "Outbuilding is real property", "boolean", {
     required: true,
     initialValue: true,
   }),
-  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0126", "22.07.18", "Outbuilding type", "enum", {
+  outbuildingStructureChild("1800.0126", "22.14.14", "Outbuilding type", "enum", {
     options: UAD_OUTBUILDING_TYPES,
     required: true,
   }),
-  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0127", "22.07.18", "Other outbuilding type", "string", {
+  outbuildingStructureChild("1800.0127", "22.14.14", "Other outbuilding type", "string", {
     maxLength: 21,
     showWhen: { key: "sales_comparable_outbuilding:1800.0126", equals: "Other" },
     requiredWhen: { key: "sales_comparable_outbuilding:1800.0126", equals: "Other" },
   }),
-
+  outbuildingStructureChild("1800.0368", "Does Not Display", "Units in structure", "integer", {
+    required: true,
+    minimum: 0,
+    maximum: 99,
+    guidance: "Enter zero when the outbuilding contains no living unit. Any living unit in an outbuilding is an ADU and must be linked below.",
+  }),
   unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0287", "Does Not Display", "Accessory dwelling unit", "boolean", {
     required: true,
   }),
@@ -1724,6 +1789,59 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     guidance: "Enter the total supported vehicle-storage adjustment once for this comparable, including zero when applicable.",
   }),
 
+  outbuildingChild("1800.0387", "22.14.16", "Gross building area", "measurement", {
+    units: ["SquareFeet"],
+    minimumExclusive: 0,
+    showWhen: comparableOutbuildingIncluded,
+    requiredWhen: comparableOutbuildingIncluded,
+  }),
+  outbuildingChild("1800.0344", "22.14.17", "Finished area excluding vehicle storage and ADU", "measurement", {
+    units: ["SquareFeet"],
+    minimum: 0,
+    showWhen: comparableOutbuildingIncluded,
+  }),
+  outbuildingChild("1800.0380", "22.14.18", "Unfinished area excluding vehicle storage and ADU", "measurement", {
+    units: ["SquareFeet"],
+    minimum: 0,
+    showWhen: comparableOutbuildingIncluded,
+  }),
+  outbuildingChild("1800.0351", "22.14.19", "Structure volume", "measurement", {
+    units: ["CubicFeet"],
+    minimumExclusive: 0,
+    showWhen: comparableOutbuildingIncluded,
+  }),
+  outbuildingChild("1800.0124", "22.14.23", "Permanent heating system exists", "boolean", {
+    showWhen: comparableOutbuildingIncluded,
+    requiredWhen: comparableOutbuildingIncluded,
+  }),
+  outbuildingChild("1800.0123", "22.14.24", "Permanent cooling system exists", "boolean", {
+    showWhen: comparableOutbuildingIncluded,
+    requiredWhen: comparableOutbuildingIncluded,
+  }),
+  outbuildingChild("1800.0132", "22.14.25", "Utilities", "multi_enum", {
+    options: ["Electricity", "Gas", "None", "Other", "SanitarySewer", "Water"],
+    showWhen: comparableOutbuildingIncluded,
+    requiredWhen: comparableOutbuildingIncluded,
+  }),
+  outbuildingChild("1800.0133", "22.14.25", "Other utility description", "string", {
+    maxLength: 28,
+    showWhen: comparableOutbuildingOtherUtility,
+    requiredWhen: comparableOutbuildingOtherUtility,
+  }),
+  outbuildingRoomChild("1800.0388", "22.14.20 / 22.14.21 / 22.14.22", "Room type", "enum", {
+    options: ["FullBathroom", "HalfBathroom", "Kitchen"],
+    required: true,
+  }),
+  outbuildingRoomChild("1800.0389", "22.14.20 / 22.14.21 / 22.14.22", "Room count", "integer", {
+    required: true,
+    minimum: 0,
+    maximum: 99,
+  }),
+  outbuildingComp("sales_comparable_adjustment_outbuilding", "1800.0317", "22.14.15", "Outbuilding adjustment", "currency", {
+    maximum: 999999999,
+    guidance: "Enter the total supported outbuilding adjustment once for this comparable, including zero when applicable.",
+  }),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1962,11 +2080,28 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     showWhen: comparableEfficiencyRatingExists,
   }),
   sales_comparable_outbuilding: Object.freeze({
-    title: "Comparable outbuildings containing an ADU",
-    addLabel: "Add comparable outbuilding ADU",
+    title: "Comparable outbuildings",
+    addLabel: "Add comparable outbuilding",
     minItems: 0,
     maxItems: 10,
     parentEntityType: "sales_comparable",
+    showWhen: salesComparisonIncluded,
+    variants: Object.freeze({
+      "Sales comparables — outbuilding comparison": Object.freeze({
+        createEnabled: false,
+        minItems: 0,
+        maxItems: 10,
+        parentEntityType: "sales_comparable",
+        showWhen: salesComparisonIncluded,
+      }),
+    }),
+  }),
+  sales_comparable_outbuilding_room: Object.freeze({
+    title: "Comparable outbuilding room summaries",
+    addLabel: "Add room summary",
+    minItems: 0,
+    maxItems: 3,
+    parentEntityType: "sales_comparable_outbuilding",
     showWhen: salesComparisonIncluded,
   }),
   sales_comparable_unit: Object.freeze({
@@ -2203,6 +2338,18 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   comparableOutbuildingRealProperty: "sales_comparable_outbuilding:1800.0366",
   comparableOutbuildingType: "sales_comparable_outbuilding:1800.0126",
   comparableOutbuildingOther: "sales_comparable_outbuilding:1800.0127",
+  comparableOutbuildingUnits: "sales_comparable_outbuilding:1800.0368",
+  comparableOutbuildingArea: "sales_comparable_outbuilding:1800.0387",
+  comparableOutbuildingFinishedArea: "sales_comparable_outbuilding:1800.0344",
+  comparableOutbuildingUnfinishedArea: "sales_comparable_outbuilding:1800.0380",
+  comparableOutbuildingVolume: "sales_comparable_outbuilding:1800.0351",
+  comparableOutbuildingHeatingExists: "sales_comparable_outbuilding:1800.0124",
+  comparableOutbuildingCoolingExists: "sales_comparable_outbuilding:1800.0123",
+  comparableOutbuildingUtilities: "sales_comparable_outbuilding:1800.0132",
+  comparableOutbuildingUtilitiesOther: "sales_comparable_outbuilding:1800.0133",
+  comparableOutbuildingRoomType: "sales_comparable_outbuilding_room:1800.0388",
+  comparableOutbuildingRoomCount: "sales_comparable_outbuilding_room:1800.0389",
+  comparableOutbuildingAdjustment: "sales_comparable_adjustment_outbuilding:1800.0317",
   unitIsAdu: "sales_comparable_unit:1800.0287",
   unitIdentifier: "sales_comparable_unit:1800.0159",
   unitFloor: "sales_comparable_unit:1800.0154",

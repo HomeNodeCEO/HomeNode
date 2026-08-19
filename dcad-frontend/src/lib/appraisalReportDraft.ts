@@ -28,6 +28,8 @@ export type AppraisalReportComparable = {
     livingArea: number;
     garage: number;
     pool: number;
+    siteSize?: number;
+    age?: number;
     condition: number;
     quality: number;
   };

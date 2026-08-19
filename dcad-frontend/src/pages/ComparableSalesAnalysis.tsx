@@ -2046,6 +2046,34 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       )),
     [appliedGroupedAdjustmentEntries, subjectLivingArea, compGla],
   );
+  const subjectAge = useMemo(
+    () => finiteNumber(subject?.actual_age),
+    [subject?.actual_age],
+  );
+  const subjectSiteSize = useMemo(
+    () => finiteNumber(subject?.land_size_sqft),
+    [subject?.land_size_sqft],
+  );
+  const ageAdjustments = useMemo<number[]>(
+    () => compAges.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'age',
+        subjectAge,
+        finiteNumber(comparableValue),
+      )),
+    [appliedGroupedAdjustmentEntries, subjectAge, compAges],
+  );
+  const siteSizeAdjustments = useMemo<number[]>(
+    () => compLandSize.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'site_size',
+        subjectSiteSize,
+        finiteNumber(comparableValue),
+      )),
+    [appliedGroupedAdjustmentEntries, subjectSiteSize, compLandSize],
+  );
 
   // SALES/EQUITY: Net Adjustments — sum all signed adjustments per comparable
   // Condition and quality remain separate from concessions and every other
@@ -2129,6 +2157,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       : null),
     [selectedListings],
   );
+  const listingAges = useMemo(() => {
+    const parsedYear = new Date(`${salesAnalysisAsOf}T12:00:00`).getFullYear();
+    const currentYear = Number.isFinite(parsedYear) ? parsedYear : new Date().getFullYear();
+    return listingYearsBuilt.map((yearBuilt) => (
+      yearBuilt == null ? null : Math.max(0, currentYear - Number(yearBuilt))
+    ));
+  }, [listingYearsBuilt, salesAnalysisAsOf]);
   const listingBathroomGroups = useMemo(
     () => selectedListings.map((listing) => listing
       ? bathroomEquivalentValue(
@@ -2202,6 +2237,26 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       )),
     [appliedGroupedAdjustmentEntries, subjectPoolGroup, listingPoolGroups],
   );
+  const listingAgeAdjustments = useMemo(
+    () => listingAges.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'age',
+        subjectAge,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectAge, listingAges],
+  );
+  const listingSiteSizeAdjustments = useMemo(
+    () => listingLandSizes.map((comparableValue) =>
+      calculateNumericGroupedAdjustment(
+        appliedGroupedAdjustmentEntries,
+        'site_size',
+        subjectSiteSize,
+        comparableValue,
+      )),
+    [appliedGroupedAdjustmentEntries, subjectSiteSize, listingLandSizes],
+  );
   const listingConditionAdjustments = useMemo(
     () => selectedListings.map((listing) => {
       const applied = appliedConditionQualityAdjustments.condition;
@@ -2239,6 +2294,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         (listingGlaAdjustments[index] || 0) +
         (listingGarageAdjustments[index] || 0) +
         (listingPoolAdjustments[index] || 0) +
+        (listingAgeAdjustments[index] || 0) +
+        (listingSiteSizeAdjustments[index] || 0) +
         (listingConditionAdjustments[index] || 0) +
         (listingQualityAdjustments[index] || 0);
     }),
@@ -2249,6 +2306,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       listingGlaAdjustments,
       listingGarageAdjustments,
       listingPoolAdjustments,
+      listingAgeAdjustments,
+      listingSiteSizeAdjustments,
       listingConditionAdjustments,
       listingQualityAdjustments,
     ],
@@ -2261,6 +2320,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         Math.abs(listingGlaAdjustments[index] || 0) +
         Math.abs(listingGarageAdjustments[index] || 0) +
         Math.abs(listingPoolAdjustments[index] || 0) +
+        Math.abs(listingAgeAdjustments[index] || 0) +
+        Math.abs(listingSiteSizeAdjustments[index] || 0) +
         Math.abs(listingConditionAdjustments[index] || 0) +
         Math.abs(listingQualityAdjustments[index] || 0);
     }),
@@ -2271,6 +2332,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       listingGlaAdjustments,
       listingGarageAdjustments,
       listingPoolAdjustments,
+      listingAgeAdjustments,
+      listingSiteSizeAdjustments,
       listingConditionAdjustments,
       listingQualityAdjustments,
     ],
@@ -2296,14 +2359,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const poolAdj = toNum((poolAdjustments || [])[i]);
       const conditionAdj = toNum((conditionAdjustments || [])[i]);
       const qualityAdj = toNum((qualityAdjustments || [])[i]);
-      // Land Size and Age/Effective currently $0
-      const landAdj = 0;
-      const ageAdj = 0;
+      const landAdj = toNum((siteSizeAdjustments || [])[i]);
+      const ageAdj = toNum((ageAdjustments || [])[i]);
       const total = (concession > 0 ? -concession : 0) + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + conditionAdj + qualityAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments, conditionAdjustments, qualityAdjustments]);
+  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments, conditionAdjustments, qualityAdjustments, siteSizeAdjustments, ageAdjustments]);
 
   // SALES/EQUITY: Gross Adjustments — sum of absolute values of all adjustments per comparable
   const grossAdjustments = useMemo<number[]>(() => {
@@ -2322,13 +2384,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       const poolAdj = Math.abs(toNum((poolAdjustments || [])[i]));
       const conditionAdj = Math.abs(toNum((conditionAdjustments || [])[i]));
       const qualityAdj = Math.abs(toNum((qualityAdjustments || [])[i]));
-      const landAdj = 0;
-      const ageAdj = 0;
+      const landAdj = Math.abs(toNum((siteSizeAdjustments || [])[i]));
+      const ageAdj = Math.abs(toNum((ageAdjustments || [])[i]));
       const total = concession + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + conditionAdj + qualityAdj + landAdj + ageAdj;
       arr.push(total);
     }
     return arr;
-  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments, conditionAdjustments, qualityAdjustments]);
+  }, [compConcessions, compTimeAdjustments, roomCountTotalAdjustments, glaAdjustments, garageAdjustments, poolAdjustments, conditionAdjustments, qualityAdjustments, siteSizeAdjustments, ageAdjustments]);
 
   // SALES: Indicated Values — sale price plus net adjustments per comparable
   const indicatedValues = useMemo<number[]>(() => {
@@ -2472,6 +2534,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             livingArea: glaAdjustments[index] || 0,
             garage: garageAdjustments[index] || 0,
             pool: poolAdjustments[index] || 0,
+            siteSize: siteSizeAdjustments[index] || 0,
+            age: ageAdjustments[index] || 0,
             condition: conditionAdjustments[index] || 0,
             quality: qualityAdjustments[index] || 0,
           },
@@ -2542,6 +2606,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     glaAdjustments,
     garageAdjustments,
     poolAdjustments,
+    siteSizeAdjustments,
+    ageAdjustments,
     conditionAdjustments,
     qualityAdjustments,
     serializedCostToCureItems,
@@ -2605,11 +2671,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       ? 'full-bath equivalent'
       : dimensionKey === 'garage'
         ? 'garage space'
-        : dimensionKey === 'living_area'
+      : dimensionKey === 'living_area'
           ? 'square foot'
+          : dimensionKey === 'site_size'
+            ? 'site square foot'
+            : dimensionKey === 'age'
+              ? 'year of age'
           : 'pool difference';
     const hasLivingAreaFormula =
-      dimensionKey === 'living_area' &&
+      (dimensionKey === 'living_area' || dimensionKey === 'site_size') &&
       study.sourcePriceDifference != null &&
       study.sourceLivingAreaDifference != null &&
       Number.isFinite(study.sourcePriceDifference) &&
@@ -2660,6 +2730,22 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         calculateLivingAreaGroupedAdjustment(
           candidateAdjustments,
           subjectLivingArea,
+          finiteNumber(comparableValue),
+        ));
+    } else if (draftAdjustment.dimensionKey === 'age') {
+      adjustments = compAges.map((comparableValue) =>
+        calculateNumericGroupedAdjustment(
+          candidateAdjustments,
+          'age',
+          subjectAge,
+          finiteNumber(comparableValue),
+        ));
+    } else if (draftAdjustment.dimensionKey === 'site_size') {
+      adjustments = compLandSize.map((comparableValue) =>
+        calculateNumericGroupedAdjustment(
+          candidateAdjustments,
+          'site_size',
+          subjectSiteSize,
           finiteNumber(comparableValue),
         ));
     } else {
@@ -2992,7 +3078,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const renderListingAdjustmentGrid = () => {
-    const currentYear = new Date(`${salesAnalysisAsOf}T12:00:00`).getFullYear();
     const subjectHousing = subject?.structural_style || subject?.housing_type || 'Not available';
     const adjustmentRows = [
       {
@@ -3016,7 +3101,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         label: 'Land Size',
         subject: fmtSqftSafe(subject?.land_size_sqft),
         description: (_listing: SaleRow, slot: number) => fmtSqftSafe(listingLandSizes[slot]),
-        adjustment: () => 0,
+        adjustment: (_listing: SaleRow, slot: number) => listingSiteSizeAdjustments[slot] || 0,
       },
       { label: 'View', subject: subject?.view || 'Neutral', description: () => 'Neutral' },
       { label: 'Housing Type', subject: subjectHousing, description: (listing: SaleRow) => housingTypeGridValue(listing) },
@@ -3025,8 +3110,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       {
         label: 'Age/Effective',
         subject: subject?.actual_age ?? '',
-        description: (_listing: SaleRow, slot: number) => listingYearsBuilt[slot] == null ? '' : Math.max(0, currentYear - Number(listingYearsBuilt[slot])),
-        adjustment: () => 0,
+        description: (_listing: SaleRow, slot: number) => listingAges[slot] ?? '',
+        adjustment: (_listing: SaleRow, slot: number) => listingAgeAdjustments[slot] || 0,
       },
       {
         label: 'Condition',
@@ -4831,14 +4916,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                               : label === 'Date of Sale/Time'
                                 ? ''
                               : label === 'Land Size'
-                                ? fmtCurrency(0)
+                                ? fmtCurrency((siteSizeAdjustments || [])[i] ?? 0)
                               : label === 'Condition'
                                 ? fmtCurrency((conditionAdjustments || [])[i] ?? 0)
                               : label === 'Quality'
                                 ? fmtCurrency((qualityAdjustments || [])[i] ?? 0)
-                              // SALES: Age/Effective – adjustments fixed at $0 for all comparables
                               : label === 'Age/Effective'
-                                ? fmtCurrency(0)
+                                ? fmtCurrency((ageAdjustments || [])[i] ?? 0)
                               : ''}
                           </td>,
                         ])}
@@ -5310,6 +5394,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                 key: 'living_area' as const,
                 label: 'Gross Living Area',
                 adjustments: glaAdjustments,
+              },
+              {
+                key: 'site_size' as const,
+                label: 'Site Size',
+                adjustments: siteSizeAdjustments,
+              },
+              {
+                key: 'age' as const,
+                label: 'Age / Year Built',
+                adjustments: ageAdjustments,
               },
             ].map((summaryItem) => {
               const studies = groupedStudiesFor(summaryItem.key);

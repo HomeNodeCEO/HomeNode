@@ -1453,6 +1453,80 @@ export interface PairedSalesAnalysisResponse {
   dimensions: PairedAnalysisDimension[];
 }
 
+export type RegressionFeatureKey =
+  | 'living_area'
+  | 'bathrooms'
+  | 'garage'
+  | 'pool'
+  | 'age'
+  | 'site_size';
+
+export interface RegressionAnalysisResponse {
+  subject: {
+    accountId: string;
+    address: string | null;
+    city: string | null;
+    county: string | null;
+    postalCode: string | null;
+    housingGroup: string;
+  };
+  market: {
+    key: MarketConditionsAreaKey;
+    scope: 'city' | 'zip' | 'radius' | 'custom';
+    radiusMiles: number | null;
+    label: string;
+    customGeometry: GeoJsonPolygon | null;
+  };
+  period: {
+    start: string;
+    end: string;
+    analysisAsOf: string;
+    periodMonths: 12;
+    completeCalendarMonths: true;
+  };
+  rawEligibleSaleCount: number;
+  housingTypeExcludedCount: number;
+  methodology: {
+    model: 'ordinary_least_squares';
+    salePricesTimeAdjusted: false;
+    minimumStrongSample: number;
+    observationsPerParameter: number;
+    minimumPredictorCoveragePercent: number;
+  };
+  population: {
+    eligibleSaleCount: number;
+    modelSaleCount: number;
+    excludedIncompleteCount: number;
+  };
+  model: null | {
+    intercept: number;
+    rSquared: number;
+    adjustedRSquared: number;
+    rootMeanSquaredError: number;
+    parameterCount: number;
+    reliability: GroupedAdjustmentReliability;
+  };
+  coefficients: Array<{
+    key: RegressionFeatureKey;
+    label: string;
+    unit: 'per_square_foot' | 'per_bath_equivalent' | 'per_garage_space' | 'per_feature' | 'per_year';
+    coefficient: number;
+    standardizedCoefficient: number | null;
+    recommendedAdjustment: number;
+    mean: number;
+    standardDeviation: number;
+    coverageCount: number;
+    reliability: GroupedAdjustmentReliability;
+  }>;
+  warnings: string[];
+  coverage: Array<{
+    key: RegressionFeatureKey;
+    label: string;
+    count: number;
+    percent: number;
+  }>;
+}
+
 export interface GroupedAnalysesResponse {
   subject: {
     account_id: string;
@@ -3181,6 +3255,26 @@ export interface PropertyTaxProtestFile {
     review_status: string;
     updated_at: string;
   };
+}
+
+/** Fit an auditable same-housing-type OLS model inside one selected market area. */
+export async function runRegressionAnalysis(request: {
+  subjectAccountId: string;
+  marketKey: MarketConditionsAreaKey;
+  asOf?: string;
+  customGeometry?: GeoJsonPolygon | null;
+}): Promise<RegressionAnalysisResponse> {
+  return fetchJSON<RegressionAnalysisResponse>(makeUrl('/api/sales/regression-analysis'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      subject_account_id: request.subjectAccountId.trim(),
+      market_key: request.marketKey,
+      as_of: request.asOf,
+      custom_geometry: request.customGeometry || null,
+    }),
+    timeoutMs: 120000,
+  });
 }
 
 export async function getPropertyTaxProtestFile(

@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import PDFDocument from "pdfkit";
 
 import {
   buildDocumentFieldCandidates,
   classifyDocument,
+  extractPdfEvidence,
   findZoningDescriptionInPages,
 } from "../src/services/documentIntelligence.js";
+
+async function textPdf(lines) {
+  const pdf = new PDFDocument({ size: "LETTER", margin: 54 });
+  const chunks = [];
+  pdf.on("data", (chunk) => chunks.push(chunk));
+  const completed = new Promise((resolve, reject) => {
+    pdf.on("end", () => resolve(Buffer.concat(chunks)));
+    pdf.on("error", reject);
+  });
+  lines.forEach((line) => pdf.text(line));
+  pdf.end();
+  return completed;
+}
 
 test("document classification recognizes the appraisal document families", () => {
   assert.equal(classifyDocument({ pages: ["ONE TO FOUR FAMILY RESIDENTIAL CONTRACT Earnest Money"] }), "purchase_contract");
@@ -34,6 +49,33 @@ test("labeled fields retain the verbatim source text and normalized money", () =
   assert.equal(candidates.find((candidate) => candidate.field_key === "seller_name")?.raw_value, "Jordan Example");
 });
 
+test("dates and assignment purpose are normalized for the appraisal form", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "engagement_letter",
+    pages: ["Client: Freeman Appraisal Services\nAssignment Type: Refinance"],
+  });
+  assert.equal(
+    candidates.find((candidate) => candidate.field_key === "assignment_type")?.normalized_value,
+    "refinance",
+  );
+  const contract = buildDocumentFieldCandidates({
+    documentType: "purchase_contract",
+    pages: ["ONE TO FOUR FAMILY RESIDENTIAL CONTRACT\nContract Date: 08/19/2026\nSeller Concessions: None"],
+  });
+  assert.equal(
+    contract.find((candidate) => candidate.field_key === "contract_date")?.normalized_value,
+    "2026-08-19",
+  );
+  assert.equal(
+    contract.find((candidate) => candidate.field_key === "seller_concessions")?.normalized_value,
+    "0.00",
+  );
+  assert.equal(
+    contract.find((candidate) => candidate.field_key === "assignment_type")?.normalized_value,
+    "purchase_transaction",
+  );
+});
+
 test("zoning description suggestion uses the exact official line associated with the code", () => {
   const suggestion = findZoningDescriptionInPages([
     "Legend\nSF-7 - Single-Family Residential-7 (minimum 7,000 square foot lots)\nC-1 - Commercial",
@@ -49,4 +91,32 @@ test("zoning documents do not emit unrelated contract candidates", () => {
     pages: ["EFFECTIVE DATE.\nR-S - Single-Family District"],
   });
   assert.equal(candidates.some((candidate) => candidate.field_key === "contract_date"), false);
+});
+
+test("a real machine-readable PDF produces page-cited contract suggestions", async () => {
+  const buffer = await textPdf([
+    "ONE TO FOUR FAMILY RESIDENTIAL CONTRACT",
+    "Contract Price: $425,000",
+    "Contract Date: 08/19/2026",
+  ]);
+  const extraction = await extractPdfEvidence(buffer, { fileName: "contract.pdf" });
+  assert.equal(extraction.document_type, "purchase_contract");
+  assert.equal(extraction.extraction_status, "review_required");
+  assert.equal(extraction.page_count, 1);
+  assert.equal(
+    extraction.candidates.find((candidate) => candidate.field_key === "contract_price")?.normalized_value,
+    "425000.00",
+  );
+  assert.equal(
+    extraction.candidates.find((candidate) => candidate.field_key === "contract_date")?.page_number,
+    1,
+  );
+});
+
+test("an image-only or blank PDF is routed to OCR review without invented fields", async () => {
+  const buffer = await textPdf([]);
+  const extraction = await extractPdfEvidence(buffer, { fileName: "scanned-contract.pdf" });
+  assert.equal(extraction.extraction_status, "ocr_required");
+  assert.equal(extraction.extraction_method, "none");
+  assert.deepEqual(extraction.candidates, []);
 });

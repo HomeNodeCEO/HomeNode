@@ -27,10 +27,53 @@ function escapeRegExp(value) {
 }
 
 function normalizedMoney(value) {
+  if (/^(?:none|no|n\/a|not applicable|zero)$/i.test(String(value || "").trim())) return "0.00";
+  if (/%/.test(String(value || "")) && !/\$/.test(String(value || ""))) return null;
   const match = String(value || "").match(/\$?\s*([0-9][0-9,]*(?:\.\d{1,2})?)/);
   if (!match) return null;
   const amount = Number(match[1].replace(/,/g, ""));
   return Number.isFinite(amount) ? amount.toFixed(2) : null;
+}
+
+function normalizedDate(value) {
+  const source = cleanText(value, 200);
+  if (!source) return null;
+  const numeric = source.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](\d{2}|\d{4})\b/);
+  let year;
+  let month;
+  let day;
+  if (numeric) {
+    month = Number(numeric[1]);
+    day = Number(numeric[2]);
+    year = Number(numeric[3]);
+    if (year < 100) year += year >= 70 ? 1900 : 2000;
+  } else {
+    const parsed = new Date(source);
+    if (Number.isNaN(parsed.getTime())) return null;
+    year = parsed.getUTCFullYear();
+    month = parsed.getUTCMonth() + 1;
+    day = parsed.getUTCDate();
+  }
+  const verified = new Date(Date.UTC(year, month - 1, day));
+  if (
+    verified.getUTCFullYear() !== year ||
+    verified.getUTCMonth() + 1 !== month ||
+    verified.getUTCDate() !== day
+  ) return null;
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizedAssignmentType(value) {
+  const source = cleanText(value, 300).toLowerCase();
+  if (/\bpurchase\b|acquisition/.test(source)) return "purchase_transaction";
+  if (/\brefinance\b|\brefi\b/.test(source)) return "refinance";
+  if (/\bheloc\b|home\s+equity\s+line/.test(source)) return "heloc";
+  if (/\brtl\b|residential\s+transition/.test(source)) return "rtl";
+  if (/\brehab\b|renovation/.test(source)) return "rehab";
+  if (/bridge/.test(source)) return "bridge_loan";
+  if (/new\s+construction|construction\s+loan/.test(source)) return "new_construction";
+  if (/\bdscr\b|debt\s+service\s+coverage/.test(source)) return "dscr";
+  return null;
 }
 
 function pageLines(pages) {
@@ -153,10 +196,12 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
     {
       fieldKey: "contract_date",
       labels: [/^(?:contract|effective)\s+date\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedDate,
     },
     {
       fieldKey: "closing_date",
       labels: [/^(?:closing|settlement)\s+date\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedDate,
     },
     {
       fieldKey: "loan_amount",
@@ -195,6 +240,11 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
       labels: [/^(?:lender|client)\s+address\s*[:#-]\s*(.+)$/i],
     },
     {
+      fieldKey: "assignment_type",
+      labels: [/^(?:assignment|transaction|loan)\s+(?:type|purpose)\s*[:#-]\s*(.+)$/i],
+      normalize: normalizedAssignmentType,
+    },
+    {
       fieldKey: "mls_number",
       labels: [/^(?:mls|listing)\s*(?:#|number|no\.)\s*[:#-]?\s*(.+)$/i],
     },
@@ -206,6 +256,7 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
     {
       fieldKey: "list_date",
       labels: [/^list(?:ing)?\s+date\s*[:#-]?\s*(.+)$/i],
+      normalize: normalizedDate,
     },
     {
       fieldKey: "financing_type",
@@ -220,7 +271,7 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
       "down_payment", "earnest_money", "seller_concessions", "seller_name",
       "buyer_name", "financing_type",
     ]),
-    engagement_letter: new Set(["lender_client_name", "lender_client_address"]),
+    engagement_letter: new Set(["lender_client_name", "lender_client_address", "assignment_type"]),
     mls_sheet: new Set([
       "mls_number", "list_price", "list_date", "contract_date", "closing_date",
       "financing_type", "seller_concessions",
@@ -230,6 +281,23 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
     .filter((definition) => !allowedFields || allowedFields.has(definition.fieldKey))
     .map((definition) => firstLabeledCandidate(entries, definition))
     .filter(Boolean);
+
+  if (documentType === "purchase_contract" && !candidates.some((candidate) => candidate.field_key === "assignment_type")) {
+    const purchaseEvidence = entries.find((entry) => (
+      /one\s+to\s+four\s+family\s+residential\s+contract|purchase\s+contract|earnest\s+money/i.test(entry.line)
+    ));
+    if (purchaseEvidence) {
+      candidates.push({
+        field_key: "assignment_type",
+        raw_value: "Purchase Transaction",
+        normalized_value: "purchase_transaction",
+        page_number: purchaseEvidence.pageNumber,
+        confidence: 0.95,
+        evidence_excerpt: purchaseEvidence.line.slice(0, 2_000),
+        extraction_method: "document_classification",
+      });
+    }
+  }
 
   if (["zoning_map", "zoning_ordinance"].includes(documentType)) {
     const zoning = candidates.find((candidate) => candidate.field_key === "zoning_code");

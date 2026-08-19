@@ -7,6 +7,8 @@ import {
 } from "./documentIntelligence.js";
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
+export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
+const STALE_PROCESSING_MINUTES = 15;
 
 function cleanText(value, maximum = 4_000) {
   const text = String(value ?? "").trim();
@@ -16,6 +18,36 @@ function cleanText(value, maximum = 4_000) {
 function positiveInteger(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function assignmentDocumentRetryDelayMs(attempts) {
+  const boundedAttempts = Math.max(1, Math.min(Number(attempts) || 1, 20));
+  return Math.min(6 * 60 * 60 * 1_000, 30_000 * (2 ** (boundedAttempts - 1)));
+}
+
+export function assignmentDocumentCandidateReviewKey(candidate = {}) {
+  const fieldKey = cleanText(candidate.field_key, 300) || "";
+  const value = cleanText(candidate.normalized_value ?? candidate.raw_value, 4_000) || "";
+  return `${fieldKey}\u0000${value}`;
+}
+
+export function retainedAssignmentDocumentReview(previousReviews = [], candidate = {}) {
+  const key = assignmentDocumentCandidateReviewKey(candidate);
+  const matching = previousReviews.find((review) => (
+    review?.review_status !== "suggested" &&
+    assignmentDocumentCandidateReviewKey(review) === key
+  ));
+  return matching ? {
+    review_status: matching.review_status,
+    confirmed_value: matching.confirmed_value,
+    reviewer: matching.reviewer,
+    reviewed_at: matching.reviewed_at,
+  } : {
+    review_status: "suggested",
+    confirmed_value: null,
+    reviewer: null,
+    reviewed_at: null,
+  };
 }
 
 function publicCandidate(row) {
@@ -36,6 +68,21 @@ function publicCandidate(row) {
   };
 }
 
+function publicCandidateReview(row) {
+  return {
+    id: Number(row.id),
+    document_id: Number(row.document_id),
+    candidate_id: row.candidate_id == null ? null : Number(row.candidate_id),
+    field_key: row.field_key,
+    raw_value: row.raw_value,
+    normalized_value: row.normalized_value,
+    review_status: row.review_status,
+    confirmed_value: row.confirmed_value,
+    reviewer: row.reviewer,
+    reviewed_at: row.reviewed_at,
+  };
+}
+
 function publicDocument(row, candidates = undefined) {
   return {
     id: Number(row.id),
@@ -49,6 +96,10 @@ function publicDocument(row, candidates = undefined) {
     file_size_bytes: Number(row.file_size_bytes || 0),
     page_count: row.page_count == null ? null : Number(row.page_count),
     processing_status: row.processing_status,
+    processing_attempts: Number(row.processing_attempts || 0),
+    processing_started_at: row.processing_started_at,
+    next_processing_at: row.next_processing_at,
+    last_processing_error: row.last_processing_error,
     extraction_method: row.extraction_method,
     extraction_summary: row.extraction_summary || {},
     source_kind: row.source_kind,
@@ -99,6 +150,14 @@ export async function ensureAssignmentDocumentsSchema(pool) {
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS processing_attempts integer NOT NULL DEFAULT 0;
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS processing_started_at timestamptz;
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS next_processing_at timestamptz;
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS last_processing_error text;
     CREATE UNIQUE INDEX IF NOT EXISTS assignment_documents_scope_checksum_uidx
       ON app.assignment_documents (
         account_id, COALESCE(assignment_file_id, 0), checksum_sha256
@@ -140,6 +199,24 @@ export async function ensureAssignmentDocumentsSchema(pool) {
     );
     CREATE INDEX IF NOT EXISTS assignment_document_candidates_idx
       ON app.assignment_document_field_candidates (document_id, field_key, review_status);
+
+    CREATE TABLE IF NOT EXISTS app.assignment_document_candidate_reviews (
+      id bigserial PRIMARY KEY,
+      document_id bigint NOT NULL
+        REFERENCES app.assignment_documents(id) ON DELETE CASCADE,
+      candidate_id bigint,
+      field_key text NOT NULL,
+      raw_value text NOT NULL,
+      normalized_value text,
+      review_status text NOT NULL
+        CHECK (review_status IN ('confirmed', 'rejected')),
+      confirmed_value text,
+      reviewer text NOT NULL,
+      reviewed_at timestamptz NOT NULL DEFAULT now(),
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS assignment_document_candidate_reviews_idx
+      ON app.assignment_document_candidate_reviews (document_id, reviewed_at DESC, id DESC);
   `);
 }
 
@@ -171,6 +248,10 @@ export async function createAssignmentDocument(pool, {
      ) DO UPDATE SET
        title = EXCLUDED.title,
        file_name = EXCLUDED.file_name,
+       document_type = CASE
+         WHEN app.assignment_documents.document_type = 'other' THEN EXCLUDED.document_type
+         ELSE app.assignment_documents.document_type
+       END,
        uploaded_by = COALESCE(EXCLUDED.uploaded_by, app.assignment_documents.uploaded_by),
        updated_at = now()
      RETURNING *`,
@@ -189,19 +270,58 @@ export async function createAssignmentDocument(pool, {
   return publicDocument(rows[0]);
 }
 
-export async function processAssignmentDocument(pool, documentId, { logger = console } = {}) {
+export async function processAssignmentDocument(pool, documentId, {
+  logger = console,
+  force = false,
+} = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const id = positiveInteger(documentId);
   if (!id) throw new Error("invalid_document_id");
   const { rows } = await pool.query(
     `UPDATE app.assignment_documents
-     SET processing_status = 'processing', updated_at = now()
-     WHERE id = $1
+     SET processing_status = 'processing',
+         processing_attempts = processing_attempts + 1,
+         processing_started_at = now(),
+         next_processing_at = NULL,
+         last_processing_error = NULL,
+         updated_at = now()
+     WHERE id = $1 AND (
+       (
+         $2::boolean
+         AND (
+           processing_status <> 'processing'
+           OR COALESCE(processing_started_at, updated_at)
+             < now() - ($3::integer * interval '1 minute')
+         )
+       )
+       OR processing_status = 'uploaded'
+       OR (
+         processing_status = 'extraction_failed'
+         AND (next_processing_at IS NULL OR next_processing_at <= now())
+       )
+       OR (
+         processing_status = 'processing'
+         AND COALESCE(processing_started_at, updated_at)
+           < now() - ($3::integer * interval '1 minute')
+       )
+     )
      RETURNING *`,
-    [id],
+    [id, force === true, STALE_PROCESSING_MINUTES],
   );
   const document = rows[0];
-  if (!document) throw new Error("document_not_found");
+  if (!document) {
+    const current = await pool.query(
+      `SELECT processing_status, next_processing_at
+       FROM app.assignment_documents WHERE id = $1`,
+      [id],
+    );
+    if (!current.rows[0]) throw new Error("document_not_found");
+    if (current.rows[0].processing_status === "processing") {
+      throw new Error("document_processing_in_progress");
+    }
+    if (current.rows[0].next_processing_at) throw new Error("document_retry_not_due");
+    throw new Error("document_not_processable");
+  }
   try {
     const extraction = await extractPdfEvidence(document.content, {
       requestedType: document.document_type,
@@ -210,6 +330,14 @@ export async function processAssignmentDocument(pool, documentId, { logger = con
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const previousReviewResult = await client.query(
+        `SELECT field_key, raw_value, normalized_value, review_status,
+                confirmed_value, reviewer, reviewed_at
+         FROM app.assignment_document_field_candidates
+         WHERE document_id = $1 AND review_status <> 'suggested'`,
+        [id],
+      );
+      const previousReviews = previousReviewResult.rows;
       await client.query("DELETE FROM app.assignment_document_pages WHERE document_id = $1", [id]);
       await client.query("DELETE FROM app.assignment_document_field_candidates WHERE document_id = $1", [id]);
       for (let index = 0; index < extraction.pages.length; index += 1) {
@@ -221,12 +349,18 @@ export async function processAssignmentDocument(pool, documentId, { logger = con
           [id, index + 1, pageText, pageText.length, extraction.extraction_method],
         );
       }
+      let suggestedCandidateCount = 0;
+      const storedCandidates = [];
       for (const candidate of extraction.candidates) {
-        await client.query(
+        const retainedReview = retainedAssignmentDocumentReview(previousReviews, candidate);
+        if (retainedReview.review_status === "suggested") suggestedCandidateCount += 1;
+        const insertedCandidate = await client.query(
           `INSERT INTO app.assignment_document_field_candidates (
              document_id, field_key, raw_value, normalized_value, page_number,
-             confidence, evidence_excerpt, extraction_method
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+             confidence, evidence_excerpt, extraction_method, review_status,
+             confirmed_value, reviewer, reviewed_at
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           RETURNING *`,
           [
             id,
             candidate.field_key,
@@ -236,9 +370,17 @@ export async function processAssignmentDocument(pool, documentId, { logger = con
             candidate.confidence,
             candidate.evidence_excerpt,
             candidate.extraction_method,
+            retainedReview.review_status,
+            retainedReview.confirmed_value,
+            retainedReview.reviewer,
+            retainedReview.reviewed_at,
           ],
         );
+        storedCandidates.push(publicCandidate(insertedCandidate.rows[0]));
       }
+      const processingStatus = extraction.candidates.length > 0 && suggestedCandidateCount === 0
+        ? "reviewed"
+        : extraction.extraction_status;
       const updated = await client.query(
         `UPDATE app.assignment_documents
          SET document_type = $2,
@@ -246,7 +388,11 @@ export async function processAssignmentDocument(pool, documentId, { logger = con
              processing_status = $4,
              extraction_method = $5,
              extraction_summary = $6::jsonb,
+             processing_started_at = NULL,
+             next_processing_at = NULL,
+             last_processing_error = NULL,
              processed_at = now(),
+             reviewed_at = CASE WHEN $4 = 'reviewed' THEN COALESCE(reviewed_at, now()) ELSE NULL END,
              updated_at = now()
          WHERE id = $1
          RETURNING *`,
@@ -254,17 +400,19 @@ export async function processAssignmentDocument(pool, documentId, { logger = con
           id,
           extraction.document_type,
           extraction.page_count,
-          extraction.extraction_status,
+          processingStatus,
           extraction.extraction_method,
           JSON.stringify({
             text_length: extraction.text_length,
             candidate_count: extraction.candidates.length,
+            suggested_candidate_count: suggestedCandidateCount,
             review_reason: extraction.review_reason,
+            processing_attempts: Number(document.processing_attempts || 0),
           }),
         ],
       );
       await client.query("COMMIT");
-      return publicDocument(updated.rows[0], extraction.candidates);
+      return publicDocument(updated.rows[0], storedCandidates);
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
       throw error;
@@ -273,14 +421,25 @@ export async function processAssignmentDocument(pool, documentId, { logger = con
     }
   } catch (error) {
     const message = String(error?.message || error).slice(0, 2_000);
+    const attempts = Number(document.processing_attempts || 1);
+    const nextProcessingAt = attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS
+      ? null
+      : new Date(Date.now() + assignmentDocumentRetryDelayMs(attempts));
     logger.warn?.(`[documents] extraction failed for document ${id}`, message);
     await pool.query(
       `UPDATE app.assignment_documents
        SET processing_status = 'extraction_failed',
-           extraction_summary = jsonb_build_object('error', $2::text),
+           extraction_summary = jsonb_build_object(
+             'error', $2::text,
+             'processing_attempts', processing_attempts,
+             'automatic_retry_exhausted', $3::boolean
+           ),
+           processing_started_at = NULL,
+           next_processing_at = $4,
+           last_processing_error = $2,
            processed_at = now(), updated_at = now()
        WHERE id = $1`,
-      [id, message],
+      [id, message, attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS, nextProcessingAt],
     );
     throw error;
   }
@@ -289,16 +448,54 @@ export async function processAssignmentDocument(pool, documentId, { logger = con
 export async function processPendingAssignmentDocuments(pool, {
   limit = 10,
   logger = console,
+  maximumAttempts = MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 10, 50));
+  const boundedMaximumAttempts = Math.max(
+    1,
+    Math.min(Number(maximumAttempts) || MAX_AUTOMATIC_DOCUMENT_ATTEMPTS, 20),
+  );
+  await pool.query(
+    `UPDATE app.assignment_documents
+     SET processing_status = 'extraction_failed',
+         processing_started_at = NULL,
+         next_processing_at = NULL,
+         last_processing_error = 'document_processing_interrupted_retry_exhausted',
+         extraction_summary = extraction_summary || jsonb_build_object(
+           'error', 'document_processing_interrupted_retry_exhausted',
+           'processing_attempts', processing_attempts,
+           'automatic_retry_exhausted', true
+         ),
+         updated_at = now()
+     WHERE processing_status = 'processing'
+       AND processing_attempts >= $1
+       AND COALESCE(processing_started_at, updated_at)
+         < now() - ($2::integer * interval '1 minute')`,
+    [boundedMaximumAttempts, STALE_PROCESSING_MINUTES],
+  );
   const { rows } = await pool.query(
     `SELECT id
      FROM app.assignment_documents
-     WHERE processing_status IN ('uploaded', 'extraction_failed')
+     WHERE processing_status = 'uploaded'
+        OR (
+          processing_status = 'extraction_failed'
+          AND processing_attempts < $2
+          AND (next_processing_at IS NULL OR next_processing_at <= now())
+        )
+        OR (
+          processing_status = 'processing'
+          AND processing_attempts < $2
+          AND COALESCE(processing_started_at, updated_at)
+            < now() - ($3::integer * interval '1 minute')
+        )
      ORDER BY uploaded_at
      LIMIT $1`,
-    [boundedLimit],
+    [
+      boundedLimit,
+      boundedMaximumAttempts,
+      STALE_PROCESSING_MINUTES,
+    ],
   );
   const results = [];
   for (const row of rows) {
@@ -326,7 +523,13 @@ export async function listAssignmentDocuments(pool, {
      LEFT JOIN app.assignment_document_field_candidates candidate
        ON candidate.document_id = document.id
      WHERE document.account_id = $1
-       AND ($2::bigint IS NULL OR document.assignment_file_id = $2 OR document.assignment_file_id IS NULL)
+       AND (
+         ($2::bigint IS NULL AND document.assignment_file_id IS NULL)
+         OR (
+           $2::bigint IS NOT NULL
+           AND (document.assignment_file_id = $2 OR document.assignment_file_id IS NULL)
+         )
+       )
      GROUP BY document.id
      ORDER BY CASE WHEN document.assignment_file_id = $2 THEN 0 ELSE 1 END,
               document.uploaded_at DESC`,
@@ -356,7 +559,17 @@ export async function getAssignmentDocument(pool, documentId, { includeContent =
      ORDER BY page_number NULLS LAST, confidence DESC NULLS LAST, id`,
     [id],
   );
-  return publicDocument(document, candidateRows.map(publicCandidate));
+  const { rows: reviewRows } = await pool.query(
+    `SELECT * FROM app.assignment_document_candidate_reviews
+     WHERE document_id = $1
+     ORDER BY reviewed_at DESC, id DESC
+     LIMIT 200`,
+    [id],
+  );
+  return {
+    ...publicDocument(document, candidateRows.map(publicCandidate)),
+    review_history: reviewRows.map(publicCandidateReview),
+  };
 }
 
 export async function reviewAssignmentDocumentCandidate(pool, {
@@ -374,36 +587,62 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   if (!new Set(["confirmed", "rejected"]).has(status)) throw new Error("invalid_document_review_status");
   const reviewerName = cleanText(reviewer, 200);
   if (!reviewerName) throw new Error("document_reviewer_required");
-  const { rows } = await pool.query(
-    `UPDATE app.assignment_document_field_candidates
-     SET review_status = $3,
-         confirmed_value = CASE WHEN $3 = 'confirmed'
-           THEN COALESCE(NULLIF($4, ''), raw_value)
-           ELSE NULL
-         END,
-         reviewer = $5,
-         reviewed_at = now(),
-         updated_at = now()
-     WHERE id = $2 AND document_id = $1
-     RETURNING *`,
-    [document, candidate, status, cleanText(confirmedValue, 4_000), reviewerName],
-  );
-  if (!rows[0]) throw new Error("document_candidate_not_found");
-  const { rows: remaining } = await pool.query(
-    `SELECT COUNT(*)::integer AS count
-     FROM app.assignment_document_field_candidates
-     WHERE document_id = $1 AND review_status = 'suggested'`,
-    [document],
-  );
-  if (Number(remaining[0]?.count || 0) === 0) {
-    await pool.query(
-      `UPDATE app.assignment_documents
-       SET processing_status = 'reviewed', reviewed_at = now(), updated_at = now()
-       WHERE id = $1`,
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `UPDATE app.assignment_document_field_candidates
+       SET review_status = $3,
+           confirmed_value = CASE WHEN $3 = 'confirmed'
+             THEN COALESCE(NULLIF($4, ''), raw_value)
+             ELSE NULL
+           END,
+           reviewer = $5,
+           reviewed_at = now(),
+           updated_at = now()
+       WHERE id = $2 AND document_id = $1
+       RETURNING *`,
+      [document, candidate, status, cleanText(confirmedValue, 4_000), reviewerName],
+    );
+    if (!rows[0]) throw new Error("document_candidate_not_found");
+    await client.query(
+      `INSERT INTO app.assignment_document_candidate_reviews (
+         document_id, candidate_id, field_key, raw_value, normalized_value,
+         review_status, confirmed_value, reviewer, reviewed_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+      [
+        document,
+        candidate,
+        rows[0].field_key,
+        rows[0].raw_value,
+        rows[0].normalized_value,
+        rows[0].review_status,
+        rows[0].confirmed_value,
+        reviewerName,
+      ],
+    );
+    const { rows: remaining } = await client.query(
+      `SELECT COUNT(*)::integer AS count
+       FROM app.assignment_document_field_candidates
+       WHERE document_id = $1 AND review_status = 'suggested'`,
       [document],
     );
+    if (Number(remaining[0]?.count || 0) === 0) {
+      await client.query(
+        `UPDATE app.assignment_documents
+         SET processing_status = 'reviewed', reviewed_at = now(), updated_at = now()
+         WHERE id = $1`,
+        [document],
+      );
+    }
+    await client.query("COMMIT");
+    return publicCandidate(rows[0]);
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
-  return publicCandidate(rows[0]);
 }
 
 export async function getAssignmentDocumentZoningSuggestion(pool, {

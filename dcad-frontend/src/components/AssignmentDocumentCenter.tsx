@@ -40,6 +40,7 @@ const FIELD_LABELS: Record<string, string> = {
   list_price: 'List Price',
   list_date: 'List Date',
   financing_type: 'Financing Type',
+  assignment_type: 'Assignment Type',
 };
 
 function statusStyle(status: AssignmentDocument['processing_status']) {
@@ -56,6 +57,23 @@ function statusLabel(status: AssignmentDocument['processing_status']) {
 function fileSize(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024)).toLocaleString()} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function processingDetail(document: AssignmentDocument) {
+  if (document.processing_status === 'processing') {
+    return `Extraction attempt ${Math.max(1, document.processing_attempts || 1)} is in progress.`;
+  }
+  if (document.processing_status !== 'extraction_failed') return '';
+  if (document.extraction_summary?.automatic_retry_exhausted) {
+    return `Automatic retries stopped after ${document.processing_attempts} attempts. Review the PDF or retry manually.`;
+  }
+  if (document.next_processing_at) {
+    const retryAt = new Date(document.next_processing_at);
+    if (!Number.isNaN(retryAt.getTime())) {
+      return `Automatic retry scheduled for ${retryAt.toLocaleString()}.`;
+    }
+  }
+  return 'Automatic retry is pending, or the appraiser may retry now.';
 }
 
 interface AssignmentDocumentCenterProps {
@@ -310,6 +328,10 @@ export default function AssignmentDocumentCenter({
                   <div className={`rounded-lg p-3 text-xs leading-5 ${statusStyle(selectedDocument.processing_status)}`}>
                     <strong>{statusLabel(selectedDocument.processing_status)}</strong>
                     <p>{selectedDocument.extraction_summary?.review_reason || 'Every machine suggestion remains separate from appraiser-confirmed data.'}</p>
+                    {processingDetail(selectedDocument) ? <p>{processingDetail(selectedDocument)}</p> : null}
+                    {selectedDocument.last_processing_error ? (
+                      <p className="mt-1 break-words">Last error: {selectedDocument.last_processing_error}</p>
+                    ) : null}
                     {['ocr_required', 'extraction_failed'].includes(selectedDocument.processing_status) ? (
                       <button type="button" className="btn btn-primary btn-xs mt-2 normal-case rounded-lg" onClick={() => void reprocess()} disabled={loading}>Retry Extraction</button>
                     ) : null}
@@ -339,6 +361,23 @@ export default function AssignmentDocumentCenter({
                       <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-xs leading-5 text-slate-600">No labeled fields were found. Review the visible PDF directly; scanned or blurry pages remain appraiser-review items.</p>
                     )}
                   </div>
+                  {(selectedDocument.review_history || []).length ? (
+                    <details className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-700">
+                        Review history ({selectedDocument.review_history?.length})
+                      </summary>
+                      <div className="mt-2 space-y-2">
+                        {selectedDocument.review_history?.map((review) => (
+                          <div key={review.id} className="rounded bg-white p-2 text-[11px] leading-4 text-slate-600">
+                            <strong className="text-slate-800">{FIELD_LABELS[review.field_key] || review.field_key.replace(/_/g, ' ')}</strong>
+                            {' · '}{review.review_status} by {review.reviewer}
+                            {' · '}{new Date(review.reviewed_at).toLocaleString()}
+                            {review.confirmed_value ? <div>Confirmed value: {review.confirmed_value}</div> : null}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                 </>
               ) : null}
             </div>

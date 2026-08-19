@@ -24,6 +24,7 @@ import {
   UAD_SALES_COMPARABLE_FINANCING_TYPES,
   UAD_SALES_COMPARABLE_HEATING_SYSTEM_TYPES,
   UAD_SALES_COMPARABLE_LISTING_STATUSES,
+  UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES,
   UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES,
   UAD_SALES_COMPARABLE_VIEW_TYPES,
   UAD_SALES_COMPARABLE_WATER_ACCESS_DEPTH_TYPES,
@@ -38,13 +39,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22E editor on canonical comparable entities", () => {
+test("adds the Section 22A-22F editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 164);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 164);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 174);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 174);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -59,6 +60,9 @@ test("adds the Section 22A-22E editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_construction_method.parentEntityType, "sales_comparable_dwelling");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_heating_system.parentEntityType, "sales_comparable_dwelling");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_cooling_system.parentEntityType, "sales_comparable_dwelling");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_renewable_energy_component.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_green_certification.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_efficiency_rating.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
 });
 
@@ -75,6 +79,7 @@ test("uses official Section 22 general-information enumerations and conditional 
   assert.equal(UAD_SALES_COMPARABLE_DWELLING_STYLE_TYPES.includes("Traditional"), true);
   assert.equal(UAD_SALES_COMPARABLE_HEATING_SYSTEM_TYPES.includes("ForcedWarmAir"), true);
   assert.equal(UAD_SALES_COMPARABLE_DISASTER_MITIGATION_TYPES.includes("FortifiedRoof"), true);
+  assert.deepEqual(UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES, ["Geothermal", "Other", "Solar", "WindTurbine"]);
   assert.deepEqual(UAD_PROPERTY_RIGHTS_NOT_INCLUDED, ["AirRights", "MineralRights", "Other", "TimberRights", "WaterRights"]);
 
   const ratio = getUadField("sales_comparable_listing", "1800.0316");
@@ -285,6 +290,38 @@ test("validates Section 22E dwelling hierarchy and mechanical-system conditions"
   assert.equal(codes.includes("sales_comparable_functional_issue_duplicate_none_conflict"), true);
 });
 
+test("validates Section 22F comparable energy and green hierarchy and conditional records", () => {
+  const comparable = { id: "a4c92569-f14e-4b2a-9295-e420fc296aac", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const solarOne = { id: "88e83e35-a87f-4737-89e8-c79ab225b730", entity_type: "sales_comparable_renewable_energy_component", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const solarTwo = { id: "f63d3c55-c727-456c-b3d1-1a496758eaea", entity_type: "sales_comparable_renewable_energy_component", parent_entity_id: comparable.id, ordinal: 2, data: {} };
+  const staleCertification = { id: "afc135c5-1d03-43ed-aadc-59b3cd671f01", entity_type: "sales_comparable_green_certification", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const orphanRating = { id: "5a8a7f02-7a20-4fe8-824d-eb22235c6fd1", entity_type: "sales_comparable_efficiency_rating", parent_entity_id: "bfed6f75-1c13-4bc6-aa65-a92f70c898b0", ordinal: 1, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(comparable.id, "sales_comparable_energy_green", "1800.0108", true),
+    value(comparable.id, "sales_comparable_energy_green", "1800.0107", false),
+    value(comparable.id, "sales_comparable_energy_green", "1800.0106", true),
+    value(solarOne.id, "sales_comparable_renewable_energy_component", "1800.0113", "Solar"),
+    value(solarOne.id, "sales_comparable_renewable_energy_component", "1800.0114", "stale description"),
+    value(solarTwo.id, "sales_comparable_renewable_energy_component", "1800.0113", "Solar"),
+    value(staleCertification.id, "sales_comparable_green_certification", "1800.0110", "NGBS Green"),
+    value(orphanRating.id, "sales_comparable_efficiency_rating", "1800.0111", "HERS Index"),
+    value(orphanRating.id, "sales_comparable_efficiency_rating", "1800.0112", "62"),
+    value(comparable.id, "sales_comparable_adjustment_energy_green", "1800.0317", 0),
+  ];
+  const codes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    values,
+    [comparable, solarOne, solarTwo, staleCertification, orphanRating],
+  ).map((error) => error.code);
+  assert.equal(codes.includes("sales_comparable_energy_green_child_orphaned"), true);
+  assert.equal(codes.includes("sales_comparable_green_certification_conflict"), true);
+  assert.equal(codes.includes("sales_comparable_efficiency_rating_required"), true);
+  assert.equal(codes.includes("sales_comparable_renewable_energy_component_duplicate"), true);
+  assert.equal(codes.includes("sales_comparable_renewable_energy_other_conflict"), true);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -375,6 +412,21 @@ test("seeds Section 22E dwelling fields, hierarchy, redisplays, adjustments, and
   assert.match(sql, /GrossBuildingFinishedArea/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-DWELLING-006/);
   assert.match(runner, /20260908_uad_sales_comparison_dwelling\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22F energy and green fields, redisplays, adjustment, and rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260909_uad_sales_comparison_energy_green.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  assert.match(sql, /sales_comparable_renewable_energy_component/);
+  assert.match(sql, /sales_comparable_green_certification/);
+  assert.match(sql, /sales_comparable_efficiency_rating/);
+  assert.match(sql, /'2600\.0005','energy_green','22\.06\.01'/);
+  assert.match(sql, /'1800\.0108','sales_comparable_energy_green','22\.06\.05'/);
+  assert.match(sql, /EnergyEfficientAndGreenFeatures/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-ENERGY-GREEN-004/);
+  assert.match(runner, /20260909_uad_sales_comparison_energy_green\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

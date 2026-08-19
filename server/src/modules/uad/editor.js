@@ -1963,6 +1963,9 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableCoolingSystems = entities.filter((entity) => entity.entity_type === "sales_comparable_cooling_system");
     const comparableFunctionalIssues = entities.filter((entity) => entity.entity_type === "sales_comparable_functional_issue");
     const comparableDisasterMitigation = entities.filter((entity) => entity.entity_type === "sales_comparable_disaster_mitigation");
+    const comparableRenewableEnergyComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_renewable_energy_component");
+    const comparableGreenCertifications = entities.filter((entity) => entity.entity_type === "sales_comparable_green_certification");
+    const comparableEfficiencyRatings = entities.filter((entity) => entity.entity_type === "sales_comparable_efficiency_rating");
     const comparableSiteChildTypes = new Set([
       "sales_comparable_site_hazard",
       "sales_comparable_site_street",
@@ -2071,6 +2074,18 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_dwelling_property_child_orphaned",
         "Every comparable functional-issue and disaster-mitigation record must be linked to a sales comparable.",
+      ));
+    }
+    if ([
+      ...comparableRenewableEnergyComponents,
+      ...comparableGreenCertifications,
+      ...comparableEfficiencyRatings,
+    ].some((entity) => !comparableIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyExists),
+        null,
+        "sales_comparable_energy_green_child_orphaned",
+        "Every comparable renewable component, building certification, and efficiency rating must be linked to a sales comparable.",
       ));
     }
 
@@ -2359,6 +2374,9 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       const dwellings = comparableDwellings.filter((dwelling) => dwelling.parent_entity_id === comparable.id);
       const functionalIssues = comparableFunctionalIssues.filter((issue) => issue.parent_entity_id === comparable.id);
       const disasterFeatures = comparableDisasterMitigation.filter((feature) => feature.parent_entity_id === comparable.id);
+      const renewableEnergyComponents = comparableRenewableEnergyComponents.filter((component) => component.parent_entity_id === comparable.id);
+      const greenCertifications = comparableGreenCertifications.filter((certification) => certification.parent_entity_id === comparable.id);
+      const efficiencyRatings = comparableEfficiencyRatings.filter((rating) => rating.parent_entity_id === comparable.id);
       const attachment = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAttachment);
       if (!dwellings.length) {
         errors.push(validationError(
@@ -2614,6 +2632,84 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       );
       for (const feature of disasterFeatures) {
         conditionalDwellingConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingDisasterMitigation, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingDisasterMitigationOther], "sales_comparable_disaster_mitigation_other_conflict", "Clear the other disaster-mitigation description or select Other.");
+      }
+
+      const validateEnergyGreenFamily = (indicatorKey, records, childKey, code, label) => {
+        const indicator = lookup(indicatorKey);
+        if (indicator === true && !records.length) {
+          errors.push(validationError(
+            salesField(childKey),
+            comparable.id,
+            `${code}_required`,
+            `Add at least one ${label} when its known-feature indicator is Yes.`,
+          ));
+        }
+        if (indicator !== true && records.length) {
+          errors.push(validationError(
+            salesField(indicatorKey),
+            comparable.id,
+            `${code}_conflict`,
+            `Remove the saved ${label} records or change the known-feature indicator to Yes.`,
+          ));
+        }
+      };
+      validateEnergyGreenFamily(
+        UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyExists,
+        renewableEnergyComponents,
+        UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyType,
+        "sales_comparable_renewable_energy_component",
+        "renewable energy component",
+      );
+      validateEnergyGreenFamily(
+        UAD_SALES_COMPARISON_FIELD_KEYS.greenCertificationExists,
+        greenCertifications,
+        UAD_SALES_COMPARISON_FIELD_KEYS.greenCertificationName,
+        "sales_comparable_green_certification",
+        "building certification",
+      );
+      validateEnergyGreenFamily(
+        UAD_SALES_COMPARISON_FIELD_KEYS.efficiencyRatingExists,
+        efficiencyRatings,
+        UAD_SALES_COMPARISON_FIELD_KEYS.efficiencyRatingName,
+        "sales_comparable_efficiency_rating",
+        "efficiency rating",
+      );
+
+      const renewableTypes = renewableEnergyComponents
+        .map((component) => valueLookup(merged, component.id)(UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyType))
+        .filter(isPresent);
+      if (new Set(renewableTypes).size !== renewableTypes.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyType),
+          comparable.id,
+          "sales_comparable_renewable_energy_component_duplicate",
+          "Each renewable energy component type may be selected only once for a comparable.",
+        ));
+      }
+      for (const component of renewableEnergyComponents) {
+        conditionalDwellingConflict(
+          component,
+          UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyType,
+          "Other",
+          [UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyOther],
+          "sales_comparable_renewable_energy_other_conflict",
+          "Clear the other renewable-energy description or select Other.",
+        );
+      }
+
+      const energyGreenAdjustment = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.energyGreenAdjustment);
+      const energyGreenIndicators = [
+        lookup(UAD_SALES_COMPARISON_FIELD_KEYS.renewableEnergyExists),
+        lookup(UAD_SALES_COMPARISON_FIELD_KEYS.greenCertificationExists),
+        lookup(UAD_SALES_COMPARISON_FIELD_KEYS.efficiencyRatingExists),
+      ];
+      if (isPresent(energyGreenAdjustment) && !energyGreenIndicators.some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.energyGreenAdjustment),
+          comparable.id,
+          "sales_comparable_energy_green_adjustment_detail_required",
+          "Include at least one Energy Efficient and Green Features comparison row when an adjustment is entered.",
+        ));
       }
 
       const siteOwnedInCommon = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteOwnedInCommon);

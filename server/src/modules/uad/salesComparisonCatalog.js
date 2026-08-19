@@ -160,6 +160,10 @@ export const UAD_SALES_COMPARABLE_DISASTER_MITIGATION_TYPES = Object.freeze([
   "StormShutters", "WaterHeaterStrapping",
 ]);
 
+export const UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES = Object.freeze([
+  "Geothermal", "Other", "Solar", "WindTurbine",
+]);
+
 export const UAD_SALES_COMPARABLE_ENVIRONMENTAL_TYPES = Object.freeze([
   "HazardousAboveGroundStorageTank", "HazardousSubstances", "Landfill", "None", "Other",
   "Radon", "SlushPit", "SoilContamination", "SuperfundSite", "UndergroundStorageTank",
@@ -249,6 +253,18 @@ const comparableCoolingExists = Object.freeze({
   key: "sales_comparable_dwelling:1800.0123",
   equals: true,
 });
+const comparableRenewableEnergyExists = Object.freeze({
+  key: "sales_comparable_energy_green:1800.0108",
+  equals: true,
+});
+const comparableGreenCertificationExists = Object.freeze({
+  key: "sales_comparable_energy_green:1800.0107",
+  equals: true,
+});
+const comparableEfficiencyRatingExists = Object.freeze({
+  key: "sales_comparable_energy_green:1800.0106",
+  equals: true,
+});
 const siteComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
   "Sales comparables — site information",
   contextKey,
@@ -322,6 +338,24 @@ const dwellingAdjustment = (contextKey, reportFieldId, label) => field(
   label,
   "currency",
   { entityType: "sales_comparable", showWhen: salesComparisonIncluded, maximum: 999999999 },
+);
+const energyGreenComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — energy efficient and green features",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
+const energyGreenChild = (group, entityType, uid, reportFieldId, label, dataType, options = {}) => field(
+  group,
+  entityType,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType, ...options },
 );
 
 export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
@@ -941,6 +975,45 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   dwellingAdjustment("sales_comparable_adjustment_heating", "22.05.50", "Heating adjustment"),
   dwellingAdjustment("sales_comparable_adjustment_cooling", "22.05.52", "Cooling adjustment"),
 
+  energyGreenComp("sales_comparable_energy_green", "1800.0108", "22.06.05", "Known renewable energy components", "boolean", {
+    guidance: "Leave blank when this comparison row is not relevant. Select Yes or No when the row is included; Yes enables one record per known renewable component.",
+  }),
+  energyGreenComp("sales_comparable_energy_green", "1800.0107", "22.06.06", "Known building certifications", "boolean", {
+    guidance: "Leave blank when this comparison row is not relevant. Select Yes or No when the row is included; Yes enables one record per known green, health, or wellness certification.",
+  }),
+  energyGreenComp("sales_comparable_energy_green", "1800.0106", "22.06.07", "Known efficiency ratings", "boolean", {
+    guidance: "Leave blank when this comparison row is not relevant. Select Yes or No when the row is included; Yes enables one record per known efficiency rating.",
+  }),
+
+  energyGreenChild("Comparable renewable energy components", "sales_comparable_renewable_energy_component", "1800.0113", "22.06.05", "Renewable energy component", "enum", {
+    options: UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES,
+    required: true,
+  }),
+  energyGreenChild("Comparable renewable energy components", "sales_comparable_renewable_energy_component", "1800.0114", "22.06.05", "Other renewable energy component", "string", {
+    maxLength: 60,
+    showWhen: { key: "sales_comparable_renewable_energy_component:1800.0113", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_renewable_energy_component:1800.0113", equals: "Other" },
+  }),
+  energyGreenChild("Comparable building certifications", "sales_comparable_green_certification", "1800.0110", "22.06.06", "Building certification name", "string", {
+    maxLength: 30,
+    required: true,
+  }),
+  energyGreenChild("Comparable building certifications", "sales_comparable_green_certification", "1800.0109", "22.06.06", "Building certification rating", "string", {
+    maxLength: 10,
+  }),
+  energyGreenChild("Comparable efficiency ratings", "sales_comparable_efficiency_rating", "1800.0111", "22.06.07", "Efficiency rating name", "string", {
+    maxLength: 30,
+    required: true,
+  }),
+  energyGreenChild("Comparable efficiency ratings", "sales_comparable_efficiency_rating", "1800.0112", "22.06.07", "Efficiency rating score", "string", {
+    maxLength: 10,
+    required: true,
+  }),
+  energyGreenComp("sales_comparable_adjustment_energy_green", "1800.0317", "22.06.04", "Energy efficient and green features adjustment", "currency", {
+    maximum: 999999999,
+    guidance: "Enter the supported adjustment, including zero when applicable. The MISMO adjustment type is derived as EnergyEfficientAndGreenFeatures.",
+  }),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1154,6 +1227,30 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     parentEntityType: "sales_comparable",
     showWhen: salesComparisonIncluded,
   }),
+  sales_comparable_renewable_energy_component: Object.freeze({
+    title: "Comparable renewable energy components",
+    addLabel: "Add renewable energy component",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES.length,
+    parentEntityType: "sales_comparable",
+    showWhen: comparableRenewableEnergyExists,
+  }),
+  sales_comparable_green_certification: Object.freeze({
+    title: "Comparable building certifications",
+    addLabel: "Add building certification",
+    minItems: 0,
+    maxItems: 20,
+    parentEntityType: "sales_comparable",
+    showWhen: comparableGreenCertificationExists,
+  }),
+  sales_comparable_efficiency_rating: Object.freeze({
+    title: "Comparable efficiency ratings",
+    addLabel: "Add efficiency rating",
+    minItems: 0,
+    maxItems: 20,
+    parentEntityType: "sales_comparable",
+    showWhen: comparableEfficiencyRatingExists,
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -1255,6 +1352,16 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   dwellingFunctionalIssueOther: "sales_comparable_functional_issue:1800.0122",
   dwellingDisasterMitigation: "sales_comparable_disaster_mitigation:1800.0104",
   dwellingDisasterMitigationOther: "sales_comparable_disaster_mitigation:1800.0105",
+  renewableEnergyExists: "sales_comparable_energy_green:1800.0108",
+  greenCertificationExists: "sales_comparable_energy_green:1800.0107",
+  efficiencyRatingExists: "sales_comparable_energy_green:1800.0106",
+  renewableEnergyType: "sales_comparable_renewable_energy_component:1800.0113",
+  renewableEnergyOther: "sales_comparable_renewable_energy_component:1800.0114",
+  greenCertificationName: "sales_comparable_green_certification:1800.0110",
+  greenCertificationRating: "sales_comparable_green_certification:1800.0109",
+  efficiencyRatingName: "sales_comparable_efficiency_rating:1800.0111",
+  efficiencyRatingScore: "sales_comparable_efficiency_rating:1800.0112",
+  energyGreenAdjustment: "sales_comparable_adjustment_energy_green:1800.0317",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

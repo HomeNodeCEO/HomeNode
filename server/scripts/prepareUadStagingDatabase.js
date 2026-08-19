@@ -744,6 +744,9 @@ try {
   const salesComparableCoolingId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_cooling_system", "sales-comparable-cooling-system-1", 1, "Comparable Cooling System 1");
   const salesComparableFunctionalIssueId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_functional_issue", "sales-comparable-functional-issue-1", 1, "Comparable Functional Issue 1");
   const salesComparableDisasterMitigationId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_disaster_mitigation", "sales-comparable-disaster-mitigation-1", 1, "Comparable Disaster Mitigation 1");
+  const salesComparableRenewableEnergyId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_renewable_energy_component", "sales-comparable-renewable-energy-1", 1, "Comparable Renewable Energy Component 1");
+  const salesComparableGreenCertificationId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_green_certification", "sales-comparable-green-certification-1", 1, "Comparable Green Certification 1");
+  const salesComparableEfficiencyRatingId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_efficiency_rating", "sales-comparable-efficiency-rating-1", 1, "Comparable Efficiency Rating 1");
   const comparableNoTransferSourceId = await ensureEntity(
     sfrWorkfileId,
     salesComparableId,
@@ -830,6 +833,15 @@ try {
     [salesComparableId, "sales_comparable_adjustment_disaster_mitigation", "1800.0317", "22.05.48", 0],
     [salesComparableId, "sales_comparable_adjustment_heating", "1800.0317", "22.05.50", 0],
     [salesComparableId, "sales_comparable_adjustment_cooling", "1800.0317", "22.05.52", 0],
+    [salesComparableId, "sales_comparable_energy_green", "1800.0108", "22.06.05", true],
+    [salesComparableId, "sales_comparable_energy_green", "1800.0107", "22.06.06", true],
+    [salesComparableId, "sales_comparable_energy_green", "1800.0106", "22.06.07", true],
+    [salesComparableRenewableEnergyId, "sales_comparable_renewable_energy_component", "1800.0113", "22.06.05", "Solar"],
+    [salesComparableGreenCertificationId, "sales_comparable_green_certification", "1800.0110", "22.06.06", "NGBS Green"],
+    [salesComparableGreenCertificationId, "sales_comparable_green_certification", "1800.0109", "22.06.06", "Silver"],
+    [salesComparableEfficiencyRatingId, "sales_comparable_efficiency_rating", "1800.0111", "22.06.07", "HERS Index"],
+    [salesComparableEfficiencyRatingId, "sales_comparable_efficiency_rating", "1800.0112", "22.06.07", "62"],
+    [salesComparableId, "sales_comparable_adjustment_energy_green", "1800.0317", "22.06.04", 0],
     [salesComparableSourceId, "sales_comparable_data_source", "0700.0125", "22.01.18", "MLS"],
     [salesComparableSourceId, "sales_comparable_data_source", "1800.0347", "22.01.18", "NTREIS-SYNTHETIC-22001"],
   ];

@@ -66,6 +66,10 @@ import {
   calculateDepreciatedCostAdjustment,
   depreciatedCostAdjustmentErrorStatus,
 } from "./util/depreciatedCostAdjustment.js";
+import {
+  buildSiteValuationStudy,
+  siteValuationErrorStatus,
+} from "./services/siteValuation.js";
 import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
 import {
   ensureCensusGeographySchema,
@@ -5152,6 +5156,23 @@ app.post("/api/sales/depreciated-cost-adjustment", (req, res) => {
   } catch (error) {
     const message = error?.message || "depreciated_cost_adjustment_failed";
     res.status(depreciatedCostAdjustmentErrorStatus(message)).json({ error: message });
+  }
+});
+
+/** POST /api/sales/site-valuation — allocated site value per square foot. */
+app.post("/api/sales/site-valuation", async (req, res) => {
+  try {
+    const result = await buildSiteValuationStudy(pool, {
+      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+      marketKey: String(req.body?.market_key || "city").trim(),
+      asOfDate: String(req.body?.as_of || "").trim(),
+      customGeometry: req.body?.custom_geometry || null,
+    });
+    res.json(result);
+  } catch (error) {
+    const message = error?.message || "site_valuation_failed";
+    console.error("/api/sales/site-valuation failed", error);
+    res.status(siteValuationErrorStatus(message)).json({ error: message });
   }
 });
 

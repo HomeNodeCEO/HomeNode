@@ -1551,6 +1551,76 @@ export interface DepreciatedCostAdjustmentResponse {
   formula: string;
 }
 
+export interface SiteValuationEvidence {
+  saleId: number | null;
+  sourceRecordId: string | null;
+  accountId: string | null;
+  address: string | null;
+  closingDate: string | null;
+  salePrice: number;
+  cadLandValue: number;
+  cadImprovementValue: number;
+  allocationRatio: number;
+  siteSizeSquareFeet: number;
+  allocatedSiteValue: number;
+  siteValuePerSquareFoot: number;
+}
+
+export interface SiteValuationResponse {
+  subject: {
+    accountId: string;
+    address: string | null;
+    city: string | null;
+    county: string | null;
+    postalCode: string | null;
+    siteSizeSquareFeet: number | null;
+  };
+  market: {
+    key: MarketConditionsAreaKey;
+    scope: 'city' | 'zip' | 'radius' | 'custom';
+    radiusMiles: number | null;
+    label: string;
+    customGeometry: GeoJsonPolygon | null;
+  };
+  period: {
+    start: string;
+    end: string;
+    analysisAsOf: string;
+    periodMonths: 12;
+    completeCalendarMonths: true;
+  };
+  methodology: {
+    method: 'allocation';
+    salePricesTimeAdjusted: false;
+    allocationBasis: string;
+    minimumStrongSample: 30;
+  };
+  population: {
+    eligibleSaleCount: number;
+    analyzedSaleCount: number;
+    missingAllocationCount: number;
+    missingSiteSizeCount: number;
+  };
+  statistics: null | {
+    medianSiteValuePerSquareFoot: number;
+    averageSiteValuePerSquareFoot: number;
+    standardDeviation: number;
+    coefficientOfDispersion: number;
+    coefficientOfVariation: number;
+    minimumSiteValuePerSquareFoot: number;
+    maximumSiteValuePerSquareFoot: number;
+  };
+  options: Array<{
+    id: 'median' | 'average';
+    label: string;
+    amount: number;
+    reliability: 'strong' | 'moderate' | 'limited';
+  }>;
+  evidence: SiteValuationEvidence[];
+  reliability: 'strong' | 'moderate' | 'limited';
+  warnings: string[];
+}
+
 export interface GroupedAnalysesResponse {
   subject: {
     account_id: string;
@@ -3329,6 +3399,26 @@ export async function calculateDepreciatedCostAdjustment(request: {
       source_reference: request.sourceReference || null,
       as_of_date: request.asOfDate || null,
     }),
+  });
+}
+
+/** Run an allocation-method site valuation inside one selected market area. */
+export async function runSiteValuation(request: {
+  subjectAccountId: string;
+  marketKey: MarketConditionsAreaKey;
+  asOf?: string;
+  customGeometry?: GeoJsonPolygon | null;
+}): Promise<SiteValuationResponse> {
+  return fetchJSON<SiteValuationResponse>(makeUrl('/api/sales/site-valuation'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      subject_account_id: request.subjectAccountId.trim(),
+      market_key: request.marketKey,
+      as_of: request.asOf,
+      custom_geometry: request.customGeometry || null,
+    }),
+    timeoutMs: 120000,
   });
 }
 

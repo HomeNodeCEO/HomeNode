@@ -31,6 +31,7 @@ import {
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
+import type { CostApproachDraft } from "@/lib/costApproach";
 
 type Detail = {
   tax_year?: string | number;
@@ -323,6 +324,7 @@ export default function AppraisalReport() {
   const [marketDraft, setMarketDraft] = useState<MarketConditionsDraft | null>(
     () => readMarketConditionsDraft(propertyId),
   );
+  const [costDraft, setCostDraft] = useState<CostApproachDraft | null>(null);
   const [assignmentFile, setAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
   const [assignmentLoading, setAssignmentLoading] = useState(Boolean(propertyId));
   const [printBlocker, setPrintBlocker] = useState("");
@@ -346,6 +348,7 @@ export default function AppraisalReport() {
   useEffect(() => {
     setDraft(readAppraisalReportDraft(propertyId));
     setMarketDraft(readMarketConditionsDraft(propertyId));
+    setCostDraft(null);
   }, [propertyId]);
 
   useEffect(() => {
@@ -374,6 +377,9 @@ export default function AppraisalReport() {
         setMarketDraft(
           (result.workfile.sections.market_conditions?.value as MarketConditionsDraft | undefined) ||
             readMarketConditionsDraft(propertyId),
+        );
+        setCostDraft(
+          (result.workfile.sections.cost_approach?.value as CostApproachDraft | undefined) || null,
         );
       })
       .catch(() => {
@@ -489,6 +495,7 @@ export default function AppraisalReport() {
     ([, row]) => (numberValue(row.homestead_exemption) || 0) > 0,
   ).length;
   const opinionOfValue = draft?.opinionOfValue ?? null;
+  const costApproachDeveloped = Boolean(costDraft?.developed && costDraft.rounded_indicated_value > 0);
   const indicatedValues = comparables
     .map((comparable) => comparable.indicatedValue)
     .filter((value) => Number.isFinite(value) && value > 0);
@@ -1840,66 +1847,56 @@ export default function AppraisalReport() {
         <article className="report-page">
           <PageHeader page={8} title="Cost Approach" address={address} />
           <section className="report-approach-hero">
-            <div className="report-status">Preliminary methodology scaffold</div>
-            <h2>Cost Approach Not Yet Developed</h2>
-            <p>
-              The appraisal-district land and improvement data are carried into this section as
-              reference points only. Replacement cost new, entrepreneurial incentive, physical
-              depreciation, functional obsolescence, and external obsolescence have not yet been
-              developed.
-            </p>
+            <div className="report-status">
+              {costApproachDeveloped ? "Developed appraisal approach" : "Preliminary methodology scaffold"}
+            </div>
+            <h2>{costApproachDeveloped ? "Cost Approach" : "Cost Approach Not Yet Developed"}</h2>
+            <p>{costApproachDeveloped
+              ? text(costDraft?.summary || costDraft?.methodology)
+              : "The appraisal-district land and improvement data are carried into this section as reference points only. Replacement cost new, entrepreneurial incentive, physical depreciation, functional obsolescence, and external obsolescence have not yet been fully developed."}</p>
           </section>
           <section className="report-section">
-            <h2 className="report-section-title">Available Subject Inputs</h2>
+            <h2 className="report-section-title">
+              {costApproachDeveloped ? "Cost Basis and Subject Inputs" : "Available Subject Inputs"}
+            </h2>
             <div className="report-facts">
-              <Fact label="CAD Land Value" value={money(values.land_value)} />
+              <Fact label="Cost Data Source" value={costDraft?.source_name} />
+              <Fact label="Source Reference" value={costDraft?.source_reference} />
+              <Fact label="Cost Effective Date" value={costDraft?.as_of_date} />
+              <Fact label="Local Multiplier" value={costDraft?.local_multiplier} />
               <Fact
                 label="Main Improvement Area"
-                value={count(
-                  improvement.living_area_sqft || improvement.total_living_area,
-                  " sq. ft.",
-                )}
+                value={count(costDraft?.living_area_sqft || improvement.living_area_sqft || improvement.total_living_area, " sq. ft.")}
               />
-              <Fact label="Year Built" value={improvement.year_built} />
-              <Fact label="Effective Year" value={improvement.effective_year_built} />
-              <Fact label="Construction" value={improvement.construction_type} />
-              <Fact label="Building Class" value={improvement.building_class} />
-              <Fact
-                label="Additional Improvements"
-                value={additionalImprovements.length}
-              />
-              <Fact label="CAD Improvement Value" value={money(values.improvement_value)} />
+              <Fact label="Base Cost / SF" value={money(costDraft?.cost_per_sqft)} />
+              <Fact label="Dwelling Base Cost" value={money(costDraft?.dwelling_base_cost)} />
+              <Fact label="Other Improvements" value={money(costDraft?.other_improvements_total)} />
             </div>
           </section>
           <section className="report-section">
-            <h2 className="report-section-title">Inputs Required for Development</h2>
-            <div className="report-input-grid">
-              <div className="report-input-card">
-                <strong>Replacement Cost New</strong>
-                <span>Current cost-service rate, local multiplier, and indirect costs.</span>
-              </div>
-              <div className="report-input-card">
-                <strong>Site Value Support</strong>
-                <span>Comparable land sales or an allocation/extraction analysis.</span>
-              </div>
-              <div className="report-input-card">
-                <strong>Accrued Depreciation</strong>
-                <span>Physical deterioration, effective age, and remaining economic life.</span>
-              </div>
-              <div className="report-input-card">
-                <strong>Obsolescence</strong>
-                <span>Market evidence for functional and external obsolescence, if any.</span>
-              </div>
+            <h2 className="report-section-title">Replacement Cost and Accrued Depreciation</h2>
+            <div className="report-facts">
+              <Fact label="Direct Cost" value={money(costDraft?.direct_cost_before_incentive)} />
+              <Fact label="Entrepreneurial Incentive" value={money(costDraft?.entrepreneurial_incentive)} />
+              <Fact label="Replacement Cost New" value={money(costDraft?.replacement_cost_new)} />
+              <Fact label="Effective Age / Economic Life" value={costDraft ? `${text(costDraft.effective_age)} / ${text(costDraft.economic_life)} years` : "Not reported"} />
+              <Fact label="Physical Depreciation" value={money(costDraft?.physical_depreciation)} />
+              <Fact label="Functional Obsolescence" value={money(costDraft?.functional_obsolescence)} />
+              <Fact label="External Obsolescence" value={money(costDraft?.external_obsolescence)} />
+              <Fact label="Depreciated Improvements" value={money(costDraft?.depreciated_improvement_value)} />
             </div>
           </section>
           <section className="report-section">
             <h2 className="report-section-title">Current Conclusion</h2>
             <div className="report-facts">
-              <Fact label="Approach Status" value="Not developed" />
-              <Fact label="Cost Indication" value="Not reported" />
-              <Fact label="Reconciliation Weight" value="0% in this draft" />
-              <Fact label="Review Requirement" value="Cost and depreciation data required" />
+              <Fact label="Site Value" value={money(costDraft?.site_value)} />
+              <Fact label="Site Improvements" value={money(costDraft?.site_improvements_value)} />
+              <Fact label="Cost Indication" value={money(costDraft?.rounded_indicated_value)} />
+              <Fact label="Reconciliation Weight" value={costDraft ? `${costDraft.weight}%` : "0% in this draft"} />
+              <Fact label="Approach Status" value={costApproachDeveloped ? "Developed" : "Not developed"} />
+              <Fact label="Review Requirement" value={costApproachDeveloped ? "Appraiser reconciliation required" : "Cost and depreciation data required"} wide />
             </div>
+            {costDraft?.methodology ? <p className="report-note">{costDraft.methodology}</p> : null}
           </section>
           <PageFooter generatedAt={generatedAt} />
         </article>

@@ -6496,15 +6496,26 @@ function AddressHero({
           >
             Sales Comparison Approach
           </a>
-          <button
-            type="button"
-            disabled
-            title="Cost Approach is coming soon"
-            aria-label="Cost Approach coming soon"
-            className="btn normal-case rounded-md border-slate-200 bg-slate-200 px-4 py-2 text-slate-500"
+          <a
+            href={
+              accountId
+                ? `/CostApproach?propertyId=${encodeURIComponent(accountId)}${
+                    activeAssignmentFile
+                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
+                      : ""
+                  }`
+                : "#"
+            }
+            aria-label="Cost Approach"
+            aria-disabled={!accountId}
+            className={`btn normal-case rounded-md px-4 py-2 ${
+              accountId
+                ? "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
+                : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
+            }`}
           >
             Cost Approach
-          </button>
+          </a>
           <button
             type="button"
             disabled

@@ -484,6 +484,10 @@ function completionFor(values, entities, assets = []) {
               && entity.parent_entity_id === comparable.id
             ))
           ) required += 1;
+          if (!entities.some((entity) => (
+            entity.entity_type === "sales_comparable_vehicle_storage"
+            && entity.parent_entity_id === comparable.id
+          ))) required += 1;
           const comparableDwellings = entities.filter((entity) => (
             entity.entity_type === "sales_comparable_dwelling"
             && entity.parent_entity_id === comparable.id
@@ -2077,6 +2081,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableKitchens = entities.filter((entity) => entity.entity_type === "sales_comparable_kitchen");
     const comparableInteriorComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_interior_component");
     const comparableAmenities = entities.filter((entity) => entity.entity_type === "sales_comparable_amenity");
+    const comparableVehicleStorages = entities.filter((entity) => entity.entity_type === "sales_comparable_vehicle_storage");
     const subjectExteriorFeatures = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature");
     const subjectExteriorSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_exterior_quality_summary");
     const subjectUnits = entities.filter((entity) => entity.entity_type === "unit");
@@ -2233,6 +2238,14 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_amenity_orphaned",
         "Every comparable property amenity must be linked to a sales comparable.",
+      ));
+    }
+    if (comparableVehicleStorages.some((storage) => !comparableIds.has(storage.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageType),
+        null,
+        "sales_comparable_vehicle_storage_orphaned",
+        "Every comparable vehicle-storage record must be linked to a sales comparable.",
       ));
     }
     if (comparableExteriorComponents.some((component) => !comparableDwellingIds.has(component.parent_entity_id))) {
@@ -2612,6 +2625,99 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
               "Clear the other water-feature detail or select Other.",
             ));
           }
+        }
+      }
+
+      const vehicleStorages = comparableVehicleStorages.filter((storage) => storage.parent_entity_id === comparable.id);
+      if (!vehicleStorages.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageType),
+          comparable.id,
+          "sales_comparable_vehicle_storage_required",
+          "Add a vehicle-storage record for this comparable and select None when it has no vehicle storage.",
+        ));
+      }
+      const storageTypes = vehicleStorages.map((storage) => ({
+        storage,
+        type: valueLookup(merged, storage.id)(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageType),
+      }));
+      if (storageTypes.some(({ type }) => type === "None") && vehicleStorages.length > 1) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageType),
+          comparable.id,
+          "sales_comparable_vehicle_storage_none_conflict",
+          "Select None as the only vehicle-storage record, or remove None before reporting another storage type.",
+        ));
+      }
+      for (const { storage, type } of storageTypes) {
+        const storageLookup = valueLookup(merged, storage.id);
+        const typeOther = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageTypeOther);
+        const tenOrMore = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageTenOrMoreSpaces);
+        const spaces = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageSpaces);
+        const assignment = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageAssignment);
+        const attachment = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageAttachment);
+        const area = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageArea);
+        const surface = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageSurface);
+        const surfaceOther = storageLookup(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageSurfaceOther);
+        const drivewayType = ["Driveway", "SharedDriveway"].includes(type);
+        const garageOrCarport = ["Carport", "Garage"].includes(type);
+        const sharedProjectParking = ["CommonCarport", "OpenLot", "ParkingGarage"].includes(type);
+
+        if (type !== "Other" && isPresent(typeOther)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageTypeOther),
+            storage.id,
+            "sales_comparable_vehicle_storage_other_conflict",
+            "Clear the other vehicle-storage description or select Other.",
+          ));
+        }
+        if (!drivewayType && [tenOrMore, surface, surfaceOther].some(isPresent)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageSurface),
+            storage.id,
+            "sales_comparable_vehicle_storage_driveway_detail_conflict",
+            "Clear driveway-only details unless the storage type is Driveway or Shared Driveway.",
+          ));
+        }
+        if (drivewayType && tenOrMore === true && isPresent(spaces)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageSpaces),
+            storage.id,
+            "sales_comparable_vehicle_storage_ten_or_more_conflict",
+            "Clear the exact parking-space count when the driveway has ten or more spaces.",
+          ));
+        }
+        if (drivewayType && tenOrMore === false && isPresent(spaces) && Number(spaces) > 9) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageSpaces),
+            storage.id,
+            "sales_comparable_vehicle_storage_driveway_space_count",
+            "Enter a parking-space count from 0 through 9, or change Ten or more parking spaces to Yes.",
+          ));
+        }
+        if (!sharedProjectParking && isPresent(assignment)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageAssignment),
+            storage.id,
+            "sales_comparable_vehicle_storage_assignment_conflict",
+            "Clear parking-space assignment unless the type is Common Carport, Open Lot, or Parking Garage.",
+          ));
+        }
+        if (!garageOrCarport && [attachment, area].some(isPresent)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageAttachment),
+            storage.id,
+            "sales_comparable_vehicle_storage_garage_detail_conflict",
+            "Clear attachment and area unless the type is Carport or Garage.",
+          ));
+        }
+        if (surface !== "Other" && isPresent(surfaceOther)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.vehicleStorageSurfaceOther),
+            storage.id,
+            "sales_comparable_vehicle_storage_surface_other_conflict",
+            "Clear the other surface-material description or select Other.",
+          ));
         }
       }
 

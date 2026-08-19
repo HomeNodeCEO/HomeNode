@@ -778,6 +778,14 @@ try {
     "Comparable Outdoor Living Amenity 1",
     { amenity_category: "OutdoorLiving" },
   );
+  const salesComparableVehicleStorageId = await ensureEntity(
+    sfrWorkfileId,
+    salesComparableId,
+    "sales_comparable_vehicle_storage",
+    "sales-comparable-vehicle-storage-garage-1",
+    1,
+    "Comparable Garage 1",
+  );
   const salesComparableHazardId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_hazard", "sales-comparable-site-hazard-1", 1, "Comparable Hazard Zone 1");
   const salesComparableStreetId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_street", "sales-comparable-site-street-1", 1, "Comparable Access Street 1");
   const salesComparableFeatureId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_feature", "sales-comparable-site-feature-1", 1, "Comparable Site Characteristic 1");
@@ -839,6 +847,11 @@ try {
     [salesComparableAmenityId, "sales_comparable_amenity_outdoor_living", "1800.0257", "22.12.08", 1],
     [salesComparableAmenityId, "sales_comparable_amenity_outdoor_living", "1800.0258", "22.12.08", "Deck"],
     [salesComparableId, "sales_comparable_adjustment_outdoor_living_amenity", "1800.0317", "22.12.09", 0],
+    [salesComparableVehicleStorageId, "sales_comparable_vehicle_storage", "1800.0095", "22.13.05", "Garage"],
+    [salesComparableVehicleStorageId, "sales_comparable_vehicle_storage", "1800.0099", "22.13.05", 2],
+    [salesComparableVehicleStorageId, "sales_comparable_vehicle_storage", "1800.0094", "22.13.05", "Attached"],
+    [salesComparableVehicleStorageId, "sales_comparable_vehicle_storage", "1800.0397", "22.13.05", { amount: 480, unit: "SquareFeet" }],
+    [salesComparableId, "sales_comparable_adjustment_vehicle_storage", "1800.0317", "22.13.04", 0],
     [salesComparableId, "sales_comparable_proximity", "1800.0065", "22.01.19", { amount: 2.1, unit: "Miles" }],
     [salesComparableId, "sales_comparable_proximity", "1800.0066", "22.01.19", "NorthEast"],
     [salesComparableId, "sales_comparable_listing", "1800.0074", "22.01.20", 449000],

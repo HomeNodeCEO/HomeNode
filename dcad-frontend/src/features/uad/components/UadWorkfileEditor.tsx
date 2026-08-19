@@ -180,6 +180,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const salesContractExists = draft[fieldValueKey("sales_contract", "0600.0016")];
   const salesComparisonIncluded = draft[fieldValueKey("sales_comparison_scope", "1000.0032")];
   const salesComparables = editor?.entities.filter((entity) => entity.entity_type === "sales_comparable") || [];
+  const section22SubjectVehicleStorages = vehicleStorages.map((storage) => ({
+    id: storage.id,
+    label: storage.label || `Vehicle storage ${storage.ordinal}`,
+    type: draft[fieldValueKey("vehicle_storage", "3200.0006", storage.id)],
+    spaces: draft[fieldValueKey("vehicle_storage", "3200.0010", storage.id)],
+    tenOrMore: draft[fieldValueKey("vehicle_storage", "3200.0011", storage.id)],
+    assignment: draft[fieldValueKey("vehicle_storage", "3200.0012", storage.id)],
+    attachment: draft[fieldValueKey("vehicle_storage", "3200.0005", storage.id)],
+    area: draft[fieldValueKey("vehicle_storage", "3200.0004", storage.id)],
+    surface: draft[fieldValueKey("vehicle_storage", "3200.0008", storage.id)],
+  }));
   const section22SubjectAmenities = SUBJECT_AMENITY_REDISPLAY.map((category) => ({
     ...category,
     amenities: subjectAmenities
@@ -512,8 +523,41 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         )}
         {activeSection === "sales_comparison" && (
           <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-            Sections 22A–22L establish each comparable's official general information, source trail, property-rights details, project or PUD information, Site facts and water frontage, repeatable dwellings, mechanical systems, energy-efficient and green features, Unit(s), exterior quality and condition, separate interior comparisons for primary units and ADUs, reconciled overall Q/C ratings, and property amenities, along with the required verified photo. Bodies of water remain linked to their Site Influence; construction, heating, cooling, living units, exterior components, kitchens, interior components, and amenities remain linked to the exact comparable parent. Subject energy/green, unit, exterior, interior, and property-amenity facts redisplay from Sections 6, 8, 10, 14, and 15 without duplicate entry; only comparison-specific subject quality and condition summaries are added here and linked to their canonical feature. Unit, ADU, dwelling, and per-structure counts reconcile before completion. Quality and condition adjustments are entered only once in Overall Quality and Condition, where they aggregate exterior, primary-unit, and ADU analysis. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
+            Sections 22A–22M establish each comparable's official general information, source trail, property-rights details, project or PUD information, Site facts and water frontage, repeatable dwellings, mechanical systems, energy-efficient and green features, Unit(s), exterior quality and condition, separate interior comparisons for primary units and ADUs, reconciled overall Q/C ratings, property amenities, and vehicle storage, along with the required verified photo. Bodies of water remain linked to their Site Influence; construction, heating, cooling, living units, exterior components, kitchens, interior components, amenities, and vehicle-storage records remain linked to the exact comparable parent. Subject energy/green, unit, exterior, interior, property-amenity, and vehicle-storage facts redisplay from Sections 6, 8, 10, 13, 14, and 15 without duplicate entry; only comparison-specific subject quality and condition summaries are added here and linked to their canonical feature. Unit, ADU, dwelling, and per-structure counts reconcile before completion. Quality, condition, and vehicle-storage adjustments each use their single official typed row. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
           </div>
+        )}
+        {activeSection === "sales_comparison" && (
+          <section className="mb-5 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-cyan-950">
+            <h3 className="text-base font-semibold">Subject vehicle storage redisplayed from Section 13</h3>
+            <p className="mt-1 text-sm leading-6">Edit these facts in Vehicle Storage. Section 22M reads the same canonical records and reserves the comparable fields for appraiser-confirmed comparison data.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {section22SubjectVehicleStorages.map((storage) => {
+                const area = typeof storage.area === "object" && storage.area && !Array.isArray(storage.area)
+                  ? storage.area as UadMeasurement
+                  : null;
+                return (
+                  <div className="rounded-lg border border-cyan-200 bg-white p-3" key={storage.id}>
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold">{storage.label}</h4>
+                      <span className="text-[11px] text-cyan-700">22.13.01</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      <span className={`rounded-full px-2.5 py-1 font-semibold ${storage.type ? "bg-cyan-100" : "bg-amber-100"}`}>{storage.type ? displayOption(String(storage.type)) : "Incomplete type"}</span>
+                      {storage.tenOrMore === true && <span className="rounded-full bg-cyan-100 px-2.5 py-1 font-semibold">10 or more spaces</span>}
+                      {typeof storage.spaces === "number" && <span className="rounded-full bg-cyan-100 px-2.5 py-1 font-semibold">{storage.spaces} spaces</span>}
+                      {storage.attachment && <span className="rounded-full bg-cyan-100 px-2.5 py-1 font-semibold">{displayOption(String(storage.attachment))}</span>}
+                      {storage.assignment && <span className="rounded-full bg-cyan-100 px-2.5 py-1 font-semibold">{displayOption(String(storage.assignment))}</span>}
+                      {storage.surface && <span className="rounded-full bg-cyan-100 px-2.5 py-1 font-semibold">{displayOption(String(storage.surface))}</span>}
+                      {area?.amount != null && <span className="rounded-full bg-cyan-100 px-2.5 py-1 font-semibold">{Number(area.amount).toLocaleString()} sq ft</span>}
+                    </div>
+                  </div>
+                );
+              })}
+              {!section22SubjectVehicleStorages.length && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">Complete Section 13 by adding a Vehicle Storage record; select None when the subject has no vehicle storage.</div>
+              )}
+            </div>
+          </section>
         )}
         {activeSection === "sales_comparison" && (
           <section className="mb-5 rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-4 text-fuchsia-950">

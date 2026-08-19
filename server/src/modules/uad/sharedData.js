@@ -123,6 +123,48 @@ export function subjectListingSuggestions(activityRows) {
     });
 }
 
+export function subjectPriorTransferSuggestions(activityRows) {
+  if (!Array.isArray(activityRows)) return [];
+  return activityRows
+    .filter((row) => ["closed_sale", "cad_transfer"].includes(row.record_type))
+    .filter((row) => isoDate(row.closing_date || row.activity_date))
+    .slice(0, 12)
+    .map((row) => {
+      const isDeedOnly = row.record_type === "cad_transfer";
+      const amount = row.sale_price == null || row.sale_price === "" ? null : Number(row.sale_price);
+      const sourceName = String(row.source || "");
+      const dataSourceType = /\bmls\b/i.test(sourceName)
+        ? "MLS"
+        : /\b(deed|cad|assessor)\b/i.test(sourceName)
+          ? "Deed"
+          : "DataAggregator";
+      return {
+        entity_type: "subject_prior_transfer",
+        values: {
+          "subject_prior_transfer:0800.0018": isDeedOnly ? "DeedTransferOnly" : "Sale",
+          "subject_prior_transfer:0800.0011": isoDate(row.closing_date || row.activity_date),
+          ...(Number.isFinite(amount) && amount >= 0
+            ? { "subject_prior_transfer:0800.0012": amount }
+            : { "subject_prior_transfer:0800.0009": "NotRecorded" }),
+        },
+        related_entities: [{
+          entity_type: "subject_prior_transfer_data_source",
+          values: { "subject_prior_transfer_data_source:0700.0125": dataSourceType },
+        }],
+        source_reference: row.source_record_id
+          ? `sales_source_record:${row.source_record_id}`
+          : row.sale_id
+            ? `sale:${row.sale_id}`
+            : `property_activity:${isoDate(row.closing_date || row.activity_date)}`,
+        observed_at: isoDate(row.activity_date),
+        requires_appraiser_confirmation: true,
+        source_name: row.source || null,
+        data_quality_flags: row.data_quality_flags || [],
+        requires_additional_review: Boolean(row.requires_additional_review),
+      };
+    });
+}
+
 export async function getUadSharedData(pool, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const workfileResult = await pool.query(
@@ -145,6 +187,7 @@ export async function getUadSharedData(pool, workfileIdValue) {
   const boundary = settledSource("neighborhood_boundary", boundaryResult);
   const activity = settledSource("property_activity_history", activityResult);
   const listingSuggestions = subjectListingSuggestions(activity.data);
+  const priorTransferSuggestions = subjectPriorTransferSuggestions(activity.data);
 
   return {
     workfile_id: workfileId,
@@ -167,6 +210,13 @@ export async function getUadSharedData(pool, workfileIdValue) {
         requires_appraiser_confirmation: true,
       }] : [],
       subject_listing_entities: listingSuggestions,
+      subject_prior_transfer_fields: priorTransferSuggestions.length ? [{
+        field_key: "subject_prior_transfer_summary:0800.0005",
+        value: true,
+        source_reference: "property_activity_history:prior_transfer_candidates",
+        requires_appraiser_confirmation: true,
+      }] : [],
+      subject_prior_transfer_entities: priorTransferSuggestions,
     },
     adapters: {
       comparable_search: { ready: true, mode: "existing_homenode_services", enabled_in_uad_editor: false },
@@ -174,6 +224,8 @@ export async function getUadSharedData(pool, workfileIdValue) {
       neighborhood_boundary: { ready: true, mode: "stored_reviewable_suggestions", enabled_in_uad_editor: true },
       market_conditions: { ready: true, mode: "existing_homenode_services", enabled_in_uad_editor: true },
       subject_listing_history: { ready: true, mode: "existing_homenode_activity_service", enabled_in_uad_editor: false },
+      subject_prior_transfer_history: { ready: true, mode: "existing_homenode_activity_service", enabled_in_uad_editor: false },
+      comparable_prior_transfer_history: { ready: true, mode: "shared_sales_comparable_entities", enabled_in_uad_editor: false },
     },
   };
 }

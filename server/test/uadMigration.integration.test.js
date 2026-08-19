@@ -489,6 +489,52 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND rule_id LIKE 'HN-UAD-SALES-CONTRACT-%'
     `);
     assert.equal(homeNodeSalesContractRules.rows[0].count, 4);
+
+    const priorTransferFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 21
+    `);
+    assert.equal(priorTransferFields.rows[0].count, 45);
+
+    const priorTransferLocations = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 21
+    `);
+    assert.equal(priorTransferLocations.rows[0].count, 29);
+
+    const officialPriorTransferRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1191', 'UAD1192', 'UAD1193', 'UAD1194', 'UAD1195', 'UAD1196',
+           'UAD1197', 'UAD1198', 'UAD1199', 'UAD1200', 'UAD1201', 'UAD1202',
+           'UAD1431', 'UAD1432', 'UAD1436', 'UAD1439', 'UAD1440', 'UAD1442',
+           'UAD1444', 'UAD1698', 'UAD1734', 'UAD1735', 'UAD1744'
+         )
+    `);
+    assert.equal(officialPriorTransferRules.rows[0].count, 23);
+
+    const homeNodePriorTransferRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-PRIOR-TRANSFER-%'
+    `);
+    assert.equal(homeNodePriorTransferRules.rows[0].count, 4);
+
+    const priorTransferEntityConstraint = await pool.query(`
+      SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conname = 'uad_entities_entity_type_check'
+         AND conrelid = 'appraisal.uad_entities'::regclass
+    `);
+    assert.match(priorTransferEntityConstraint.rows[0].definition, /subject_prior_transfer/);
+    assert.match(priorTransferEntityConstraint.rows[0].definition, /comparable_prior_transfer_data_source/);
   } finally {
     await pool.end();
   }

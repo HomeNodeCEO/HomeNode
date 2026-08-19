@@ -34,7 +34,7 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 20:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 21:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -84,6 +84,12 @@ The editor currently implements Appendix A-1 v1.4 Sections 2 through 20:
   explains unavailable contracts or conveyed personal property. Hidden values
   and verified exhibits cannot survive a conflicting No answer, and the same
   private R2/mobile artifact contract supports optional contract exhibits.
+- Prior Sale and Transfer History captures the subject's three-year transfer
+  history as repeatable sale/deed records with linked data sources, amount or
+  unavailable-reason reconciliation, and required analysis. Comparable
+  histories share the reserved `sales_comparable` entities that Section 22 and
+  the comparable-search adapter will populate, avoiding duplicate records and
+  preserving the official one-year comparable lookback workflow.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 
@@ -97,9 +103,10 @@ zoning evidence, location influences, and neighborhood boundaries without
 running a new analysis or changing a Custom Appraisal. Comparable search and
 influence-driven automation remain disabled in the UAD UI until their
 corresponding URAR sections and appraiser-review flow are ready. Sections 17
-through 20 now expose the manual market, subject-listing, and sales-contract
-workflows behind that boundary; automatic listing suggestions remain disabled
-in the editor until the explicit appraiser-review/import interaction is
+through 21 now expose the manual market, subject-listing, sales-contract, and
+prior-transfer workflows behind that boundary. Existing HomeNode sale and deed
+activity is available through a review-only Section 21 adapter, while automatic
+imports remain disabled until the explicit appraiser-review interaction is
 implemented.
 
 ## Staging strategy
@@ -122,8 +129,9 @@ representative Section 10 unit, area source, level, rooms, and interior
 features, a deterministic Section 11 `None` answer, Sections 12-17 fixtures,
 a deterministic Section 18 PUD with data source, amenity, utility, dues, and
 project-factor answers, a deterministic Section 19 MLS listing with date/DOM
-reconciliation, and a deterministic Section 20 arm's-length purchase contract
-with known concessions while verifying that Section 9 remains hidden; the separate
+reconciliation, a deterministic Section 20 arm's-length purchase contract with
+known concessions, and a deterministic Section 21 subject prior sale with a
+linked deed source while verifying that Section 9 remains hidden; the separate
 manufactured-home fixture includes a deterministic UAD workfile whose Section 8
 Construction Method is `Manufactured`, allowing Section 9 to be exercised
 without changing the SFR or copying production tax, owner, or sales data. CI
@@ -188,6 +196,9 @@ categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
 - Sales Contract uses the optional `SalesContractExhibit` image category at the
   workfile level. Uploads require an active contract and a caption; saved images
   remain visible for removal when the contract answer is changed to No.
+- Prior Sale and Transfer History uses the optional
+  `PriorSaleAndTransferHistoryExhibit` image category at the workfile level.
+  Uploads are image-only and require a descriptive caption.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

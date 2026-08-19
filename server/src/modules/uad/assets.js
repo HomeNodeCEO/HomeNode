@@ -15,6 +15,10 @@ import {
   UAD_HIGHEST_BEST_USE_IMAGE_CONTENT_TYPES,
 } from "./highestBestUseCatalog.js";
 import {
+  UAD_MARKET_CAPTION_TYPES,
+  UAD_MARKET_IMAGE_CONTENT_TYPES,
+} from "./marketCatalog.js";
+import {
   UAD_OUTBUILDING_CAPTION_TYPES,
   UAD_OUTBUILDING_IMAGE_CONTENT_TYPES,
 } from "./outbuildingCatalog.js";
@@ -69,6 +73,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [13, new Set(UAD_VEHICLE_STORAGE_CAPTION_TYPES)],
   [14, new Set(UAD_SUBJECT_PROPERTY_AMENITIES_CAPTION_TYPES)],
   [16, new Set(UAD_HIGHEST_BEST_USE_CAPTION_TYPES)],
+  [17, new Set(UAD_MARKET_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -181,6 +186,12 @@ function normalizeAssetInput(input = {}) {
   if (sectionNumber === 16 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_highest_best_use_asset_kind");
   }
+  if (sectionNumber === 17 && !UAD_MARKET_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_market_content_type");
+  }
+  if (sectionNumber === 17 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_market_asset_kind");
+  }
   return {
     kind,
     contentType,
@@ -255,6 +266,9 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   }
   if (normalized.sectionNumber === 16 && normalized.entityId) {
     throw new Error("invalid_uad_highest_best_use_asset_entity");
+  }
+  if (normalized.sectionNumber === 17 && normalized.entityId) {
+    throw new Error("invalid_uad_market_asset_entity");
   }
 
   const organizationId = workfileResult.rows[0].organization_id;

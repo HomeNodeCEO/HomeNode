@@ -218,6 +218,30 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     }
     assert.equal(siteBuiltEditor.completion.highest_best_use.required, 5);
     assert.equal(siteBuiltEditor.completion.highest_best_use.percent, 100);
+    const section17 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 17);
+    assert.equal(section17?.key, "market");
+    assert.equal(section17?.applicable, true);
+    assert.equal(section17.groups.reduce((count, group) => count + group.fields.length, 0), 19);
+    const marketSource = siteBuiltEditor.entities.find((entity) => entity.entity_type === "market_price_trend_source");
+    assert.ok(marketSource);
+    assert.equal(
+      siteBuiltEditor.values.find((value) => (
+        value.entity_id === marketSource.id
+        && value.context_key === "market_price_trend_source"
+        && value.uid === "3000.0051"
+      ))?.value,
+      "Synthetic MLS Market Dataset",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((value) => (
+        value.entity_id === null
+        && value.context_key === "market_total_sales"
+        && value.uid === "3000.0029"
+      ))?.value,
+      418000,
+    );
+    assert.equal(siteBuiltEditor.completion.market.required, 18);
+    assert.equal(siteBuiltEditor.completion.market.percent, 100);
   } finally {
     await pool.end();
   }

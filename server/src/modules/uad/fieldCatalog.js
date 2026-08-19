@@ -8,6 +8,7 @@ import {
 } from "./dwellingExteriorCatalog.js";
 import { UAD_FUNCTIONAL_OBSOLESCENCE_FIELDS } from "./functionalObsolescenceCatalog.js";
 import { UAD_HIGHEST_BEST_USE_FIELDS } from "./highestBestUseCatalog.js";
+import { UAD_MARKET_ENTITY_GROUPS, UAD_MARKET_FIELDS } from "./marketCatalog.js";
 import {
   UAD_MANUFACTURED_HOME_ENTITY_GROUPS,
   UAD_MANUFACTURED_HOME_FIELDS,
@@ -42,6 +43,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_OUTBUILDING_ENTITY_GROUPS,
   ...UAD_VEHICLE_STORAGE_ENTITY_GROUPS,
   ...UAD_SUBJECT_PROPERTY_AMENITIES_ENTITY_GROUPS,
+  ...UAD_MARKET_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -65,6 +67,7 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   subject_property_amenities: { title: "Subject Property Amenities", officialSectionNumber: 14 },
   overall_quality_condition: { title: "Overall Quality and Condition", officialSectionNumber: 15 },
   highest_best_use: { title: "Highest and Best Use", officialSectionNumber: 16 },
+  market: { title: "Market", officialSectionNumber: 17 },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -541,6 +544,7 @@ const fields = [
   ...UAD_SUBJECT_PROPERTY_AMENITIES_FIELDS,
   ...UAD_OVERALL_QUALITY_CONDITION_FIELDS,
   ...UAD_HIGHEST_BEST_USE_FIELDS,
+  ...UAD_MARKET_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -722,6 +726,16 @@ export function normalizeAndValidateUadValue(field, rawValue) {
     return Number.isFinite(value) && value >= 0 && value <= 100
       ? { value, error: null }
       : { value: null, error: invalid(field, "percentage", `${field.label} must be between 0 and 100.`) };
+  }
+
+  if (field.dataType === "currency") {
+    const value = typeof rawValue === "number" ? rawValue : Number(String(rawValue).trim());
+    const minimumOk = field.minimum == null || value >= field.minimum;
+    const exclusiveMinimumOk = field.minimumExclusive == null || value > field.minimumExclusive;
+    const maximumOk = field.maximum == null || value <= field.maximum;
+    return Number.isFinite(value) && minimumOk && exclusiveMinimumOk && maximumOk
+      ? { value, error: null }
+      : { value: null, error: invalid(field, "currency", `${field.label} must be a valid dollar amount in the supported range.`) };
   }
 
   if (field.dataType === "measurement") {

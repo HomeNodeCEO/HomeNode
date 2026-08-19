@@ -16,6 +16,10 @@ import {
   validateUadSectionValues,
 } from "./fieldCatalog.js";
 import { isVerifiedManufacturedHomeAsset } from "./manufacturedHomeCatalog.js";
+import {
+  UAD_MARKET_FIELD_KEYS,
+  isVerifiedMarketAsset,
+} from "./marketCatalog.js";
 import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
 import { UAD_HIGHEST_BEST_USE_FIELD_KEYS } from "./highestBestUseCatalog.js";
 import { UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS } from "./overallQualityConditionCatalog.js";
@@ -305,6 +309,14 @@ function completionFor(values, entities, assets = []) {
           if (isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.interiorQuality))) completed += 1;
           if (isPresent(lookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.interiorCondition))) completed += 1;
         }
+      }
+    }
+    if (section === "market") {
+      const sources = entities.filter((entity) => entity.entity_type === "market_price_trend_source");
+      if (!sources.length) required += 1;
+      if (!assets.some((asset) => isVerifiedMarketAsset(asset, "PriceTrendGraph"))) {
+        required += 1;
+        if (isPresent(byKey.get(`root:${UAD_MARKET_FIELD_KEYS.priceTrendCommentary}`))) completed += 1;
       }
     }
     result[section] = {
@@ -1005,6 +1017,62 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
         "The present or proposed use cannot be concluded as highest and best when it fails one of the four tests.",
       ));
     }
+  }
+
+  if (section === "market") {
+    const lookup = valueLookup(merged);
+    const priceTrendField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+      candidate.key === UAD_MARKET_FIELD_KEYS.priceTrendCommentary
+    ));
+    const sources = entities.filter((entity) => entity.entity_type === "market_price_trend_source");
+    if (!sources.length) {
+      const sourceField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+        candidate.key === UAD_MARKET_FIELD_KEYS.priceTrendSource
+      ));
+      errors.push(validationError(
+        sourceField,
+        null,
+        "market_price_trend_source_required",
+        "Add at least one source used to determine the price trend.",
+      ));
+    }
+    if (
+      !assets.some((asset) => isVerifiedMarketAsset(asset, "PriceTrendGraph"))
+      && !isPresent(lookup(UAD_MARKET_FIELD_KEYS.priceTrendCommentary))
+    ) {
+      errors.push(validationError(
+        priceTrendField,
+        null,
+        "market_price_trend_commentary_required",
+        "Provide price trend analysis commentary or upload and verify a Price Trend Graph.",
+      ));
+    }
+    const validatePriceOrder = ({ countKey, lowKey, medianKey, highKey, code, message }) => {
+      if (Number(lookup(countKey)) <= 0) return;
+      const low = Number(lookup(lowKey));
+      const median = Number(lookup(medianKey));
+      const high = Number(lookup(highKey));
+      if (![low, median, high].every(Number.isFinite) || low > median || median > high) {
+        const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === medianKey);
+        errors.push(validationError(field, null, code, message));
+      }
+    };
+    validatePriceOrder({
+      countKey: UAD_MARKET_FIELD_KEYS.activeListingCount,
+      lowKey: UAD_MARKET_FIELD_KEYS.activeLowestPrice,
+      medianKey: UAD_MARKET_FIELD_KEYS.activeMedianPrice,
+      highKey: UAD_MARKET_FIELD_KEYS.activeHighestPrice,
+      code: "market_active_price_order",
+      message: "Active listing prices must be ordered from lowest to median to highest.",
+    });
+    validatePriceOrder({
+      countKey: UAD_MARKET_FIELD_KEYS.salesCount,
+      lowKey: UAD_MARKET_FIELD_KEYS.salesLowestPrice,
+      medianKey: UAD_MARKET_FIELD_KEYS.salesMedianPrice,
+      highKey: UAD_MARKET_FIELD_KEYS.salesHighestPrice,
+      code: "market_sale_price_order",
+      message: "Sale prices must be ordered from lowest to median to highest.",
+    });
   }
 
   if (section === "unit_interior") {

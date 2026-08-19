@@ -470,14 +470,24 @@ try {
     ["0300.0023", "12.008", false],
     ["0300.0022", "12.009 / 12.016", false],
     ["0300.0028", "12.010", ["Electricity"]],
-    ["0300.0112", "12.011", { amount: 0, unit: "SquareFeet" }],
-    ["0300.0113", "12.013", { amount: 240, unit: "SquareFeet" }],
+    ["0300.0112", "12.011", { amount: 120, unit: "SquareFeet" }],
+    ["0300.0113", "12.013", { amount: 120, unit: "SquareFeet" }],
     ["0300.0111", "12.019", false],
     ["0300.0096", "12.025", "Detached storage shed included as real property."],
   ];
   for (const [uid, reportFieldId, value] of outbuildingValues) {
     await seedEntityValue(sfrWorkfileId, outbuildingId, "outbuilding", uid, reportFieldId, value);
   }
+  const outbuildingKitchenId = await ensureEntity(
+    sfrWorkfileId,
+    outbuildingId,
+    "outbuilding_room",
+    "outbuilding-shed-kitchen-1",
+    1,
+    "Shed Kitchen Summary",
+  );
+  await seedEntityValue(sfrWorkfileId, outbuildingKitchenId, "outbuilding_room", "0300.0018", "12.012", "Kitchen");
+  await seedEntityValue(sfrWorkfileId, outbuildingKitchenId, "outbuilding_room", "0300.0020", "12.012", 1);
   const vehicleStorageId = await ensureEntity(
     sfrWorkfileId,
     null,
@@ -786,6 +796,22 @@ try {
     1,
     "Comparable Garage 1",
   );
+  const salesComparableOutbuildingId = await ensureEntity(
+    sfrWorkfileId,
+    salesComparableId,
+    "sales_comparable_outbuilding",
+    "sales-comparable-outbuilding-shed-1",
+    1,
+    "Comparable Shed 1",
+  );
+  const salesComparableOutbuildingKitchenId = await ensureEntity(
+    sfrWorkfileId,
+    salesComparableOutbuildingId,
+    "sales_comparable_outbuilding_room",
+    "sales-comparable-outbuilding-kitchen-1",
+    1,
+    "Comparable Shed Kitchen Summary",
+  );
   const salesComparableHazardId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_hazard", "sales-comparable-site-hazard-1", 1, "Comparable Hazard Zone 1");
   const salesComparableStreetId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_street", "sales-comparable-site-street-1", 1, "Comparable Access Street 1");
   const salesComparableFeatureId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_feature", "sales-comparable-site-feature-1", 1, "Comparable Site Characteristic 1");
@@ -852,6 +878,20 @@ try {
     [salesComparableVehicleStorageId, "sales_comparable_vehicle_storage", "1800.0094", "22.13.05", "Attached"],
     [salesComparableVehicleStorageId, "sales_comparable_vehicle_storage", "1800.0397", "22.13.05", { amount: 480, unit: "SquareFeet" }],
     [salesComparableId, "sales_comparable_adjustment_vehicle_storage", "1800.0317", "22.13.04", 0],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0125", "22.07.18", "Outbuilding"],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0366", "Does Not Display", true],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0126", "22.14.14", "Shed"],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0368", "Does Not Display", 0],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0387", "22.14.16", { amount: 260, unit: "SquareFeet" }],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0344", "22.14.17", { amount: 120, unit: "SquareFeet" }],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0380", "22.14.18", { amount: 140, unit: "SquareFeet" }],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0351", "22.14.19", { amount: 2080, unit: "CubicFeet" }],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0124", "22.14.23", false],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0123", "22.14.24", false],
+    [salesComparableOutbuildingId, "sales_comparable_outbuilding", "1800.0132", "22.14.25", ["Electricity"]],
+    [salesComparableOutbuildingKitchenId, "sales_comparable_outbuilding_room", "1800.0388", "22.14.22", "Kitchen"],
+    [salesComparableOutbuildingKitchenId, "sales_comparable_outbuilding_room", "1800.0389", "22.14.22", 1],
+    [salesComparableId, "sales_comparable_adjustment_outbuilding", "1800.0317", "22.14.15", 0],
     [salesComparableId, "sales_comparable_proximity", "1800.0065", "22.01.19", { amount: 2.1, unit: "Miles" }],
     [salesComparableId, "sales_comparable_proximity", "1800.0066", "22.01.19", "NorthEast"],
     [salesComparableId, "sales_comparable_listing", "1800.0074", "22.01.20", 449000],

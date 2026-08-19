@@ -163,6 +163,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const unitInteriorFeatures = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_feature") || [];
   const unitInteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_defect") || [];
   const outbuildings = editor?.entities.filter((entity) => entity.entity_type === "outbuilding") || [];
+  const outbuildingRooms = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_room") || [];
   const outbuildingDefects = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_defect") || [];
   const vehicleStorages = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage") || [];
   const vehicleStorageDefects = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage_defect") || [];
@@ -180,6 +181,33 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const salesContractExists = draft[fieldValueKey("sales_contract", "0600.0016")];
   const salesComparisonIncluded = draft[fieldValueKey("sales_comparison_scope", "1000.0032")];
   const salesComparables = editor?.entities.filter((entity) => entity.entity_type === "sales_comparable") || [];
+  const section22SubjectOutbuildings = outbuildings
+    .filter((outbuilding) => {
+      const type = draft[fieldValueKey("outbuilding", "0300.0025", outbuilding.id)];
+      const other = draft[fieldValueKey("outbuilding", "0300.0026", outbuilding.id)];
+      return draft[fieldValueKey("outbuilding", "0300.0024", outbuilding.id)] === true
+        && type !== "StandaloneADU"
+        && !(type === "Other" && other === "ADUGarage");
+    })
+    .map((outbuilding) => ({
+      id: outbuilding.id,
+      label: outbuilding.label || `Outbuilding ${outbuilding.ordinal}`,
+      type: draft[fieldValueKey("outbuilding", "0300.0025", outbuilding.id)],
+      area: draft[fieldValueKey("outbuilding", "0300.0060", outbuilding.id)],
+      finishedArea: draft[fieldValueKey("outbuilding", "0300.0112", outbuilding.id)],
+      unfinishedArea: draft[fieldValueKey("outbuilding", "0300.0113", outbuilding.id)],
+      volume: draft[fieldValueKey("outbuilding", "0300.0073", outbuilding.id)],
+      heating: draft[fieldValueKey("outbuilding", "0300.0023", outbuilding.id)],
+      cooling: draft[fieldValueKey("outbuilding", "0300.0022", outbuilding.id)],
+      utilities: draft[fieldValueKey("outbuilding", "0300.0028", outbuilding.id)],
+      rooms: outbuildingRooms
+        .filter((room) => room.parent_entity_id === outbuilding.id)
+        .map((room) => ({
+          id: room.id,
+          type: draft[fieldValueKey("outbuilding_room", "0300.0018", room.id)],
+          count: draft[fieldValueKey("outbuilding_room", "0300.0020", room.id)],
+        })),
+    }));
   const section22SubjectVehicleStorages = vehicleStorages.map((storage) => ({
     id: storage.id,
     label: storage.label || `Vehicle storage ${storage.ordinal}`,
@@ -523,8 +551,48 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         )}
         {activeSection === "sales_comparison" && (
           <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-            Sections 22A–22M establish each comparable's official general information, source trail, property-rights details, project or PUD information, Site facts and water frontage, repeatable dwellings, mechanical systems, energy-efficient and green features, Unit(s), exterior quality and condition, separate interior comparisons for primary units and ADUs, reconciled overall Q/C ratings, property amenities, and vehicle storage, along with the required verified photo. Bodies of water remain linked to their Site Influence; construction, heating, cooling, living units, exterior components, kitchens, interior components, amenities, and vehicle-storage records remain linked to the exact comparable parent. Subject energy/green, unit, exterior, interior, property-amenity, and vehicle-storage facts redisplay from Sections 6, 8, 10, 13, 14, and 15 without duplicate entry; only comparison-specific subject quality and condition summaries are added here and linked to their canonical feature. Unit, ADU, dwelling, and per-structure counts reconcile before completion. Quality, condition, and vehicle-storage adjustments each use their single official typed row. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
+            Sections 22A–22N establish each comparable's official general information, source trail, property-rights details, project or PUD information, Site facts and water frontage, repeatable dwellings and outbuildings, mechanical systems, energy-efficient and green features, Unit(s), exterior quality and condition, separate interior comparisons for primary units and ADUs, reconciled overall Q/C ratings, property amenities, and vehicle storage, along with the required verified photo. Bodies of water remain linked to their Site Influence; construction, heating, cooling, living units, exterior components, kitchens, interior components, amenities, vehicle-storage records, and outbuilding room summaries remain linked to the exact comparable parent. Subject energy/green, unit, exterior, interior, outbuilding, property-amenity, and vehicle-storage facts redisplay from Sections 6, 8, 10, 12, 13, 14, and 15 without duplicate entry; only comparison-specific subject quality and condition summaries are added here and linked to their canonical feature. Unit, ADU, dwelling, and per-structure counts reconcile before completion. Quality, condition, vehicle-storage, and outbuilding adjustments each use their single official typed row. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
           </div>
+        )}
+        {activeSection === "sales_comparison" && (
+          <section className="mb-5 rounded-xl border border-orange-200 bg-orange-50 p-4 text-orange-950">
+            <h3 className="text-base font-semibold">Subject outbuildings redisplayed from Section 12</h3>
+            <p className="mt-1 text-sm leading-6">Section 22N reads the same canonical real-property outbuildings. Standalone ADUs and ADU/garage structures remain in Unit(s), ADU Interior, and Vehicle Storage so their areas are not adjusted twice.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {section22SubjectOutbuildings.map((outbuilding) => {
+                const measurements = [
+                  ["GBA", outbuilding.area, "sq ft"],
+                  ["Finished", outbuilding.finishedArea, "sq ft"],
+                  ["Unfinished", outbuilding.unfinishedArea, "sq ft"],
+                  ["Volume", outbuilding.volume, "cu ft"],
+                ] as const;
+                return (
+                  <div className="rounded-lg border border-orange-200 bg-white p-3" key={outbuilding.id}>
+                    <div className="flex items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold">{outbuilding.label}</h4>
+                      <span className="text-[11px] text-orange-700">22.14.01</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      <span className={`rounded-full px-2.5 py-1 font-semibold ${outbuilding.type ? "bg-orange-100" : "bg-amber-100"}`}>{outbuilding.type ? displayOption(String(outbuilding.type)) : "Incomplete type"}</span>
+                      {measurements.map(([label, value, unit]) => {
+                        const measurement = typeof value === "object" && value && !Array.isArray(value) ? value as UadMeasurement : null;
+                        return measurement?.amount != null
+                          ? <span className="rounded-full bg-orange-100 px-2.5 py-1 font-semibold" key={label}>{label}: {Number(measurement.amount).toLocaleString()} {unit}</span>
+                          : null;
+                      })}
+                      {outbuilding.heating === true && <span className="rounded-full bg-orange-100 px-2.5 py-1 font-semibold">Heated</span>}
+                      {outbuilding.cooling === true && <span className="rounded-full bg-orange-100 px-2.5 py-1 font-semibold">Cooled</span>}
+                      {Array.isArray(outbuilding.utilities) && outbuilding.utilities.map((utility) => <span className="rounded-full bg-orange-100 px-2.5 py-1 font-semibold" key={utility}>{displayOption(utility)}</span>)}
+                      {outbuilding.rooms.map((room) => <span className="rounded-full bg-orange-100 px-2.5 py-1 font-semibold" key={room.id}>{room.type ? displayOption(String(room.type)) : "Room"}: {typeof room.count === "number" ? room.count : "—"}</span>)}
+                    </div>
+                  </div>
+                );
+              })}
+              {!section22SubjectOutbuildings.length && (
+                <div className="rounded-lg border border-orange-200 bg-white p-3 text-sm text-orange-900">No Section 12 real-property outbuilding belongs in the Section 22N comparison grid.</div>
+              )}
+            </div>
+          </section>
         )}
         {activeSection === "sales_comparison" && (
           <section className="mb-5 rounded-xl border border-cyan-200 bg-cyan-50 p-4 text-cyan-950">

@@ -40,13 +40,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22M editor on canonical comparable entities", () => {
+test("adds the Section 22A-22N editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 280);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 280);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 292);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 292);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -65,6 +65,7 @@ test("adds the Section 22A-22M editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_green_certification.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_efficiency_rating.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_outbuilding.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_outbuilding_room.parentEntityType, "sales_comparable_outbuilding");
   assert.deepEqual(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_unit.parentEntityTypes, ["sales_comparable_dwelling", "sales_comparable_outbuilding"]);
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_unit_accessibility_feature.parentEntityType, "sales_comparable_unit");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_exterior_component.parentEntityType, "sales_comparable_dwelling");
@@ -83,6 +84,14 @@ test("adds the Section 22A-22M editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_vehicle_storage.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_vehicle_storage.minItems, 1);
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
+  assert.equal(
+    section?.groups.find((group) => group.name === "Sales comparables — outbuilding comparison")?.createEnabled,
+    false,
+  );
+  assert.equal(
+    section?.groups.find((group) => group.name === "Sales comparables — outbuilding adjustment")?.entityType,
+    "sales_comparable",
+  );
 });
 
 test("uses official Section 22 general-information enumerations and conditional fields", () => {
@@ -633,6 +642,58 @@ test("validates Section 22M comparable vehicle storage and its typed adjustment"
   assert.equal(normalizeAndValidateUadValue(adjustment, 10000).error, null);
 });
 
+test("validates Section 22N comparable outbuilding hierarchy, areas, utilities, rooms, and typed adjustment", () => {
+  const comparable = { id: "d9ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const shed = { id: "e9ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_outbuilding", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const standaloneAdu = { id: "f9ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_outbuilding", parent_entity_id: comparable.id, ordinal: 2, data: {} };
+  const kitchenOne = { id: "19ca14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_outbuilding_room", parent_entity_id: shed.id, ordinal: 1, data: {} };
+  const kitchenTwo = { id: "29ca14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_outbuilding_room", parent_entity_id: shed.id, ordinal: 2, data: {} };
+  const errors = validateCompleteSection(
+    "sales_comparison",
+    [],
+    [
+      value(null, "sales_comparison_scope", "1000.0032", true),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0125", "Outbuilding"),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0366", true),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0126", "Shed"),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0368", 1),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0387", { amount: 240, unit: "SquareFeet" }),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0344", { amount: 160, unit: "SquareFeet" }),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0380", { amount: 120, unit: "SquareFeet" }),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0132", ["None", "Electricity"]),
+      value(shed.id, "sales_comparable_outbuilding", "1800.0133", "Generator"),
+      value(kitchenOne.id, "sales_comparable_outbuilding_room", "1800.0388", "Kitchen"),
+      value(kitchenOne.id, "sales_comparable_outbuilding_room", "1800.0389", 1),
+      value(kitchenTwo.id, "sales_comparable_outbuilding_room", "1800.0388", "Kitchen"),
+      value(kitchenTwo.id, "sales_comparable_outbuilding_room", "1800.0389", 1),
+      value(standaloneAdu.id, "sales_comparable_outbuilding", "1800.0125", "Outbuilding"),
+      value(standaloneAdu.id, "sales_comparable_outbuilding", "1800.0366", true),
+      value(standaloneAdu.id, "sales_comparable_outbuilding", "1800.0126", "StandaloneADU"),
+      value(standaloneAdu.id, "sales_comparable_outbuilding", "1800.0368", 0),
+      value(standaloneAdu.id, "sales_comparable_outbuilding", "1800.0387", { amount: 600, unit: "SquareFeet" }),
+      value(comparable.id, "sales_comparable_adjustment_outbuilding", "1800.0317", -5000),
+    ],
+    [comparable, shed, standaloneAdu, kitchenOne, kitchenTwo],
+  );
+  const codes = errors.map((error) => error.code);
+  for (const code of [
+    "sales_comparable_outbuilding_unit_count_mismatch",
+    "sales_comparable_outbuilding_utility_none_conflict",
+    "sales_comparable_outbuilding_utility_other_conflict",
+    "sales_comparable_outbuilding_room_duplicate",
+    "sales_comparable_outbuilding_area_reconciliation",
+    "sales_comparable_outbuilding_adu_required",
+    "sales_comparable_outbuilding_comparison_detail_conflict",
+  ]) assert.equal(codes.includes(code), true, code);
+
+  const area = getUadField("sales_comparable_outbuilding", "1800.0387");
+  const roomType = getUadField("sales_comparable_outbuilding_room", "1800.0388");
+  const adjustment = getUadField("sales_comparable_adjustment_outbuilding", "1800.0317");
+  assert.equal(normalizeAndValidateUadValue(area, { amount: 260, unit: "SquareFeet" }).error, null);
+  assert.deepEqual(roomType.options, ["FullBathroom", "HalfBathroom", "Kitchen"]);
+  assert.equal(normalizeAndValidateUadValue(adjustment, -5000).error, null);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -851,6 +912,21 @@ test("seeds Section 22M vehicle storage, subject redisplays, and official rules 
   assert.match(sql, /'1800\.0095','sales_comparable_vehicle_storage','22\.13\.05'/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-VEHICLE-STORAGE-004/);
   assert.match(runner, /20260916_uad_sales_comparison_vehicle_storage\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22N outbuilding hierarchy, subject redisplays, typed adjustment, and rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260917_uad_sales_comparison_outbuildings.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  assert.match(sql, /UAD1758/);
+  assert.match(sql, /sales_comparable_outbuilding_room/);
+  assert.match(sql, /ComparableAdjustmentType/);
+  assert.match(sql, /Outbuilding/);
+  assert.match(sql, /'0300\.0025','outbuilding','22\.14\.01'/);
+  assert.match(sql, /'1800\.0387','sales_comparable_outbuilding','22\.14\.16'/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-OUTBUILDING-006/);
+  assert.match(runner, /20260917_uad_sales_comparison_outbuildings\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

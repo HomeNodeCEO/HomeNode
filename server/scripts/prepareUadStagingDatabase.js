@@ -729,6 +729,12 @@ try {
     1,
     "Comparable Project Amenity 1",
   );
+  const salesComparableHazardId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_hazard", "sales-comparable-site-hazard-1", 1, "Comparable Hazard Zone 1");
+  const salesComparableStreetId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_street", "sales-comparable-site-street-1", 1, "Comparable Access Street 1");
+  const salesComparableFeatureId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_feature", "sales-comparable-site-feature-1", 1, "Comparable Site Characteristic 1");
+  const salesComparableInfluenceId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_influence", "sales-comparable-site-influence-1", 1, "Comparable Site Influence 1");
+  const salesComparableEnvironmentalId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_environmental", "sales-comparable-site-environmental-1", 1, "Comparable Environmental Condition 1");
+  const salesComparableViewId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_view", "sales-comparable-site-view-1", 1, "Comparable View 1");
   const comparableNoTransferSourceId = await ensureEntity(
     sfrWorkfileId,
     salesComparableId,
@@ -770,6 +776,19 @@ try {
     [salesComparableId, "sales_comparable_project", "1800.0371", "22.02.09", "None"],
     [salesComparableId, "sales_comparable_adjustment_project", "1800.0317", "22.02.05", 0],
     [salesComparableProjectAmenityId, "sales_comparable_project_amenity", "1800.0056", "22.02.08", "Clubhouse"],
+    [salesComparableId, "sales_comparable_site", "1800.0277", "22.03.18", false],
+    [salesComparableId, "sales_comparable_site", "1800.0239", "22.03.20", { amount: 8400, unit: "SquareFeet" }],
+    [salesComparableId, "sales_comparable_site", "1800.0193", "22.03.22", "Test Subject Market Area"],
+    [salesComparableId, "sales_comparable_site", "1800.0245", "22.03.24", "Legal"],
+    [salesComparableId, "sales_comparable_site", "1800.0218", "22.03.28", "PublicStreet"],
+    [salesComparableHazardId, "sales_comparable_site_hazard", "1800.0212", "22.03.26", "None"],
+    [salesComparableStreetId, "sales_comparable_site_street", "1800.0216", "22.03.30", "Local"],
+    [salesComparableStreetId, "sales_comparable_site_street", "1800.0214", "22.03.30", "Asphalt"],
+    [salesComparableFeatureId, "sales_comparable_site_feature", "1800.0222", "22.03.40", "None"],
+    [salesComparableInfluenceId, "sales_comparable_site_influence", "1800.0233", "22.03.42", "Residential"],
+    [salesComparableEnvironmentalId, "sales_comparable_site_environmental", "1800.0116", "22.03.44", "None"],
+    [salesComparableViewId, "sales_comparable_site_view", "1800.0243", "22.03.46", "Residential"],
+    [salesComparableViewId, "sales_comparable_site_view", "1800.0242", "22.03.46", "Full"],
     [salesComparableSourceId, "sales_comparable_data_source", "0700.0125", "22.01.18", "MLS"],
     [salesComparableSourceId, "sales_comparable_data_source", "1800.0347", "22.01.18", "NTREIS-SYNTHETIC-22001"],
   ];

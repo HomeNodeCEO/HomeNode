@@ -56,7 +56,7 @@ export function bathroomEquivalentValue(
  */
 export function calculateNumericGroupedAdjustment(
   adjustments: NumericGroupedAdjustment[],
-  dimensionKey: 'bathrooms' | 'garage',
+  dimensionKey: string,
   subjectValue: number | null,
   comparableValue: number | null,
 ): number {

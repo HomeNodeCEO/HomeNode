@@ -58,6 +58,10 @@ import {
   buildPairedSalesStudy,
   pairedSalesErrorStatus,
 } from "./services/pairedSalesAnalysis.js";
+import {
+  buildRegressionStudy,
+  regressionAnalysisErrorStatus,
+} from "./services/regressionAnalysis.js";
 import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
 import {
   ensureCensusGeographySchema,
@@ -5105,6 +5109,29 @@ app.post("/api/sales/market-analysis", async (req, res) => {
       error: message,
       ...(error?.detail ? { detail: error.detail } : {}),
     });
+  }
+});
+
+/**
+ * POST /api/sales/regression-analysis
+ *
+ * Fits an auditable OLS model to same-housing-type sales in one appraiser-selected
+ * market area. Sale prices remain unadjusted for time, and incomplete predictors
+ * are reported rather than silently replaced with zeroes.
+ */
+app.post("/api/sales/regression-analysis", async (req, res) => {
+  try {
+    const result = await buildRegressionStudy(pool, {
+      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+      marketKey: String(req.body?.market_key || "city").trim(),
+      asOfDate: String(req.body?.as_of || "").trim(),
+      customGeometry: req.body?.custom_geometry || null,
+    });
+    res.json(result);
+  } catch (error) {
+    const message = error?.message || "regression_analysis_failed";
+    console.error("/api/sales/regression-analysis failed", error);
+    res.status(regressionAnalysisErrorStatus(message)).json({ error: message });
   }
 });
 

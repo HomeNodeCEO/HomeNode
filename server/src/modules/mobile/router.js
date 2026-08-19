@@ -2,6 +2,10 @@ import express from "express";
 
 import { createMobileAuthenticator } from "./auth.js";
 import {
+  completeInspectionSession,
+  getInspectionCompletionReadiness,
+} from "./completion.js";
+import {
   getCustomAppraisalReview,
   refreshCustomAppraisalProposals,
   reviewCustomAppraisalProposal,
@@ -61,7 +65,10 @@ function sendError(res, error) {
     ? "mobile_request_failed"
     : String(error?.message || "mobile_request_failed").split(":")[0];
   if (status === 500) console.error("[mobile] request failed", error);
-  return res.status(status).json({ error: code });
+  return res.status(status).json({
+    error: code,
+    ...(code === "inspection_not_ready_conflict" ? { details: error.details } : {}),
+  });
 }
 
 function requireWriteRole(req, res, next) {
@@ -137,6 +144,14 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
         exact_delete_conflict_detection: true,
         official_catalog_only: true,
         comparable_creation: "official_catalog",
+      },
+      inspection_completion: {
+        enabled: true,
+        server_authoritative: true,
+        idempotent: true,
+        blocks_unresolved_work: true,
+        report_signing: false,
+        report_submission: false,
       },
     });
   });
@@ -233,6 +248,31 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
   router.get("/inspection-sessions/:sessionId/snapshot", async (req, res) => {
     try {
       return res.json(await getInspectionSnapshot(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.get("/inspection-sessions/:sessionId/completion-readiness", async (req, res) => {
+    try {
+      return res.json(await getInspectionCompletionReadiness(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+      ));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/complete", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await completeInspectionSession(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.body || {},
+      ));
     } catch (error) {
       return sendError(res, error);
     }

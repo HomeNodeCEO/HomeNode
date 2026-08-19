@@ -5343,6 +5343,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         <GroupedAdjustmentAnalysis
           key={propertyId}
           subjectAccountId={propertyId}
+          assignmentFileId={activeAssignmentFile?.id || null}
           appraiserDefinedArea={appraiserDefinedAdjustmentArea}
           appliedAdjustments={appliedGroupedAdjustments}
           getImpactPreview={previewGroupedAdjustment}

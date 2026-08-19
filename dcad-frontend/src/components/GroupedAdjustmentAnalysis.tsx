@@ -11,6 +11,7 @@ import PairedSalesAnalysis, {
   type AppraiserDefinedAdjustmentArea,
 } from '@/components/PairedSalesAnalysis';
 import RegressionAnalysis from '@/components/RegressionAnalysis';
+import DepreciatedCostAnalysis from '@/components/DepreciatedCostAnalysis';
 
 export type AdjustmentDimensionKey =
   | GroupedAnalysisDimension['key']
@@ -19,7 +20,7 @@ export type AdjustmentDimensionKey =
 
 export type AppliedGroupedAdjustment = {
   id: string;
-  marketKey: GroupedAnalysisBreakdownKey;
+  marketKey: GroupedAnalysisBreakdownKey | 'cost_approach';
   marketLabel: string;
   dimensionKey: AdjustmentDimensionKey;
   dimensionLabel: string;
@@ -592,6 +593,7 @@ const BREAKDOWN_OPTIONS: Array<{
 
 export default function GroupedAdjustmentAnalysis({
   subjectAccountId,
+  assignmentFileId,
   appraiserDefinedArea,
   appliedAdjustments,
   getImpactPreview,
@@ -599,6 +601,7 @@ export default function GroupedAdjustmentAnalysis({
   onRemoveAdjustment,
 }: {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   appraiserDefinedArea?: AppraiserDefinedAdjustmentArea | null;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
   getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
@@ -700,7 +703,7 @@ export default function GroupedAdjustmentAnalysis({
         </div>
       </div>
 
-      {activeMethod && !['grouped', 'paired_sales', 'regression'].includes(activeMethod) && (
+      {activeMethod && !['grouped', 'paired_sales', 'regression', 'depreciated_cost'].includes(activeMethod) && (
         <div className="p-5">
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5">
             <div className="text-lg font-semibold text-indigo-950">
@@ -731,6 +734,17 @@ export default function GroupedAdjustmentAnalysis({
         <RegressionAnalysis
           subjectAccountId={subjectAccountId}
           appraiserDefinedArea={appraiserDefinedArea}
+          appliedAdjustments={appliedAdjustments}
+          getImpactPreview={getImpactPreview}
+          onApplyAdjustment={onApplyAdjustment}
+          onRemoveAdjustment={onRemoveAdjustment}
+        />
+      )}
+
+      {activeMethod === 'depreciated_cost' && (
+        <DepreciatedCostAnalysis
+          subjectAccountId={subjectAccountId}
+          assignmentFileId={assignmentFileId}
           appliedAdjustments={appliedAdjustments}
           getImpactPreview={getImpactPreview}
           onApplyAdjustment={onApplyAdjustment}

@@ -62,6 +62,10 @@ import {
   buildRegressionStudy,
   regressionAnalysisErrorStatus,
 } from "./services/regressionAnalysis.js";
+import {
+  calculateDepreciatedCostAdjustment,
+  depreciatedCostAdjustmentErrorStatus,
+} from "./util/depreciatedCostAdjustment.js";
 import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
 import {
   ensureCensusGeographySchema,
@@ -5132,6 +5136,22 @@ app.post("/api/sales/regression-analysis", async (req, res) => {
     const message = error?.message || "regression_analysis_failed";
     console.error("/api/sales/regression-analysis failed", error);
     res.status(regressionAnalysisErrorStatus(message)).json({ error: message });
+  }
+});
+
+/**
+ * POST /api/sales/depreciated-cost-adjustment
+ *
+ * Recalculates one feature adjustment from replacement cost new less accrued
+ * depreciation. The result can support GLA, garage, or pool differences; land
+ * is excluded because it is not a depreciable improvement.
+ */
+app.post("/api/sales/depreciated-cost-adjustment", (req, res) => {
+  try {
+    res.json(calculateDepreciatedCostAdjustment(req.body || {}));
+  } catch (error) {
+    const message = error?.message || "depreciated_cost_adjustment_failed";
+    res.status(depreciatedCostAdjustmentErrorStatus(message)).json({ error: message });
   }
 });
 

@@ -154,7 +154,7 @@ export async function ensureSalesReconciliationSchema(pool) {
         match_status = ANY (
           ARRAY[
             'exact', 'normalized', 'secondary', 'multiple', 'unmatched',
-            'manual_verified'
+            'address', 'manual_verified'
           ]::text[]
         )
       );

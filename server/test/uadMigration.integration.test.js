@@ -542,7 +542,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    assert.equal(salesComparisonFields.rows[0].count, 229);
+    assert.equal(salesComparisonFields.rows[0].count, 240);
 
     const salesComparisonLocations = await pool.query(`
       SELECT count(*)::integer AS count,
@@ -551,10 +551,10 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    // Earlier source-section migrations plus Sections 22A-22E provide the
+    // Earlier source-section migrations plus Sections 22A-22F provide the
     // canonical comparable/grid locations and their subject redisplays.
-    assert.equal(salesComparisonLocations.rows[0].count, 246);
-    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 83);
+    assert.equal(salesComparisonLocations.rows[0].count, 265);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 92);
 
     const officialSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
@@ -617,7 +617,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND rule_id LIKE 'HN-UAD-SALES-COMPARISON-%'
     `);
-    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 24);
+    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 28);
 
     const salesComparisonEntityConstraint = await pool.query(`
       SELECT pg_get_constraintdef(oid) AS definition
@@ -637,6 +637,9 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_cooling_system/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_functional_issue/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_disaster_mitigation/);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_renewable_energy_component/);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_green_certification/);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_efficiency_rating/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /site_body_of_water/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /site_waterfront_feature/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_site_view/);

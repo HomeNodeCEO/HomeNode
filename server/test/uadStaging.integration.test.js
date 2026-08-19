@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 164);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 174);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -406,6 +406,18 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_cooling_system"
       && entity.parent_entity_id === salesComparableDwelling?.id
     ));
+    const salesComparableRenewableEnergy = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_renewable_energy_component"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
+    const salesComparableGreenCertification = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_green_certification"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
+    const salesComparableEfficiencyRating = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_efficiency_rating"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
     assert.ok(salesComparable);
     assert.ok(salesComparableSource);
     assert.ok(salesComparableProjectAmenity);
@@ -418,6 +430,9 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(salesComparableConstruction);
     assert.ok(salesComparableHeating);
     assert.ok(salesComparableCooling);
+    assert.ok(salesComparableRenewableEnergy);
+    assert.ok(salesComparableGreenCertification);
+    assert.ok(salesComparableEfficiencyRating);
     assert.equal(
       siteBuiltEditor.values.find((item) => (
         item.entity_id === salesComparable.id
@@ -489,6 +504,38 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0161"
       ))?.value,
       "Centralized",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_energy_green"
+        && item.uid === "1800.0108"
+      ))?.value,
+      true,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableRenewableEnergy.id
+        && item.context_key === "sales_comparable_renewable_energy_component"
+        && item.uid === "1800.0113"
+      ))?.value,
+      "Solar",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableGreenCertification.id
+        && item.context_key === "sales_comparable_green_certification"
+        && item.uid === "1800.0110"
+      ))?.value,
+      "NGBS Green",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableEfficiencyRating.id
+        && item.context_key === "sales_comparable_efficiency_rating"
+        && item.uid === "1800.0112"
+      ))?.value,
+      "62",
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

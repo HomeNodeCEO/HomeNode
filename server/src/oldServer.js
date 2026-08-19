@@ -70,6 +70,10 @@ import {
   buildSiteValuationStudy,
   siteValuationErrorStatus,
 } from "./services/siteValuation.js";
+import {
+  calculateQualitativeAnalysis,
+  qualitativeAnalysisErrorStatus,
+} from "./util/qualitativeAnalysis.js";
 import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
 import {
   ensureCensusGeographySchema,
@@ -5173,6 +5177,16 @@ app.post("/api/sales/site-valuation", async (req, res) => {
     const message = error?.message || "site_valuation_failed";
     console.error("/api/sales/site-valuation failed", error);
     res.status(siteValuationErrorStatus(message)).json({ error: message });
+  }
+});
+
+/** POST /api/sales/qualitative-analysis — reconcile appraisal bracketing judgments. */
+app.post("/api/sales/qualitative-analysis", (req, res) => {
+  try {
+    res.json(calculateQualitativeAnalysis(req.body || {}, req.body?.comparables || []));
+  } catch (error) {
+    const message = error?.message || "qualitative_analysis_failed";
+    res.status(qualitativeAnalysisErrorStatus(message)).json({ error: message });
   }
 });
 

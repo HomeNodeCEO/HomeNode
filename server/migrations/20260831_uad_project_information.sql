@@ -104,12 +104,12 @@ WITH locations(uid, property_context, report_field_id, location_role, label) AS 
     ('1400.0640','project_information_asset','18.012.2','redisplay','Project Amenity Caption'),
     ('1400.0638','project_information_asset','18.014.1','redisplay','Project Deficiency'),
     ('1400.0640','project_information_asset','18.014.2','redisplay','Project Deficiency Caption'),
-    ('2500.0039','project_blanket_financing','18.037','repeat','Second Lien'),
-    ('2500.0039','project_blanket_financing','18.046','repeat','Third Lien'),
-    ('2500.0039','project_blanket_financing','18.055','repeat','Fourth Lien'),
-    ('2500.0044','project_blanket_financing_calculated','18.045','repeat','Second Lien Pro Rata Share'),
-    ('2500.0044','project_blanket_financing_calculated','18.054','repeat','Third Lien Pro Rata Share'),
-    ('2500.0044','project_blanket_financing_calculated','18.063','repeat','Fourth Lien Pro Rata Share'),
+    ('2500.0039','project_blanket_financing','18.037','redisplay','Second Lien'),
+    ('2500.0039','project_blanket_financing','18.046','redisplay','Third Lien'),
+    ('2500.0039','project_blanket_financing','18.055','redisplay','Fourth Lien'),
+    ('2500.0044','project_blanket_financing_calculated','18.045','redisplay','Second Lien Pro Rata Share'),
+    ('2500.0044','project_blanket_financing_calculated','18.054','redisplay','Third Lien Pro Rata Share'),
+    ('2500.0044','project_blanket_financing_calculated','18.063','redisplay','Fourth Lien Pro Rata Share'),
     ('1400.0638','project_information_asset','18.096.1','primary','Project Exhibit'),
     ('1400.0640','project_information_asset','18.096.2','primary','Project Exhibit Caption')
 )

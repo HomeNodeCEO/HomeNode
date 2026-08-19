@@ -113,6 +113,8 @@ test("seeds the full Section 18 reference catalog and current rules additively",
     "UAD1614", "UAD1615", "UAD1727", "UAD1741",
   ]) assert.match(sql, new RegExp(ruleId));
   assert.match(sql, /HN-UAD-PROJECT-004/);
+  assert.match(sql, /'18\.037','redisplay','Second Lien'/);
+  assert.doesNotMatch(sql, /'repeat'/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

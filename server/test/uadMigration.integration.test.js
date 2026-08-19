@@ -374,6 +374,43 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND rule_id LIKE 'HN-UAD-MARKET-%'
     `);
     assert.equal(homeNodeMarketRules.rows[0].count, 5);
+
+    const projectInformationFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 18
+    `);
+    assert.equal(projectInformationFields.rows[0].count, 95);
+
+    const projectInformationLocations = await pool.query(`
+      SELECT count(*)::integer AS count,
+             count(*) FILTER (WHERE location_role = 'redisplay')::integer AS redisplay_count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 18
+    `);
+    assert.ok(projectInformationLocations.rows[0].count >= 90);
+    assert.ok(projectInformationLocations.rows[0].redisplay_count >= 7);
+
+    const officialProjectInformationRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND (
+           rule_id BETWEEN 'UAD1568' AND 'UAD1615'
+           OR rule_id IN ('UAD1727', 'UAD1741')
+         )
+    `);
+    assert.equal(officialProjectInformationRules.rows[0].count, 50);
+
+    const homeNodeProjectInformationRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-PROJECT-%'
+    `);
+    assert.equal(homeNodeProjectInformationRules.rows[0].count, 4);
   } finally {
     await pool.end();
   }

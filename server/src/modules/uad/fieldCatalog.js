@@ -19,6 +19,11 @@ import {
   UAD_OUTBUILDING_FIELDS,
 } from "./outbuildingCatalog.js";
 import { UAD_OVERALL_QUALITY_CONDITION_FIELDS } from "./overallQualityConditionCatalog.js";
+import {
+  UAD_PROJECT_INFORMATION_ENTITY_GROUPS,
+  UAD_PROJECT_INFORMATION_FIELDS,
+  projectOrPud,
+} from "./projectInformationCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 import {
@@ -44,6 +49,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_VEHICLE_STORAGE_ENTITY_GROUPS,
   ...UAD_SUBJECT_PROPERTY_AMENITIES_ENTITY_GROUPS,
   ...UAD_MARKET_ENTITY_GROUPS,
+  ...UAD_PROJECT_INFORMATION_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -68,6 +74,11 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   overall_quality_condition: { title: "Overall Quality and Condition", officialSectionNumber: 15 },
   highest_best_use: { title: "Highest and Best Use", officialSectionNumber: 16 },
   market: { title: "Market", officialSectionNumber: 17 },
+  project_information: {
+    title: "Project Information",
+    officialSectionNumber: 18,
+    appliesWhen: projectOrPud,
+  },
 });
 
 const inspectionMethods = ["NoInspection", "Physical", "Virtual"];
@@ -545,6 +556,7 @@ const fields = [
   ...UAD_OVERALL_QUALITY_CONDITION_FIELDS,
   ...UAD_HIGHEST_BEST_USE_FIELDS,
   ...UAD_MARKET_FIELDS,
+  ...UAD_PROJECT_INFORMATION_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -766,6 +778,9 @@ export function normalizeAndValidateUadValue(field, rawValue) {
   }
   if (field.dataType === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     return { value: null, error: invalid(field, "date", `${field.label} must use YYYY-MM-DD.`) };
+  }
+  if (field.dataType === "month" && !/^\d{4}-(?:0[1-9]|1[0-2])$/.test(value)) {
+    return { value: null, error: invalid(field, "month", `${field.label} must use YYYY-MM.`) };
   }
   if (field.dataType === "year" && !/^\d{4}$/.test(value)) {
     return { value: null, error: invalid(field, "year", `${field.label} must use YYYY.`) };

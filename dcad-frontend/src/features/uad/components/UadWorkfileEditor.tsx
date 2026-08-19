@@ -59,6 +59,8 @@ const MARKET_CAPTIONS = [
   "AbsorptionRateGraph", "MedianDaysOnMarketGraph", "PercentOfDistressedSalesGraph",
   "PriceTrendGraph", "YearBuiltOfSalesGraph", "MarketAnalysisExhibit",
 ];
+const PROJECT_INFORMATION_GENERAL_CAPTIONS = ["ProjectDeficiency", "ProjectExhibit"];
+const PROJECT_AMENITY_CAPTIONS = ["ProjectAmenity"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -154,6 +156,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const vehicleStorageDefects = editor?.entities.filter((entity) => entity.entity_type === "vehicle_storage_defect") || [];
   const subjectAmenities = editor?.entities.filter((entity) => entity.entity_type === "amenity") || [];
   const subjectAmenityDefects = editor?.entities.filter((entity) => entity.entity_type === "amenity_defect") || [];
+  const projectAmenities = editor?.entities.filter((entity) => entity.entity_type === "project_amenity") || [];
   const homeownerMaintainsExterior = draft[fieldValueKey("subject", "0100.0046")];
   const nonAduUnits = units.filter((unit) => draft[fieldValueKey("unit", "0700.0089", unit.id)] === false);
   const unclassifiedUnits = units.filter((unit) => {
@@ -245,7 +248,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities", "market"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -330,7 +333,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         min={field.minimum ?? (numeric ? 0 : undefined)}
         onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : numeric ? Number(event.target.value) : event.target.value)}
         step={field.dataType === "currency" ? "0.01" : field.dataType === "percentage" ? "any" : undefined}
-        type={numeric ? "number" : field.dataType === "date" ? "date" : "text"}
+        type={numeric ? "number" : field.dataType === "date" ? "date" : field.dataType === "month" ? "month" : "text"}
         value={typeof value === "string" || typeof value === "number" ? value : ""}
       />
     );
@@ -845,6 +848,31 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               workfileId={workfileId}
             />
           )}
+          {activeSection === "project_information" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={PROJECT_INFORMATION_GENERAL_CAPTIONS}
+              description="Upload the required photo for an observed physical project deficiency or add another project exhibit. Captions and images remain isolated to this UAD workfile and are ready for mobile capture through the shared R2 upload path."
+              emptyMessage="No project deficiency photos or general project exhibits uploaded."
+              sectionNumber={18}
+              title="Project information exhibits"
+              visibleCaptionTypes={PROJECT_INFORMATION_GENERAL_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "project_information" && projectAmenities.map((amenity) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={PROJECT_AMENITY_CAPTIONS}
+              description="Optional photos or images document this common amenity or service and display in Project Information Exhibits."
+              emptyMessage="No optional project amenity image uploaded."
+              entityId={amenity.id}
+              key={`project-amenity-${amenity.id}`}
+              sectionNumber={18}
+              title={`${amenity.label || `Project amenity ${amenity.ordinal}`} images`}
+              workfileId={workfileId}
+            />
+          ))}
           {activeSection === "unit_interior" && unitRooms.map((room) => (
             <UadAssetPanel
               accept={SKETCH_IMAGE_ACCEPT}

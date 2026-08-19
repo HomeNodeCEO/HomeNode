@@ -20,6 +20,10 @@ import {
   UAD_MARKET_FIELD_KEYS,
   isVerifiedMarketAsset,
 } from "./marketCatalog.js";
+import {
+  UAD_PROJECT_INFORMATION_FIELD_KEYS,
+  isVerifiedProjectInformationAsset,
+} from "./projectInformationCatalog.js";
 import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
 import { UAD_HIGHEST_BEST_USE_FIELD_KEYS } from "./highestBestUseCatalog.js";
 import { UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS } from "./overallQualityConditionCatalog.js";
@@ -319,6 +323,30 @@ function completionFor(values, entities, assets = []) {
         if (isPresent(byKey.get(`root:${UAD_MARKET_FIELD_KEYS.priceTrendCommentary}`))) completed += 1;
       }
     }
+    if (section === "project_information") {
+      const rootLookup = valueLookup(byKey);
+      const applicable = rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.pud) === true
+        || isPresent(rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.legalStructure));
+      if (applicable) {
+        for (const entityType of ["project_data_source", "project_amenity", "project_utility"]) {
+          if (!entities.some((entity) => entity.entity_type === entityType)) required += 1;
+        }
+        if (
+          rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.projectComplete) === false
+          && !entities.some((entity) => entity.entity_type === "project_incomplete_component")
+        ) required += 1;
+        if (
+          rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.blanketFinancing) === true
+          && !entities.some((entity) => entity.entity_type === "project_blanket_financing")
+        ) required += 1;
+        if (rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.projectDeficiencies) === true) {
+          required += 1;
+          if (assets.some((asset) => isVerifiedProjectInformationAsset(asset, "ProjectDeficiency", null))) {
+            completed += 1;
+          }
+        }
+      }
+    }
     result[section] = {
       completed,
       required,
@@ -396,6 +424,24 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
       }
       const result = normalizeAndValidateUadValue(field, rawValue);
       if (result.error) errors.push({ ...result.error, entity_id: entityId });
+    }
+  }
+
+  if (section === "subject") {
+    const rootLookup = valueLookup(merged);
+    if (
+      rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.pud) === true
+      && isPresent(rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.legalStructure))
+    ) {
+      const field = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+        candidate.key === UAD_PROJECT_INFORMATION_FIELD_KEYS.legalStructure
+      ));
+      errors.push(validationError(
+        field,
+        null,
+        "project_classification_conflict",
+        "A property cannot be classified as both a PUD and a condominium, cooperative, or condop.",
+      ));
     }
   }
 
@@ -1073,6 +1119,179 @@ function validateCompleteSection(section, existingRows, submitted, entities, ass
       code: "market_sale_price_order",
       message: "Sale prices must be ordered from lowest to median to highest.",
     });
+  }
+
+  if (section === "project_information") {
+    const lookup = valueLookup(merged);
+    const projectField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+    const pud = lookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.pud) === true;
+    const legalStructure = lookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.legalStructure);
+    const applicable = pud || isPresent(legalStructure);
+    const classificationField = projectField(UAD_PROJECT_INFORMATION_FIELD_KEYS.legalStructure);
+    if (!applicable) {
+      errors.push(validationError(
+        classificationField,
+        null,
+        "project_information_not_applicable",
+        "Select PUD or a project legal structure in Subject Property before completing Project Information.",
+      ));
+    }
+    if (pud && isPresent(legalStructure)) {
+      errors.push(validationError(
+        classificationField,
+        null,
+        "project_classification_conflict",
+        "A property cannot be classified as both a PUD and a condominium, cooperative, or condop.",
+      ));
+    }
+
+    const requireEntity = (entityType, fieldKey, code, message) => {
+      if (!entities.some((entity) => entity.entity_type === entityType)) {
+        errors.push(validationError(projectField(fieldKey), null, code, message));
+      }
+    };
+    if (applicable) {
+      requireEntity(
+        "project_data_source",
+        "project_data_source:0700.0125",
+        "project_data_source_required",
+        "Add at least one source used for the Project Information section.",
+      );
+      requireEntity(
+        "project_amenity",
+        UAD_PROJECT_INFORMATION_FIELD_KEYS.amenityType,
+        "project_amenity_required",
+        "Add the common amenities and services, or add one record and select None.",
+      );
+      requireEntity(
+        "project_utility",
+        UAD_PROJECT_INFORMATION_FIELD_KEYS.utilityType,
+        "project_utility_required",
+        "Add the utilities included in the mandatory monthly fees, or add one record and select None.",
+      );
+    }
+
+    const validateNoneExclusivity = (entityType, fieldKey, code, label) => {
+      const selected = entities
+        .filter((entity) => entity.entity_type === entityType)
+        .map((entity) => valueLookup(merged, entity.id)(fieldKey))
+        .filter(isPresent);
+      if (selected.includes("None") && selected.length > 1) {
+        errors.push(validationError(
+          projectField(fieldKey),
+          null,
+          code,
+          `Select None by itself, or remove None before adding ${label}.`,
+        ));
+      }
+      if (new Set(selected).size !== selected.length) {
+        errors.push(validationError(
+          projectField(fieldKey),
+          null,
+          `${code}_duplicate`,
+          `Each ${label} may be selected only once.`,
+        ));
+      }
+    };
+    validateNoneExclusivity("project_amenity", UAD_PROJECT_INFORMATION_FIELD_KEYS.amenityType, "project_amenity_none_conflict", "common amenity or service");
+    validateNoneExclusivity("project_utility", UAD_PROJECT_INFORMATION_FIELD_KEYS.utilityType, "project_utility_none_conflict", "included utility");
+
+    if (isPresent(legalStructure)) {
+      const totalUnits = Number(lookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.totalUnits));
+      for (const [key, label] of [
+        [UAD_PROJECT_INFORMATION_FIELD_KEYS.unitsSold, "Units sold"],
+        [UAD_PROJECT_INFORMATION_FIELD_KEYS.unitsForSale, "Units for sale"],
+        [UAD_PROJECT_INFORMATION_FIELD_KEYS.unitsRented, "Units rented"],
+      ]) {
+        const count = Number(lookup(key));
+        if (Number.isFinite(totalUnits) && Number.isFinite(count) && count > totalUnits) {
+          errors.push(validationError(
+            projectField(key),
+            null,
+            "project_unit_count_conflict",
+            `${label} cannot exceed total project units.`,
+          ));
+        }
+      }
+    }
+
+    const incompleteComponents = entities.filter((entity) => entity.entity_type === "project_incomplete_component");
+    const projectComplete = lookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.projectComplete);
+    if (projectComplete === false && !incompleteComponents.length) {
+      errors.push(validationError(
+        projectField(UAD_PROJECT_INFORMATION_FIELD_KEYS.projectComplete),
+        null,
+        "project_incomplete_component_required",
+        "Add at least one incomplete project element when the project is not complete.",
+      ));
+    }
+    if (projectComplete === true && incompleteComponents.length) {
+      errors.push(validationError(
+        projectField(UAD_PROJECT_INFORMATION_FIELD_KEYS.projectComplete),
+        null,
+        "project_incomplete_component_conflict",
+        "Remove incomplete project elements or change Project complete to No.",
+      ));
+    }
+
+    const liens = entities
+      .filter((entity) => entity.entity_type === "project_blanket_financing")
+      .sort((left, right) => left.ordinal - right.ordinal);
+    const blanketFinancing = lookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.blanketFinancing);
+    if (blanketFinancing === true && !liens.length) {
+      errors.push(validationError(
+        projectField(UAD_PROJECT_INFORMATION_FIELD_KEYS.blanketFinancing),
+        null,
+        "project_blanket_financing_lien_required",
+        "Add at least one project blanket-financing lien.",
+      ));
+    }
+    if (blanketFinancing === false && liens.length) {
+      errors.push(validationError(
+        projectField(UAD_PROJECT_INFORMATION_FIELD_KEYS.blanketFinancing),
+        null,
+        "project_blanket_financing_lien_conflict",
+        "Remove project blanket-financing liens or change Project blanket financing to Yes.",
+      ));
+    }
+    if (blanketFinancing === true) {
+      const priorities = ["FirstLien", "SecondLien", "ThirdLien", "FourthLien"];
+      liens.forEach((lien, index) => {
+        const lienLookup = valueLookup(merged, lien.id);
+        if (lienLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.lienPriority) !== priorities[index]) {
+          errors.push(validationError(
+            projectField(UAD_PROJECT_INFORMATION_FIELD_KEYS.lienPriority),
+            lien.id,
+            "project_lien_priority_order",
+            `Lien ${index + 1} must use ${priorities[index]} so blanket financing is reported in lien-priority order.`,
+          ));
+        }
+        if (lienLookup("project_blanket_financing:2500.0151") === true) {
+          const maximum = Number(lienLookup("project_blanket_financing:2500.0153"));
+          const drawn = Number(lienLookup("project_blanket_financing:2500.0155"));
+          if (Number.isFinite(maximum) && Number.isFinite(drawn) && drawn > maximum) {
+            errors.push(validationError(
+              projectField("project_blanket_financing:2500.0155"),
+              lien.id,
+              "project_line_of_credit_balance_conflict",
+              "The drawn line-of-credit amount cannot exceed its maximum amount.",
+            ));
+          }
+        }
+      });
+    }
+
+    if (
+      lookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.projectDeficiencies) === true
+      && !assets.some((asset) => isVerifiedProjectInformationAsset(asset, "ProjectDeficiency", null))
+    ) {
+      errors.push(validationError(
+        projectField(UAD_PROJECT_INFORMATION_FIELD_KEYS.projectDeficiencies),
+        null,
+        "project_deficiency_asset_required",
+        "Upload and verify a photo of the observed physical project deficiency.",
+      ));
+    }
   }
 
   if (section === "unit_interior") {

@@ -299,7 +299,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-17 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-18 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -312,6 +312,20 @@ try {
   }
 
   const sfrWorkfileId = sfrWorkfileResult.rows[0].id;
+  await seedEntityValue(sfrWorkfileId, null, "subject", "0100.0026", "3.010", true);
+  await pool.query(
+    `UPDATE appraisal.uad_field_values
+        SET value = 'true'::jsonb,
+            source_type = 'calculated',
+            source_reference = 'uad_staging_fixture',
+            is_appraiser_confirmed = false,
+            updated_at = now()
+      WHERE workfile_id = $1
+        AND entity_id IS NULL
+        AND field_context = 'subject'
+        AND uad_uid = '0100.0026'`,
+    [sfrWorkfileId],
+  );
   await seedEntityValue(
     sfrWorkfileId,
     null,
@@ -516,6 +530,45 @@ try {
     [null, "market_commentary", "0100.0044", "17.023", "The synthetic subject competes in an established single-family market with balanced supply and typical marketing under three months."],
   ];
   for (const [entityId, context, uid, reportFieldId, value] of marketValues) {
+    await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
+  }
+
+  const projectDataSourceId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "project_data_source",
+    "project-data-source-1",
+    1,
+    "Project Data Source 1",
+  );
+  const projectUtilityId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "project_utility",
+    "project-utility-1",
+    1,
+    "Included Utility 1",
+  );
+  const projectAmenityId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "project_amenity",
+    "project-amenity-1",
+    1,
+    "Common Amenity 1",
+  );
+  const projectValues = [
+    [projectDataSourceId, "project_data_source", "0700.0125", "18.005", "HomeownersAssociation"],
+    [projectUtilityId, "project_utility", "2500.0009", "18.013", "None"],
+    [projectAmenityId, "project_amenity", "2500.0004", "18.012", "Clubhouse"],
+    [null, "project_association_dues", "2500.0007", "18.011", 125],
+    [null, "project_developer", "2500.0067", "18.064", false],
+    [null, "project_information", "2500.0051", "18.070", false],
+    [null, "project_special_assessment", "2500.0163", "18.072", "None"],
+    [null, "project_tax", "2500.0081", "18.073", false],
+    [null, "project_information_commentary", "2500.0170", "18.095", "The synthetic subject is in a PUD with mandatory monthly association dues and common clubhouse access."],
+  ];
+  for (const [entityId, context, uid, reportFieldId, value] of projectValues) {
     await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
   }
 

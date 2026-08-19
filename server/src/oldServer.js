@@ -111,6 +111,14 @@ import {
   normalizeAssignmentFileNumber,
 } from "./services/assignmentFiles.js";
 import {
+  canonicalCustomAppraisalFileName,
+  ensureCustomAppraisalWorkfileSchema,
+  getCustomAppraisalWorkfile,
+  getCustomAppraisalWorkfileDownload,
+  saveCustomAppraisalWorkfileSection,
+  signCustomAppraisalWorkfile,
+} from "./services/customAppraisalWorkfiles.js";
+import {
   analyzePropertyContext,
   getPropertyContextStatus,
   getStoredPropertyContext,
@@ -286,6 +294,29 @@ async function ensureAssignmentFilesAvailable() {
   }
 }
 
+let customAppraisalWorkfilesSchemaReady = false;
+const customAppraisalWorkfilesReady = assignmentFilesReady
+  .then(() => ensureCustomAppraisalWorkfileSchema(pool))
+  .then(() => {
+    customAppraisalWorkfilesSchemaReady = true;
+    console.log("[init] custom appraisal workfile schema ensured");
+  })
+  .catch((error) => {
+    console.warn(
+      "[init] custom appraisal workfile schema failed (will retry on request)",
+      error?.message || error,
+    );
+  });
+
+async function ensureCustomAppraisalWorkfilesAvailable() {
+  await customAppraisalWorkfilesReady;
+  if (!customAppraisalWorkfilesSchemaReady) {
+    await ensureAssignmentFilesAvailable();
+    await ensureCustomAppraisalWorkfileSchema(pool);
+    customAppraisalWorkfilesSchemaReady = true;
+  }
+}
+
 let assignmentDocumentsSchemaReady = false;
 const assignmentDocumentsReady = assignmentFilesReady
   .then(() => ensureAssignmentDocumentsSchema(pool))
@@ -346,9 +377,16 @@ const REPORT_MANUAL_SECTION_KEYS = new Set([
 const ASSIGNMENT_FILE_SELECT = `
   SELECT f.id, f.account_id, f.file_number, f.assignment_details,
          f.inherited_from_file_id, parent.file_number AS inherited_from_file_number,
-         f.reviewer, f.revision, f.created_at, f.updated_at
+         f.reviewer, f.revision, f.created_at, f.updated_at,
+         workfile.workfile_key, workfile.canonical_file_name,
+         workfile.status AS workfile_status,
+         workfile.signed_at AS workfile_signed_at,
+         workfile.signed_by AS workfile_signed_by,
+         workfile.updated_at AS workfile_updated_at
   FROM app.assignment_files f
   LEFT JOIN app.assignment_files parent ON parent.id = f.inherited_from_file_id
+  LEFT JOIN app.custom_appraisal_workfiles workfile
+    ON workfile.assignment_file_id = f.id
 `;
 
 async function mirrorLatestAssignmentDetails(client, accountId, assignmentDetails, reviewer, fileNumber) {
@@ -1320,7 +1358,12 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
     return res.status(400).json({ error: "invalid_account_id" });
   }
   try {
-    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    await Promise.all([
+      accountQualityReady,
+      propertyEnrichmentReady,
+      ensureAssignmentFilesAvailable(),
+      ensureCustomAppraisalWorkfilesAvailable(),
+    ]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
     const accountResult = await pool.query(
       "SELECT 1 FROM core.accounts WHERE account_id = $1",
@@ -1451,7 +1494,12 @@ app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", 
   let assignmentFileId;
   try {
     assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
-    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    await Promise.all([
+      accountQualityReady,
+      propertyEnrichmentReady,
+      ensureAssignmentFilesAvailable(),
+      ensureCustomAppraisalWorkfilesAvailable(),
+    ]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
     const result = await getAssignmentInspectionSketch(pool, canonicalId, assignmentFileId);
     if (!result) return res.status(404).json({ error: "assignment_sketch_not_found" });
@@ -1481,7 +1529,12 @@ app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/report.pdf", a
   let assignmentFileId;
   try {
     assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
-    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    await Promise.all([
+      accountQualityReady,
+      propertyEnrichmentReady,
+      ensureAssignmentFilesAvailable(),
+      ensureCustomAppraisalWorkfilesAvailable(),
+    ]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
     const result = await getAssignmentInspectionSketch(pool, canonicalId, assignmentFileId);
     if (!result) return res.status(404).json({ error: "assignment_sketch_not_found" });
@@ -1617,7 +1670,12 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
     .slice(0, 200) || "HomeNode editor";
   const client = await pool.connect();
   try {
-    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    await Promise.all([
+      accountQualityReady,
+      propertyEnrichmentReady,
+      ensureAssignmentFilesAvailable(),
+      ensureCustomAppraisalWorkfilesAvailable(),
+    ]);
     await client.query("BEGIN");
     const canonicalId = await resolveCanonicalAccountId(client, requestedId);
     const accountResult = await client.query(
@@ -1681,6 +1739,53 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
       [canonicalId, fileNumber, JSON.stringify(assignmentDetails), inheritedFromFileId, reviewer],
     );
     const assignmentFileId = Number(inserted.rows[0].id);
+    await client.query(
+      `INSERT INTO app.custom_appraisal_workfiles (
+         assignment_file_id, canonical_file_name
+       ) VALUES ($1, $2)
+       ON CONFLICT (assignment_file_id) DO NOTHING`,
+      [
+        assignmentFileId,
+        canonicalCustomAppraisalFileName(fileNumber, assignmentFileId),
+      ],
+    );
+    const reportRegistryResult = await client.query(
+      "SELECT to_regclass('app.report_files') AS table_name",
+    );
+    if (reportRegistryResult.rows[0]?.table_name) {
+      const previousRegistryResult = inheritedFromFileId
+        ? await client.query(
+          `SELECT id FROM app.report_files
+            WHERE custom_assignment_file_id = $1`,
+          [inheritedFromFileId],
+        )
+        : { rows: [] };
+      await client.query(
+        `UPDATE app.report_files
+            SET is_current = false, updated_at = now()
+          WHERE organization_id IS NULL
+            AND account_id = $1
+            AND workflow_type = 'custom_appraisal'
+            AND is_current = true`,
+        [canonicalId],
+      );
+      await client.query(
+        `INSERT INTO app.report_files (
+           organization_id, account_id, workflow_type, file_number,
+           previous_report_file_id, custom_assignment_file_id,
+           is_current, registry_revision
+         ) VALUES (NULL, $1, 'custom_appraisal', $2, $3, $4, true, 1)
+         ON CONFLICT (custom_assignment_file_id)
+           WHERE custom_assignment_file_id IS NOT NULL
+         DO UPDATE SET is_current = true, updated_at = now()`,
+        [
+          canonicalId,
+          fileNumber,
+          previousRegistryResult.rows[0]?.id || null,
+          assignmentFileId,
+        ],
+      );
+    }
     await client.query(
       `INSERT INTO app.assignment_file_history (
          assignment_file_id, account_id, file_number, assignment_details, reviewer, revision
@@ -1771,20 +1876,32 @@ app.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
   const assignmentDetails = req.body.assignment_details;
   const client = await pool.connect();
   try {
-    await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
+    await Promise.all([
+      accountQualityReady,
+      propertyEnrichmentReady,
+      ensureAssignmentFilesAvailable(),
+      ensureCustomAppraisalWorkfilesAvailable(),
+    ]);
     await client.query("BEGIN");
     const canonicalId = await resolveCanonicalAccountId(client, requestedId);
     const existingResult = await client.query(
-      `SELECT id, file_number, revision
-       FROM app.assignment_files
-       WHERE id = $1 AND account_id = $2
-       FOR UPDATE`,
+      `SELECT assignment_file.id, assignment_file.file_number, assignment_file.revision,
+              workfile.status AS workfile_status
+       FROM app.assignment_files assignment_file
+       LEFT JOIN app.custom_appraisal_workfiles workfile
+         ON workfile.assignment_file_id = assignment_file.id
+       WHERE assignment_file.id = $1 AND assignment_file.account_id = $2
+       FOR UPDATE OF assignment_file`,
       [assignmentFileId, canonicalId],
     );
     const existing = existingResult.rows[0];
     if (!existing) {
       await client.query("ROLLBACK");
       return res.status(404).json({ error: "assignment_file_not_found" });
+    }
+    if (existing.workfile_status === "signed") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "custom_appraisal_workfile_signed" });
     }
     if (Number(existing.revision) !== expectedRevision) {
       await client.query("ROLLBACK");
@@ -1832,6 +1949,147 @@ app.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
     return res.status(500).json({ error: "assignment_file_update_failed" });
   } finally {
     client.release();
+  }
+});
+
+/** Load all database-backed sections for one Custom Appraisal file. */
+app.get("/api/accounts/:id/assignment-files/:fileId/workfile", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  let assignmentFileId;
+  try {
+    assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await ensureCustomAppraisalWorkfilesAvailable();
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const workfile = await getCustomAppraisalWorkfile(pool, {
+      accountId: canonicalId,
+      assignmentFileId,
+    });
+    return res.json({ ok: true, account_id: canonicalId, workfile });
+  } catch (error) {
+    if (error?.message === "assignment_file_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (String(error?.message || "").startsWith("invalid_")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("custom appraisal workfile load failed", error);
+    return res.status(500).json({ error: "custom_appraisal_workfile_load_failed" });
+  }
+});
+
+/** Download the live draft or immutable signed snapshot under its unique name. */
+app.get("/api/accounts/:id/assignment-files/:fileId/workfile/download", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await ensureCustomAppraisalWorkfilesAvailable();
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const download = await getCustomAppraisalWorkfileDownload(pool, {
+      accountId: canonicalId,
+      assignmentFileId,
+    });
+    const fileName = String(download.canonical_file_name).replace(/[\r\n"]/g, "_");
+    const serialized = `${JSON.stringify(download.snapshot, null, 2)}\n`;
+    res.set({
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${fileName}"`,
+      "Cache-Control": download.immutable ? "private, max-age=86400, immutable" : "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-HomeNode-Immutable": String(download.immutable),
+    });
+    if (download.checksum_sha256) res.set("ETag", `"${download.checksum_sha256}"`);
+    return res.send(serialized);
+  } catch (error) {
+    if (error?.message === "assignment_file_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    console.error("custom appraisal workfile download failed", error);
+    return res.status(500).json({ error: "custom_appraisal_workfile_download_failed" });
+  }
+});
+
+/** Save one independently versioned Custom Appraisal section. */
+app.put("/api/accounts/:id/assignment-files/:fileId/workfile/sections/:sectionKey", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  let assignmentFileId;
+  try {
+    assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await ensureCustomAppraisalWorkfilesAvailable();
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const section = await saveCustomAppraisalWorkfileSection(pool, {
+      accountId: canonicalId,
+      assignmentFileId,
+      sectionKey: req.params.sectionKey,
+      sectionValue: req.body?.value,
+      expectedRevision: req.body?.expected_revision,
+      saveReason: req.body?.save_reason,
+      reviewer: req.body?.reviewer,
+    });
+    return res.json({ ok: true, account_id: canonicalId, assignment_file_id: assignmentFileId, section });
+  } catch (error) {
+    if (error?.message === "assignment_file_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error?.message === "custom_appraisal_section_revision_conflict") {
+      return res.status(409).json({
+        error: error.message,
+        current_revision: Number(error.currentRevision || 0),
+      });
+    }
+    if (error?.message === "custom_appraisal_workfile_signed") {
+      return res.status(409).json({ error: error.message });
+    }
+    if (
+      String(error?.message || "").startsWith("invalid_") ||
+      error?.message === "custom_appraisal_section_too_large"
+    ) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("custom appraisal workfile section save failed", error);
+    return res.status(500).json({ error: "custom_appraisal_workfile_save_failed" });
+  }
+});
+
+/** Create the immutable snapshot that represents the signed/finalized appraisal. */
+app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await ensureCustomAppraisalWorkfilesAvailable();
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const workfile = await signCustomAppraisalWorkfile(pool, {
+      accountId: canonicalId,
+      assignmentFileId,
+      signedBy: req.body?.signed_by || req.body?.reviewer,
+    });
+    return res.json({ ok: true, account_id: canonicalId, workfile });
+  } catch (error) {
+    if (error?.message === "assignment_file_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (["custom_appraisal_workfile_signed", "custom_appraisal_workfile_empty"].includes(error?.message)) {
+      return res.status(409).json({ error: error.message });
+    }
+    if (String(error?.message || "").startsWith("invalid_")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("custom appraisal workfile signing failed", error);
+    return res.status(500).json({ error: "custom_appraisal_workfile_sign_failed" });
   }
 });
 

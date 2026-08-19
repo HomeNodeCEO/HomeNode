@@ -37,7 +37,8 @@ import {
 } from '@/lib/conditionQualityStudy';
 import {
   readAppraisalReportDraft,
-  saveAppraisalReportDraft,
+  removeAppraisalReportDraft,
+  type AppraisalReportSalesDraft,
 } from '@/lib/appraisalReportDraft';
 import {
   readMarketConditionsDraft,
@@ -334,6 +335,11 @@ export default function ComparableSalesAnalysis() {
     const p = new URLSearchParams(location.search);
     return p.get('propertyId') || '';
   }, [location.search]);
+  const requestedAssignmentFileId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const parsed = Number(params.get('assignmentFileId'));
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }, [location.search]);
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [propertyId]);
@@ -503,6 +509,85 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [ratingPersistenceSaving, setRatingPersistenceSaving] = useState(false);
   const [ratingPersistenceError, setRatingPersistenceError] = useState<string | null>(null);
   const [ratingsSavedAt, setRatingsSavedAt] = useState<string | null>(null);
+  const [activeAssignmentFile, setActiveAssignmentFile] =
+    useState<api.AppraisalAssignmentFile | null>(null);
+  const [workfileDraftToRestore, setWorkfileDraftToRestore] =
+    useState<AppraisalReportSalesDraft | null>(null);
+  const [workfileReady, setWorkfileReady] = useState(false);
+  const [workfileSaveStatus, setWorkfileSaveStatus] = useState('Loading appraisal workfile...');
+  const [workfileCanonicalName, setWorkfileCanonicalName] = useState('');
+  const [workfileLocked, setWorkfileLocked] = useState(false);
+  const workfileSectionRevisionRef = useRef(0);
+  const restoredWorkfileSignatureRef = useRef('');
+  const pendingWorkfileSaveRef = useRef<{
+    draft: AppraisalReportSalesDraft;
+    reason: 'autosave' | 'legacy_import';
+  } | null>(null);
+  const workfileSaveInFlightRef = useRef(false);
+  const workfileSaveTimerRef = useRef<number | null>(null);
+  const flushWorkfileSaveRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    let cancelled = false;
+    setActiveAssignmentFile(null);
+    setWorkfileDraftToRestore(null);
+    setWorkfileReady(false);
+    setWorkfileCanonicalName('');
+    setWorkfileLocked(false);
+    workfileSectionRevisionRef.current = 0;
+    restoredWorkfileSignatureRef.current = '';
+    pendingWorkfileSaveRef.current = null;
+    if (!propertyId) {
+      setWorkfileSaveStatus('A property account is required.');
+      return () => { cancelled = true; };
+    }
+    setWorkfileSaveStatus('Loading appraisal workfile...');
+    void api.getAssignmentFiles(propertyId)
+      .then(async (response) => {
+        if (cancelled) return;
+        const selected = requestedAssignmentFileId
+          ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
+          : response.latest_file;
+        const assignmentFile = selected || response.latest_file || null;
+        if (!assignmentFile) {
+          setWorkfileSaveStatus('Create an appraisal file on the Property Report before selecting comparables.');
+          setWorkfileReady(false);
+          return;
+        }
+        setActiveAssignmentFile(assignmentFile);
+        const result = await api.getCustomAppraisalWorkfile(propertyId, assignmentFile.id);
+        if (cancelled) return;
+        const section = result.workfile.sections.sales_comparison;
+        const marketSection = result.workfile.sections.market_conditions;
+        const serverDraft = section?.value as AppraisalReportSalesDraft | undefined;
+        const legacyDraft = !serverDraft ? readAppraisalReportDraft(propertyId) : null;
+        setMarketConditionsDraft(
+          (marketSection?.value as MarketConditionsDraft | undefined) ||
+            readMarketConditionsDraft(propertyId),
+        );
+        workfileSectionRevisionRef.current = Number(section?.revision || 0);
+        setWorkfileCanonicalName(result.workfile.canonical_file_name);
+        setWorkfileLocked(result.workfile.status === 'signed');
+        setWorkfileDraftToRestore(serverDraft || legacyDraft || null);
+        setWorkfileSaveStatus(
+          result.workfile.status === 'signed'
+            ? `Signed workfile · ${result.workfile.canonical_file_name}`
+            : legacyDraft
+              ? 'Importing the prior browser draft into this appraisal file...'
+              : `Database workfile ready · ${result.workfile.canonical_file_name}`,
+        );
+      })
+      .catch((loadError) => {
+        if (!cancelled) {
+          setWorkfileSaveStatus(
+            loadError instanceof Error
+              ? `Workfile could not be loaded: ${loadError.message}`
+              : 'Workfile could not be loaded.',
+          );
+        }
+      });
+    return () => { cancelled = true; };
+  }, [propertyId, requestedAssignmentFileId]);
 
   useEffect(() => {
     setComparableSearchProfile('');
@@ -514,6 +599,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setRecommendationDetailsExpanded(false);
     setRecommendationSummary(null);
     setSalesResults([]);
+    setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
+    setCompAddresses(Array(COMPARABLE_COUNT).fill(''));
+    setCompGla(Array(COMPARABLE_COUNT).fill(null));
+    setCompPrices(Array(COMPARABLE_COUNT).fill(null));
+    setCompConcessions(Array(COMPARABLE_COUNT).fill(null));
+    setCompTimeAdjustments(Array(COMPARABLE_COUNT).fill(null));
+    setCompSaleDates(Array(COMPARABLE_COUNT).fill(''));
+    setCompLandSize(Array(COMPARABLE_COUNT).fill(null));
+    setCompAges(Array(COMPARABLE_COUNT).fill(null));
+    setCompGarage(Array(COMPARABLE_COUNT).fill(null));
+    setCompRooms(Array.from(
+      { length: COMPARABLE_COUNT },
+      () => ({ tot: null, bd: null, full: null, half: null }),
+    ));
     setAppliedGroupedAdjustments({});
     setAppliedConditionQualityAdjustments({});
     setConditionQualityRatings({});
@@ -530,10 +629,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSelectedListings(Array(LISTING_COUNT).fill(null));
     setListingError(null);
     setListingNotice(null);
-  }, [propertyId]);
-
-  useEffect(() => {
-    setMarketConditionsDraft(readMarketConditionsDraft(propertyId));
   }, [propertyId]);
 
   const appraiserDefinedAdjustmentArea = useMemo<AppraiserDefinedAdjustmentArea | null>(() => {
@@ -566,7 +661,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     void api.getAssignmentFiles(propertyId)
       .catch(() => null)
       .then(async (assignmentResponse) => {
-        const assignmentFileId = assignmentResponse?.latest_file?.id || null;
+        const assignmentFileId = activeAssignmentFile?.id || assignmentResponse?.latest_file?.id || null;
         if (propertyContextRefresh === 0) {
           const storedAssessment = await api.getPropertyContextAssessment(
             propertyId,
@@ -603,6 +698,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     marketConditionsReady,
     propertyContextRefresh,
     propertyId,
+    activeAssignmentFile?.id,
   ]);
 
   useEffect(() => {
@@ -860,21 +956,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }),
     [costToCureItems],
   );
-
-  // Preserve edits made in the dedicated Property Tax Protest workspace.
-  useEffect(() => {
-    const draft = propertyId ? readAppraisalReportDraft(propertyId) : null;
-    setSalesNotes(draft?.salesNotes || DEFAULT_SALES_NOTES);
-    setAdjustmentNotes(draft?.adjustmentNotes || DEFAULT_ADJUSTMENT_NOTES);
-    const savedRepairItems = draft?.costToCure?.items || [];
-    setCostToCureItems(
-      savedRepairItems.length
-        ? savedRepairItems.map((item) =>
-            createCostToCureLine(item.description, item.cost),
-          )
-        : [createCostToCureLine()],
-    );
-  }, [propertyId]);
 
   async function generateSummary() {
     try {
@@ -1551,6 +1632,91 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSalesError(null);
   };
 
+  useEffect(() => {
+    if (!activeAssignmentFile) return;
+    const signature = `${activeAssignmentFile.id}:${workfileDraftToRestore?.savedAt || 'empty'}`;
+    if (restoredWorkfileSignatureRef.current === signature) return;
+    restoredWorkfileSignatureRef.current = signature;
+    const draft = workfileDraftToRestore;
+    if (draft && draft.accountId === propertyId && Array.isArray(draft.comparables)) {
+      const ratings = draft.workspace?.conditionQualityRatings || {};
+      setConditionQualityRatings(ratings);
+      setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
+      draft.comparables.slice(0, COMPARABLE_COUNT).forEach((comparable, index) => {
+        applySaleToSlot(comparable.sale, index);
+      });
+      setCompConditions(Array.from({ length: COMPARABLE_COUNT }, (_, index) =>
+        draft.comparables[index]?.condition || ''));
+      setCompQualities(Array.from({ length: COMPARABLE_COUNT }, (_, index) =>
+        draft.comparables[index]?.quality || ''));
+      setCompConcessions(Array.from({ length: COMPARABLE_COUNT }, (_, index) =>
+        draft.comparables[index]?.adjustments.concessions ?? null));
+      setCompTimeAdjustments(Array.from({ length: COMPARABLE_COUNT }, (_, index) =>
+        draft.comparables[index]?.adjustments.time ?? null));
+      setSubjectCondition(draft.subject.condition || '');
+      setSubjectQuality(draft.subject.quality || '');
+      setDraftSubjectCondition(draft.subject.condition || '');
+      setDraftSubjectQuality(draft.subject.quality || '');
+      setSalesNotes(draft.salesNotes || DEFAULT_SALES_NOTES);
+      setAdjustmentNotes(draft.adjustmentNotes || DEFAULT_ADJUSTMENT_NOTES);
+      setCtcNotes(draft.workspace?.ctcNotes || '');
+      const savedRepairItems = draft.costToCure?.items || [];
+      setCostToCureItems(
+        savedRepairItems.length
+          ? savedRepairItems.map((item) => createCostToCureLine(item.description, item.cost))
+          : [createCostToCureLine()],
+      );
+      setSelectedListings([
+        ...(draft.workspace?.selectedListings || []).slice(0, LISTING_COUNT),
+        ...Array(Math.max(0, LISTING_COUNT - (draft.workspace?.selectedListings?.length || 0))).fill(null),
+      ]);
+      setAppliedGroupedAdjustments(
+        (draft.workspace?.appliedGroupedAdjustments || {}) as Record<string, AppliedGroupedAdjustment>,
+      );
+      setAppliedConditionQualityAdjustments(
+        (draft.workspace?.appliedConditionQualityAdjustments || {}) as Partial<
+          Record<'condition' | 'quality', AppliedConditionQualityAdjustment>
+        >,
+      );
+      const search = draft.workspace?.search;
+      if (search?.asOfDate) setSalesAnalysisAsOf(search.asOfDate);
+      if ([12, 24, 36].includes(Number(search?.periodMonths))) {
+        setSalesPeriodMonths(Number(search?.periodMonths) as SalesAnalysisPeriodMonths);
+      }
+      if (search?.comparableSearchProfile && COMPARABLE_SEARCH_PROFILE_OPTIONS.some(
+        (profile) => profile.key === search.comparableSearchProfile,
+      )) {
+        setComparableSearchProfile(search.comparableSearchProfile as ComparableSearchProfileKey);
+      }
+      setIncludeUnmatchedSales(Boolean(search?.includeUnmatchedSales));
+      setSameNeighborhoodOnly(Boolean(search?.sameNeighborhoodOnly));
+      if (Number.isFinite(Number(search?.outlierScoreThreshold))) {
+        setOutlierScoreThreshold(Number(search?.outlierScoreThreshold));
+      }
+    } else {
+      setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
+      setCompAddresses(Array(COMPARABLE_COUNT).fill(''));
+      setCompGla(Array(COMPARABLE_COUNT).fill(null));
+      setCompPrices(Array(COMPARABLE_COUNT).fill(null));
+      setCompConcessions(Array(COMPARABLE_COUNT).fill(null));
+      setCompTimeAdjustments(Array(COMPARABLE_COUNT).fill(null));
+      setCompSaleDates(Array(COMPARABLE_COUNT).fill(''));
+      setCompLandSize(Array(COMPARABLE_COUNT).fill(null));
+      setCompAges(Array(COMPARABLE_COUNT).fill(null));
+      setCompGarage(Array(COMPARABLE_COUNT).fill(null));
+      setCompRooms(Array.from(
+        { length: COMPARABLE_COUNT },
+        () => ({ tot: null, bd: null, full: null, half: null }),
+      ));
+      setSalesNotes(DEFAULT_SALES_NOTES);
+      setAdjustmentNotes(DEFAULT_ADJUSTMENT_NOTES);
+      setCostToCureItems([createCostToCureLine()]);
+    }
+    setWorkfileReady(true);
+  // applySaleToSlot intentionally hydrates all derived grid columns from the saved SaleRow.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAssignmentFile, propertyId, workfileDraftToRestore]);
+
   const addSaleAsComparable = (sale: SaleRow) => {
     if (!marketConditionsDraft) {
       setSalesError('Complete the Market Conditions Analysis on the Property Report before selecting comparable sales.');
@@ -2199,14 +2365,82 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return adjusted > 0 ? adjusted : 0;
   }, [costToCureTotal, opinionMedian]);
 
-  // Keep the current sales-comparison workfile available to the printable
-  // appraisal report. This remains browser-local until a server-side report
-  // workfile is introduced.
+  flushWorkfileSaveRef.current = () => {
+    if (workfileSaveInFlightRef.current || !pendingWorkfileSaveRef.current) return;
+    const pending = pendingWorkfileSaveRef.current;
+    pendingWorkfileSaveRef.current = null;
+    if (!activeAssignmentFile || workfileLocked) return;
+    let editorKey = '';
+    try {
+      editorKey = window.sessionStorage.getItem('homenode-editor-key') || '';
+    } catch {
+      editorKey = '';
+    }
+    if (!editorKey.trim()) {
+      pendingWorkfileSaveRef.current = pending;
+      setWorkfileSaveStatus('Database autosave is paused until the editor key is entered on the Property Report.');
+      return;
+    }
+    workfileSaveInFlightRef.current = true;
+    setWorkfileSaveStatus(`Saving ${activeAssignmentFile.file_number}...`);
+    void api.saveCustomAppraisalWorkfileSection(
+      propertyId,
+      activeAssignmentFile.id,
+      'sales_comparison',
+      {
+        value: pending.draft,
+        expected_revision: workfileSectionRevisionRef.current,
+        save_reason: pending.reason,
+        reviewer: 'HomeNode sales comparison',
+      },
+      editorKey,
+    ).then((response) => {
+      workfileSectionRevisionRef.current = response.section.revision;
+      removeAppraisalReportDraft(propertyId);
+      setWorkfileSaveStatus(
+        `Saved to ${workfileCanonicalName || activeAssignmentFile.file_number} at ${new Date(response.section.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+      );
+    }).catch((saveError) => {
+      const message = saveError instanceof Error ? saveError.message : String(saveError);
+      if (/custom_appraisal_workfile_signed/i.test(message)) {
+        setWorkfileLocked(true);
+        setWorkfileSaveStatus('This signed appraisal is locked. Start another file to make changes.');
+        return;
+      }
+      if (/custom_appraisal_section_revision_conflict/i.test(message)) {
+        pendingWorkfileSaveRef.current = pending;
+        void api.getCustomAppraisalWorkfile(propertyId, activeAssignmentFile.id)
+          .then((result) => {
+            workfileSectionRevisionRef.current = Number(
+              result.workfile.sections.sales_comparison?.revision || 0,
+            );
+            setWorkfileSaveStatus('Reconciling a newer workfile revision...');
+            window.setTimeout(() => flushWorkfileSaveRef.current(), 0);
+          })
+          .catch(() => {
+            setWorkfileSaveStatus('Autosave found a newer revision. Reload before continuing.');
+          });
+        return;
+      }
+      pendingWorkfileSaveRef.current = pending;
+      setWorkfileSaveStatus(`Autosave needs attention: ${message}`);
+    }).finally(() => {
+      workfileSaveInFlightRef.current = false;
+      if (pendingWorkfileSaveRef.current) {
+        window.setTimeout(() => flushWorkfileSaveRef.current(), 0);
+      }
+    });
+  };
+
+  // Save the complete Sales Comparison workspace to the selected appraisal
+  // file. Each top-level workfile section has its own revision, so a market
+  // study save cannot overwrite a simultaneous comparable-grid save.
   useEffect(() => {
-    if (!propertyId || !subject || !selectedSales.some(Boolean)) return;
-    saveAppraisalReportDraft({
-      version: 1,
+    if (!propertyId || !subject || !activeAssignmentFile || !workfileReady || workfileLocked) return;
+    const draft: AppraisalReportSalesDraft = {
+      version: 2,
       accountId: propertyId,
+      assignmentFileId: activeAssignmentFile.id,
       savedAt: new Date().toISOString(),
       source: 'sales-comparison-workspace',
       subject: {
@@ -2251,11 +2485,50 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       },
       salesNotes,
       adjustmentNotes,
-    });
+      workspace: {
+        selectedListings: selectedListings.filter((listing): listing is SaleRow => Boolean(listing)),
+        search: {
+          asOfDate: salesAnalysisAsOf,
+          periodMonths: salesPeriodMonths,
+          comparableSearchProfile,
+          includeUnmatchedSales,
+          sameNeighborhoodOnly,
+          outlierScoreThreshold,
+        },
+        appliedGroupedAdjustments,
+        appliedConditionQualityAdjustments,
+        conditionQualityRatings,
+        ctcNotes,
+      },
+    };
+    pendingWorkfileSaveRef.current = {
+      draft,
+      reason: workfileSectionRevisionRef.current === 0 && Boolean(workfileDraftToRestore)
+        ? 'legacy_import'
+        : 'autosave',
+    };
+    if (workfileSaveTimerRef.current !== null) {
+      window.clearTimeout(workfileSaveTimerRef.current);
+    }
+    workfileSaveTimerRef.current = window.setTimeout(
+      () => flushWorkfileSaveRef.current(),
+      900,
+    );
+    return () => {
+      if (workfileSaveTimerRef.current !== null) {
+        window.clearTimeout(workfileSaveTimerRef.current);
+        workfileSaveTimerRef.current = null;
+      }
+    };
   }, [
     propertyId,
     subject,
+    activeAssignmentFile,
+    workfileReady,
+    workfileLocked,
+    workfileDraftToRestore,
     selectedSales,
+    selectedListings,
     subjectCondition,
     subjectQuality,
     compConditions,
@@ -2277,7 +2550,26 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     opinionAfterCtc,
     salesNotes,
     adjustmentNotes,
+    salesAnalysisAsOf,
+    salesPeriodMonths,
+    comparableSearchProfile,
+    includeUnmatchedSales,
+    sameNeighborhoodOnly,
+    outlierScoreThreshold,
+    appliedGroupedAdjustments,
+    appliedConditionQualityAdjustments,
+    conditionQualityRatings,
+    ctcNotes,
+    workfileCanonicalName,
   ]);
+
+  useEffect(() => () => {
+    if (workfileSaveTimerRef.current !== null) {
+      window.clearTimeout(workfileSaveTimerRef.current);
+      workfileSaveTimerRef.current = null;
+    }
+    flushWorkfileSaveRef.current();
+  }, []);
 
   // Derived room counts for subject column
   const subjectBedrooms = useMemo(() => {
@@ -2925,6 +3217,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             <div className="text-sm opacity-70">
               {subject?.address || `Property ID: ${propertyId || '(none provided)'}`}
             </div>
+            <div className={`mt-1 text-xs font-medium ${
+              workfileLocked ? 'text-amber-700' : 'text-emerald-700'
+            }`}>
+              {activeAssignmentFile
+                ? `${activeAssignmentFile.file_number} · ${workfileSaveStatus}`
+                : workfileSaveStatus}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <a
@@ -2936,7 +3235,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               File My Protest
             </a>
             <a
-              href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}`}
+              href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${
+                activeAssignmentFile
+                  ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
+                  : ''
+              }`}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 border border-blue-600 text-white hover:bg-blue-700"
               aria-label="Generate Full Appraisal PDF"
             >

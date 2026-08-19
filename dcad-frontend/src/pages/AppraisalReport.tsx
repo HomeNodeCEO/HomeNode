@@ -356,12 +356,24 @@ export default function AppraisalReport() {
     }
     setAssignmentLoading(true);
     void api.getAssignmentFiles(propertyId)
-      .then((response) => {
+      .then(async (response) => {
         if (cancelled) return;
         const selected = requestedAssignmentFileId
           ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
           : response.latest_file;
-        setAssignmentFile(selected || response.latest_file || null);
+        const assignment = selected || response.latest_file || null;
+        setAssignmentFile(assignment);
+        if (!assignment) return;
+        const result = await api.getCustomAppraisalWorkfile(propertyId, assignment.id);
+        if (cancelled) return;
+        setDraft(
+          (result.workfile.sections.sales_comparison?.value as AppraisalReportSalesDraft | undefined) ||
+            readAppraisalReportDraft(propertyId),
+        );
+        setMarketDraft(
+          (result.workfile.sections.market_conditions?.value as MarketConditionsDraft | undefined) ||
+            readMarketConditionsDraft(propertyId),
+        );
       })
       .catch(() => {
         if (!cancelled) setAssignmentFile(null);

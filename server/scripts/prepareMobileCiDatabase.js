@@ -16,6 +16,10 @@ const assignmentMigration = await fs.readFile(
   path.resolve(scriptDirectory, "../migrations/005_assignment_files.sql"),
   "utf8",
 );
+const workfileMigration = await fs.readFile(
+  path.resolve(scriptDirectory, "../migrations/20260828_custom_appraisal_workfiles.sql"),
+  "utf8",
+);
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 try {
   const identity = await pool.query("SELECT current_database() AS database_name");
@@ -23,6 +27,7 @@ try {
     throw new Error("CI database name must end with _test");
   }
   await pool.query(assignmentMigration);
+  await pool.query(workfileMigration);
   console.log(JSON.stringify({ prepared: true, database: identity.rows[0].database_name }));
 } finally {
   await pool.end();

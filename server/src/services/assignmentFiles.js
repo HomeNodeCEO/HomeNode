@@ -72,6 +72,14 @@ export function assignmentFileResponse(row) {
     inherited_from_file_number: row.inherited_from_file_number || null,
     reviewer: row.reviewer || null,
     revision: Number(row.revision || 1),
+    workfile: row.workfile_key ? {
+      key: row.workfile_key,
+      canonical_file_name: row.canonical_file_name,
+      status: row.workfile_status || "draft",
+      signed_at: row.workfile_signed_at || null,
+      signed_by: row.workfile_signed_by || null,
+      updated_at: row.workfile_updated_at || row.updated_at,
+    } : null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };

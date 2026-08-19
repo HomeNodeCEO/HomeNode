@@ -8,6 +8,7 @@ import {
 } from "@/lib/appraisalReportDraft";
 import {
   createAssignmentFile,
+  downloadCustomAppraisalWorkfile,
   analyzePropertyContext as runPropertyContextAnalysis,
   getPropertyZoningEvidence,
   getZoningDocumentDescriptionSuggestion,
@@ -21,11 +22,14 @@ import {
   getPropertyContextAssessment,
   runNeighborhoodLandUseAnalysis,
   getAssignmentFiles,
+  getCustomAppraisalWorkfile,
   getAccountPhotos,
   getRelatedParcels,
   lookupAccountCensusGeography,
   savePropertyContextReview,
   savePropertyZoningVerification,
+  saveCustomAppraisalWorkfileSection,
+  signCustomAppraisalWorkfile,
   updateAssignmentFile,
   updatePropertyReportSections,
   type AppraisalAssignmentFile,
@@ -2160,8 +2164,9 @@ function NeighborhoodCharacteristicsContent({
       {accountId ? (
         <section className="border-t border-slate-200 pt-3">
           <MarketConditionsAnalysis
-            key={`property-report-market-conditions-${accountId}`}
+            key={`property-report-market-conditions-${accountId}-${assignmentFileId || "unfiled"}`}
             subjectAccountId={accountId}
+            initialDraft={marketConditionsDraft}
             onCompletionChange={onMarketConditionsChange}
             initialCustomGeometry={assignmentDraft.neighborhood_boundary_geometry}
             initialCustomGeometrySource={assignmentDraft.neighborhood_boundary_source}
@@ -3090,10 +3095,12 @@ function ReportSectionEditor({
 function AddressHero({
   detail,
   accountId,
+  requestedAssignmentFileId,
   onReload,
 }: {
   detail: DcadDetail | null;
   accountId?: string;
+  requestedAssignmentFileId?: number | null;
   onReload: () => Promise<void>;
 }) {
   const [photoIndex, setPhotoIndex] = useState(0);
@@ -3138,6 +3145,9 @@ function AddressHero({
   const [salesComparisonDraft, setSalesComparisonDraft] = useState<AppraisalReportSalesDraft | null>(
     () => readAppraisalReportDraft(accountId || ""),
   );
+  const marketWorkfileRevisionRef = useRef(0);
+  const marketWorkfileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [workfileStatusMessage, setWorkfileStatusMessage] = useState("");
   const [propertyContext, setPropertyContext] = useState<PropertyComplexityAssessment | null>(
     () => detail?.property_context || null,
   );
@@ -3273,6 +3283,8 @@ function AddressHero({
     setCensusLookupMessage("");
     setUnemploymentLookupMessage("");
     setUnemploymentAutoAttemptedSignature("");
+    marketWorkfileRevisionRef.current = 0;
+    setWorkfileStatusMessage("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
     setPropertyContext(detail?.property_context || null);
@@ -3289,14 +3301,46 @@ function AddressHero({
 
     setAssignmentFilesLoading(true);
     void getAssignmentFiles(accountId)
-      .then((response) => {
+      .then(async (response) => {
         if (cancelled) return;
         setAssignmentFiles(response.files || []);
-        if (response.latest_file) {
-          hydrateAssignmentDraft(response.latest_file.assignment_details);
-          setActiveAssignmentFile(response.latest_file);
-          setAssignmentFileNumber(response.latest_file.file_number);
-          void getPropertyContextAssessment(accountId, response.latest_file.id)
+        const requestedFile = requestedAssignmentFileId
+          ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
+          : null;
+        const selectedFile = requestedFile || response.latest_file;
+        if (selectedFile) {
+          hydrateAssignmentDraft(selectedFile.assignment_details);
+          setActiveAssignmentFile(selectedFile);
+          setAssignmentFileNumber(selectedFile.file_number);
+          try {
+            const workfileResult = await getCustomAppraisalWorkfile(accountId, selectedFile.id);
+            if (cancelled) return;
+            const marketSection = workfileResult.workfile.sections.market_conditions;
+            const salesSection = workfileResult.workfile.sections.sales_comparison;
+            marketWorkfileRevisionRef.current = Number(marketSection?.revision || 0);
+            setMarketConditionsDraft(
+              (marketSection?.value as MarketConditionsDraft | undefined) ||
+                readMarketConditionsDraft(accountId || ""),
+            );
+            setSalesComparisonDraft(
+              (salesSection?.value as AppraisalReportSalesDraft | undefined) ||
+                readAppraisalReportDraft(accountId || ""),
+            );
+            setWorkfileStatusMessage(
+              workfileResult.workfile.status === "signed"
+                ? `Signed and locked: ${workfileResult.workfile.canonical_file_name}`
+                : `Database workfile: ${workfileResult.workfile.canonical_file_name}`,
+            );
+          } catch (workfileError) {
+            if (!cancelled) {
+              setWorkfileStatusMessage(
+                workfileError instanceof Error
+                  ? `Workfile could not be loaded: ${workfileError.message}`
+                  : "Workfile could not be loaded.",
+              );
+            }
+          }
+          void getPropertyContextAssessment(accountId, selectedFile.id)
             .then((assessment) => {
               if (cancelled || !assessment) return;
               setPropertyContext(assessment);
@@ -3326,19 +3370,13 @@ function AddressHero({
     return () => {
       cancelled = true;
     };
-  }, [accountId, detail?.assignment_details, detail?.property_context, detailLoaded]);
-
-  useEffect(() => {
-    const refreshSalesComparisonDraft = () => {
-      setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
-    };
-    window.addEventListener("focus", refreshSalesComparisonDraft);
-    window.addEventListener("storage", refreshSalesComparisonDraft);
-    return () => {
-      window.removeEventListener("focus", refreshSalesComparisonDraft);
-      window.removeEventListener("storage", refreshSalesComparisonDraft);
-    };
-  }, [accountId]);
+  }, [
+    accountId,
+    detail?.assignment_details,
+    detail?.property_context,
+    detailLoaded,
+    requestedAssignmentFileId,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3780,6 +3818,42 @@ function AddressHero({
   const updateMarketConditions = (draft: MarketConditionsDraft | null) => {
     setMarketConditionsDraft(draft);
     if (!draft) return;
+    if (accountId && activeAssignmentFile) {
+      const editorKey = editorKeyForSave();
+      if (editorKey) {
+        setWorkfileStatusMessage(`Saving market study to ${activeAssignmentFile.file_number}...`);
+        marketWorkfileSaveQueueRef.current = marketWorkfileSaveQueueRef.current
+          .catch(() => undefined)
+          .then(async () => {
+            const response = await saveCustomAppraisalWorkfileSection(
+              accountId,
+              activeAssignmentFile.id,
+              "market_conditions",
+              {
+                value: draft,
+                expected_revision: marketWorkfileRevisionRef.current,
+                save_reason: marketWorkfileRevisionRef.current === 0
+                  ? "legacy_import"
+                  : "manual_save",
+                reviewer: "HomeNode market conditions",
+              },
+              editorKey,
+            );
+            marketWorkfileRevisionRef.current = response.section.revision;
+            setWorkfileStatusMessage(
+              `Market study saved to ${activeAssignmentFile.workfile?.canonical_file_name || activeAssignmentFile.file_number}.`,
+            );
+          })
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            setWorkfileStatusMessage(
+              /custom_appraisal_workfile_signed/i.test(message)
+                ? "This appraisal is signed and locked. Start another file to change its market study."
+                : `Market study save needs attention: ${message}`,
+            );
+          });
+      }
+    }
     const medianDom = reconciledMedianDaysOnMarket(draft.response);
     const marketChange = draft.response.recommendation.recommended_change_percent;
     const marketTrend = marketTrendFromRecommendation(draft.response.recommendation.conclusion);
@@ -4319,6 +4393,12 @@ function AddressHero({
       setAssignmentFiles((current) => [created, ...current.filter((file) => file.id !== created.id)]);
       setActiveAssignmentFile(created);
       setAssignmentFileNumber(created.file_number);
+      marketWorkfileRevisionRef.current = 0;
+      setMarketConditionsDraft(null);
+      setSalesComparisonDraft(null);
+      setWorkfileStatusMessage(
+        `New database workfile: ${created.workfile?.canonical_file_name || created.file_number}`,
+      );
       setAssignmentDirty(false);
       setAssignmentSaveMessage(`New appraisal file ${created.file_number} saved.`);
     } catch (error) {
@@ -4418,6 +4498,10 @@ function AddressHero({
     setAssignmentDraft(assignmentDraftFromDetail());
     setActiveAssignmentFile(null);
     setAssignmentFileNumber("");
+    marketWorkfileRevisionRef.current = 0;
+    setMarketConditionsDraft(null);
+    setSalesComparisonDraft(null);
+    setWorkfileStatusMessage("");
     setAssignmentDirty(false);
     setAssignmentSaveMessage("Enter a unique file number to begin a fresh appraisal assignment.");
   };
@@ -4484,6 +4568,96 @@ function AddressHero({
     }
   };
 
+  const finalizeCustomAppraisalFile = async () => {
+    if (!accountId || !activeAssignmentFile) return;
+    const blockers = [
+      ...assignmentValidationErrors(assignmentDraft),
+      ...neighborhoodBoundaryReadinessErrors(assignmentDraft),
+      ...(salesComparisonDraft?.comparables?.length
+        ? []
+        : ["Complete and save the Sales Comparison Approach before finalizing."]),
+      ...(assignmentDirty ? ["Save the current Property Report changes before finalizing."] : []),
+    ];
+    if (blockers.length) {
+      setAssignmentSaveMessage(`Cannot finalize yet: ${blockers.join(" ")}`);
+      return;
+    }
+    const confirmed = window.confirm(
+      `Finalize and lock ${activeAssignmentFile.file_number}? This creates the immutable signed snapshot. Future changes must be made in a new appraisal file.`,
+    );
+    if (!confirmed) return;
+    const signedBy = window.prompt(
+      "Enter the appraiser name that is signing/finalizing this file:",
+      activeAssignmentFile.reviewer || "",
+    )?.trim();
+    if (!signedBy) return;
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    setSavingAssignmentFile(true);
+    try {
+      await marketWorkfileSaveQueueRef.current;
+      const response = await signCustomAppraisalWorkfile(
+        accountId,
+        activeAssignmentFile.id,
+        { signed_by: signedBy },
+        editorKey,
+      );
+      const workfile = response.workfile;
+      const updatedFile: AppraisalAssignmentFile = {
+        ...activeAssignmentFile,
+        workfile: {
+          key: workfile.workfile_key,
+          canonical_file_name: workfile.canonical_file_name,
+          status: workfile.status,
+          signed_at: workfile.signed_at,
+          signed_by: workfile.signed_by,
+          updated_at: workfile.updated_at,
+        },
+      };
+      setActiveAssignmentFile(updatedFile);
+      setAssignmentFiles((current) => current.map((file) =>
+        file.id === updatedFile.id ? updatedFile : file
+      ));
+      setWorkfileStatusMessage(
+        `Signed and locked: ${workfile.canonical_file_name} · SHA-256 ${workfile.checksum_sha256 || "recorded"}`,
+      );
+      setAssignmentSaveMessage(
+        `Finalized ${activeAssignmentFile.file_number}. The signed snapshot is immutable.`,
+      );
+    } catch (error) {
+      setAssignmentSaveMessage(
+        error instanceof Error ? error.message : "The appraisal file could not be finalized.",
+      );
+    } finally {
+      setSavingAssignmentFile(false);
+    }
+  };
+
+  const downloadCustomAppraisalFile = async (file: AppraisalAssignmentFile) => {
+    if (!accountId) return;
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    setWorkfileStatusMessage(`Preparing ${file.workfile?.canonical_file_name || file.file_number}...`);
+    try {
+      const download = await downloadCustomAppraisalWorkfile(accountId, file.id, editorKey);
+      const objectUrl = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = download.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      setWorkfileStatusMessage(
+        `${download.immutable ? "Immutable signed file" : "Current database draft"} downloaded as ${download.fileName}.`,
+      );
+    } catch (error) {
+      setWorkfileStatusMessage(
+        error instanceof Error ? error.message : "The appraisal workfile could not be downloaded.",
+      );
+    }
+  };
+
   const editSection = (key: ReportManualSectionKey) => {
     const section = EDITABLE_REPORT_SECTIONS.find((item) => item.key === key);
     if (section) setEditingSection(section);
@@ -4532,7 +4706,8 @@ function AddressHero({
     ownerName,
   );
   const assignmentSaveDisabled = Boolean(
-    assignmentFilesLoading || savingAssignmentFile || !assignmentDirty,
+    assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
+      activeAssignmentFile?.workfile?.status === "signed",
   );
   const priorAssignmentFiles = activeAssignmentFile
     ? assignmentFiles.filter((file) => file.id !== activeAssignmentFile.id)
@@ -4578,8 +4753,13 @@ function AddressHero({
       <section className="border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-end">
           {activeAssignmentFile ? (
-            <span className="mb-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-              Active file {activeAssignmentFile.file_number}
+            <span className={`mb-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+              activeAssignmentFile.workfile?.status === "signed"
+                ? "bg-amber-100 text-amber-900"
+                : "bg-emerald-100 text-emerald-800"
+            }`}>
+              {activeAssignmentFile.workfile?.status === "signed" ? "Signed file" : "Active file"}{" "}
+              {activeAssignmentFile.file_number}
             </span>
           ) : null}
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
@@ -4631,6 +4811,11 @@ function AddressHero({
               </button>
             )}
           </div>
+          {workfileStatusMessage ? (
+            <p className="mt-2 break-all text-right text-[11px] font-medium text-slate-600">
+              {workfileStatusMessage}
+            </p>
+          ) : null}
         </div>
 
         <details className={`mt-3 rounded-xl border px-3 py-2 ${
@@ -4674,6 +4859,11 @@ function AddressHero({
                           Current
                         </span>
                       ) : null}
+                      {file.workfile?.status === "signed" ? (
+                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-900">
+                          Signed &amp; locked
+                        </span>
+                      ) : null}
                       <span className="mx-2 text-slate-300">|</span>
                       Created {formatDate(file.created_at)}
                       <span className="mx-2 text-slate-300">|</span>
@@ -4686,6 +4876,11 @@ function AddressHero({
                             : ""}
                         </span>
                       ) : null}
+                      {file.workfile?.canonical_file_name ? (
+                        <span className="block break-all pt-1 font-mono text-[10px] text-slate-500">
+                          {file.workfile.canonical_file_name}
+                        </span>
+                      ) : null}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <a
@@ -4696,7 +4891,14 @@ function AddressHero({
                       >
                         View File
                       </a>
-                      {isActiveFile ? (
+                      <button
+                        type="button"
+                        className="btn btn-sm normal-case"
+                        onClick={() => void downloadCustomAppraisalFile(file)}
+                      >
+                        {file.workfile?.status === "signed" ? "Download Signed File" : "Download Draft"}
+                      </button>
+                      {isActiveFile && file.workfile?.status !== "signed" ? (
                         <button
                           type="button"
                           className="btn btn-sm normal-case"
@@ -4704,6 +4906,16 @@ function AddressHero({
                           disabled={savingAssignmentFile}
                         >
                           Record Revision Request
+                        </button>
+                      ) : null}
+                      {isActiveFile && file.workfile?.status !== "signed" ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm normal-case border-amber-600 bg-amber-600 text-white hover:bg-amber-700"
+                          onClick={() => void finalizeCustomAppraisalFile()}
+                          disabled={savingAssignmentFile}
+                        >
+                          Finalize &amp; Lock
                         </button>
                       ) : null}
                     </div>
@@ -6228,7 +6440,11 @@ function AddressHero({
           <a
             href={
               accountId
-                ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}`
+                ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}${
+                    activeAssignmentFile
+                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
+                      : ""
+                  }`
                 : "#"
             }
             aria-label="Sales Comparison Approach"
@@ -6317,6 +6533,11 @@ export default function PropertyReport() {
     const params = new URLSearchParams(location.search);
     return params.get("account_id") || params.get("account") || "";
   }, [location.search, routeAccountId]);
+  const requestedAssignmentFileId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const parsed = Number(params.get("assignmentFileId"));
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }, [location.search]);
 
   const account = presetAccount;
   const [detail, setDetail] = useState<DcadDetail | null>(null);
@@ -6405,7 +6626,12 @@ export default function PropertyReport() {
         className="container mx-auto space-y-4 px-4 py-4"
         data-report-subject-loaded={detail ? "true" : "false"}
       >
-        <AddressHero detail={detail} accountId={account} onReload={importFromDatabase} />
+        <AddressHero
+          detail={detail}
+          accountId={account}
+          requestedAssignmentFileId={requestedAssignmentFileId}
+          onReload={importFromDatabase}
+        />
       </main>
     </div>
   );

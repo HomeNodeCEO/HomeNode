@@ -357,6 +357,14 @@ export interface AppraisalAssignmentFile {
   inherited_from_file_number: string | null;
   reviewer: string | null;
   revision: number;
+  workfile: {
+    key: string;
+    canonical_file_name: string;
+    status: 'draft' | 'signed' | 'archived';
+    signed_at: string | null;
+    signed_by: string | null;
+    updated_at: string;
+  } | null;
   created_at: string;
   updated_at: string;
   custom_appraisal_sections?: Record<string, {
@@ -456,6 +464,34 @@ export interface AssignmentFilesResponse {
   files: AppraisalAssignmentFile[];
   latest_file: AppraisalAssignmentFile | null;
   legacy_assignment_details: AssignmentDetailsPayload | null;
+}
+
+export interface CustomAppraisalWorkfileSection<T extends object = Record<string, unknown>> {
+  value: T;
+  revision: number;
+  updated_by: string;
+  updated_at: string;
+}
+
+export interface CustomAppraisalWorkfile {
+  assignment_file_id: number;
+  file_number: string;
+  workfile_key: string;
+  canonical_file_name: string;
+  schema_version: number;
+  status: 'draft' | 'signed' | 'archived';
+  signed_at: string | null;
+  signed_by: string | null;
+  created_at: string;
+  updated_at: string;
+  signed_snapshot: {
+    id: string;
+    checksum_sha256: string;
+    signed_at: string;
+    signed_by: string;
+  } | null;
+  sections: Record<string, CustomAppraisalWorkfileSection>;
+  checksum_sha256?: string;
 }
 
 export interface SalePhoto {
@@ -2322,6 +2358,110 @@ export async function updateAssignmentFile(
       body: JSON.stringify(input),
     },
   );
+}
+
+/** Load the database-backed, file-specific Custom Appraisal workfile. */
+export async function getCustomAppraisalWorkfile(
+  accountId: string,
+  assignmentFileId: number,
+): Promise<{ ok: true; account_id: string; workfile: CustomAppraisalWorkfile }> {
+  const id = (accountId || '').trim();
+  return fetchJSON(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile`,
+    ),
+  );
+}
+
+/** Save one workfile section without overwriting another page's appraisal data. */
+export async function saveCustomAppraisalWorkfileSection<T extends object>(
+  accountId: string,
+  assignmentFileId: number,
+  sectionKey: string,
+  input: {
+    value: T;
+    expected_revision: number;
+    save_reason?: 'autosave' | 'manual_save' | 'legacy_import';
+    reviewer?: string;
+  },
+  editorKey: string,
+): Promise<{
+  ok: true;
+  account_id: string;
+  assignment_file_id: number;
+  section: CustomAppraisalWorkfileSection<T> & { key: string };
+}> {
+  const id = (accountId || '').trim();
+  return fetchJSON(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/sections/${encodeURIComponent(sectionKey)}`,
+    ),
+    {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        'x-homenode-editor-key': editorKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+/** Finalize the current file as an immutable, checksummed appraisal snapshot. */
+export async function signCustomAppraisalWorkfile(
+  accountId: string,
+  assignmentFileId: number,
+  input: { signed_by: string },
+  editorKey: string,
+): Promise<{ ok: true; account_id: string; workfile: CustomAppraisalWorkfile }> {
+  const id = (accountId || '').trim();
+  return fetchJSON(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/sign`,
+    ),
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-homenode-editor-key': editorKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+/** Fetch the named database workfile (a live draft or immutable signed snapshot). */
+export async function downloadCustomAppraisalWorkfile(
+  accountId: string,
+  assignmentFileId: number,
+  editorKey: string,
+): Promise<{ blob: Blob; fileName: string; immutable: boolean }> {
+  const id = (accountId || '').trim();
+  const response = await fetch(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/download`,
+    ),
+    { headers: { 'x-homenode-editor-key': editorKey } },
+  );
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      message = payload?.error || message;
+    } catch {
+      // The HTTP status remains actionable when a proxy returns plain text.
+    }
+    throw new Error(message);
+  }
+  const disposition = response.headers.get('content-disposition') || '';
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const quotedName = disposition.match(/filename="([^"]+)"/i)?.[1];
+  const fileName = encodedName ? decodeURIComponent(encodedName) : quotedName || `custom-appraisal-${assignmentFileId}.json`;
+  return {
+    blob: await response.blob(),
+    fileName,
+    immutable: response.headers.get('x-homenode-immutable') === 'true',
+  };
 }
 
 /** Save a desktop review as the next immutable mobile-sketch revision. */

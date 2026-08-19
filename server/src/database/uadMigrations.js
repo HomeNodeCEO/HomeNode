@@ -31,6 +31,7 @@ const MIGRATIONS = Object.freeze([
   "20260907_uad_sales_comparison_water_frontage.sql",
   "20260908_uad_sales_comparison_dwelling.sql",
   "20260909_uad_sales_comparison_energy_green.sql",
+  "20260910_uad_sales_comparison_units.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 

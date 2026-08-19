@@ -747,6 +747,8 @@ try {
   const salesComparableRenewableEnergyId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_renewable_energy_component", "sales-comparable-renewable-energy-1", 1, "Comparable Renewable Energy Component 1");
   const salesComparableGreenCertificationId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_green_certification", "sales-comparable-green-certification-1", 1, "Comparable Green Certification 1");
   const salesComparableEfficiencyRatingId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_efficiency_rating", "sales-comparable-efficiency-rating-1", 1, "Comparable Efficiency Rating 1");
+  const salesComparableUnitId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_unit", "sales-comparable-unit-1", 1, "Comparable Unit 1");
+  const salesComparableAccessibilityId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_unit_accessibility_feature", "sales-comparable-unit-accessibility-1", 1, "Comparable Unit Accessibility 1");
   const comparableNoTransferSourceId = await ensureEntity(
     sfrWorkfileId,
     salesComparableId,
@@ -765,6 +767,8 @@ try {
     [salesComparableId, "sales_comparable_address", "1800.0005", "22.01.17", "TX"],
     [salesComparableId, "sales_comparable_address", "1800.0004", "22.01.17", "75044"],
     [salesComparableId, "sales_comparable_property", "0100.0059", "Does Not Display", 0],
+    [salesComparableId, "sales_comparable_property", "1800.0365", "Does Not Display", 1],
+    [salesComparableId, "sales_comparable_property", "1800.0363", "Does Not Display", 1],
     [salesComparableId, "sales_comparable_proximity", "1800.0065", "22.01.19", { amount: 2.1, unit: "Miles" }],
     [salesComparableId, "sales_comparable_proximity", "1800.0066", "22.01.19", "NorthEast"],
     [salesComparableId, "sales_comparable_listing", "1800.0074", "22.01.20", 449000],
@@ -812,6 +816,7 @@ try {
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0368", "Does Not Display", 1],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0128", "22.05.21", "2004"],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0129", "22.05.21", false],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0125", "22.07.18", "Dwelling"],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0373", "22.05.27", { amount: 0, unit: "SquareFeet" }],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0167", "22.05.39", "Traditional"],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0123", "22.05.51", true],
@@ -842,6 +847,18 @@ try {
     [salesComparableEfficiencyRatingId, "sales_comparable_efficiency_rating", "1800.0111", "22.06.07", "HERS Index"],
     [salesComparableEfficiencyRatingId, "sales_comparable_efficiency_rating", "1800.0112", "22.06.07", "62"],
     [salesComparableId, "sales_comparable_adjustment_energy_green", "1800.0317", "22.06.04", 0],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0287", "Does Not Display", false],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0330", "22.07.26", 3],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0331", "22.07.28", 2],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0332", "22.07.28", 1],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0390", "22.07.30", { amount: 2050, unit: "SquareFeet" }],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0391", "22.07.32", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0392", "22.07.34", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0393", "22.07.36", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0399", "22.07.38", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0394", "22.07.40", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableAccessibilityId, "sales_comparable_unit_accessibility_feature", "1800.0134", "22.07.42", "None"],
+    [salesComparableId, "sales_comparable_adjustment_standard_above", "1800.0317", "22.07.31", 0],
     [salesComparableSourceId, "sales_comparable_data_source", "0700.0125", "22.01.18", "MLS"],
     [salesComparableSourceId, "sales_comparable_data_source", "1800.0347", "22.01.18", "NTREIS-SYNTHETIC-22001"],
   ];

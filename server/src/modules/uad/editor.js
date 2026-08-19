@@ -1966,6 +1966,9 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableRenewableEnergyComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_renewable_energy_component");
     const comparableGreenCertifications = entities.filter((entity) => entity.entity_type === "sales_comparable_green_certification");
     const comparableEfficiencyRatings = entities.filter((entity) => entity.entity_type === "sales_comparable_efficiency_rating");
+    const comparableOutbuildings = entities.filter((entity) => entity.entity_type === "sales_comparable_outbuilding");
+    const comparableUnits = entities.filter((entity) => entity.entity_type === "sales_comparable_unit");
+    const comparableUnitAccessibility = entities.filter((entity) => entity.entity_type === "sales_comparable_unit_accessibility_feature");
     const comparableSiteChildTypes = new Set([
       "sales_comparable_site_hazard",
       "sales_comparable_site_street",
@@ -1985,6 +1988,9 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     );
     const comparableBodyOfWaterIds = new Set(comparableBodiesOfWater.map((entity) => entity.id));
     const comparableDwellingIds = new Set(comparableDwellings.map((entity) => entity.id));
+    const comparableOutbuildingIds = new Set(comparableOutbuildings.map((entity) => entity.id));
+    const comparableStructureIds = new Set([...comparableDwellingIds, ...comparableOutbuildingIds]);
+    const comparableUnitIds = new Set(comparableUnits.map((entity) => entity.id));
 
     if (included === true && !comparables.length) {
       errors.push(validationError(
@@ -2056,6 +2062,30 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_dwelling_orphaned",
         "Every comparable dwelling must be linked to a sales comparable.",
+      ));
+    }
+    if (comparableOutbuildings.some((outbuilding) => !comparableIds.has(outbuilding.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingType),
+        null,
+        "sales_comparable_outbuilding_orphaned",
+        "Every comparable outbuilding must be linked to a sales comparable.",
+      ));
+    }
+    if (comparableUnits.some((unit) => !comparableStructureIds.has(unit.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIdentifier),
+        null,
+        "sales_comparable_unit_orphaned",
+        "Every comparable unit must be linked to a comparable dwelling or outbuilding.",
+      ));
+    }
+    if (comparableUnitAccessibility.some((feature) => !comparableUnitIds.has(feature.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitAccessibility),
+        null,
+        "sales_comparable_unit_accessibility_orphaned",
+        "Every comparable accessibility feature must be linked to a comparable unit.",
       ));
     }
     if ([...comparableConstructionMethods, ...comparableHeatingSystems, ...comparableCoolingSystems]
@@ -2372,6 +2402,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       }
 
       const dwellings = comparableDwellings.filter((dwelling) => dwelling.parent_entity_id === comparable.id);
+      const outbuildings = comparableOutbuildings.filter((outbuilding) => outbuilding.parent_entity_id === comparable.id);
       const functionalIssues = comparableFunctionalIssues.filter((issue) => issue.parent_entity_id === comparable.id);
       const disasterFeatures = comparableDisasterMitigation.filter((feature) => feature.parent_entity_id === comparable.id);
       const renewableEnergyComponents = comparableRenewableEnergyComponents.filter((component) => component.parent_entity_id === comparable.id);
@@ -2610,6 +2641,205 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         );
         for (const system of coolingSystems) {
           conditionalDwellingConflict(system, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystem, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystemOther], "sales_comparable_cooling_system_other_conflict", "Clear the other cooling-system description or select Other.");
+        }
+      }
+
+      const structures = [...dwellings, ...outbuildings];
+      const structureIds = new Set(structures.map((structure) => structure.id));
+      const units = comparableUnits.filter((unit) => structureIds.has(unit.parent_entity_id));
+      const aduUnits = units.filter((unit) => valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === true);
+      const nonAduUnits = units.filter((unit) => valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === false);
+      const reportedNonAduCount = Number(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.nonAduUnitCount));
+      const reportedAduCount = Number(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.aduCount));
+      const reportedDwellingCount = Number(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCount));
+
+      if (!units.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIdentifier),
+          comparable.id,
+          "sales_comparable_unit_required",
+          "Add at least one living unit for this sales comparable.",
+        ));
+      }
+      for (const [key, reported, actual, code, label] of [
+        [UAD_SALES_COMPARISON_FIELD_KEYS.nonAduUnitCount, reportedNonAduCount, nonAduUnits.length, "sales_comparable_non_adu_count_mismatch", "Living units excluding ADUs"],
+        [UAD_SALES_COMPARISON_FIELD_KEYS.aduCount, reportedAduCount, aduUnits.length, "sales_comparable_adu_count_mismatch", "Number of ADUs on property"],
+        [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCount, reportedDwellingCount, dwellings.length, "sales_comparable_dwelling_count_mismatch", "Dwelling count"],
+      ]) {
+        if (Number.isFinite(reported) && reported !== actual) {
+          errors.push(validationError(
+            salesField(key),
+            comparable.id,
+            code,
+            `${label} must equal the saved comparable hierarchy count (${actual}).`,
+          ));
+        }
+      }
+
+      for (const dwelling of dwellings) {
+        const dwellingLookup = valueLookup(merged, dwelling.id);
+        const dwellingUnits = units.filter((unit) => unit.parent_entity_id === dwelling.id);
+        const primaryUnits = dwellingUnits.filter((unit) => valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === false);
+        const reportedUnits = Number(dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingUnits));
+        if (!primaryUnits.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu),
+            dwelling.id,
+            "sales_comparable_dwelling_primary_unit_required",
+            "Each comparable dwelling must contain at least one primary living unit that is not an ADU.",
+          ));
+        }
+        if (Number.isFinite(reportedUnits) && reportedUnits !== dwellingUnits.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingUnits),
+            dwelling.id,
+            "sales_comparable_dwelling_unit_count_mismatch",
+            `Units in structure must equal the saved unit count (${dwellingUnits.length}).`,
+          ));
+        }
+        if (dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableImprovementType) !== "Dwelling") {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableImprovementType),
+            dwelling.id,
+            "sales_comparable_dwelling_improvement_type_invalid",
+            "A comparable dwelling must use Improvement Type Dwelling.",
+          ));
+        }
+      }
+
+      for (const outbuilding of outbuildings) {
+        const outbuildingLookup = valueLookup(merged, outbuilding.id);
+        const outbuildingUnits = units.filter((unit) => unit.parent_entity_id === outbuilding.id);
+        if (!outbuildingUnits.length || outbuildingUnits.some((unit) => valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) !== true)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu),
+            outbuilding.id,
+            "sales_comparable_outbuilding_adu_required",
+            "A comparable outbuilding in Unit(s) must contain at least one ADU and cannot contain a primary living unit.",
+          ));
+        }
+        if (
+          outbuildingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingImprovementType) !== "Outbuilding"
+          || outbuildingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingRealProperty) !== true
+        ) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingImprovementType),
+            outbuilding.id,
+            "sales_comparable_outbuilding_classification_invalid",
+            "A comparable outbuilding in Unit(s) must be classified as real-property Improvement Type Outbuilding.",
+          ));
+        }
+        conditionalDwellingConflict(
+          outbuilding,
+          UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingType,
+          "Other",
+          [UAD_SALES_COMPARISON_FIELD_KEYS.comparableOutbuildingOther],
+          "sales_comparable_outbuilding_other_conflict",
+          "Clear the other outbuilding description or select Other.",
+        );
+      }
+
+      const structureIdentifiers = dwellings.map((structure) => ({
+        structure,
+        key: UAD_SALES_COMPARISON_FIELD_KEYS.comparableDwellingStructureIdentifier,
+        identifier: valueLookup(merged, structure.id)(UAD_SALES_COMPARISON_FIELD_KEYS.comparableDwellingStructureIdentifier),
+      }));
+      if (nonAduUnits.length > 1 || reportedNonAduCount > 1) {
+        for (const { structure, key, identifier } of structureIdentifiers) {
+          if (!isPresent(identifier)) {
+            errors.push(validationError(
+              salesField(key),
+              structure.id,
+              "sales_comparable_structure_identifier_required",
+              "Provide a unique Structure Identifier for each dwelling when the comparable has more than one primary living unit.",
+            ));
+          }
+        }
+      }
+      const savedStructureIdentifiers = structureIdentifiers.map(({ identifier }) => identifier).filter(isPresent);
+      if (new Set(savedStructureIdentifiers).size !== savedStructureIdentifiers.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.comparableDwellingStructureIdentifier),
+          comparable.id,
+          "sales_comparable_structure_identifier_duplicate",
+          "Structure identifiers must be unique within a sales comparable.",
+        ));
+      }
+
+      const unitIdentifiers = units.map((unit) => ({
+        unit,
+        identifier: valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIdentifier),
+      }));
+      if (nonAduUnits.length > 1 || aduUnits.length > 0) {
+        for (const { unit, identifier } of unitIdentifiers) {
+          if (!isPresent(identifier)) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIdentifier),
+              unit.id,
+              "sales_comparable_unit_identifier_required",
+              "Provide a unique Unit Identifier when the comparable has multiple primary units or any ADU.",
+            ));
+          }
+        }
+      }
+      const savedUnitIdentifiers = unitIdentifiers.map(({ identifier }) => identifier).filter(isPresent);
+      if (new Set(savedUnitIdentifiers).size !== savedUnitIdentifiers.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitIdentifier),
+          comparable.id,
+          "sales_comparable_unit_identifier_duplicate",
+          "Unit identifiers must be unique within a sales comparable.",
+        ));
+      }
+
+      for (const unit of units) {
+        const parentDwelling = dwellings.find((dwelling) => dwelling.id === unit.parent_entity_id);
+        const design = parentDwelling
+          ? valueLookup(merged, parentDwelling.id)(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign)
+          : null;
+        const unitLookup = valueLookup(merged, unit.id);
+        if (
+          attachment === "Attached"
+          && ["Lowrise", "Midrise", "Highrise"].includes(design)
+          && !isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitFloor))
+        ) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitFloor),
+            unit.id,
+            "sales_comparable_unit_floor_required",
+            "Provide Floor Number for each attached low-rise, mid-rise, or high-rise comparable unit.",
+          ));
+        }
+
+        const accessibility = comparableUnitAccessibility.filter((feature) => feature.parent_entity_id === unit.id);
+        const selectedAccessibility = accessibility
+          .map((feature) => valueLookup(merged, feature.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitAccessibility))
+          .filter(isPresent);
+        if (new Set(selectedAccessibility).size !== selectedAccessibility.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitAccessibility),
+            unit.id,
+            "sales_comparable_unit_accessibility_duplicate",
+            "Each accessibility feature may be selected only once for a comparable unit.",
+          ));
+        }
+        if (selectedAccessibility.includes("None") && selectedAccessibility.length > 1) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.unitAccessibility),
+            unit.id,
+            "sales_comparable_unit_accessibility_none_conflict",
+            "Select None by itself, or remove None before adding another accessibility feature.",
+          ));
+        }
+        for (const feature of accessibility) {
+          conditionalDwellingConflict(
+            feature,
+            UAD_SALES_COMPARISON_FIELD_KEYS.unitAccessibility,
+            "Other",
+            [UAD_SALES_COMPARISON_FIELD_KEYS.unitAccessibilityOther],
+            "sales_comparable_unit_accessibility_other_conflict",
+            "Clear the other accessibility description or select Other.",
+          );
         }
       }
 

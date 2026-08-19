@@ -1,4 +1,6 @@
 import { UAD_PROJECT_AMENITY_TYPES } from "./projectInformationCatalog.js";
+import { UAD_OUTBUILDING_TYPES } from "./outbuildingCatalog.js";
+import { UAD_UNIT_ACCESSIBILITY_TYPES } from "./unitInteriorCatalog.js";
 
 export const UAD_SALES_COMPARISON_CAPTION_TYPES = Object.freeze([
   "PropertyPhoto",
@@ -356,6 +358,35 @@ const energyGreenChild = (group, entityType, uid, reportFieldId, label, dataType
   label,
   dataType,
   { entityType, ...options },
+);
+const unitComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — unit summaries",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
+const unitChild = (group, entityType, contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  group,
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType, ...options },
+);
+const unitAdjustment = (contextKey, reportFieldId, label) => unitComp(
+  contextKey,
+  "1800.0317",
+  reportFieldId,
+  label,
+  "currency",
+  {
+    maximum: 999999999,
+    guidance: "Enter the supported adjustment, including zero when applicable. The MISMO adjustment type is derived from this row's typed context.",
+  },
 );
 
 export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
@@ -1014,6 +1045,137 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     guidance: "Enter the supported adjustment, including zero when applicable. The MISMO adjustment type is derived as EnergyEfficientAndGreenFeatures.",
   }),
 
+  unitComp("sales_comparable_property", "1800.0365", "Does Not Display", "Living units excluding ADUs", "integer", {
+    requiredWhen: salesComparisonIncluded,
+    minimum: 1,
+    maximum: 9,
+    guidance: "Enter the number of primary living units. This must agree with the saved comparable unit records that are not ADUs.",
+  }),
+  unitComp("sales_comparable_property", "1800.0363", "Does Not Display", "Dwelling count", "integer", {
+    requiredWhen: salesComparisonIncluded,
+    minimum: 1,
+    maximum: 9,
+    guidance: "Enter the number of dwelling structures. This must agree with the saved comparable dwelling records.",
+  }),
+
+  unitChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0125", "22.07.18", "Improvement type", "enum", {
+    options: ["Dwelling"],
+    required: true,
+    initialValue: "Dwelling",
+  }),
+  unitChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "0300.0065", "22.07.17", "Structure identifier", "string", {
+    maxLength: 30,
+    guidance: "Required for each dwelling when the comparable has more than one primary living unit.",
+  }),
+
+  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0125", "22.07.18", "Improvement type", "enum", {
+    options: ["Outbuilding"],
+    required: true,
+    initialValue: "Outbuilding",
+  }),
+  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0366", "Does Not Display", "Outbuilding is real property", "boolean", {
+    required: true,
+    initialValue: true,
+  }),
+  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0126", "22.07.18", "Outbuilding type", "enum", {
+    options: UAD_OUTBUILDING_TYPES,
+    required: true,
+  }),
+  unitChild("Comparable outbuildings containing an ADU", "sales_comparable_outbuilding", "sales_comparable_outbuilding", "1800.0127", "22.07.18", "Other outbuilding type", "string", {
+    maxLength: 21,
+    showWhen: { key: "sales_comparable_outbuilding:1800.0126", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_outbuilding:1800.0126", equals: "Other" },
+  }),
+
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0287", "Does Not Display", "Accessory dwelling unit", "boolean", {
+    required: true,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0159", "22.07.17", "Unit identifier", "string", {
+    maxLength: 25,
+    guidance: "Required when the comparable has more than one primary living unit or any ADU.",
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0154", "22.07.20", "Floor number", "string", {
+    maxLength: 3,
+    guidance: "Required for attached low-rise, mid-rise, and high-rise dwelling units.",
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0153", "22.07.22", "Corner unit", "boolean"),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0156", "22.07.24", "Levels in unit", "integer", {
+    minimum: 1,
+    maximum: 99,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0330", "22.07.26", "Bedrooms", "integer", {
+    required: true,
+    minimum: 0,
+    maximum: 99,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0331", "22.07.28", "Full bathrooms", "integer", {
+    required: true,
+    minimum: 0,
+    maximum: 99,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0332", "22.07.28", "Half bathrooms", "integer", {
+    required: true,
+    minimum: 0,
+    maximum: 99,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0390", "22.07.30", "Standard finished area above grade", "measurement", {
+    required: true,
+    units: ["SquareFeet"],
+    minimum: 0,
+    maximum: 999999,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0391", "22.07.32", "Nonstandard finished area above grade", "measurement", {
+    units: ["SquareFeet"],
+    minimum: 0,
+    maximum: 999999,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0392", "22.07.34", "Unfinished area above grade", "measurement", {
+    units: ["SquareFeet"],
+    minimum: 0,
+    maximum: 999999,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0393", "22.07.36", "Standard finished area below grade", "measurement", {
+    required: true,
+    units: ["SquareFeet"],
+    minimum: 0,
+    maximum: 999999,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0399", "22.07.38", "Nonstandard finished area below grade", "measurement", {
+    units: ["SquareFeet"],
+    minimum: 0,
+    maximum: 999999,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0394", "22.07.40", "Unfinished area below grade", "measurement", {
+    required: true,
+    units: ["SquareFeet"],
+    minimum: 0,
+    maximum: 999999,
+  }),
+
+  unitChild("Comparable unit accessibility features", "sales_comparable_unit_accessibility_feature", "sales_comparable_unit_accessibility_feature", "1800.0134", "22.07.42", "Accessibility feature", "enum", {
+    options: UAD_UNIT_ACCESSIBILITY_TYPES,
+    required: true,
+  }),
+  unitChild("Comparable unit accessibility features", "sales_comparable_unit_accessibility_feature", "sales_comparable_unit_accessibility_feature", "1800.0135", "22.07.42", "Other accessibility feature", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_unit_accessibility_feature:1800.0134", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_unit_accessibility_feature:1800.0134", equals: "Other" },
+  }),
+
+  unitAdjustment("sales_comparable_adjustment_adu_location", "22.07.19", "ADU location adjustment"),
+  unitAdjustment("sales_comparable_adjustment_unit_floor", "22.07.21", "Floor number adjustment"),
+  unitAdjustment("sales_comparable_adjustment_corner_unit", "22.07.23", "Corner unit adjustment"),
+  unitAdjustment("sales_comparable_adjustment_unit_levels", "22.07.25", "Unit levels adjustment"),
+  unitAdjustment("sales_comparable_adjustment_bedrooms", "22.07.27", "Bedroom count adjustment"),
+  unitAdjustment("sales_comparable_adjustment_bathrooms", "22.07.29", "Bathroom count adjustment"),
+  unitAdjustment("sales_comparable_adjustment_standard_above", "22.07.31", "Standard finished area above grade adjustment"),
+  unitAdjustment("sales_comparable_adjustment_nonstandard_above", "22.07.33", "Nonstandard finished area above grade adjustment"),
+  unitAdjustment("sales_comparable_adjustment_unfinished_above", "22.07.35", "Unfinished area above grade adjustment"),
+  unitAdjustment("sales_comparable_adjustment_standard_below", "22.07.37", "Standard finished area below grade adjustment"),
+  unitAdjustment("sales_comparable_adjustment_nonstandard_below", "22.07.39", "Nonstandard finished area below grade adjustment"),
+  unitAdjustment("sales_comparable_adjustment_unfinished_below", "22.07.41", "Unfinished area below grade adjustment"),
+  unitAdjustment("sales_comparable_adjustment_accessibility", "22.07.43", "Accessibility feature adjustment"),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1251,11 +1413,36 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     parentEntityType: "sales_comparable",
     showWhen: comparableEfficiencyRatingExists,
   }),
+  sales_comparable_outbuilding: Object.freeze({
+    title: "Comparable outbuildings containing an ADU",
+    addLabel: "Add comparable outbuilding ADU",
+    minItems: 0,
+    maxItems: 10,
+    parentEntityType: "sales_comparable",
+    showWhen: salesComparisonIncluded,
+  }),
+  sales_comparable_unit: Object.freeze({
+    title: "Comparable living units",
+    addLabel: "Add comparable living unit",
+    minItems: 0,
+    maxItems: 99,
+    parentEntityTypes: ["sales_comparable_dwelling", "sales_comparable_outbuilding"],
+    showWhen: salesComparisonIncluded,
+  }),
+  sales_comparable_unit_accessibility_feature: Object.freeze({
+    title: "Comparable unit accessibility features",
+    addLabel: "Add accessibility feature",
+    minItems: 0,
+    maxItems: UAD_UNIT_ACCESSIBILITY_TYPES.length,
+    parentEntityType: "sales_comparable_unit",
+    showWhen: salesComparisonIncluded,
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   included: "sales_comparison_scope:1000.0032",
   ordinal: "sales_comparable:1800.0192",
+  aduCount: "sales_comparable_property:0100.0059",
   dataSourceType: "sales_comparable_data_source:0700.0125",
   dataSourceIdentifier: "sales_comparable_data_source:1800.0347",
   dataSourceOther: "sales_comparable_data_source:0700.0126",
@@ -1362,6 +1549,30 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   efficiencyRatingName: "sales_comparable_efficiency_rating:1800.0111",
   efficiencyRatingScore: "sales_comparable_efficiency_rating:1800.0112",
   energyGreenAdjustment: "sales_comparable_adjustment_energy_green:1800.0317",
+  nonAduUnitCount: "sales_comparable_property:1800.0365",
+  dwellingCount: "sales_comparable_property:1800.0363",
+  comparableImprovementType: "sales_comparable_dwelling:1800.0125",
+  comparableDwellingStructureIdentifier: "sales_comparable_dwelling:0300.0065",
+  comparableOutbuildingImprovementType: "sales_comparable_outbuilding:1800.0125",
+  comparableOutbuildingRealProperty: "sales_comparable_outbuilding:1800.0366",
+  comparableOutbuildingType: "sales_comparable_outbuilding:1800.0126",
+  comparableOutbuildingOther: "sales_comparable_outbuilding:1800.0127",
+  unitIsAdu: "sales_comparable_unit:1800.0287",
+  unitIdentifier: "sales_comparable_unit:1800.0159",
+  unitFloor: "sales_comparable_unit:1800.0154",
+  unitCorner: "sales_comparable_unit:1800.0153",
+  unitLevels: "sales_comparable_unit:1800.0156",
+  unitBedrooms: "sales_comparable_unit:1800.0330",
+  unitFullBaths: "sales_comparable_unit:1800.0331",
+  unitHalfBaths: "sales_comparable_unit:1800.0332",
+  unitStandardAbove: "sales_comparable_unit:1800.0390",
+  unitNonstandardAbove: "sales_comparable_unit:1800.0391",
+  unitUnfinishedAbove: "sales_comparable_unit:1800.0392",
+  unitStandardBelow: "sales_comparable_unit:1800.0393",
+  unitNonstandardBelow: "sales_comparable_unit:1800.0399",
+  unitUnfinishedBelow: "sales_comparable_unit:1800.0394",
+  unitAccessibility: "sales_comparable_unit_accessibility_feature:1800.0134",
+  unitAccessibilityOther: "sales_comparable_unit_accessibility_feature:1800.0135",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

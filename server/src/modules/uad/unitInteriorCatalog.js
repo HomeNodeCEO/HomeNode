@@ -83,10 +83,10 @@ const DATA_SOURCE_TYPES = [
   "PhysicalMeasurement", "PlansAndSpecifications", "PlatMap", "PreviousAppraisalFile", "PropertyDataReport",
   "PropertyManagementCompany", "PropertyOwner", "PropertyTenant", "RealEstateAgent", "ThreeDimensionalScan", "Zoning",
 ];
-const ACCESSIBILITY_TYPES = [
+export const UAD_UNIT_ACCESSIBILITY_TYPES = Object.freeze([
   "Appliances", "Auditory", "Bathtub", "Cabinets", "Counters", "Doorways", "ElectricalSwitches",
   "GrabBars", "Handrails", "Hardware", "Lighting", "None", "Other", "Ramps", "Shower", "Sink", "Toilet",
-];
+]);
 
 const field = (group, contextKey, entityType, uid, reportFieldId, label, dataType, options = {}) => ({
   section: "unit_interior",
@@ -240,7 +240,7 @@ export const UAD_UNIT_INTERIOR_FIELDS = [
   unit("Quality, condition, and accessibility", "unit", "0700.0066", "10.035", "Interior condition rating", "enum", { required: true, options: ["C1", "C2", "C3", "C4", "C5", "C6"] }),
   unit("Quality, condition, and accessibility", "unit", "0700.0117", "10.043", "Overall bathroom update status", "enum", { required: true, options: ["FullyUpdated", "SignificantlyUpdated", "ModeratelyUpdated", "NotUpdated"] }),
   unit("Quality, condition, and accessibility", "unit", "0700.0122", "10.049", "Overall flooring update status", "enum", { required: true, options: ["FullyUpdated", "SignificantlyUpdated", "ModeratelyUpdated", "NotUpdated"] }),
-  unit("Quality, condition, and accessibility", "unit_accessibility", "0700.0005", "10.050", "Accessibility features", "multi_enum", { required: true, options: ACCESSIBILITY_TYPES }),
+  unit("Quality, condition, and accessibility", "unit_accessibility", "0700.0005", "10.050", "Accessibility features", "multi_enum", { required: true, options: UAD_UNIT_ACCESSIBILITY_TYPES }),
   unit("Quality, condition, and accessibility", "unit_accessibility", "0700.0006", "10.050", "Other accessibility feature", "string", { maxLength: 33, showWhen: { key: "unit_accessibility:0700.0005", contains: "Other" }, requiredWhen: { key: "unit_accessibility:0700.0005", contains: "Other" } }),
   unit("Quality, condition, and accessibility", "unit_accessibility", "0700.0007", "10.051", "Accessibility commentary", "text", { maxLength: 296 }),
 

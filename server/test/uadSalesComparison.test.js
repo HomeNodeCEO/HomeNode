@@ -39,13 +39,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22J editor on canonical comparable entities", () => {
+test("adds the Section 22A-22K editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 242);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 242);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 246);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 246);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -118,6 +118,8 @@ test("accepts a complete settled comparable with a source and verified property 
   const walls = { id: "a24d53de-9c6e-441e-8b60-9958866649de", entity_type: "sales_comparable_interior_component", parent_entity_id: unit.id, ordinal: 2, data: {} };
   const values = [
     value(null, "sales_comparison_scope", "1000.0032", true),
+    value(null, "subject", "1600.0007", "Q3"),
+    value(null, "subject", "1600.0006", "C3"),
     value(comparable.id, "sales_comparable", "1800.0192", 1),
     value(comparable.id, "sales_comparable_address", "1800.0001", "1234 Oak Street"),
     value(comparable.id, "sales_comparable_address", "1800.0003", "Garland"),
@@ -127,6 +129,8 @@ test("accepts a complete settled comparable with a source and verified property 
     value(comparable.id, "sales_comparable_property", "1800.0365", 1),
     value(comparable.id, "sales_comparable_property", "1800.0363", 1),
     value(comparable.id, "sales_comparable_property", "1800.0364", false),
+    value(comparable.id, "sales_comparable_property", "1800.0197", "Q3"),
+    value(comparable.id, "sales_comparable_property", "1800.0196", "C3"),
     value(comparable.id, "sales_comparable_proximity", "1800.0065", { amount: 0, unit: "Miles" }),
     value(comparable.id, "sales_comparable_listing", "1800.0075", "SettledSale"),
     value(comparable.id, "sales_comparable_sale", "1800.0272", 425000),
@@ -537,6 +541,28 @@ test("validates Section 22J ADU ratings, kitchens, interior components, and subj
   );
 });
 
+test("validates Section 22K subject and comparable overall quality and condition", () => {
+  const comparable = { id: "69ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const errors = validateCompleteSection(
+    "sales_comparison",
+    [],
+    [value(null, "sales_comparison_scope", "1000.0032", true)],
+    [comparable],
+  );
+  const codes = errors.map((error) => error.code);
+  for (const code of [
+    "sales_comparison_subject_overall_quality_required",
+    "sales_comparison_subject_overall_condition_required",
+    "sales_comparable_overall_quality_required",
+    "sales_comparable_overall_condition_required",
+  ]) assert.equal(codes.includes(code), true, code);
+
+  const quality = getUadField("sales_comparable_property", "1800.0197");
+  const conditionAdjustment = getUadField("sales_comparable_adjustment_overall_condition", "1800.0317");
+  assert.deepEqual(quality.options, ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]);
+  assert.equal(normalizeAndValidateUadValue(conditionAdjustment, -12500).error, null);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -706,6 +732,20 @@ test("seeds Section 22J ADU interior report locations and shared official rules 
   assert.match(sql, /'1800\.0296','sales_comparable_interior_component','22\.10\.28'/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-ADU-003/);
   assert.match(runner, /20260913_uad_sales_comparison_adu_interior\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22K overall ratings, typed aggregate adjustments, and official rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260914_uad_sales_comparison_overall_quality_condition.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const ruleId of ["UAD1434", "UAD1435"]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /OverallQualityRating/);
+  assert.match(sql, /OverallConditionRating/);
+  assert.match(sql, /'1600\.0007','subject','22\.11\.01'/);
+  assert.match(sql, /'1800\.0197','sales_comparable_property','22\.11\.03'/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-OVERALL-QC-003/);
+  assert.match(runner, /20260914_uad_sales_comparison_overall_quality_condition\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

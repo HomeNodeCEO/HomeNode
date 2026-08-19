@@ -434,6 +434,15 @@ const unitAdjustment = (contextKey, reportFieldId, label) => unitComp(
     guidance: "Enter the supported adjustment, including zero when applicable. The MISMO adjustment type is derived from this row's typed context.",
   },
 );
+const overallQualityConditionComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — overall quality and condition",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
 
 export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   field(
@@ -1384,6 +1393,25 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     required: true,
   }),
 
+  overallQualityConditionComp("sales_comparable_property", "1800.0197", "22.11.03", "Overall quality rating", "enum", {
+    options: UAD_QUALITY_RATINGS,
+    requiredWhen: salesComparisonIncluded,
+    guidance: "Reconcile the comparable's exterior, primary-unit, and ADU quality into one Q1–Q6 rating.",
+  }),
+  overallQualityConditionComp("sales_comparable_adjustment_overall_quality", "1800.0317", "22.11.04", "Overall quality adjustment", "currency", {
+    maximum: 999999999,
+    guidance: "Enter the single supported aggregate quality adjustment. Use zero when the analysis supports no adjustment.",
+  }),
+  overallQualityConditionComp("sales_comparable_property", "1800.0196", "22.11.05", "Overall condition rating", "enum", {
+    options: UAD_CONDITION_RATINGS,
+    requiredWhen: salesComparisonIncluded,
+    guidance: "Reconcile the comparable's exterior, primary-unit, and ADU condition into one C1–C6 rating.",
+  }),
+  overallQualityConditionComp("sales_comparable_adjustment_overall_condition", "1800.0317", "22.11.06", "Overall condition adjustment", "currency", {
+    maximum: 999999999,
+    guidance: "Enter the single supported aggregate condition adjustment. Use zero when the analysis supports no adjustment.",
+  }),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1883,6 +1911,10 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   subjectKitchenQualitySummary: "sales_comparison_subject_kitchen_summary:1800.0323",
   subjectInteriorQualitySummary: "sales_comparison_subject_interior_quality_summary:1800.0293",
   subjectInteriorConditionSummary: "sales_comparison_subject_interior_condition_summary:1800.0292",
+  overallQuality: "sales_comparable_property:1800.0197",
+  overallQualityAdjustment: "sales_comparable_adjustment_overall_quality:1800.0317",
+  overallCondition: "sales_comparable_property:1800.0196",
+  overallConditionAdjustment: "sales_comparable_adjustment_overall_condition:1800.0317",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

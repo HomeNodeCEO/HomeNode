@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 242);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 246);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -641,6 +641,22 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0364"
       ))?.value,
       true,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_property"
+        && item.uid === "1800.0197"
+      ))?.value,
+      "Q3",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_adjustment_overall_condition"
+        && item.uid === "1800.0317"
+      ))?.value,
+      0,
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

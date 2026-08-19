@@ -542,7 +542,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    assert.equal(salesComparisonFields.rows[0].count, 322);
+    assert.equal(salesComparisonFields.rows[0].count, 328);
 
     const salesComparisonLocations = await pool.query(`
       SELECT count(*)::integer AS count,
@@ -553,8 +553,8 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     // Earlier source-section migrations plus Sections 22A-22I provide the
     // canonical comparable/grid locations and their subject redisplays.
-    assert.equal(salesComparisonLocations.rows[0].count, 422);
-    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 174);
+    assert.equal(salesComparisonLocations.rows[0].count, 428);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 176);
 
     const officialSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
@@ -646,13 +646,21 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.equal(officialSalesComparisonAduInteriorRules.rows[0].count, 3);
 
+    const officialSalesComparisonOverallQualityRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN ('UAD1434', 'UAD1435')
+    `);
+    assert.equal(officialSalesComparisonOverallQualityRules.rows[0].count, 2);
+
     const homeNodeSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
         FROM uad_ref.compliance_rules
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND rule_id LIKE 'HN-UAD-SALES-COMPARISON-%'
     `);
-    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 50);
+    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 53);
 
     const salesComparisonEntityConstraint = await pool.query(`
       SELECT pg_get_constraintdef(oid) AS definition

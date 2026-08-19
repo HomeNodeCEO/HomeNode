@@ -769,6 +769,15 @@ try {
     1,
     "Comparable Project Amenity 1",
   );
+  const salesComparableAmenityId = await ensureEntity(
+    sfrWorkfileId,
+    salesComparableId,
+    "sales_comparable_amenity",
+    "sales-comparable-amenity-deck-1",
+    1,
+    "Comparable Outdoor Living Amenity 1",
+    { amenity_category: "OutdoorLiving" },
+  );
   const salesComparableHazardId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_hazard", "sales-comparable-site-hazard-1", 1, "Comparable Hazard Zone 1");
   const salesComparableStreetId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_street", "sales-comparable-site-street-1", 1, "Comparable Access Street 1");
   const salesComparableFeatureId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_feature", "sales-comparable-site-feature-1", 1, "Comparable Site Characteristic 1");
@@ -825,6 +834,11 @@ try {
     [salesComparableId, "sales_comparable_adjustment_overall_quality", "1800.0317", "22.11.04", 0],
     [salesComparableId, "sales_comparable_property", "1800.0196", "22.11.05", "C3"],
     [salesComparableId, "sales_comparable_adjustment_overall_condition", "1800.0317", "22.11.06", 0],
+    [salesComparableId, "sales_comparable_property", "1800.0199", "Does Not Display", true],
+    [salesComparableAmenityId, "sales_comparable_amenity_outdoor_living", "1800.0256", "Does Not Display", "OutdoorLiving"],
+    [salesComparableAmenityId, "sales_comparable_amenity_outdoor_living", "1800.0257", "22.12.08", 1],
+    [salesComparableAmenityId, "sales_comparable_amenity_outdoor_living", "1800.0258", "22.12.08", "Deck"],
+    [salesComparableId, "sales_comparable_adjustment_outdoor_living_amenity", "1800.0317", "22.12.09", 0],
     [salesComparableId, "sales_comparable_proximity", "1800.0065", "22.01.19", { amount: 2.1, unit: "Miles" }],
     [salesComparableId, "sales_comparable_proximity", "1800.0066", "22.01.19", "NorthEast"],
     [salesComparableId, "sales_comparable_listing", "1800.0074", "22.01.20", 449000],

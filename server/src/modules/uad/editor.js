@@ -26,6 +26,7 @@ import {
 } from "./projectInformationCatalog.js";
 import { UAD_PRIOR_TRANSFER_FIELD_KEYS } from "./priorSaleTransferCatalog.js";
 import {
+  UAD_SALES_COMPARABLE_AMENITY_FIELD_KEYS,
   UAD_SALES_COMPARISON_FIELD_KEYS,
   isVerifiedSalesComparisonAsset,
 } from "./salesComparisonCatalog.js";
@@ -476,6 +477,13 @@ function completionFor(values, entities, assets = []) {
             ));
             if (!amenities.length) required += 1;
           }
+          if (
+            comparableLookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAmenitiesExist) === true
+            && !entities.some((entity) => (
+              entity.entity_type === "sales_comparable_amenity"
+              && entity.parent_entity_id === comparable.id
+            ))
+          ) required += 1;
           const comparableDwellings = entities.filter((entity) => (
             entity.entity_type === "sales_comparable_dwelling"
             && entity.parent_entity_id === comparable.id
@@ -2068,6 +2076,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableExteriorComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_exterior_component");
     const comparableKitchens = entities.filter((entity) => entity.entity_type === "sales_comparable_kitchen");
     const comparableInteriorComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_interior_component");
+    const comparableAmenities = entities.filter((entity) => entity.entity_type === "sales_comparable_amenity");
     const subjectExteriorFeatures = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature");
     const subjectExteriorSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_exterior_quality_summary");
     const subjectUnits = entities.filter((entity) => entity.entity_type === "unit");
@@ -2216,6 +2225,14 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_unit_accessibility_orphaned",
         "Every comparable accessibility feature must be linked to a comparable unit.",
+      ));
+    }
+    if (comparableAmenities.some((amenity) => !comparableIds.has(amenity.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.amenityOutdoorLivingType),
+        null,
+        "sales_comparable_amenity_orphaned",
+        "Every comparable property amenity must be linked to a sales comparable.",
       ));
     }
     if (comparableExteriorComponents.some((component) => !comparableDwellingIds.has(component.parent_entity_id))) {
@@ -2508,6 +2525,94 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
           "sales_comparable_overall_condition_required",
           "Provide the reconciled C1–C6 Overall Condition rating for this sales comparable.",
         ));
+      }
+
+      const propertyAmenitiesExist = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAmenitiesExist);
+      const propertyAmenities = comparableAmenities.filter((amenity) => amenity.parent_entity_id === comparable.id);
+      if (propertyAmenitiesExist === true && !propertyAmenities.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAmenitiesExist),
+          comparable.id,
+          "sales_comparable_amenity_required",
+          "Add at least one property amenity when this comparable has property amenities.",
+        ));
+      }
+      if (propertyAmenitiesExist === false && propertyAmenities.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAmenitiesExist),
+          comparable.id,
+          "sales_comparable_amenity_conflict",
+          "Remove the comparable property amenity records or change Property amenities exist to Yes.",
+        ));
+      }
+      const amenityIdentities = new Set();
+      for (const amenity of propertyAmenities) {
+        const category = amenity.data?.amenity_category;
+        const keys = UAD_SALES_COMPARABLE_AMENITY_FIELD_KEYS[category];
+        if (!keys) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAmenitiesExist),
+            amenity.id,
+            "sales_comparable_amenity_category_invalid",
+            "Select one of the five UAD property amenity categories.",
+          ));
+          continue;
+        }
+        const amenityLookup = valueLookup(merged, amenity.id);
+        const deliveredCategory = amenityLookup(keys.category);
+        const type = amenityLookup(keys.type);
+        if (isPresent(deliveredCategory) && deliveredCategory !== category) {
+          errors.push(validationError(
+            salesField(keys.category),
+            amenity.id,
+            "sales_comparable_amenity_category_conflict",
+            "The delivered amenity category must match the category selected for this record.",
+          ));
+        }
+        if (isPresent(type)) {
+          const identity = `${category}:${type}`;
+          if (amenityIdentities.has(identity)) {
+            errors.push(validationError(
+              salesField(keys.type),
+              amenity.id,
+              "sales_comparable_amenity_duplicate",
+              "Report one record per amenity type and use Amenity count when more than one is present.",
+            ));
+          }
+          amenityIdentities.add(identity);
+        }
+        if (category === "Miscellaneous" && type !== "Other" && isPresent(amenityLookup(keys.typeOther))) {
+          errors.push(validationError(
+            salesField(keys.typeOther),
+            amenity.id,
+            "sales_comparable_amenity_other_conflict",
+            "Clear the other amenity description or select Other.",
+          ));
+        }
+        if (category === "WaterFeatures") {
+          const poolType = ["IngroundPool", "IngroundSpa", "Sauna"].includes(type);
+          const poolFeatures = amenityLookup(keys.poolFeatures);
+          const poolFeatureOther = amenityLookup(keys.poolFeatureOther);
+          if (!poolType && [poolFeatures, poolFeatureOther].some(isPresent)) {
+            errors.push(validationError(
+              salesField(keys.poolFeatures),
+              amenity.id,
+              "sales_comparable_water_feature_detail_conflict",
+              "Clear swimming-pool feature details unless the amenity is an inground pool, inground spa, or sauna.",
+            ));
+          }
+          if (
+            isPresent(poolFeatureOther)
+            && (!Array.isArray(poolFeatures) || !poolFeatures.includes("Other"))
+          ) {
+            errors.push(validationError(
+              salesField(keys.poolFeatureOther),
+              amenity.id,
+              "sales_comparable_water_feature_other_conflict",
+              "Clear the other water-feature detail or select Other.",
+            ));
+          }
+        }
       }
 
       const comparableSources = sources.filter((source) => source.parent_entity_id === comparable.id);

@@ -53,7 +53,7 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
   if (!locked.rows.length) throw new Error("uad_workfile_not_found");
   const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
   let entityData = { ...(input.data || {}) };
-  if (entityType === "amenity") {
+  if (["amenity", "sales_comparable_amenity"].includes(entityType)) {
     const amenityCategory = String(entityData.amenity_category || "").trim();
     if (!UAD_SUBJECT_AMENITY_CATEGORIES.includes(amenityCategory)) {
       throw new Error("invalid_uad_amenity_category");
@@ -90,14 +90,15 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
       throw new Error("invalid_uad_entity_maximum_reached");
     }
   }
-  if (entityType === "amenity") {
+  if (["amenity", "sales_comparable_amenity"].includes(entityType)) {
     const categoryCount = await client.query(
         `SELECT count(*)::integer AS count
            FROM appraisal.uad_entities
           WHERE workfile_id = $1
-            AND entity_type = 'amenity'
-            AND data->>'amenity_category' = $2`,
-        [workfileId, entityData.amenity_category],
+            AND entity_type = $2
+            AND parent_entity_id IS NOT DISTINCT FROM $3::uuid
+            AND data->>'amenity_category' = $4`,
+        [workfileId, entityType, parentEntityId, entityData.amenity_category],
     );
     if (Number(categoryCount.rows[0].count) >= UAD_SUBJECT_AMENITY_CATEGORY_LIMITS[entityData.amenity_category]) {
       throw new Error("invalid_uad_amenity_category_maximum_reached");

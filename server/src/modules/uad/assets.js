@@ -23,6 +23,10 @@ import {
   UAD_PROJECT_INFORMATION_IMAGE_CONTENT_TYPES,
 } from "./projectInformationCatalog.js";
 import {
+  UAD_SALES_CONTRACT_CAPTION_TYPES,
+  UAD_SALES_CONTRACT_IMAGE_CONTENT_TYPES,
+} from "./salesContractCatalog.js";
+import {
   UAD_OUTBUILDING_CAPTION_TYPES,
   UAD_OUTBUILDING_IMAGE_CONTENT_TYPES,
 } from "./outbuildingCatalog.js";
@@ -84,6 +88,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [17, new Set(UAD_MARKET_CAPTION_TYPES)],
   [18, new Set(UAD_PROJECT_INFORMATION_CAPTION_TYPES)],
   [19, new Set(UAD_SUBJECT_LISTING_CAPTION_TYPES)],
+  [20, new Set(UAD_SALES_CONTRACT_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -217,6 +222,15 @@ function normalizeAssetInput(input = {}) {
   if (sectionNumber === 19 && !caption) {
     throw new Error("invalid_uad_subject_listing_asset_caption");
   }
+  if (sectionNumber === 20 && !UAD_SALES_CONTRACT_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_sales_contract_content_type");
+  }
+  if (sectionNumber === 20 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_sales_contract_asset_kind");
+  }
+  if (sectionNumber === 20 && !caption) {
+    throw new Error("invalid_uad_sales_contract_asset_caption");
+  }
   return {
     kind,
     contentType,
@@ -306,6 +320,9 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   }
   if (normalized.sectionNumber === 19 && normalized.entityId) {
     throw new Error("invalid_uad_subject_listing_asset_entity");
+  }
+  if (normalized.sectionNumber === 20 && normalized.entityId) {
+    throw new Error("invalid_uad_sales_contract_asset_entity");
   }
 
   const organizationId = workfileResult.rows[0].organization_id;

@@ -24,6 +24,10 @@ import {
   UAD_PROJECT_INFORMATION_FIELD_KEYS,
   isVerifiedProjectInformationAsset,
 } from "./projectInformationCatalog.js";
+import {
+  UAD_SALES_CONTRACT_FIELD_KEYS,
+  isVerifiedSalesContractAsset,
+} from "./salesContractCatalog.js";
 import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
 import { UAD_HIGHEST_BEST_USE_FIELD_KEYS } from "./highestBestUseCatalog.js";
 import { UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS } from "./overallQualityConditionCatalog.js";
@@ -1416,6 +1420,83 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "subject_listing_total_dom_conflict",
         `Total days on market must equal the ${totalDaysOnMarket} days reported across the listing rows.`,
+      ));
+    }
+  }
+
+  if (section === "sales_contract") {
+    const lookup = valueLookup(merged);
+    const contractField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+    const exists = lookup(UAD_SALES_CONTRACT_FIELD_KEYS.exists);
+    const reviewed = lookup(UAD_SALES_CONTRACT_FIELD_KEYS.reviewed);
+    const concessions = lookup(UAD_SALES_CONTRACT_FIELD_KEYS.concessions);
+    const concessionAmountKnown = lookup(UAD_SALES_CONTRACT_FIELD_KEYS.concessionAmountKnown);
+    const detailKeys = Object.values(UAD_SALES_CONTRACT_FIELD_KEYS).filter((key) => ![
+      UAD_SALES_CONTRACT_FIELD_KEYS.exists,
+      UAD_SALES_CONTRACT_FIELD_KEYS.appraisalEffectiveDate,
+    ].includes(key));
+    const reviewedDetailKeys = [
+      UAD_SALES_CONTRACT_FIELD_KEYS.contractPrice,
+      UAD_SALES_CONTRACT_FIELD_KEYS.contractDate,
+      UAD_SALES_CONTRACT_FIELD_KEYS.transferTerms,
+      UAD_SALES_CONTRACT_FIELD_KEYS.personalProperty,
+      UAD_SALES_CONTRACT_FIELD_KEYS.concessions,
+      UAD_SALES_CONTRACT_FIELD_KEYS.concessionAmountKnown,
+      UAD_SALES_CONTRACT_FIELD_KEYS.totalConcessions,
+      UAD_SALES_CONTRACT_FIELD_KEYS.typicalConcessions,
+    ];
+
+    if (exists === false && detailKeys.some((key) => isPresent(lookup(key)))) {
+      errors.push(validationError(
+        contractField(UAD_SALES_CONTRACT_FIELD_KEYS.exists),
+        null,
+        "sales_contract_absent_detail_conflict",
+        "Clear the saved sales contract details before changing Is there a sales contract to No.",
+      ));
+    }
+    if (exists === false && assets.some((asset) => isVerifiedSalesContractAsset(asset))) {
+      errors.push(validationError(
+        contractField(UAD_SALES_CONTRACT_FIELD_KEYS.exists),
+        null,
+        "sales_contract_asset_conflict",
+        "Remove the verified Sales Contract exhibits before changing Is there a sales contract to No.",
+      ));
+    }
+    if (exists === true && reviewed === false && reviewedDetailKeys.some((key) => isPresent(lookup(key)))) {
+      errors.push(validationError(
+        contractField(UAD_SALES_CONTRACT_FIELD_KEYS.reviewed),
+        null,
+        "sales_contract_unreviewed_detail_conflict",
+        "Clear the discrete contract terms and report any transaction details learned through other sources in Sales Contract Analysis.",
+      ));
+    }
+    if (
+      concessions === false
+      && [
+        UAD_SALES_CONTRACT_FIELD_KEYS.concessionAmountKnown,
+        UAD_SALES_CONTRACT_FIELD_KEYS.totalConcessions,
+        UAD_SALES_CONTRACT_FIELD_KEYS.typicalConcessions,
+      ].some((key) => isPresent(lookup(key)))
+    ) {
+      errors.push(validationError(
+        contractField(UAD_SALES_CONTRACT_FIELD_KEYS.concessions),
+        null,
+        "sales_contract_concession_detail_conflict",
+        "Clear the concession amount details or change Known sales concessions to Yes.",
+      ));
+    }
+    if (
+      concessionAmountKnown === false
+      && [
+        UAD_SALES_CONTRACT_FIELD_KEYS.totalConcessions,
+        UAD_SALES_CONTRACT_FIELD_KEYS.typicalConcessions,
+      ].some((key) => isPresent(lookup(key)))
+    ) {
+      errors.push(validationError(
+        contractField(UAD_SALES_CONTRACT_FIELD_KEYS.concessionAmountKnown),
+        null,
+        "sales_contract_known_amount_conflict",
+        "Clear the total and market-typical answers or change Total sales concessions known to Yes.",
       ));
     }
   }

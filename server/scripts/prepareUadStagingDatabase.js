@@ -359,7 +359,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-19 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-20 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -655,6 +655,24 @@ try {
   ];
   for (const [entityId, context, uid, reportFieldId, value] of subjectListingValues) {
     await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
+  }
+
+  const salesContractValues = [
+    ["sales_contract", "0600.0016", "20.000", true],
+    ["sales_contract", "0600.0010", "20.001", true],
+    ["sales_contract", "0600.0002", "20.002", true],
+    ["sales_contract", "0600.0008", "20.004", 435000],
+    ["sales_contract", "0600.0009", "20.005", "2026-07-15"],
+    ["sales_contract", "0600.0017", "20.006", "TypicallyMotivated"],
+    ["sales_contract", "0600.0004", "20.007", false],
+    ["sales_contract", "0600.0006", "20.008", true],
+    ["sales_contract", "0600.0005", "20.009", true],
+    ["sales_contract", "0600.0011", "20.009", 7500],
+    ["sales_contract", "0600.0007", "20.010", true],
+    ["sales_contract_commentary", "0600.0014", "20.011", "The synthetic arm's-length contract was analyzed. The $7,500 seller-paid financial concession is typical for the market and no personal property is included in the appraiser's final opinion of value."],
+  ];
+  for (const [context, uid, reportFieldId, value] of salesContractValues) {
+    await seedEntityValue(sfrWorkfileId, null, context, uid, reportFieldId, value);
   }
 
   const areaSourceId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_area_data_source", "unit-area-source-1", 1, "Area Source 1");

@@ -448,6 +448,47 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND rule_id LIKE 'HN-UAD-SUBJECT-LISTING-%'
     `);
     assert.equal(homeNodeSubjectListingRules.rows[0].count, 4);
+
+    const salesContractFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 20
+    `);
+    assert.equal(salesContractFields.rows[0].count, 17);
+
+    const salesContractLocations = await pool.query(`
+      SELECT count(*)::integer AS count,
+             count(*) FILTER (WHERE location_role = 'redisplay')::integer AS redisplay_count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND (section_number = 20 OR (
+           property_context = 'sales_contract' AND report_field_id IN (
+             '1.007', '22.01.04', '22.15.03', '26.006', '22.01.05', '22.01.06'
+           )
+         ))
+    `);
+    assert.equal(salesContractLocations.rows[0].count, 24);
+    assert.equal(salesContractLocations.rows[0].redisplay_count, 8);
+
+    const officialSalesContractRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1127', 'UAD1128', 'UAD1129', 'UAD1130', 'UAD1131', 'UAD1132',
+           'UAD1133', 'UAD1134', 'UAD1135', 'UAD1136', 'UAD1728'
+         )
+    `);
+    assert.equal(officialSalesContractRules.rows[0].count, 11);
+
+    const homeNodeSalesContractRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-SALES-CONTRACT-%'
+    `);
+    assert.equal(homeNodeSalesContractRules.rows[0].count, 4);
   } finally {
     await pool.end();
   }

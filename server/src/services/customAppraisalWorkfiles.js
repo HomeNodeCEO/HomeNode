@@ -7,6 +7,7 @@ import {
   loadCustomAppraisalPropertySnapshot,
 } from "./customAppraisalReportPdf.js";
 import { normalizeCostApproachSection } from "./costApproach.js";
+import { normalizeIncomeApproachSection } from "./incomeApproach.js";
 
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
@@ -383,7 +384,9 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
   const sectionValue = normalizeCustomAppraisalSectionValue(
     sectionKey === "cost_approach"
       ? normalizeCostApproachSection(sectionValueInput)
-      : sectionValueInput,
+      : sectionKey === "income_approach"
+        ? normalizeIncomeApproachSection(sectionValueInput)
+        : sectionValueInput,
   );
   const expectedRevision = normalizeCustomAppraisalSectionRevision(expectedRevisionValue);
   const saveReason = normalizeCustomAppraisalSaveReason(saveReasonValue);

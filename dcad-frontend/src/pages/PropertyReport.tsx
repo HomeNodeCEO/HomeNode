@@ -6516,15 +6516,26 @@ function AddressHero({
           >
             Cost Approach
           </a>
-          <button
-            type="button"
-            disabled
-            title="Income Approach is coming soon"
-            aria-label="Income Approach coming soon"
-            className="btn normal-case rounded-md border-slate-200 bg-slate-200 px-4 py-2 text-slate-500"
+          <a
+            href={
+              accountId
+                ? `/IncomeApproach?propertyId=${encodeURIComponent(accountId)}${
+                    activeAssignmentFile
+                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
+                      : ""
+                  }`
+                : "#"
+            }
+            aria-label="Income Approach"
+            aria-disabled={!accountId}
+            className={`btn normal-case rounded-md px-4 py-2 ${
+              accountId
+                ? "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
+                : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
+            }`}
           >
             Income Approach
-          </button>
+          </a>
           <a
             href={protestUrl}
             aria-label="Property Tax Protest"

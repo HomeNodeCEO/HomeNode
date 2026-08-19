@@ -535,6 +535,56 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.match(priorTransferEntityConstraint.rows[0].definition, /subject_prior_transfer/);
     assert.match(priorTransferEntityConstraint.rows[0].definition, /comparable_prior_transfer_data_source/);
+
+    const salesComparisonFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 22
+    `);
+    assert.equal(salesComparisonFields.rows[0].count, 76);
+
+    const salesComparisonLocations = await pool.query(`
+      SELECT count(*)::integer AS count,
+             count(*) FILTER (WHERE location_role = 'redisplay')::integer AS redisplay_count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 22
+    `);
+    // Six subject/contract redisplays were seeded by their source-section
+    // migrations; Section 22A adds 56 canonical comparable/grid locations.
+    assert.equal(salesComparisonLocations.rows[0].count, 62);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 8);
+
+    const officialSalesComparisonRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1218', 'UAD1275', 'UAD1390', 'UAD1391', 'UAD1392', 'UAD1393',
+           'UAD1394', 'UAD1395', 'UAD1396', 'UAD1397', 'UAD1402', 'UAD1403',
+           'UAD1404', 'UAD1428', 'UAD1433', 'UAD1469', 'UAD1477', 'UAD1481',
+           'UAD1731', 'UAD1771', 'UAD1773'
+         )
+    `);
+    assert.equal(officialSalesComparisonRules.rows[0].count, 21);
+
+    const homeNodeSalesComparisonRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-SALES-COMPARISON-%'
+    `);
+    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 4);
+
+    const salesComparisonEntityConstraint = await pool.query(`
+      SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+       WHERE conname = 'uad_entities_entity_type_check'
+         AND conrelid = 'appraisal.uad_entities'::regclass
+    `);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_data_source/);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_right_not_included/);
   } finally {
     await pool.end();
   }

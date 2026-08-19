@@ -350,8 +350,40 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       ))?.value,
       375000,
     );
-    assert.equal(siteBuiltEditor.completion.prior_sale_transfer_history.required, 8);
+    assert.equal(siteBuiltEditor.completion.prior_sale_transfer_history.required, 11);
     assert.equal(siteBuiltEditor.completion.prior_sale_transfer_history.percent, 100);
+    const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
+    assert.equal(section22?.key, "sales_comparison");
+    assert.equal(section22?.applicable, true);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 52);
+    const salesComparable = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable"
+      && entity.entity_identifier === "sales-comparable-1"
+    ));
+    const salesComparableSource = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_data_source"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
+    assert.ok(salesComparable);
+    assert.ok(salesComparableSource);
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_sale"
+        && item.uid === "1800.0272"
+      ))?.value,
+      442500,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableSource.id
+        && item.context_key === "sales_comparable_data_source"
+        && item.uid === "1800.0347"
+      ))?.value,
+      "NTREIS-SYNTHETIC-22001",
+    );
+    assert.ok(siteBuiltEditor.completion.sales_comparison.required > 0);
+    assert.ok(siteBuiltEditor.completion.sales_comparison.percent < 100);
   } finally {
     await pool.end();
   }

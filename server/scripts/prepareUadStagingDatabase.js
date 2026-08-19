@@ -359,7 +359,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-21 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-22A staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -702,6 +702,64 @@ try {
     [null, "comparable_prior_transfer_commentary", "1600.0008", "21.012", "No sales comparables have been selected in the staging fixture. Comparable transfer histories will be analyzed when Section 22 comparable records are added."],
   ];
   for (const [entityId, context, uid, reportFieldId, value] of priorTransferValues) {
+    await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
+  }
+
+  const salesComparableId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "sales_comparable",
+    "sales-comparable-1",
+    1,
+    "Sales Comparable 1",
+  );
+  const salesComparableSourceId = await ensureEntity(
+    sfrWorkfileId,
+    salesComparableId,
+    "sales_comparable_data_source",
+    "sales-comparable-source-1",
+    1,
+    "Comparable Data Source 1",
+  );
+  const comparableNoTransferSourceId = await ensureEntity(
+    sfrWorkfileId,
+    salesComparableId,
+    "comparable_no_prior_transfer_data_source",
+    "sales-comparable-no-transfer-source-1",
+    1,
+    "Comparable No-Transfer Data Source 1",
+  );
+  const salesComparableValues = [
+    [null, "sales_comparison_scope", "1000.0032", "Does Not Display", true],
+    [salesComparableId, "sales_comparable", "1800.0192", "21.007", 1],
+    [salesComparableId, "comparable_prior_transfer_summary", "1800.0198", "21.008", false],
+    [comparableNoTransferSourceId, "comparable_no_prior_transfer_data_source", "0700.0125", "21.011", "MLS"],
+    [salesComparableId, "sales_comparable_address", "1800.0001", "22.01.17", "1250 Forest Lane"],
+    [salesComparableId, "sales_comparable_address", "1800.0003", "22.01.17", "Garland"],
+    [salesComparableId, "sales_comparable_address", "1800.0005", "22.01.17", "TX"],
+    [salesComparableId, "sales_comparable_address", "1800.0004", "22.01.17", "75044"],
+    [salesComparableId, "sales_comparable_property", "0100.0059", "Does Not Display", 0],
+    [salesComparableId, "sales_comparable_proximity", "1800.0065", "22.01.19", { amount: 2.1, unit: "Miles" }],
+    [salesComparableId, "sales_comparable_proximity", "1800.0066", "22.01.19", "NorthEast"],
+    [salesComparableId, "sales_comparable_listing", "1800.0074", "22.01.20", 449000],
+    [salesComparableId, "sales_comparable_listing", "1800.0075", "22.01.21", "SettledSale"],
+    [salesComparableId, "sales_comparable_sale", "1800.0272", "22.01.23", 442500],
+    [salesComparableId, "sales_comparable_sale", "1800.0274", "22.01.24", "TypicallyMotivated"],
+    [salesComparableId, "sales_comparable_financing", "1800.0381", "22.01.26", false],
+    [salesComparableId, "sales_comparable_financing", "1800.0063", "22.01.26", "Conventional"],
+    [salesComparableId, "sales_comparable_concessions", "1800.0370", "22.01.28", false],
+    [salesComparableId, "sales_comparable_contract", "1800.0385", "22.01.30", false],
+    [salesComparableId, "sales_comparable_contract", "1800.0202", "22.01.30", "2026-05-20"],
+    [salesComparableId, "sales_comparable_sale", "1800.0342", "22.01.32", "2026-06-25"],
+    [salesComparableId, "sales_comparable_listing", "1800.0189", "22.01.34", 21],
+    [salesComparableId, "sales_comparable_property", "1800.0195", "22.01.37", "Detached"],
+    [salesComparableId, "sales_comparable_property", "1800.0337", "22.01.39", "FeeSimple"],
+    [salesComparableId, "sales_comparable_property", "1800.0357", "22.01.42", false],
+    [salesComparableId, "sales_comparable_property", "1800.0201", "22.01.44", true],
+    [salesComparableSourceId, "sales_comparable_data_source", "0700.0125", "22.01.18", "MLS"],
+    [salesComparableSourceId, "sales_comparable_data_source", "1800.0347", "22.01.18", "NTREIS-SYNTHETIC-22001"],
+  ];
+  for (const [entityId, context, uid, reportFieldId, value] of salesComparableValues) {
     await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
   }
 

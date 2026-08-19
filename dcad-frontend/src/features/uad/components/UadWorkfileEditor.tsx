@@ -64,6 +64,8 @@ const PROJECT_AMENITY_CAPTIONS = ["ProjectAmenity"];
 const SUBJECT_LISTING_CAPTIONS = ["SubjectListingExhibit"];
 const SALES_CONTRACT_CAPTIONS = ["SalesContractExhibit"];
 const PRIOR_TRANSFER_CAPTIONS = ["PriorSaleAndTransferHistoryExhibit"];
+const SALES_COMPARABLE_PHOTO_CAPTIONS = ["PropertyPhoto"];
+const SALES_COMPARISON_EXHIBIT_CAPTIONS = ["SalesComparisonApproachExhibit"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -169,6 +171,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const highestBestUseHasNo = ["3100.0004", "3100.0006", "3100.0003", "3100.0005", "3100.0007"]
     .some((uid) => draft[fieldValueKey("highest_best_use", uid)] === false);
   const salesContractExists = draft[fieldValueKey("sales_contract", "0600.0016")];
+  const salesComparisonIncluded = draft[fieldValueKey("sales_comparison_scope", "1000.0032")];
+  const salesComparables = editor?.entities.filter((entity) => entity.entity_type === "sales_comparable") || [];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -253,7 +257,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract", "prior_sale_transfer_history"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract", "prior_sale_transfer_history", "sales_comparison"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -485,6 +489,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "prior_sale_transfer_history" && (
           <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm leading-6 text-indigo-950">
             Report every relevant subject transfer during the three years before the appraisal effective date. Comparable transfers use a one-year lookback and attach to the same comparable records that will be created in Section 22, so future comparable searching can populate reviewable suggestions without duplicating appraisal data.
+          </div>
+        )}
+        {activeSection === "sales_comparison" && (
+          <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
+            Section 22A establishes each comparable's official general information, source trail, property-rights details, and required verified photo. The same comparable record is shared with Section 21 and is reserved for the remaining adjustment-grid sections. HomeNode search results may later arrive as source-attributed suggestions, but only an appraiser save confirms them for the UAD report.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -929,6 +938,34 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               sectionNumber={21}
               title="Prior sale and transfer history exhibits"
               visibleCaptionTypes={PRIOR_TRANSFER_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "sales_comparison" && salesComparables.map((comparable) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SALES_COMPARABLE_PHOTO_CAPTIONS}
+              description="A verified property photo is required for every sales comparable. It attaches to this canonical comparable record so mobile capture and the future adjustment grid use the same evidence."
+              emptyMessage="No verified comparable property photo uploaded yet."
+              entityId={comparable.id}
+              key={`sales-comparable-${comparable.id}`}
+              sectionNumber={22}
+              title={`${comparable.label || `Comparable ${comparable.ordinal}`} property photo`}
+              uploadEnabled={salesComparisonIncluded === true}
+              visibleCaptionTypes={SALES_COMPARABLE_PHOTO_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
+          {activeSection === "sales_comparison" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SALES_COMPARISON_EXHIBIT_CAPTIONS}
+              description="Upload optional photographs, maps, search support, or other images relevant to the Sales Comparison Approach. General exhibits stay at workfile level; comparable property photos attach to the individual comparable above."
+              emptyMessage="No optional sales-comparison exhibits uploaded."
+              sectionNumber={22}
+              title="Sales Comparison Approach exhibits"
+              uploadEnabled={salesComparisonIncluded === true}
+              visibleCaptionTypes={SALES_COMPARISON_EXHIBIT_CAPTIONS}
               workfileId={workfileId}
             />
           )}

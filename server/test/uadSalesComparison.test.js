@@ -1,0 +1,159 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  UAD_PHASE_ONE_FIELDS,
+  UAD_REPEATABLE_ENTITY_GROUPS,
+  getUadEditorSections,
+  getUadField,
+  normalizeAndValidateUadValue,
+  uadFieldIsRequired,
+  uadFieldIsVisible,
+} from "../src/modules/uad/fieldCatalog.js";
+import { validateCompleteSection } from "../src/modules/uad/editor.js";
+import {
+  UAD_NATIVE_AMERICAN_LAND_TYPES,
+  UAD_PROPERTY_RIGHTS_NOT_INCLUDED,
+  UAD_SALES_COMPARABLE_DATA_SOURCE_TYPES,
+  UAD_SALES_COMPARABLE_DIRECTIONS,
+  UAD_SALES_COMPARABLE_FINANCING_TYPES,
+  UAD_SALES_COMPARABLE_LISTING_STATUSES,
+  UAD_SALES_COMPARISON_FIELDS,
+  isVerifiedSalesComparisonAsset,
+} from "../src/modules/uad/salesComparisonCatalog.js";
+
+const value = (entityId, contextKey, uid, fieldValue) => ({
+  field: getUadField(contextKey, uid),
+  entityId,
+  value: fieldValue,
+});
+
+test("adds the Section 22A general-information editor on canonical comparable entities", () => {
+  const sections = getUadEditorSections();
+  const section = sections.find((item) => item.key === "sales_comparison");
+  assert.equal(sections.at(-1)?.officialSectionNumber, 22);
+  assert.equal(section?.title, "Sales Comparison Approach");
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 52);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 52);
+  assert.equal(
+    section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
+    true,
+  );
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_data_source.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_right_not_included.parentEntityType, "sales_comparable");
+});
+
+test("uses official Section 22 general-information enumerations and conditional fields", () => {
+  assert.deepEqual(UAD_SALES_COMPARABLE_LISTING_STATUSES, ["Active", "OffMarket", "Pending", "SettledSale"]);
+  assert.deepEqual(UAD_SALES_COMPARABLE_DIRECTIONS, ["East", "North", "NorthEast", "NorthWest", "South", "SouthEast", "SouthWest", "West"]);
+  assert.deepEqual(UAD_SALES_COMPARABLE_FINANCING_TYPES, ["Conventional", "FHA", "Other", "Private", "USDARuralDevelopment", "VA"]);
+  assert.equal(UAD_SALES_COMPARABLE_DATA_SOURCE_TYPES.includes("MLS"), true);
+  assert.equal(UAD_NATIVE_AMERICAN_LAND_TYPES.includes("TribalTrustLand"), true);
+  assert.deepEqual(UAD_PROPERTY_RIGHTS_NOT_INCLUDED, ["AirRights", "MineralRights", "Other", "TimberRights", "WaterRights"]);
+
+  const ratio = getUadField("sales_comparable_listing", "1800.0316");
+  const direction = getUadField("sales_comparable_proximity", "1800.0066");
+  const salePrice = getUadField("sales_comparable_sale", "1800.0272");
+  assert.equal(normalizeAndValidateUadValue(ratio, 102).error, null);
+  assert.equal(normalizeAndValidateUadValue(ratio, 1000).error?.code, "percentage");
+  assert.equal(uadFieldIsVisible(direction, (key) => key.endsWith("1800.0065") ? { amount: 0, unit: "Miles" } : true), false);
+  assert.equal(uadFieldIsRequired(salePrice, (key) => key.endsWith("1800.0075") ? "SettledSale" : true), true);
+});
+
+test("accepts a complete settled comparable with a source and verified property photo", () => {
+  const comparable = { id: "048540df-2f90-43d3-b574-1c8705675b8d", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const source = { id: "dc64e88d-e329-4b57-ad42-a1e426fd739c", entity_type: "sales_comparable_data_source", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(comparable.id, "sales_comparable", "1800.0192", 1),
+    value(comparable.id, "sales_comparable_address", "1800.0001", "1234 Oak Street"),
+    value(comparable.id, "sales_comparable_address", "1800.0003", "Garland"),
+    value(comparable.id, "sales_comparable_address", "1800.0005", "TX"),
+    value(comparable.id, "sales_comparable_address", "1800.0004", "75044"),
+    value(comparable.id, "sales_comparable_property", "0100.0059", 0),
+    value(comparable.id, "sales_comparable_proximity", "1800.0065", { amount: 0, unit: "Miles" }),
+    value(comparable.id, "sales_comparable_listing", "1800.0075", "SettledSale"),
+    value(comparable.id, "sales_comparable_sale", "1800.0272", 425000),
+    value(comparable.id, "sales_comparable_sale", "1800.0274", "TypicallyMotivated"),
+    value(comparable.id, "sales_comparable_concessions", "1800.0370", false),
+    value(comparable.id, "sales_comparable_contract", "1800.0385", true),
+    value(comparable.id, "sales_comparable_sale", "1800.0342", "2026-07-15"),
+    value(comparable.id, "sales_comparable_listing", "1800.0189", 8),
+    value(comparable.id, "sales_comparable_property", "1800.0195", "Detached"),
+    value(comparable.id, "sales_comparable_property", "1800.0337", "FeeSimple"),
+    value(source.id, "sales_comparable_data_source", "0700.0125", "MLS"),
+    value(source.id, "sales_comparable_data_source", "1800.0347", "NTREIS-123456"),
+  ];
+  const assets = [{
+    section_number: 22,
+    entity_id: comparable.id,
+    caption_type: "PropertyPhoto",
+    content_type: "image/jpeg",
+    status: "verified",
+  }];
+  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source], assets), []);
+});
+
+test("rejects missing evidence and contradictory comparable transaction records", () => {
+  const comparable = { id: "fbf1ae14-78fe-41fd-86c4-fc82716d7f58", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(comparable.id, "sales_comparable_address", "1800.0001", "9 Main Street"),
+    value(comparable.id, "sales_comparable_listing", "1800.0075", "Active"),
+    value(comparable.id, "sales_comparable_sale", "1800.0272", 400000),
+  ];
+  const codes = validateCompleteSection("sales_comparison", [], values, [comparable]).map((error) => error.code);
+  assert.equal(codes.includes("sales_comparable_data_source_required"), true);
+  assert.equal(codes.includes("sales_comparable_photo_required"), true);
+  assert.equal(codes.includes("sales_comparable_settled_detail_conflict"), true);
+});
+
+test("recognizes only verified entity-linked Section 22 comparable photos", () => {
+  const asset = {
+    section_number: 22,
+    entity_id: "923d5c2a-cce9-4f07-8f8e-a3ed2e498142",
+    caption_type: "PropertyPhoto",
+    content_type: "image/webp",
+    status: "verified",
+  };
+  assert.equal(isVerifiedSalesComparisonAsset(asset, "PropertyPhoto", asset.entity_id), true);
+  assert.equal(isVerifiedSalesComparisonAsset({ ...asset, entity_id: null }, "PropertyPhoto", asset.entity_id), false);
+  assert.equal(isVerifiedSalesComparisonAsset({ ...asset, content_type: "application/pdf" }, "PropertyPhoto", asset.entity_id), false);
+  assert.equal(isVerifiedSalesComparisonAsset({ ...asset, status: "pending_upload" }, "PropertyPhoto", asset.entity_id), false);
+});
+
+test("seeds Section 22A additively with official compliance rules", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260904_uad_sales_comparison_general.sql"), "utf8");
+  assert.match(sql, /SalesComparisonApproachIndicator/);
+  assert.match(sql, /'1800\.0192','sales_comparable','22\.01\.16'/);
+  assert.match(sql, /PropertyPhoto/);
+  assert.match(sql, /SalesComparisonApproachExhibit/);
+  for (const ruleId of [
+    "UAD1218", "UAD1275", "UAD1390", "UAD1391", "UAD1392", "UAD1393",
+    "UAD1394", "UAD1395", "UAD1396", "UAD1397", "UAD1402", "UAD1403",
+    "UAD1404", "UAD1428", "UAD1433", "UAD1469", "UAD1477", "UAD1481",
+    "UAD1731", "UAD1771", "UAD1773",
+  ]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-004/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("wires Section 22 through server and frontend without changing legacy forms", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const entities = fs.readFileSync(path.resolve(directory, "../src/modules/uad/entities.js"), "utf8");
+  const editor = fs.readFileSync(path.resolve(directory, "../src/modules/uad/editor.js"), "utf8");
+  const assets = fs.readFileSync(path.resolve(directory, "../src/modules/uad/assets.js"), "utf8");
+  const frontend = fs.readFileSync(path.resolve(directory, "../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx"), "utf8");
+  assert.match(entities, /uad_entity\.ordinal/);
+  assert.match(entities, /parent_entity_id IS NOT DISTINCT FROM/);
+  assert.match(editor, /sales_comparable_photo_required/);
+  assert.match(editor, /sales_comparable_data_source_required/);
+  assert.match(assets, /invalid_uad_sales_comparison_asset_entity/);
+  assert.match(frontend, /Sales Comparison Approach exhibits/);
+  assert.match(frontend, /future adjustment grid/);
+  assert.doesNotMatch(frontend, /PropertyReport/);
+});

@@ -34,7 +34,8 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 21:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 21 and
+the Section 22A general-information foundation:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -90,6 +91,14 @@ The editor currently implements Appendix A-1 v1.4 Sections 2 through 21:
   histories share the reserved `sales_comparable` entities that Section 22 and
   the comparable-search adapter will populate, avoiding duplicate records and
   preserving the official one-year comparable lookback workflow.
+- Sales Comparison Approach now captures the official approach indicator and
+  repeatable general information for each canonical sales comparable: address,
+  source relationships, proximity, listing/contract/sale facts, financing,
+  concessions, dates, property rights, and the applicable adjustment columns.
+  Each included comparable requires a verified entity-linked Property Photo.
+  Remaining Project, Site, Dwelling, Unit, quality/condition, amenity,
+  reconciliation, and summary grid subsections will extend these same records
+  in later Section 22 increments rather than creating parallel comparables.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 
@@ -103,11 +112,13 @@ zoning evidence, location influences, and neighborhood boundaries without
 running a new analysis or changing a Custom Appraisal. Comparable search and
 influence-driven automation remain disabled in the UAD UI until their
 corresponding URAR sections and appraiser-review flow are ready. Sections 17
-through 21 now expose the manual market, subject-listing, sales-contract, and
-prior-transfer workflows behind that boundary. Existing HomeNode sale and deed
-activity is available through a review-only Section 21 adapter, while automatic
-imports remain disabled until the explicit appraiser-review interaction is
-implemented.
+through 22A now expose the manual market, subject-listing, sales-contract,
+prior-transfer, and comparable-general-information workflows behind that
+boundary. Existing HomeNode sale and deed activity is available through a
+review-only Section 21 adapter. Automatic comparable searches and imports stay
+disabled until the explicit appraiser-review interaction is implemented; they
+will target the canonical Section 22 records and source children already in
+place.
 
 ## Staging strategy
 
@@ -130,8 +141,11 @@ features, a deterministic Section 11 `None` answer, Sections 12-17 fixtures,
 a deterministic Section 18 PUD with data source, amenity, utility, dues, and
 project-factor answers, a deterministic Section 19 MLS listing with date/DOM
 reconciliation, a deterministic Section 20 arm's-length purchase contract with
-known concessions, and a deterministic Section 21 subject prior sale with a
-linked deed source while verifying that Section 9 remains hidden; the separate
+known concessions, a deterministic Section 21 subject prior sale with a linked
+deed source, and one Section 22A settled comparable with MLS provenance. The
+comparable intentionally lacks its required verified photo so staging exercises
+the web/mobile upload gate rather than representing a nonexistent R2 object as
+verified. Section 9 remains hidden; the separate
 manufactured-home fixture includes a deterministic UAD workfile whose Section 8
 Construction Method is `Manufactured`, allowing Section 9 to be exercised
 without changing the SFR or copying production tax, owner, or sales data. CI
@@ -199,6 +213,10 @@ categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
 - Prior Sale and Transfer History uses the optional
   `PriorSaleAndTransferHistoryExhibit` image category at the workfile level.
   Uploads are image-only and require a descriptive caption.
+- Sales Comparison Approach requires one verified `PropertyPhoto` linked to
+  each canonical sales comparable and permits optional workfile-level
+  `SalesComparisonApproachExhibit` images. Both use the same private R2 upload
+  and verification contract that the mobile capture client will call.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

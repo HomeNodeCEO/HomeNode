@@ -31,6 +31,10 @@ import {
   UAD_SALES_CONTRACT_IMAGE_CONTENT_TYPES,
 } from "./salesContractCatalog.js";
 import {
+  UAD_SALES_COMPARISON_CAPTION_TYPES,
+  UAD_SALES_COMPARISON_IMAGE_CONTENT_TYPES,
+} from "./salesComparisonCatalog.js";
+import {
   UAD_OUTBUILDING_CAPTION_TYPES,
   UAD_OUTBUILDING_IMAGE_CONTENT_TYPES,
 } from "./outbuildingCatalog.js";
@@ -94,6 +98,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [19, new Set(UAD_SUBJECT_LISTING_CAPTION_TYPES)],
   [20, new Set(UAD_SALES_CONTRACT_CAPTION_TYPES)],
   [21, new Set(UAD_PRIOR_TRANSFER_CAPTION_TYPES)],
+  [22, new Set(UAD_SALES_COMPARISON_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -245,6 +250,15 @@ function normalizeAssetInput(input = {}) {
   if (sectionNumber === 21 && !caption) {
     throw new Error("invalid_uad_prior_transfer_asset_caption");
   }
+  if (sectionNumber === 22 && !UAD_SALES_COMPARISON_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_sales_comparison_content_type");
+  }
+  if (sectionNumber === 22 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_sales_comparison_asset_kind");
+  }
+  if (sectionNumber === 22 && !caption) {
+    throw new Error("invalid_uad_sales_comparison_asset_caption");
+  }
   return {
     kind,
     contentType,
@@ -340,6 +354,15 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   }
   if (normalized.sectionNumber === 21 && normalized.entityId) {
     throw new Error("invalid_uad_prior_transfer_asset_entity");
+  }
+  if (normalized.sectionNumber === 22) {
+    const comparablePhoto = normalized.captionType === "PropertyPhoto";
+    if (
+      (comparablePhoto && entityType !== "sales_comparable")
+      || (!comparablePhoto && normalized.entityId)
+    ) {
+      throw new Error("invalid_uad_sales_comparison_asset_entity");
+    }
   }
 
   const organizationId = workfileResult.rows[0].organization_id;

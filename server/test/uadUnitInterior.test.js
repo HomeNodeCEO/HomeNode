@@ -19,7 +19,7 @@ import { isVerifiedUnitInteriorAsset } from "../src/modules/uad/unitInteriorCata
 test("adds official always-displayed URAR Section 10", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "unit_interior");
-  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]);
+  assert.deepEqual(sections.map((item) => item.officialSectionNumber), [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
   assert.equal(section?.key, "unit_interior");
   assert.equal(section?.title, "Unit Interior");
   assert.equal(section?.appliesWhen, undefined);

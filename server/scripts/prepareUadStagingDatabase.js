@@ -789,6 +789,9 @@ try {
   const salesComparableEfficiencyRatingId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_efficiency_rating", "sales-comparable-efficiency-rating-1", 1, "Comparable Efficiency Rating 1");
   const salesComparableUnitId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_unit", "sales-comparable-unit-1", 1, "Comparable Unit 1");
   const salesComparableAccessibilityId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_unit_accessibility_feature", "sales-comparable-unit-accessibility-1", 1, "Comparable Unit Accessibility 1");
+  const salesComparableKitchenId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_kitchen", "sales-comparable-kitchen-1", 1, "Comparable Kitchen 1");
+  const salesComparableFlooringId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_interior_component", "sales-comparable-interior-flooring-1", 1, "Comparable Flooring");
+  const salesComparableWallsId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_interior_component", "sales-comparable-interior-walls-1", 2, "Comparable Walls and Ceiling");
   const salesComparableExteriorWallId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-exterior-wall-1", 1, "Comparable Exterior Walls and Trim");
   const salesComparableFoundationId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-foundation-1", 2, "Comparable Foundation");
   const salesComparableRoofId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-roof-1", 3, "Comparable Roof");
@@ -904,7 +907,20 @@ try {
     [salesComparableUnitId, "sales_comparable_unit", "1800.0393", "22.07.36", { amount: 0, unit: "SquareFeet" }],
     [salesComparableUnitId, "sales_comparable_unit", "1800.0399", "22.07.38", { amount: 0, unit: "SquareFeet" }],
     [salesComparableUnitId, "sales_comparable_unit", "1800.0394", "22.07.40", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0158", "22.09.19", "Q3"],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0157", "22.09.25", "C3"],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0329", "22.09.21", "Typical builder-grade bath finishes"],
+    [salesComparableUnitId, "sales_comparable_unit", "1800.0328", "22.09.27", "NotUpdated"],
     [salesComparableAccessibilityId, "sales_comparable_unit_accessibility_feature", "1800.0134", "22.07.42", "None"],
+    [salesComparableKitchenId, "sales_comparable_kitchen", "1800.0325", "Does Not Display", "Kitchen"],
+    [salesComparableKitchenId, "sales_comparable_kitchen", "1800.0327", "22.09.20", "Typical builder-grade cabinets and counters"],
+    [salesComparableKitchenId, "sales_comparable_kitchen", "1800.0326", "22.09.26", "NotUpdated"],
+    [salesComparableFlooringId, "sales_comparable_interior_component", "1800.0147", "Does Not Display", "Flooring"],
+    [salesComparableFlooringId, "sales_comparable_interior_component", "1800.0146", "22.09.22", "Carpet and ceramic tile of typical quality"],
+    [salesComparableFlooringId, "sales_comparable_interior_component", "1800.0336", "22.09.28", "NotUpdated"],
+    [salesComparableWallsId, "sales_comparable_interior_component", "1800.0147", "Does Not Display", "WallsAndCeiling"],
+    [salesComparableWallsId, "sales_comparable_interior_component", "1800.0146", "22.09.23", "Painted drywall with flat ceilings"],
+    [salesComparableWallsId, "sales_comparable_interior_component", "1800.0296", "22.09.29", "Typical wear with no material damage"],
     [salesComparableExteriorWallId, "sales_comparable_exterior_component", "1800.0180", "Does Not Display", "ExteriorWallsAndTrim"],
     [salesComparableExteriorWallId, "sales_comparable_exterior_component", "0300.0042", "22.08.18", ["Brick"]],
     [salesComparableExteriorWallId, "sales_comparable_exterior_component", "1800.0179", "22.08.24", "TypicalWearAndTear"],
@@ -942,8 +958,10 @@ try {
     ["unit-room-full-bath-2", 5, "Full Bathroom 2", "FullBathroom"],
     ["unit-room-kitchen-1", 6, "Kitchen 1", "Kitchen"],
   ];
+  let subjectKitchenId = null;
   for (const [identifier, ordinal, label, roomType] of roomFixtures) {
     const roomId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_room", identifier, ordinal, label);
+    if (roomType === "Kitchen") subjectKitchenId = roomId;
     await seedEntityValue(sfrWorkfileId, roomId, "unit_room", "0700.0035", "10.033", roomType);
     await seedEntityValue(sfrWorkfileId, roomId, "unit_room", "0700.0121", "10.037", "LevelOne");
     if (["FullBathroom", "HalfBathroom", "Kitchen"].includes(roomType)) {
@@ -964,6 +982,17 @@ try {
   await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0108", "10.044", "Flat");
   await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0107", "10.044", "Typical quality for the market");
   await seedEntityValue(sfrWorkfileId, wallsId, "unit_interior_feature", "0700.0045", "10.044", "TypicalWearAndTear");
+  if (!subjectKitchenId) throw new Error("site-built staging workfile is missing its kitchen entity");
+  const subjectUnitInteriorSummaryId = await ensureEntity(sfrWorkfileId, sfrUnitId, "sales_comparison_subject_unit_interior_summary", "subject-unit-interior-summary-1", 1, "Subject Unit Interior Summary");
+  const subjectKitchenSummaryId = await ensureEntity(sfrWorkfileId, subjectKitchenId, "sales_comparison_subject_kitchen_summary", "subject-kitchen-summary-1", 1, "Subject Kitchen Quality Summary");
+  const subjectFlooringQualitySummaryId = await ensureEntity(sfrWorkfileId, flooringId, "sales_comparison_subject_interior_quality_summary", "subject-flooring-quality-summary-1", 1, "Subject Flooring Quality Summary");
+  const subjectWallsQualitySummaryId = await ensureEntity(sfrWorkfileId, wallsId, "sales_comparison_subject_interior_quality_summary", "subject-walls-quality-summary-1", 1, "Subject Walls and Ceiling Quality Summary");
+  const subjectWallsConditionSummaryId = await ensureEntity(sfrWorkfileId, wallsId, "sales_comparison_subject_interior_condition_summary", "subject-walls-condition-summary-1", 1, "Subject Walls and Ceiling Condition Summary");
+  await seedEntityValue(sfrWorkfileId, subjectUnitInteriorSummaryId, "sales_comparison_subject_unit_interior_summary", "1800.0294", "22.09.05", "Typical builder-grade bath finishes");
+  await seedEntityValue(sfrWorkfileId, subjectKitchenSummaryId, "sales_comparison_subject_kitchen_summary", "1800.0323", "22.09.04", "Typical builder-grade cabinets and counters");
+  await seedEntityValue(sfrWorkfileId, subjectFlooringQualitySummaryId, "sales_comparison_subject_interior_quality_summary", "1800.0293", "22.09.06", "Carpet and ceramic tile of typical quality");
+  await seedEntityValue(sfrWorkfileId, subjectWallsQualitySummaryId, "sales_comparison_subject_interior_quality_summary", "1800.0293", "22.09.07", "Painted drywall with flat ceilings");
+  await seedEntityValue(sfrWorkfileId, subjectWallsConditionSummaryId, "sales_comparison_subject_interior_condition_summary", "1800.0292", "22.09.14", "Typical wear with no material damage");
 
   let manufacturedWorkfileResult = await pool.query(
     `SELECT id

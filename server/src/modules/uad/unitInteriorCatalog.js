@@ -88,6 +88,18 @@ export const UAD_UNIT_ACCESSIBILITY_TYPES = Object.freeze([
   "GrabBars", "Handrails", "Hardware", "Lighting", "None", "Other", "Ramps", "Shower", "Sink", "Toilet",
 ]);
 
+export const UAD_INTERIOR_COMPONENT_TYPES = Object.freeze([
+  "Flooring", "Other", "WallsAndCeiling",
+]);
+
+export const UAD_INTERIOR_ROOM_UPDATE_STATUS_TYPES = Object.freeze([
+  "FullyUpdated", "NotUpdated", "PartiallyUpdated",
+]);
+
+export const UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES = Object.freeze([
+  "FullyUpdated", "SignificantlyUpdated", "ModeratelyUpdated", "NotUpdated",
+]);
+
 const field = (group, contextKey, entityType, uid, reportFieldId, label, dataType, options = {}) => ({
   section: "unit_interior",
   group,
@@ -230,7 +242,7 @@ export const UAD_UNIT_INTERIOR_FIELDS = [
   child("Rooms", "unit_room", "0700.0035", "10.033", "Room type", "enum", { required: true, options: ROOM_TYPES }),
   child("Rooms", "unit_room", "0700.0087", "10.033", "Other room type", "string", { maxLength: 33, showWhen: condition("unit_room:0700.0035", "Other"), requiredWhen: condition("unit_room:0700.0035", "Other") }),
   child("Rooms", "unit_room", "0700.0121", "10.037", "Room level", "enum", { required: true, options: LEVEL_TYPES }),
-  child("Rooms", "unit_room", "0700.0036", "10.038", "Room update status", "enum", { showWhen: roomRequiresDetail, requiredWhen: roomRequiresDetail, options: ["FullyUpdated", "NotUpdated", "PartiallyUpdated"] }),
+  child("Rooms", "unit_room", "0700.0036", "10.038", "Room update status", "enum", { showWhen: roomRequiresDetail, requiredWhen: roomRequiresDetail, options: UAD_INTERIOR_ROOM_UPDATE_STATUS_TYPES }),
   child("Rooms", "unit_room", "0700.0034", "10.039", "Room update time frame", "enum", { showWhen: roomWasUpdated, requiredWhen: roomWasUpdated, options: ["FiveToTenYears", "LessThanOneYear", "OneToFiveYears", "TenOrMoreYears"] }),
   child("Rooms", "unit_room", "0700.0044", "10.040", "Room quality description", "string", { maxLength: 120, showWhen: roomRequiresDetail, requiredWhen: roomRequiresDetail }),
   child("Rooms", "unit_room", "0700.0033", "10.041", "Room condition", "enum", { showWhen: roomRequiresDetail, requiredWhen: roomRequiresDetail, options: ["DamagedAndFunctional", "DamagedAndNonfunctional", "NewOrLikeNew", "TypicalWearAndTear"] }),
@@ -238,13 +250,13 @@ export const UAD_UNIT_INTERIOR_FIELDS = [
 
   unit("Quality, condition, and accessibility", "unit", "0700.0067", "10.034", "Interior quality rating", "enum", { required: true, options: ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"] }),
   unit("Quality, condition, and accessibility", "unit", "0700.0066", "10.035", "Interior condition rating", "enum", { required: true, options: ["C1", "C2", "C3", "C4", "C5", "C6"] }),
-  unit("Quality, condition, and accessibility", "unit", "0700.0117", "10.043", "Overall bathroom update status", "enum", { required: true, options: ["FullyUpdated", "SignificantlyUpdated", "ModeratelyUpdated", "NotUpdated"] }),
-  unit("Quality, condition, and accessibility", "unit", "0700.0122", "10.049", "Overall flooring update status", "enum", { required: true, options: ["FullyUpdated", "SignificantlyUpdated", "ModeratelyUpdated", "NotUpdated"] }),
+  unit("Quality, condition, and accessibility", "unit", "0700.0117", "10.043", "Overall bathroom update status", "enum", { required: true, options: UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES }),
+  unit("Quality, condition, and accessibility", "unit", "0700.0122", "10.049", "Overall flooring update status", "enum", { required: true, options: UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES }),
   unit("Quality, condition, and accessibility", "unit_accessibility", "0700.0005", "10.050", "Accessibility features", "multi_enum", { required: true, options: UAD_UNIT_ACCESSIBILITY_TYPES }),
   unit("Quality, condition, and accessibility", "unit_accessibility", "0700.0006", "10.050", "Other accessibility feature", "string", { maxLength: 33, showWhen: { key: "unit_accessibility:0700.0005", contains: "Other" }, requiredWhen: { key: "unit_accessibility:0700.0005", contains: "Other" } }),
   unit("Quality, condition, and accessibility", "unit_accessibility", "0700.0007", "10.051", "Accessibility commentary", "text", { maxLength: 296 }),
 
-  child("Interior features", "unit_interior_feature", "0700.0046", "10.044", "Feature", "enum", { required: true, options: ["Flooring", "Other", "WallsAndCeiling"] }),
+  child("Interior features", "unit_interior_feature", "0700.0046", "10.044", "Feature", "enum", { required: true, options: UAD_INTERIOR_COMPONENT_TYPES }),
   child("Interior features", "unit_interior_feature", "0700.0047", "10.044", "Other feature label", "string", { maxLength: 36, showWhen: otherFeature, requiredWhen: otherFeature }),
   child("Interior features", "unit_interior_feature", "0700.0043", "10.044", "Other feature detail", "string", { maxLength: 70, showWhen: otherFeature }),
   child("Interior features", "unit_interior_feature", "0700.0041", "10.045", "Flooring type", "enum", { showWhen: flooringFeature, requiredWhen: flooringFeature, options: ["Carpet", "CeramicTile", "EngineeredWood", "FinishedConcrete", "Hardwood", "Laminate", "Marble", "Other", "SubflooringOnly", "Vinyl"] }),

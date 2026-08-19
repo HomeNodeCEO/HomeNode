@@ -403,6 +403,46 @@ function completionFor(values, entities, assets = []) {
             }
           }
         }
+        const subjectUnits = entities.filter((entity) => entity.entity_type === "unit");
+        const subjectNonAduUnitIds = new Set(
+          subjectUnits
+            .filter((unit) => valueLookup(byKey, unit.id)("unit:0700.0089") === false)
+            .map((unit) => unit.id),
+        );
+        const subjectUnitSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_unit_interior_summary");
+        const subjectKitchenSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_kitchen_summary");
+        const subjectInteriorQualitySummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_interior_quality_summary");
+        const subjectInteriorConditionSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_interior_condition_summary");
+        for (const unit of subjectUnits.filter((entity) => subjectNonAduUnitIds.has(entity.id))) {
+          const unitLookup = valueLookup(byKey, unit.id);
+          if (
+            Number(unitLookup("unit:0700.0119") || 0) + Number(unitLookup("unit:0700.0120") || 0) > 0
+            && !subjectUnitSummaries.some((summary) => summary.parent_entity_id === unit.id)
+          ) required += 1;
+        }
+        const subjectKitchens = entities.filter((entity) => (
+          entity.entity_type === "unit_room"
+          && subjectNonAduUnitIds.has(entity.parent_entity_id)
+          && valueLookup(byKey, entity.id)("unit_room:0700.0035") === "Kitchen"
+        ));
+        for (const kitchen of subjectKitchens) {
+          if (!subjectKitchenSummaries.some((summary) => summary.parent_entity_id === kitchen.id)) required += 1;
+        }
+        const subjectInteriorFeatures = entities.filter((entity) => (
+          entity.entity_type === "unit_interior_feature"
+          && subjectNonAduUnitIds.has(entity.parent_entity_id)
+        ));
+        for (const feature of subjectInteriorFeatures) {
+          const featureType = valueLookup(byKey, feature.id)("unit_interior_feature:0700.0046");
+          if (
+            ["Flooring", "WallsAndCeiling", "Other"].includes(featureType)
+            && !subjectInteriorQualitySummaries.some((summary) => summary.parent_entity_id === feature.id)
+          ) required += 1;
+          if (
+            ["WallsAndCeiling", "Other"].includes(featureType)
+            && !subjectInteriorConditionSummaries.some((summary) => summary.parent_entity_id === feature.id)
+          ) required += 1;
+        }
         const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
         if (!comparables.length) required += 1;
         for (const comparable of comparables) {
@@ -475,6 +515,33 @@ function completionFor(values, entities, assets = []) {
               for (const requiredType of ["ExteriorWallsAndTrim", "Foundation", "Roof", "Windows"]) {
                 if (!componentTypes.has(requiredType)) required += 1;
               }
+            }
+          }
+          const comparableStructureIds = new Set(comparableDwellings.map((dwelling) => dwelling.id));
+          const comparableNonAduUnits = entities.filter((entity) => (
+            entity.entity_type === "sales_comparable_unit"
+            && comparableStructureIds.has(entity.parent_entity_id)
+            && valueLookup(byKey, entity.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === false
+          ));
+          for (const unit of comparableNonAduUnits) {
+            const unitLookup = valueLookup(byKey, unit.id);
+            required += 2;
+            if (isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorQuality))) completed += 1;
+            if (isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorCondition))) completed += 1;
+            const kitchens = entities.filter((entity) => entity.entity_type === "sales_comparable_kitchen" && entity.parent_entity_id === unit.id);
+            const componentTypes = new Set(
+              entities
+                .filter((entity) => entity.entity_type === "sales_comparable_interior_component" && entity.parent_entity_id === unit.id)
+                .map((entity) => valueLookup(byKey, entity.id)(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentType)),
+            );
+            if (!kitchens.length) required += 1;
+            for (const requiredType of ["Flooring", "WallsAndCeiling"]) {
+              if (!componentTypes.has(requiredType)) required += 1;
+            }
+            if (Number(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitFullBaths) || 0) + Number(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitHalfBaths) || 0) > 0) {
+              required += 2;
+              if (isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.overallBathroomsQuality))) completed += 1;
+              if (isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.overallBathroomsUpdate))) completed += 1;
             }
           }
           for (const entityType of [
@@ -1995,8 +2062,17 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableUnits = entities.filter((entity) => entity.entity_type === "sales_comparable_unit");
     const comparableUnitAccessibility = entities.filter((entity) => entity.entity_type === "sales_comparable_unit_accessibility_feature");
     const comparableExteriorComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_exterior_component");
+    const comparableKitchens = entities.filter((entity) => entity.entity_type === "sales_comparable_kitchen");
+    const comparableInteriorComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_interior_component");
     const subjectExteriorFeatures = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature");
     const subjectExteriorSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_exterior_quality_summary");
+    const subjectUnits = entities.filter((entity) => entity.entity_type === "unit");
+    const subjectRooms = entities.filter((entity) => entity.entity_type === "unit_room");
+    const subjectInteriorFeatures = entities.filter((entity) => entity.entity_type === "unit_interior_feature");
+    const subjectUnitInteriorSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_unit_interior_summary");
+    const subjectKitchenSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_kitchen_summary");
+    const subjectInteriorQualitySummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_interior_quality_summary");
+    const subjectInteriorConditionSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_interior_condition_summary");
     const comparableSiteChildTypes = new Set([
       "sales_comparable_site_hazard",
       "sales_comparable_site_street",
@@ -2020,6 +2096,9 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableStructureIds = new Set([...comparableDwellingIds, ...comparableOutbuildingIds]);
     const comparableUnitIds = new Set(comparableUnits.map((entity) => entity.id));
     const subjectExteriorFeatureIds = new Set(subjectExteriorFeatures.map((entity) => entity.id));
+    const subjectUnitIds = new Set(subjectUnits.map((entity) => entity.id));
+    const subjectRoomIds = new Set(subjectRooms.map((entity) => entity.id));
+    const subjectInteriorFeatureIds = new Set(subjectInteriorFeatures.map((entity) => entity.id));
 
     if (included === true && !comparables.length) {
       errors.push(validationError(
@@ -2133,6 +2212,38 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         "Every subject exterior quality summary must be linked to a subject Windows or Other exterior feature.",
       ));
     }
+    if (comparableKitchens.some((kitchen) => !comparableUnitIds.has(kitchen.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.kitchenType),
+        null,
+        "sales_comparable_kitchen_orphaned",
+        "Every comparable kitchen comparison record must be linked to a comparable unit.",
+      ));
+    }
+    if (comparableInteriorComponents.some((component) => !comparableUnitIds.has(component.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentType),
+        null,
+        "sales_comparable_interior_component_orphaned",
+        "Every comparable interior component must be linked to a comparable unit.",
+      ));
+    }
+    const subjectInteriorSummaryFamilies = [
+      [subjectUnitInteriorSummaries, subjectUnitIds, UAD_SALES_COMPARISON_FIELD_KEYS.subjectOverallBathroomsQuality, "unit interior"],
+      [subjectKitchenSummaries, subjectRoomIds, UAD_SALES_COMPARISON_FIELD_KEYS.subjectKitchenQualitySummary, "kitchen"],
+      [subjectInteriorQualitySummaries, subjectInteriorFeatureIds, UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorQualitySummary, "interior quality"],
+      [subjectInteriorConditionSummaries, subjectInteriorFeatureIds, UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorConditionSummary, "interior condition"],
+    ];
+    for (const [summaries, parentIds, key, label] of subjectInteriorSummaryFamilies) {
+      if (summaries.some((summary) => !parentIds.has(summary.parent_entity_id))) {
+        errors.push(validationError(
+          salesField(key),
+          null,
+          `sales_comparison_subject_${label.replaceAll(" ", "_")}_summary_orphaned`,
+          `Every subject ${label} summary must be linked to its canonical Section 10 record.`,
+        ));
+      }
+    }
 
     const subjectMaintainsExterior = rootLookup("subject:0100.0046") === true;
     const subjectExteriorComparisonFeatures = subjectExteriorFeatures.filter((feature) => (
@@ -2181,6 +2292,130 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparison_subject_exterior_summary_conflict",
         "Remove subject exterior comparison summaries unless the Sales Comparison Approach is developed and the subject homeowner maintains all dwelling exteriors.",
+      ));
+    }
+
+    const subjectNonAduUnitIds = new Set(
+      subjectUnits
+        .filter((unit) => valueLookup(merged, unit.id)("unit:0700.0089") === false)
+        .map((unit) => unit.id),
+    );
+    const subjectNonAduKitchens = subjectRooms.filter((room) => (
+      subjectNonAduUnitIds.has(room.parent_entity_id)
+      && valueLookup(merged, room.id)("unit_room:0700.0035") === "Kitchen"
+    ));
+    const subjectNonAduInteriorFeatures = subjectInteriorFeatures.filter((feature) => (
+      subjectNonAduUnitIds.has(feature.parent_entity_id)
+    ));
+    const subjectOtherInteriorLabels = new Set(
+      subjectNonAduInteriorFeatures
+        .filter((feature) => valueLookup(merged, feature.id)("unit_interior_feature:0700.0046") === "Other")
+        .map((feature) => String(valueLookup(merged, feature.id)("unit_interior_feature:0700.0047") || "").trim())
+        .filter(Boolean),
+    );
+    const subjectKitchenIds = new Set(subjectRooms
+      .filter((room) => valueLookup(merged, room.id)("unit_room:0700.0035") === "Kitchen")
+      .map((room) => room.id));
+    const subjectQualityFeatureIds = new Set(subjectInteriorFeatures
+      .filter((feature) => ["Flooring", "WallsAndCeiling", "Other"].includes(
+        valueLookup(merged, feature.id)("unit_interior_feature:0700.0046"),
+      ))
+      .map((feature) => feature.id));
+    const subjectConditionFeatureIds = new Set(subjectInteriorFeatures
+      .filter((feature) => ["WallsAndCeiling", "Other"].includes(
+        valueLookup(merged, feature.id)("unit_interior_feature:0700.0046"),
+      ))
+      .map((feature) => feature.id));
+    if (subjectKitchenSummaries.some((summary) => !subjectKitchenIds.has(summary.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectKitchenQualitySummary),
+        null,
+        "sales_comparison_subject_kitchen_summary_parent_invalid",
+        "A subject kitchen quality summary may be linked only to a canonical Section 10 Kitchen room.",
+      ));
+    }
+    if (subjectInteriorQualitySummaries.some((summary) => !subjectQualityFeatureIds.has(summary.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorQualitySummary),
+        null,
+        "sales_comparison_subject_interior_quality_summary_parent_invalid",
+        "A subject interior quality summary may be linked only to a Flooring, Walls and Ceiling, or Other Section 10 feature.",
+      ));
+    }
+    if (subjectInteriorConditionSummaries.some((summary) => !subjectConditionFeatureIds.has(summary.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorConditionSummary),
+        null,
+        "sales_comparison_subject_interior_condition_summary_parent_invalid",
+        "A subject interior condition summary may be linked only to a Walls and Ceiling or Other Section 10 feature.",
+      ));
+    }
+    const requireOneSubjectSummary = (records, parent, key, code, label) => {
+      const matches = records.filter((record) => record.parent_entity_id === parent.id);
+      if (matches.length !== 1) {
+        errors.push(validationError(
+          salesField(key),
+          parent.id,
+          matches.length ? `${code}_duplicate` : `${code}_required`,
+          matches.length ? `Keep exactly one ${label}.` : `Add the ${label}.`,
+        ));
+      }
+    };
+    const allSubjectInteriorSummaries = [
+      ...subjectUnitInteriorSummaries,
+      ...subjectKitchenSummaries,
+      ...subjectInteriorQualitySummaries,
+      ...subjectInteriorConditionSummaries,
+    ];
+    if (included === true) {
+      for (const unit of subjectUnits.filter((entity) => subjectNonAduUnitIds.has(entity.id))) {
+        const unitLookup = valueLookup(merged, unit.id);
+        if (Number(unitLookup("unit:0700.0119") || 0) + Number(unitLookup("unit:0700.0120") || 0) > 0) {
+          requireOneSubjectSummary(
+            subjectUnitInteriorSummaries,
+            unit,
+            UAD_SALES_COMPARISON_FIELD_KEYS.subjectOverallBathroomsQuality,
+            "sales_comparison_subject_bathrooms_quality_summary",
+            "Section 22 overall bathrooms quality summary for this non-ADU subject unit",
+          );
+        }
+      }
+      for (const kitchen of subjectNonAduKitchens) {
+        requireOneSubjectSummary(
+          subjectKitchenSummaries,
+          kitchen,
+          UAD_SALES_COMPARISON_FIELD_KEYS.subjectKitchenQualitySummary,
+          "sales_comparison_subject_kitchen_quality_summary",
+          "Section 22 kitchen quality summary for this subject kitchen",
+        );
+      }
+      for (const feature of subjectNonAduInteriorFeatures) {
+        const featureType = valueLookup(merged, feature.id)("unit_interior_feature:0700.0046");
+        if (["Flooring", "WallsAndCeiling", "Other"].includes(featureType)) {
+          requireOneSubjectSummary(
+            subjectInteriorQualitySummaries,
+            feature,
+            UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorQualitySummary,
+            "sales_comparison_subject_interior_quality_summary",
+            `Section 22 quality summary for this ${featureType} subject feature`,
+          );
+        }
+        if (["WallsAndCeiling", "Other"].includes(featureType)) {
+          requireOneSubjectSummary(
+            subjectInteriorConditionSummaries,
+            feature,
+            UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorConditionSummary,
+            "sales_comparison_subject_interior_condition_summary",
+            `Section 22 condition summary for this ${featureType} subject feature`,
+          );
+        }
+      }
+    } else if (allSubjectInteriorSummaries.length) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectInteriorQualitySummary),
+        null,
+        "sales_comparison_subject_interior_summary_conflict",
+        "Remove subject interior comparison summaries unless the Sales Comparison Approach is developed.",
       ));
     }
     if ([...comparableConstructionMethods, ...comparableHeatingSystems, ...comparableCoolingSystems]
@@ -3077,6 +3312,141 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
             "sales_comparable_unit_accessibility_other_conflict",
             "Clear the other accessibility description or select Other.",
           );
+        }
+
+        const kitchens = comparableKitchens.filter((kitchen) => kitchen.parent_entity_id === unit.id);
+        const interiorComponents = comparableInteriorComponents.filter((component) => component.parent_entity_id === unit.id);
+        const isAdu = unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitIsAdu) === true;
+        if (!isAdu) {
+          if (!isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorQuality))) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorQuality),
+              unit.id,
+              "sales_comparable_interior_quality_required",
+              "Provide the UAD interior quality rating for this non-ADU comparable unit.",
+            ));
+          }
+          if (!isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorCondition))) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorCondition),
+              unit.id,
+              "sales_comparable_interior_condition_required",
+              "Provide the UAD interior condition rating for this non-ADU comparable unit.",
+            ));
+          }
+          if (!kitchens.length) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.kitchenType),
+              unit.id,
+              "sales_comparable_kitchen_required",
+              "Add the Kitchen quality and update-status row for this non-ADU comparable unit.",
+            ));
+          }
+          const bathroomCount = Number(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitFullBaths) || 0)
+            + Number(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitHalfBaths) || 0);
+          if (bathroomCount > 0) {
+            if (!isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.overallBathroomsQuality))) {
+              errors.push(validationError(
+                salesField(UAD_SALES_COMPARISON_FIELD_KEYS.overallBathroomsQuality),
+                unit.id,
+                "sales_comparable_bathrooms_quality_summary_required",
+                "Provide the overall bathrooms quality summary for this comparable unit.",
+              ));
+            }
+            if (!isPresent(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.overallBathroomsUpdate))) {
+              errors.push(validationError(
+                salesField(UAD_SALES_COMPARISON_FIELD_KEYS.overallBathroomsUpdate),
+                unit.id,
+                "sales_comparable_bathrooms_update_required",
+                "Provide the overall bathroom update status for this comparable unit.",
+              ));
+            }
+          }
+          const componentTypes = interiorComponents
+            .map((component) => valueLookup(merged, component.id)(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentType))
+            .filter(isPresent);
+          for (const requiredType of ["Flooring", "WallsAndCeiling"]) {
+            const count = componentTypes.filter((type) => type === requiredType).length;
+            if (count !== 1) {
+              errors.push(validationError(
+                salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentType),
+                unit.id,
+                count ? "sales_comparable_interior_component_duplicate" : "sales_comparable_interior_component_required",
+                count
+                  ? `Keep exactly one ${requiredType} component for this comparable unit.`
+                  : `Add the required ${requiredType} component for this comparable unit.`,
+              ));
+            }
+          }
+        }
+
+        for (const kitchen of kitchens) {
+          if (valueLookup(merged, kitchen.id)(UAD_SALES_COMPARISON_FIELD_KEYS.kitchenType) !== "Kitchen") {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.kitchenType),
+              kitchen.id,
+              "sales_comparable_kitchen_type_invalid",
+              "A comparable kitchen comparison record must use Room Type Kitchen.",
+            ));
+          }
+        }
+
+        const componentDetailKeys = [
+          UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentOther,
+          UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentQualitySummary,
+          UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentConditionSummary,
+          UAD_SALES_COMPARISON_FIELD_KEYS.interiorFlooringUpdate,
+        ];
+        const allowedComponentDetails = {
+          Flooring: new Set([
+            UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentQualitySummary,
+            UAD_SALES_COMPARISON_FIELD_KEYS.interiorFlooringUpdate,
+          ]),
+          WallsAndCeiling: new Set([
+            UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentQualitySummary,
+            UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentConditionSummary,
+          ]),
+          Other: new Set([
+            UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentOther,
+            UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentQualitySummary,
+            UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentConditionSummary,
+          ]),
+        };
+        const otherInteriorLabels = [];
+        for (const component of interiorComponents) {
+          const componentLookup = valueLookup(merged, component.id);
+          const componentType = componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentType);
+          const allowed = allowedComponentDetails[componentType] || new Set();
+          if (componentDetailKeys.some((key) => !allowed.has(key) && isPresent(componentLookup(key)))) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentType),
+              component.id,
+              "sales_comparable_interior_component_detail_conflict",
+              "Clear details that do not belong to the selected interior component type.",
+            ));
+          }
+          if (componentType === "Other") {
+            const label = String(componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentOther) || "").trim();
+            if (label) {
+              otherInteriorLabels.push(label);
+              if (!subjectOtherInteriorLabels.has(label)) {
+                errors.push(validationError(
+                  salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentOther),
+                  component.id,
+                  "sales_comparable_interior_other_subject_mismatch",
+                  "Comparable Other interior rows must use the exact label of a subject Other interior feature; unrelated features belong in the Unit(s) additional row.",
+                ));
+              }
+            }
+          }
+        }
+        if (new Set(otherInteriorLabels).size !== otherInteriorLabels.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.interiorComponentOther),
+            unit.id,
+            "sales_comparable_interior_other_duplicate",
+            "Each subject-defined Other interior feature may appear only once per comparable unit.",
+          ));
         }
       }
 

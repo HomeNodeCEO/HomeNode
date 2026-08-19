@@ -26,6 +26,10 @@ import {
 } from "./projectInformationCatalog.js";
 import { UAD_PRIOR_TRANSFER_FIELD_KEYS } from "./priorSaleTransferCatalog.js";
 import {
+  UAD_SALES_COMPARISON_FIELD_KEYS,
+  isVerifiedSalesComparisonAsset,
+} from "./salesComparisonCatalog.js";
+import {
   UAD_SALES_CONTRACT_FIELD_KEYS,
   isVerifiedSalesContractAsset,
 } from "./salesContractCatalog.js";
@@ -364,6 +368,31 @@ function completionFor(values, entities, assets = []) {
         hasListings === false
         && !entities.some((entity) => entity.entity_type === "subject_listing_data_source")
       ) required += 1;
+    }
+    if (section === "sales_comparison") {
+      const included = valueLookup(byKey)(UAD_SALES_COMPARISON_FIELD_KEYS.included);
+      if (included === true) {
+        const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
+        if (!comparables.length) required += 1;
+        for (const comparable of comparables) {
+          const sources = entities.filter((entity) => (
+            entity.entity_type === "sales_comparable_data_source"
+            && entity.parent_entity_id === comparable.id
+          ));
+          if (!sources.length) required += 1;
+          required += 1;
+          if (assets.some((asset) => isVerifiedSalesComparisonAsset(asset, "PropertyPhoto", comparable.id))) {
+            completed += 1;
+          }
+          if (valueLookup(byKey, comparable.id)(UAD_SALES_COMPARISON_FIELD_KEYS.allRightsIncluded) === false) {
+            const rights = entities.filter((entity) => (
+              entity.entity_type === "sales_comparable_right_not_included"
+              && entity.parent_entity_id === comparable.id
+            ));
+            if (!rights.length) required += 1;
+          }
+        }
+      }
     }
     result[section] = {
       completed,
@@ -1748,6 +1777,252 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         prefix: "comparable_prior_transfer",
         ownerLabel: "comparable",
       });
+    }
+  }
+
+  if (section === "sales_comparison") {
+    const rootLookup = valueLookup(merged);
+    const salesField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+    const included = rootLookup(UAD_SALES_COMPARISON_FIELD_KEYS.included);
+    const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
+    const sources = entities.filter((entity) => entity.entity_type === "sales_comparable_data_source");
+    const rights = entities.filter((entity) => entity.entity_type === "sales_comparable_right_not_included");
+    const comparableIds = new Set(comparables.map((entity) => entity.id));
+
+    if (included === true && !comparables.length) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.included),
+        null,
+        "sales_comparable_required",
+        "Add at least one sales comparable when the Sales Comparison Approach is developed.",
+      ));
+    }
+    if (included === false && comparables.length) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.included),
+        null,
+        "sales_comparable_scope_conflict",
+        "Remove the saved sales comparables or change Sales Comparison Approach developed by appraiser to Yes.",
+      ));
+    }
+    if (sources.some((source) => !comparableIds.has(source.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dataSourceType),
+        null,
+        "sales_comparable_data_source_orphaned",
+        "Every comparable data source must be linked to a sales comparable.",
+      ));
+    }
+    if (rights.some((right) => !comparableIds.has(right.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.rightNotIncluded),
+        null,
+        "sales_comparable_right_orphaned",
+        "Every excluded property right must be linked to a sales comparable.",
+      ));
+    }
+
+    const ordinals = new Set();
+    for (const comparable of comparables) {
+      const lookup = valueLookup(merged, comparable.id);
+      const ordinal = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.ordinal) ?? comparable.ordinal;
+      if (ordinals.has(ordinal)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.ordinal),
+          comparable.id,
+          "sales_comparable_ordinal_duplicate",
+          "Sales comparable numbers must be unique.",
+        ));
+      }
+      ordinals.add(ordinal);
+
+      const comparableSources = sources.filter((source) => source.parent_entity_id === comparable.id);
+      if (!comparableSources.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dataSourceType),
+          comparable.id,
+          "sales_comparable_data_source_required",
+          "Add at least one data source for this sales comparable.",
+        ));
+      }
+      const sourceTypes = comparableSources
+        .map((source) => valueLookup(merged, source.id)(UAD_SALES_COMPARISON_FIELD_KEYS.dataSourceType))
+        .filter(isPresent);
+      if (new Set(sourceTypes).size !== sourceTypes.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dataSourceType),
+          comparable.id,
+          "sales_comparable_data_source_duplicate",
+          "Each comparable data source type may be selected only once.",
+        ));
+      }
+      if (!assets.some((asset) => isVerifiedSalesComparisonAsset(asset, "PropertyPhoto", comparable.id))) {
+        errors.push(validationError(
+          salesField("sales_comparable_address:1800.0001"),
+          comparable.id,
+          "sales_comparable_photo_required",
+          "Upload and verify a property photo for this sales comparable.",
+        ));
+      }
+
+      const status = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.listingStatus);
+      const pending = status === "Pending";
+      const settledSale = status === "SettledSale";
+      const contractPriceUnknown = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.contractPriceUnknown);
+      const contractPrice = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.contractPrice);
+      const salePrice = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.salePrice);
+      const saleType = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.saleType);
+      const saleTypeOther = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.saleTypeOther);
+      const noFinancing = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.noFinancing);
+      const financingType = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.financingType);
+      const financingOther = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.financingOther);
+      const concessions = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.concessions);
+      const concessionAmountKnown = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.concessionAmountKnown);
+      const concessionAmount = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.concessionAmount);
+      const contractDateUnknown = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.contractDateUnknown);
+      const contractDate = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.contractDate);
+      const saleDate = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.saleDate);
+
+      if (!pending && [contractPriceUnknown, contractPrice].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.contractPriceUnknown),
+          comparable.id,
+          "sales_comparable_contract_price_status_conflict",
+          "Contract price details are only reported for a pending comparable.",
+        ));
+      }
+      if (contractPriceUnknown === true && isPresent(contractPrice)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.contractPriceUnknown),
+          comparable.id,
+          "sales_comparable_contract_price_unknown_conflict",
+          "Clear the contract price or change Contract price unknown to No.",
+        ));
+      }
+      if (!settledSale && [salePrice, saleType, saleTypeOther, saleDate, noFinancing, financingType, financingOther, concessions, concessionAmountKnown, concessionAmount].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.listingStatus),
+          comparable.id,
+          "sales_comparable_settled_detail_conflict",
+          "Clear the settled-sale details or change Listing status to Settled Sale.",
+        ));
+      }
+      if (saleType !== "Other" && isPresent(saleTypeOther)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.saleType),
+          comparable.id,
+          "sales_comparable_sale_type_other_conflict",
+          "Clear the other transfer-terms description or select Other.",
+        ));
+      }
+      if (noFinancing === true && [financingType, financingOther].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.noFinancing),
+          comparable.id,
+          "sales_comparable_financing_conflict",
+          "Clear the financing details when the transaction was executed without financing.",
+        ));
+      }
+      if (financingType !== "Other" && isPresent(financingOther)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.financingType),
+          comparable.id,
+          "sales_comparable_financing_other_conflict",
+          "Clear the other financing description or select Other.",
+        ));
+      }
+      if (concessions === false && [concessionAmountKnown, concessionAmount].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.concessions),
+          comparable.id,
+          "sales_comparable_concession_conflict",
+          "Clear the concession amount details when there are no known sales concessions.",
+        ));
+      }
+      if (concessionAmountKnown === false && isPresent(concessionAmount)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.concessionAmountKnown),
+          comparable.id,
+          "sales_comparable_concession_amount_conflict",
+          "Clear the concession amount or change Sales concession amount known to Yes.",
+        ));
+      }
+      if (!pending && !settledSale && [contractDateUnknown, contractDate].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.contractDateUnknown),
+          comparable.id,
+          "sales_comparable_contract_date_status_conflict",
+          "Contract date details are only reported for pending or settled comparables.",
+        ));
+      }
+      if (contractDateUnknown === true && isPresent(contractDate)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.contractDateUnknown),
+          comparable.id,
+          "sales_comparable_contract_date_unknown_conflict",
+          "Clear the contract date or change Contract date unknown to No.",
+        ));
+      }
+
+      const propertyRights = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyRights);
+      const propertyRightsOther = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyRightsOther);
+      if (propertyRights !== "Other" && isPresent(propertyRightsOther)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.propertyRights),
+          comparable.id,
+          "sales_comparable_property_rights_other_conflict",
+          "Clear the other property-rights description or select Other.",
+        ));
+      }
+      const nativeLands = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.nativeLands);
+      const nativeLandsType = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.nativeLandsType);
+      const nativeLandsOther = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.nativeLandsOther);
+      if (nativeLands !== true && [nativeLandsType, nativeLandsOther].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.nativeLands),
+          comparable.id,
+          "sales_comparable_native_lands_conflict",
+          "Clear the Native American lands details or change the indicator to Yes.",
+        ));
+      }
+      if (nativeLandsType !== "Other" && isPresent(nativeLandsOther)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.nativeLandsType),
+          comparable.id,
+          "sales_comparable_native_lands_other_conflict",
+          "Clear the other Native American lands description or select Other.",
+        ));
+      }
+
+      const comparableRights = rights.filter((right) => right.parent_entity_id === comparable.id);
+      const allRightsIncluded = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.allRightsIncluded);
+      if (allRightsIncluded === false && !comparableRights.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.rightNotIncluded),
+          comparable.id,
+          "sales_comparable_right_not_included_required",
+          "Add at least one right that is not included in the appraisal.",
+        ));
+      }
+      if (allRightsIncluded === true && comparableRights.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.allRightsIncluded),
+          comparable.id,
+          "sales_comparable_right_not_included_conflict",
+          "Remove the excluded-right records or change All property rights included to No.",
+        ));
+      }
+      const selectedRights = comparableRights
+        .map((right) => valueLookup(merged, right.id)(UAD_SALES_COMPARISON_FIELD_KEYS.rightNotIncluded))
+        .filter(isPresent);
+      if (new Set(selectedRights).size !== selectedRights.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.rightNotIncluded),
+          comparable.id,
+          "sales_comparable_right_not_included_duplicate",
+          "Each excluded property right may be selected only once.",
+        ));
+      }
     }
   }
 

@@ -291,6 +291,13 @@ export const UAD_PRIOR_SALE_TRANSFER_ENTITY_GROUPS = Object.freeze({
     minItems: 0,
     maxItems: 99,
     createEnabled: false,
+    variants: Object.freeze({
+      "Sales comparables — general information": Object.freeze({
+        addLabel: "Add sales comparable",
+        createEnabled: true,
+        showWhen: Object.freeze({ key: "sales_comparison_scope:1000.0032", equals: true }),
+      }),
+    }),
   }),
   comparable_no_prior_transfer_data_source: Object.freeze({
     title: "Comparable no-transfer data sources",

@@ -25,6 +25,7 @@ const MIGRATIONS = Object.freeze([
   "20260901_uad_subject_listing_information.sql",
   "20260902_uad_sales_contract.sql",
   "20260903_uad_prior_sale_transfer_history.sql",
+  "20260904_uad_sales_comparison_general.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 

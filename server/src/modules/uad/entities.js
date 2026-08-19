@@ -80,12 +80,14 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
     } else if (parentEntityId) {
       throw new Error("invalid_uad_parent_entity");
     }
-    if (Number(group.maxItems || 0) > 0 && !parentEntityId) {
+    if (Number(group.maxItems || 0) > 0) {
       const count = await client.query(
         `SELECT count(*)::integer AS count
            FROM appraisal.uad_entities
-          WHERE workfile_id = $1 AND entity_type = $2`,
-        [workfileId, entityType],
+          WHERE workfile_id = $1
+            AND entity_type = $2
+            AND parent_entity_id IS NOT DISTINCT FROM $3::uuid`,
+        [workfileId, entityType, parentEntityId],
       );
       if (Number(count.rows[0].count) >= Number(group.maxItems)) {
         throw new Error("invalid_uad_entity_maximum_reached");
@@ -139,6 +141,18 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
         JSON.stringify(entityData),
       ],
     );
+    if (entityType === "sales_comparable") {
+      await client.query(
+        `INSERT INTO appraisal.uad_field_values (
+           id, workfile_id, entity_id, field_context, uad_uid, report_field_id,
+           value, source_type, source_reference, is_appraiser_confirmed
+         ) VALUES (
+           $1, $2, $3, 'sales_comparable', '1800.0192', '21.007',
+           $4::jsonb, 'calculated', 'uad_entity.ordinal', false
+         )`,
+        [randomUUID(), workfileId, id, JSON.stringify(ordinal)],
+      );
+    }
     await client.query(
       `INSERT INTO appraisal.uad_audit_events (
          workfile_id, event_type, entity_type, entity_id, after_data

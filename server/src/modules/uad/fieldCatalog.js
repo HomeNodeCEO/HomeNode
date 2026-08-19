@@ -29,6 +29,10 @@ import {
   UAD_PRIOR_SALE_TRANSFER_FIELDS,
 } from "./priorSaleTransferCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
+import {
+  UAD_SALES_COMPARISON_ENTITY_GROUPS,
+  UAD_SALES_COMPARISON_FIELDS,
+} from "./salesComparisonCatalog.js";
 import { UAD_SALES_CONTRACT_FIELDS } from "./salesContractCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 import {
@@ -61,6 +65,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_PROJECT_INFORMATION_ENTITY_GROUPS,
   ...UAD_SUBJECT_LISTING_ENTITY_GROUPS,
   ...UAD_PRIOR_SALE_TRANSFER_ENTITY_GROUPS,
+  ...UAD_SALES_COMPARISON_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -101,6 +106,10 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   prior_sale_transfer_history: {
     title: "Prior Sale and Transfer History",
     officialSectionNumber: 21,
+  },
+  sales_comparison: {
+    title: "Sales Comparison Approach",
+    officialSectionNumber: 22,
   },
 });
 
@@ -583,6 +592,7 @@ const fields = [
   ...UAD_SUBJECT_LISTING_FIELDS,
   ...UAD_SALES_CONTRACT_FIELDS,
   ...UAD_PRIOR_SALE_TRANSFER_FIELDS,
+  ...UAD_SALES_COMPARISON_FIELDS,
 ];
 
 function fieldKey(field) {
@@ -761,9 +771,11 @@ export function normalizeAndValidateUadValue(field, rawValue) {
 
   if (field.dataType === "percentage") {
     const value = typeof rawValue === "number" ? rawValue : Number(String(rawValue).trim());
-    return Number.isFinite(value) && value >= 0 && value <= 100
+    const minimum = field.minimum == null ? 0 : Number(field.minimum);
+    const maximum = field.maximum == null ? 100 : Number(field.maximum);
+    return Number.isFinite(value) && value >= minimum && value <= maximum
       ? { value, error: null }
-      : { value: null, error: invalid(field, "percentage", `${field.label} must be between 0 and 100.`) };
+      : { value: null, error: invalid(field, "percentage", `${field.label} must be between ${minimum} and ${maximum}.`) };
   }
 
   if (field.dataType === "currency") {

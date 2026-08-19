@@ -40,6 +40,10 @@ import {
   UAD_SUBJECT_PROPERTY_AMENITIES_MAX_IMAGES,
 } from "./subjectPropertyAmenitiesCatalog.js";
 import {
+  UAD_SUBJECT_LISTING_CAPTION_TYPES,
+  UAD_SUBJECT_LISTING_IMAGE_CONTENT_TYPES,
+} from "./subjectListingCatalog.js";
+import {
   UAD_UNIT_INTERIOR_CAPTION_TYPES,
   UAD_UNIT_INTERIOR_IMAGE_CONTENT_TYPES,
 } from "./unitInteriorCatalog.js";
@@ -79,6 +83,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [16, new Set(UAD_HIGHEST_BEST_USE_CAPTION_TYPES)],
   [17, new Set(UAD_MARKET_CAPTION_TYPES)],
   [18, new Set(UAD_PROJECT_INFORMATION_CAPTION_TYPES)],
+  [19, new Set(UAD_SUBJECT_LISTING_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -203,6 +208,15 @@ function normalizeAssetInput(input = {}) {
   if (sectionNumber === 18 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_project_information_asset_kind");
   }
+  if (sectionNumber === 19 && !UAD_SUBJECT_LISTING_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_subject_listing_content_type");
+  }
+  if (sectionNumber === 19 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_subject_listing_asset_kind");
+  }
+  if (sectionNumber === 19 && !caption) {
+    throw new Error("invalid_uad_subject_listing_asset_caption");
+  }
   return {
     kind,
     contentType,
@@ -289,6 +303,9 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
     ) {
       throw new Error("invalid_uad_project_information_asset_entity");
     }
+  }
+  if (normalized.sectionNumber === 19 && normalized.entityId) {
+    throw new Error("invalid_uad_subject_listing_asset_entity");
   }
 
   const organizationId = workfileResult.rows[0].organization_id;

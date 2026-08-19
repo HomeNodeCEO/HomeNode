@@ -61,6 +61,7 @@ const MARKET_CAPTIONS = [
 ];
 const PROJECT_INFORMATION_GENERAL_CAPTIONS = ["ProjectDeficiency", "ProjectExhibit"];
 const PROJECT_AMENITY_CAPTIONS = ["ProjectAmenity"];
+const SUBJECT_LISTING_CAPTIONS = ["SubjectListingExhibit"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -248,7 +249,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -467,6 +468,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             Define the market area and search criteria, then report active listings, pending sales, closed sales, price trends, supply, and marketing time. HomeNode's existing market and neighborhood tools can supply reviewable evidence without changing the custom appraisal workfile. Price trend commentary is required unless a verified Price Trend Graph is attached.
           </div>
         )}
+        {activeSection === "subject_listing_information" && (
+          <div className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-950">
+            Use a minimum one-year lookback. If no current or relevant listing exists, add every source used to reach that conclusion. If listings exist, add each listing separately; settled sales belong in Prior Sale and Transfer History. Existing HomeNode MLS activity remains source-attributed review material and is never treated as appraiser-confirmed merely because it was found automatically.
+          </div>
+        )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
@@ -591,7 +597,9 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               );
             }
             const groupEnabled = !group.showWhen || evaluateCondition(group.showWhen, draftLookup(null));
-            const displayedEntities = entities.filter((entity) => group.fields.some((field) => isVisible(field, entity.id)));
+            const displayedEntities = groupEnabled
+              ? entities.filter((entity) => group.fields.some((field) => isVisible(field, entity.id)))
+              : entities;
             if (!groupEnabled && !displayedEntities.length) return null;
             if (!displayedEntities.length && group.createEnabled === false) return null;
             return (
@@ -873,6 +881,18 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               workfileId={workfileId}
             />
           ))}
+          {activeSection === "subject_listing_information" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SUBJECT_LISTING_CAPTIONS}
+              description="Upload optional photos or images relevant to the subject listing analysis. Each exhibit remains isolated to this UAD workfile and requires a descriptive caption."
+              emptyMessage="No optional subject listing exhibits uploaded."
+              sectionNumber={19}
+              title="Subject listing information exhibits"
+              visibleCaptionTypes={SUBJECT_LISTING_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
           {activeSection === "unit_interior" && unitRooms.map((room) => (
             <UadAssetPanel
               accept={SKETCH_IMAGE_ACCEPT}

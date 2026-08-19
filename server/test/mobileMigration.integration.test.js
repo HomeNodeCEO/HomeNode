@@ -18,6 +18,11 @@ import {
   refreshTargetFieldProposals,
   reviewTargetFieldProposal,
 } from "../src/modules/mobile/targetFields.js";
+import {
+  createMobileUadEntityProposal,
+  getMobileUadEntityReview,
+  reviewMobileUadEntityProposal,
+} from "../src/modules/mobile/uadEntities.js";
 import { getMobileProperty, searchMobileProperties } from "../src/modules/mobile/properties.js";
 import {
   createPhotoUploadBatch,
@@ -170,6 +175,70 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.ok(uadTargetReview.catalog.length > 100);
     assert.ok(uadTargetReview.entities.length >= 4);
     assert.match(uadTargetReview.target.specification_release_key, /^uad-3\.6-/);
+
+    const initialEntityReview = await getMobileUadEntityReview(pool, auth, uadSession.session.id);
+    const unitEntity = initialEntityReview.entities.find((entity) => entity.entity_type === "unit");
+    assert.ok(unitEntity);
+    const createRoomOperationId = randomUUID();
+    const roomProposalInput = {
+      client_operation_id: createRoomOperationId,
+      action: "create",
+      entity_type: "unit_room",
+      parent_entity_id: unitEntity.id,
+      label: "Kitchen",
+      data: {},
+      base_target_revision: initialEntityReview.target.revision,
+    };
+    const roomProposal = await createMobileUadEntityProposal(
+      pool, auth, uadSession.session.id, roomProposalInput,
+    );
+    assert.equal(roomProposal.created, true);
+    const retriedRoomProposal = await createMobileUadEntityProposal(
+      pool, auth, uadSession.session.id, roomProposalInput,
+    );
+    assert.equal(retriedRoomProposal.created, false);
+    assert.equal(retriedRoomProposal.proposal.id, roomProposal.proposal.id);
+    const acceptedRoom = await reviewMobileUadEntityProposal(
+      pool,
+      auth,
+      uadSession.session.id,
+      roomProposal.proposal.id,
+      { client_operation_id: randomUUID(), decision: "accept" },
+    );
+    assert.equal(acceptedRoom.proposal.status, "accepted");
+    assert.equal(acceptedRoom.proposal.applied_target_revision, 2);
+    const entityReviewWithRoom = await getMobileUadEntityReview(pool, auth, uadSession.session.id);
+    const roomEntity = entityReviewWithRoom.entities.find((entity) => entity.id === acceptedRoom.proposal.applied_entity_id);
+    assert.equal(roomEntity?.label, "Kitchen");
+
+    const deleteRoom = await createMobileUadEntityProposal(pool, auth, uadSession.session.id, {
+      client_operation_id: randomUUID(),
+      action: "delete",
+      entity_type: "unit_room",
+      target_entity_id: roomEntity.id,
+      base_target_revision: entityReviewWithRoom.target.revision,
+      base_entity: roomEntity,
+    });
+    await pool.query(
+      "UPDATE appraisal.uad_entities SET label = 'Kitchen changed elsewhere', updated_at = now() WHERE id = $1",
+      [roomEntity.id],
+    );
+    const conflictedDelete = await reviewMobileUadEntityProposal(
+      pool,
+      auth,
+      uadSession.session.id,
+      deleteRoom.proposal.id,
+      { client_operation_id: randomUUID(), decision: "accept" },
+    );
+    assert.equal(conflictedDelete.proposal.status, "conflict");
+    const rejectedDelete = await reviewMobileUadEntityProposal(
+      pool,
+      auth,
+      uadSession.session.id,
+      deleteRoom.proposal.id,
+      { client_operation_id: randomUUID(), decision: "reject" },
+    );
+    assert.equal(rejectedDelete.proposal.status, "rejected");
 
     const taxSession = await createInspectionSession(pool, auth, {
       report_file_id: tax.reportFile.id,

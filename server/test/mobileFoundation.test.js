@@ -36,6 +36,10 @@ import {
   normalizePropertyTaxWorkfileData,
   propertyTaxFieldCatalog,
 } from "../src/modules/mobile/targetFields.js";
+import {
+  mobileUadEntityCatalog,
+  normalizeMobileUadEntityProposal,
+} from "../src/modules/mobile/uadEntities.js";
 const ISSUER = "https://identity.example.test";
 const AUDIENCE = "https://api.homenode.test/mobile";
 const NOW = Date.parse("2026-08-21T12:00:00.000Z");
@@ -180,6 +184,42 @@ test("property tax adapter exposes a bounded canonical field catalog", () => {
     () => normalizePropertyTaxWorkfileData({ subject: { condition_rating: "C7" } }),
     /invalid_property_tax_protest_enum/,
   );
+});
+
+test("mobile UAD entity proposals use only the official repeatable catalog", () => {
+  const catalog = mobileUadEntityCatalog();
+  assert.ok(catalog.some((item) => item.entity_type === "unit_room" && item.parent_entity_types.includes("unit")));
+  assert.equal(catalog.find((item) => item.entity_type === "dwelling")?.create_enabled, false);
+  assert.equal(catalog.find((item) => item.entity_type === "sales_comparable")?.create_enabled, true);
+  assert.equal(catalog.filter((item) => item.entity_type === "amenity").length, 5);
+  const request = normalizeMobileUadEntityProposal({
+    client_operation_id: "10000000-0000-4000-8000-000000000010",
+    action: "create",
+    entity_type: "unit_room",
+    parent_entity_id: "10000000-0000-4000-8000-000000000011",
+    label: "Kitchen",
+    data: {},
+    base_target_revision: 2,
+  });
+  assert.equal(request.entityType, "unit_room");
+  assert.equal(request.parentEntityId, "10000000-0000-4000-8000-000000000011");
+  const comparableRequest = normalizeMobileUadEntityProposal({
+    client_operation_id: "10000000-0000-4000-8000-000000000013",
+    action: "create",
+    entity_type: "sales_comparable",
+    label: "Comparable 1",
+    data: {},
+    base_target_revision: 2,
+  });
+  assert.equal(comparableRequest.entityType, "sales_comparable");
+  assert.throws(() => normalizeMobileUadEntityProposal({
+    client_operation_id: "10000000-0000-4000-8000-000000000012",
+    action: "create",
+    entity_type: "dwelling",
+    label: "Dwelling 2",
+    data: {},
+    base_target_revision: 2,
+  }), /invalid_uad_entity_creation_disabled/);
 });
 test("custom appraisal adapter exposes only mapped, bounded assignment fields", () => {
   const catalog = customAppraisalFieldCatalog();
@@ -481,4 +521,14 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(workfileSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_signed_snapshots/);
   assert.match(workfileSource, /checksum_sha256 ~ '\^\[a-f0-9\]\{64\}\$'/);
   assert.doesNotMatch(workfileSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const entitySource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260831_mobile_uad_entities.sql"),
+    "utf8",
+  );
+  assert.match(entitySource, /CREATE TABLE IF NOT EXISTS app\.mobile_uad_entity_proposals/);
+  assert.match(entitySource, /CREATE TABLE IF NOT EXISTS app\.mobile_uad_entity_review_operations/);
+  assert.match(entitySource, /CREATE TABLE IF NOT EXISTS app\.mobile_uad_entity_events/);
+  assert.match(entitySource, /action IN \('create', 'delete'\)/);
+  assert.doesNotMatch(entitySource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

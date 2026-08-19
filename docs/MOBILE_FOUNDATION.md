@@ -1,10 +1,10 @@
 # HomeNode mobile inspection foundation
 
-Status: Phase 8 field foundation. Offline synchronization, private photo capture,
-the Custom Appraisal review adapter, the manual sketch workspace, and separate
-UAD 3.6 and Property Tax Protest target adapters are built. The mobile API
-remains disabled by default and no identity-provider purchase or production
-migration is part of this work.
+Status: Phase 9 managed-identity activation foundation. Offline synchronization,
+private photo capture, all three report adapters, the manual sketch workspace,
+provider-neutral Expo PKCE, a staging-only synthetic appraiser, and deployment
+OIDC preflight checks are built. The mobile API remains disabled by default and
+no identity-provider purchase or production migration is part of this work.
 
 ## Boundaries
 
@@ -64,10 +64,17 @@ Required environment settings after provider approval:
 ```text
 MOBILE_INSPECTION_ENABLED=true
 OIDC_ISSUER=https://provider-issuer.example
-OIDC_AUDIENCE=https://api.homenode.com/mobile
+OIDC_AUDIENCE=<expected access-token audience>
 OIDC_JWKS_URI=                     # optional when discovery publishes jwks_uri
 OIDC_CLOCK_TOLERANCE_SECONDS=60
 ```
+
+For the selected WorkOS public OAuth application, the issuer is its AuthKit
+domain, the audience is the public application's `client_id`, and the JWKS is
+`https://<authkit-domain>/oauth2/jwks`. Render staging runs an OIDC discovery
+and supported-key preflight whenever mobile inspection is enabled; an invalid or
+unreachable identity configuration fails the new deployment while the previous
+healthy deployment remains live.
 
 The contract is intentionally provider-neutral. Expo/React Native should use
 Authorization Code with PKCE and secure OS credential storage; no reusable
@@ -75,7 +82,7 @@ secret belongs in the app bundle.
 
 ## Managed OIDC cost decision
 
-Pricing checked against official provider pages on 2026-08-17:
+Pricing rechecked against official provider pages on 2026-08-18:
 
 | Provider | Practical HomeNode starting cost | Material tradeoff |
 | --- | ---: | --- |
@@ -84,11 +91,13 @@ Pricing checked against official provider pages on 2026-08-17:
 | Clerk | $0/month through 50,000 retained users; Pro is $20/month annually or $25 month-to-month | Expo support is strong, but MFA requires Pro. |
 | Amazon Cognito | Usage-based with a free allowance | Potentially inexpensive, but materially more AWS configuration and operational surface for this small internal app. |
 
-Recommendation: approve WorkOS AuthKit at the $0 tier. It provides the best
-cost-to-security fit for HomeNode's small internal user population because MFA
-and RBAC do not force an immediate paid plan. Keep its hosted auth domain at
-first, so the expected provider bill is $0. A custom domain or enterprise SSO
-must be a separate approval.
+Decision: use WorkOS AuthKit, beginning in its free staging environment. It
+provides the best cost-to-security fit for HomeNode's small internal user
+population because MFA and RBAC do not force an immediate paid plan. Keep its
+hosted auth domain, so the expected provider bill is $0. WorkOS requires a
+payment method to unlock production even when AuthKit usage remains in the free
+tier; adding it, a $99/month custom domain, or paid enterprise connections must
+remain separate financial actions.
 
 Official pricing references:
 
@@ -199,8 +208,9 @@ are deliberately deployed.
 
 ## Next phases
 
-1. Approve and configure managed OIDC; the provider-neutral Expo PKCE and server
-   verification paths are ready but intentionally inactive.
+1. Create the WorkOS staging public OAuth application, disable public signup,
+   require MFA, map its test user to the synthetic HomeNode staging appraiser,
+   and only then enable `MOBILE_INSPECTION_ENABLED` in Render staging.
 2. Add mobile creation and review for repeatable UAD entities such as levels,
    rooms, defects, outbuildings, and comparable records.
 3. Run physical-device staging across iPhone and Android, including offline and

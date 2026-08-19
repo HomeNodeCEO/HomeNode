@@ -85,6 +85,9 @@ export function createOidcAccessTokenVerifier({
   if (!configured) {
     return Object.freeze({
       configured: false,
+      async preflight() {
+        return Object.freeze({ configured: false });
+      },
       async verify() {
         const error = new Error("mobile_oidc_not_configured");
         error.statusCode = 503;
@@ -196,7 +199,25 @@ export function createOidcAccessTokenVerifier({
     return Object.freeze({ ...payload, iss: issuer, sub: payload.sub.trim() });
   }
 
-  return Object.freeze({ configured: true, issuer, audience, verify });
+  async function preflight() {
+    const jwksUri = await resolveJwksUri();
+    const importedKeys = await keys({ refresh: true });
+    if (!importedKeys.size) {
+      const error = new Error("oidc_jwks_has_no_supported_keys");
+      error.statusCode = 503;
+      throw error;
+    }
+    return Object.freeze({
+      configured: true,
+      issuer,
+      audience,
+      jwksUri,
+      signingAlgorithm: "RS256",
+      supportedKeyCount: importedKeys.size,
+    });
+  }
+
+  return Object.freeze({ configured: true, issuer, audience, preflight, verify });
 }
 
 export function createMobileAuthenticator({ pool, verifier }) {

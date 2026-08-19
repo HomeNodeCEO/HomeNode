@@ -98,8 +98,10 @@ idempotency and schema compatibility.
 The Render UAD staging service must use `npm run start:staging:uad` as its
 start command. This intentionally applies all additive UAD migrations, then all
 additive mobile migrations, before seeding the deterministic fixtures and
-starting the API. Reversing that order can make a new fixture entity type fail
-against the previous release's database constraint during a rolling deployment.
+synthetic mobile appraiser. It then preflights OIDC discovery/JWKS when mobile
+inspection is enabled and starts the API. Reversing the migration order can make
+a new fixture entity type fail against the previous release's database
+constraint during a rolling deployment.
 
 ## Mobile photos and artifacts
 

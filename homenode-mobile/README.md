@@ -66,31 +66,39 @@ The server stores every sketch revision and audit event on the existing typed re
 
 ## WorkOS activation
 
-Create a **first-party public OAuth application** in the WorkOS environment used by HomeNode:
+Create a **first-party public OAuth application** in the WorkOS staging environment used by HomeNode:
 
-1. Enable PKCE and do not create or embed a mobile client secret.
+1. Mark the application Public, require PKCE, and never create or embed a mobile client secret.
 2. Register `homenode://oauth/callback` as the redirect URI.
 3. Allow `openid profile email offline_access`.
-4. Copy `.env.example` to `.env.local` and set the API URL, AuthKit issuer, and public OAuth client ID.
-5. Configure the HomeNode server with:
+4. Disable public sign-up and require TOTP MFA before inviting a test user.
+5. Copy `.env.example` to `.env.local` and set:
 
    ```text
-   MOBILE_INSPECTION_ENABLED=true
+   EXPO_PUBLIC_API_BASE_URL=https://homenode-api-staging.onrender.com
+   EXPO_PUBLIC_OIDC_ISSUER=https://<environment>.authkit.app
+   EXPO_PUBLIC_OIDC_CLIENT_ID=client_<public-oauth-application-id>
+   ```
+
+6. Configure Render staging, initially leaving the protected routes dark:
+
+   ```text
+   MOBILE_INSPECTION_ENABLED=false
    OIDC_ISSUER=https://<environment>.authkit.app
-   OIDC_AUDIENCE=<aud claim issued for the protected HomeNode API>
+   OIDC_AUDIENCE=client_<public-oauth-application-id>
    OIDC_JWKS_URI=https://<environment>.authkit.app/oauth2/jwks
    ```
 
-The issuer and audience must exactly match the WorkOS access token. The server remains provider-neutral and validates RS256 signatures, expiration, issuer, and audience before it performs HomeNode authorization.
+The issuer and audience must exactly match the WorkOS access token. WorkOS public OAuth access tokens use the application `client_id` as `aud`. The server remains provider-neutral and validates RS256 signatures, expiration, issuer, and audience before it performs HomeNode authorization.
 
-After the WorkOS user exists, link its WorkOS user ID (`sub`) to one active HomeNode user:
+After the WorkOS staging user exists, link its WorkOS user ID (`sub`) to the synthetic HomeNode staging appraiser:
 
 ```powershell
 cd server
-npm run provision:mobile-identity -- --email appraiser@example.com --issuer https://<environment>.authkit.app --subject user_123
+npm run provision:mobile-identity -- --email mobile-appraiser@staging.homenode.invalid --issuer https://<environment>.authkit.app --subject user_123
 ```
 
-This command refuses to silently move an identity already assigned to another user. HomeNode organization membership and roles remain the source of authorization.
+The command refuses to silently move an identity already assigned to another user. HomeNode organization membership and roles remain the source of authorization. Set `MOBILE_INSPECTION_ENABLED=true` only after the mapping exists; Render then performs OIDC discovery and JWKS preflight before replacing the live deployment. See `docs/MOBILE_OIDC_ACTIVATION.md` for the complete checklist.
 
 ## Local verification
 

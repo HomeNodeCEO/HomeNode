@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 62);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 110);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -368,9 +368,19 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_project_amenity"
       && entity.parent_entity_id === salesComparable?.id
     ));
+    const salesComparableInfluence = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_site_influence"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
+    const salesComparableView = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_site_view"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
     assert.ok(salesComparable);
     assert.ok(salesComparableSource);
     assert.ok(salesComparableProjectAmenity);
+    assert.ok(salesComparableInfluence);
+    assert.ok(salesComparableView);
     assert.equal(
       siteBuiltEditor.values.find((item) => (
         item.entity_id === salesComparable.id
@@ -402,6 +412,22 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0056"
       ))?.value,
       "Clubhouse",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableInfluence.id
+        && item.context_key === "sales_comparable_site_influence"
+        && item.uid === "1800.0233"
+      ))?.value,
+      "Residential",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableView.id
+        && item.context_key === "sales_comparable_site_view"
+        && item.uid === "1800.0243"
+      ))?.value,
+      "Residential",
     );
     assert.ok(siteBuiltEditor.completion.sales_comparison.required > 0);
     assert.ok(siteBuiltEditor.completion.sales_comparison.percent < 100);

@@ -542,7 +542,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    assert.equal(salesComparisonFields.rows[0].count, 90);
+    assert.equal(salesComparisonFields.rows[0].count, 155);
 
     const salesComparisonLocations = await pool.query(`
       SELECT count(*)::integer AS count,
@@ -551,10 +551,10 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    // Earlier source-section migrations plus Sections 22A-22B provide the
+    // Earlier source-section migrations plus Sections 22A-22C provide the
     // canonical comparable/grid locations and their subject redisplays.
-    assert.equal(salesComparisonLocations.rows[0].count, 74);
-    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 13);
+    assert.equal(salesComparisonLocations.rows[0].count, 155);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 46);
 
     const officialSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
@@ -569,13 +569,25 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.equal(officialSalesComparisonRules.rows[0].count, 21);
 
+    const officialSalesComparisonSiteRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1398', 'UAD1399', 'UAD1400', 'UAD1401', 'UAD1445', 'UAD1446',
+           'UAD1447', 'UAD1448', 'UAD1449', 'UAD1450', 'UAD1451', 'UAD1452',
+           'UAD1476', 'UAD1769', 'UAD1770'
+         )
+    `);
+    assert.equal(officialSalesComparisonSiteRules.rows[0].count, 15);
+
     const homeNodeSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
         FROM uad_ref.compliance_rules
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND rule_id LIKE 'HN-UAD-SALES-COMPARISON-%'
     `);
-    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 8);
+    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 13);
 
     const salesComparisonEntityConstraint = await pool.query(`
       SELECT pg_get_constraintdef(oid) AS definition
@@ -586,6 +598,8 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_data_source/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_right_not_included/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_project_amenity/);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_site_influence/);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_site_view/);
   } finally {
     await pool.end();
   }

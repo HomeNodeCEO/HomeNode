@@ -401,6 +401,16 @@ function completionFor(values, entities, assets = []) {
             ));
             if (!amenities.length) required += 1;
           }
+          for (const entityType of [
+            "sales_comparable_site_hazard",
+            "sales_comparable_site_influence",
+            "sales_comparable_site_view",
+          ]) {
+            if (!entities.some((entity) => (
+              entity.entity_type === entityType
+              && entity.parent_entity_id === comparable.id
+            ))) required += 1;
+          }
         }
       }
     }
@@ -1798,6 +1808,17 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const sources = entities.filter((entity) => entity.entity_type === "sales_comparable_data_source");
     const rights = entities.filter((entity) => entity.entity_type === "sales_comparable_right_not_included");
     const projectAmenities = entities.filter((entity) => entity.entity_type === "sales_comparable_project_amenity");
+    const comparableSiteChildTypes = new Set([
+      "sales_comparable_site_hazard",
+      "sales_comparable_site_street",
+      "sales_comparable_site_restriction",
+      "sales_comparable_site_easement",
+      "sales_comparable_site_feature",
+      "sales_comparable_site_influence",
+      "sales_comparable_site_environmental",
+      "sales_comparable_site_view",
+    ]);
+    const comparableSiteChildren = entities.filter((entity) => comparableSiteChildTypes.has(entity.entity_type));
     const comparableIds = new Set(comparables.map((entity) => entity.id));
 
     if (included === true && !comparables.length) {
@@ -1838,6 +1859,14 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_project_amenity_orphaned",
         "Every comparable project amenity must be linked to a sales comparable.",
+      ));
+    }
+    if (comparableSiteChildren.some((entity) => !comparableIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence),
+        null,
+        "sales_comparable_site_child_orphaned",
+        "Every comparable site record must be linked to a sales comparable.",
       ));
     }
 
@@ -2121,6 +2150,138 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
           "sales_comparable_project_amenity_none_conflict",
           "Select None by itself, or remove None before adding another comparable project amenity.",
         ));
+      }
+
+      const siteOwnedInCommon = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteOwnedInCommon);
+      const siteSize = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteSize);
+      const sitePrimaryAccess = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.sitePrimaryAccess);
+      const sitePrimaryAccessOther = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.sitePrimaryAccessOther);
+      const siteChildren = (entityType) => comparableSiteChildren.filter((entity) => (
+        entity.entity_type === entityType && entity.parent_entity_id === comparable.id
+      ));
+      const hazards = siteChildren("sales_comparable_site_hazard");
+      const streets = siteChildren("sales_comparable_site_street");
+      const restrictions = siteChildren("sales_comparable_site_restriction");
+      const easements = siteChildren("sales_comparable_site_easement");
+      const siteFeatures = siteChildren("sales_comparable_site_feature");
+      const siteInfluences = siteChildren("sales_comparable_site_influence");
+      const environmentalConditions = siteChildren("sales_comparable_site_environmental");
+      const siteViews = siteChildren("sales_comparable_site_view");
+
+      for (const requirement of [
+        [hazards, UAD_SALES_COMPARISON_FIELD_KEYS.siteHazard, "sales_comparable_site_hazard_required", "Add at least one hazard-zone record; select None when no hazard zone is identified."],
+        [siteInfluences, UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence, "sales_comparable_site_influence_required", "Add at least one Site Influence (Location) record for this sales comparable."],
+        [siteViews, UAD_SALES_COMPARISON_FIELD_KEYS.siteView, "sales_comparable_site_view_required", "Add at least one View record for this sales comparable."],
+      ]) {
+        if (!requirement[0].length) {
+          errors.push(validationError(
+            salesField(requirement[1]),
+            comparable.id,
+            requirement[2],
+            requirement[3],
+          ));
+        }
+      }
+
+      if (siteOwnedInCommon === true && [siteSize, sitePrimaryAccess, sitePrimaryAccessOther].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteOwnedInCommon),
+          comparable.id,
+          "sales_comparable_site_common_ownership_conflict",
+          "Clear site size and primary-access details when the comparable site is owned in common.",
+        ));
+      }
+      if (sitePrimaryAccess !== "Other" && isPresent(sitePrimaryAccessOther)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.sitePrimaryAccessOther),
+          comparable.id,
+          "sales_comparable_site_primary_access_other_conflict",
+          "Clear the other primary-access description or select Other.",
+        ));
+      }
+
+      const validateUniqueSiteSelections = (records, key, code, label, noneExclusive = false) => {
+        const selected = records
+          .map((record) => valueLookup(merged, record.id)(key))
+          .filter(isPresent);
+        if (new Set(selected).size !== selected.length) {
+          errors.push(validationError(
+            salesField(key),
+            comparable.id,
+            code,
+            `Each ${label} may be selected only once for a sales comparable.`,
+          ));
+        }
+        if (noneExclusive && selected.includes("None") && selected.length > 1) {
+          errors.push(validationError(
+            salesField(key),
+            comparable.id,
+            `${code}_none_conflict`,
+            `Select None by itself, or remove None before adding another ${label}.`,
+          ));
+        }
+      };
+      validateUniqueSiteSelections(hazards, UAD_SALES_COMPARISON_FIELD_KEYS.siteHazard, "sales_comparable_site_hazard_duplicate", "hazard zone", true);
+      validateUniqueSiteSelections(streets, UAD_SALES_COMPARISON_FIELD_KEYS.siteStreetType, "sales_comparable_site_street_duplicate", "street type");
+      validateUniqueSiteSelections(restrictions, UAD_SALES_COMPARISON_FIELD_KEYS.siteRestriction, "sales_comparable_site_restriction_duplicate", "property restriction");
+      validateUniqueSiteSelections(easements, UAD_SALES_COMPARISON_FIELD_KEYS.siteEasement, "sales_comparable_site_easement_duplicate", "easement");
+      validateUniqueSiteSelections(siteFeatures, UAD_SALES_COMPARISON_FIELD_KEYS.siteFeature, "sales_comparable_site_feature_duplicate", "site characteristic", true);
+      validateUniqueSiteSelections(siteInfluences, UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence, "sales_comparable_site_influence_duplicate", "site influence");
+      validateUniqueSiteSelections(environmentalConditions, UAD_SALES_COMPARISON_FIELD_KEYS.siteEnvironmental, "sales_comparable_site_environmental_duplicate", "environmental condition", true);
+      validateUniqueSiteSelections(siteViews, UAD_SALES_COMPARISON_FIELD_KEYS.siteView, "sales_comparable_site_view_duplicate", "view type");
+
+      const conditionalConflict = (record, controlKey, expectedValue, dependentKeys, code, message) => {
+        const childLookup = valueLookup(merged, record.id);
+        if (childLookup(controlKey) !== expectedValue && dependentKeys.some((key) => isPresent(childLookup(key)))) {
+          errors.push(validationError(salesField(controlKey), record.id, code, message));
+        }
+      };
+      for (const hazard of hazards) {
+        conditionalConflict(
+          hazard,
+          UAD_SALES_COMPARISON_FIELD_KEYS.siteHazard,
+          "Other",
+          [UAD_SALES_COMPARISON_FIELD_KEYS.siteHazardOther],
+          "sales_comparable_site_hazard_other_conflict",
+          "Clear the other hazard-zone description or select Other.",
+        );
+        conditionalConflict(
+          hazard,
+          UAD_SALES_COMPARISON_FIELD_KEYS.siteHazard,
+          "USGSLavaFlowZone",
+          [UAD_SALES_COMPARISON_FIELD_KEYS.siteHazardLavaZone],
+          "sales_comparable_site_hazard_lava_conflict",
+          "Clear the lava-flow zone or select USGS Lava Flow Zone.",
+        );
+      }
+      for (const street of streets) {
+        conditionalConflict(street, UAD_SALES_COMPARISON_FIELD_KEYS.siteStreetType, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteStreetTypeOther], "sales_comparable_site_street_other_conflict", "Clear the other street-type description or select Other.");
+        conditionalConflict(street, UAD_SALES_COMPARISON_FIELD_KEYS.siteStreetSurface, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteStreetSurfaceOther], "sales_comparable_site_surface_other_conflict", "Clear the other surface description or select Other.");
+      }
+      for (const restriction of restrictions) {
+        conditionalConflict(restriction, UAD_SALES_COMPARISON_FIELD_KEYS.siteRestriction, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteRestrictionOther], "sales_comparable_site_restriction_other_conflict", "Clear the other restriction description or select Other.");
+      }
+      for (const easement of easements) {
+        conditionalConflict(easement, UAD_SALES_COMPARISON_FIELD_KEYS.siteEasement, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteEasementOther], "sales_comparable_site_easement_other_conflict", "Clear the other easement description or select Other.");
+      }
+      for (const feature of siteFeatures) {
+        conditionalConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.siteFeature, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteFeatureOther], "sales_comparable_site_feature_other_conflict", "Clear the other site-characteristic description or select Other.");
+        conditionalConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.siteFeature, "Topography", [UAD_SALES_COMPARISON_FIELD_KEYS.siteTopography, UAD_SALES_COMPARISON_FIELD_KEYS.siteTopographyOther], "sales_comparable_site_topography_conflict", "Clear topography details unless Site Characteristic is Topography.");
+        conditionalConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.siteTopography, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteTopographyOther], "sales_comparable_site_topography_other_conflict", "Clear the other topography description or select Other.");
+        conditionalConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.siteFeature, "Drainage", [UAD_SALES_COMPARISON_FIELD_KEYS.siteDrainage, UAD_SALES_COMPARISON_FIELD_KEYS.siteDrainageOther], "sales_comparable_site_drainage_conflict", "Clear drainage details unless Site Characteristic is Drainage.");
+        conditionalConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.siteDrainage, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteDrainageOther], "sales_comparable_site_drainage_other_conflict", "Clear the other drainage description or select Other.");
+      }
+      for (const influence of siteInfluences) {
+        conditionalConflict(influence, UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluenceOther], "sales_comparable_site_influence_other_conflict", "Clear the other influence description or select Other.");
+        conditionalConflict(influence, UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence, "BodyOfWater", [UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWater, UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterOther], "sales_comparable_site_body_of_water_conflict", "Clear body-of-water details unless Site Influence is Body of Water.");
+        conditionalConflict(influence, UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWater, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterOther], "sales_comparable_site_body_of_water_other_conflict", "Clear the other body-of-water description or select Other.");
+      }
+      for (const condition of environmentalConditions) {
+        conditionalConflict(condition, UAD_SALES_COMPARISON_FIELD_KEYS.siteEnvironmental, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteEnvironmentalOther], "sales_comparable_site_environmental_other_conflict", "Clear the other environmental-condition description or select Other.");
+      }
+      for (const view of siteViews) {
+        conditionalConflict(view, UAD_SALES_COMPARISON_FIELD_KEYS.siteView, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteViewOther], "sales_comparable_site_view_other_conflict", "Clear the other view description or select Other.");
+        conditionalConflict(view, UAD_SALES_COMPARISON_FIELD_KEYS.siteViewRange, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteViewRangeOther], "sales_comparable_site_view_range_other_conflict", "Clear the other view-range description or select Other.");
       }
     }
   }

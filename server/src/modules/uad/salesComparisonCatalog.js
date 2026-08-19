@@ -70,6 +70,58 @@ export const UAD_PROPERTY_RIGHTS_NOT_INCLUDED = Object.freeze([
   "AirRights", "MineralRights", "Other", "TimberRights", "WaterRights",
 ]);
 
+export const UAD_SALES_COMPARABLE_HAZARD_TYPES = Object.freeze([
+  "FEMASpecialFloodHazardArea", "None", "Other", "USGSLavaFlowZone",
+]);
+
+export const UAD_SALES_COMPARABLE_STREET_TYPES = Object.freeze([
+  "Alley", "Arterial", "Collector", "CulDeSac", "DeadEnd", "Local", "Other", "Rural",
+]);
+
+export const UAD_SALES_COMPARABLE_SURFACE_TYPES = Object.freeze([
+  "Asphalt", "Brick", "Cobblestone", "Concrete", "Dirt", "Gravel", "Other",
+]);
+
+export const UAD_SALES_COMPARABLE_RESTRICTION_TYPES = Object.freeze([
+  "Age", "HistoricPreservation", "Income", "LandUse", "Other", "Rental", "SalePrice",
+]);
+
+export const UAD_SALES_COMPARABLE_EASEMENT_TYPES = Object.freeze([
+  "Conservation", "Drainage", "IngressOrEgress", "Other", "Utility",
+]);
+
+export const UAD_SALES_COMPARABLE_SITE_FEATURE_TYPES = Object.freeze([
+  "CoastalBarrierResourcesSystem", "Drainage", "ExcessLand", "Landlocked", "Landscaping",
+  "None", "Other", "RoadFrontage", "Shape", "SoilSuitability", "SurplusLand",
+  "Topography", "Wetlands", "ZeroLotLine",
+]);
+
+export const UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES = Object.freeze([
+  "Agricultural", "Airport", "BodyOfWater", "BusyRoadway", "CommercialArea", "GolfCourse",
+  "GreenSpace", "HighDensityResidential", "HighPressureGasLine", "HistoricDistrict",
+  "IndustrialArea", "LocalDistributionLine", "OilOrGasWell", "Other",
+  "OverheadElectricPowerTransmissionLine", "Park", "PublicTransportationHub", "RailLine",
+  "Residential", "School", "StormwaterRetention",
+]);
+
+export const UAD_SALES_COMPARABLE_BODY_OF_WATER_TYPES = Object.freeze([
+  "Bay", "Canal", "Cove", "Creek", "Gulf", "Lake", "Marsh", "Ocean", "Other",
+  "Pond", "Reservoir", "River", "Sound",
+]);
+
+export const UAD_SALES_COMPARABLE_ENVIRONMENTAL_TYPES = Object.freeze([
+  "HazardousAboveGroundStorageTank", "HazardousSubstances", "Landfill", "None", "Other",
+  "Radon", "SlushPit", "SoilContamination", "SuperfundSite", "UndergroundStorageTank",
+  "WaterContamination",
+]);
+
+export const UAD_SALES_COMPARABLE_VIEW_TYPES = Object.freeze([
+  "Bay", "Canal", "CityStreet", "Commercial", "Cove", "Creek", "GolfCourse", "Gulf",
+  "HighDensityResidential", "Highway", "Industrial", "Lake", "Marsh", "Mountain", "Ocean",
+  "Other", "Park", "ParkingLot", "Pastoral", "Pond", "Reservoir", "Residential", "River",
+  "School", "Skyline", "Sound", "TrafficWallBarriers", "Valley", "Woods",
+]);
+
 export const salesComparisonIncluded = Object.freeze({
   key: "sales_comparison_scope:1000.0032",
   equals: true,
@@ -118,6 +170,28 @@ const projectComp = (contextKey, uid, reportFieldId, label, dataType, options = 
   dataType,
   { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
 );
+const comparableSiteNotOwnedInCommon = Object.freeze({
+  key: "sales_comparable_site:1800.0277",
+  equals: false,
+});
+const siteComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — site information",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
+const siteChild = (group, entityType, contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  group,
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType, ...options },
+);
 const statusIs = (value) => Object.freeze({
   key: "sales_comparable_listing:1800.0075",
   equals: value,
@@ -138,6 +212,14 @@ const adjustment = (contextKey, reportFieldId, label, condition = salesCompariso
   label,
   "currency",
   { showWhen: condition, maximum: 999999999 },
+);
+const siteAdjustment = (contextKey, reportFieldId, label) => siteComp(
+  contextKey,
+  "1800.0317",
+  reportFieldId,
+  label,
+  "currency",
+  { maximum: 999999999 },
 );
 
 export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
@@ -388,6 +470,178 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     },
   ),
 
+  siteComp("sales_comparable_site", "1800.0277", "22.03.18", "Site owned in common", "boolean", {
+    requiredWhen: salesComparisonIncluded,
+  }),
+  siteComp("sales_comparable_site", "1800.0239", "22.03.20", "Total site size", "measurement", {
+    units: ["Acres", "Hectares", "SquareFeet", "SquareMeters"],
+    minimumExclusive: 0,
+    showWhen: includedAnd(comparableSiteNotOwnedInCommon),
+    requiredWhen: comparableSiteNotOwnedInCommon,
+  }),
+  siteComp("sales_comparable_site", "1800.0193", "22.03.22", "Neighborhood name", "string", {
+    maxLength: 66,
+  }),
+  siteComp("sales_comparable_site", "1800.0245", "22.03.24", "Zoning compliance", "enum", {
+    options: ["Illegal", "Legal", "LegalNonConforming", "NoZoning"],
+  }),
+  siteComp("sales_comparable_site", "1800.0218", "22.03.28", "Primary property access", "enum", {
+    options: ["Other", "PedestrianOnlyAccess", "PrivateAirstrip", "PrivateStreet", "PublicStreet", "Waterway"],
+    showWhen: includedAnd(comparableSiteNotOwnedInCommon),
+  }),
+  siteComp("sales_comparable_site", "1800.0219", "22.03.28", "Other primary property access", "string", {
+    maxLength: 33,
+    showWhen: includedAnd({ key: "sales_comparable_site:1800.0218", equals: "Other" }),
+    requiredWhen: { key: "sales_comparable_site:1800.0218", equals: "Other" },
+  }),
+
+  siteChild("Comparable hazard zones", "sales_comparable_site_hazard", "sales_comparable_site_hazard", "1800.0212", "22.03.26", "Hazard zone", "enum", {
+    options: UAD_SALES_COMPARABLE_HAZARD_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable hazard zones", "sales_comparable_site_hazard", "sales_comparable_site_hazard", "1800.0213", "22.03.26", "Other hazard zone", "string", {
+    maxLength: 45,
+    showWhen: { key: "sales_comparable_site_hazard:1800.0212", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_hazard:1800.0212", equals: "Other" },
+  }),
+  siteChild("Comparable hazard zones", "sales_comparable_site_hazard", "sales_comparable_site_hazard", "1800.0367", "22.03.26", "USGS lava flow zone", "enum", {
+    options: ["Zone1", "Zone2", "Zone3", "Zone4", "Zone5", "Zone6", "Zone7", "Zone8", "Zone9"],
+    showWhen: { key: "sales_comparable_site_hazard:1800.0212", equals: "USGSLavaFlowZone" },
+    requiredWhen: { key: "sales_comparable_site_hazard:1800.0212", equals: "USGSLavaFlowZone" },
+  }),
+
+  siteChild("Comparable access streets", "sales_comparable_site_street", "sales_comparable_site_street", "1800.0216", "22.03.30", "Street type", "enum", {
+    options: UAD_SALES_COMPARABLE_STREET_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable access streets", "sales_comparable_site_street", "sales_comparable_site_street", "1800.0217", "22.03.30", "Other street type", "string", {
+    maxLength: 12,
+    showWhen: { key: "sales_comparable_site_street:1800.0216", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_street:1800.0216", equals: "Other" },
+  }),
+  siteChild("Comparable access streets", "sales_comparable_site_street", "sales_comparable_site_street", "1800.0214", "22.03.30", "Street surface material", "enum", {
+    options: UAD_SALES_COMPARABLE_SURFACE_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable access streets", "sales_comparable_site_street", "sales_comparable_site_street", "1800.0215", "22.03.30", "Other street surface material", "string", {
+    maxLength: 12,
+    showWhen: { key: "sales_comparable_site_street:1800.0214", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_street:1800.0214", equals: "Other" },
+  }),
+
+  siteChild("Comparable property restrictions", "sales_comparable_site_restriction", "sales_comparable_site_restriction", "1800.0068", "22.03.32", "Property restriction", "enum", {
+    options: UAD_SALES_COMPARABLE_RESTRICTION_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable property restrictions", "sales_comparable_site_restriction", "sales_comparable_site_restriction", "1800.0069", "22.03.32", "Other property restriction", "string", {
+    maxLength: 45,
+    showWhen: { key: "sales_comparable_site_restriction:1800.0068", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_restriction:1800.0068", equals: "Other" },
+  }),
+  siteChild("Comparable easements", "sales_comparable_site_easement", "sales_comparable_site_easement", "1800.0070", "22.03.34", "Easement", "enum", {
+    options: UAD_SALES_COMPARABLE_EASEMENT_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable easements", "sales_comparable_site_easement", "sales_comparable_site_easement", "1800.0071", "22.03.34", "Other easement", "string", {
+    maxLength: 45,
+    showWhen: { key: "sales_comparable_site_easement:1800.0070", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_easement:1800.0070", equals: "Other" },
+  }),
+
+  siteChild("Comparable site characteristics", "sales_comparable_site_feature", "sales_comparable_site_feature", "1800.0222", "22.03.40", "Site characteristic", "enum", {
+    options: UAD_SALES_COMPARABLE_SITE_FEATURE_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable site characteristics", "sales_comparable_site_feature", "sales_comparable_site_feature", "1800.0223", "22.03.40", "Other site characteristic", "string", {
+    maxLength: 45,
+    showWhen: { key: "sales_comparable_site_feature:1800.0222", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_feature:1800.0222", equals: "Other" },
+  }),
+  siteChild("Comparable site characteristics", "sales_comparable_site_feature", "sales_comparable_site_feature", "1800.0225", "22.03.36", "Topography", "enum", {
+    options: ["Flat", "Other", "Rocky", "Rolling", "Sloping"],
+    showWhen: { key: "sales_comparable_site_feature:1800.0222", equals: "Topography" },
+    requiredWhen: { key: "sales_comparable_site_feature:1800.0222", equals: "Topography" },
+  }),
+  siteChild("Comparable site characteristics", "sales_comparable_site_feature", "sales_comparable_site_feature", "1800.0226", "22.03.36", "Other topography", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_site_feature:1800.0225", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_feature:1800.0225", equals: "Other" },
+  }),
+  siteChild("Comparable site characteristics", "sales_comparable_site_feature", "sales_comparable_site_feature", "1800.0220", "22.03.38", "Drainage reason", "enum", {
+    options: ["EvidenceOfErosion", "ImproperGrading", "Other", "StandingWater"],
+    showWhen: { key: "sales_comparable_site_feature:1800.0222", equals: "Drainage" },
+    requiredWhen: { key: "sales_comparable_site_feature:1800.0222", equals: "Drainage" },
+  }),
+  siteChild("Comparable site characteristics", "sales_comparable_site_feature", "sales_comparable_site_feature", "1800.0221", "22.03.38", "Other drainage reason", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_site_feature:1800.0220", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_feature:1800.0220", equals: "Other" },
+  }),
+
+  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0233", "22.03.42", "Site influence", "enum", {
+    options: UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0234", "22.03.42", "Other site influence", "string", {
+    maxLength: 45,
+    showWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "Other" },
+  }),
+  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0228", "22.03.42", "Body of water", "enum", {
+    options: UAD_SALES_COMPARABLE_BODY_OF_WATER_TYPES,
+    showWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "BodyOfWater" },
+    requiredWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "BodyOfWater" },
+  }),
+  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0229", "22.03.42", "Other body of water", "string", {
+    maxLength: 21,
+    showWhen: { key: "sales_comparable_site_influence:1800.0228", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_influence:1800.0228", equals: "Other" },
+  }),
+
+  siteChild("Comparable apparent environmental conditions", "sales_comparable_site_environmental", "sales_comparable_site_environmental", "1800.0116", "22.03.44", "Apparent environmental condition", "enum", {
+    options: UAD_SALES_COMPARABLE_ENVIRONMENTAL_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable apparent environmental conditions", "sales_comparable_site_environmental", "sales_comparable_site_environmental", "1800.0117", "22.03.44", "Other apparent environmental condition", "string", {
+    maxLength: 45,
+    showWhen: { key: "sales_comparable_site_environmental:1800.0116", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_environmental:1800.0116", equals: "Other" },
+  }),
+
+  siteChild("Comparable views", "sales_comparable_site_view", "sales_comparable_site_view", "1800.0243", "22.03.46", "View", "enum", {
+    options: UAD_SALES_COMPARABLE_VIEW_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable views", "sales_comparable_site_view", "sales_comparable_site_view", "1800.0244", "22.03.46", "Other view", "string", {
+    maxLength: 27,
+    showWhen: { key: "sales_comparable_site_view:1800.0243", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_view:1800.0243", equals: "Other" },
+  }),
+  siteChild("Comparable views", "sales_comparable_site_view", "sales_comparable_site_view", "1800.0242", "22.03.46", "View range", "enum", {
+    options: ["Full", "Other", "Partial", "Seasonal"],
+  }),
+  siteChild("Comparable views", "sales_comparable_site_view", "sales_comparable_site_view", "1800.0250", "22.03.46", "Other view range", "string", {
+    maxLength: 9,
+    showWhen: { key: "sales_comparable_site_view:1800.0242", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_view:1800.0242", equals: "Other" },
+  }),
+
+  siteAdjustment("sales_comparable_adjustment_site_owned_common", "22.03.19", "Site owned in common adjustment"),
+  siteAdjustment("sales_comparable_adjustment_site_size", "22.03.21", "Site size adjustment"),
+  siteAdjustment("sales_comparable_adjustment_neighborhood", "22.03.23", "Neighborhood name adjustment"),
+  siteAdjustment("sales_comparable_adjustment_zoning", "22.03.25", "Zoning compliance adjustment"),
+  siteAdjustment("sales_comparable_adjustment_hazard", "22.03.27", "Hazard zone adjustment"),
+  siteAdjustment("sales_comparable_adjustment_primary_access", "22.03.29", "Primary access adjustment"),
+  siteAdjustment("sales_comparable_adjustment_street", "22.03.31", "Street type and surface adjustment"),
+  siteAdjustment("sales_comparable_adjustment_restriction", "22.03.33", "Property restriction adjustment"),
+  siteAdjustment("sales_comparable_adjustment_easement", "22.03.35", "Easement adjustment"),
+  siteAdjustment("sales_comparable_adjustment_topography", "22.03.37", "Topography adjustment"),
+  siteAdjustment("sales_comparable_adjustment_drainage", "22.03.39", "Drainage adjustment"),
+  siteAdjustment("sales_comparable_adjustment_site_characteristic", "22.03.41", "Site characteristics adjustment"),
+  siteAdjustment("sales_comparable_adjustment_site_influence", "22.03.43", "Site influence adjustment"),
+  siteAdjustment("sales_comparable_adjustment_environmental", "22.03.45", "Apparent environmental conditions adjustment"),
+  siteAdjustment("sales_comparable_adjustment_view", "22.03.47", "View and range adjustment"),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -483,6 +737,62 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     parentEntityType: "sales_comparable",
     showWhen: comparableProjectOrPud,
   }),
+  sales_comparable_site_hazard: Object.freeze({
+    title: "Comparable hazard zones",
+    addLabel: "Add hazard zone",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_HAZARD_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
+  sales_comparable_site_street: Object.freeze({
+    title: "Comparable access streets",
+    addLabel: "Add access street",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_STREET_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
+  sales_comparable_site_restriction: Object.freeze({
+    title: "Comparable property restrictions",
+    addLabel: "Add property restriction",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_RESTRICTION_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
+  sales_comparable_site_easement: Object.freeze({
+    title: "Comparable easements",
+    addLabel: "Add easement",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_EASEMENT_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
+  sales_comparable_site_feature: Object.freeze({
+    title: "Comparable site characteristics",
+    addLabel: "Add site characteristic",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_SITE_FEATURE_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
+  sales_comparable_site_influence: Object.freeze({
+    title: "Comparable site influences",
+    addLabel: "Add site influence",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
+  sales_comparable_site_environmental: Object.freeze({
+    title: "Comparable apparent environmental conditions",
+    addLabel: "Add apparent environmental condition",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_ENVIRONMENTAL_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
+  sales_comparable_site_view: Object.freeze({
+    title: "Comparable views",
+    addLabel: "Add view",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_VIEW_TYPES.length,
+    parentEntityType: "sales_comparable",
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -523,6 +833,37 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   projectAdjustment: "sales_comparable_adjustment_project:1800.0317",
   projectAmenity: "sales_comparable_project_amenity:1800.0056",
   projectAmenityOther: "sales_comparable_project_amenity:1800.0057",
+  siteOwnedInCommon: "sales_comparable_site:1800.0277",
+  siteSize: "sales_comparable_site:1800.0239",
+  sitePrimaryAccess: "sales_comparable_site:1800.0218",
+  sitePrimaryAccessOther: "sales_comparable_site:1800.0219",
+  siteHazard: "sales_comparable_site_hazard:1800.0212",
+  siteHazardOther: "sales_comparable_site_hazard:1800.0213",
+  siteHazardLavaZone: "sales_comparable_site_hazard:1800.0367",
+  siteStreetType: "sales_comparable_site_street:1800.0216",
+  siteStreetTypeOther: "sales_comparable_site_street:1800.0217",
+  siteStreetSurface: "sales_comparable_site_street:1800.0214",
+  siteStreetSurfaceOther: "sales_comparable_site_street:1800.0215",
+  siteRestriction: "sales_comparable_site_restriction:1800.0068",
+  siteRestrictionOther: "sales_comparable_site_restriction:1800.0069",
+  siteEasement: "sales_comparable_site_easement:1800.0070",
+  siteEasementOther: "sales_comparable_site_easement:1800.0071",
+  siteFeature: "sales_comparable_site_feature:1800.0222",
+  siteFeatureOther: "sales_comparable_site_feature:1800.0223",
+  siteTopography: "sales_comparable_site_feature:1800.0225",
+  siteTopographyOther: "sales_comparable_site_feature:1800.0226",
+  siteDrainage: "sales_comparable_site_feature:1800.0220",
+  siteDrainageOther: "sales_comparable_site_feature:1800.0221",
+  siteInfluence: "sales_comparable_site_influence:1800.0233",
+  siteInfluenceOther: "sales_comparable_site_influence:1800.0234",
+  siteBodyOfWater: "sales_comparable_site_influence:1800.0228",
+  siteBodyOfWaterOther: "sales_comparable_site_influence:1800.0229",
+  siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
+  siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
+  siteView: "sales_comparable_site_view:1800.0243",
+  siteViewOther: "sales_comparable_site_view:1800.0244",
+  siteViewRange: "sales_comparable_site_view:1800.0242",
+  siteViewRangeOther: "sales_comparable_site_view:1800.0250",
 });
 
 export function isVerifiedSalesComparisonAsset(asset, captionType = null, entityId = undefined) {

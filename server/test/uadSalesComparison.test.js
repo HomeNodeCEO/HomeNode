@@ -21,6 +21,8 @@ import {
   UAD_SALES_COMPARABLE_DIRECTIONS,
   UAD_SALES_COMPARABLE_FINANCING_TYPES,
   UAD_SALES_COMPARABLE_LISTING_STATUSES,
+  UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES,
+  UAD_SALES_COMPARABLE_VIEW_TYPES,
   UAD_SALES_COMPARISON_FIELDS,
   isVerifiedSalesComparisonAsset,
 } from "../src/modules/uad/salesComparisonCatalog.js";
@@ -31,13 +33,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22B editor on canonical comparable entities", () => {
+test("adds the Section 22A-22C editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 62);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 62);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 110);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 110);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -45,6 +47,8 @@ test("adds the Section 22A-22B editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_data_source.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_right_not_included.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_project_amenity.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_influence.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
 });
 
 test("uses official Section 22 general-information enumerations and conditional fields", () => {
@@ -53,6 +57,8 @@ test("uses official Section 22 general-information enumerations and conditional 
   assert.deepEqual(UAD_SALES_COMPARABLE_FINANCING_TYPES, ["Conventional", "FHA", "Other", "Private", "USDARuralDevelopment", "VA"]);
   assert.equal(UAD_SALES_COMPARABLE_DATA_SOURCE_TYPES.includes("MLS"), true);
   assert.equal(UAD_NATIVE_AMERICAN_LAND_TYPES.includes("TribalTrustLand"), true);
+  assert.equal(UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES.includes("BusyRoadway"), true);
+  assert.equal(UAD_SALES_COMPARABLE_VIEW_TYPES.includes("TrafficWallBarriers"), true);
   assert.deepEqual(UAD_PROPERTY_RIGHTS_NOT_INCLUDED, ["AirRights", "MineralRights", "Other", "TimberRights", "WaterRights"]);
 
   const ratio = getUadField("sales_comparable_listing", "1800.0316");
@@ -67,6 +73,9 @@ test("uses official Section 22 general-information enumerations and conditional 
 test("accepts a complete settled comparable with a source and verified property photo", () => {
   const comparable = { id: "048540df-2f90-43d3-b574-1c8705675b8d", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
   const source = { id: "dc64e88d-e329-4b57-ad42-a1e426fd739c", entity_type: "sales_comparable_data_source", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const hazard = { id: "52eaeb42-71ae-42bd-9b25-a8d7439e238a", entity_type: "sales_comparable_site_hazard", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const influence = { id: "3f78d850-5ec7-47b0-9f04-e63d25c7ef69", entity_type: "sales_comparable_site_influence", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const view = { id: "f8bab272-4177-40d7-978c-d12828874c69", entity_type: "sales_comparable_site_view", parent_entity_id: comparable.id, ordinal: 1, data: {} };
   const values = [
     value(null, "sales_comparison_scope", "1000.0032", true),
     value(comparable.id, "sales_comparable", "1800.0192", 1),
@@ -87,6 +96,11 @@ test("accepts a complete settled comparable with a source and verified property 
     value(comparable.id, "sales_comparable_property", "1800.0337", "FeeSimple"),
     value(comparable.id, "sales_comparable_project", "1800.0383", false),
     value(comparable.id, "sales_comparable_project", "1800.0378", false),
+    value(comparable.id, "sales_comparable_site", "1800.0277", false),
+    value(comparable.id, "sales_comparable_site", "1800.0239", { amount: 8400, unit: "SquareFeet" }),
+    value(hazard.id, "sales_comparable_site_hazard", "1800.0212", "None"),
+    value(influence.id, "sales_comparable_site_influence", "1800.0233", "Residential"),
+    value(view.id, "sales_comparable_site_view", "1800.0243", "Residential"),
     value(source.id, "sales_comparable_data_source", "0700.0125", "MLS"),
     value(source.id, "sales_comparable_data_source", "1800.0347", "NTREIS-123456"),
   ];
@@ -97,7 +111,7 @@ test("accepts a complete settled comparable with a source and verified property 
     content_type: "image/jpeg",
     status: "verified",
   }];
-  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source], assets), []);
+  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view], assets), []);
 });
 
 test("rejects missing evidence and contradictory comparable transaction records", () => {
@@ -153,6 +167,27 @@ test("validates Section 22B project classification, financial details, and ameni
   assert.equal(noAmenityCodes.includes("sales_comparable_project_amenity_required"), true);
 });
 
+test("validates mandatory Section 22C Site records and exclusive None selections", () => {
+  const comparable = { id: "ce740d51-00d9-40dc-915c-2721586119c6", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const hazardNone = { id: "aaeb7f39-3a8e-459e-a367-c7676426b5e5", entity_type: "sales_comparable_site_hazard", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const hazardFlood = { id: "509a2d12-c95b-4d5c-9567-c3549527b072", entity_type: "sales_comparable_site_hazard", parent_entity_id: comparable.id, ordinal: 2, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(comparable.id, "sales_comparable_site", "1800.0277", true),
+    value(hazardNone.id, "sales_comparable_site_hazard", "1800.0212", "None"),
+    value(hazardFlood.id, "sales_comparable_site_hazard", "1800.0212", "FEMASpecialFloodHazardArea"),
+  ];
+  const codes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    values,
+    [comparable, hazardNone, hazardFlood],
+  ).map((error) => error.code);
+  assert.equal(codes.includes("sales_comparable_site_hazard_duplicate_none_conflict"), true);
+  assert.equal(codes.includes("sales_comparable_site_influence_required"), true);
+  assert.equal(codes.includes("sales_comparable_site_view_required"), true);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -193,6 +228,21 @@ test("seeds Section 22B project information additively from the official deliver
   assert.match(sql, /'2500\.0065','project_information','22\.02\.01'/);
   assert.match(sql, /'1800\.0056','sales_comparable_project_amenity','22\.02\.08'/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-PROJECT-004/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22C Site fields, redisplays, and current official rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260906_uad_sales_comparison_site.sql"), "utf8");
+  for (const ruleId of [
+    "UAD1398", "UAD1399", "UAD1400", "UAD1401", "UAD1445", "UAD1446",
+    "UAD1447", "UAD1448", "UAD1449", "UAD1450", "UAD1451", "UAD1452",
+    "UAD1476", "UAD1769", "UAD1770",
+  ]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /'0100\.0047','subject','22\.03\.01'/);
+  assert.match(sql, /'1800\.0233','sales_comparable_site_influence','22\.03\.42'/);
+  assert.match(sql, /PropertyStreetAccessAndSurface/);
+  assert.match(sql, /sales_comparable_site_environmental/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

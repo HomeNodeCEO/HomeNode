@@ -35,7 +35,7 @@ The UAD API is off by default. Apply the migration and set
 ## Current editor scope
 
 The editor currently implements Appendix A-1 v1.4 Sections 2 through 21 and
-the Section 22A general-information foundation:
+Sections 22A-22B of the Sales Comparison Approach:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -92,11 +92,13 @@ the Section 22A general-information foundation:
   the comparable-search adapter will populate, avoiding duplicate records and
   preserving the official one-year comparable lookback workflow.
 - Sales Comparison Approach now captures the official approach indicator and
-  repeatable general information for each canonical sales comparable: address,
-  source relationships, proximity, listing/contract/sale facts, financing,
-  concessions, dates, property rights, and the applicable adjustment columns.
-  Each included comparable requires a verified entity-linked Property Photo.
-  Remaining Project, Site, Dwelling, Unit, quality/condition, amenity,
+  repeatable general and project information for each canonical sales
+  comparable: address, source relationships, proximity,
+  listing/contract/sale facts, financing, concessions, dates, property rights,
+  PUD/project classification, project identity, monthly fee, special
+  assessment status, common amenities/services, and applicable adjustment
+  columns. Each included comparable requires a verified entity-linked Property
+  Photo. Remaining Site, Dwelling, Unit, quality/condition, amenity,
   reconciliation, and summary grid subsections will extend these same records
   in later Section 22 increments rather than creating parallel comparables.
 - All HomeNode-prefilled or automated values retain source provenance and stay
@@ -112,9 +114,9 @@ zoning evidence, location influences, and neighborhood boundaries without
 running a new analysis or changing a Custom Appraisal. Comparable search and
 influence-driven automation remain disabled in the UAD UI until their
 corresponding URAR sections and appraiser-review flow are ready. Sections 17
-through 22A now expose the manual market, subject-listing, sales-contract,
-prior-transfer, and comparable-general-information workflows behind that
-boundary. Existing HomeNode sale and deed activity is available through a
+through 22B now expose the manual market, subject-listing, sales-contract,
+prior-transfer, comparable-general-information, and comparable-project
+workflows behind that boundary. Existing HomeNode sale and deed activity is available through a
 review-only Section 21 adapter. Automatic comparable searches and imports stay
 disabled until the explicit appraiser-review interaction is implemented; they
 will target the canonical Section 22 records and source children already in
@@ -142,8 +144,9 @@ a deterministic Section 18 PUD with data source, amenity, utility, dues, and
 project-factor answers, a deterministic Section 19 MLS listing with date/DOM
 reconciliation, a deterministic Section 20 arm's-length purchase contract with
 known concessions, a deterministic Section 21 subject prior sale with a linked
-deed source, and one Section 22A settled comparable with MLS provenance. The
-comparable intentionally lacks its required verified photo so staging exercises
+deed source, and one Section 22A-22B settled PUD comparable with MLS provenance,
+monthly dues, special-assessment status, and a common amenity. The comparable
+intentionally lacks its required verified photo so staging exercises
 the web/mobile upload gate rather than representing a nonexistent R2 object as
 verified. Section 9 remains hidden; the separate
 manufactured-home fixture includes a deterministic UAD workfile whose Section 8

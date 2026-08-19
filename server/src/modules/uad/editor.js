@@ -391,6 +391,16 @@ function completionFor(values, entities, assets = []) {
             ));
             if (!rights.length) required += 1;
           }
+          const comparableLookup = valueLookup(byKey, comparable.id);
+          const projectApplicable = comparableLookup(UAD_SALES_COMPARISON_FIELD_KEYS.pud) === true
+            || comparableLookup(UAD_SALES_COMPARISON_FIELD_KEYS.inProject) === true;
+          if (projectApplicable) {
+            const amenities = entities.filter((entity) => (
+              entity.entity_type === "sales_comparable_project_amenity"
+              && entity.parent_entity_id === comparable.id
+            ));
+            if (!amenities.length) required += 1;
+          }
         }
       }
     }
@@ -1787,6 +1797,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
     const sources = entities.filter((entity) => entity.entity_type === "sales_comparable_data_source");
     const rights = entities.filter((entity) => entity.entity_type === "sales_comparable_right_not_included");
+    const projectAmenities = entities.filter((entity) => entity.entity_type === "sales_comparable_project_amenity");
     const comparableIds = new Set(comparables.map((entity) => entity.id));
 
     if (included === true && !comparables.length) {
@@ -1819,6 +1830,14 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_right_orphaned",
         "Every excluded property right must be linked to a sales comparable.",
+      ));
+    }
+    if (projectAmenities.some((amenity) => !comparableIds.has(amenity.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.projectAmenity),
+        null,
+        "sales_comparable_project_amenity_orphaned",
+        "Every comparable project amenity must be linked to a sales comparable.",
       ));
     }
 
@@ -2021,6 +2040,86 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
           comparable.id,
           "sales_comparable_right_not_included_duplicate",
           "Each excluded property right may be selected only once.",
+        ));
+      }
+
+      const pud = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.pud);
+      const inProject = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.inProject);
+      const projectLegalStructure = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.projectLegalStructure);
+      const projectName = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.projectName);
+      const sameProject = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.sameProject);
+      const projectMonthlyFee = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.projectMonthlyFee);
+      const projectSpecialAssessment = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.projectSpecialAssessment);
+      const projectAdjustment = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.projectAdjustment);
+      const comparableProjectAmenities = projectAmenities.filter((amenity) => amenity.parent_entity_id === comparable.id);
+      const projectApplicable = pud === true || inProject === true;
+      const subjectProject = isPresent(rootLookup(UAD_PROJECT_INFORMATION_FIELD_KEYS.legalStructure));
+
+      if (pud === true && inProject === true) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.inProject),
+          comparable.id,
+          "sales_comparable_project_classification_conflict",
+          "A sales comparable cannot be classified as both a PUD and a condominium, cooperative, or condop.",
+        ));
+      }
+      if (inProject !== true && [projectLegalStructure, projectName, sameProject].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.inProject),
+          comparable.id,
+          "sales_comparable_project_detail_conflict",
+          "Clear the condominium, cooperative, or condop details or change the comparable project indicator to Yes.",
+        ));
+      }
+      if (!subjectProject && isPresent(sameProject)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.sameProject),
+          comparable.id,
+          "sales_comparable_same_project_subject_conflict",
+          "Clear Same project as subject because the subject is not identified as a condominium, cooperative, or condop.",
+        ));
+      }
+      if (!projectApplicable && [projectMonthlyFee, projectSpecialAssessment, projectAdjustment].some(isPresent)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.pud),
+          comparable.id,
+          "sales_comparable_project_financial_conflict",
+          "Clear project fees, special assessment status, and project adjustment when the comparable is not in a project or PUD.",
+        ));
+      }
+      if (projectApplicable && !comparableProjectAmenities.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.projectAmenity),
+          comparable.id,
+          "sales_comparable_project_amenity_required",
+          "Add at least one common amenity or service for this project or PUD comparable.",
+        ));
+      }
+      if (!projectApplicable && comparableProjectAmenities.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.projectAmenity),
+          comparable.id,
+          "sales_comparable_project_amenity_conflict",
+          "Remove comparable project amenities when the comparable is not in a project or PUD.",
+        ));
+      }
+      const selectedAmenities = comparableProjectAmenities
+        .map((amenity) => valueLookup(merged, amenity.id)(UAD_SALES_COMPARISON_FIELD_KEYS.projectAmenity))
+        .filter(isPresent);
+      if (new Set(selectedAmenities).size !== selectedAmenities.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.projectAmenity),
+          comparable.id,
+          "sales_comparable_project_amenity_duplicate",
+          "Each comparable project amenity or service may be selected only once.",
+        ));
+      }
+      if (selectedAmenities.includes("None") && selectedAmenities.length > 1) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.projectAmenity),
+          comparable.id,
+          "sales_comparable_project_amenity_none_conflict",
+          "Select None by itself, or remove None before adding another comparable project amenity.",
         ));
       }
     }

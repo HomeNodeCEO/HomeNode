@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 52);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 62);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -364,8 +364,13 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_data_source"
       && entity.parent_entity_id === salesComparable?.id
     ));
+    const salesComparableProjectAmenity = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_project_amenity"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
     assert.ok(salesComparable);
     assert.ok(salesComparableSource);
+    assert.ok(salesComparableProjectAmenity);
     assert.equal(
       siteBuiltEditor.values.find((item) => (
         item.entity_id === salesComparable.id
@@ -381,6 +386,22 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0347"
       ))?.value,
       "NTREIS-SYNTHETIC-22001",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_project"
+        && item.uid === "1800.0353"
+      ))?.value,
+      125,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableProjectAmenity.id
+        && item.context_key === "sales_comparable_project_amenity"
+        && item.uid === "1800.0056"
+      ))?.value,
+      "Clubhouse",
     );
     assert.ok(siteBuiltEditor.completion.sales_comparison.required > 0);
     assert.ok(siteBuiltEditor.completion.sales_comparison.percent < 100);

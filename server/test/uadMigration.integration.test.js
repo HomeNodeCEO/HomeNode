@@ -542,7 +542,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    assert.equal(salesComparisonFields.rows[0].count, 76);
+    assert.equal(salesComparisonFields.rows[0].count, 90);
 
     const salesComparisonLocations = await pool.query(`
       SELECT count(*)::integer AS count,
@@ -551,10 +551,10 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    // Six subject/contract redisplays were seeded by their source-section
-    // migrations; Section 22A adds 56 canonical comparable/grid locations.
-    assert.equal(salesComparisonLocations.rows[0].count, 62);
-    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 8);
+    // Earlier source-section migrations plus Sections 22A-22B provide the
+    // canonical comparable/grid locations and their subject redisplays.
+    assert.equal(salesComparisonLocations.rows[0].count, 74);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 13);
 
     const officialSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
@@ -575,7 +575,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND rule_id LIKE 'HN-UAD-SALES-COMPARISON-%'
     `);
-    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 4);
+    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 8);
 
     const salesComparisonEntityConstraint = await pool.query(`
       SELECT pg_get_constraintdef(oid) AS definition
@@ -585,6 +585,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_data_source/);
     assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_right_not_included/);
+    assert.match(salesComparisonEntityConstraint.rows[0].definition, /sales_comparable_project_amenity/);
   } finally {
     await pool.end();
   }

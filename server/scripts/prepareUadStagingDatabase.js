@@ -75,40 +75,52 @@ try {
        display_name = EXCLUDED.display_name,
        active = true,
        metadata = EXCLUDED.metadata,
-       updated_at = now();
+       updated_at = now()`,
+    [STAGING_ORGANIZATION_ID],
+  );
 
-     INSERT INTO app_auth.users (
+  await pool.query(
+    `INSERT INTO app_auth.users (
        id, email, display_name, active, metadata
-     ) VALUES ($2, $3, 'Mobile Staging Appraiser', true, '{"synthetic":true,"environment":"staging"}'::jsonb)
+     ) VALUES ($1, $2, 'Mobile Staging Appraiser', true, '{"synthetic":true,"environment":"staging"}'::jsonb)
      ON CONFLICT (id) DO UPDATE SET
        email = EXCLUDED.email,
        display_name = EXCLUDED.display_name,
        active = true,
        metadata = EXCLUDED.metadata,
-       updated_at = now();
+       updated_at = now()`,
+    [STAGING_USER_ID, STAGING_USER_EMAIL],
+  );
 
-     INSERT INTO app_auth.organization_memberships (
+  await pool.query(
+    `INSERT INTO app_auth.organization_memberships (
        organization_id, user_id, status
      ) VALUES ($1, $2, 'active')
      ON CONFLICT (organization_id, user_id) DO UPDATE SET
        status = 'active',
-       updated_at = now();
+       updated_at = now()`,
+    [STAGING_ORGANIZATION_ID, STAGING_USER_ID],
+  );
 
-     INSERT INTO app_auth.membership_roles (
+  await pool.query(
+    `INSERT INTO app_auth.membership_roles (
        organization_id, user_id, role_code
      ) VALUES ($1, $2, 'appraiser')
-     ON CONFLICT (organization_id, user_id, role_code) DO NOTHING;
+     ON CONFLICT (organization_id, user_id, role_code) DO NOTHING`,
+    [STAGING_ORGANIZATION_ID, STAGING_USER_ID],
+  );
 
-     INSERT INTO app_auth.appraiser_profiles (
+  await pool.query(
+    `INSERT INTO app_auth.appraiser_profiles (
        user_id, default_organization_id, signature_policy, profile_status, metadata
-     ) VALUES ($2, $1, 'reauthentication', 'active', '{"synthetic":true,"environment":"staging"}'::jsonb)
+     ) VALUES ($1, $2, 'reauthentication', 'active', '{"synthetic":true,"environment":"staging"}'::jsonb)
      ON CONFLICT (user_id) DO UPDATE SET
        default_organization_id = EXCLUDED.default_organization_id,
        signature_policy = EXCLUDED.signature_policy,
        profile_status = 'active',
        metadata = EXCLUDED.metadata,
        updated_at = now()`,
-    [STAGING_ORGANIZATION_ID, STAGING_USER_ID, STAGING_USER_EMAIL],
+    [STAGING_USER_ID, STAGING_ORGANIZATION_ID],
   );
 
   await pool.query(`

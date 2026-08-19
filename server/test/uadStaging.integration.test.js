@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 119);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 164);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -390,6 +390,22 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_site_view"
       && entity.parent_entity_id === salesComparable?.id
     ));
+    const salesComparableDwelling = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_dwelling"
+      && entity.parent_entity_id === salesComparable?.id
+    ));
+    const salesComparableConstruction = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_construction_method"
+      && entity.parent_entity_id === salesComparableDwelling?.id
+    ));
+    const salesComparableHeating = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_heating_system"
+      && entity.parent_entity_id === salesComparableDwelling?.id
+    ));
+    const salesComparableCooling = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_cooling_system"
+      && entity.parent_entity_id === salesComparableDwelling?.id
+    ));
     assert.ok(salesComparable);
     assert.ok(salesComparableSource);
     assert.ok(salesComparableProjectAmenity);
@@ -398,6 +414,10 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(salesComparableBodyOfWater);
     assert.ok(salesComparableWaterfrontFeature);
     assert.ok(salesComparableView);
+    assert.ok(salesComparableDwelling);
+    assert.ok(salesComparableConstruction);
+    assert.ok(salesComparableHeating);
+    assert.ok(salesComparableCooling);
     assert.equal(
       siteBuiltEditor.values.find((item) => (
         item.entity_id === salesComparable.id
@@ -437,6 +457,38 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0233"
       ))?.value,
       "Residential",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableDwelling.id
+        && item.context_key === "sales_comparable_dwelling"
+        && item.uid === "1800.0128"
+      ))?.value,
+      "2004",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableConstruction.id
+        && item.context_key === "sales_comparable_construction_method"
+        && item.uid === "1800.0171"
+      ))?.value,
+      "SiteBuilt",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableHeating.id
+        && item.context_key === "sales_comparable_heating_system"
+        && item.uid === "1800.0165"
+      ))?.value,
+      "ForcedWarmAir",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableCooling.id
+        && item.context_key === "sales_comparable_cooling_system"
+        && item.uid === "1800.0161"
+      ))?.value,
+      "Centralized",
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

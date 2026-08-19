@@ -225,7 +225,7 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function accessibleSession(client, auth, sessionId, { lock = false } = {}) {
+async function accessibleSession(client, auth, sessionId, { lock = false, writable = false } = {}) {
   const organizationIds = auth.organizations.map((item) => item.organizationId);
   const { rows } = await client.query(
     `SELECT session.*, report_file.workflow_type, report_file.account_id,
@@ -239,6 +239,9 @@ async function accessibleSession(client, auth, sessionId, { lock = false } = {})
     [sessionId, organizationIds, auth.userId],
   );
   if (!rows.length) throw new Error("inspection_session_not_found");
+  if (writable && rows[0].status === "completed") {
+    throw new Error("inspection_session_completed_conflict");
+  }
   return rows[0];
 }
 
@@ -383,7 +386,7 @@ export async function saveInspectionSketch(pool, auth, sessionIdValue, input = {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const session = await accessibleSession(client, auth, sessionId, { lock: true });
+    const session = await accessibleSession(client, auth, sessionId, { lock: true, writable: true });
     const priorOperation = await client.query(
       `SELECT request_sha256, result FROM app.inspection_sketch_operations
         WHERE inspection_session_id = $1 AND client_operation_id = $2`,

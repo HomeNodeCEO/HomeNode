@@ -507,7 +507,10 @@ export async function reviewCustomAppraisalProposal(pool, auth, sessionIdValue, 
     );
     const proposal = selected.rows[0];
     if (!proposal) throw new Error("custom_appraisal_proposal_not_found");
-    if (proposal.status !== "pending") throw new Error("custom_appraisal_proposal_status_conflict");
+    const mayRejectConflict = request.decision === "reject" && proposal.status === "conflict";
+    if (proposal.status !== "pending" && !mayRejectConflict) {
+      throw new Error("custom_appraisal_proposal_status_conflict");
+    }
     const definition = FIELD_BY_PATH.get(proposal.field_path);
     if (!definition) throw new Error("invalid_custom_appraisal_field_path");
 

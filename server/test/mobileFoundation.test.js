@@ -11,6 +11,10 @@ import {
   parseBearerToken,
 } from "../src/modules/mobile/auth.js";
 import {
+  completionReadinessFromCounts,
+  normalizeInspectionCompletionRequest,
+} from "../src/modules/mobile/completion.js";
+import {
   customAppraisalFieldCatalog,
   normalizeCustomAppraisalFieldValue,
 } from "../src/modules/mobile/customAppraisal.js";
@@ -77,6 +81,63 @@ function verifier() {
     }),
   });
 }
+
+
+test("inspection completion requires authoritative queues to be clear", () => {
+  const request = normalizeInspectionCompletionRequest({
+    client_operation_id: "4cc2f528-65fd-4f4d-8e12-b8ac84a32fc7",
+    base_session_revision: 7,
+  });
+  assert.equal(request.baseSessionRevision, 7);
+  assert.throws(
+    () => normalizeInspectionCompletionRequest({
+      client_operation_id: "4cc2f528-65fd-4f4d-8e12-b8ac84a32fc7",
+      base_session_revision: 7,
+      submit_report: true,
+    }),
+    /invalid_inspection_completion_request/,
+  );
+
+  const session = {
+    id: "36a1a6e1-72cc-46dc-92c5-6f47c49a912e",
+    report_file_id: "31824969-2883-475a-abfd-4c3c44b7f9ea",
+    organization_id: "fc0c68e9-e00c-443d-9253-d9c570b2e8fa",
+    appraiser_user_id: "06d27a75-1499-4562-a39e-e1d353ce69cf",
+    workflow_type: "custom_appraisal",
+    file_number: "HN-CA-2026-000001",
+    status: "review_required",
+    revision: 7,
+    base_report_revision: 1,
+    registry_revision: 3,
+  };
+  const blocked = completionReadinessFromCounts(session, {
+    sync_conflicts: 1,
+    custom_reviews: 2,
+    target_reviews: 5,
+    uad_entity_reviews: 5,
+    unverified_photos: 1,
+    sketch_exists: false,
+    draft_sketches: 0,
+  });
+  assert.equal(blocked.ready_to_complete, false);
+  assert.deepEqual(blocked.blockers, [
+    "sync_conflicts",
+    "custom_appraisal_review",
+    "photo_verification",
+  ]);
+
+  const ready = completionReadinessFromCounts(session, {
+    sync_conflicts: 0,
+    custom_reviews: 0,
+    target_reviews: 12,
+    uad_entity_reviews: 12,
+    unverified_photos: 0,
+    sketch_exists: false,
+    draft_sketches: 0,
+  });
+  assert.equal(ready.ready_to_complete, true);
+  assert.deepEqual(ready.blockers, []);
+});
 
 test("formats independent, recognizable report-file sequences", () => {
   assert.equal(formatReportFileNumber({
@@ -531,4 +592,13 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(entitySource, /CREATE TABLE IF NOT EXISTS app\.mobile_uad_entity_events/);
   assert.match(entitySource, /action IN \('create', 'delete'\)/);
   assert.doesNotMatch(entitySource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const completionSource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260911_mobile_inspection_completion.sql"),
+    "utf8",
+  );
+  assert.match(completionSource, /ADD COLUMN IF NOT EXISTS completed_by_user_id uuid/);
+  assert.match(completionSource, /CREATE TABLE IF NOT EXISTS app\.inspection_completion_operations/);
+  assert.match(completionSource, /UNIQUE \(inspection_session_id\)/);
+  assert.doesNotMatch(completionSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

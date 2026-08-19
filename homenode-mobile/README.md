@@ -1,9 +1,10 @@
 # HomeNode Appraiser mobile
 
-Private Expo/React Native client for HomeNode field appraisal. Phase 10 includes
+Private Expo/React Native client for HomeNode field appraisal. Phase 11 includes
 offline sparse inspection fields, private photos, manual measurement and room
-labels, separate reviewed adapters for all three canonical report types, and
-offline repeatable UAD property-component proposals.
+labels, separate reviewed adapters for all three canonical report types,
+repeatable UAD property-component proposals, and a guarded finish-on-site
+readiness workflow.
 
 ## Offline inspection behavior
 
@@ -68,6 +69,19 @@ The server stores every sketch revision and audit event on the existing typed re
 - The encrypted SQLite queue restores interrupted registration, upload, and verification work after restart and retries with bounded exponential backoff.
 - The mobile client uploads directly to short-lived, object-specific R2 URLs. R2 credentials never reach the device, and a photo is not synchronized until the backend verifies every object with `HEAD`.
 - Empty local placeholders can be removed immediately. Removing a verified photo excludes it from the active report but retains its private objects and audit record for five years.
+
+## Finish inspection on site
+
+- HomeNode synchronizes and checks every local edit, conflict, photo, sketch,
+  workflow proposal, and UAD entity proposal before enabling completion.
+- The final request is online-only, revision-guarded, idempotent, and recorded
+  in both inspection-session and report-file audit history.
+- Completion makes the mobile session read-only. It does not sign, certify,
+  transmit, or submit the appraisal report.
+- A saved sketch must be appraiser-confirmed. No saved sketch is disclosed for
+  later report validation rather than being falsely treated as complete.
+
+See `docs/MOBILE_INSPECTION_COMPLETION.md` for the server checks and lifecycle.
 
 ## WorkOS activation
 

@@ -9,6 +9,10 @@ import {
   listReportFiles,
 } from "../src/modules/mobile/reportFiles.js";
 import {
+  completeInspectionSession,
+  getInspectionCompletionReadiness,
+} from "../src/modules/mobile/completion.js";
+import {
   getCustomAppraisalReview,
   refreshCustomAppraisalProposals,
   reviewCustomAppraisalProposal,
@@ -714,6 +718,69 @@ test("mobile report files preserve prior versions and allocate separate workflow
       [secondCustom.reportFile.target_id],
     );
     assert.equal(conflictPreserved.rows[0].foundation, "Web edit");
+
+    const blockedReadiness = await getInspectionCompletionReadiness(
+      pool,
+      auth,
+      session.session.id,
+    );
+    assert.equal(blockedReadiness.ready_to_complete, false);
+    assert.ok(blockedReadiness.blockers.includes("custom_appraisal_review"));
+    await assert.rejects(
+      () => completeInspectionSession(pool, auth, session.session.id, {
+        client_operation_id: randomUUID(),
+        base_session_revision: blockedReadiness.session.revision,
+      }),
+      (error) => error.message === "inspection_not_ready_conflict"
+        && error.details.readiness.blockers.includes("custom_appraisal_review"),
+    );
+
+    const unresolvedReview = await getCustomAppraisalReview(pool, auth, session.session.id);
+    for (const proposal of unresolvedReview.proposals.filter((item) => (
+      item.status === "pending" || item.status === "conflict"
+    ))) {
+      const rejected = await reviewCustomAppraisalProposal(
+        pool,
+        auth,
+        session.session.id,
+        proposal.id,
+        { client_operation_id: randomUUID(), decision: "reject" },
+      );
+      assert.equal(rejected.proposal.status, "rejected");
+    }
+
+    const readyToComplete = await getInspectionCompletionReadiness(
+      pool,
+      auth,
+      session.session.id,
+    );
+    assert.equal(readyToComplete.ready_to_complete, true);
+    const completionRequest = {
+      client_operation_id: randomUUID(),
+      base_session_revision: readyToComplete.session.revision,
+    };
+    const completedInspection = await completeInspectionSession(
+      pool,
+      auth,
+      session.session.id,
+      completionRequest,
+    );
+    assert.equal(completedInspection.completed, true);
+    assert.equal(completedInspection.session.status, "completed");
+    assert.equal(completedInspection.session.revision, readyToComplete.session.revision + 1);
+    assert.deepEqual(
+      await completeInspectionSession(pool, auth, session.session.id, completionRequest),
+      completedInspection,
+    );
+    await assert.rejects(
+      () => saveInspectionSketch(pool, auth, session.session.id, {
+        ...sketchRequest,
+        client_operation_id: randomUUID(),
+        base_revision: loadedSketch.sketch.revision,
+      }),
+      /inspection_session_completed_conflict/,
+    );
+
 
     const lineage = await pool.query(
       `SELECT prior.is_current AS prior_current,

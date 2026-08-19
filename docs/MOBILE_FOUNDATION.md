@@ -1,10 +1,11 @@
 # HomeNode mobile inspection foundation
 
-Status: Phase 9 managed-identity activation foundation. Offline synchronization,
-private photo capture, all three report adapters, the manual sketch workspace,
-provider-neutral Expo PKCE, a staging-only synthetic appraiser, and deployment
-OIDC preflight checks are built. The mobile API remains disabled by default and
-no identity-provider purchase or production migration is part of this work.
+Status: Phase 11 inspection-completion foundation. Offline synchronization,
+private photo capture, manual sketching, reviewed adapters for all three report
+types, repeatable UAD entities, provider-neutral Expo PKCE, deployment OIDC
+preflight, and guarded finish-on-site readiness are built. The mobile API
+remains disabled by default; WorkOS activation and production migration remain
+separate deployment decisions.
 
 ## Boundaries
 
@@ -145,6 +146,19 @@ history and both adapters increment report registry history.
 See `docs/MOBILE_TARGET_FIELD_ADAPTERS.md` for the API, persistence, desktop
 review, and conflict boundary.
 
+## Inspection completion
+
+The mobile app now checks its encrypted device queues and the authoritative
+server state before allowing **Finish inspection on site**. Pending edits,
+conflicts, uploads, or workflow review proposals block completion. A saved
+sketch also blocks until it is appraiser-confirmed; a missing sketch remains a
+later report-validation concern rather than being silently treated as complete.
+
+The idempotent completion transaction locks field capture, increments the
+inspection-session revision, and records the actor and audit events. It does
+not sign, submit, or change report content. See
+`docs/MOBILE_INSPECTION_COMPLETION.md` for the complete lifecycle and API.
+
 ## Photo and appraisal-file retention
 
 Appraisal evidence is retained in a verified appraisal-file archive for five
@@ -199,6 +213,10 @@ Official distribution references:
   into target-specific review proposals.
 - `POST .../target-fields/proposals/:proposalId/review` — idempotently accept or
   reject one proposal with exact-value conflict detection.
+- `GET .../completion-readiness` — compare device-ready work with authoritative
+  workflow, photo, sketch, and conflict blockers.
+- `POST .../complete` — idempotently close field capture at an exact session
+  revision without signing or submitting the report.
 - `GET/PATCH /api/accounts/:id/property-tax-protest[...]` — load and save a
   revision-guarded desktop Property Tax Protest workfile.
 
@@ -211,12 +229,10 @@ are deliberately deployed.
 1. Create the WorkOS staging public OAuth application, disable public signup,
    require MFA, map its test user to the synthetic HomeNode staging appraiser,
    and only then enable `MOBILE_INSPECTION_ENABLED` in Render staging.
-2. Add mobile creation and review for repeatable UAD entities such as levels,
-   rooms, defects, outbuildings, and comparable records.
-3. Run physical-device staging across iPhone and Android, including offline and
-   100-photo inspections.
-4. Approve the private iOS and Android distribution channels and device policy.
-5. Add optional LiDAR capture after the manual workflow is field-tested.
+2. Run physical-device staging across iPhone and Android, including offline and
+   100-photo inspections plus the finish-on-site readiness gate.
+3. Approve the private iOS and Android distribution channels and device policy.
+4. Add optional LiDAR capture after the manual workflow is field-tested.
 
 Before production UAD delivery, separately confirm all required UAD compliance,
 submission credentials, approved endpoints, and certification/testing status.

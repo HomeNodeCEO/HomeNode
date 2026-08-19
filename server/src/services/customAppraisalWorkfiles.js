@@ -6,6 +6,7 @@ import {
   ensureSignedCustomAppraisalReportArtifact,
   loadCustomAppraisalPropertySnapshot,
 } from "./customAppraisalReportPdf.js";
+import { normalizeCostApproachSection } from "./costApproach.js";
 
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
@@ -379,7 +380,11 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
   reviewer: reviewerValue,
 }) {
   const sectionKey = normalizeCustomAppraisalSectionKey(sectionKeyValue);
-  const sectionValue = normalizeCustomAppraisalSectionValue(sectionValueInput);
+  const sectionValue = normalizeCustomAppraisalSectionValue(
+    sectionKey === "cost_approach"
+      ? normalizeCostApproachSection(sectionValueInput)
+      : sectionValueInput,
+  );
   const expectedRevision = normalizeCustomAppraisalSectionRevision(expectedRevisionValue);
   const saveReason = normalizeCustomAppraisalSaveReason(saveReasonValue);
   const reviewer = String(reviewerValue || "HomeNode editor").trim().slice(0, 200) || "HomeNode editor";

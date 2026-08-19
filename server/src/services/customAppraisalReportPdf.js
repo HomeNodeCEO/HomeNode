@@ -825,12 +825,14 @@ function approachPage(doc, meta, snapshot, property, type, page) {
     ["Reconciliation Weight", section.weight == null ? "0%" : percent(section.weight)],
     ["Status", developed ? "Developed" : "Not developed"],
   ] : [
-    ["Site Value", money(section.site_value || property.account?.land_value)],
+    ["Cost Source", section.source_name],
+    ["Cost Effective Date", dateText(section.as_of_date)],
+    ["Living Area / Base Cost", `${count(section.living_area_sqft, " sq. ft.")} / ${money(section.cost_per_sqft)} per sq. ft.`],
     ["Replacement Cost New", money(section.replacement_cost_new)],
     ["Physical Depreciation", money(section.physical_depreciation)],
-    ["Functional Obsolescence", money(section.functional_obsolescence)],
-    ["External Obsolescence", money(section.external_obsolescence)],
-    ["Cost Indication", money(section.indicated_value)],
+    ["Functional / External", `${money(section.functional_obsolescence)} / ${money(section.external_obsolescence)}`],
+    ["Site / Site Improvements", `${money(section.site_value || property.account?.land_value)} / ${money(section.site_improvements_value)}`],
+    ["Cost Indication", money(section.rounded_indicated_value || section.indicated_value)],
     ["Reconciliation Weight", section.weight == null ? "0%" : percent(section.weight)],
     ["Status", developed ? "Developed" : "Not developed"],
   ];
@@ -842,7 +844,7 @@ function approachPage(doc, meta, snapshot, property, type, page) {
   y = sectionTitle(doc, "Current Conclusion", y + 4);
   factsGrid(doc, [
     { label: "Approach Status", value: developed ? "Developed" : "Not developed" },
-    { label: "Indicated Value", value: money(section.indicated_value) },
+    { label: "Indicated Value", value: money(section.rounded_indicated_value || section.indicated_value) },
     { label: "Weight", value: section.weight == null ? "0%" : percent(section.weight) },
     { label: "Appraiser Review", value: developed ? "Required before signing" : "No indication relied upon" },
   ], y, 4);
@@ -859,7 +861,7 @@ function renderReconciliationPage(doc, meta, snapshot, property) {
   y = factsGrid(doc, [
     { label: "Sales Comparison", value: money(sales.opinionOfValue) },
     { label: "Income Approach", value: money(income.indicated_value) },
-    { label: "Cost Approach", value: money(cost.indicated_value) },
+    { label: "Cost Approach", value: money(cost.rounded_indicated_value || cost.indicated_value) },
     { label: "Final Opinion of Value", value: money(finalValue) },
   ], y, 4);
   y = noteBox(doc, final.explanation || sales.salesNotes || "The final value is reconciled to the Sales Comparison Approach because no other developed approach was saved in this workfile.", y + 8, { height: 86 });

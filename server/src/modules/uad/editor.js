@@ -392,6 +392,10 @@ function completionFor(values, entities, assets = []) {
     if (section === "sales_comparison") {
       const included = valueLookup(byKey)(UAD_SALES_COMPARISON_FIELD_KEYS.included);
       if (included === true) {
+        const rootLookup = valueLookup(byKey);
+        required += 2;
+        if (isPresent(rootLookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.overallQuality))) completed += 1;
+        if (isPresent(rootLookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.overallCondition))) completed += 1;
         const subjectMaintainsExterior = valueLookup(byKey)("subject:0100.0046") === true;
         const subjectExteriorFeatures = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature");
         const subjectExteriorSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_exterior_quality_summary");
@@ -2100,6 +2104,24 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const subjectRoomIds = new Set(subjectRooms.map((entity) => entity.id));
     const subjectInteriorFeatureIds = new Set(subjectInteriorFeatures.map((entity) => entity.id));
 
+    if (included === true) {
+      if (!isPresent(rootLookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.overallQuality))) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.overallQuality),
+          null,
+          "sales_comparison_subject_overall_quality_required",
+          "Complete the subject Overall Quality rating in Section 15 before completing the sales comparison.",
+        ));
+      }
+      if (!isPresent(rootLookup(UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS.overallCondition))) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.overallCondition),
+          null,
+          "sales_comparison_subject_overall_condition_required",
+          "Complete the subject Overall Condition rating in Section 15 before completing the sales comparison.",
+        ));
+      }
+    }
     if (included === true && !comparables.length) {
       errors.push(validationError(
         salesField(UAD_SALES_COMPARISON_FIELD_KEYS.included),
@@ -2470,6 +2492,23 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         ));
       }
       ordinals.add(ordinal);
+
+      if (!isPresent(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.overallQuality))) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.overallQuality),
+          comparable.id,
+          "sales_comparable_overall_quality_required",
+          "Provide the reconciled Q1–Q6 Overall Quality rating for this sales comparable.",
+        ));
+      }
+      if (!isPresent(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.overallCondition))) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.overallCondition),
+          comparable.id,
+          "sales_comparable_overall_condition_required",
+          "Provide the reconciled C1–C6 Overall Condition rating for this sales comparable.",
+        ));
+      }
 
       const comparableSources = sources.filter((source) => source.parent_entity_id === comparable.id);
       if (!comparableSources.length) {

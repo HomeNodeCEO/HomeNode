@@ -19,6 +19,8 @@
         "sync:property-context": "node scripts/syncPropertyContext.js",
         "sync:property-context:full": "node scripts/syncPropertyContext.js --source=all --mode=full",
         "maintenance:scheduled": "node scripts/runScheduledMaintenance.js --task=routine",
+        "maintenance:locations": "node scripts/runScheduledMaintenance.js --task=locations",
+        "maintenance:locations:drain": "node scripts/runScheduledMaintenance.js --task=locations --location-maximum-batches=100 --location-seed-limit=10000 --maximum-runtime-minutes=30",
         "maintenance:roads": "node scripts/runScheduledMaintenance.js --task=roads",
         "maintenance:traffic": "node scripts/runScheduledMaintenance.js --task=traffic",
         "maintenance:context": "node scripts/runScheduledMaintenance.js --task=context",
@@ -29,6 +31,7 @@
         "maintenance:influences": "node scripts/runScheduledMaintenance.js --task=influences",
         "sync:collin-account-ids": "node scripts/syncCollinAccountIdentifiers.js",
         "backfill:collin-sales": "node scripts/backfillCollinSales.js",
+        "sync:trestle": "node scripts/runTrestleSync.js",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"
     },

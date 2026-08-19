@@ -33,6 +33,14 @@ try {
       "location-maximum-batches",
       process.env.MAINTENANCE_LOCATION_MAX_BATCHES || "4",
     ),
+    locationBatchSize: option(
+      "location-batch-size",
+      process.env.MAINTENANCE_LOCATION_BATCH_SIZE || "50",
+    ),
+    locationSeedLimit: option(
+      "location-seed-limit",
+      process.env.MAINTENANCE_LOCATION_SEED_LIMIT || "1000",
+    ),
     influenceMaximumBatches: option(
       "influence-maximum-batches",
       process.env.MAINTENANCE_INFLUENCE_MAX_BATCHES || "40",

@@ -84,42 +84,22 @@ async function requestItems(query: string, city: string, limit = 25): Promise<Se
     return localToItems(data);
   }
 
-  // Prefer helper if available
+  // Use the current typed API helper. Older dynamic helper probes caused
+  // Rollup to request exports that no longer exist and could leave search
+  // unavailable at runtime after an otherwise successful production build.
   try {
-    // 1) searchItems -> returns SearchItem[]
-    const searchItems = (api as any).searchItems;
-    if (typeof searchItems === "function") {
-      return await searchItems(query, limit);
-    }
-
-    // 2) searchByQuery -> returns {results: ApiSearchRow[]}
-    const searchByQuery = (api as any).searchByQuery;
-    if (typeof searchByQuery === "function") {
-      const obj = await searchByQuery(query, limit);
-      if (typeof (api as any).toSearchItems === "function") {
-        return (api as any).toSearchItems(obj);
-      }
-      return localToItems(obj);
-    }
-
-    // 3) apiSearch -> returns ApiSearchRow[]
-    const apiSearch = (api as any).apiSearch;
-    if (typeof apiSearch === "function") {
-      const arr = await apiSearch(query, limit);
-      if (typeof (api as any).toSearchItems === "function") {
-        return (api as any).toSearchItems(arr);
-      }
-      return localToItems(arr);
-    }
+    const rows = await api.apiSearch(query, limit);
+    return api.toSearchItems(rows);
   } catch (e) {
     console.error("[requestItems] helper call failed:", e);
   }
 
-  // 4) If it's an exact 17-digit account id, return a direct link without hitting API
+  // If it's an exact 17-digit account id, retain direct navigation during a
+  // transient search-service failure.
   if (/^\d{17}$/.test(query)) {
     return [{ id: query, title: query, subtitle: query }];
   }
-  // 5) Final fallback: DB search route that supports address or exact account_id
+  // Final fallback: DB search route that supports address or exact account_id
   const url = api.makeUrl('/api/search', { q: query, limit });
   let res = await fetch(url);
   if (!res.ok) {

@@ -6,6 +6,8 @@ import type {
   ComparableRecommendationsResponse,
   ComparableSearchProfileKey,
   PropertyComplexityAssessment,
+  QualitativeAnalysisResponse,
+  QualitativeComparableInput,
   SalePhoto,
   SaleRow,
 } from '@/lib/api';
@@ -467,6 +469,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [appliedGroupedAdjustments, setAppliedGroupedAdjustments] = useState<
     Record<string, AppliedGroupedAdjustment>
   >({});
+  const [qualitativeAnalysis, setQualitativeAnalysis] =
+    useState<QualitativeAnalysisResponse | null>(null);
   const [salesLoading, setSalesLoading] = useState(false);
   const [salesError, setSalesError] = useState<string | null>(null);
   const [salesNotice, setSalesNotice] = useState<string | null>(null);
@@ -614,6 +618,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       () => ({ tot: null, bd: null, full: null, half: null }),
     ));
     setAppliedGroupedAdjustments({});
+    setQualitativeAnalysis(null);
     setAppliedConditionQualityAdjustments({});
     setConditionQualityRatings({});
     setSavedConditionQualityRatings({});
@@ -1673,6 +1678,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setAppliedGroupedAdjustments(
         (draft.workspace?.appliedGroupedAdjustments || {}) as Record<string, AppliedGroupedAdjustment>,
       );
+      setQualitativeAnalysis(draft.workspace?.qualitativeAnalysis || null);
       setAppliedConditionQualityAdjustments(
         (draft.workspace?.appliedConditionQualityAdjustments || {}) as Partial<
           Record<'condition' | 'quality', AppliedConditionQualityAdjustment>
@@ -1710,6 +1716,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       ));
       setSalesNotes(DEFAULT_SALES_NOTES);
       setAdjustmentNotes(DEFAULT_ADJUSTMENT_NOTES);
+      setQualitativeAnalysis(null);
       setCostToCureItems([createCostToCureLine()]);
     }
     setWorkfileReady(true);
@@ -2408,8 +2415,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return arr;
   }, [compPrices, netAdjustments]);
 
-  // SALES: Opinion of Market Value - median of indicated values (non-zero)
-  const opinionMedian = useMemo<number | null>(() => {
+  const qualitativeComparables = useMemo<QualitativeComparableInput[]>(
+    () => selectedSales.flatMap((sale, index) => sale ? [{
+      sale,
+      indicatedValue: indicatedValues[index] || finiteNumber(sale.sale_price) || 0,
+    }] : []),
+    [selectedSales, indicatedValues],
+  );
+
+  // SALES: Base quantitative opinion is the median of non-zero indicated values.
+  const quantitativeOpinionMedian = useMemo<number | null>(() => {
     const vals = (indicatedValues || [])
       .map((v) => (typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v)))
       .filter((n) => Number.isFinite(n) && n > 0)
@@ -2419,6 +2434,30 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const median = vals.length % 2 === 0 ? (vals[mid - 1] + vals[mid]) / 2 : vals[mid];
     return Math.round(median);
   }, [indicatedValues]);
+
+  const qualitativeAnalysisIsCurrent = useMemo(() => {
+    if (!qualitativeAnalysis?.applied) return false;
+    const currentValues = new Map(qualitativeComparables.map((comparable, index) => {
+      const sale = comparable.sale;
+      const stable = sale.source_record_id ?? sale.sale_id ?? sale.listing_key ?? sale.listing_id;
+      const fallback = [sale.primary_account_id, sale.closing_date, sale.address]
+        .map((value) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase())
+        .filter(Boolean)
+        .join('|');
+      const key = stable !== null && stable !== undefined && String(stable).trim()
+        ? `sale:${String(stable).trim()}`
+        : fallback ? `fallback:${fallback}` : `slot:${index}`;
+      return [key, comparable.indicatedValue] as const;
+    }));
+    return qualitativeAnalysis.selections.every((selection) => (
+      currentValues.has(selection.comparable_key) &&
+      currentValues.get(selection.comparable_key) === selection.indicated_value
+    ));
+  }, [qualitativeAnalysis, qualitativeComparables]);
+
+  const opinionMedian = qualitativeAnalysisIsCurrent && qualitativeAnalysis?.conclusion.recommended_value
+    ? qualitativeAnalysis.conclusion.recommended_value
+    : quantitativeOpinionMedian;
 
   // OPINION ADJUSTMENT: subtract the current user-entered Cost to Cure.
   const opinionAfterCtc = useMemo<number | null>(() => {
@@ -2562,6 +2601,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         appliedGroupedAdjustments,
         appliedConditionQualityAdjustments,
         conditionQualityRatings,
+        qualitativeAnalysis,
         ctcNotes,
       },
     };
@@ -2625,6 +2665,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     appliedGroupedAdjustments,
     appliedConditionQualityAdjustments,
     conditionQualityRatings,
+    qualitativeAnalysis,
     ctcNotes,
     workfileCanonicalName,
   ]);
@@ -5304,6 +5345,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               Based on the sales comparison analysis of comparable properties in the immediate neighborhood and
               accounting for necessary cost-to-cure repairs.
             </p>
+            {qualitativeAnalysisIsCurrent ? (
+              <p className="mt-2 text-sm font-semibold text-emerald-800">
+                Qualitative bracketing is applied to the reconciled Sales Comparison opinion.
+              </p>
+            ) : null}
             <p className="mt-6 text-xs italic text-slate-600 max-w-5xl mx-auto">
               DISCLAIMER: This is not an appraisal nor should it be relied on as an appraisal by a licensed
               professional. The use of this opinion of market value is limited strictly to protesting an appraisal by a
@@ -5344,6 +5390,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           key={propertyId}
           subjectAccountId={propertyId}
           assignmentFileId={activeAssignmentFile?.id || null}
+          qualitativeComparables={qualitativeComparables}
+          qualitativeAnalysis={qualitativeAnalysisIsCurrent ? qualitativeAnalysis : null}
+          onQualitativeAnalysisChange={setQualitativeAnalysis}
           appraiserDefinedArea={appraiserDefinedAdjustmentArea}
           appliedAdjustments={appliedGroupedAdjustments}
           getImpactPreview={previewGroupedAdjustment}

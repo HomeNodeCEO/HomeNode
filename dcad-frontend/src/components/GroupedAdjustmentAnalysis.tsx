@@ -6,6 +6,8 @@ import type {
   GroupedAnalysisBreakdownKey,
   GroupedAnalysisDimension,
   GroupedAnalysisTransition,
+  QualitativeAnalysisResponse,
+  QualitativeComparableInput,
 } from '@/lib/api';
 import PairedSalesAnalysis, {
   type AppraiserDefinedAdjustmentArea,
@@ -13,6 +15,7 @@ import PairedSalesAnalysis, {
 import RegressionAnalysis from '@/components/RegressionAnalysis';
 import DepreciatedCostAnalysis from '@/components/DepreciatedCostAnalysis';
 import SiteValuationAnalysis from '@/components/SiteValuationAnalysis';
+import QualitativeAnalysis from '@/components/QualitativeAnalysis';
 
 export type AdjustmentDimensionKey =
   | GroupedAnalysisDimension['key']
@@ -595,6 +598,9 @@ const BREAKDOWN_OPTIONS: Array<{
 export default function GroupedAdjustmentAnalysis({
   subjectAccountId,
   assignmentFileId,
+  qualitativeComparables,
+  qualitativeAnalysis,
+  onQualitativeAnalysisChange,
   appraiserDefinedArea,
   appliedAdjustments,
   getImpactPreview,
@@ -603,6 +609,9 @@ export default function GroupedAdjustmentAnalysis({
 }: {
   subjectAccountId: string;
   assignmentFileId?: number | null;
+  qualitativeComparables: QualitativeComparableInput[];
+  qualitativeAnalysis?: QualitativeAnalysisResponse | null;
+  onQualitativeAnalysisChange: (analysis: QualitativeAnalysisResponse) => void;
   appraiserDefinedArea?: AppraiserDefinedAdjustmentArea | null;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
   getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
@@ -704,7 +713,7 @@ export default function GroupedAdjustmentAnalysis({
         </div>
       </div>
 
-      {activeMethod && !['grouped', 'paired_sales', 'regression', 'depreciated_cost', 'site_valuation'].includes(activeMethod) && (
+      {activeMethod && !['grouped', 'paired_sales', 'regression', 'depreciated_cost', 'site_valuation', 'qualitative'].includes(activeMethod) && (
         <div className="p-5">
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5">
             <div className="text-lg font-semibold text-indigo-950">
@@ -761,6 +770,14 @@ export default function GroupedAdjustmentAnalysis({
           getImpactPreview={getImpactPreview}
           onApplyAdjustment={onApplyAdjustment}
           onRemoveAdjustment={onRemoveAdjustment}
+        />
+      )}
+
+      {activeMethod === 'qualitative' && (
+        <QualitativeAnalysis
+          comparables={qualitativeComparables}
+          savedAnalysis={qualitativeAnalysis}
+          onChange={onQualitativeAnalysisChange}
         />
       )}
 

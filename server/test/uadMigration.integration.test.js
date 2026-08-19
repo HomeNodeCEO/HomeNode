@@ -335,6 +335,45 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND rule_id LIKE 'HN-UAD-HIGHEST-BEST-USE-%'
     `);
     assert.equal(homeNodeHighestBestUseRules.rows[0].count, 2);
+
+    const marketFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 17
+    `);
+    assert.equal(marketFields.rows[0].count, 21);
+
+    const marketLocations = await pool.query(`
+      SELECT count(*)::integer AS count,
+             count(*) FILTER (WHERE location_role = 'redisplay')::integer AS redisplay_count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 17
+    `);
+    assert.equal(marketLocations.rows[0].count, 24);
+    assert.equal(marketLocations.rows[0].redisplay_count, 3);
+
+    const officialMarketRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1626', 'UAD1627', 'UAD1629', 'UAD1630', 'UAD1631', 'UAD1632',
+           'UAD1633', 'UAD1634', 'UAD1635', 'UAD1636', 'UAD1639', 'UAD1642',
+           'UAD1643', 'UAD1644', 'UAD1645', 'UAD1646', 'UAD1647', 'UAD1648',
+           'UAD1652', 'UAD1653', 'UAD1656', 'UAD1657'
+         )
+    `);
+    assert.equal(officialMarketRules.rows[0].count, 22);
+
+    const homeNodeMarketRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id LIKE 'HN-UAD-MARKET-%'
+    `);
+    assert.equal(homeNodeMarketRules.rows[0].count, 5);
   } finally {
     await pool.end();
   }

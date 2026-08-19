@@ -58,6 +58,21 @@ function zoningSuggestions(evidence) {
   ];
 }
 
+function marketSuggestions(boundary) {
+  if (!boundary) return [];
+  const summary = String(boundary.evidence?.roads?.summary || "").trim();
+  if (!summary) return [];
+  return [{
+    field_key: "market:3000.0008",
+    value: summary,
+    source_reference: `neighborhood_boundary_assessment:${boundary.id}`,
+    observed_at: boundary.confirmed_at || boundary.generated_at || boundary.updated_at || null,
+    requires_appraiser_confirmation: true,
+    source_status: boundary.status,
+    confidence: boundary.confidence,
+  }];
+}
+
 export async function getUadSharedData(pool, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const workfileResult = await pool.query(
@@ -85,12 +100,13 @@ export async function getUadSharedData(pool, workfileIdValue) {
     suggestions: {
       site_fields: zoningSuggestions(zoning.data),
       site_entities: influenceSuggestions(influence.data),
+      market_fields: marketSuggestions(boundary.data),
     },
     adapters: {
       comparable_search: { ready: true, mode: "existing_homenode_services", enabled_in_uad_editor: false },
       location_influences: { ready: true, mode: "stored_suggestions", enabled_in_uad_editor: true },
-      neighborhood_boundary: { ready: true, mode: "stored_suggestions", enabled_in_uad_editor: false },
-      market_conditions: { ready: true, mode: "existing_homenode_services", enabled_in_uad_editor: false },
+      neighborhood_boundary: { ready: true, mode: "stored_reviewable_suggestions", enabled_in_uad_editor: true },
+      market_conditions: { ready: true, mode: "existing_homenode_services", enabled_in_uad_editor: true },
     },
   };
 }

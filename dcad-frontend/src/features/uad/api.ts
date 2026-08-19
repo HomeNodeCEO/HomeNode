@@ -69,7 +69,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -94,7 +94,7 @@ export interface UadFieldDefinition {
   uid: string;
   reportFieldId: string;
   label: string;
-  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "measurement" | "date" | "year" | "state" | "postal_code";
+  dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "currency" | "measurement" | "date" | "year" | "state" | "postal_code";
   entityType?: string;
   required?: boolean;
   maxLength?: number;
@@ -350,7 +350,7 @@ export async function saveUadSketch(
 }
 
 export async function getUadSharedData(workfileId: string): Promise<{
-  suggestions: { site_fields: unknown[]; site_entities: unknown[] };
+  suggestions: { site_fields: unknown[]; site_entities: unknown[]; market_fields: unknown[] };
   adapters: Record<string, { ready: boolean; mode: string; enabled_in_uad_editor: boolean }>;
 }> {
   return uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/shared-data`));

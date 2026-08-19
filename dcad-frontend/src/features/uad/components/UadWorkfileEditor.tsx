@@ -55,6 +55,10 @@ const SUBJECT_AMENITY_GENERAL_CAPTIONS = ["SubjectPropertyAmenitiesExhibit"];
 const SUBJECT_AMENITY_CAPTIONS = ["SubjectPropertyAmenity"];
 const SUBJECT_AMENITY_DEFECT_CAPTIONS = ["SubjectPropertyAmenityDefect"];
 const HIGHEST_BEST_USE_CAPTIONS = ["HighestAndBestUseExhibit"];
+const MARKET_CAPTIONS = [
+  "AbsorptionRateGraph", "MedianDaysOnMarketGraph", "PercentOfDistressedSalesGraph",
+  "PriceTrendGraph", "YearBuiltOfSalesGraph", "MarketAnalysisExhibit",
+];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -241,7 +245,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -317,7 +321,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     if (field.dataType === "text") {
       return <textarea className={`${inputClass} min-h-24`} maxLength={field.maxLength} onChange={(event) => setValue(field, entityId, event.target.value)} value={String(value ?? "")} />;
     }
-    const numeric = field.dataType === "integer" || field.dataType === "percentage";
+    const numeric = field.dataType === "integer" || field.dataType === "percentage" || field.dataType === "currency";
     return (
       <input
         className={inputClass}
@@ -325,6 +329,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         maxLength={field.maxLength}
         min={field.minimum ?? (numeric ? 0 : undefined)}
         onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : numeric ? Number(event.target.value) : event.target.value)}
+        step={field.dataType === "currency" ? "0.01" : field.dataType === "percentage" ? "any" : undefined}
         type={numeric ? "number" : field.dataType === "date" ? "date" : "text"}
         value={typeof value === "string" || typeof value === "number" ? value : ""}
       />
@@ -452,6 +457,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "highest_best_use" && highestBestUseHasNo && (
           <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
             One or more answers is No. Highest and Best Use Commentary is now required and must describe the supporting evidence and reasoning.
+          </div>
+        )}
+        {activeSection === "market" && (
+          <div className="mb-5 rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm leading-6 text-violet-950">
+            Define the market area and search criteria, then report active listings, pending sales, closed sales, price trends, supply, and marketing time. HomeNode's existing market and neighborhood tools can supply reviewable evidence without changing the custom appraisal workfile. Price trend commentary is required unless a verified Price Trend Graph is attached.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -821,6 +831,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               emptyMessage="No optional highest and best use exhibits uploaded."
               sectionNumber={16}
               title="Highest and best use exhibits"
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "market" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={MARKET_CAPTIONS}
+              description="Upload market graphs, a boundary map, search-result support, or another market-analysis exhibit. A verified Price Trend Graph satisfies the graph-or-commentary requirement; every image remains tied only to this UAD workfile."
+              emptyMessage="No optional market graphs or exhibits uploaded."
+              sectionNumber={17}
+              title="Market graphs and exhibits"
               workfileId={workfileId}
             />
           )}

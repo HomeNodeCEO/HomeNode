@@ -299,7 +299,7 @@ try {
   if (!sfrWorkfileResult.rows.length) {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
-      assignment_purpose: "Synthetic site-built Sections 10-16 staging validation",
+      assignment_purpose: "Synthetic site-built Sections 10-17 staging validation",
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -485,6 +485,39 @@ try {
     "16.005",
     "The present single-family residential use is legally permissible, physically possible, financially feasible, and maximally productive.",
   );
+
+  const marketPriceTrendSourceId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "market_price_trend_source",
+    "market-price-trend-source-1",
+    1,
+    "Price Trend Source 1",
+  );
+  const marketValues = [
+    [null, "market", "3000.0008", "17.003", "North: North Test Rd; East: East Test Ave; South: South Test Blvd; West: West Test Dr."],
+    [null, "market", "3000.0010", "17.004", "Detached single-family properties within the defined test market, including active, pending, and closed sales over the prior 12 months."],
+    [null, "market_active_listings", "3000.0018", "17.005", 3],
+    [null, "market_active_listings", "3000.0021", "17.006", 24],
+    [null, "market_active_listings", "3000.0020", "17.007", 399000],
+    [null, "market_active_listings", "3000.0022", "17.008", 425000],
+    [null, "market_active_listings", "3000.0019", "17.009", 465000],
+    [null, "market_pending_sales", "3000.0024", "17.010", 2],
+    [null, "market", "3000.0009", "17.011", 12],
+    [null, "market_total_sales", "3000.0026", "17.012", 8],
+    [null, "market_total_sales", "3000.0028", "17.013", 365000],
+    [null, "market_total_sales", "3000.0029", "17.014", 418000],
+    [null, "market_total_sales", "3000.0027", "17.015", 472000],
+    [null, "market", "3000.0034", "17.016", false],
+    [marketPriceTrendSourceId, "market_price_trend_source", "3000.0051", "17.018", "Synthetic MLS Market Dataset"],
+    [null, "market_price_trend_commentary", "3000.0040", "17.019", "Monthly median sale prices from the synthetic MLS market dataset were reviewed over the 12-month period. The series indicates stable pricing with ordinary month-to-month variation and no conflicting source trend."],
+    [null, "market", "3000.0033", "17.021", "InBalance"],
+    [null, "market", "3000.0031", "17.022", "UnderThreeMonths"],
+    [null, "market_commentary", "0100.0044", "17.023", "The synthetic subject competes in an established single-family market with balanced supply and typical marketing under three months."],
+  ];
+  for (const [entityId, context, uid, reportFieldId, value] of marketValues) {
+    await seedEntityValue(sfrWorkfileId, entityId, context, uid, reportFieldId, value);
+  }
 
   const areaSourceId = await ensureEntity(sfrWorkfileId, sfrUnitId, "unit_area_data_source", "unit-area-source-1", 1, "Area Source 1");
   await seedEntityValue(sfrWorkfileId, areaSourceId, "unit_area_data_source", "0700.0125", "10.009", "PhysicalMeasurement");

@@ -96,10 +96,10 @@ runs the bootstrap twice and executes the same search joins to verify
 idempotency and schema compatibility.
 
 The Render UAD staging service must use `npm run start:staging:uad` as its
-start command. This intentionally applies all additive UAD migrations before
-seeding the deterministic fixtures, then starts the API. Reversing that order
-can make a new fixture entity type fail against the previous release's database
-constraint during a rolling deployment.
+start command. This intentionally applies all additive UAD migrations, then all
+additive mobile migrations, before seeding the deterministic fixtures and
+starting the API. Reversing that order can make a new fixture entity type fail
+against the previous release's database constraint during a rolling deployment.
 
 ## Mobile photos and artifacts
 

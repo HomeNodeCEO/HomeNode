@@ -62,6 +62,7 @@ const MARKET_CAPTIONS = [
 const PROJECT_INFORMATION_GENERAL_CAPTIONS = ["ProjectDeficiency", "ProjectExhibit"];
 const PROJECT_AMENITY_CAPTIONS = ["ProjectAmenity"];
 const SUBJECT_LISTING_CAPTIONS = ["SubjectListingExhibit"];
+const SALES_CONTRACT_CAPTIONS = ["SalesContractExhibit"];
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -166,6 +167,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   });
   const highestBestUseHasNo = ["3100.0004", "3100.0006", "3100.0003", "3100.0005", "3100.0007"]
     .some((uid) => draft[fieldValueKey("highest_best_use", uid)] === false);
+  const salesContractExists = draft[fieldValueKey("sales_contract", "0600.0016")];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -249,7 +251,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -471,6 +473,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {activeSection === "subject_listing_information" && (
           <div className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm leading-6 text-sky-950">
             Use a minimum one-year lookback. If no current or relevant listing exists, add every source used to reach that conclusion. If listings exist, add each listing separately; settled sales belong in Prior Sale and Transfer History. Existing HomeNode MLS activity remains source-attributed review material and is never treated as appraiser-confirmed merely because it was found automatically.
+          </div>
+        )}
+        {activeSection === "sales_contract" && (
+          <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm leading-6 text-rose-950">
+            The report displays this section only when an active sales contract exists. If the contract was not analyzed, explain the information source, efforts to obtain it, and why it was unavailable. Personal property is excluded from the final opinion of value and must be described in the analysis.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
@@ -890,6 +897,19 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               sectionNumber={19}
               title="Subject listing information exhibits"
               visibleCaptionTypes={SUBJECT_LISTING_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "sales_contract" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SALES_CONTRACT_CAPTIONS}
+              description="Upload optional photos or images relevant to the active sales contract. A descriptive caption is required. When no active contract exists, uploads are disabled but saved exhibits remain visible for removal."
+              emptyMessage="No optional sales contract exhibits uploaded."
+              sectionNumber={20}
+              title="Sales contract exhibits"
+              uploadEnabled={salesContractExists === true}
+              visibleCaptionTypes={SALES_CONTRACT_CAPTIONS}
               workfileId={workfileId}
             />
           )}

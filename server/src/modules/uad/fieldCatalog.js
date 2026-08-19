@@ -25,6 +25,7 @@ import {
   projectOrPud,
 } from "./projectInformationCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
+import { UAD_SALES_CONTRACT_FIELDS } from "./salesContractCatalog.js";
 import { UAD_SITE_ENTITY_GROUPS, UAD_SITE_FIELDS } from "./siteCatalog.js";
 import {
   UAD_SUBJECT_PROPERTY_AMENITIES_ENTITY_GROUPS,
@@ -87,6 +88,10 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   subject_listing_information: {
     title: "Subject Listing Information",
     officialSectionNumber: 19,
+  },
+  sales_contract: {
+    title: "Sales Contract",
+    officialSectionNumber: 20,
   },
 });
 
@@ -567,6 +572,7 @@ const fields = [
   ...UAD_MARKET_FIELDS,
   ...UAD_PROJECT_INFORMATION_FIELDS,
   ...UAD_SUBJECT_LISTING_FIELDS,
+  ...UAD_SALES_CONTRACT_FIELDS,
 ];
 
 function fieldKey(field) {

@@ -24,7 +24,7 @@ test("adds official always-displayed URAR Section 14", () => {
   const section = sections.find((item) => item.key === "subject_property_amenities");
   assert.deepEqual(
     sections.map((item) => item.officialSectionNumber),
-    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19],
+    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
   );
   assert.equal(section?.title, "Subject Property Amenities");
   assert.equal(section?.appliesWhen, undefined);

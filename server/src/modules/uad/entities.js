@@ -42,90 +42,87 @@ export async function listUadEntities(queryable, workfileIdValue) {
   return rows.map(entityResponse);
 }
 
-export async function createUadEntity(pool, workfileIdValue, input = {}) {
+export async function createUadEntityWithClient(client, workfileIdValue, input = {}, { actorUserId = null } = {}) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const entityType = normalizeEntityType(input.entity_type);
   const id = randomUUID();
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const locked = await client.query(
+  const locked = await client.query(
       `SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE`,
       [workfileId],
-    );
-    if (!locked.rows.length) throw new Error("uad_workfile_not_found");
-    const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
-    let entityData = { ...(input.data || {}) };
-    if (entityType === "amenity") {
-      const amenityCategory = String(entityData.amenity_category || "").trim();
-      if (!UAD_SUBJECT_AMENITY_CATEGORIES.includes(amenityCategory)) {
-        throw new Error("invalid_uad_amenity_category");
-      }
-      entityData = { amenity_category: amenityCategory };
+  );
+  if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+  const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
+  let entityData = { ...(input.data || {}) };
+  if (entityType === "amenity") {
+    const amenityCategory = String(entityData.amenity_category || "").trim();
+    if (!UAD_SUBJECT_AMENITY_CATEGORIES.includes(amenityCategory)) {
+      throw new Error("invalid_uad_amenity_category");
     }
-    let parentEntityId = input.parent_entity_id == null ? null : normalizeUadWorkfileId(input.parent_entity_id);
-    const parentEntityTypes = group.parentEntityTypes
-      || (group.parentEntityType ? [group.parentEntityType] : []);
-    if (parentEntityTypes.length) {
-      const parents = await client.query(
+    entityData = { amenity_category: amenityCategory };
+  }
+  let parentEntityId = input.parent_entity_id == null ? null : normalizeUadWorkfileId(input.parent_entity_id);
+  const parentEntityTypes = group.parentEntityTypes
+    || (group.parentEntityType ? [group.parentEntityType] : []);
+  if (parentEntityTypes.length) {
+    const parents = await client.query(
         `SELECT id
            FROM appraisal.uad_entities
           WHERE workfile_id = $1 AND entity_type = ANY($2::text[])
           ORDER BY ordinal, id`,
         [workfileId, parentEntityTypes],
-      );
-      if (!parentEntityId && parents.rows.length === 1) parentEntityId = parents.rows[0].id;
-      if (!parentEntityId) throw new Error("uad_parent_entity_required");
-      if (!parents.rows.some((row) => row.id === parentEntityId)) throw new Error("invalid_uad_parent_entity");
-    } else if (parentEntityId) {
-      throw new Error("invalid_uad_parent_entity");
-    }
-    if (Number(group.maxItems || 0) > 0) {
-      const count = await client.query(
+    );
+    if (!parentEntityId && parents.rows.length === 1) parentEntityId = parents.rows[0].id;
+    if (!parentEntityId) throw new Error("uad_parent_entity_required");
+    if (!parents.rows.some((row) => row.id === parentEntityId)) throw new Error("invalid_uad_parent_entity");
+  } else if (parentEntityId) {
+    throw new Error("invalid_uad_parent_entity");
+  }
+  if (Number(group.maxItems || 0) > 0) {
+    const count = await client.query(
         `SELECT count(*)::integer AS count
            FROM appraisal.uad_entities
           WHERE workfile_id = $1
             AND entity_type = $2
             AND parent_entity_id IS NOT DISTINCT FROM $3::uuid`,
         [workfileId, entityType, parentEntityId],
-      );
-      if (Number(count.rows[0].count) >= Number(group.maxItems)) {
-        throw new Error("invalid_uad_entity_maximum_reached");
-      }
+    );
+    if (Number(count.rows[0].count) >= Number(group.maxItems)) {
+      throw new Error("invalid_uad_entity_maximum_reached");
     }
-    if (entityType === "amenity") {
-      const categoryCount = await client.query(
+  }
+  if (entityType === "amenity") {
+    const categoryCount = await client.query(
         `SELECT count(*)::integer AS count
            FROM appraisal.uad_entities
           WHERE workfile_id = $1
             AND entity_type = 'amenity'
             AND data->>'amenity_category' = $2`,
         [workfileId, entityData.amenity_category],
-      );
-      if (Number(categoryCount.rows[0].count) >= UAD_SUBJECT_AMENITY_CATEGORY_LIMITS[entityData.amenity_category]) {
-        throw new Error("invalid_uad_amenity_category_maximum_reached");
-      }
+    );
+    if (Number(categoryCount.rows[0].count) >= UAD_SUBJECT_AMENITY_CATEGORY_LIMITS[entityData.amenity_category]) {
+      throw new Error("invalid_uad_amenity_category_maximum_reached");
     }
-    if (entityType === "amenity_defect") {
-      const defectCount = await client.query(
+  }
+  if (entityType === "amenity_defect") {
+    const defectCount = await client.query(
         `SELECT count(*)::integer AS count
            FROM appraisal.uad_entities
           WHERE workfile_id = $1 AND entity_type = 'amenity_defect'`,
         [workfileId],
-      );
-      if (Number(defectCount.rows[0].count) >= 6) {
-        throw new Error("invalid_uad_amenity_defect_maximum_reached");
-      }
+    );
+    if (Number(defectCount.rows[0].count) >= 6) {
+      throw new Error("invalid_uad_amenity_defect_maximum_reached");
     }
-    const ordinalResult = await client.query(
+  }
+  const ordinalResult = await client.query(
       `SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal
          FROM appraisal.uad_entities
         WHERE workfile_id = $1 AND entity_type = $2`,
       [workfileId, entityType],
-    );
-    const ordinal = Number(ordinalResult.rows[0].ordinal);
-    const singular = group.title.replace(/ies$/, "y").replace(/s$/, "");
-    const inserted = await client.query(
+  );
+  const ordinal = Number(ordinalResult.rows[0].ordinal);
+  const singular = group.title.replace(/ies$/, "y").replace(/s$/, "");
+  const inserted = await client.query(
       `INSERT INTO appraisal.uad_entities (
          id, workfile_id, parent_entity_id, entity_type, entity_identifier, ordinal, label, data
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
@@ -141,27 +138,35 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
         JSON.stringify(entityData),
       ],
     );
-    if (entityType === "sales_comparable") {
-      await client.query(
-        `INSERT INTO appraisal.uad_field_values (
-           id, workfile_id, entity_id, field_context, uad_uid, report_field_id,
-           value, source_type, source_reference, is_appraiser_confirmed
-         ) VALUES (
-           $1, $2, $3, 'sales_comparable', '1800.0192', '21.007',
-           $4::jsonb, 'calculated', 'uad_entity.ordinal', false
-         )`,
-        [randomUUID(), workfileId, id, JSON.stringify(ordinal)],
-      );
-    }
+  if (entityType === "sales_comparable") {
     await client.query(
-      `INSERT INTO appraisal.uad_audit_events (
-         workfile_id, event_type, entity_type, entity_id, after_data
-       ) VALUES ($1, 'uad_entity.created', $2, $3, $4::jsonb)`,
-      [workfileId, entityType, id, JSON.stringify({ ordinal, label: inserted.rows[0].label })],
+      `INSERT INTO appraisal.uad_field_values (
+         id, workfile_id, entity_id, field_context, uad_uid, report_field_id,
+         value, source_type, source_reference, is_appraiser_confirmed
+       ) VALUES (
+         $1, $2, $3, 'sales_comparable', '1800.0192', '21.007',
+         $4::jsonb, 'calculated', 'uad_entity.ordinal', false
+       )`,
+      [randomUUID(), workfileId, id, JSON.stringify(ordinal)],
     );
-    await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+  }
+  await client.query(
+      `INSERT INTO appraisal.uad_audit_events (
+         workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data
+       ) VALUES ($1, $2, 'uad_entity.created', $3, $4, $5::jsonb)`,
+    [workfileId, actorUserId, entityType, id, JSON.stringify(entityResponse(inserted.rows[0]))],
+  );
+  await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+  return entityResponse(inserted.rows[0]);
+}
+
+export async function createUadEntity(pool, workfileIdValue, input = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const entity = await createUadEntityWithClient(client, workfileIdValue, input);
     await client.query("COMMIT");
-    return entityResponse(inserted.rows[0]);
+    return entity;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -170,41 +175,48 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
   }
 }
 
-export async function deleteUadEntity(pool, workfileIdValue, entityIdValue) {
+export async function deleteUadEntityWithClient(client, workfileIdValue, entityIdValue, { actorUserId = null } = {}) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const entityId = normalizeUadWorkfileId(entityIdValue);
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const selected = await client.query(
+  const selected = await client.query(
       `SELECT * FROM appraisal.uad_entities
         WHERE id = $1 AND workfile_id = $2
         FOR UPDATE`,
       [entityId, workfileId],
-    );
-    if (!selected.rows.length) throw new Error("uad_entity_not_found");
-    if (!EDITABLE_ENTITY_TYPES.has(selected.rows[0].entity_type)) throw new Error("invalid_uad_entity_type");
-    const group = UAD_REPEATABLE_ENTITY_GROUPS[selected.rows[0].entity_type];
-    if (Number(group.minItems || 0) > 0) {
-      const siblings = await client.query(
+  );
+  if (!selected.rows.length) throw new Error("uad_entity_not_found");
+  if (!EDITABLE_ENTITY_TYPES.has(selected.rows[0].entity_type)) throw new Error("invalid_uad_entity_type");
+  const group = UAD_REPEATABLE_ENTITY_GROUPS[selected.rows[0].entity_type];
+  if (Number(group.minItems || 0) > 0) {
+    const siblings = await client.query(
         `SELECT count(*)::integer AS count
            FROM appraisal.uad_entities
           WHERE workfile_id = $1
             AND entity_type = $2
             AND parent_entity_id IS NOT DISTINCT FROM $3::uuid`,
         [workfileId, selected.rows[0].entity_type, selected.rows[0].parent_entity_id],
-      );
-      if (Number(siblings.rows[0].count) <= Number(group.minItems)) throw new Error("uad_entity_minimum_required");
-    }
-    await client.query("DELETE FROM appraisal.uad_entities WHERE id = $1", [entityId]);
-    await client.query(
-      `INSERT INTO appraisal.uad_audit_events (
-         workfile_id, event_type, entity_type, entity_id, before_data
-       ) VALUES ($1, 'uad_entity.deleted', $2, $3, $4::jsonb)`,
-      [workfileId, selected.rows[0].entity_type, entityId, JSON.stringify(entityResponse(selected.rows[0]))],
     );
-    await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+    if (Number(siblings.rows[0].count) <= Number(group.minItems)) throw new Error("uad_entity_minimum_required");
+  }
+  const deleted = entityResponse(selected.rows[0]);
+  await client.query("DELETE FROM appraisal.uad_entities WHERE id = $1", [entityId]);
+  await client.query(
+      `INSERT INTO appraisal.uad_audit_events (
+         workfile_id, actor_user_id, event_type, entity_type, entity_id, before_data
+       ) VALUES ($1, $2, 'uad_entity.deleted', $3, $4, $5::jsonb)`,
+    [workfileId, actorUserId, selected.rows[0].entity_type, entityId, JSON.stringify(deleted)],
+  );
+  await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+  return deleted;
+}
+
+export async function deleteUadEntity(pool, workfileIdValue, entityIdValue) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const deleted = await deleteUadEntityWithClient(client, workfileIdValue, entityIdValue);
     await client.query("COMMIT");
+    return deleted;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

@@ -1,8 +1,9 @@
 # HomeNode Appraiser mobile
 
-Private Expo/React Native client for HomeNode field appraisal. Phase 8 includes
+Private Expo/React Native client for HomeNode field appraisal. Phase 10 includes
 offline sparse inspection fields, private photos, manual measurement and room
-labels, plus separate reviewed adapters for all three canonical report types.
+labels, separate reviewed adapters for all three canonical report types, and
+offline repeatable UAD property-component proposals.
 
 ## Offline inspection behavior
 
@@ -35,11 +36,15 @@ labels, plus separate reviewed adapters for all three canonical report types.
   opened. Acceptance refuses to overwrite a same-field desktop change.
 - **Accept into report** appends the target's domain history and registry audit;
   **Keep inspection-only** leaves the report unchanged.
-- Repeatable UAD entity creation remains a later phase. UAD submission
+- Official repeatable UAD records—including levels, rooms, interior/exterior
+  defects, outbuildings, vehicle storage, amenities, site details, and market
+  trend sources—can be queued offline and explicitly accepted into the report.
+- Comparable creation and repeatable comparable children follow the canonical
+  web UAD catalog and the same explicit acceptance workflow. UAD submission
   credentials and certification remain outside mobile authentication.
 
 See `docs/MOBILE_TARGET_FIELD_ADAPTERS.md` for the full persistence and API
-boundary.
+boundary and `docs/MOBILE_UAD_REPEATABLE_ENTITIES.md` for entity review.
 
 SQLCipher requires a development or internal native build and is not available in Expo Go.
 

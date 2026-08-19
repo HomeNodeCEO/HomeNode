@@ -2,15 +2,42 @@ import * as Network from "expo-network";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 
-import { ApiError, type MobileApi } from "../api/client";
+import { ApiError, type MobileApi, type UadEntityProposalRequest } from "../api/client";
 import { networkAvailable } from "./model";
 import { OfflineStore, type QueueSummary } from "./store";
 
 const EMPTY_SUMMARY: QueueSummary = { pending: 0, conflicts: 0, synchronized: 0 };
 
 export async function synchronizeDueOperations(store: OfflineStore, api: MobileApi, ownerUserId: string) {
-  const rows = await store.dueOperations(ownerUserId);
-  if (!rows.length) return;
+  const [rows, entityRows] = await Promise.all([
+    store.dueOperations(ownerUserId),
+    store.dueUadEntityProposals(ownerUserId),
+  ]);
+  if (!rows.length && !entityRows.length) return;
+  if (entityRows.length) {
+    await store.markUadEntityProposalsUploading(entityRows.map((row) => row.client_operation_id));
+    const refreshedSessions = new Set<string>();
+    for (const row of entityRows) {
+      try {
+        const request = JSON.parse(row.request_json) as UadEntityProposalRequest;
+        await api.createUadEntityProposal(row.session_id, request);
+        await store.completeUadEntityProposal(ownerUserId, row.client_operation_id);
+        refreshedSessions.add(row.session_id);
+      } catch (reason) {
+        const code = reason instanceof ApiError
+          ? reason.code
+          : reason instanceof Error ? reason.message : "uad_entity_sync_failed";
+        await store.failUadEntityProposal(row, code);
+      }
+    }
+    for (const sessionId of refreshedSessions) {
+      try {
+        await store.cacheUadEntityReview(ownerUserId, sessionId, await api.uadEntityReview(sessionId));
+      } catch {
+        // The proposal is durable on the server; the panel will retry this read when opened.
+      }
+    }
+  }
   const sessions = new Map<string, typeof rows>();
   for (const row of rows) {
     const group = sessions.get(row.session_id) || [];

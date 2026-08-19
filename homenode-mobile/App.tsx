@@ -36,6 +36,7 @@ import {
 import { PhotoCapturePanel } from "./src/photos/PhotoCapturePanel";
 import { SketchEditorPanel, type SelectedSketchRoom } from "./src/sketch/SketchEditorPanel";
 import { TargetFieldPanel } from "./src/targetFields/TargetFieldPanel";
+import { UadEntityPanel } from "./src/uadEntities/UadEntityPanel";
 
 function friendlyError(reason: unknown) {
   const code = reason instanceof ApiError ? reason.code : reason instanceof Error ? reason.message : "request_failed";
@@ -461,6 +462,14 @@ function InspectionScreen({
         onSelectRoom={setSelectedSketchRoom}
       />
       {file.workflow_type === "custom_appraisal" ? <CustomAppraisalPanel
+        api={api}
+        store={store}
+        ownerUserId={ownerUserId}
+        sessionId={session.id}
+        online={online}
+        onSync={onSync}
+      /> : null}
+      {file.workflow_type === "uad_3_6" ? <UadEntityPanel
         api={api}
         store={store}
         ownerUserId={ownerUserId}

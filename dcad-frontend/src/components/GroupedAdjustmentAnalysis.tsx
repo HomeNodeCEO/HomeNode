@@ -10,12 +10,18 @@ import type {
 import PairedSalesAnalysis, {
   type AppraiserDefinedAdjustmentArea,
 } from '@/components/PairedSalesAnalysis';
+import RegressionAnalysis from '@/components/RegressionAnalysis';
+
+export type AdjustmentDimensionKey =
+  | GroupedAnalysisDimension['key']
+  | 'age'
+  | 'site_size';
 
 export type AppliedGroupedAdjustment = {
   id: string;
   marketKey: GroupedAnalysisBreakdownKey;
   marketLabel: string;
-  dimensionKey: GroupedAnalysisDimension['key'];
+  dimensionKey: AdjustmentDimensionKey;
   dimensionLabel: string;
   transitionId: string;
   transitionLabel: string;
@@ -694,7 +700,7 @@ export default function GroupedAdjustmentAnalysis({
         </div>
       </div>
 
-      {activeMethod && activeMethod !== 'grouped' && activeMethod !== 'paired_sales' && (
+      {activeMethod && !['grouped', 'paired_sales', 'regression'].includes(activeMethod) && (
         <div className="p-5">
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5">
             <div className="text-lg font-semibold text-indigo-950">
@@ -712,6 +718,17 @@ export default function GroupedAdjustmentAnalysis({
 
       {activeMethod === 'paired_sales' && (
         <PairedSalesAnalysis
+          subjectAccountId={subjectAccountId}
+          appraiserDefinedArea={appraiserDefinedArea}
+          appliedAdjustments={appliedAdjustments}
+          getImpactPreview={getImpactPreview}
+          onApplyAdjustment={onApplyAdjustment}
+          onRemoveAdjustment={onRemoveAdjustment}
+        />
+      )}
+
+      {activeMethod === 'regression' && (
+        <RegressionAnalysis
           subjectAccountId={subjectAccountId}
           appraiserDefinedArea={appraiserDefinedArea}
           appliedAdjustments={appliedAdjustments}

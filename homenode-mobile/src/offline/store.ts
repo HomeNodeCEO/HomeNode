@@ -14,6 +14,8 @@ import type {
   PhotoUploadRequest,
   PropertyResult,
   TargetFieldReview,
+  UadEntityProposalRequest,
+  UadEntityReview,
   ReportFile,
 } from "../api/client";
 import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
@@ -115,6 +117,17 @@ type SketchDraftRow = {
   error_code: string | null;
   updated_at: number;
 };
+
+export type LocalUadEntityProposal = Readonly<{
+  owner_user_id: string;
+  session_id: string;
+  client_operation_id: string;
+  request_json: string;
+  state: "queued" | "uploading" | "failed";
+  attempts: number;
+  next_attempt_at: number | null;
+  error_code: string | null;
+}>;
 
 export type CachedInspection = Readonly<{
   property: PropertyResult;
@@ -327,6 +340,30 @@ async function initializeDatabase() {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (owner_user_id, session_id)
     );
+    CREATE TABLE IF NOT EXISTS uad_entity_review_cache (
+      owner_user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      review_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, session_id)
+    );
+    CREATE TABLE IF NOT EXISTS uad_entity_proposal_queue (
+      owner_user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      client_operation_id TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      state TEXT NOT NULL DEFAULT 'queued',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER,
+      error_code TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, client_operation_id)
+    );
+    CREATE INDEX IF NOT EXISTS uad_entity_proposal_queue_due_idx
+      ON uad_entity_proposal_queue (owner_user_id, state, next_attempt_at, created_at);
+    CREATE INDEX IF NOT EXISTS uad_entity_proposal_queue_session_idx
+      ON uad_entity_proposal_queue (owner_user_id, session_id, created_at);
     CREATE TABLE IF NOT EXISTS sketch_drafts (
       owner_user_id TEXT NOT NULL,
       session_id TEXT NOT NULL,
@@ -426,6 +463,12 @@ async function initializeDatabase() {
   await database.runAsync(
     `UPDATE sketch_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
       WHERE state = 'synchronizing'`,
+    Date.now(),
+    Date.now(),
+  );
+  await database.runAsync(
+    `UPDATE uad_entity_proposal_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
+      WHERE state = 'uploading'`,
     Date.now(),
     Date.now(),
   );
@@ -564,6 +607,126 @@ export class OfflineStore {
       ? parseJson<TargetFieldReview>(row.review_json, null as unknown as TargetFieldReview)
       : null;
   }
+
+  async cacheUadEntityReview(ownerUserId: string, sessionId: string, review: UadEntityReview) {
+    await this.database.runAsync(
+      `INSERT INTO uad_entity_review_cache (owner_user_id, session_id, review_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (owner_user_id, session_id) DO UPDATE SET
+         review_json = excluded.review_json, updated_at = excluded.updated_at`,
+      ownerUserId,
+      sessionId,
+      JSON.stringify(review),
+      Date.now(),
+    );
+  }
+
+  async cachedUadEntityReview(ownerUserId: string, sessionId: string) {
+    const row = await this.database.getFirstAsync<{ review_json: string }>(
+      `SELECT review_json FROM uad_entity_review_cache
+        WHERE owner_user_id = ? AND session_id = ?`,
+      ownerUserId,
+      sessionId,
+    );
+    return row
+      ? parseJson<UadEntityReview>(row.review_json, null as unknown as UadEntityReview)
+      : null;
+  }
+
+  async queueUadEntityProposal(
+    ownerUserId: string,
+    sessionId: string,
+    request: UadEntityProposalRequest,
+  ) {
+    const now = Date.now();
+    const requestJson = JSON.stringify(request);
+    const existing = await this.database.getFirstAsync<{ request_json: string }>(
+      `SELECT request_json FROM uad_entity_proposal_queue
+        WHERE owner_user_id = ? AND client_operation_id = ?`,
+      ownerUserId,
+      request.client_operation_id,
+    );
+    if (existing) {
+      if (existing.request_json !== requestJson) throw new Error("client_operation_id_conflict");
+      return;
+    }
+    await this.database.runAsync(
+      `INSERT INTO uad_entity_proposal_queue (
+         owner_user_id, session_id, client_operation_id, request_json,
+         state, attempts, next_attempt_at, error_code, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'queued', 0, NULL, NULL, ?, ?)`,
+      ownerUserId,
+      sessionId,
+      request.client_operation_id,
+      requestJson,
+      now,
+      now,
+    );
+  }
+
+  async dueUadEntityProposals(ownerUserId: string, limit = 25) {
+    return this.database.getAllAsync<LocalUadEntityProposal>(
+      `SELECT owner_user_id, session_id, client_operation_id, request_json,
+              state, attempts, next_attempt_at, error_code
+         FROM uad_entity_proposal_queue
+        WHERE owner_user_id = ? AND state IN ('queued', 'failed')
+          AND COALESCE(next_attempt_at, 0) <= ?
+        ORDER BY created_at LIMIT ?`,
+      ownerUserId,
+      Date.now(),
+      limit,
+    );
+  }
+
+  async markUadEntityProposalsUploading(operationIds: string[]) {
+    if (!operationIds.length) return;
+    const now = Date.now();
+    await this.database.withExclusiveTransactionAsync(async (transaction) => {
+      for (const operationId of operationIds) {
+        await transaction.runAsync(
+          `UPDATE uad_entity_proposal_queue
+              SET state = 'uploading', attempts = attempts + 1, updated_at = ?
+            WHERE client_operation_id = ? AND state IN ('queued', 'failed')`,
+          now,
+          operationId,
+        );
+      }
+    });
+  }
+
+  async completeUadEntityProposal(ownerUserId: string, operationId: string) {
+    await this.database.runAsync(
+      `DELETE FROM uad_entity_proposal_queue
+        WHERE owner_user_id = ? AND client_operation_id = ?`,
+      ownerUserId,
+      operationId,
+    );
+  }
+
+  async failUadEntityProposal(row: LocalUadEntityProposal, errorCode: string) {
+    const now = Date.now();
+    await this.database.runAsync(
+      `UPDATE uad_entity_proposal_queue
+          SET state = 'failed', error_code = ?, next_attempt_at = ?, updated_at = ?
+        WHERE owner_user_id = ? AND client_operation_id = ? AND state = 'uploading'`,
+      errorCode,
+      now + retryDelayMs(Number(row.attempts) + 1, Math.random()),
+      now,
+      row.owner_user_id,
+      row.client_operation_id,
+    );
+  }
+
+  async localUadEntityProposalCount(ownerUserId: string, sessionId: string) {
+    const row = await this.database.getFirstAsync<{ count: number }>(
+      `SELECT count(*) AS count FROM uad_entity_proposal_queue
+        WHERE owner_user_id = ? AND session_id = ?`,
+      ownerUserId,
+      sessionId,
+    );
+    return Number(row?.count || 0);
+  }
+
   async sketchDraft(ownerUserId: string, sessionId: string) {
     const row = await this.database.getFirstAsync<SketchDraftRow>(
       "SELECT * FROM sketch_drafts WHERE owner_user_id = ? AND session_id = ?",
@@ -1131,7 +1294,7 @@ export class OfflineStore {
   }
 
   async queueSummary(ownerUserId: string, sessionId?: string): Promise<QueueSummary> {
-    const row = await this.database.getFirstAsync<{
+    const [row, entityRow] = await Promise.all([this.database.getFirstAsync<{
       pending: number;
       conflicts: number;
       synchronized: number;
@@ -1144,9 +1307,16 @@ export class OfflineStore {
       ownerUserId,
       sessionId || null,
       sessionId || null,
-    );
+    ), this.database.getFirstAsync<{ pending: number }>(
+      `SELECT COALESCE(sum(CASE WHEN state IN ('queued', 'uploading', 'failed') THEN 1 ELSE 0 END), 0) AS pending
+         FROM uad_entity_proposal_queue
+        WHERE owner_user_id = ? AND (? IS NULL OR session_id = ?)`,
+      ownerUserId,
+      sessionId || null,
+      sessionId || null,
+    )]);
     return {
-      pending: Number(row?.pending || 0),
+      pending: Number(row?.pending || 0) + Number(entityRow?.pending || 0),
       conflicts: Number(row?.conflicts || 0),
       synchronized: Number(row?.synchronized || 0),
     };

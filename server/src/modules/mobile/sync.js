@@ -430,6 +430,9 @@ async function hasUnresolvedConflicts(client, sessionId) {
        UNION ALL
        SELECT 1 FROM app.mobile_target_field_proposals
         WHERE inspection_session_id = $1 AND status IN ('pending', 'conflict')
+       UNION ALL
+       SELECT 1 FROM app.mobile_uad_entity_proposals
+        WHERE inspection_session_id = $1 AND status IN ('pending', 'conflict')
      ) AS has_conflicts`,
     [sessionId],
   );

@@ -27,6 +27,7 @@ import {
   UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES,
   UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES,
   UAD_SALES_COMPARABLE_VIEW_TYPES,
+  UAD_SALES_COMPARABLE_VEHICLE_STORAGE_SURFACE_TYPES,
   UAD_SALES_COMPARABLE_WATER_ACCESS_DEPTH_TYPES,
   UAD_SALES_COMPARABLE_WATERFRONT_FEATURE_TYPES,
   UAD_SALES_COMPARISON_FIELDS,
@@ -39,13 +40,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22L editor on canonical comparable entities", () => {
+test("adds the Section 22A-22M editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 270);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 270);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 280);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 280);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -79,6 +80,8 @@ test("adds the Section 22A-22L editor on canonical comparable entities", () => {
     UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_amenity.variants["Sales comparables — property amenities — Outdoor living"].createData,
     { amenity_category: "OutdoorLiving" },
   );
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_vehicle_storage.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_vehicle_storage.minItems, 1);
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
 });
 
@@ -121,6 +124,7 @@ test("accepts a complete settled comparable with a source and verified property 
   const kitchen = { id: "7ecae27d-198d-4e3e-b6b2-d138e60868ba", entity_type: "sales_comparable_kitchen", parent_entity_id: unit.id, ordinal: 1, data: {} };
   const flooring = { id: "d4a31b2d-cc98-4b85-8de1-4e4fdff22116", entity_type: "sales_comparable_interior_component", parent_entity_id: unit.id, ordinal: 1, data: {} };
   const walls = { id: "a24d53de-9c6e-441e-8b60-9958866649de", entity_type: "sales_comparable_interior_component", parent_entity_id: unit.id, ordinal: 2, data: {} };
+  const vehicleStorage = { id: "b34d53de-9c6e-441e-8b60-9958866649de", entity_type: "sales_comparable_vehicle_storage", parent_entity_id: comparable.id, ordinal: 1, data: {} };
   const values = [
     value(null, "sales_comparison_scope", "1000.0032", true),
     value(null, "subject", "1600.0007", "Q3"),
@@ -179,6 +183,7 @@ test("accepts a complete settled comparable with a source and verified property 
     value(walls.id, "sales_comparable_interior_component", "1800.0147", "WallsAndCeiling"),
     value(walls.id, "sales_comparable_interior_component", "1800.0146", "Typical painted drywall"),
     value(walls.id, "sales_comparable_interior_component", "1800.0296", "Typical wear"),
+    value(vehicleStorage.id, "sales_comparable_vehicle_storage", "1800.0095", "None"),
     value(method.id, "sales_comparable_construction_method", "1800.0171", "SiteBuilt"),
     value(heating.id, "sales_comparable_heating_system", "1800.0165", "ForcedWarmAir"),
     value(source.id, "sales_comparable_data_source", "0700.0125", "MLS"),
@@ -191,7 +196,7 @@ test("accepts a complete settled comparable with a source and verified property 
     content_type: "image/jpeg",
     status: "verified",
   }];
-  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view, dwelling, method, heating, unit, accessibility, kitchen, flooring, walls], assets), []);
+  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view, dwelling, method, heating, unit, accessibility, kitchen, flooring, walls, vehicleStorage], assets), []);
 });
 
 test("rejects missing evidence and contradictory comparable transaction records", () => {
@@ -596,6 +601,38 @@ test("validates Section 22L comparable property amenities and typed category adj
   assert.equal(normalizeAndValidateUadValue(adjustment, -7500).error, null);
 });
 
+test("validates Section 22M comparable vehicle storage and its typed adjustment", () => {
+  const comparable = { id: "a9ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const garage = { id: "b9ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_vehicle_storage", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const none = { id: "c9ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_vehicle_storage", parent_entity_id: comparable.id, ordinal: 2, data: {} };
+  const errors = validateCompleteSection(
+    "sales_comparison",
+    [],
+    [
+      value(null, "sales_comparison_scope", "1000.0032", true),
+      value(garage.id, "sales_comparable_vehicle_storage", "1800.0095", "Garage"),
+      value(garage.id, "sales_comparable_vehicle_storage", "1800.0094", "Attached"),
+      value(garage.id, "sales_comparable_vehicle_storage", "1800.0099", 2),
+      value(none.id, "sales_comparable_vehicle_storage", "1800.0095", "None"),
+      value(none.id, "sales_comparable_vehicle_storage", "1800.0097", "Concrete"),
+    ],
+    [comparable, garage, none],
+  );
+  const codes = errors.map((error) => error.code);
+  assert.equal(codes.includes("sales_comparable_vehicle_storage_none_conflict"), true);
+  assert.equal(codes.includes("sales_comparable_vehicle_storage_driveway_detail_conflict"), true);
+
+  const drivewayType = getUadField("sales_comparable_vehicle_storage", "1800.0095");
+  const area = getUadField("sales_comparable_vehicle_storage", "1800.0397");
+  const adjustment = getUadField("sales_comparable_adjustment_vehicle_storage", "1800.0317");
+  assert.equal(drivewayType.options.includes("SharedDriveway"), true);
+  assert.deepEqual(UAD_SALES_COMPARABLE_VEHICLE_STORAGE_SURFACE_TYPES, [
+    "Asphalt", "Brick", "Cobblestone", "Concrete", "Dirt", "Gravel", "Other",
+  ]);
+  assert.equal(normalizeAndValidateUadValue(area, { amount: 480, unit: "SquareFeet" }).error, null);
+  assert.equal(normalizeAndValidateUadValue(adjustment, 10000).error, null);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -796,6 +833,24 @@ test("seeds Section 22L property amenities, subject redisplays, and typed adjust
   assert.match(sql, /'1800\.0258','sales_comparable_amenity_outdoor_living','22\.12\.08'/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-AMENITIES-004/);
   assert.match(runner, /20260915_uad_sales_comparison_property_amenities\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22M vehicle storage, subject redisplays, and official rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260916_uad_sales_comparison_vehicle_storage.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const ruleId of [
+    "UAD1405", "UAD1407", "UAD1408", "UAD1409",
+    "UAD1410", "UAD1411", "UAD1412", "UAD1414",
+  ]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /sales_comparable_vehicle_storage/);
+  assert.match(sql, /ComparableAdjustmentType/);
+  assert.match(sql, /VehicleStorage/);
+  assert.match(sql, /'3200\.0006','vehicle_storage','22\.13\.01'/);
+  assert.match(sql, /'1800\.0095','sales_comparable_vehicle_storage','22\.13\.05'/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-VEHICLE-STORAGE-004/);
+  assert.match(runner, /20260916_uad_sales_comparison_vehicle_storage\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

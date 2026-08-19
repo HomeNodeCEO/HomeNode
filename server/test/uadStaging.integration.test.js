@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 270);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 280);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -372,6 +372,10 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_amenity"
       && entity.parent_entity_id === salesComparable?.id
       && entity.data?.amenity_category === "OutdoorLiving"
+    ));
+    const salesComparableVehicleStorage = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_vehicle_storage"
+      && entity.parent_entity_id === salesComparable?.id
     ));
     const salesComparableInfluence = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable_site_influence"
@@ -486,6 +490,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(salesComparableSource);
     assert.ok(salesComparableProjectAmenity);
     assert.ok(salesComparableAmenity);
+    assert.ok(salesComparableVehicleStorage);
     assert.ok(salesComparableInfluence);
     assert.ok(salesComparableWaterInfluence);
     assert.ok(salesComparableBodyOfWater);
@@ -660,6 +665,30 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       siteBuiltEditor.values.find((item) => (
         item.entity_id === salesComparable.id
         && item.context_key === "sales_comparable_adjustment_overall_condition"
+        && item.uid === "1800.0317"
+      ))?.value,
+      0,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableVehicleStorage.id
+        && item.context_key === "sales_comparable_vehicle_storage"
+        && item.uid === "1800.0095"
+      ))?.value,
+      "Garage",
+    );
+    assert.deepEqual(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableVehicleStorage.id
+        && item.context_key === "sales_comparable_vehicle_storage"
+        && item.uid === "1800.0397"
+      ))?.value,
+      { amount: 480, unit: "SquareFeet" },
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_adjustment_vehicle_storage"
         && item.uid === "1800.0317"
       ))?.value,
       0,

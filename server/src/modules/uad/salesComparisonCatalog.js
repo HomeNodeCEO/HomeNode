@@ -18,6 +18,7 @@ import {
   UAD_INTERIOR_ROOM_UPDATE_STATUS_TYPES,
   UAD_UNIT_ACCESSIBILITY_TYPES,
 } from "./unitInteriorCatalog.js";
+import { UAD_VEHICLE_STORAGE_TYPES } from "./vehicleStorageCatalog.js";
 
 export const UAD_SALES_COMPARISON_CAPTION_TYPES = Object.freeze([
   "PropertyPhoto",
@@ -200,6 +201,18 @@ export const UAD_SALES_COMPARABLE_AMENITY_POOL_FEATURE_TYPES = Object.freeze([
   "Caged", "Heated", "Indoor", "Other",
 ]);
 
+export const UAD_SALES_COMPARABLE_VEHICLE_STORAGE_ATTACHMENT_TYPES = Object.freeze([
+  "Attached", "BuiltIn", "Detached",
+]);
+
+export const UAD_SALES_COMPARABLE_VEHICLE_STORAGE_ASSIGNMENT_TYPES = Object.freeze([
+  "Assigned", "Owned", "Unassigned",
+]);
+
+export const UAD_SALES_COMPARABLE_VEHICLE_STORAGE_SURFACE_TYPES = Object.freeze([
+  "Asphalt", "Brick", "Cobblestone", "Concrete", "Dirt", "Gravel", "Other",
+]);
+
 export const UAD_SALES_COMPARABLE_AMENITY_CATEGORY_GROUPS = Object.freeze({
   "Sales comparables — property amenities — Outdoor accessories": Object.freeze({
     category: "OutdoorAccessories",
@@ -345,6 +358,29 @@ const comparableEfficiencyRatingExists = Object.freeze({
 const comparableAmenitiesExist = Object.freeze({
   key: "sales_comparable_property:1800.0199",
   equals: true,
+});
+const comparableVehicleStorageTypeIs = (...types) => Object.freeze({
+  any: types.map((type) => ({ key: "sales_comparable_vehicle_storage:1800.0095", equals: type })),
+});
+const comparableVehicleStorageGarageOrCarport = comparableVehicleStorageTypeIs("Carport", "Garage");
+const comparableVehicleStorageDriveway = comparableVehicleStorageTypeIs("Driveway", "SharedDriveway");
+const comparableVehicleStorageSharedProjectParking = comparableVehicleStorageTypeIs("CommonCarport", "OpenLot", "ParkingGarage");
+const comparableVehicleStorageCountRequired = Object.freeze({
+  any: [
+    comparableVehicleStorageTypeIs("Carport", "CommonCarport", "Garage", "OpenLot", "Other", "ParkingGarage"),
+    {
+      all: [
+        comparableVehicleStorageDriveway,
+        { key: "sales_comparable_vehicle_storage:1800.0103", equals: false },
+      ],
+    },
+  ],
+});
+const comparableVehicleStorageOtherSurface = Object.freeze({
+  all: [
+    comparableVehicleStorageDriveway,
+    { key: "sales_comparable_vehicle_storage:1800.0097", equals: "Other" },
+  ],
 });
 const subjectMaintainsExterior = Object.freeze({
   key: "subject:0100.0046",
@@ -532,6 +568,24 @@ const propertyAmenityChild = (
   entityDataFilter: { amenity_category: category },
   ...options,
 });
+const vehicleStorageChild = (uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — vehicle storage",
+  "sales_comparable_vehicle_storage",
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable_vehicle_storage", ...options },
+);
+const vehicleStorageComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — vehicle storage",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
 const comparableAmenityTypeIs = (contextKey, uid, ...types) => Object.freeze({
   any: types.map((type) => ({ key: `${contextKey}:${uid}`, equals: type })),
 });
@@ -1621,6 +1675,55 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   propertyAmenityComp("sales_comparable_adjustment_whole_home_amenity", "1800.0317", "22.12.13", "Whole home adjustment", "currency", { maximum: 999999999 }),
   propertyAmenityComp("sales_comparable_adjustment_miscellaneous_amenity", "1800.0317", "22.12.15", "Miscellaneous amenities adjustment", "currency", { maximum: 999999999 }),
 
+  vehicleStorageChild("1800.0095", "22.13.05", "Vehicle storage type", "enum", {
+    required: true,
+    options: UAD_VEHICLE_STORAGE_TYPES,
+  }),
+  vehicleStorageChild("1800.0096", "22.13.05", "Other vehicle storage type", "string", {
+    maxLength: 45,
+    showWhen: comparableVehicleStorageTypeIs("Other"),
+    requiredWhen: comparableVehicleStorageTypeIs("Other"),
+  }),
+  vehicleStorageChild("1800.0103", "22.13.05", "Ten or more parking spaces", "boolean", {
+    showWhen: comparableVehicleStorageDriveway,
+    requiredWhen: comparableVehicleStorageDriveway,
+  }),
+  vehicleStorageChild("1800.0099", "22.13.05", "Dedicated parking spaces", "integer", {
+    minimum: 0,
+    maximum: 99,
+    showWhen: comparableVehicleStorageCountRequired,
+    requiredWhen: comparableVehicleStorageCountRequired,
+  }),
+  vehicleStorageChild("1800.0100", "22.13.05", "Parking space assignment", "enum", {
+    options: UAD_SALES_COMPARABLE_VEHICLE_STORAGE_ASSIGNMENT_TYPES,
+    showWhen: comparableVehicleStorageSharedProjectParking,
+    requiredWhen: comparableVehicleStorageSharedProjectParking,
+  }),
+  vehicleStorageChild("1800.0094", "22.13.05", "Attachment type", "enum", {
+    options: UAD_SALES_COMPARABLE_VEHICLE_STORAGE_ATTACHMENT_TYPES,
+    showWhen: comparableVehicleStorageGarageOrCarport,
+    requiredWhen: comparableVehicleStorageGarageOrCarport,
+  }),
+  vehicleStorageChild("1800.0397", "22.13.05", "Vehicle storage area", "measurement", {
+    units: ["SquareFeet"],
+    minimumExclusive: 0,
+    showWhen: comparableVehicleStorageGarageOrCarport,
+  }),
+  vehicleStorageChild("1800.0097", "22.13.05", "Driveway surface material", "enum", {
+    options: UAD_SALES_COMPARABLE_VEHICLE_STORAGE_SURFACE_TYPES,
+    showWhen: comparableVehicleStorageDriveway,
+    requiredWhen: comparableVehicleStorageDriveway,
+  }),
+  vehicleStorageChild("1800.0098", "22.13.05", "Other driveway surface material", "string", {
+    maxLength: 12,
+    showWhen: comparableVehicleStorageOtherSurface,
+    requiredWhen: comparableVehicleStorageOtherSurface,
+  }),
+  vehicleStorageComp("sales_comparable_adjustment_vehicle_storage", "1800.0317", "22.13.04", "Vehicle storage adjustment", "currency", {
+    maximum: 999999999,
+    guidance: "Enter the total supported vehicle-storage adjustment once for this comparable, including zero when applicable.",
+  }),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1972,6 +2075,14 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
       }]),
     )),
   }),
+  sales_comparable_vehicle_storage: Object.freeze({
+    title: "Comparable vehicle storage",
+    addLabel: "Add comparable vehicle storage",
+    minItems: 1,
+    maxItems: 20,
+    parentEntityType: "sales_comparable",
+    showWhen: salesComparisonIncluded,
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -2152,6 +2263,16 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   amenityWholeHomeType: "sales_comparable_amenity_whole_home:1800.0264",
   amenityMiscellaneousType: "sales_comparable_amenity_miscellaneous:1800.0267",
   amenityMiscellaneousOther: "sales_comparable_amenity_miscellaneous:1800.0268",
+  vehicleStorageType: "sales_comparable_vehicle_storage:1800.0095",
+  vehicleStorageTypeOther: "sales_comparable_vehicle_storage:1800.0096",
+  vehicleStorageTenOrMoreSpaces: "sales_comparable_vehicle_storage:1800.0103",
+  vehicleStorageSpaces: "sales_comparable_vehicle_storage:1800.0099",
+  vehicleStorageAssignment: "sales_comparable_vehicle_storage:1800.0100",
+  vehicleStorageAttachment: "sales_comparable_vehicle_storage:1800.0094",
+  vehicleStorageArea: "sales_comparable_vehicle_storage:1800.0397",
+  vehicleStorageSurface: "sales_comparable_vehicle_storage:1800.0097",
+  vehicleStorageSurfaceOther: "sales_comparable_vehicle_storage:1800.0098",
+  vehicleStorageAdjustment: "sales_comparable_adjustment_vehicle_storage:1800.0317",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

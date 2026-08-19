@@ -1,4 +1,4 @@
-import type { SaleRow } from "./api";
+import type { QualitativeAnalysisResponse, SaleRow } from "./api";
 
 export type AppraisalReportSubject = {
   accountId: string;
@@ -70,6 +70,7 @@ export type AppraisalReportSalesDraft = {
       condition: string;
       quality: string;
     }>;
+    qualitativeAnalysis?: QualitativeAnalysisResponse | null;
     ctcNotes?: string;
   };
 };

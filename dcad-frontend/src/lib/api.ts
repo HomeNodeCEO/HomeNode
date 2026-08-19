@@ -1621,6 +1621,48 @@ export interface SiteValuationResponse {
   warnings: string[];
 }
 
+export type QualitativeClassification = 'inferior' | 'similar' | 'superior' | 'excluded';
+
+export interface QualitativeSelectionInput {
+  comparable_key: string;
+  classification: QualitativeClassification;
+  commentary?: string | null;
+}
+
+export interface QualitativeComparableInput {
+  sale: SaleRow;
+  indicatedValue: number;
+}
+
+export interface QualitativeAnalysisResponse {
+  schema_version: 1;
+  methodology: 'qualitative_bracketing';
+  selections: Array<{
+    comparable_key: string;
+    comparable_number: number;
+    address: string | null;
+    classification: QualitativeClassification;
+    commentary: string | null;
+    indicated_value: number | null;
+  }>;
+  conclusion: {
+    analyzed_count: number;
+    inferior_count: number;
+    similar_count: number;
+    superior_count: number;
+    excluded_count: number;
+    lower_bound: number | null;
+    upper_bound: number | null;
+    similar_median: number | null;
+    recommended_value: number | null;
+    bracket_consistent: boolean;
+    narrative: string;
+    warnings: string[];
+  };
+  applied: boolean;
+  calculated_at: string;
+}
+
 export interface GroupedAnalysesResponse {
   subject: {
     account_id: string;
@@ -3419,6 +3461,23 @@ export async function runSiteValuation(request: {
       custom_geometry: request.customGeometry || null,
     }),
     timeoutMs: 120000,
+  });
+}
+
+/** Calculate or apply a qualitative bracketing conclusion on the server. */
+export async function runQualitativeAnalysis(request: {
+  comparables: QualitativeComparableInput[];
+  selections: QualitativeSelectionInput[];
+  applied?: boolean;
+}): Promise<QualitativeAnalysisResponse> {
+  return fetchJSON<QualitativeAnalysisResponse>(makeUrl('/api/sales/qualitative-analysis'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      comparables: request.comparables,
+      selections: request.selections,
+      applied: request.applied === true,
+    }),
   });
 }
 

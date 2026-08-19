@@ -1,3 +1,5 @@
+import { UAD_PROJECT_AMENITY_TYPES } from "./projectInformationCatalog.js";
+
 export const UAD_SALES_COMPARISON_CAPTION_TYPES = Object.freeze([
   "PropertyPhoto",
   "SalesComparisonApproachExhibit",
@@ -95,6 +97,27 @@ const comp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => 
   { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
 );
 const includedAnd = (condition) => Object.freeze({ all: [salesComparisonIncluded, condition] });
+const comparableInProject = Object.freeze({
+  key: "sales_comparable_project:1800.0378",
+  equals: true,
+});
+const comparablePud = Object.freeze({
+  key: "sales_comparable_project:1800.0383",
+  equals: true,
+});
+const comparableProjectOrPud = Object.freeze({
+  any: [comparableInProject, comparablePud],
+});
+const subjectInProject = Object.freeze({ key: "subject:2500.0168", present: true });
+const projectComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — project information",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
 const statusIs = (value) => Object.freeze({
   key: "sales_comparable_listing:1800.0075",
   equals: value,
@@ -301,6 +324,70 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   adjustment("sales_comparable_adjustment_native_lands", "22.01.43", "Native American lands adjustment", includedAnd({ key: "sales_comparable_property:1800.0357", present: true })),
   adjustment("sales_comparable_adjustment_all_rights", "22.01.45", "All rights included adjustment", includedAnd({ key: "sales_comparable_property:1800.0201", present: true })),
 
+  projectComp("sales_comparable_project", "1800.0383", "Does Not Display", "Property in a PUD", "boolean", {
+    requiredWhen: salesComparisonIncluded,
+  }),
+  projectComp("sales_comparable_project", "1800.0378", "Does Not Display", "Property in a condominium, cooperative, or condop", "boolean", {
+    requiredWhen: salesComparisonIncluded,
+  }),
+  projectComp("sales_comparable_project", "1800.0377", "Does Not Display", "Project legal structure", "enum", {
+    options: ["Condominium", "Condop", "Cooperative"],
+    showWhen: includedAnd(comparableInProject),
+    requiredWhen: comparableInProject,
+  }),
+  projectComp("sales_comparable_project", "1800.0194", "22.02.06", "Project name", "string", {
+    maxLength: 33,
+    showWhen: includedAnd(comparableInProject),
+    requiredWhen: comparableInProject,
+  }),
+  projectComp("sales_comparable_project", "1800.0083", "22.02.06", "Same project as subject", "boolean", {
+    showWhen: includedAnd({ all: [comparableInProject, subjectInProject] }),
+    requiredWhen: { all: [comparableInProject, subjectInProject] },
+  }),
+  projectComp("sales_comparable_project", "1800.0353", "22.02.07", "Mandatory monthly fee", "currency", {
+    minimum: 0,
+    maximum: 999999,
+    showWhen: includedAnd(comparableProjectOrPud),
+    requiredWhen: comparableProjectOrPud,
+  }),
+  projectComp("sales_comparable_project", "1800.0371", "22.02.09", "Special assessment status", "enum", {
+    options: ["Existing", "None", "Proposed"],
+    showWhen: includedAnd(comparableProjectOrPud),
+    requiredWhen: comparableProjectOrPud,
+  }),
+  projectComp("sales_comparable_adjustment_project", "1800.0317", "22.02.05", "Project information adjustment", "currency", {
+    maximum: 999999999,
+    showWhen: includedAnd(comparableProjectOrPud),
+  }),
+
+  field(
+    "Comparable project amenities and services",
+    "sales_comparable_project_amenity",
+    "1800.0056",
+    "22.02.08",
+    "Common amenity or service",
+    "enum",
+    {
+      entityType: "sales_comparable_project_amenity",
+      options: UAD_PROJECT_AMENITY_TYPES,
+      required: true,
+    },
+  ),
+  field(
+    "Comparable project amenities and services",
+    "sales_comparable_project_amenity",
+    "1800.0057",
+    "22.02.08",
+    "Other common amenity or service",
+    "string",
+    {
+      entityType: "sales_comparable_project_amenity",
+      maxLength: 33,
+      showWhen: { key: "sales_comparable_project_amenity:1800.0056", equals: "Other" },
+      requiredWhen: { key: "sales_comparable_project_amenity:1800.0056", equals: "Other" },
+    },
+  ),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -388,6 +475,14 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     parentEntityType: "sales_comparable",
     showWhen: { key: "sales_comparable_property:1800.0201", equals: false },
   }),
+  sales_comparable_project_amenity: Object.freeze({
+    title: "Comparable project amenities and services",
+    addLabel: "Add common amenity or service",
+    minItems: 0,
+    maxItems: UAD_PROJECT_AMENITY_TYPES.length,
+    parentEntityType: "sales_comparable",
+    showWhen: comparableProjectOrPud,
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -418,6 +513,16 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   nativeLandsOther: "sales_comparable_property:1800.0359",
   allRightsIncluded: "sales_comparable_property:1800.0201",
   rightNotIncluded: "sales_comparable_right_not_included:1800.0340",
+  pud: "sales_comparable_project:1800.0383",
+  inProject: "sales_comparable_project:1800.0378",
+  projectLegalStructure: "sales_comparable_project:1800.0377",
+  projectName: "sales_comparable_project:1800.0194",
+  sameProject: "sales_comparable_project:1800.0083",
+  projectMonthlyFee: "sales_comparable_project:1800.0353",
+  projectSpecialAssessment: "sales_comparable_project:1800.0371",
+  projectAdjustment: "sales_comparable_adjustment_project:1800.0317",
+  projectAmenity: "sales_comparable_project_amenity:1800.0056",
+  projectAmenityOther: "sales_comparable_project_amenity:1800.0057",
 });
 
 export function isVerifiedSalesComparisonAsset(asset, captionType = null, entityId = undefined) {

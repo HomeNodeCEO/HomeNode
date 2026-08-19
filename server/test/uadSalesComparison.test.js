@@ -31,19 +31,20 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A general-information editor on canonical comparable entities", () => {
+test("adds the Section 22A-22B editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 52);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 52);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 62);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 62);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
   );
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_data_source.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_right_not_included.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_project_amenity.parentEntityType, "sales_comparable");
 });
 
 test("uses official Section 22 general-information enumerations and conditional fields", () => {
@@ -84,6 +85,8 @@ test("accepts a complete settled comparable with a source and verified property 
     value(comparable.id, "sales_comparable_listing", "1800.0189", 8),
     value(comparable.id, "sales_comparable_property", "1800.0195", "Detached"),
     value(comparable.id, "sales_comparable_property", "1800.0337", "FeeSimple"),
+    value(comparable.id, "sales_comparable_project", "1800.0383", false),
+    value(comparable.id, "sales_comparable_project", "1800.0378", false),
     value(source.id, "sales_comparable_data_source", "0700.0125", "MLS"),
     value(source.id, "sales_comparable_data_source", "1800.0347", "NTREIS-123456"),
   ];
@@ -109,6 +112,45 @@ test("rejects missing evidence and contradictory comparable transaction records"
   assert.equal(codes.includes("sales_comparable_data_source_required"), true);
   assert.equal(codes.includes("sales_comparable_photo_required"), true);
   assert.equal(codes.includes("sales_comparable_settled_detail_conflict"), true);
+});
+
+test("validates Section 22B project classification, financial details, and amenities", () => {
+  const comparable = { id: "02f965b1-fb7a-425c-a7f3-33280878dc99", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const amenityOne = { id: "69157369-a8ec-48df-ac48-f7063085f359", entity_type: "sales_comparable_project_amenity", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const amenityTwo = { id: "471387b0-e32e-4c61-88c8-6ea83df1455a", entity_type: "sales_comparable_project_amenity", parent_entity_id: comparable.id, ordinal: 2, data: {} };
+  const contradictory = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(comparable.id, "sales_comparable_project", "1800.0383", true),
+    value(comparable.id, "sales_comparable_project", "1800.0378", true),
+    value(comparable.id, "sales_comparable_project", "1800.0377", "Condominium"),
+    value(comparable.id, "sales_comparable_project", "1800.0194", "Test Project"),
+    value(comparable.id, "sales_comparable_project", "1800.0353", 125),
+    value(comparable.id, "sales_comparable_project", "1800.0371", "None"),
+    value(amenityOne.id, "sales_comparable_project_amenity", "1800.0056", "None"),
+    value(amenityTwo.id, "sales_comparable_project_amenity", "1800.0056", "Clubhouse"),
+  ];
+  const codes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    contradictory,
+    [comparable, amenityOne, amenityTwo],
+  ).map((error) => error.code);
+  assert.equal(codes.includes("sales_comparable_project_classification_conflict"), true);
+  assert.equal(codes.includes("sales_comparable_project_amenity_none_conflict"), true);
+
+  const noAmenityCodes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    [
+      value(null, "sales_comparison_scope", "1000.0032", true),
+      value(comparable.id, "sales_comparable_project", "1800.0383", true),
+      value(comparable.id, "sales_comparable_project", "1800.0378", false),
+      value(comparable.id, "sales_comparable_project", "1800.0353", 125),
+      value(comparable.id, "sales_comparable_project", "1800.0371", "None"),
+    ],
+    [comparable],
+  ).map((error) => error.code);
+  assert.equal(noAmenityCodes.includes("sales_comparable_project_amenity_required"), true);
 });
 
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
@@ -139,6 +181,18 @@ test("seeds Section 22A additively with official compliance rules", () => {
     "UAD1731", "UAD1771", "UAD1773",
   ]) assert.match(sql, new RegExp(ruleId));
   assert.match(sql, /HN-UAD-SALES-COMPARISON-004/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22B project information additively from the official delivery specification", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260905_uad_sales_comparison_project.sql"), "utf8");
+  assert.match(sql, /PropertyInProjectIndicator/);
+  assert.match(sql, /PUDIndicator/);
+  assert.match(sql, /ProjectInformation/);
+  assert.match(sql, /'2500\.0065','project_information','22\.02\.01'/);
+  assert.match(sql, /'1800\.0056','sales_comparable_project_amenity','22\.02\.08'/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-PROJECT-004/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

@@ -493,7 +493,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         )}
         {activeSection === "sales_comparison" && (
           <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-            Section 22A establishes each comparable's official general information, source trail, property-rights details, and required verified photo. The same comparable record is shared with Section 21 and is reserved for the remaining adjustment-grid sections. HomeNode search results may later arrive as source-attributed suggestions, but only an appraiser save confirms them for the UAD report.
+            Sections 22A–22B establish each comparable's official general information, source trail, property-rights details, project or PUD information, common amenities, and required verified photo. The same comparable record is shared with Section 21 and is reserved for the remaining adjustment-grid sections. HomeNode search results may later arrive as source-attributed suggestions, but only an appraiser save confirms them for the UAD report.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}

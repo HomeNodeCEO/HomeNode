@@ -721,6 +721,14 @@ try {
     1,
     "Comparable Data Source 1",
   );
+  const salesComparableProjectAmenityId = await ensureEntity(
+    sfrWorkfileId,
+    salesComparableId,
+    "sales_comparable_project_amenity",
+    "sales-comparable-project-amenity-1",
+    1,
+    "Comparable Project Amenity 1",
+  );
   const comparableNoTransferSourceId = await ensureEntity(
     sfrWorkfileId,
     salesComparableId,
@@ -756,6 +764,12 @@ try {
     [salesComparableId, "sales_comparable_property", "1800.0337", "22.01.39", "FeeSimple"],
     [salesComparableId, "sales_comparable_property", "1800.0357", "22.01.42", false],
     [salesComparableId, "sales_comparable_property", "1800.0201", "22.01.44", true],
+    [salesComparableId, "sales_comparable_project", "1800.0383", "Does Not Display", true],
+    [salesComparableId, "sales_comparable_project", "1800.0378", "Does Not Display", false],
+    [salesComparableId, "sales_comparable_project", "1800.0353", "22.02.07", 125],
+    [salesComparableId, "sales_comparable_project", "1800.0371", "22.02.09", "None"],
+    [salesComparableId, "sales_comparable_adjustment_project", "1800.0317", "22.02.05", 0],
+    [salesComparableProjectAmenityId, "sales_comparable_project_amenity", "1800.0056", "22.02.08", "Clubhouse"],
     [salesComparableSourceId, "sales_comparable_data_source", "0700.0125", "22.01.18", "MLS"],
     [salesComparableSourceId, "sales_comparable_data_source", "1800.0347", "22.01.18", "NTREIS-SYNTHETIC-22001"],
   ];

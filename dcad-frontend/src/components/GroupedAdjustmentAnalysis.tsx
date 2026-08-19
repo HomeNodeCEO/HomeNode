@@ -12,6 +12,7 @@ import PairedSalesAnalysis, {
 } from '@/components/PairedSalesAnalysis';
 import RegressionAnalysis from '@/components/RegressionAnalysis';
 import DepreciatedCostAnalysis from '@/components/DepreciatedCostAnalysis';
+import SiteValuationAnalysis from '@/components/SiteValuationAnalysis';
 
 export type AdjustmentDimensionKey =
   | GroupedAnalysisDimension['key']
@@ -703,7 +704,7 @@ export default function GroupedAdjustmentAnalysis({
         </div>
       </div>
 
-      {activeMethod && !['grouped', 'paired_sales', 'regression', 'depreciated_cost'].includes(activeMethod) && (
+      {activeMethod && !['grouped', 'paired_sales', 'regression', 'depreciated_cost', 'site_valuation'].includes(activeMethod) && (
         <div className="p-5">
           <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-5">
             <div className="text-lg font-semibold text-indigo-950">
@@ -745,6 +746,17 @@ export default function GroupedAdjustmentAnalysis({
         <DepreciatedCostAnalysis
           subjectAccountId={subjectAccountId}
           assignmentFileId={assignmentFileId}
+          appliedAdjustments={appliedAdjustments}
+          getImpactPreview={getImpactPreview}
+          onApplyAdjustment={onApplyAdjustment}
+          onRemoveAdjustment={onRemoveAdjustment}
+        />
+      )}
+
+      {activeMethod === 'site_valuation' && (
+        <SiteValuationAnalysis
+          subjectAccountId={subjectAccountId}
+          appraiserDefinedArea={appraiserDefinedArea}
           appliedAdjustments={appliedAdjustments}
           getImpactPreview={getImpactPreview}
           onApplyAdjustment={onApplyAdjustment}

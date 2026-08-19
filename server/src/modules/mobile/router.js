@@ -31,6 +31,11 @@ import {
   refreshTargetFieldProposals,
   reviewTargetFieldProposal,
 } from "./targetFields.js";
+import {
+  createMobileUadEntityProposal,
+  getMobileUadEntityReview,
+  reviewMobileUadEntityProposal,
+} from "./uadEntities.js";
 
 
 const WRITE_ROLES = new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]);
@@ -124,6 +129,14 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
         exact_value_conflict_detection: true,
         uad_official_catalog: true,
         property_tax_version_history: true,
+      },
+      uad_repeatable_entities: {
+        enabled: true,
+        offline_queue: true,
+        review_required_before_report_update: true,
+        exact_delete_conflict_detection: true,
+        official_catalog_only: true,
+        comparable_creation: "official_catalog",
       },
     });
   });
@@ -319,6 +332,40 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
       return sendError(res, error);
     }
   });
+
+  router.get("/inspection-sessions/:sessionId/uad-entities", async (req, res) => {
+    try {
+      return res.json(await getMobileUadEntityReview(pool, req.mobileAuth, req.params.sessionId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/uad-entities/proposals", requireWriteRole, async (req, res) => {
+    try {
+      const result = await createMobileUadEntityProposal(
+        pool, req.mobileAuth, req.params.sessionId, req.body || {},
+      );
+      return res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/inspection-sessions/:sessionId/uad-entities/proposals/:proposalId/review", requireWriteRole, async (req, res) => {
+    try {
+      return res.json(await reviewMobileUadEntityProposal(
+        pool,
+        req.mobileAuth,
+        req.params.sessionId,
+        req.params.proposalId,
+        req.body || {},
+      ));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
   router.get("/inspection-sessions/:sessionId/photos", async (req, res) => {
     try {
       return res.json(await listInspectionPhotos(pool, req.mobileAuth, req.params.sessionId));

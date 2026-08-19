@@ -58,11 +58,13 @@ An accepted field:
 - appends a UAD audit event; and
 - increments the selected report file's registry revision.
 
-Phase 8 exposes fields for existing workfile entities. Creating repeatable UAD
-entities such as additional levels, rooms, defects, outbuildings, and comparable
-records from mobile remains a later phase. Submission credentials, approved
-endpoints, certification, and lender/GSE delivery remain separate from mobile
-OIDC and must be confirmed before production UAD delivery.
+Phase 10 adds a separate reviewed workflow for creating and removing the
+repeatable entity types already defined by the official HomeNode UAD catalog.
+See `MOBILE_UAD_REPEATABLE_ENTITIES.md`. Comparable creation and repeatable
+comparable children follow the canonical web UAD catalog and review contract.
+Submission credentials, approved endpoints, certification, and lender/GSE
+delivery remain separate from mobile OIDC and must be confirmed before
+production UAD delivery.
 
 ## Property Tax Protest adapter
 

@@ -246,6 +246,77 @@ export type TargetFieldReview = {
     }>;
   };
 };
+
+export type UadEntity = {
+  id: string;
+  workfile_id: string;
+  parent_entity_id: string | null;
+  entity_type: string;
+  entity_identifier: string;
+  ordinal: number;
+  label: string | null;
+  data: Record<string, JsonValue>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UadEntityGroup = {
+  key: string;
+  entity_type: string;
+  title: string;
+  add_label: string;
+  min_items: number;
+  max_items: number | null;
+  parent_entity_types: string[];
+  create_enabled: boolean;
+  data: Record<string, JsonValue>;
+};
+
+export type UadEntityProposalRequest = {
+  client_operation_id: string;
+  action: "create" | "delete";
+  entity_type: string;
+  parent_entity_id?: string;
+  target_entity_id?: string;
+  label?: string;
+  data?: Record<string, JsonValue>;
+  base_target_revision: number;
+  base_entity?: UadEntity;
+};
+
+export type UadEntityProposal = {
+  id: string;
+  client_operation_id: string;
+  action: "create" | "delete";
+  entity_type: string;
+  parent_entity_id: string | null;
+  target_entity_id: string | null;
+  label: string | null;
+  data: Record<string, JsonValue>;
+  base_target_revision: number;
+  base_entity: UadEntity | null;
+  status: "pending" | "accepted" | "rejected" | "conflict";
+  conflict: Record<string, JsonValue> | null;
+  applied_entity_id: string | null;
+  applied_target_revision: number | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type UadEntityReview = {
+  session: InspectionSession;
+  target: {
+    id: string;
+    revision: number;
+    status: string;
+    specification_release_key: string;
+  };
+  catalog: UadEntityGroup[];
+  entities: UadEntity[];
+  proposals: UadEntityProposal[];
+};
+
 export type InspectionSketchSummary = {
   area_count: number;
   room_count: number;
@@ -530,6 +601,34 @@ export class MobileApi {
   ) {
     return this.request<{ proposal: TargetFieldProposal; report_registry_revision: number }>(
       `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/target-fields/proposals/${encodeURIComponent(proposalId)}/review`,
+      {
+        method: "POST",
+        body: JSON.stringify({ client_operation_id: clientOperationId, decision }),
+      },
+    );
+  }
+
+  async uadEntityReview(sessionId: string) {
+    return this.request<UadEntityReview>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/uad-entities`,
+    );
+  }
+
+  async createUadEntityProposal(sessionId: string, input: UadEntityProposalRequest) {
+    return this.request<{ proposal: UadEntityProposal; created: boolean }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/uad-entities/proposals`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
+  async reviewUadEntityProposal(
+    sessionId: string,
+    proposalId: string,
+    decision: "accept" | "reject",
+    clientOperationId: string,
+  ) {
+    return this.request<{ proposal: UadEntityProposal; report_registry_revision: number }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/uad-entities/proposals/${encodeURIComponent(proposalId)}/review`,
       {
         method: "POST",
         body: JSON.stringify({ client_operation_id: clientOperationId, decision }),

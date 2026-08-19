@@ -733,6 +733,9 @@ try {
   const salesComparableStreetId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_street", "sales-comparable-site-street-1", 1, "Comparable Access Street 1");
   const salesComparableFeatureId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_feature", "sales-comparable-site-feature-1", 1, "Comparable Site Characteristic 1");
   const salesComparableInfluenceId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_influence", "sales-comparable-site-influence-1", 1, "Comparable Site Influence 1");
+  const salesComparableWaterInfluenceId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_influence", "sales-comparable-site-influence-2", 2, "Comparable Site Influence 2");
+  const salesComparableBodyOfWaterId = await ensureEntity(sfrWorkfileId, salesComparableWaterInfluenceId, "sales_comparable_body_of_water", "sales-comparable-body-of-water-1", 1, "Comparable Body of Water 1");
+  const salesComparableWaterfrontFeatureId = await ensureEntity(sfrWorkfileId, salesComparableBodyOfWaterId, "sales_comparable_waterfront_feature", "sales-comparable-waterfront-feature-1", 1, "Comparable Waterfront Feature 1");
   const salesComparableEnvironmentalId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_environmental", "sales-comparable-site-environmental-1", 1, "Comparable Environmental Condition 1");
   const salesComparableViewId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_view", "sales-comparable-site-view-1", 1, "Comparable View 1");
   const comparableNoTransferSourceId = await ensureEntity(
@@ -786,6 +789,14 @@ try {
     [salesComparableStreetId, "sales_comparable_site_street", "1800.0214", "22.03.30", "Asphalt"],
     [salesComparableFeatureId, "sales_comparable_site_feature", "1800.0222", "22.03.40", "None"],
     [salesComparableInfluenceId, "sales_comparable_site_influence", "1800.0233", "22.03.42", "Residential"],
+    [salesComparableWaterInfluenceId, "sales_comparable_site_influence", "1800.0233", "22.03.42", "BodyOfWater"],
+    [salesComparableWaterInfluenceId, "sales_comparable_site_influence", "1800.0237", "22.04.09", { amount: 75, unit: "Feet" }],
+    [salesComparableId, "sales_comparable_adjustment_water_frontage", "1800.0317", "22.04.05", 0],
+    [salesComparableBodyOfWaterId, "sales_comparable_site_influence", "1800.0228", "22.04.06", "Lake"],
+    [salesComparableBodyOfWaterId, "sales_comparable_site_influence", "1800.0279", "Does Not Display", true],
+    [salesComparableBodyOfWaterId, "sales_comparable_site_influence", "1800.0227", "22.04.06", "Lake Ray Hubbard"],
+    [salesComparableBodyOfWaterId, "sales_comparable_site_influence", "1800.0321", "22.04.06", "ShallowWater"],
+    [salesComparableWaterfrontFeatureId, "sales_comparable_waterfront_feature", "1800.0230", "22.04.07", "Dock"],
     [salesComparableEnvironmentalId, "sales_comparable_site_environmental", "1800.0116", "22.03.44", "None"],
     [salesComparableViewId, "sales_comparable_site_view", "1800.0243", "22.03.46", "Residential"],
     [salesComparableViewId, "sales_comparable_site_view", "1800.0242", "22.03.46", "Full"],

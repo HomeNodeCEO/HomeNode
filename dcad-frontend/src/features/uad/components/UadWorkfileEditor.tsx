@@ -408,7 +408,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
         {activeSection === "site" && (
           <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-            Site uses repeatable records for parcels, influences, views, utilities, encumbrances, features, and defects. This same entity model is reserved for future comparable-sales and market-analysis integration.
+            Site uses repeatable records for parcels, influences, views, utilities, encumbrances, features, and defects. For a Body of Water influence, add each body of water and answer its private-access questions; private access also requires total frontage and a verified Water Frontage photo. These subject facts redisplay in Section 22D without duplicate entry.
           </div>
         )}
         {activeSection === "disaster_mitigation" && (
@@ -493,7 +493,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         )}
         {activeSection === "sales_comparison" && (
           <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-            Sections 22A–22C establish each comparable's official general information, source trail, property-rights details, project or PUD information, common amenities, Site facts and adjustments, and required verified photo. The same comparable record is shared with Section 21 and is reserved for the remaining adjustment-grid sections. HomeNode search results and location-influence analysis may later arrive as source-attributed suggestions, but only an appraiser save confirms them for the UAD report.
+            Sections 22A–22D establish each comparable's official general information, source trail, property-rights details, project or PUD information, common amenities, Site facts and adjustments, water frontage with private access, and required verified photo. Bodies of water and permanent waterfront features stay linked to the comparable's canonical Site Influence record so future XML and mobile evidence cannot drift. HomeNode search results and location-influence analysis may later arrive as source-attributed suggestions, but only an appraiser save confirms them for the UAD report.
           </div>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}

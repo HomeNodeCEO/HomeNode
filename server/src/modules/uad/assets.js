@@ -46,6 +46,7 @@ import {
   UAD_SKETCH_REPORT_CAPTION_TYPES,
   UAD_SKETCH_REPORT_CONTENT_TYPES,
 } from "./sketchCatalog.js";
+import { UAD_SITE_CAPTION_TYPES } from "./siteCatalog.js";
 import {
   UAD_SUBJECT_PROPERTY_AMENITIES_CAPTION_TYPES,
   UAD_SUBJECT_PROPERTY_AMENITIES_IMAGE_CONTENT_TYPES,
@@ -82,6 +83,7 @@ const ALLOWED_CONTENT_TYPES = new Set([
 
 const MAX_UAD_ASSET_BYTES = 50 * 1024 * 1024;
 const SECTION_CAPTION_TYPES = new Map([
+  [4, new Set(UAD_SITE_CAPTION_TYPES)],
   [5, new Set(["DisasterMitigationExhibit"])],
   [6, new Set(["EnergyEfficientAndGreenFeaturesExhibit"])],
   [7, new Set([...UAD_SKETCH_REPORT_CAPTION_TYPES, "MeasurementSource"])],

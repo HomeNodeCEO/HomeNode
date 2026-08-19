@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 110);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 119);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -371,6 +371,20 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const salesComparableInfluence = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable_site_influence"
       && entity.parent_entity_id === salesComparable?.id
+      && entity.entity_identifier === "sales-comparable-site-influence-1"
+    ));
+    const salesComparableWaterInfluence = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_site_influence"
+      && entity.parent_entity_id === salesComparable?.id
+      && entity.entity_identifier === "sales-comparable-site-influence-2"
+    ));
+    const salesComparableBodyOfWater = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_body_of_water"
+      && entity.parent_entity_id === salesComparableWaterInfluence?.id
+    ));
+    const salesComparableWaterfrontFeature = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_waterfront_feature"
+      && entity.parent_entity_id === salesComparableBodyOfWater?.id
     ));
     const salesComparableView = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable_site_view"
@@ -380,6 +394,9 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(salesComparableSource);
     assert.ok(salesComparableProjectAmenity);
     assert.ok(salesComparableInfluence);
+    assert.ok(salesComparableWaterInfluence);
+    assert.ok(salesComparableBodyOfWater);
+    assert.ok(salesComparableWaterfrontFeature);
     assert.ok(salesComparableView);
     assert.equal(
       siteBuiltEditor.values.find((item) => (
@@ -420,6 +437,22 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0233"
       ))?.value,
       "Residential",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableBodyOfWater.id
+        && item.context_key === "sales_comparable_site_influence"
+        && item.uid === "1800.0279"
+      ))?.value,
+      true,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableWaterfrontFeature.id
+        && item.context_key === "sales_comparable_waterfront_feature"
+        && item.uid === "1800.0230"
+      ))?.value,
+      "Dock",
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

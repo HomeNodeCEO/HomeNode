@@ -37,6 +37,7 @@ import { isVerifiedOutbuildingAsset } from "./outbuildingCatalog.js";
 import { UAD_HIGHEST_BEST_USE_FIELD_KEYS } from "./highestBestUseCatalog.js";
 import { UAD_OVERALL_QUALITY_CONDITION_FIELD_KEYS } from "./overallQualityConditionCatalog.js";
 import { isVerifiedSketchReportAsset } from "./sketchCatalog.js";
+import { isVerifiedSiteAsset } from "./siteCatalog.js";
 import {
   UAD_SUBJECT_AMENITY_CATEGORIES,
   UAD_SUBJECT_AMENITY_CATEGORY_LIMITS,
@@ -180,6 +181,25 @@ function completionFor(values, entities, assets = []) {
         if (!uadFieldIsVisible(field, lookup) || !uadFieldIsRequired(field, lookup)) continue;
         required += 1;
         if (isPresent(byKey.get(fieldValueKey(field, entityId)))) completed += 1;
+      }
+    }
+    if (section === "site") {
+      const influences = entities.filter((entity) => entity.entity_type === "site_influence");
+      const bodies = entities.filter((entity) => entity.entity_type === "site_body_of_water");
+      let hasPrivateWaterAccess = false;
+      for (const influence of influences) {
+        if (valueLookup(byKey, influence.id)("site_influence:1500.0087") !== "BodyOfWater") continue;
+        const influenceBodies = bodies.filter((body) => body.parent_entity_id === influence.id);
+        if (!influenceBodies.length) required += 1;
+        if (influenceBodies.some((body) => valueLookup(byKey, body.id)("site_influence:1500.0075") === true)) {
+          hasPrivateWaterAccess = true;
+          required += 1;
+          if (isPresent(valueLookup(byKey, influence.id)("site_influence:1500.0091"))) completed += 1;
+        }
+      }
+      if (hasPrivateWaterAccess) {
+        required += 1;
+        if (assets.some((asset) => isVerifiedSiteAsset(asset, "WaterFrontage"))) completed += 1;
       }
     }
     if (section === "sketch" && byKey.get("root:sketch:3300.0002") === true) {
@@ -529,6 +549,102 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     if (defectsExist === false && defects.length > 0) {
       const field = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "site:1500.0178");
       errors.push(validationError(field, null, "site_defect_conflict", "Remove site defect records or change the site-defects answer to Yes."));
+    }
+
+    const influences = entities.filter((entity) => entity.entity_type === "site_influence");
+    const bodiesOfWater = entities.filter((entity) => entity.entity_type === "site_body_of_water");
+    const waterfrontFeatures = entities.filter((entity) => entity.entity_type === "site_waterfront_feature");
+    const influenceIds = new Set(influences.map((entity) => entity.id));
+    const bodyIds = new Set(bodiesOfWater.map((entity) => entity.id));
+    const siteField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+    if (bodiesOfWater.some((body) => !influenceIds.has(body.parent_entity_id))) {
+      errors.push(validationError(siteField("site_influence:1500.0073"), null, "site_body_of_water_orphaned", "Every body of water must be linked to a Site Influence."));
+    }
+    if (waterfrontFeatures.some((feature) => !bodyIds.has(feature.parent_entity_id))) {
+      errors.push(validationError(siteField("site_influence:1500.0082"), null, "site_waterfront_feature_orphaned", "Every permanent waterfront feature must be linked to a body of water."));
+    }
+
+    let privateWaterAccessExists = false;
+    for (const influence of influences) {
+      const lookup = valueLookup(merged, influence.id);
+      const influenceType = lookup("site_influence:1500.0087");
+      const influenceBodies = bodiesOfWater.filter((body) => body.parent_entity_id === influence.id);
+      const influenceFeatures = waterfrontFeatures.filter((feature) => (
+        influenceBodies.some((body) => body.id === feature.parent_entity_id)
+      ));
+      const developmentRights = lookup("site_influence:1500.0092");
+      const totalLength = lookup("site_influence:1500.0091");
+
+      if (influenceType === "BodyOfWater" && !influenceBodies.length) {
+        errors.push(validationError(siteField("site_influence:1500.0073"), influence.id, "site_body_of_water_required", "Add at least one body of water to every Body of Water influence."));
+      }
+      if (influenceType !== "BodyOfWater" && (influenceBodies.length || [developmentRights, totalLength].some(isPresent))) {
+        errors.push(validationError(siteField("site_influence:1500.0087"), influence.id, "site_body_of_water_conflict", "Remove waterfront records and details or change Influence Type to Body of Water."));
+      }
+
+      const privateBodies = influenceBodies.filter((body) => (
+        valueLookup(merged, body.id)("site_influence:1500.0075") === true
+      ));
+      if (privateBodies.length) {
+        privateWaterAccessExists = true;
+        if (!isPresent(totalLength)) {
+          errors.push(validationError(siteField("site_influence:1500.0091"), influence.id, "site_water_frontage_total_length_required", "Provide total linear measurement when one or more bodies of water have private access."));
+        }
+      }
+
+      for (const body of influenceBodies) {
+        const bodyLookup = valueLookup(merged, body.id);
+        const privateAccess = bodyLookup("site_influence:1500.0075");
+        const bodyFeatures = waterfrontFeatures.filter((feature) => feature.parent_entity_id === body.id);
+        const bodyType = bodyLookup("site_influence:1500.0073");
+        const depth = bodyLookup("site_influence:1500.0197");
+        const accessRights = bodyLookup("site_influence:1500.0079");
+        if (bodyType !== "Other" && isPresent(bodyLookup("site_influence:1500.0074"))) {
+          errors.push(validationError(siteField("site_influence:1500.0074"), body.id, "site_body_of_water_other_conflict", "Clear the other body-of-water description or select Other."));
+        }
+        if (depth !== "Other" && isPresent(bodyLookup("site_influence:1500.0198"))) {
+          errors.push(validationError(siteField("site_influence:1500.0198"), body.id, "site_water_access_depth_other_conflict", "Clear the other access-depth description or select Other."));
+        }
+        if (accessRights !== "Other" && isPresent(bodyLookup("site_influence:1500.0080"))) {
+          errors.push(validationError(siteField("site_influence:1500.0080"), body.id, "site_water_access_right_other_conflict", "Clear the other waterfront-access-right description or select Other."));
+        }
+        if (privateAccess !== true && [
+          "site_influence:1500.0072",
+          "site_influence:1500.0197",
+          "site_influence:1500.0198",
+          "site_influence:1500.0079",
+          "site_influence:1500.0080",
+        ].some((key) => isPresent(bodyLookup(key)))) {
+          errors.push(validationError(siteField("site_influence:1500.0075"), body.id, "site_private_water_detail_conflict", "Clear private-water details or change Private Access to Yes."));
+        }
+        if (privateAccess !== true && bodyFeatures.length) {
+          errors.push(validationError(siteField("site_influence:1500.0082"), body.id, "site_waterfront_feature_private_access_conflict", "Remove permanent waterfront features or change Private Access to Yes."));
+        }
+        const selections = bodyFeatures.map((feature) => valueLookup(merged, feature.id)("site_influence:1500.0082")).filter(isPresent);
+        if (new Set(selections).size !== selections.length) {
+          errors.push(validationError(siteField("site_influence:1500.0082"), body.id, "site_waterfront_feature_duplicate", "Each permanent waterfront feature may be selected only once for a body of water."));
+        }
+        if (selections.includes("None") && selections.length > 1) {
+          errors.push(validationError(siteField("site_influence:1500.0082"), body.id, "site_waterfront_feature_none_conflict", "Select None by itself, or remove None before adding another permanent waterfront feature."));
+        }
+        for (const feature of bodyFeatures) {
+          const featureLookup = valueLookup(merged, feature.id);
+          if (featureLookup("site_influence:1500.0082") !== "Other" && isPresent(featureLookup("site_influence:1500.0083"))) {
+            errors.push(validationError(siteField("site_influence:1500.0083"), feature.id, "site_waterfront_feature_other_conflict", "Clear the other waterfront-feature description or select Other."));
+          }
+        }
+      }
+
+      const featureSelections = influenceFeatures.map((feature) => valueLookup(merged, feature.id)("site_influence:1500.0082")).filter(isPresent);
+      if (!privateBodies.length && (influenceFeatures.length || [developmentRights, totalLength].some(isPresent))) {
+        errors.push(validationError(siteField("site_influence:1500.0075"), influence.id, "site_private_water_frontage_conflict", "Remove waterfront features, rights, and total frontage unless at least one body of water has private access."));
+      }
+      if (!featureSelections.includes("None") && isPresent(developmentRights)) {
+        errors.push(validationError(siteField("site_influence:1500.0092"), influence.id, "site_waterfront_development_rights_conflict", "Clear Right to Build unless Permanent Waterfront Feature is None."));
+      }
+    }
+    if (privateWaterAccessExists && !assets.some((asset) => isVerifiedSiteAsset(asset, "WaterFrontage"))) {
+      errors.push(validationError(siteField("site_influence:1500.0075"), null, "site_water_frontage_photo_required", "Upload and verify a Water Frontage photo when the subject has private water access."));
     }
   }
 
@@ -1808,6 +1924,8 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const sources = entities.filter((entity) => entity.entity_type === "sales_comparable_data_source");
     const rights = entities.filter((entity) => entity.entity_type === "sales_comparable_right_not_included");
     const projectAmenities = entities.filter((entity) => entity.entity_type === "sales_comparable_project_amenity");
+    const comparableBodiesOfWater = entities.filter((entity) => entity.entity_type === "sales_comparable_body_of_water");
+    const comparableWaterfrontFeatures = entities.filter((entity) => entity.entity_type === "sales_comparable_waterfront_feature");
     const comparableSiteChildTypes = new Set([
       "sales_comparable_site_hazard",
       "sales_comparable_site_street",
@@ -1820,6 +1938,12 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     ]);
     const comparableSiteChildren = entities.filter((entity) => comparableSiteChildTypes.has(entity.entity_type));
     const comparableIds = new Set(comparables.map((entity) => entity.id));
+    const comparableInfluenceIds = new Set(
+      comparableSiteChildren
+        .filter((entity) => entity.entity_type === "sales_comparable_site_influence")
+        .map((entity) => entity.id),
+    );
+    const comparableBodyOfWaterIds = new Set(comparableBodiesOfWater.map((entity) => entity.id));
 
     if (included === true && !comparables.length) {
       errors.push(validationError(
@@ -1867,6 +1991,22 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_site_child_orphaned",
         "Every comparable site record must be linked to a sales comparable.",
+      ));
+    }
+    if (comparableBodiesOfWater.some((body) => !comparableInfluenceIds.has(body.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWater),
+        null,
+        "sales_comparable_body_of_water_orphaned",
+        "Every comparable body of water must be linked to a comparable Body of Water influence.",
+      ));
+    }
+    if (comparableWaterfrontFeatures.some((feature) => !comparableBodyOfWaterIds.has(feature.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeature),
+        null,
+        "sales_comparable_waterfront_feature_orphaned",
+        "Every permanent waterfront feature must be linked to a comparable body of water.",
       ));
     }
 
@@ -2273,8 +2413,113 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       }
       for (const influence of siteInfluences) {
         conditionalConflict(influence, UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluenceOther], "sales_comparable_site_influence_other_conflict", "Clear the other influence description or select Other.");
-        conditionalConflict(influence, UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence, "BodyOfWater", [UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWater, UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterOther], "sales_comparable_site_body_of_water_conflict", "Clear body-of-water details unless Site Influence is Body of Water.");
-        conditionalConflict(influence, UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWater, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterOther], "sales_comparable_site_body_of_water_other_conflict", "Clear the other body-of-water description or select Other.");
+        const influenceLookup = valueLookup(merged, influence.id);
+        const bodiesOfWater = comparableBodiesOfWater.filter((body) => body.parent_entity_id === influence.id);
+        const privateBodies = bodiesOfWater.filter((body) => (
+          valueLookup(merged, body.id)(UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterPrivateAccess) === true
+        ));
+        const waterfrontFeatures = comparableWaterfrontFeatures.filter((feature) => (
+          bodiesOfWater.some((body) => body.id === feature.parent_entity_id)
+        ));
+        const influenceType = influenceLookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence);
+        const developmentRights = influenceLookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontDevelopmentRights);
+        const totalLength = influenceLookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterFrontageTotalLength);
+
+        if (influenceType === "BodyOfWater" && !bodiesOfWater.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWater),
+            influence.id,
+            "sales_comparable_body_of_water_required",
+            "Add at least one body of water to every Body of Water influence.",
+          ));
+        }
+        if (influenceType !== "BodyOfWater" && bodiesOfWater.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteInfluence),
+            influence.id,
+            "sales_comparable_body_of_water_conflict",
+            "Remove the body-of-water records or change Site Influence to Body of Water.",
+          ));
+        }
+
+        for (const body of bodiesOfWater) {
+          const bodyLookup = valueLookup(merged, body.id);
+          const privateAccess = bodyLookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterPrivateAccess);
+          const bodyFeatures = comparableWaterfrontFeatures.filter((feature) => feature.parent_entity_id === body.id);
+          conditionalConflict(body, UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWater, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterOther], "sales_comparable_site_body_of_water_other_conflict", "Clear the other body-of-water description or select Other.");
+          if (privateAccess !== true && [
+            UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterName,
+            UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterAccessDepth,
+            UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterAccessDepthOther,
+          ].some((key) => isPresent(bodyLookup(key)))) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterPrivateAccess),
+              body.id,
+              "sales_comparable_private_water_detail_conflict",
+              "Clear the private-water name and access-depth details or change Private Access to Yes.",
+            ));
+          }
+          conditionalConflict(body, UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterAccessDepth, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterAccessDepthOther], "sales_comparable_water_access_depth_other_conflict", "Clear the other access-depth description or select Other.");
+          if (privateAccess !== true && bodyFeatures.length) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeature),
+              body.id,
+              "sales_comparable_waterfront_feature_private_access_conflict",
+              "Remove permanent waterfront features or change Private Access to Yes.",
+            ));
+          }
+
+          const selectedFeatures = bodyFeatures
+            .map((feature) => valueLookup(merged, feature.id)(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeature))
+            .filter(isPresent);
+          if (new Set(selectedFeatures).size !== selectedFeatures.length) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeature),
+              body.id,
+              "sales_comparable_waterfront_feature_duplicate",
+              "Each permanent waterfront feature may be selected only once for a body of water.",
+            ));
+          }
+          if (selectedFeatures.includes("None") && selectedFeatures.length > 1) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeature),
+              body.id,
+              "sales_comparable_waterfront_feature_none_conflict",
+              "Select None by itself, or remove None before adding another permanent waterfront feature.",
+            ));
+          }
+          for (const feature of bodyFeatures) {
+            conditionalConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeature, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeatureOther], "sales_comparable_waterfront_feature_other_conflict", "Clear the other waterfront-feature description or select Other.");
+          }
+        }
+
+        const featureSelections = waterfrontFeatures.map((feature) => (
+          valueLookup(merged, feature.id)(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontFeature)
+        )).filter(isPresent);
+        if (!privateBodies.length && (waterfrontFeatures.length || [developmentRights, totalLength].some(isPresent))) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteBodyOfWaterPrivateAccess),
+            influence.id,
+            "sales_comparable_private_water_frontage_conflict",
+            "Remove waterfront features, rights, and total frontage unless at least one body of water has private access.",
+          ));
+        }
+        if (featureSelections.includes("None") && !isPresent(developmentRights)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontDevelopmentRights),
+            influence.id,
+            "sales_comparable_waterfront_development_rights_required",
+            "Indicate the right to build waterfront features when Permanent Waterfront Feature is None.",
+          ));
+        }
+        if (!featureSelections.includes("None") && isPresent(developmentRights)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.siteWaterfrontDevelopmentRights),
+            influence.id,
+            "sales_comparable_waterfront_development_rights_conflict",
+            "Clear Right to Build unless Permanent Waterfront Feature is None.",
+          ));
+        }
       }
       for (const condition of environmentalConditions) {
         conditionalConflict(condition, UAD_SALES_COMPARISON_FIELD_KEYS.siteEnvironmental, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.siteEnvironmentalOther], "sales_comparable_site_environmental_other_conflict", "Clear the other environmental-condition description or select Other.");

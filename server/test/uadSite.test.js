@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   UAD_PHASE_ONE_FIELDS,
+  UAD_REPEATABLE_ENTITY_GROUPS,
   evaluateUadCondition,
   getUadEditorSections,
   getUadField,
@@ -13,6 +14,14 @@ import {
   uadFieldIsRequired,
   validateUadSectionValues,
 } from "../src/modules/uad/fieldCatalog.js";
+import { validateCompleteSection } from "../src/modules/uad/editor.js";
+import { isVerifiedSiteAsset } from "../src/modules/uad/siteCatalog.js";
+
+const value = (entityId, contextKey, uid, fieldValue) => ({
+  field: getUadField(contextKey, uid),
+  entityId,
+  value: fieldValue,
+});
 
 test("adds official UAD Site as Section 4 without colliding with Assignment or Subject contexts", () => {
   const sections = getUadEditorSections();
@@ -23,6 +32,44 @@ test("adds official UAD Site as Section 4 without colliding with Assignment or S
   assert.equal(getUadField("site", "1500.0093")?.reportFieldId, "4.000");
   assert.equal(getUadField("site_zoning", "1500.0125")?.reportFieldId, "4.008");
   assert.equal(getUadField("site_influence", "1500.0087")?.entityType, "site_influence");
+  assert.equal(getUadField("site_influence", "1500.0075")?.entityType, "site_body_of_water");
+  assert.equal(getUadField("site_influence", "1500.0082")?.entityType, "site_waterfront_feature");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.site_body_of_water.parentEntityType, "site_influence");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.site_waterfront_feature.parentEntityType, "site_body_of_water");
+});
+
+test("captures subject private water frontage for the Section 22D redisplay", () => {
+  const influence = { id: "9f20a2c0-ceaf-4205-9d6c-1028bf25fce7", entity_type: "site_influence", parent_entity_id: null, ordinal: 1, data: {} };
+  const body = { id: "0bc0df8b-e870-4a4c-8b06-87e180628fd3", entity_type: "site_body_of_water", parent_entity_id: influence.id, ordinal: 1, data: {} };
+  const feature = { id: "e406271d-f4b6-4615-a087-326ce4c8a9dd", entity_type: "site_waterfront_feature", parent_entity_id: body.id, ordinal: 1, data: {} };
+  const values = [
+    value(influence.id, "site_influence", "1500.0087", "BodyOfWater"),
+    value(influence.id, "site_influence", "1500.0091", { amount: 120, unit: "Feet" }),
+    value(body.id, "site_influence", "1500.0073", "Lake"),
+    value(body.id, "site_influence", "1500.0075", true),
+    value(body.id, "site_influence", "1500.0197", "DeepWater"),
+    value(body.id, "site_influence", "1500.0079", "Deeded"),
+    value(feature.id, "site_influence", "1500.0082", "Dock"),
+  ];
+  const photo = {
+    section_number: 4,
+    caption_type: "WaterFrontage",
+    content_type: "image/jpeg",
+    status: "verified",
+  };
+  const codes = validateCompleteSection("site", [], values, [influence, body, feature], [photo]).map((error) => error.code);
+  assert.equal(codes.includes("site_water_frontage_total_length_required"), false);
+  assert.equal(codes.includes("site_water_frontage_photo_required"), false);
+  assert.equal(isVerifiedSiteAsset(photo, "WaterFrontage"), true);
+
+  const incompleteCodes = validateCompleteSection(
+    "site",
+    [],
+    values.filter((item) => item.field.uid !== "1500.0091"),
+    [influence, body, feature],
+  ).map((error) => error.code);
+  assert.equal(incompleteCodes.includes("site_water_frontage_total_length_required"), true);
+  assert.equal(incompleteCodes.includes("site_water_frontage_photo_required"), true);
 });
 
 test("evaluates conditional and cross-section Site requirements", () => {
@@ -67,6 +114,16 @@ test("Site migration expands repeatable entities and seeds cross-record complian
   assert.match(sql, /HN-UAD-SITE-001/);
   assert.match(sql, /Appendix A-1 URAR Delivery Specification 1\.4/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("Section 22D migration also supplies the missing subject waterfront catalog and rules", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260907_uad_sales_comparison_water_frontage.sql"), "utf8");
+  assert.match(sql, /'site_body_of_water'/);
+  assert.match(sql, /'site_waterfront_feature'/);
+  for (const ruleId of ["UAD1278", "UAD1333", "UAD1335", "UAD1336", "UAD1337", "UAD1338", "UAD1339", "UAD1340"]) {
+    assert.match(sql, new RegExp(ruleId));
+  }
 });
 
 test("R2 asset workflow bounds uploads and verifies the stored object before accepting it", () => {

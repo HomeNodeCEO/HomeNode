@@ -1527,6 +1527,30 @@ export interface RegressionAnalysisResponse {
   }>;
 }
 
+export type DepreciatedCostTarget = 'living_area' | 'garage' | 'pool';
+
+export interface DepreciatedCostAdjustmentResponse {
+  schema_version: 1;
+  methodology: 'replacement_cost_new_less_depreciation';
+  target_dimension: DepreciatedCostTarget;
+  description: string;
+  source_name: string | null;
+  source_reference: string | null;
+  as_of_date: string | null;
+  unit_cost: number;
+  local_multiplier: number;
+  entrepreneurial_incentive_percent: number;
+  depreciation_percent: number;
+  factor_percent: number;
+  direct_cost_per_unit: number;
+  replacement_cost_new_per_unit: number;
+  depreciation_per_unit: number;
+  depreciated_cost_per_unit: number;
+  recommended_adjustment: number;
+  unit: 'per_square_foot' | 'per_garage_space' | 'per_feature';
+  formula: string;
+}
+
 export interface GroupedAnalysesResponse {
   subject: {
     account_id: string;
@@ -3274,6 +3298,37 @@ export async function runRegressionAnalysis(request: {
       custom_geometry: request.customGeometry || null,
     }),
     timeoutMs: 120000,
+  });
+}
+
+/** Recalculate a replacement-cost-new-less-depreciation adjustment on the server. */
+export async function calculateDepreciatedCostAdjustment(request: {
+  targetDimension: DepreciatedCostTarget;
+  description: string;
+  unitCost: number;
+  localMultiplier: number;
+  entrepreneurialIncentivePercent: number;
+  depreciationPercent: number;
+  factorPercent: number;
+  sourceName?: string | null;
+  sourceReference?: string | null;
+  asOfDate?: string | null;
+}): Promise<DepreciatedCostAdjustmentResponse> {
+  return fetchJSON<DepreciatedCostAdjustmentResponse>(makeUrl('/api/sales/depreciated-cost-adjustment'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      target_dimension: request.targetDimension,
+      description: request.description,
+      unit_cost: request.unitCost,
+      local_multiplier: request.localMultiplier,
+      entrepreneurial_incentive_percent: request.entrepreneurialIncentivePercent,
+      depreciation_percent: request.depreciationPercent,
+      factor_percent: request.factorPercent,
+      source_name: request.sourceName || null,
+      source_reference: request.sourceReference || null,
+      as_of_date: request.asOfDate || null,
+    }),
   });
 }
 

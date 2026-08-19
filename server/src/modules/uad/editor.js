@@ -421,6 +421,37 @@ function completionFor(values, entities, assets = []) {
             ));
             if (!amenities.length) required += 1;
           }
+          const comparableDwellings = entities.filter((entity) => (
+            entity.entity_type === "sales_comparable_dwelling"
+            && entity.parent_entity_id === comparable.id
+          ));
+          if (!comparableDwellings.length) required += 1;
+          const attachment = comparableLookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAttachment);
+          for (const dwelling of comparableDwellings) {
+            const dwellingLookup = valueLookup(byKey, dwelling.id);
+            const design = dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign);
+            if (attachment === "Attached") {
+              required += 1;
+              if (isPresent(design)) completed += 1;
+            }
+            const constructionRequired = attachment === "Detached"
+              || (attachment === "Attached" && ["RowhouseTownhouse", "SemiDetached", "Other"].includes(design));
+            if (constructionRequired && !entities.some((entity) => (
+              entity.entity_type === "sales_comparable_construction_method"
+              && entity.parent_entity_id === dwelling.id
+            ))) required += 1;
+            if (!entities.some((entity) => (
+              entity.entity_type === "sales_comparable_heating_system"
+              && entity.parent_entity_id === dwelling.id
+            ))) required += 1;
+            if (
+              dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingExists) === true
+              && !entities.some((entity) => (
+                entity.entity_type === "sales_comparable_cooling_system"
+                && entity.parent_entity_id === dwelling.id
+              ))
+            ) required += 1;
+          }
           for (const entityType of [
             "sales_comparable_site_hazard",
             "sales_comparable_site_influence",
@@ -1926,6 +1957,12 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const projectAmenities = entities.filter((entity) => entity.entity_type === "sales_comparable_project_amenity");
     const comparableBodiesOfWater = entities.filter((entity) => entity.entity_type === "sales_comparable_body_of_water");
     const comparableWaterfrontFeatures = entities.filter((entity) => entity.entity_type === "sales_comparable_waterfront_feature");
+    const comparableDwellings = entities.filter((entity) => entity.entity_type === "sales_comparable_dwelling");
+    const comparableConstructionMethods = entities.filter((entity) => entity.entity_type === "sales_comparable_construction_method");
+    const comparableHeatingSystems = entities.filter((entity) => entity.entity_type === "sales_comparable_heating_system");
+    const comparableCoolingSystems = entities.filter((entity) => entity.entity_type === "sales_comparable_cooling_system");
+    const comparableFunctionalIssues = entities.filter((entity) => entity.entity_type === "sales_comparable_functional_issue");
+    const comparableDisasterMitigation = entities.filter((entity) => entity.entity_type === "sales_comparable_disaster_mitigation");
     const comparableSiteChildTypes = new Set([
       "sales_comparable_site_hazard",
       "sales_comparable_site_street",
@@ -1944,6 +1981,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         .map((entity) => entity.id),
     );
     const comparableBodyOfWaterIds = new Set(comparableBodiesOfWater.map((entity) => entity.id));
+    const comparableDwellingIds = new Set(comparableDwellings.map((entity) => entity.id));
 
     if (included === true && !comparables.length) {
       errors.push(validationError(
@@ -2007,6 +2045,32 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_waterfront_feature_orphaned",
         "Every permanent waterfront feature must be linked to a comparable body of water.",
+      ));
+    }
+    if (comparableDwellings.some((dwelling) => !comparableIds.has(dwelling.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingYearBuilt),
+        null,
+        "sales_comparable_dwelling_orphaned",
+        "Every comparable dwelling must be linked to a sales comparable.",
+      ));
+    }
+    if ([...comparableConstructionMethods, ...comparableHeatingSystems, ...comparableCoolingSystems]
+      .some((entity) => !comparableDwellingIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingConstructionMethod),
+        null,
+        "sales_comparable_dwelling_child_orphaned",
+        "Every comparable construction, heating, and cooling record must be linked to a comparable dwelling.",
+      ));
+    }
+    if ([...comparableFunctionalIssues, ...comparableDisasterMitigation]
+      .some((entity) => !comparableIds.has(entity.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingFunctionalIssue),
+        null,
+        "sales_comparable_dwelling_property_child_orphaned",
+        "Every comparable functional-issue and disaster-mitigation record must be linked to a sales comparable.",
       ));
     }
 
@@ -2290,6 +2354,266 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
           "sales_comparable_project_amenity_none_conflict",
           "Select None by itself, or remove None before adding another comparable project amenity.",
         ));
+      }
+
+      const dwellings = comparableDwellings.filter((dwelling) => dwelling.parent_entity_id === comparable.id);
+      const functionalIssues = comparableFunctionalIssues.filter((issue) => issue.parent_entity_id === comparable.id);
+      const disasterFeatures = comparableDisasterMitigation.filter((feature) => feature.parent_entity_id === comparable.id);
+      const attachment = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAttachment);
+      if (!dwellings.length) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingYearBuilt),
+          comparable.id,
+          "sales_comparable_dwelling_required",
+          "Add at least one dwelling for this sales comparable.",
+        ));
+      }
+
+      const validateUniqueDwellingSelections = (records, key, code, label, noneExclusive = false) => {
+        const selected = records
+          .map((record) => valueLookup(merged, record.id)(key))
+          .filter(isPresent);
+        if (new Set(selected).size !== selected.length) {
+          errors.push(validationError(
+            salesField(key),
+            comparable.id,
+            code,
+            `Each ${label} may be selected only once within its owning comparable record.`,
+          ));
+        }
+        if (noneExclusive && selected.includes("None") && selected.length > 1) {
+          errors.push(validationError(
+            salesField(key),
+            comparable.id,
+            `${code}_none_conflict`,
+            `Select None by itself, or remove None before adding another ${label}.`,
+          ));
+        }
+      };
+      const conditionalDwellingConflict = (record, controlKey, expectedValue, dependentKeys, code, message) => {
+        const childLookup = valueLookup(merged, record.id);
+        if (childLookup(controlKey) !== expectedValue && dependentKeys.some((key) => isPresent(childLookup(key)))) {
+          errors.push(validationError(salesField(controlKey), record.id, code, message));
+        }
+      };
+
+      for (const dwelling of dwellings) {
+        const dwellingLookup = valueLookup(merged, dwelling.id);
+        const design = dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign);
+        const livingUnitCount = Number(dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingUnits));
+        const methods = comparableConstructionMethods.filter((method) => method.parent_entity_id === dwelling.id);
+        const heatingSystems = comparableHeatingSystems.filter((system) => system.parent_entity_id === dwelling.id);
+        const coolingSystems = comparableCoolingSystems.filter((system) => system.parent_entity_id === dwelling.id);
+
+        if (attachment === "Attached" && !isPresent(design)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign),
+            dwelling.id,
+            "sales_comparable_structure_design_required",
+            "Provide Structure Design for every attached comparable dwelling.",
+          ));
+        }
+        if (attachment !== "Attached" && [
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesignOther,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseEnd,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseBack,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseStacked,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseLocation,
+        ].some((key) => isPresent(dwellingLookup(key)))) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign),
+            dwelling.id,
+            "sales_comparable_structure_design_attachment_conflict",
+            "Clear attached-structure details or change Attached or Detached to Attached.",
+          ));
+        }
+        if (attachment !== "Detached" && [
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStyle,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStyleOther,
+        ].some((key) => isPresent(dwellingLookup(key)))) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStyle),
+            dwelling.id,
+            "sales_comparable_dwelling_style_attachment_conflict",
+            "Clear Dwelling Style unless the comparable is detached.",
+          ));
+        }
+        conditionalDwellingConflict(
+          dwelling,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign,
+          "Other",
+          [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesignOther],
+          "sales_comparable_structure_design_other_conflict",
+          "Clear the other structure-design description or select Other.",
+        );
+        conditionalDwellingConflict(
+          dwelling,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStyle,
+          "Other",
+          [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStyleOther],
+          "sales_comparable_dwelling_style_other_conflict",
+          "Clear the other dwelling-style description or select Other.",
+        );
+        if (design !== "RowhouseTownhouse" && [
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseEnd,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseBack,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseStacked,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseLocation,
+        ].some((key) => isPresent(dwellingLookup(key)))) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseEnd),
+            dwelling.id,
+            "sales_comparable_townhouse_detail_conflict",
+            "Clear townhouse details unless Structure Design is Rowhouse / Townhouse.",
+          ));
+        }
+        if (
+          dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseStacked) !== true
+          && isPresent(dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseLocation))
+        ) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingTownhouseLocation),
+            dwelling.id,
+            "sales_comparable_townhouse_location_conflict",
+            "Clear Townhouse Location unless Units Above or Below is Yes.",
+          ));
+        }
+        if (
+          Number.isFinite(livingUnitCount) && livingUnitCount > 1
+          && isPresent(dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingNoncontinuousArea))
+        ) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingNoncontinuousArea),
+            dwelling.id,
+            "sales_comparable_noncontinuous_area_multiunit_conflict",
+            "Include noncontinuous finished area in GBFA for a multiunit comparable and clear this one-unit row.",
+          ));
+        }
+
+        const constructionRequired = attachment === "Detached"
+          || (attachment === "Attached" && ["RowhouseTownhouse", "SemiDetached", "Other"].includes(design));
+        if (constructionRequired && !methods.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingConstructionMethod),
+            dwelling.id,
+            "sales_comparable_construction_method_required",
+            "Add at least one Construction Method for this comparable dwelling.",
+          ));
+        }
+        if (!constructionRequired && methods.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingConstructionMethod),
+            dwelling.id,
+            "sales_comparable_construction_method_conflict",
+            "Remove Construction Method records for a high-rise, mid-rise, or low-rise attached dwelling.",
+          ));
+        }
+        validateUniqueDwellingSelections(
+          methods,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingConstructionMethod,
+          "sales_comparable_construction_method_duplicate",
+          "construction method",
+        );
+        for (const method of methods) {
+          conditionalDwellingConflict(
+            method,
+            UAD_SALES_COMPARISON_FIELD_KEYS.dwellingConstructionMethod,
+            "Other",
+            [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingConstructionMethodOther],
+            "sales_comparable_construction_method_other_conflict",
+            "Clear the other construction-method description or select Other.",
+          );
+          conditionalDwellingConflict(
+            method,
+            UAD_SALES_COMPARISON_FIELD_KEYS.dwellingConstructionMethod,
+            "Manufactured",
+            [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingManufacturedWidth],
+            "sales_comparable_manufactured_width_conflict",
+            "Clear Manufactured Home Width or select Manufactured construction.",
+          );
+        }
+
+        if (!heatingSystems.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingSystem),
+            dwelling.id,
+            "sales_comparable_heating_system_required",
+            "Add at least one Heating System; select None when the dwelling has no heating system.",
+          ));
+        }
+        validateUniqueDwellingSelections(
+          heatingSystems,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingSystem,
+          "sales_comparable_heating_system_duplicate",
+          "heating system",
+          true,
+        );
+        for (const system of heatingSystems) {
+          const systemLookup = valueLookup(merged, system.id);
+          conditionalDwellingConflict(system, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingSystem, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingSystemOther], "sales_comparable_heating_system_other_conflict", "Clear the other heating-system description or select Other.");
+          conditionalDwellingConflict(system, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingFuel, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingFuelOther], "sales_comparable_heating_fuel_other_conflict", "Clear the other heating-fuel description or select Other.");
+          if (systemLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingSystem) === "None" && [
+            UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingSystemOther,
+            UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingFuel,
+            UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingFuelOther,
+          ].some((key) => isPresent(systemLookup(key)))) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingHeatingSystem),
+              system.id,
+              "sales_comparable_heating_none_detail_conflict",
+              "Clear heating details when Heating System is None.",
+            ));
+          }
+        }
+
+        const coolingExists = dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingExists);
+        if (coolingExists === true && !coolingSystems.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystem),
+            dwelling.id,
+            "sales_comparable_cooling_system_required",
+            "Add at least one Cooling System when Permanent Cooling Exists is Yes.",
+          ));
+        }
+        if (coolingExists !== true && coolingSystems.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingExists),
+            dwelling.id,
+            "sales_comparable_cooling_system_conflict",
+            "Remove Cooling System records or change Permanent Cooling Exists to Yes.",
+          ));
+        }
+        validateUniqueDwellingSelections(
+          coolingSystems,
+          UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystem,
+          "sales_comparable_cooling_system_duplicate",
+          "cooling system",
+        );
+        for (const system of coolingSystems) {
+          conditionalDwellingConflict(system, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystem, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystemOther], "sales_comparable_cooling_system_other_conflict", "Clear the other cooling-system description or select Other.");
+        }
+      }
+
+      validateUniqueDwellingSelections(
+        functionalIssues,
+        UAD_SALES_COMPARISON_FIELD_KEYS.dwellingFunctionalIssue,
+        "sales_comparable_functional_issue_duplicate",
+        "functional issue",
+        true,
+      );
+      for (const issue of functionalIssues) {
+        conditionalDwellingConflict(issue, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingFunctionalIssue, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingFunctionalIssueOther], "sales_comparable_functional_issue_other_conflict", "Clear the other functional-issue description or select Other.");
+      }
+      validateUniqueDwellingSelections(
+        disasterFeatures,
+        UAD_SALES_COMPARISON_FIELD_KEYS.dwellingDisasterMitigation,
+        "sales_comparable_disaster_mitigation_duplicate",
+        "disaster mitigation feature",
+        true,
+      );
+      for (const feature of disasterFeatures) {
+        conditionalDwellingConflict(feature, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingDisasterMitigation, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingDisasterMitigationOther], "sales_comparable_disaster_mitigation_other_conflict", "Clear the other disaster-mitigation description or select Other.");
       }
 
       const siteOwnedInCommon = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.siteOwnedInCommon);

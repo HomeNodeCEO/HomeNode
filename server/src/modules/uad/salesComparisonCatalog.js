@@ -118,6 +118,48 @@ export const UAD_SALES_COMPARABLE_WATERFRONT_FEATURE_TYPES = Object.freeze([
   "Riprap", "SeawallOrBulkhead",
 ]);
 
+export const UAD_SALES_COMPARABLE_STRUCTURE_DESIGN_TYPES = Object.freeze([
+  "Highrise", "Lowrise", "Midrise", "Other", "RowhouseTownhouse", "SemiDetached",
+]);
+
+export const UAD_SALES_COMPARABLE_CONSTRUCTION_METHOD_TYPES = Object.freeze([
+  "Container", "Manufactured", "Modular", "OnFrameModular", "Other", "SiteBuilt",
+  "ThreeDimensionalPrintingTechnology",
+]);
+
+export const UAD_SALES_COMPARABLE_DWELLING_STYLE_TYPES = Object.freeze([
+  "AFrame", "Barn", "BiLevel", "Bungalow", "CapeCod", "Chalet", "Colonial",
+  "Contemporary", "Cottage", "Craftsman", "EarthBerm", "Farmhouse", "GeodesicDome",
+  "Georgian", "Log", "Mediterranean", "Modern", "NeoEclectic", "Other", "RaisedRanch",
+  "Rambler", "Ranch", "Southwest", "Spanish", "SplitFoyerOrEntry", "SplitLevel",
+  "Stilt", "Traditional", "Tudor", "Victorian",
+]);
+
+export const UAD_SALES_COMPARABLE_HEATING_SYSTEM_TYPES = Object.freeze([
+  "Baseboard", "Fireplace", "ForcedWarmAir", "GravityAir", "MiniSplit", "None", "Other",
+  "PassiveSolar", "Radiant", "Radiators", "Stove",
+]);
+
+export const UAD_SALES_COMPARABLE_HEATING_FUEL_TYPES = Object.freeze([
+  "Coal", "Electric", "Geothermal", "NaturalGas", "Oil", "Other", "Propane", "Solar", "Wood",
+]);
+
+export const UAD_SALES_COMPARABLE_COOLING_SYSTEM_TYPES = Object.freeze([
+  "Centralized", "Individual", "Other",
+]);
+
+export const UAD_SALES_COMPARABLE_FUNCTIONAL_ISSUE_TYPES = Object.freeze([
+  "CeilingHeight", "FloorPlan", "NonConformity", "None", "Other", "Overimprovement",
+  "Underimprovement",
+]);
+
+export const UAD_SALES_COMPARABLE_DISASTER_MITIGATION_TYPES = Object.freeze([
+  "EnclosedSoffits", "FireResistantDecking", "FireResistantExteriorWalls", "FloodVents",
+  "FortifiedRoof", "FramingAnchorageOrBracing", "ImpactResistantGlass",
+  "ImpactResistantShingles", "NoncombustiblePerimeter", "None", "Other", "StormShelter",
+  "StormShutters", "WaterHeaterStrapping",
+]);
+
 export const UAD_SALES_COMPARABLE_ENVIRONMENTAL_TYPES = Object.freeze([
   "HazardousAboveGroundStorageTank", "HazardousSubstances", "Landfill", "None", "Other",
   "Radon", "SlushPit", "SoilContamination", "SuperfundSite", "UndergroundStorageTank",
@@ -191,6 +233,22 @@ const comparablePrivateWaterAccess = Object.freeze({
   key: "sales_comparable_site_influence:1800.0279",
   equals: true,
 });
+const comparableRowhouseTownhouse = Object.freeze({
+  key: "sales_comparable_dwelling:1800.0169",
+  equals: "RowhouseTownhouse",
+});
+const comparableTownhouseStacked = Object.freeze({
+  key: "sales_comparable_dwelling:1800.0382",
+  equals: true,
+});
+const comparableManufacturedMethod = Object.freeze({
+  key: "sales_comparable_construction_method:1800.0171",
+  equals: "Manufactured",
+});
+const comparableCoolingExists = Object.freeze({
+  key: "sales_comparable_dwelling:1800.0123",
+  equals: true,
+});
 const siteComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
   "Sales comparables — site information",
   contextKey,
@@ -208,6 +266,24 @@ const siteChild = (group, entityType, contextKey, uid, reportFieldId, label, dat
   label,
   dataType,
   { entityType, ...options },
+);
+const dwellingChild = (group, entityType, contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  group,
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType, ...options },
+);
+const dwellingComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — dwelling summaries",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
 );
 const statusIs = (value) => Object.freeze({
   key: "sales_comparable_listing:1800.0075",
@@ -237,6 +313,15 @@ const siteAdjustment = (contextKey, reportFieldId, label) => siteComp(
   label,
   "currency",
   { maximum: 999999999 },
+);
+const dwellingAdjustment = (contextKey, reportFieldId, label) => field(
+  "Sales comparables — dwelling adjustments",
+  contextKey,
+  "1800.0317",
+  reportFieldId,
+  label,
+  "currency",
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, maximum: 999999999 },
 );
 
 export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
@@ -699,6 +784,163 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   siteAdjustment("sales_comparable_adjustment_view", "22.03.47", "View and range adjustment"),
   siteAdjustment("sales_comparable_adjustment_water_frontage", "22.04.05", "Water frontage with private access adjustment"),
 
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0368", "Does Not Display", "Units in structure", "integer", {
+    required: true,
+    minimum: 1,
+    maximum: 99,
+    guidance: "Count the separate living units in or attached to this dwelling, including any ADUs attributable to the comparable property.",
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0128", "22.05.21", "Year built", "year", {
+    required: true,
+    maxLength: 4,
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0129", "22.05.21", "Year built estimated", "boolean", {
+    required: true,
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0169", "22.05.23", "Structure design", "enum", {
+    options: UAD_SALES_COMPARABLE_STRUCTURE_DESIGN_TYPES,
+    guidance: "Required for an attached comparable dwelling. Leave blank for a detached dwelling.",
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0170", "22.05.23", "Other structure design", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_dwelling:1800.0169", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_dwelling:1800.0169", equals: "Other" },
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0373", "22.05.27", "Noncontinuous finished area", "measurement", {
+    units: ["SquareFeet"],
+    minimum: 0,
+    maximum: 999999,
+    guidance: "Enter 0 when the one-unit comparable has no noncontinuous finished area; multiunit properties include this area in GBFA instead.",
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0182", "22.05.29", "Townhouse end unit", "boolean", {
+    showWhen: comparableRowhouseTownhouse,
+    requiredWhen: comparableRowhouseTownhouse,
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0188", "22.05.31", "Townhouse back-to-back", "boolean", {
+    showWhen: comparableRowhouseTownhouse,
+    requiredWhen: comparableRowhouseTownhouse,
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0382", "22.05.33", "Units above or below townhouse", "boolean", {
+    showWhen: comparableRowhouseTownhouse,
+    requiredWhen: comparableRowhouseTownhouse,
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0187", "22.05.33", "Townhouse location", "enum", {
+    options: ["BottomUnit", "MiddleUnit", "TopUnit"],
+    showWhen: comparableTownhouseStacked,
+    requiredWhen: comparableTownhouseStacked,
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0167", "22.05.39", "Dwelling style", "enum", {
+    options: UAD_SALES_COMPARABLE_DWELLING_STYLE_TYPES,
+    guidance: "Use for detached dwellings when the Dwelling Style comparison row is relevant.",
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0168", "22.05.39", "Other dwelling style", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_dwelling:1800.0167", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_dwelling:1800.0167", equals: "Other" },
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0123", "22.05.51", "Permanent cooling exists", "boolean", {
+    guidance: "Complete when Cooling is relevant to the comparison; selecting Yes enables repeatable cooling-system records.",
+  }),
+
+  dwellingChild("Comparable construction methods", "sales_comparable_construction_method", "sales_comparable_construction_method", "1800.0171", "22.05.35", "Construction method", "enum", {
+    options: UAD_SALES_COMPARABLE_CONSTRUCTION_METHOD_TYPES,
+    required: true,
+  }),
+  dwellingChild("Comparable construction methods", "sales_comparable_construction_method", "sales_comparable_construction_method", "1800.0172", "22.05.35", "Other construction method", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_construction_method:1800.0171", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_construction_method:1800.0171", equals: "Other" },
+  }),
+  dwellingChild("Comparable construction methods", "sales_comparable_construction_method", "sales_comparable_manufactured_home", "1800.0379", "22.05.37", "Manufactured home width", "enum", {
+    options: ["MultiWide", "SingleWide"],
+    showWhen: comparableManufacturedMethod,
+    requiredWhen: comparableManufacturedMethod,
+  }),
+
+  dwellingChild("Comparable heating systems", "sales_comparable_heating_system", "sales_comparable_heating_system", "1800.0165", "22.05.49", "Heating system", "enum", {
+    options: UAD_SALES_COMPARABLE_HEATING_SYSTEM_TYPES,
+    required: true,
+  }),
+  dwellingChild("Comparable heating systems", "sales_comparable_heating_system", "sales_comparable_heating_system", "1800.0166", "22.05.49", "Other heating system", "string", {
+    maxLength: 19,
+    showWhen: { key: "sales_comparable_heating_system:1800.0165", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_heating_system:1800.0165", equals: "Other" },
+  }),
+  dwellingChild("Comparable heating systems", "sales_comparable_heating_system", "sales_comparable_heating_system", "1800.0163", "22.05.49", "Heating fuel", "enum", {
+    options: UAD_SALES_COMPARABLE_HEATING_FUEL_TYPES,
+    showWhen: { key: "sales_comparable_heating_system:1800.0165", notEquals: "None" },
+  }),
+  dwellingChild("Comparable heating systems", "sales_comparable_heating_system", "sales_comparable_heating_system", "1800.0164", "22.05.49", "Other heating fuel", "string", {
+    maxLength: 31,
+    showWhen: { key: "sales_comparable_heating_system:1800.0163", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_heating_system:1800.0163", equals: "Other" },
+  }),
+
+  dwellingChild("Comparable cooling systems", "sales_comparable_cooling_system", "sales_comparable_cooling_system", "1800.0161", "22.05.51", "Cooling system", "enum", {
+    options: UAD_SALES_COMPARABLE_COOLING_SYSTEM_TYPES,
+    required: true,
+  }),
+  dwellingChild("Comparable cooling systems", "sales_comparable_cooling_system", "sales_comparable_cooling_system", "1800.0162", "22.05.51", "Other cooling system", "string", {
+    maxLength: 19,
+    showWhen: { key: "sales_comparable_cooling_system:1800.0161", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_cooling_system:1800.0161", equals: "Other" },
+  }),
+
+  dwellingChild("Comparable functional issues", "sales_comparable_functional_issue", "sales_comparable_functional_issue", "1800.0121", "22.05.45", "Functional issue", "enum", {
+    options: UAD_SALES_COMPARABLE_FUNCTIONAL_ISSUE_TYPES,
+    required: true,
+  }),
+  dwellingChild("Comparable functional issues", "sales_comparable_functional_issue", "sales_comparable_functional_issue", "1800.0122", "22.05.45", "Other functional issue", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_functional_issue:1800.0121", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_functional_issue:1800.0121", equals: "Other" },
+  }),
+
+  dwellingChild("Comparable disaster mitigation", "sales_comparable_disaster_mitigation", "sales_comparable_disaster_mitigation", "1800.0104", "22.05.47", "Disaster mitigation feature", "enum", {
+    options: UAD_SALES_COMPARABLE_DISASTER_MITIGATION_TYPES,
+    required: true,
+  }),
+  dwellingChild("Comparable disaster mitigation", "sales_comparable_disaster_mitigation", "sales_comparable_disaster_mitigation", "1800.0105", "22.05.47", "Other disaster mitigation feature", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_disaster_mitigation:1800.0104", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_disaster_mitigation:1800.0104", equals: "Other" },
+  }),
+
+  dwellingComp("sales_comparable_dwelling_summary", "1800.0345", "22.05.25", "Gross building finished area", "measurement", {
+    units: ["SquareFeet"],
+    minimumExclusive: 0,
+    maximum: 999999,
+    showWhen: includedAnd({ key: "subject:0100.0022", greaterThan: 1 }),
+    requiredWhen: { key: "subject:0100.0022", greaterThan: 1 },
+  }),
+  dwellingComp("sales_comparable_dwelling_summary", "1800.0280", "22.05.41", "Total dwelling volume", "measurement", {
+    units: ["CubicFeet"],
+    minimumExclusive: 0,
+    maximum: 999999,
+  }),
+  dwellingComp("sales_comparable_dwelling_summary", "1800.0281", "22.05.43", "Window surface area", "measurement", {
+    units: ["SquareFeet"],
+    minimumExclusive: 0,
+    maximum: 999999,
+  }),
+
+  dwellingAdjustment("sales_comparable_adjustment_year_built", "22.05.22", "Year built adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_structure_design", "22.05.24", "Structure design adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_gross_finished_area", "22.05.26", "Gross building finished area adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_noncontinuous_area", "22.05.28", "Noncontinuous finished area adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_townhouse_end", "22.05.30", "Townhouse end unit adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_townhouse_back", "22.05.32", "Townhouse back-to-back adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_townhouse_location", "22.05.34", "Townhouse location adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_construction_method", "22.05.36", "Construction method adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_manufactured_width", "22.05.38", "Manufactured home width adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_dwelling_style", "22.05.40", "Dwelling style adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_dwelling_volume", "22.05.42", "Total dwelling volume adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_window_area", "22.05.44", "Window surface area adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_functional_issues", "22.05.46", "Functional issues adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_disaster_mitigation", "22.05.48", "Disaster mitigation adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_heating", "22.05.50", "Heating adjustment"),
+  dwellingAdjustment("sales_comparable_adjustment_cooling", "22.05.52", "Cooling adjustment"),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -866,6 +1108,52 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     maxItems: UAD_SALES_COMPARABLE_VIEW_TYPES.length,
     parentEntityType: "sales_comparable",
   }),
+  sales_comparable_dwelling: Object.freeze({
+    title: "Comparable dwellings",
+    addLabel: "Add comparable dwelling",
+    minItems: 0,
+    maxItems: 10,
+    parentEntityType: "sales_comparable",
+    showWhen: salesComparisonIncluded,
+  }),
+  sales_comparable_construction_method: Object.freeze({
+    title: "Comparable construction methods",
+    addLabel: "Add construction method",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_CONSTRUCTION_METHOD_TYPES.length,
+    parentEntityType: "sales_comparable_dwelling",
+  }),
+  sales_comparable_heating_system: Object.freeze({
+    title: "Comparable heating systems",
+    addLabel: "Add heating system",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_HEATING_SYSTEM_TYPES.length,
+    parentEntityType: "sales_comparable_dwelling",
+  }),
+  sales_comparable_cooling_system: Object.freeze({
+    title: "Comparable cooling systems",
+    addLabel: "Add cooling system",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_COOLING_SYSTEM_TYPES.length,
+    parentEntityType: "sales_comparable_dwelling",
+    showWhen: comparableCoolingExists,
+  }),
+  sales_comparable_functional_issue: Object.freeze({
+    title: "Comparable functional issues",
+    addLabel: "Add functional issue",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_FUNCTIONAL_ISSUE_TYPES.length,
+    parentEntityType: "sales_comparable",
+    showWhen: salesComparisonIncluded,
+  }),
+  sales_comparable_disaster_mitigation: Object.freeze({
+    title: "Comparable disaster mitigation",
+    addLabel: "Add disaster mitigation feature",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_DISASTER_MITIGATION_TYPES.length,
+    parentEntityType: "sales_comparable",
+    showWhen: salesComparisonIncluded,
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -889,6 +1177,7 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   contractDateUnknown: "sales_comparable_contract:1800.0385",
   contractDate: "sales_comparable_contract:1800.0202",
   saleDate: "sales_comparable_sale:1800.0342",
+  propertyAttachment: "sales_comparable_property:1800.0195",
   propertyRights: "sales_comparable_property:1800.0337",
   propertyRightsOther: "sales_comparable_property:1800.0338",
   nativeLands: "sales_comparable_property:1800.0357",
@@ -940,6 +1229,32 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   siteWaterfrontDevelopmentRights: "sales_comparable_site_influence:1800.0238",
   siteWaterFrontageTotalLength: "sales_comparable_site_influence:1800.0237",
   siteWaterFrontageAdjustment: "sales_comparable_adjustment_water_frontage:1800.0317",
+  dwellingUnits: "sales_comparable_dwelling:1800.0368",
+  dwellingYearBuilt: "sales_comparable_dwelling:1800.0128",
+  dwellingYearEstimated: "sales_comparable_dwelling:1800.0129",
+  dwellingStructureDesign: "sales_comparable_dwelling:1800.0169",
+  dwellingStructureDesignOther: "sales_comparable_dwelling:1800.0170",
+  dwellingNoncontinuousArea: "sales_comparable_dwelling:1800.0373",
+  dwellingTownhouseEnd: "sales_comparable_dwelling:1800.0182",
+  dwellingTownhouseBack: "sales_comparable_dwelling:1800.0188",
+  dwellingTownhouseStacked: "sales_comparable_dwelling:1800.0382",
+  dwellingTownhouseLocation: "sales_comparable_dwelling:1800.0187",
+  dwellingStyle: "sales_comparable_dwelling:1800.0167",
+  dwellingStyleOther: "sales_comparable_dwelling:1800.0168",
+  dwellingCoolingExists: "sales_comparable_dwelling:1800.0123",
+  dwellingConstructionMethod: "sales_comparable_construction_method:1800.0171",
+  dwellingConstructionMethodOther: "sales_comparable_construction_method:1800.0172",
+  dwellingManufacturedWidth: "sales_comparable_manufactured_home:1800.0379",
+  dwellingHeatingSystem: "sales_comparable_heating_system:1800.0165",
+  dwellingHeatingSystemOther: "sales_comparable_heating_system:1800.0166",
+  dwellingHeatingFuel: "sales_comparable_heating_system:1800.0163",
+  dwellingHeatingFuelOther: "sales_comparable_heating_system:1800.0164",
+  dwellingCoolingSystem: "sales_comparable_cooling_system:1800.0161",
+  dwellingCoolingSystemOther: "sales_comparable_cooling_system:1800.0162",
+  dwellingFunctionalIssue: "sales_comparable_functional_issue:1800.0121",
+  dwellingFunctionalIssueOther: "sales_comparable_functional_issue:1800.0122",
+  dwellingDisasterMitigation: "sales_comparable_disaster_mitigation:1800.0104",
+  dwellingDisasterMitigationOther: "sales_comparable_disaster_mitigation:1800.0105",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

@@ -738,6 +738,12 @@ try {
   const salesComparableWaterfrontFeatureId = await ensureEntity(sfrWorkfileId, salesComparableBodyOfWaterId, "sales_comparable_waterfront_feature", "sales-comparable-waterfront-feature-1", 1, "Comparable Waterfront Feature 1");
   const salesComparableEnvironmentalId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_environmental", "sales-comparable-site-environmental-1", 1, "Comparable Environmental Condition 1");
   const salesComparableViewId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_site_view", "sales-comparable-site-view-1", 1, "Comparable View 1");
+  const salesComparableDwellingId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_dwelling", "sales-comparable-dwelling-1", 1, "Comparable Dwelling 1");
+  const salesComparableConstructionId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_construction_method", "sales-comparable-construction-method-1", 1, "Comparable Construction Method 1");
+  const salesComparableHeatingId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_heating_system", "sales-comparable-heating-system-1", 1, "Comparable Heating System 1");
+  const salesComparableCoolingId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_cooling_system", "sales-comparable-cooling-system-1", 1, "Comparable Cooling System 1");
+  const salesComparableFunctionalIssueId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_functional_issue", "sales-comparable-functional-issue-1", 1, "Comparable Functional Issue 1");
+  const salesComparableDisasterMitigationId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_disaster_mitigation", "sales-comparable-disaster-mitigation-1", 1, "Comparable Disaster Mitigation 1");
   const comparableNoTransferSourceId = await ensureEntity(
     sfrWorkfileId,
     salesComparableId,
@@ -800,6 +806,30 @@ try {
     [salesComparableEnvironmentalId, "sales_comparable_site_environmental", "1800.0116", "22.03.44", "None"],
     [salesComparableViewId, "sales_comparable_site_view", "1800.0243", "22.03.46", "Residential"],
     [salesComparableViewId, "sales_comparable_site_view", "1800.0242", "22.03.46", "Full"],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0368", "Does Not Display", 1],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0128", "22.05.21", "2004"],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0129", "22.05.21", false],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0373", "22.05.27", { amount: 0, unit: "SquareFeet" }],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0167", "22.05.39", "Traditional"],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0123", "22.05.51", true],
+    [salesComparableConstructionId, "sales_comparable_construction_method", "1800.0171", "22.05.35", "SiteBuilt"],
+    [salesComparableHeatingId, "sales_comparable_heating_system", "1800.0165", "22.05.49", "ForcedWarmAir"],
+    [salesComparableHeatingId, "sales_comparable_heating_system", "1800.0163", "22.05.49", "NaturalGas"],
+    [salesComparableCoolingId, "sales_comparable_cooling_system", "1800.0161", "22.05.51", "Centralized"],
+    [salesComparableFunctionalIssueId, "sales_comparable_functional_issue", "1800.0121", "22.05.45", "None"],
+    [salesComparableDisasterMitigationId, "sales_comparable_disaster_mitigation", "1800.0104", "22.05.47", "None"],
+    [salesComparableId, "sales_comparable_dwelling_summary", "1800.0280", "22.05.41", { amount: 18900, unit: "CubicFeet" }],
+    [salesComparableId, "sales_comparable_dwelling_summary", "1800.0281", "22.05.43", { amount: 300, unit: "SquareFeet" }],
+    [salesComparableId, "sales_comparable_adjustment_year_built", "1800.0317", "22.05.22", 0],
+    [salesComparableId, "sales_comparable_adjustment_noncontinuous_area", "1800.0317", "22.05.28", 0],
+    [salesComparableId, "sales_comparable_adjustment_construction_method", "1800.0317", "22.05.36", 0],
+    [salesComparableId, "sales_comparable_adjustment_dwelling_style", "1800.0317", "22.05.40", 0],
+    [salesComparableId, "sales_comparable_adjustment_dwelling_volume", "1800.0317", "22.05.42", 0],
+    [salesComparableId, "sales_comparable_adjustment_window_area", "1800.0317", "22.05.44", 0],
+    [salesComparableId, "sales_comparable_adjustment_functional_issues", "1800.0317", "22.05.46", 0],
+    [salesComparableId, "sales_comparable_adjustment_disaster_mitigation", "1800.0317", "22.05.48", 0],
+    [salesComparableId, "sales_comparable_adjustment_heating", "1800.0317", "22.05.50", 0],
+    [salesComparableId, "sales_comparable_adjustment_cooling", "1800.0317", "22.05.52", 0],
     [salesComparableSourceId, "sales_comparable_data_source", "0700.0125", "22.01.18", "MLS"],
     [salesComparableSourceId, "sales_comparable_data_source", "1800.0347", "22.01.18", "NTREIS-SYNTHETIC-22001"],
   ];

@@ -2243,6 +2243,19 @@ export interface AssignmentDocumentCandidate {
   reviewed_at?: string | null;
 }
 
+export interface AssignmentDocumentCandidateReview {
+  id: number;
+  document_id: number;
+  candidate_id: number | null;
+  field_key: string;
+  raw_value: string;
+  normalized_value: string | null;
+  review_status: 'confirmed' | 'rejected';
+  confirmed_value: string | null;
+  reviewer: string;
+  reviewed_at: string;
+}
+
 export interface AssignmentDocument {
   id: number;
   account_id: string;
@@ -2255,12 +2268,18 @@ export interface AssignmentDocument {
   file_size_bytes: number;
   page_count: number | null;
   processing_status: 'uploaded' | 'processing' | 'review_required' | 'ocr_required' | 'extraction_failed' | 'reviewed';
+  processing_attempts: number;
+  processing_started_at: string | null;
+  next_processing_at: string | null;
+  last_processing_error: string | null;
   extraction_method: string | null;
   extraction_summary: {
     text_length?: number;
     candidate_count?: number;
     review_reason?: string;
     error?: string;
+    processing_attempts?: number;
+    automatic_retry_exhausted?: boolean;
   };
   source_kind: 'upload' | 'official_url' | 'zoning_cache';
   source_url: string | null;
@@ -2272,6 +2291,7 @@ export interface AssignmentDocument {
   candidate_count?: number;
   suggested_candidate_count?: number;
   candidates?: AssignmentDocumentCandidate[];
+  review_history?: AssignmentDocumentCandidateReview[];
 }
 
 export async function getAssignmentDocuments(

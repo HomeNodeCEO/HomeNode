@@ -406,6 +406,46 @@ try {
   const sfrDwellingId = sfrDwellingResult.rows[0].id;
   await seedEntityValue(sfrWorkfileId, sfrDwellingId, "dwelling", "1600.0005", "8.022", "Q3");
   await seedEntityValue(sfrWorkfileId, sfrDwellingId, "dwelling", "1600.0004", "8.023", "C3");
+  const subjectExteriorWallId = await ensureEntity(sfrWorkfileId, sfrDwellingId, "dwelling_exterior_feature", "dwelling-exterior-wall-1", 1, "Exterior Walls and Trim");
+  const subjectFoundationId = await ensureEntity(sfrWorkfileId, sfrDwellingId, "dwelling_exterior_feature", "dwelling-foundation-1", 2, "Foundation");
+  const subjectRoofId = await ensureEntity(sfrWorkfileId, sfrDwellingId, "dwelling_exterior_feature", "dwelling-roof-1", 3, "Roof");
+  const subjectWindowsId = await ensureEntity(sfrWorkfileId, sfrDwellingId, "dwelling_exterior_feature", "dwelling-windows-1", 4, "Windows");
+  const subjectWindowsSummaryId = await ensureEntity(
+    sfrWorkfileId,
+    subjectWindowsId,
+    "sales_comparison_subject_exterior_quality_summary",
+    "subject-windows-quality-summary-1",
+    1,
+    "Subject Windows Quality Summary",
+  );
+  const subjectExteriorValues = [
+    [subjectExteriorWallId, "0300.0055", "8.041", "ExteriorWallsAndTrim"],
+    [subjectExteriorWallId, "0300.0098", "8.025", ["Brick"]],
+    [subjectExteriorWallId, "0300.0054", "8.027", "TypicalWearAndTear"],
+    [subjectFoundationId, "0300.0055", "8.041", "Foundation"],
+    [subjectFoundationId, "0300.0044", "8.029", ["PouredConcrete"]],
+    [subjectFoundationId, "0300.0046", "8.029", ["Slab"]],
+    [subjectFoundationId, "0300.0054", "8.027", "TypicalWearAndTear"],
+    [subjectRoofId, "0300.0055", "8.041", "Roof"],
+    [subjectRoofId, "0300.0048", "8.033", "OneToTenYears"],
+    [subjectRoofId, "0300.0049", "8.033", true],
+    [subjectRoofId, "0300.0050", "8.033", ["Composition"]],
+    [subjectRoofId, "0300.0054", "8.027", "TypicalWearAndTear"],
+    [subjectWindowsId, "0300.0055", "8.041", "Windows"],
+    [subjectWindowsId, "0300.0052", "8.037", "Vinyl-framed double-pane windows"],
+    [subjectWindowsId, "0300.0054", "8.027", "TypicalWearAndTear"],
+  ];
+  for (const [entityId, uid, reportFieldId, value] of subjectExteriorValues) {
+    await seedEntityValue(sfrWorkfileId, entityId, "dwelling_exterior_feature", uid, reportFieldId, value);
+  }
+  await seedEntityValue(
+    sfrWorkfileId,
+    subjectWindowsSummaryId,
+    "sales_comparison_subject_exterior_quality_summary",
+    "1800.0295",
+    "22.08.06",
+    "Typical builder-grade vinyl double-pane windows",
+  );
   await seedEntityValue(
     sfrWorkfileId,
     null,
@@ -749,6 +789,10 @@ try {
   const salesComparableEfficiencyRatingId = await ensureEntity(sfrWorkfileId, salesComparableId, "sales_comparable_efficiency_rating", "sales-comparable-efficiency-rating-1", 1, "Comparable Efficiency Rating 1");
   const salesComparableUnitId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_unit", "sales-comparable-unit-1", 1, "Comparable Unit 1");
   const salesComparableAccessibilityId = await ensureEntity(sfrWorkfileId, salesComparableUnitId, "sales_comparable_unit_accessibility_feature", "sales-comparable-unit-accessibility-1", 1, "Comparable Unit Accessibility 1");
+  const salesComparableExteriorWallId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-exterior-wall-1", 1, "Comparable Exterior Walls and Trim");
+  const salesComparableFoundationId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-foundation-1", 2, "Comparable Foundation");
+  const salesComparableRoofId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-roof-1", 3, "Comparable Roof");
+  const salesComparableWindowsId = await ensureEntity(sfrWorkfileId, salesComparableDwellingId, "sales_comparable_exterior_component", "sales-comparable-windows-1", 4, "Comparable Windows");
   const comparableNoTransferSourceId = await ensureEntity(
     sfrWorkfileId,
     salesComparableId,
@@ -769,6 +813,7 @@ try {
     [salesComparableId, "sales_comparable_property", "0100.0059", "Does Not Display", 0],
     [salesComparableId, "sales_comparable_property", "1800.0365", "Does Not Display", 1],
     [salesComparableId, "sales_comparable_property", "1800.0363", "Does Not Display", 1],
+    [salesComparableId, "sales_comparable_property", "1800.0364", "Does Not Display", true],
     [salesComparableId, "sales_comparable_proximity", "1800.0065", "22.01.19", { amount: 2.1, unit: "Miles" }],
     [salesComparableId, "sales_comparable_proximity", "1800.0066", "22.01.19", "NorthEast"],
     [salesComparableId, "sales_comparable_listing", "1800.0074", "22.01.20", 449000],
@@ -820,6 +865,8 @@ try {
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0373", "22.05.27", { amount: 0, unit: "SquareFeet" }],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0167", "22.05.39", "Traditional"],
     [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0123", "22.05.51", true],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0186", "22.08.17", "Q3"],
+    [salesComparableDwellingId, "sales_comparable_dwelling", "1800.0185", "22.08.23", "C3"],
     [salesComparableConstructionId, "sales_comparable_construction_method", "1800.0171", "22.05.35", "SiteBuilt"],
     [salesComparableHeatingId, "sales_comparable_heating_system", "1800.0165", "22.05.49", "ForcedWarmAir"],
     [salesComparableHeatingId, "sales_comparable_heating_system", "1800.0163", "22.05.49", "NaturalGas"],
@@ -858,6 +905,19 @@ try {
     [salesComparableUnitId, "sales_comparable_unit", "1800.0399", "22.07.38", { amount: 0, unit: "SquareFeet" }],
     [salesComparableUnitId, "sales_comparable_unit", "1800.0394", "22.07.40", { amount: 0, unit: "SquareFeet" }],
     [salesComparableAccessibilityId, "sales_comparable_unit_accessibility_feature", "1800.0134", "22.07.42", "None"],
+    [salesComparableExteriorWallId, "sales_comparable_exterior_component", "1800.0180", "Does Not Display", "ExteriorWallsAndTrim"],
+    [salesComparableExteriorWallId, "sales_comparable_exterior_component", "0300.0042", "22.08.18", ["Brick"]],
+    [salesComparableExteriorWallId, "sales_comparable_exterior_component", "1800.0179", "22.08.24", "TypicalWearAndTear"],
+    [salesComparableFoundationId, "sales_comparable_exterior_component", "1800.0180", "Does Not Display", "Foundation"],
+    [salesComparableFoundationId, "sales_comparable_exterior_component", "1800.0173", "22.08.19", ["Slab"]],
+    [salesComparableFoundationId, "sales_comparable_exterior_component", "1800.0179", "22.08.25", "TypicalWearAndTear"],
+    [salesComparableRoofId, "sales_comparable_exterior_component", "1800.0180", "Does Not Display", "Roof"],
+    [salesComparableRoofId, "sales_comparable_exterior_component", "1800.0175", "22.08.20", ["Composition"]],
+    [salesComparableRoofId, "sales_comparable_exterior_component", "1800.0386", "22.08.26", true],
+    [salesComparableRoofId, "sales_comparable_exterior_component", "1800.0179", "22.08.26", "TypicalWearAndTear"],
+    [salesComparableWindowsId, "sales_comparable_exterior_component", "1800.0180", "Does Not Display", "Windows"],
+    [salesComparableWindowsId, "sales_comparable_exterior_component", "1800.0297", "22.08.21", "Typical builder-grade vinyl double-pane windows"],
+    [salesComparableWindowsId, "sales_comparable_exterior_component", "1800.0179", "22.08.27", "TypicalWearAndTear"],
     [salesComparableId, "sales_comparable_adjustment_standard_above", "1800.0317", "22.07.31", 0],
     [salesComparableSourceId, "sales_comparable_data_source", "0700.0125", "22.01.18", "MLS"],
     [salesComparableSourceId, "sales_comparable_data_source", "1800.0347", "22.01.18", "NTREIS-SYNTHETIC-22001"],

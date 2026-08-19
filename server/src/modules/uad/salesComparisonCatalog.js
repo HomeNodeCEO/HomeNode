@@ -1,5 +1,13 @@
 import { UAD_PROJECT_AMENITY_TYPES } from "./projectInformationCatalog.js";
 import { UAD_OUTBUILDING_TYPES } from "./outbuildingCatalog.js";
+import {
+  UAD_EXTERIOR_COMPONENT_TYPES,
+  UAD_EXTERIOR_CONDITION_STATUS_TYPES,
+  UAD_EXTERIOR_FOUNDATION_TYPES,
+  UAD_EXTERIOR_ROOF_MATERIAL_TYPES,
+  UAD_EXTERIOR_WALL_MATERIAL_TYPES,
+} from "./dwellingExteriorCatalog.js";
+import { UAD_CONDITION_RATINGS, UAD_QUALITY_RATINGS } from "./overallQualityConditionCatalog.js";
 import { UAD_UNIT_ACCESSIBILITY_TYPES } from "./unitInteriorCatalog.js";
 
 export const UAD_SALES_COMPARISON_CAPTION_TYPES = Object.freeze([
@@ -266,6 +274,23 @@ const comparableGreenCertificationExists = Object.freeze({
 const comparableEfficiencyRatingExists = Object.freeze({
   key: "sales_comparable_energy_green:1800.0106",
   equals: true,
+});
+const subjectMaintainsExterior = Object.freeze({
+  key: "subject:0100.0046",
+  equals: true,
+});
+const subjectExteriorComparisonEnabled = Object.freeze({
+  all: [salesComparisonIncluded, subjectMaintainsExterior],
+});
+const exteriorComponentTypeIs = (value) => Object.freeze({
+  key: "sales_comparable_exterior_component:1800.0180",
+  equals: value,
+});
+const subjectExteriorFeatureTypeIs = (...values) => Object.freeze({
+  any: values.map((value) => ({
+    key: "dwelling_exterior_feature:0300.0055",
+    equals: value,
+  })),
 });
 const siteComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
   "Sales comparables — site information",
@@ -1176,6 +1201,100 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   unitAdjustment("sales_comparable_adjustment_unfinished_below", "22.07.41", "Unfinished area below grade adjustment"),
   unitAdjustment("sales_comparable_adjustment_accessibility", "22.07.43", "Accessibility feature adjustment"),
 
+  comp("sales_comparable_property", "1800.0364", "Does Not Display", "Homeowner maintains all dwelling exteriors", "boolean", {
+    requiredWhen: salesComparisonIncluded,
+    guidance: "Required for MISMO delivery. Exterior Quality and Condition rows are completed only when both the subject and this comparable place all dwelling exterior maintenance on the homeowner.",
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0186", "22.08.17", "Exterior quality rating", "enum", {
+    options: UAD_QUALITY_RATINGS,
+    showWhen: subjectExteriorComparisonEnabled,
+    guidance: "Use the UAD Q1–Q6 definitions. Overall quality adjustments are entered later in Section 22K, not in this subsection.",
+  }),
+  dwellingChild("Comparable dwellings", "sales_comparable_dwelling", "sales_comparable_dwelling", "1800.0185", "22.08.23", "Exterior condition rating", "enum", {
+    options: UAD_CONDITION_RATINGS,
+    showWhen: subjectExteriorComparisonEnabled,
+    guidance: "Use the UAD C1–C6 definitions. Overall condition adjustments are entered later in Section 22K, not in this subsection.",
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0180", "Does Not Display", "Exterior component", "enum", {
+    required: true,
+    options: UAD_EXTERIOR_COMPONENT_TYPES,
+    guidance: "Add Exterior Walls and Trim, Foundation, Roof, and Windows for every applicable comparable dwelling. Add matching Other rows only when the subject has them.",
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0181", "22.08.07", "Other exterior component", "string", {
+    maxLength: 36,
+    showWhen: exteriorComponentTypeIs("Other"),
+    requiredWhen: exteriorComponentTypeIs("Other"),
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "0300.0042", "22.08.18", "Exterior wall materials", "multi_enum", {
+    options: UAD_EXTERIOR_WALL_MATERIAL_TYPES,
+    showWhen: exteriorComponentTypeIs("ExteriorWallsAndTrim"),
+    requiredWhen: exteriorComponentTypeIs("ExteriorWallsAndTrim"),
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "0300.0043", "22.08.18", "Other exterior wall material", "string", {
+    maxLength: 36,
+    showWhen: { key: "sales_comparable_exterior_component:0300.0042", contains: "Other" },
+    requiredWhen: { key: "sales_comparable_exterior_component:0300.0042", contains: "Other" },
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0173", "22.08.19", "Foundation types", "multi_enum", {
+    options: UAD_EXTERIOR_FOUNDATION_TYPES,
+    showWhen: exteriorComponentTypeIs("Foundation"),
+    requiredWhen: exteriorComponentTypeIs("Foundation"),
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0174", "22.08.19", "Other foundation type", "string", {
+    maxLength: 36,
+    showWhen: { key: "sales_comparable_exterior_component:1800.0173", contains: "Other" },
+    requiredWhen: { key: "sales_comparable_exterior_component:1800.0173", contains: "Other" },
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0175", "22.08.20", "Roof materials", "multi_enum", {
+    options: UAD_EXTERIOR_ROOF_MATERIAL_TYPES,
+    showWhen: exteriorComponentTypeIs("Roof"),
+    requiredWhen: exteriorComponentTypeIs("Roof"),
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0176", "22.08.20", "Other roof material", "string", {
+    maxLength: 36,
+    showWhen: { key: "sales_comparable_exterior_component:1800.0175", contains: "Other" },
+    requiredWhen: { key: "sales_comparable_exterior_component:1800.0175", contains: "Other" },
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0297", "22.08.21", "Component quality summary", "string", {
+    maxLength: 70,
+    showWhen: { any: [exteriorComponentTypeIs("Windows"), exteriorComponentTypeIs("Other")] },
+    requiredWhen: { any: [exteriorComponentTypeIs("Windows"), exteriorComponentTypeIs("Other")] },
+    guidance: "Enter a concise quality summary. For a subject-defined Other feature that the comparable does not have, omit the Other component record; the grid will display None.",
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0386", "22.08.26", "Roof observable", "boolean", {
+    showWhen: exteriorComponentTypeIs("Roof"),
+    requiredWhen: exteriorComponentTypeIs("Roof"),
+  }),
+  dwellingChild("Comparable exterior components", "sales_comparable_exterior_component", "sales_comparable_exterior_component", "1800.0179", "22.08.24", "Component condition status", "enum", {
+    options: UAD_EXTERIOR_CONDITION_STATUS_TYPES,
+    showWhen: {
+      any: [
+        { not: exteriorComponentTypeIs("Roof") },
+        { key: "sales_comparable_exterior_component:1800.0386", equals: true },
+      ],
+    },
+    requiredWhen: {
+      any: [
+        { not: exteriorComponentTypeIs("Roof") },
+        { key: "sales_comparable_exterior_component:1800.0386", equals: true },
+      ],
+    },
+  }),
+  dwellingChild(
+    "Subject exterior quality summaries",
+    "sales_comparison_subject_exterior_quality_summary",
+    "sales_comparison_subject_exterior_quality_summary",
+    "1800.0295",
+    "22.08.06",
+    "Subject component quality summary",
+    "string",
+    {
+      required: true,
+      maxLength: 70,
+      guidance: "Required for the subject Windows row and each subject-defined Other exterior feature included in the comparison grid.",
+    },
+  ),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1437,6 +1556,27 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     parentEntityType: "sales_comparable_unit",
     showWhen: salesComparisonIncluded,
   }),
+  sales_comparable_exterior_component: Object.freeze({
+    title: "Comparable exterior components",
+    addLabel: "Add comparable exterior component",
+    minItems: 0,
+    maxItems: 20,
+    parentEntityType: "sales_comparable_dwelling",
+    showWhen: subjectExteriorComparisonEnabled,
+  }),
+  sales_comparison_subject_exterior_quality_summary: Object.freeze({
+    title: "Subject exterior quality summaries",
+    addLabel: "Add subject quality summary",
+    minItems: 0,
+    maxItems: 1,
+    parentEntityType: "dwelling_exterior_feature",
+    showWhen: Object.freeze({
+      all: [
+        subjectExteriorComparisonEnabled,
+        subjectExteriorFeatureTypeIs("Windows", "Other"),
+      ],
+    }),
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -1573,6 +1713,21 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   unitUnfinishedBelow: "sales_comparable_unit:1800.0394",
   unitAccessibility: "sales_comparable_unit_accessibility_feature:1800.0134",
   unitAccessibilityOther: "sales_comparable_unit_accessibility_feature:1800.0135",
+  homeownerMaintainsExterior: "sales_comparable_property:1800.0364",
+  exteriorQuality: "sales_comparable_dwelling:1800.0186",
+  exteriorCondition: "sales_comparable_dwelling:1800.0185",
+  exteriorComponentType: "sales_comparable_exterior_component:1800.0180",
+  exteriorComponentOther: "sales_comparable_exterior_component:1800.0181",
+  exteriorWallMaterial: "sales_comparable_exterior_component:0300.0042",
+  exteriorWallMaterialOther: "sales_comparable_exterior_component:0300.0043",
+  exteriorFoundationType: "sales_comparable_exterior_component:1800.0173",
+  exteriorFoundationOther: "sales_comparable_exterior_component:1800.0174",
+  exteriorRoofMaterial: "sales_comparable_exterior_component:1800.0175",
+  exteriorRoofMaterialOther: "sales_comparable_exterior_component:1800.0176",
+  exteriorQualitySummary: "sales_comparable_exterior_component:1800.0297",
+  exteriorRoofObservable: "sales_comparable_exterior_component:1800.0386",
+  exteriorComponentCondition: "sales_comparable_exterior_component:1800.0179",
+  subjectExteriorQualitySummary: "sales_comparison_subject_exterior_quality_summary:1800.0295",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

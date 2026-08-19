@@ -39,13 +39,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22G editor on canonical comparable entities", () => {
+test("adds the Section 22A-22H editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 211);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 211);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 226);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 226);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -66,6 +66,8 @@ test("adds the Section 22A-22G editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_outbuilding.parentEntityType, "sales_comparable");
   assert.deepEqual(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_unit.parentEntityTypes, ["sales_comparable_dwelling", "sales_comparable_outbuilding"]);
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_unit_accessibility_feature.parentEntityType, "sales_comparable_unit");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_exterior_component.parentEntityType, "sales_comparable_dwelling");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_exterior_quality_summary.parentEntityType, "dwelling_exterior_feature");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
 });
 
@@ -115,6 +117,7 @@ test("accepts a complete settled comparable with a source and verified property 
     value(comparable.id, "sales_comparable_property", "0100.0059", 0),
     value(comparable.id, "sales_comparable_property", "1800.0365", 1),
     value(comparable.id, "sales_comparable_property", "1800.0363", 1),
+    value(comparable.id, "sales_comparable_property", "1800.0364", false),
     value(comparable.id, "sales_comparable_proximity", "1800.0065", { amount: 0, unit: "Miles" }),
     value(comparable.id, "sales_comparable_listing", "1800.0075", "SettledSale"),
     value(comparable.id, "sales_comparable_sale", "1800.0272", 425000),
@@ -383,6 +386,42 @@ test("validates Section 22G comparable unit hierarchy, counts, identifiers, and 
   ]) assert.equal(codes.includes(code), true, code);
 });
 
+test("validates Section 22H exterior ratings, core components, subject summaries, and exact Other labels", () => {
+  const comparable = { id: "210a3c6f-67a1-49ba-a2de-591574c22b50", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const dwelling = { id: "1b82b40d-361a-46f7-aa3d-237494204ce1", entity_type: "sales_comparable_dwelling", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const roof = { id: "28d6893b-26dc-4030-93df-220652522552", entity_type: "sales_comparable_exterior_component", parent_entity_id: dwelling.id, ordinal: 1, data: {} };
+  const unrelatedOther = { id: "d9c41f50-a023-417f-b1ef-c9f345f86053", entity_type: "sales_comparable_exterior_component", parent_entity_id: dwelling.id, ordinal: 2, data: {} };
+  const subjectWindows = { id: "ae62c229-af98-4828-93c5-bd63f99d08a5", entity_type: "dwelling_exterior_feature", parent_entity_id: "fef6f2de-35bc-43cf-bd33-743b2fd6f2de", ordinal: 1, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(null, "subject", "0100.0046", true),
+    value(subjectWindows.id, "dwelling_exterior_feature", "0300.0055", "Windows"),
+    value(comparable.id, "sales_comparable_property", "1800.0364", true),
+    value(roof.id, "sales_comparable_exterior_component", "1800.0180", "Roof"),
+    value(roof.id, "sales_comparable_exterior_component", "1800.0175", ["Composition"]),
+    value(roof.id, "sales_comparable_exterior_component", "1800.0386", false),
+    value(roof.id, "sales_comparable_exterior_component", "1800.0179", "TypicalWearAndTear"),
+    value(unrelatedOther.id, "sales_comparable_exterior_component", "1800.0180", "Other"),
+    value(unrelatedOther.id, "sales_comparable_exterior_component", "1800.0181", "Cupola"),
+    value(unrelatedOther.id, "sales_comparable_exterior_component", "1800.0297", "Decorative cupola"),
+    value(unrelatedOther.id, "sales_comparable_exterior_component", "1800.0179", "NewOrLikeNew"),
+  ];
+  const codes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    values,
+    [comparable, dwelling, roof, unrelatedOther, subjectWindows],
+  ).map((error) => error.code);
+  for (const code of [
+    "sales_comparison_subject_exterior_summary_required",
+    "sales_comparable_exterior_quality_required",
+    "sales_comparable_exterior_condition_required",
+    "sales_comparable_exterior_component_required",
+    "sales_comparable_exterior_roof_condition_conflict",
+    "sales_comparable_exterior_other_subject_mismatch",
+  ]) assert.equal(codes.includes(code), true, code);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -507,6 +546,21 @@ test("seeds Section 22G Unit(s) hierarchy, redisplays, typed adjustments, and of
   assert.match(sql, /LivingUnitStandardFinishedAreaAboveGrade/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-UNIT-007/);
   assert.match(runner, /20260910_uad_sales_comparison_units\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22H exterior ratings, component hierarchy, redisplays, and official rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260911_uad_sales_comparison_exterior_quality.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const ruleId of ["UAD1426", "UAD1427", "UAD1473"]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /sales_comparable_exterior_component/);
+  assert.match(sql, /sales_comparison_subject_exterior_quality_summary/);
+  assert.match(sql, /'1600\.0005','dwelling','22\.08\.02'/);
+  assert.match(sql, /'1800\.0186','sales_comparable_dwelling','22\.08\.17'/);
+  assert.match(sql, /ImprovementComponentQualitySummaryDescription/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-EXTERIOR-006/);
+  assert.match(runner, /20260911_uad_sales_comparison_exterior_quality\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

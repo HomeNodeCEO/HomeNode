@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 211);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 226);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -426,6 +426,23 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_unit_accessibility_feature"
       && entity.parent_entity_id === salesComparableUnit?.id
     ));
+    const salesComparableExteriorComponents = siteBuiltEditor.entities.filter((entity) => (
+      entity.entity_type === "sales_comparable_exterior_component"
+      && entity.parent_entity_id === salesComparableDwelling?.id
+    ));
+    const subjectWindows = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "dwelling_exterior_feature"
+      && siteBuiltEditor.values.some((item) => (
+        item.entity_id === entity.id
+        && item.context_key === "dwelling_exterior_feature"
+        && item.uid === "0300.0055"
+        && item.value === "Windows"
+      ))
+    ));
+    const subjectWindowsSummary = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparison_subject_exterior_quality_summary"
+      && entity.parent_entity_id === subjectWindows?.id
+    ));
     assert.ok(salesComparable);
     assert.ok(salesComparableSource);
     assert.ok(salesComparableProjectAmenity);
@@ -443,6 +460,9 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(salesComparableEfficiencyRating);
     assert.ok(salesComparableUnit);
     assert.ok(salesComparableAccessibility);
+    assert.equal(salesComparableExteriorComponents.length, 4);
+    assert.ok(subjectWindows);
+    assert.ok(subjectWindowsSummary);
     assert.equal(
       siteBuiltEditor.values.find((item) => (
         item.entity_id === salesComparable.id
@@ -570,6 +590,30 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0134"
       ))?.value,
       "None",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_property"
+        && item.uid === "1800.0364"
+      ))?.value,
+      true,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableDwelling.id
+        && item.context_key === "sales_comparable_dwelling"
+        && item.uid === "1800.0186"
+      ))?.value,
+      "Q3",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === subjectWindowsSummary.id
+        && item.context_key === "sales_comparison_subject_exterior_quality_summary"
+        && item.uid === "1800.0295"
+      ))?.value,
+      "Typical builder-grade vinyl double-pane windows",
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

@@ -1,5 +1,28 @@
 const condition = (key, equals) => ({ key, equals });
 
+export const UAD_EXTERIOR_COMPONENT_TYPES = Object.freeze([
+  "ExteriorWallsAndTrim", "Foundation", "Other", "Roof", "Windows",
+]);
+
+export const UAD_EXTERIOR_WALL_MATERIAL_TYPES = Object.freeze([
+  "Adobe", "Aluminum", "Asbestos", "Brick", "CementBoard", "ConcreteBlock",
+  "EngineeredWood", "Glass", "Log", "Other", "PouredConcrete", "Steel", "Stone",
+  "Stucco", "SyntheticStone", "SyntheticStucco", "Vinyl", "Wood",
+]);
+
+export const UAD_EXTERIOR_FOUNDATION_TYPES = Object.freeze([
+  "Basement", "CrawlSpace", "Other", "PostAndPier", "Runner", "Slab",
+]);
+
+export const UAD_EXTERIOR_ROOF_MATERIAL_TYPES = Object.freeze([
+  "Asbestos", "Asphalt", "CeramicTile", "Clay", "Composition", "Concrete", "Copper",
+  "Metal", "Other", "Rubber", "Slate", "SolarShingles", "Synthetic", "TarAndGravel", "Wood",
+]);
+
+export const UAD_EXTERIOR_CONDITION_STATUS_TYPES = Object.freeze([
+  "DamagedAndFunctional", "DamagedAndNonfunctional", "NewOrLikeNew", "TypicalWearAndTear",
+]);
+
 const subjectAttached = Object.freeze(condition("subject:0100.0020", "Attached"));
 const subjectDetached = Object.freeze(condition("subject:0100.0020", "Detached"));
 const homeownerMaintainsExterior = Object.freeze(condition("subject:0100.0046", true));
@@ -284,7 +307,7 @@ export const UAD_DWELLING_EXTERIOR_FIELDS = [
   }),
   feature("0300.0055", "8.041", "Exterior feature", "enum", {
     required: true,
-    options: ["ExteriorWallsAndTrim", "Foundation", "Other", "Roof", "Windows"],
+    options: UAD_EXTERIOR_COMPONENT_TYPES,
   }),
   feature("0300.0056", "8.041", "Other exterior feature", "string", {
     maxLength: 36,
@@ -292,7 +315,7 @@ export const UAD_DWELLING_EXTERIOR_FIELDS = [
     requiredWhen: condition("dwelling_exterior_feature:0300.0055", "Other"),
   }),
   feature("0300.0098", "8.025", "Exterior wall materials", "multi_enum", {
-    options: ["Adobe", "Aluminum", "Asbestos", "Brick", "CementBoard", "ConcreteBlock", "EngineeredWood", "Glass", "Log", "Other", "PouredConcrete", "Steel", "Stone", "Stucco", "SyntheticStone", "SyntheticStucco", "Vinyl", "Wood"],
+    options: UAD_EXTERIOR_WALL_MATERIAL_TYPES,
     showWhen: condition("dwelling_exterior_feature:0300.0055", "ExteriorWallsAndTrim"),
     requiredWhen: condition("dwelling_exterior_feature:0300.0055", "ExteriorWallsAndTrim"),
   }),
@@ -303,7 +326,7 @@ export const UAD_DWELLING_EXTERIOR_FIELDS = [
   }),
   feature("0300.0075", "8.026", "Feature quality description", "text", { maxLength: 144 }),
   feature("0300.0054", "8.027", "Condition status", "enum", {
-    options: ["DamagedAndFunctional", "DamagedAndNonfunctional", "NewOrLikeNew", "TypicalWearAndTear"],
+    options: UAD_EXTERIOR_CONDITION_STATUS_TYPES,
     showWhen: {
       any: [
         { not: condition("dwelling_exterior_feature:0300.0055", "Roof") },
@@ -329,7 +352,7 @@ export const UAD_DWELLING_EXTERIOR_FIELDS = [
     requiredWhen: { key: "dwelling_exterior_feature:0300.0044", contains: "Other" },
   }),
   feature("0300.0046", "8.029", "Foundation types", "multi_enum", {
-    options: ["Basement", "CrawlSpace", "Other", "PostAndPier", "Runner", "Slab"],
+    options: UAD_EXTERIOR_FOUNDATION_TYPES,
     showWhen: condition("dwelling_exterior_feature:0300.0055", "Foundation"),
     requiredWhen: condition("dwelling_exterior_feature:0300.0055", "Foundation"),
   }),
@@ -356,7 +379,7 @@ export const UAD_DWELLING_EXTERIOR_FIELDS = [
     requiredWhen: condition("dwelling_exterior_feature:0300.0055", "Roof"),
   }),
   feature("0300.0050", "8.033", "Roof materials", "multi_enum", {
-    options: ["Asbestos", "Asphalt", "CeramicTile", "Clay", "Composition", "Concrete", "Copper", "Metal", "Other", "Rubber", "Slate", "SolarShingles", "Synthetic", "TarAndGravel", "Wood"],
+    options: UAD_EXTERIOR_ROOF_MATERIAL_TYPES,
     showWhen: condition("dwelling_exterior_feature:0300.0055", "Roof"),
     requiredWhen: condition("dwelling_exterior_feature:0300.0055", "Roof"),
   }),

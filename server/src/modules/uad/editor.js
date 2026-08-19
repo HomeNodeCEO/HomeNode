@@ -392,6 +392,17 @@ function completionFor(values, entities, assets = []) {
     if (section === "sales_comparison") {
       const included = valueLookup(byKey)(UAD_SALES_COMPARISON_FIELD_KEYS.included);
       if (included === true) {
+        const subjectMaintainsExterior = valueLookup(byKey)("subject:0100.0046") === true;
+        const subjectExteriorFeatures = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature");
+        const subjectExteriorSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_exterior_quality_summary");
+        if (subjectMaintainsExterior) {
+          for (const feature of subjectExteriorFeatures) {
+            const featureType = valueLookup(byKey, feature.id)("dwelling_exterior_feature:0300.0055");
+            if (["Windows", "Other"].includes(featureType) && !subjectExteriorSummaries.some((summary) => summary.parent_entity_id === feature.id)) {
+              required += 1;
+            }
+          }
+        }
         const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
         if (!comparables.length) required += 1;
         for (const comparable of comparables) {
@@ -427,6 +438,7 @@ function completionFor(values, entities, assets = []) {
           ));
           if (!comparableDwellings.length) required += 1;
           const attachment = comparableLookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAttachment);
+          const comparableMaintainsExterior = comparableLookup(UAD_SALES_COMPARISON_FIELD_KEYS.homeownerMaintainsExterior) === true;
           for (const dwelling of comparableDwellings) {
             const dwellingLookup = valueLookup(byKey, dwelling.id);
             const design = dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingStructureDesign);
@@ -451,6 +463,19 @@ function completionFor(values, entities, assets = []) {
                 && entity.parent_entity_id === dwelling.id
               ))
             ) required += 1;
+            if (subjectMaintainsExterior && comparableMaintainsExterior) {
+              required += 2;
+              if (isPresent(dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorQuality))) completed += 1;
+              if (isPresent(dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorCondition))) completed += 1;
+              const componentTypes = new Set(
+                entities
+                  .filter((entity) => entity.entity_type === "sales_comparable_exterior_component" && entity.parent_entity_id === dwelling.id)
+                  .map((entity) => valueLookup(byKey, entity.id)(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentType)),
+              );
+              for (const requiredType of ["ExteriorWallsAndTrim", "Foundation", "Roof", "Windows"]) {
+                if (!componentTypes.has(requiredType)) required += 1;
+              }
+            }
           }
           for (const entityType of [
             "sales_comparable_site_hazard",
@@ -1969,6 +1994,9 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableOutbuildings = entities.filter((entity) => entity.entity_type === "sales_comparable_outbuilding");
     const comparableUnits = entities.filter((entity) => entity.entity_type === "sales_comparable_unit");
     const comparableUnitAccessibility = entities.filter((entity) => entity.entity_type === "sales_comparable_unit_accessibility_feature");
+    const comparableExteriorComponents = entities.filter((entity) => entity.entity_type === "sales_comparable_exterior_component");
+    const subjectExteriorFeatures = entities.filter((entity) => entity.entity_type === "dwelling_exterior_feature");
+    const subjectExteriorSummaries = entities.filter((entity) => entity.entity_type === "sales_comparison_subject_exterior_quality_summary");
     const comparableSiteChildTypes = new Set([
       "sales_comparable_site_hazard",
       "sales_comparable_site_street",
@@ -1991,6 +2019,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const comparableOutbuildingIds = new Set(comparableOutbuildings.map((entity) => entity.id));
     const comparableStructureIds = new Set([...comparableDwellingIds, ...comparableOutbuildingIds]);
     const comparableUnitIds = new Set(comparableUnits.map((entity) => entity.id));
+    const subjectExteriorFeatureIds = new Set(subjectExteriorFeatures.map((entity) => entity.id));
 
     if (included === true && !comparables.length) {
       errors.push(validationError(
@@ -2086,6 +2115,72 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         null,
         "sales_comparable_unit_accessibility_orphaned",
         "Every comparable accessibility feature must be linked to a comparable unit.",
+      ));
+    }
+    if (comparableExteriorComponents.some((component) => !comparableDwellingIds.has(component.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentType),
+        null,
+        "sales_comparable_exterior_component_orphaned",
+        "Every comparable exterior component must be linked to a comparable dwelling.",
+      ));
+    }
+    if (subjectExteriorSummaries.some((summary) => !subjectExteriorFeatureIds.has(summary.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectExteriorQualitySummary),
+        null,
+        "sales_comparison_subject_exterior_summary_orphaned",
+        "Every subject exterior quality summary must be linked to a subject Windows or Other exterior feature.",
+      ));
+    }
+
+    const subjectMaintainsExterior = rootLookup("subject:0100.0046") === true;
+    const subjectExteriorComparisonFeatures = subjectExteriorFeatures.filter((feature) => (
+      ["Windows", "Other"].includes(valueLookup(merged, feature.id)("dwelling_exterior_feature:0300.0055"))
+    ));
+    const subjectExteriorComparisonFeatureIds = new Set(subjectExteriorComparisonFeatures.map((feature) => feature.id));
+    if (subjectExteriorSummaries.some((summary) => !subjectExteriorComparisonFeatureIds.has(summary.parent_entity_id))) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectExteriorQualitySummary),
+        null,
+        "sales_comparison_subject_exterior_summary_parent_invalid",
+        "A subject exterior quality summary may be linked only to a Windows or Other exterior feature.",
+      ));
+    }
+    const subjectOtherExteriorLabels = new Set(
+      subjectExteriorComparisonFeatures
+        .filter((feature) => valueLookup(merged, feature.id)("dwelling_exterior_feature:0300.0055") === "Other")
+        .map((feature) => String(valueLookup(merged, feature.id)("dwelling_exterior_feature:0300.0056") || "").trim())
+        .filter(Boolean),
+    );
+    if (included === true && subjectMaintainsExterior) {
+      if (!subjectExteriorComparisonFeatures.some((feature) => valueLookup(merged, feature.id)("dwelling_exterior_feature:0300.0055") === "Windows")) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectExteriorQualitySummary),
+          null,
+          "sales_comparison_subject_windows_feature_required",
+          "Complete the required subject Windows exterior feature in Section 8 before completing the exterior comparison.",
+        ));
+      }
+      for (const feature of subjectExteriorComparisonFeatures) {
+        const summaries = subjectExteriorSummaries.filter((summary) => summary.parent_entity_id === feature.id);
+        if (summaries.length !== 1) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectExteriorQualitySummary),
+            feature.id,
+            summaries.length ? "sales_comparison_subject_exterior_summary_duplicate" : "sales_comparison_subject_exterior_summary_required",
+            summaries.length
+              ? "Keep exactly one Section 22 quality summary for this subject exterior feature."
+              : "Add the Section 22 quality summary for this subject Windows or Other exterior feature.",
+          ));
+        }
+      }
+    } else if (subjectExteriorSummaries.length) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.subjectExteriorQualitySummary),
+        null,
+        "sales_comparison_subject_exterior_summary_conflict",
+        "Remove subject exterior comparison summaries unless the Sales Comparison Approach is developed and the subject homeowner maintains all dwelling exteriors.",
       ));
     }
     if ([...comparableConstructionMethods, ...comparableHeatingSystems, ...comparableCoolingSystems]
@@ -2409,6 +2504,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       const greenCertifications = comparableGreenCertifications.filter((certification) => certification.parent_entity_id === comparable.id);
       const efficiencyRatings = comparableEfficiencyRatings.filter((rating) => rating.parent_entity_id === comparable.id);
       const attachment = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.propertyAttachment);
+      const comparableMaintainsExterior = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.homeownerMaintainsExterior);
       if (!dwellings.length) {
         errors.push(validationError(
           salesField(UAD_SALES_COMPARISON_FIELD_KEYS.dwellingYearBuilt),
@@ -2453,6 +2549,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         const methods = comparableConstructionMethods.filter((method) => method.parent_entity_id === dwelling.id);
         const heatingSystems = comparableHeatingSystems.filter((system) => system.parent_entity_id === dwelling.id);
         const coolingSystems = comparableCoolingSystems.filter((system) => system.parent_entity_id === dwelling.id);
+        const exteriorComponents = comparableExteriorComponents.filter((component) => component.parent_entity_id === dwelling.id);
 
         if (attachment === "Attached" && !isPresent(design)) {
           errors.push(validationError(
@@ -2641,6 +2738,146 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         );
         for (const system of coolingSystems) {
           conditionalDwellingConflict(system, UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystem, "Other", [UAD_SALES_COMPARISON_FIELD_KEYS.dwellingCoolingSystemOther], "sales_comparable_cooling_system_other_conflict", "Clear the other cooling-system description or select Other.");
+        }
+
+        const exteriorComparisonApplies = subjectMaintainsExterior && comparableMaintainsExterior === true;
+        const exteriorQuality = dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorQuality);
+        const exteriorCondition = dwellingLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorCondition);
+        if (exteriorComparisonApplies) {
+          if (!isPresent(exteriorQuality)) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorQuality),
+              dwelling.id,
+              "sales_comparable_exterior_quality_required",
+              "Provide the UAD exterior quality rating for this comparable dwelling.",
+            ));
+          }
+          if (!isPresent(exteriorCondition)) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorCondition),
+              dwelling.id,
+              "sales_comparable_exterior_condition_required",
+              "Provide the UAD exterior condition rating for this comparable dwelling.",
+            ));
+          }
+          const componentTypes = exteriorComponents
+            .map((component) => valueLookup(merged, component.id)(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentType))
+            .filter(isPresent);
+          for (const requiredType of ["ExteriorWallsAndTrim", "Foundation", "Roof", "Windows"]) {
+            if (!componentTypes.includes(requiredType)) {
+              errors.push(validationError(
+                salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentType),
+                dwelling.id,
+                "sales_comparable_exterior_component_required",
+                `Add the required ${requiredType} exterior comparison component.`,
+              ));
+            }
+          }
+          for (const coreType of ["ExteriorWallsAndTrim", "Foundation", "Roof", "Windows"]) {
+            if (componentTypes.filter((type) => type === coreType).length > 1) {
+              errors.push(validationError(
+                salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentType),
+                dwelling.id,
+                "sales_comparable_exterior_component_duplicate",
+                `Keep exactly one ${coreType} component for this comparable dwelling.`,
+              ));
+            }
+          }
+        } else if (exteriorComponents.length || [exteriorQuality, exteriorCondition].some(isPresent)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.homeownerMaintainsExterior),
+            comparable.id,
+            "sales_comparable_exterior_comparison_conflict",
+            "Clear exterior ratings and components unless both the subject and comparable homeowners maintain all dwelling exteriors.",
+          ));
+        }
+
+        const componentDetailKeys = [
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentOther,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorWallMaterial,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorWallMaterialOther,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorFoundationType,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorFoundationOther,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofMaterial,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofMaterialOther,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorQualitySummary,
+          UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofObservable,
+        ];
+        const allowedDetails = {
+          ExteriorWallsAndTrim: new Set([
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorWallMaterial,
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorWallMaterialOther,
+          ]),
+          Foundation: new Set([
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorFoundationType,
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorFoundationOther,
+          ]),
+          Roof: new Set([
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofMaterial,
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofMaterialOther,
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofObservable,
+          ]),
+          Windows: new Set([UAD_SALES_COMPARISON_FIELD_KEYS.exteriorQualitySummary]),
+          Other: new Set([
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentOther,
+            UAD_SALES_COMPARISON_FIELD_KEYS.exteriorQualitySummary,
+          ]),
+        };
+        const otherComponentLabels = [];
+        for (const component of exteriorComponents) {
+          const componentLookup = valueLookup(merged, component.id);
+          const componentType = componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentType);
+          const allowed = allowedDetails[componentType] || new Set();
+          if (componentDetailKeys.some((key) => !allowed.has(key) && isPresent(componentLookup(key)))) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentType),
+              component.id,
+              "sales_comparable_exterior_component_detail_conflict",
+              "Clear details that do not belong to the selected exterior component type.",
+            ));
+          }
+          const wallMaterials = componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorWallMaterial);
+          if (Array.isArray(wallMaterials) && !wallMaterials.includes("Other") && isPresent(componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorWallMaterialOther))) {
+            errors.push(validationError(salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorWallMaterialOther), component.id, "sales_comparable_exterior_wall_other_conflict", "Clear the other wall material description or select Other."));
+          }
+          const foundationTypes = componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorFoundationType);
+          if (Array.isArray(foundationTypes) && !foundationTypes.includes("Other") && isPresent(componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorFoundationOther))) {
+            errors.push(validationError(salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorFoundationOther), component.id, "sales_comparable_exterior_foundation_other_conflict", "Clear the other foundation type or select Other."));
+          }
+          const roofMaterials = componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofMaterial);
+          if (Array.isArray(roofMaterials) && !roofMaterials.includes("Other") && isPresent(componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofMaterialOther))) {
+            errors.push(validationError(salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofMaterialOther), component.id, "sales_comparable_exterior_roof_other_conflict", "Clear the other roof material or select Other."));
+          }
+          if (componentType === "Roof" && componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorRoofObservable) !== true && isPresent(componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentCondition))) {
+            errors.push(validationError(
+              salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentCondition),
+              component.id,
+              "sales_comparable_exterior_roof_condition_conflict",
+              "Clear the roof condition status when the roof is not observable.",
+            ));
+          }
+          if (componentType === "Other") {
+            const label = String(componentLookup(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentOther) || "").trim();
+            if (label) {
+              otherComponentLabels.push(label);
+              if (!subjectOtherExteriorLabels.has(label)) {
+                errors.push(validationError(
+                  salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentOther),
+                  component.id,
+                  "sales_comparable_exterior_other_subject_mismatch",
+                  "Comparable Other exterior rows must use the exact label of a subject Other exterior feature; unrelated features belong in the Dwelling(s) additional row.",
+                ));
+              }
+            }
+          }
+        }
+        if (new Set(otherComponentLabels).size !== otherComponentLabels.length) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.exteriorComponentOther),
+            dwelling.id,
+            "sales_comparable_exterior_other_duplicate",
+            "Each subject-defined Other exterior feature may appear only once per comparable dwelling.",
+          ));
         }
       }
 

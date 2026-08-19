@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 174);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 211);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -418,6 +418,14 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
       entity.entity_type === "sales_comparable_efficiency_rating"
       && entity.parent_entity_id === salesComparable?.id
     ));
+    const salesComparableUnit = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_unit"
+      && entity.parent_entity_id === salesComparableDwelling?.id
+    ));
+    const salesComparableAccessibility = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparable_unit_accessibility_feature"
+      && entity.parent_entity_id === salesComparableUnit?.id
+    ));
     assert.ok(salesComparable);
     assert.ok(salesComparableSource);
     assert.ok(salesComparableProjectAmenity);
@@ -433,6 +441,8 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     assert.ok(salesComparableRenewableEnergy);
     assert.ok(salesComparableGreenCertification);
     assert.ok(salesComparableEfficiencyRating);
+    assert.ok(salesComparableUnit);
+    assert.ok(salesComparableAccessibility);
     assert.equal(
       siteBuiltEditor.values.find((item) => (
         item.entity_id === salesComparable.id
@@ -536,6 +546,30 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0112"
       ))?.value,
       "62",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableUnit.id
+        && item.context_key === "sales_comparable_unit"
+        && item.uid === "1800.0330"
+      ))?.value,
+      3,
+    );
+    assert.deepEqual(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableUnit.id
+        && item.context_key === "sales_comparable_unit"
+        && item.uid === "1800.0390"
+      ))?.value,
+      { amount: 2050, unit: "SquareFeet" },
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparableAccessibility.id
+        && item.context_key === "sales_comparable_unit_accessibility_feature"
+        && item.uid === "1800.0134"
+      ))?.value,
+      "None",
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

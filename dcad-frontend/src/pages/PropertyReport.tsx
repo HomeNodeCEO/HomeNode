@@ -8,6 +8,7 @@ import {
 } from "@/lib/appraisalReportDraft";
 import {
   createAssignmentFile,
+  downloadCustomAppraisalReportPdf,
   downloadCustomAppraisalWorkfile,
   analyzePropertyContext as runPropertyContextAnalysis,
   getPropertyZoningEvidence,
@@ -4576,6 +4577,12 @@ function AddressHero({
       ...(salesComparisonDraft?.comparables?.length
         ? []
         : ["Complete and save the Sales Comparison Approach before finalizing."]),
+      ...((Number(salesComparisonDraft?.opinionOfValue) || 0) > 0
+        ? []
+        : ["Reconcile a positive Sales Comparison Approach value before finalizing."]),
+      ...(marketConditionsDraft?.response?.analyses?.length
+        ? []
+        : ["Complete and save at least one Market Conditions study before finalizing."]),
       ...(assignmentDirty ? ["Save the current Property Report changes before finalizing."] : []),
     ];
     if (blockers.length) {
@@ -4654,6 +4661,31 @@ function AddressHero({
     } catch (error) {
       setWorkfileStatusMessage(
         error instanceof Error ? error.message : "The appraisal workfile could not be downloaded.",
+      );
+    }
+  };
+
+  const downloadCustomAppraisalPdf = async (file: AppraisalAssignmentFile) => {
+    if (!accountId) return;
+    const editorKey = editorKeyForSave();
+    if (!editorKey) return;
+    setWorkfileStatusMessage(`Building ${file.file_number} appraisal PDF...`);
+    try {
+      const download = await downloadCustomAppraisalReportPdf(accountId, file.id, editorKey);
+      const objectUrl = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = download.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      setWorkfileStatusMessage(
+        `${download.immutable ? "Immutable signed" : "Current draft"} appraisal PDF downloaded as ${download.fileName}${download.pageCount ? ` (${download.pageCount} pages)` : ""}.`,
+      );
+    } catch (error) {
+      setWorkfileStatusMessage(
+        error instanceof Error ? error.message : "The appraisal PDF could not be generated.",
       );
     }
   };
@@ -4897,6 +4929,13 @@ function AddressHero({
                         onClick={() => void downloadCustomAppraisalFile(file)}
                       >
                         {file.workfile?.status === "signed" ? "Download Signed File" : "Download Draft"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm normal-case border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+                        onClick={() => void downloadCustomAppraisalPdf(file)}
+                      >
+                        {file.workfile?.status === "signed" ? "Download Signed PDF" : "Download Draft PDF"}
                       </button>
                       {isActiveFile && file.workfile?.status !== "signed" ? (
                         <button

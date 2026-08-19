@@ -10,11 +10,15 @@ on:
       - "server/migrations/20260824_mobile_custom_appraisal.sql"
       - "server/migrations/20260825_mobile_manual_sketch.sql"
       - "server/migrations/20260828_custom_appraisal_workfiles.sql"
+      - "server/migrations/20260901_custom_appraisal_report_artifacts.sql"
       - "server/scripts/*Mobile*.js"
       - "server/src/database/mobileMigrations.js"
       - "server/src/modules/mobile/**"
       - "server/src/oldServer.js"
+      - "server/src/services/customAppraisalReportPdf.js"
+      - "server/src/services/customAppraisalWorkfiles.js"
       - "server/test/mobile*.test.js"
+      - "server/test/customAppraisalReportPdf.test.js"
       - "server/package*.json"
   push:
     branches:
@@ -27,11 +31,15 @@ on:
       - "server/migrations/20260824_mobile_custom_appraisal.sql"
       - "server/migrations/20260825_mobile_manual_sketch.sql"
       - "server/migrations/20260828_custom_appraisal_workfiles.sql"
+      - "server/migrations/20260901_custom_appraisal_report_artifacts.sql"
       - "server/scripts/*Mobile*.js"
       - "server/src/database/mobileMigrations.js"
       - "server/src/modules/mobile/**"
       - "server/src/oldServer.js"
+      - "server/src/services/customAppraisalReportPdf.js"
+      - "server/src/services/customAppraisalWorkfiles.js"
       - "server/test/mobile*.test.js"
+      - "server/test/customAppraisalReportPdf.test.js"
       - "server/package*.json"
 
 permissions:

@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
 
+import {
+  customAppraisalReportReadinessErrors,
+  ensureCustomAppraisalReportArtifactSchema,
+  ensureSignedCustomAppraisalReportArtifact,
+  loadCustomAppraisalPropertySnapshot,
+} from "./customAppraisalReportPdf.js";
+
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
 const MAX_SECTION_BYTES = 850_000;
@@ -342,6 +349,10 @@ async function signedEvidenceManifest(client, { accountId, assignmentFileId }) {
       LIMIT 1`,
     [accountId, assignmentFileId],
   );
+  const propertyReportData = await loadCustomAppraisalPropertySnapshot(client, {
+    accountId,
+    assignmentFileId,
+  });
   return {
     assignment: assignmentResult.rows[0]?.record || null,
     evidence: {
@@ -353,6 +364,7 @@ async function signedEvidenceManifest(client, { accountId, assignmentFileId }) {
       property_context: propertyContext[0] || null,
       neighborhood_boundary: neighborhoodBoundaries[0] || null,
       neighborhood_relevance: neighborhoodRelevance[0] || null,
+      property_report_data: propertyReportData,
     },
   };
 }
@@ -448,6 +460,7 @@ export async function signCustomAppraisalWorkfile(pool, {
   const signedBy = String(signedByValue || "HomeNode editor").trim().slice(0, 200);
   if (!signedBy) throw new Error("invalid_custom_appraisal_signer");
   await ensureCustomAppraisalWorkfileSchema(pool);
+  await ensureCustomAppraisalReportArtifactSchema(pool);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -480,13 +493,23 @@ export async function signCustomAppraisalWorkfile(pool, {
     snapshot.status = "signed";
     snapshot.signed_at = signedAt;
     snapshot.signed_by = signedBy;
+    const readinessErrors = customAppraisalReportReadinessErrors(
+      snapshot,
+      manifest.evidence.property_report_data,
+    );
+    if (readinessErrors.length) {
+      const error = new Error("custom_appraisal_eo_incomplete");
+      error.readinessErrors = readinessErrors;
+      throw error;
+    }
     const serialized = JSON.stringify(snapshot);
     const checksum = createHash("sha256").update(serialized).digest("hex");
-    await client.query(
+    const signedResult = await client.query(
       `INSERT INTO app.custom_appraisal_signed_snapshots (
          assignment_file_id, canonical_file_name, schema_version,
          snapshot, checksum_sha256, signed_by, signed_at
-       ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::timestamptz)`,
+       ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::timestamptz)
+       RETURNING id`,
       [
         assignmentFileId,
         workfile.canonical_file_name,
@@ -504,10 +527,25 @@ export async function signCustomAppraisalWorkfile(pool, {
         WHERE assignment_file_id = $1`,
       [assignmentFileId, signedAt, signedBy],
     );
+    const artifact = await ensureSignedCustomAppraisalReportArtifact(client, {
+      accountId,
+      assignmentFileId,
+      snapshot,
+      signedSnapshotId: signedResult.rows[0].id,
+      workfileChecksum: checksum,
+    });
     await client.query("COMMIT");
+    const reportPdf = {
+      canonical_file_name: artifact.canonical_file_name,
+      checksum_sha256: artifact.content_sha256,
+      page_count: Number(artifact.page_count),
+      byte_size: Number(artifact.byte_size),
+      generated_at: artifact.generated_at,
+    };
     return {
       ...snapshot,
       checksum_sha256: checksum,
+      report_pdf: reportPdf,
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

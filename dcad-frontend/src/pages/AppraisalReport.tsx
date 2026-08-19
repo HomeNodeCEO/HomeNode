@@ -326,6 +326,7 @@ export default function AppraisalReport() {
   const [assignmentFile, setAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
   const [assignmentLoading, setAssignmentLoading] = useState(Boolean(propertyId));
   const [printBlocker, setPrintBlocker] = useState("");
+  const [pdfGenerating, setPdfGenerating] = useState(false);
   const [recommended, setRecommended] = useState<AppraisalReportComparable[]>([]);
   const [loading, setLoading] = useState(Boolean(propertyId));
   const [salesLoading, setSalesLoading] = useState(false);
@@ -522,9 +523,13 @@ export default function AppraisalReport() {
   const neighborhoodRepresentativeness = calculateNeighborhoodRepresentativeness(neighborhoodDetails);
   const propertyContext = detail.property_context || null;
 
-  const printReport = () => {
+  const downloadServerReport = async () => {
     if (assignmentLoading) {
       setPrintBlocker("Assignment-file checks are still loading. Try again in a moment.");
+      return;
+    }
+    if (!assignmentFile) {
+      setPrintBlocker("Create or select an appraisal file before generating the report PDF.");
       return;
     }
     if (neighborhoodBoundaryErrors.length) {
@@ -534,7 +539,27 @@ export default function AppraisalReport() {
       return;
     }
     setPrintBlocker("");
-    window.setTimeout(() => window.print(), 100);
+    const editorKey = sessionStorage.getItem("homenode-editor-key") || window.prompt("Enter the HomeNode editor key to generate this appraisal PDF:", "")?.trim();
+    if (!editorKey) return;
+    sessionStorage.setItem("homenode-editor-key", editorKey);
+    setPdfGenerating(true);
+    try {
+      const download = await api.downloadCustomAppraisalReportPdf(propertyId, assignmentFile.id, editorKey);
+      const objectUrl = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = download.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The appraisal PDF could not be generated.";
+      if (/401|invalid_editor_key/i.test(message)) sessionStorage.removeItem("homenode-editor-key");
+      setPrintBlocker(message);
+    } finally {
+      setPdfGenerating(false);
+    }
   };
 
   if (loading) {
@@ -929,8 +954,14 @@ export default function AppraisalReport() {
           <a href={`/ComparableSalesAnalysis?propertyId=${encodeURIComponent(propertyId)}`}>
             Sales Comparison
           </a>
-          <button type="button" className="report-print-button" onClick={printReport}>
-            {neighborhoodBoundaryErrors.length ? "Complete Boundary Review" : "Print / Save as PDF"}
+          <button type="button" className="report-print-button" onClick={() => void downloadServerReport()} disabled={pdfGenerating}>
+            {neighborhoodBoundaryErrors.length
+              ? "Complete Boundary Review"
+              : pdfGenerating
+                ? "Building PDF..."
+                : assignmentFile?.workfile?.status === "signed"
+                  ? "Download Signed PDF"
+                  : "Download Draft PDF"}
           </button>
         </div>
       </div>
@@ -1633,7 +1664,7 @@ export default function AppraisalReport() {
             <div className="report-note">
               <strong>{salesSource}.</strong>{" "}
               {draft?.comparables?.length
-                ? "The adjustments and indicated values below reflect the most recently saved sales-comparison workspace in this browser."
+                ? "The adjustments and indicated values below reflect the saved sales-comparison workspace for this appraisal file."
                 : "No saved grid was found, so this rough report uses the current top-ranked sales with zero adjustments. Open the Sales Comparison page to select, rate, and adjust the final comparables."}
             </div>
           </section>

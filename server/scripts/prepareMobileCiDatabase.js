@@ -20,6 +20,10 @@ const workfileMigration = await fs.readFile(
   path.resolve(scriptDirectory, "../migrations/20260828_custom_appraisal_workfiles.sql"),
   "utf8",
 );
+const reportArtifactMigration = await fs.readFile(
+  path.resolve(scriptDirectory, "../migrations/20260901_custom_appraisal_report_artifacts.sql"),
+  "utf8",
+);
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
 try {
   const identity = await pool.query("SELECT current_database() AS database_name");
@@ -28,6 +32,7 @@ try {
   }
   await pool.query(assignmentMigration);
   await pool.query(workfileMigration);
+  await pool.query(reportArtifactMigration);
   console.log(JSON.stringify({ prepared: true, database: identity.rows[0].database_name }));
 } finally {
   await pool.end();

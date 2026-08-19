@@ -79,6 +79,26 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     );
     assert.equal(realRows.rows[0].count, 0);
 
+    const mobilePrincipal = await pool.query(
+      `SELECT users.email, users.display_name, memberships.status, roles.role_code,
+              profiles.profile_status, profiles.signature_policy,
+              users.metadata ->> 'synthetic' AS synthetic
+         FROM app_auth.users users
+         JOIN app_auth.organization_memberships memberships ON memberships.user_id = users.id
+         JOIN app_auth.membership_roles roles
+           ON roles.organization_id = memberships.organization_id AND roles.user_id = memberships.user_id
+         JOIN app_auth.appraiser_profiles profiles ON profiles.user_id = users.id
+        WHERE users.id = '00000000-0000-4000-8000-000000000902'`,
+    );
+    assert.equal(mobilePrincipal.rows.length, 1);
+    assert.equal(mobilePrincipal.rows[0].email, "mobile-appraiser@staging.homenode.invalid");
+    assert.equal(mobilePrincipal.rows[0].display_name, "Mobile Staging Appraiser");
+    assert.equal(mobilePrincipal.rows[0].status, "active");
+    assert.equal(mobilePrincipal.rows[0].role_code, "appraiser");
+    assert.equal(mobilePrincipal.rows[0].profile_status, "active");
+    assert.equal(mobilePrincipal.rows[0].signature_policy, "reauthentication");
+    assert.equal(mobilePrincipal.rows[0].synthetic, "true");
+
     const manufacturedWorkfile = await pool.query(
       `SELECT w.id, w.file_number, w.property_type, v.value #>> '{}' AS construction_method
          FROM appraisal.uad_workfiles w

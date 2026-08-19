@@ -74,6 +74,10 @@ export function createMobileRouter({ pool, verifier, storage, enabled = false, r
       authentication: {
         protocol: "oidc",
         configured: Boolean(verifier?.configured),
+        client_type: "public",
+        authorization_flow: "authorization_code_pkce",
+        client_secret_embedded: false,
+        explicit_identity_mapping: true,
         token_transport: "bearer",
       },
       workflows: MOBILE_WORKFLOW_TYPES,

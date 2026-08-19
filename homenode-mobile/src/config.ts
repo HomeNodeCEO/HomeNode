@@ -26,8 +26,14 @@ function httpsUrl(value: string | undefined, name: string, { allowLocal = false 
 }
 
 export function createMobileConfig(environment: Environment): MobileConfig {
-  const clientId = String(environment.EXPO_PUBLIC_WORKOS_CLIENT_ID || "").trim();
-  if (!/^client_[A-Za-z0-9]+$/.test(clientId)) throw new Error("workos_client_id_required");
+  const clientId = String(
+    environment.EXPO_PUBLIC_OIDC_CLIENT_ID
+      || environment.EXPO_PUBLIC_WORKOS_CLIENT_ID
+      || "",
+  ).trim();
+  if (!clientId || clientId.length > 200 || /[\s/?#]/.test(clientId)) {
+    throw new Error("oidc_client_id_required");
+  }
   return Object.freeze({
     apiBaseUrl: httpsUrl(environment.EXPO_PUBLIC_API_BASE_URL, "api_base_url", { allowLocal: true }),
     oidcIssuer: httpsUrl(environment.EXPO_PUBLIC_OIDC_ISSUER, "oidc_issuer"),

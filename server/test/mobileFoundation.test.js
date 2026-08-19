@@ -380,6 +380,21 @@ test("verifies an RS256 OIDC access token with JWKS", async () => {
   assert.equal(claims.iss, ISSUER);
 });
 
+
+test("preflights OIDC discovery and supported signing keys", async () => {
+  const status = await verifier().preflight();
+  assert.equal(status.configured, true);
+  assert.equal(status.issuer, ISSUER);
+  assert.equal(status.audience, AUDIENCE);
+  assert.equal(status.jwksUri, `${ISSUER}/.well-known/jwks.json`);
+  assert.equal(status.signingAlgorithm, "RS256");
+  assert.equal(status.supportedKeyCount, 1);
+});
+
+test("reports an unconfigured OIDC verifier without contacting a provider", async () => {
+  const status = await createOidcAccessTokenVerifier().preflight();
+  assert.deepEqual(status, { configured: false });
+});
 test("rejects expired, wrong-audience, and tampered OIDC tokens", async () => {
   const oidc = verifier();
   await assert.rejects(() => oidc.verify(token({ exp: Math.floor(NOW / 1000) - 120 })), /invalid_access_token/);

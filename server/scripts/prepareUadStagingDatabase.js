@@ -8,6 +8,9 @@ const SFR_ACCOUNT_ID = "UAD-STAGING-SFR-0001";
 const SFR_FILE_NUMBER = "HN-UAD-STAGING-SFR-0001";
 const MANUFACTURED_HOME_ACCOUNT_ID = "UAD-STAGING-MH-0001";
 const MANUFACTURED_HOME_FILE_NUMBER = "HN-UAD-STAGING-MH-0001";
+const STAGING_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000901";
+const STAGING_USER_ID = "00000000-0000-4000-8000-000000000902";
+const STAGING_USER_EMAIL = "mobile-appraiser@staging.homenode.invalid";
 
 if (process.env.NODE_ENV !== "staging") {
   throw new Error("prepareUadStagingDatabase may only run with NODE_ENV=staging");
@@ -62,6 +65,51 @@ try {
   if (!databaseName.toLowerCase().includes("staging")) {
     throw new Error("staging bootstrap refused a non-staging database");
   }
+
+  await pool.query(
+    `INSERT INTO app_auth.organizations (
+       id, legal_name, display_name, active, metadata
+     ) VALUES ($1, 'HomeNode Staging', 'HomeNode Staging', true, '{"synthetic":true,"environment":"staging"}'::jsonb)
+     ON CONFLICT (id) DO UPDATE SET
+       legal_name = EXCLUDED.legal_name,
+       display_name = EXCLUDED.display_name,
+       active = true,
+       metadata = EXCLUDED.metadata,
+       updated_at = now();
+
+     INSERT INTO app_auth.users (
+       id, email, display_name, active, metadata
+     ) VALUES ($2, $3, 'Mobile Staging Appraiser', true, '{"synthetic":true,"environment":"staging"}'::jsonb)
+     ON CONFLICT (id) DO UPDATE SET
+       email = EXCLUDED.email,
+       display_name = EXCLUDED.display_name,
+       active = true,
+       metadata = EXCLUDED.metadata,
+       updated_at = now();
+
+     INSERT INTO app_auth.organization_memberships (
+       organization_id, user_id, status
+     ) VALUES ($1, $2, 'active')
+     ON CONFLICT (organization_id, user_id) DO UPDATE SET
+       status = 'active',
+       updated_at = now();
+
+     INSERT INTO app_auth.membership_roles (
+       organization_id, user_id, role_code
+     ) VALUES ($1, $2, 'appraiser')
+     ON CONFLICT (organization_id, user_id, role_code) DO NOTHING;
+
+     INSERT INTO app_auth.appraiser_profiles (
+       user_id, default_organization_id, signature_policy, profile_status, metadata
+     ) VALUES ($2, $1, 'reauthentication', 'active', '{"synthetic":true,"environment":"staging"}'::jsonb)
+     ON CONFLICT (user_id) DO UPDATE SET
+       default_organization_id = EXCLUDED.default_organization_id,
+       signature_policy = EXCLUDED.signature_policy,
+       profile_status = 'active',
+       metadata = EXCLUDED.metadata,
+       updated_at = now()`,
+    [STAGING_ORGANIZATION_ID, STAGING_USER_ID, STAGING_USER_EMAIL],
+  );
 
   await pool.query(`
     CREATE SCHEMA IF NOT EXISTS core;
@@ -633,6 +681,8 @@ try {
     database: databaseName,
     synthetic_account_id: SFR_ACCOUNT_ID,
     synthetic_account_ids: [SFR_ACCOUNT_ID, MANUFACTURED_HOME_ACCOUNT_ID],
+    synthetic_mobile_user_id: STAGING_USER_ID,
+    synthetic_mobile_user_email: STAGING_USER_EMAIL,
     site_built_workfile_id: sfrWorkfileId,
     manufactured_home_workfile_id: manufacturedWorkfileId,
   }));

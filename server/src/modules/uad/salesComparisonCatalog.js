@@ -8,7 +8,12 @@ import {
   UAD_EXTERIOR_WALL_MATERIAL_TYPES,
 } from "./dwellingExteriorCatalog.js";
 import { UAD_CONDITION_RATINGS, UAD_QUALITY_RATINGS } from "./overallQualityConditionCatalog.js";
-import { UAD_UNIT_ACCESSIBILITY_TYPES } from "./unitInteriorCatalog.js";
+import {
+  UAD_INTERIOR_COMPONENT_TYPES,
+  UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES,
+  UAD_INTERIOR_ROOM_UPDATE_STATUS_TYPES,
+  UAD_UNIT_ACCESSIBILITY_TYPES,
+} from "./unitInteriorCatalog.js";
 
 export const UAD_SALES_COMPARISON_CAPTION_TYPES = Object.freeze([
   "PropertyPhoto",
@@ -289,6 +294,30 @@ const exteriorComponentTypeIs = (value) => Object.freeze({
 const subjectExteriorFeatureTypeIs = (...values) => Object.freeze({
   any: values.map((value) => ({
     key: "dwelling_exterior_feature:0300.0055",
+    equals: value,
+  })),
+});
+const comparableUnitNotAdu = Object.freeze({
+  key: "sales_comparable_unit:1800.0287",
+  equals: false,
+});
+const subjectUnitNotAdu = Object.freeze({
+  key: "unit:0700.0089",
+  equals: false,
+});
+const subjectUnitHasBathroom = Object.freeze({
+  any: [
+    { key: "unit:0700.0119", greaterThan: 0 },
+    { key: "unit:0700.0120", greaterThan: 0 },
+  ],
+});
+const interiorComponentTypeIs = (value) => Object.freeze({
+  key: "sales_comparable_interior_component:1800.0147",
+  equals: value,
+});
+const subjectInteriorFeatureTypeIs = (...values) => Object.freeze({
+  any: values.map((value) => ({
+    key: "unit_interior_feature:0700.0046",
     equals: value,
   })),
 });
@@ -1295,6 +1324,78 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     },
   ),
 
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0158", "22.09.19", "Interior quality rating", "enum", {
+    options: UAD_QUALITY_RATINGS,
+    showWhen: comparableUnitNotAdu,
+    guidance: "Use the UAD Q1–Q6 definitions. Any overall quality adjustment belongs in Section 22K, not in this subsection.",
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0157", "22.09.25", "Interior condition rating", "enum", {
+    options: UAD_CONDITION_RATINGS,
+    showWhen: comparableUnitNotAdu,
+    guidance: "Use the UAD C1–C6 definitions. Any overall condition adjustment belongs in Section 22K, not in this subsection.",
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0329", "22.09.21", "Overall bathrooms quality summary", "string", {
+    maxLength: 70,
+    showWhen: comparableUnitNotAdu,
+  }),
+  unitChild("Comparable living units", "sales_comparable_unit", "sales_comparable_unit", "1800.0328", "22.09.27", "Overall bathroom update status", "enum", {
+    options: UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES,
+    showWhen: comparableUnitNotAdu,
+  }),
+  unitChild("Comparable kitchens", "sales_comparable_kitchen", "sales_comparable_kitchen", "1800.0325", "Does Not Display", "Room type", "enum", {
+    options: ["Kitchen"],
+    required: true,
+    initialValue: "Kitchen",
+  }),
+  unitChild("Comparable kitchens", "sales_comparable_kitchen", "sales_comparable_kitchen", "1800.0327", "22.09.20", "Kitchen quality summary", "string", {
+    maxLength: 70,
+    required: true,
+  }),
+  unitChild("Comparable kitchens", "sales_comparable_kitchen", "sales_comparable_kitchen", "1800.0326", "22.09.26", "Kitchen update status", "enum", {
+    options: UAD_INTERIOR_ROOM_UPDATE_STATUS_TYPES,
+    required: true,
+  }),
+  unitChild("Comparable interior components", "sales_comparable_interior_component", "sales_comparable_interior_component", "1800.0147", "Does Not Display", "Interior component", "enum", {
+    options: UAD_INTERIOR_COMPONENT_TYPES,
+    required: true,
+    guidance: "Add Flooring and Walls and Ceiling for each non-ADU comparable unit. Add matching Other rows only when the subject has them.",
+  }),
+  unitChild("Comparable interior components", "sales_comparable_interior_component", "sales_comparable_interior_component", "1800.0148", "22.09.08", "Other interior component", "string", {
+    maxLength: 36,
+    showWhen: interiorComponentTypeIs("Other"),
+    requiredWhen: interiorComponentTypeIs("Other"),
+  }),
+  unitChild("Comparable interior components", "sales_comparable_interior_component", "sales_comparable_interior_component", "1800.0146", "22.09.22", "Component quality summary", "string", {
+    maxLength: 70,
+    required: true,
+  }),
+  unitChild("Comparable interior components", "sales_comparable_interior_component", "sales_comparable_interior_component", "1800.0296", "22.09.29", "Component condition summary", "string", {
+    maxLength: 70,
+    showWhen: { any: [interiorComponentTypeIs("WallsAndCeiling"), interiorComponentTypeIs("Other")] },
+    requiredWhen: { any: [interiorComponentTypeIs("WallsAndCeiling"), interiorComponentTypeIs("Other")] },
+  }),
+  unitChild("Comparable interior components", "sales_comparable_interior_component", "sales_comparable_interior_component", "1800.0336", "22.09.28", "Overall flooring update status", "enum", {
+    options: UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES,
+    showWhen: interiorComponentTypeIs("Flooring"),
+    requiredWhen: interiorComponentTypeIs("Flooring"),
+  }),
+  unitChild("Subject unit interior summaries", "sales_comparison_subject_unit_interior_summary", "sales_comparison_subject_unit_interior_summary", "1800.0294", "22.09.05", "Subject overall bathrooms quality summary", "string", {
+    maxLength: 70,
+    required: true,
+  }),
+  unitChild("Subject kitchen quality summaries", "sales_comparison_subject_kitchen_summary", "sales_comparison_subject_kitchen_summary", "1800.0323", "22.09.04", "Subject kitchen quality summary", "string", {
+    maxLength: 70,
+    required: true,
+  }),
+  unitChild("Subject interior component quality summaries", "sales_comparison_subject_interior_quality_summary", "sales_comparison_subject_interior_quality_summary", "1800.0293", "22.09.06", "Subject component quality summary", "string", {
+    maxLength: 70,
+    required: true,
+  }),
+  unitChild("Subject interior component condition summaries", "sales_comparison_subject_interior_condition_summary", "sales_comparison_subject_interior_condition_summary", "1800.0292", "22.09.14", "Subject component condition summary", "string", {
+    maxLength: 70,
+    required: true,
+  }),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1577,6 +1678,56 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
       ],
     }),
   }),
+  sales_comparable_kitchen: Object.freeze({
+    title: "Comparable kitchens",
+    addLabel: "Add comparable kitchen",
+    minItems: 0,
+    maxItems: 23,
+    parentEntityType: "sales_comparable_unit",
+    showWhen: Object.freeze({ all: [salesComparisonIncluded, comparableUnitNotAdu] }),
+  }),
+  sales_comparable_interior_component: Object.freeze({
+    title: "Comparable interior components",
+    addLabel: "Add comparable interior component",
+    minItems: 0,
+    maxItems: 7,
+    parentEntityType: "sales_comparable_unit",
+    showWhen: Object.freeze({ all: [salesComparisonIncluded, comparableUnitNotAdu] }),
+  }),
+  sales_comparison_subject_unit_interior_summary: Object.freeze({
+    title: "Subject unit interior summaries",
+    addLabel: "Add subject bathroom quality summary",
+    minItems: 0,
+    maxItems: 1,
+    parentEntityType: "unit",
+    showWhen: Object.freeze({ all: [salesComparisonIncluded, subjectUnitNotAdu, subjectUnitHasBathroom] }),
+  }),
+  sales_comparison_subject_kitchen_summary: Object.freeze({
+    title: "Subject kitchen quality summaries",
+    addLabel: "Add subject kitchen quality summary",
+    minItems: 0,
+    maxItems: 1,
+    parentEntityType: "unit_room",
+    showWhen: Object.freeze({
+      all: [salesComparisonIncluded, { key: "unit_room:0700.0035", equals: "Kitchen" }],
+    }),
+  }),
+  sales_comparison_subject_interior_quality_summary: Object.freeze({
+    title: "Subject interior component quality summaries",
+    addLabel: "Add subject component quality summary",
+    minItems: 0,
+    maxItems: 1,
+    parentEntityType: "unit_interior_feature",
+    showWhen: Object.freeze({ all: [salesComparisonIncluded, subjectInteriorFeatureTypeIs("Flooring", "WallsAndCeiling", "Other")] }),
+  }),
+  sales_comparison_subject_interior_condition_summary: Object.freeze({
+    title: "Subject interior component condition summaries",
+    addLabel: "Add subject component condition summary",
+    minItems: 0,
+    maxItems: 1,
+    parentEntityType: "unit_interior_feature",
+    showWhen: Object.freeze({ all: [salesComparisonIncluded, subjectInteriorFeatureTypeIs("WallsAndCeiling", "Other")] }),
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -1728,6 +1879,22 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   exteriorRoofObservable: "sales_comparable_exterior_component:1800.0386",
   exteriorComponentCondition: "sales_comparable_exterior_component:1800.0179",
   subjectExteriorQualitySummary: "sales_comparison_subject_exterior_quality_summary:1800.0295",
+  interiorQuality: "sales_comparable_unit:1800.0158",
+  interiorCondition: "sales_comparable_unit:1800.0157",
+  overallBathroomsQuality: "sales_comparable_unit:1800.0329",
+  overallBathroomsUpdate: "sales_comparable_unit:1800.0328",
+  kitchenType: "sales_comparable_kitchen:1800.0325",
+  kitchenQualitySummary: "sales_comparable_kitchen:1800.0327",
+  kitchenUpdateStatus: "sales_comparable_kitchen:1800.0326",
+  interiorComponentType: "sales_comparable_interior_component:1800.0147",
+  interiorComponentOther: "sales_comparable_interior_component:1800.0148",
+  interiorComponentQualitySummary: "sales_comparable_interior_component:1800.0146",
+  interiorComponentConditionSummary: "sales_comparable_interior_component:1800.0296",
+  interiorFlooringUpdate: "sales_comparable_interior_component:1800.0336",
+  subjectOverallBathroomsQuality: "sales_comparison_subject_unit_interior_summary:1800.0294",
+  subjectKitchenQualitySummary: "sales_comparison_subject_kitchen_summary:1800.0323",
+  subjectInteriorQualitySummary: "sales_comparison_subject_interior_quality_summary:1800.0293",
+  subjectInteriorConditionSummary: "sales_comparison_subject_interior_condition_summary:1800.0292",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

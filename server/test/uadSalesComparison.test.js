@@ -39,13 +39,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22H editor on canonical comparable entities", () => {
+test("adds the Section 22A-22I editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 226);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 226);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 242);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 242);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -68,6 +68,12 @@ test("adds the Section 22A-22H editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_unit_accessibility_feature.parentEntityType, "sales_comparable_unit");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_exterior_component.parentEntityType, "sales_comparable_dwelling");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_exterior_quality_summary.parentEntityType, "dwelling_exterior_feature");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_kitchen.parentEntityType, "sales_comparable_unit");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_interior_component.parentEntityType, "sales_comparable_unit");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_unit_interior_summary.parentEntityType, "unit");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_kitchen_summary.parentEntityType, "unit_room");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_interior_quality_summary.parentEntityType, "unit_interior_feature");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_interior_condition_summary.parentEntityType, "unit_interior_feature");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
 });
 
@@ -107,6 +113,9 @@ test("accepts a complete settled comparable with a source and verified property 
   const heating = { id: "85ac6d0b-4404-45d8-a311-c399d049b96f", entity_type: "sales_comparable_heating_system", parent_entity_id: dwelling.id, ordinal: 1, data: {} };
   const unit = { id: "8748d33b-e309-4da6-9602-b870e15336c1", entity_type: "sales_comparable_unit", parent_entity_id: dwelling.id, ordinal: 1, data: {} };
   const accessibility = { id: "39a4804b-b886-4281-9210-b3474bccb0dc", entity_type: "sales_comparable_unit_accessibility_feature", parent_entity_id: unit.id, ordinal: 1, data: {} };
+  const kitchen = { id: "7ecae27d-198d-4e3e-b6b2-d138e60868ba", entity_type: "sales_comparable_kitchen", parent_entity_id: unit.id, ordinal: 1, data: {} };
+  const flooring = { id: "d4a31b2d-cc98-4b85-8de1-4e4fdff22116", entity_type: "sales_comparable_interior_component", parent_entity_id: unit.id, ordinal: 1, data: {} };
+  const walls = { id: "a24d53de-9c6e-441e-8b60-9958866649de", entity_type: "sales_comparable_interior_component", parent_entity_id: unit.id, ordinal: 2, data: {} };
   const values = [
     value(null, "sales_comparison_scope", "1000.0032", true),
     value(comparable.id, "sales_comparable", "1800.0192", 1),
@@ -146,7 +155,20 @@ test("accepts a complete settled comparable with a source and verified property 
     value(unit.id, "sales_comparable_unit", "1800.0390", { amount: 1900, unit: "SquareFeet" }),
     value(unit.id, "sales_comparable_unit", "1800.0393", { amount: 0, unit: "SquareFeet" }),
     value(unit.id, "sales_comparable_unit", "1800.0394", { amount: 0, unit: "SquareFeet" }),
+    value(unit.id, "sales_comparable_unit", "1800.0158", "Q3"),
+    value(unit.id, "sales_comparable_unit", "1800.0157", "C3"),
+    value(unit.id, "sales_comparable_unit", "1800.0329", "Typical bathroom finishes"),
+    value(unit.id, "sales_comparable_unit", "1800.0328", "NotUpdated"),
     value(accessibility.id, "sales_comparable_unit_accessibility_feature", "1800.0134", "None"),
+    value(kitchen.id, "sales_comparable_kitchen", "1800.0325", "Kitchen"),
+    value(kitchen.id, "sales_comparable_kitchen", "1800.0327", "Typical kitchen finishes"),
+    value(kitchen.id, "sales_comparable_kitchen", "1800.0326", "NotUpdated"),
+    value(flooring.id, "sales_comparable_interior_component", "1800.0147", "Flooring"),
+    value(flooring.id, "sales_comparable_interior_component", "1800.0146", "Typical flooring"),
+    value(flooring.id, "sales_comparable_interior_component", "1800.0336", "NotUpdated"),
+    value(walls.id, "sales_comparable_interior_component", "1800.0147", "WallsAndCeiling"),
+    value(walls.id, "sales_comparable_interior_component", "1800.0146", "Typical painted drywall"),
+    value(walls.id, "sales_comparable_interior_component", "1800.0296", "Typical wear"),
     value(method.id, "sales_comparable_construction_method", "1800.0171", "SiteBuilt"),
     value(heating.id, "sales_comparable_heating_system", "1800.0165", "ForcedWarmAir"),
     value(source.id, "sales_comparable_data_source", "0700.0125", "MLS"),
@@ -159,7 +181,7 @@ test("accepts a complete settled comparable with a source and verified property 
     content_type: "image/jpeg",
     status: "verified",
   }];
-  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view, dwelling, method, heating, unit, accessibility], assets), []);
+  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view, dwelling, method, heating, unit, accessibility, kitchen, flooring, walls], assets), []);
 });
 
 test("rejects missing evidence and contradictory comparable transaction records", () => {
@@ -422,6 +444,53 @@ test("validates Section 22H exterior ratings, core components, subject summaries
   ]) assert.equal(codes.includes(code), true, code);
 });
 
+test("validates Section 22I non-ADU ratings, kitchens, interior components, and subject summaries", () => {
+  const comparable = { id: "00db10f8-3f7c-4b6a-a33b-2af775056024", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const dwelling = { id: "3022ef27-72d6-49fb-8645-61468b00af74", entity_type: "sales_comparable_dwelling", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const comparableUnit = { id: "2fa830c8-c308-44ee-856e-01496893615f", entity_type: "sales_comparable_unit", parent_entity_id: dwelling.id, ordinal: 1, data: {} };
+  const unrelatedOther = { id: "3830b554-1399-45db-a9f8-a1c2d50cbc3f", entity_type: "sales_comparable_interior_component", parent_entity_id: comparableUnit.id, ordinal: 1, data: {} };
+  const subjectDwelling = { id: "b6d9fc4d-f10a-4785-8ad0-39af5610a410", entity_type: "dwelling", parent_entity_id: null, ordinal: 1, data: {} };
+  const subjectUnit = { id: "73dbcfb2-f253-4b87-b38c-c13785a773a0", entity_type: "unit", parent_entity_id: subjectDwelling.id, ordinal: 1, data: {} };
+  const subjectKitchen = { id: "c675b917-9eda-490e-8752-9b2f7cbc2538", entity_type: "unit_room", parent_entity_id: subjectUnit.id, ordinal: 1, data: {} };
+  const subjectFlooring = { id: "5d04f040-b369-4866-9745-e62df10c35e8", entity_type: "unit_interior_feature", parent_entity_id: subjectUnit.id, ordinal: 1, data: {} };
+  const subjectWalls = { id: "4b2dc58e-3693-41e4-8124-b01280369a4a", entity_type: "unit_interior_feature", parent_entity_id: subjectUnit.id, ordinal: 2, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(subjectUnit.id, "unit", "0700.0089", false),
+    value(subjectUnit.id, "unit", "0700.0119", 1),
+    value(subjectUnit.id, "unit", "0700.0120", 0),
+    value(subjectKitchen.id, "unit_room", "0700.0035", "Kitchen"),
+    value(subjectFlooring.id, "unit_interior_feature", "0700.0046", "Flooring"),
+    value(subjectWalls.id, "unit_interior_feature", "0700.0046", "WallsAndCeiling"),
+    value(comparableUnit.id, "sales_comparable_unit", "1800.0287", false),
+    value(comparableUnit.id, "sales_comparable_unit", "1800.0331", 1),
+    value(comparableUnit.id, "sales_comparable_unit", "1800.0332", 0),
+    value(unrelatedOther.id, "sales_comparable_interior_component", "1800.0147", "Other"),
+    value(unrelatedOther.id, "sales_comparable_interior_component", "1800.0148", "Cupola"),
+    value(unrelatedOther.id, "sales_comparable_interior_component", "1800.0146", "Decorative cupola"),
+    value(unrelatedOther.id, "sales_comparable_interior_component", "1800.0296", "Typical wear"),
+  ];
+  const codes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    values,
+    [comparable, dwelling, comparableUnit, unrelatedOther, subjectDwelling, subjectUnit, subjectKitchen, subjectFlooring, subjectWalls],
+  ).map((error) => error.code);
+  for (const code of [
+    "sales_comparison_subject_bathrooms_quality_summary_required",
+    "sales_comparison_subject_kitchen_quality_summary_required",
+    "sales_comparison_subject_interior_quality_summary_required",
+    "sales_comparison_subject_interior_condition_summary_required",
+    "sales_comparable_interior_quality_required",
+    "sales_comparable_interior_condition_required",
+    "sales_comparable_kitchen_required",
+    "sales_comparable_bathrooms_quality_summary_required",
+    "sales_comparable_bathrooms_update_required",
+    "sales_comparable_interior_component_required",
+    "sales_comparable_interior_other_subject_mismatch",
+  ]) assert.equal(codes.includes(code), true, code);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -561,6 +630,22 @@ test("seeds Section 22H exterior ratings, component hierarchy, redisplays, and o
   assert.match(sql, /ImprovementComponentQualitySummaryDescription/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-EXTERIOR-006/);
   assert.match(runner, /20260911_uad_sales_comparison_exterior_quality\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22I interior ratings, kitchen/component hierarchy, redisplays, and official rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260912_uad_sales_comparison_interior_quality.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const ruleId of ["UAD1419", "UAD1420"]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /sales_comparable_kitchen/);
+  assert.match(sql, /sales_comparable_interior_component/);
+  assert.match(sql, /sales_comparison_subject_kitchen_summary/);
+  assert.match(sql, /'0700\.0067','unit','22\.09\.03'/);
+  assert.match(sql, /'1800\.0158','sales_comparable_unit','22\.09\.19'/);
+  assert.match(sql, /ImprovementComponentConditionSummaryDescription/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-INTERIOR-006/);
+  assert.match(runner, /20260912_uad_sales_comparison_interior_quality\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

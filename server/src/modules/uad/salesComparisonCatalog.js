@@ -109,6 +109,15 @@ export const UAD_SALES_COMPARABLE_BODY_OF_WATER_TYPES = Object.freeze([
   "Pond", "Reservoir", "River", "Sound",
 ]);
 
+export const UAD_SALES_COMPARABLE_WATER_ACCESS_DEPTH_TYPES = Object.freeze([
+  "DeepWater", "NonNavigable", "Other", "ShallowWater",
+]);
+
+export const UAD_SALES_COMPARABLE_WATERFRONT_FEATURE_TYPES = Object.freeze([
+  "Beach", "BoatLift", "BoatRamp", "BoatSlip", "Dock", "None", "Other", "Pier",
+  "Riprap", "SeawallOrBulkhead",
+]);
+
 export const UAD_SALES_COMPARABLE_ENVIRONMENTAL_TYPES = Object.freeze([
   "HazardousAboveGroundStorageTank", "HazardousSubstances", "Landfill", "None", "Other",
   "Radon", "SlushPit", "SoilContamination", "SuperfundSite", "UndergroundStorageTank",
@@ -173,6 +182,14 @@ const projectComp = (contextKey, uid, reportFieldId, label, dataType, options = 
 const comparableSiteNotOwnedInCommon = Object.freeze({
   key: "sales_comparable_site:1800.0277",
   equals: false,
+});
+const comparableBodyOfWaterInfluence = Object.freeze({
+  key: "sales_comparable_site_influence:1800.0233",
+  equals: "BodyOfWater",
+});
+const comparablePrivateWaterAccess = Object.freeze({
+  key: "sales_comparable_site_influence:1800.0279",
+  equals: true,
 });
 const siteComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
   "Sales comparables — site information",
@@ -587,15 +604,54 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     showWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "Other" },
     requiredWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "Other" },
   }),
-  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0228", "22.03.42", "Body of water", "enum", {
-    options: UAD_SALES_COMPARABLE_BODY_OF_WATER_TYPES,
-    showWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "BodyOfWater" },
-    requiredWhen: { key: "sales_comparable_site_influence:1800.0233", equals: "BodyOfWater" },
+  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0238", "22.04.08", "Right to build waterfront features", "boolean", {
+    showWhen: comparableBodyOfWaterInfluence,
+    guidance: "Required when Permanent Waterfront Feature is None. Leave blank unless that row is included.",
   }),
-  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0229", "22.03.42", "Other body of water", "string", {
+  siteChild("Comparable site influences", "sales_comparable_site_influence", "sales_comparable_site_influence", "1800.0237", "22.04.09", "Total private water frontage", "measurement", {
+    units: ["Feet", "Meters"],
+    minimum: 0,
+    maximum: 999999,
+    showWhen: comparableBodyOfWaterInfluence,
+    guidance: "Optional row. Enter the combined linear measurement for all waterfronts with private access when this comparison row is relevant.",
+  }),
+
+  siteChild("Comparable bodies of water", "sales_comparable_body_of_water", "sales_comparable_site_influence", "1800.0228", "22.04.06", "Body of water", "enum", {
+    options: UAD_SALES_COMPARABLE_BODY_OF_WATER_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable bodies of water", "sales_comparable_body_of_water", "sales_comparable_site_influence", "1800.0229", "22.04.06", "Other body of water", "string", {
     maxLength: 21,
     showWhen: { key: "sales_comparable_site_influence:1800.0228", equals: "Other" },
     requiredWhen: { key: "sales_comparable_site_influence:1800.0228", equals: "Other" },
+  }),
+  siteChild("Comparable bodies of water", "sales_comparable_body_of_water", "sales_comparable_site_influence", "1800.0279", "Does Not Display", "Private access to this body of water", "boolean", {
+    required: true,
+    guidance: "Answer for every body of water. The Section 22D subsection displays when the subject or any comparable has private access.",
+  }),
+  siteChild("Comparable bodies of water", "sales_comparable_body_of_water", "sales_comparable_site_influence", "1800.0227", "22.04.06", "Body of water name", "string", {
+    maxLength: 45,
+    showWhen: comparablePrivateWaterAccess,
+  }),
+  siteChild("Comparable bodies of water", "sales_comparable_body_of_water", "sales_comparable_site_influence", "1800.0321", "22.04.06", "Water access depth", "enum", {
+    options: UAD_SALES_COMPARABLE_WATER_ACCESS_DEPTH_TYPES,
+    showWhen: comparablePrivateWaterAccess,
+    requiredWhen: comparablePrivateWaterAccess,
+  }),
+  siteChild("Comparable bodies of water", "sales_comparable_body_of_water", "sales_comparable_site_influence", "1800.0322", "22.04.06", "Other water access depth", "string", {
+    maxLength: 21,
+    showWhen: { key: "sales_comparable_site_influence:1800.0321", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_site_influence:1800.0321", equals: "Other" },
+  }),
+
+  siteChild("Comparable permanent waterfront features", "sales_comparable_waterfront_feature", "sales_comparable_waterfront_feature", "1800.0230", "22.04.07", "Permanent waterfront feature", "enum", {
+    options: UAD_SALES_COMPARABLE_WATERFRONT_FEATURE_TYPES,
+    required: true,
+  }),
+  siteChild("Comparable permanent waterfront features", "sales_comparable_waterfront_feature", "sales_comparable_waterfront_feature", "1800.0231", "22.04.07", "Other permanent waterfront feature", "string", {
+    maxLength: 33,
+    showWhen: { key: "sales_comparable_waterfront_feature:1800.0230", equals: "Other" },
+    requiredWhen: { key: "sales_comparable_waterfront_feature:1800.0230", equals: "Other" },
   }),
 
   siteChild("Comparable apparent environmental conditions", "sales_comparable_site_environmental", "sales_comparable_site_environmental", "1800.0116", "22.03.44", "Apparent environmental condition", "enum", {
@@ -641,6 +697,7 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   siteAdjustment("sales_comparable_adjustment_site_influence", "22.03.43", "Site influence adjustment"),
   siteAdjustment("sales_comparable_adjustment_environmental", "22.03.45", "Apparent environmental conditions adjustment"),
   siteAdjustment("sales_comparable_adjustment_view", "22.03.47", "View and range adjustment"),
+  siteAdjustment("sales_comparable_adjustment_water_frontage", "22.04.05", "Water frontage with private access adjustment"),
 
   field(
     "Comparable data sources",
@@ -779,6 +836,22 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     maxItems: UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES.length,
     parentEntityType: "sales_comparable",
   }),
+  sales_comparable_body_of_water: Object.freeze({
+    title: "Comparable bodies of water",
+    addLabel: "Add body of water",
+    minItems: 0,
+    maxItems: 20,
+    parentEntityType: "sales_comparable_site_influence",
+    showWhen: comparableBodyOfWaterInfluence,
+  }),
+  sales_comparable_waterfront_feature: Object.freeze({
+    title: "Comparable permanent waterfront features",
+    addLabel: "Add permanent waterfront feature",
+    minItems: 0,
+    maxItems: UAD_SALES_COMPARABLE_WATERFRONT_FEATURE_TYPES.length,
+    parentEntityType: "sales_comparable_body_of_water",
+    showWhen: comparablePrivateWaterAccess,
+  }),
   sales_comparable_site_environmental: Object.freeze({
     title: "Comparable apparent environmental conditions",
     addLabel: "Add apparent environmental condition",
@@ -858,6 +931,15 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   siteInfluenceOther: "sales_comparable_site_influence:1800.0234",
   siteBodyOfWater: "sales_comparable_site_influence:1800.0228",
   siteBodyOfWaterOther: "sales_comparable_site_influence:1800.0229",
+  siteBodyOfWaterPrivateAccess: "sales_comparable_site_influence:1800.0279",
+  siteBodyOfWaterName: "sales_comparable_site_influence:1800.0227",
+  siteWaterAccessDepth: "sales_comparable_site_influence:1800.0321",
+  siteWaterAccessDepthOther: "sales_comparable_site_influence:1800.0322",
+  siteWaterfrontFeature: "sales_comparable_waterfront_feature:1800.0230",
+  siteWaterfrontFeatureOther: "sales_comparable_waterfront_feature:1800.0231",
+  siteWaterfrontDevelopmentRights: "sales_comparable_site_influence:1800.0238",
+  siteWaterFrontageTotalLength: "sales_comparable_site_influence:1800.0237",
+  siteWaterFrontageAdjustment: "sales_comparable_adjustment_water_frontage:1800.0317",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

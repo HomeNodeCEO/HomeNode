@@ -23,6 +23,8 @@ import {
   UAD_SALES_COMPARABLE_LISTING_STATUSES,
   UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES,
   UAD_SALES_COMPARABLE_VIEW_TYPES,
+  UAD_SALES_COMPARABLE_WATER_ACCESS_DEPTH_TYPES,
+  UAD_SALES_COMPARABLE_WATERFRONT_FEATURE_TYPES,
   UAD_SALES_COMPARISON_FIELDS,
   isVerifiedSalesComparisonAsset,
 } from "../src/modules/uad/salesComparisonCatalog.js";
@@ -33,13 +35,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22C editor on canonical comparable entities", () => {
+test("adds the Section 22A-22D editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 110);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 110);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 119);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 119);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -48,6 +50,8 @@ test("adds the Section 22A-22C editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_right_not_included.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_project_amenity.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_influence.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_body_of_water.parentEntityType, "sales_comparable_site_influence");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_waterfront_feature.parentEntityType, "sales_comparable_body_of_water");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
 });
 
@@ -59,6 +63,8 @@ test("uses official Section 22 general-information enumerations and conditional 
   assert.equal(UAD_NATIVE_AMERICAN_LAND_TYPES.includes("TribalTrustLand"), true);
   assert.equal(UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES.includes("BusyRoadway"), true);
   assert.equal(UAD_SALES_COMPARABLE_VIEW_TYPES.includes("TrafficWallBarriers"), true);
+  assert.deepEqual(UAD_SALES_COMPARABLE_WATER_ACCESS_DEPTH_TYPES, ["DeepWater", "NonNavigable", "Other", "ShallowWater"]);
+  assert.equal(UAD_SALES_COMPARABLE_WATERFRONT_FEATURE_TYPES.includes("SeawallOrBulkhead"), true);
   assert.deepEqual(UAD_PROPERTY_RIGHTS_NOT_INCLUDED, ["AirRights", "MineralRights", "Other", "TimberRights", "WaterRights"]);
 
   const ratio = getUadField("sales_comparable_listing", "1800.0316");
@@ -188,6 +194,42 @@ test("validates mandatory Section 22C Site records and exclusive None selections
   assert.equal(codes.includes("sales_comparable_site_view_required"), true);
 });
 
+test("validates Section 22D body-of-water hierarchy and private-access conditions", () => {
+  const comparable = { id: "d9c0bfac-b523-4437-8365-c5ec1ba89acb", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const influence = { id: "c8cb2b08-5b79-4f94-82b2-4951bed38dc0", entity_type: "sales_comparable_site_influence", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const body = { id: "703a338b-5458-44db-af73-38bbbc2fe6e0", entity_type: "sales_comparable_body_of_water", parent_entity_id: influence.id, ordinal: 1, data: {} };
+  const noneFeature = { id: "cf321677-4801-418d-aa31-826aee90b194", entity_type: "sales_comparable_waterfront_feature", parent_entity_id: body.id, ordinal: 1, data: {} };
+  const dockFeature = { id: "03e2015e-b49d-48bb-b005-52298d56be5c", entity_type: "sales_comparable_waterfront_feature", parent_entity_id: body.id, ordinal: 2, data: {} };
+  const values = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(influence.id, "sales_comparable_site_influence", "1800.0233", "BodyOfWater"),
+    value(body.id, "sales_comparable_site_influence", "1800.0228", "Lake"),
+    value(body.id, "sales_comparable_site_influence", "1800.0279", true),
+    value(body.id, "sales_comparable_site_influence", "1800.0321", "ShallowWater"),
+    value(noneFeature.id, "sales_comparable_waterfront_feature", "1800.0230", "None"),
+    value(dockFeature.id, "sales_comparable_waterfront_feature", "1800.0230", "Dock"),
+  ];
+  const codes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    values,
+    [comparable, influence, body, noneFeature, dockFeature],
+  ).map((error) => error.code);
+  assert.equal(codes.includes("sales_comparable_waterfront_feature_none_conflict"), true);
+  assert.equal(codes.includes("sales_comparable_waterfront_development_rights_required"), true);
+
+  const missingBodyCodes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    [
+      value(null, "sales_comparison_scope", "1000.0032", true),
+      value(influence.id, "sales_comparable_site_influence", "1800.0233", "BodyOfWater"),
+    ],
+    [comparable, influence],
+  ).map((error) => error.code);
+  assert.equal(missingBodyCodes.includes("sales_comparable_body_of_water_required"), true);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -243,6 +285,22 @@ test("seeds Section 22C Site fields, redisplays, and current official rules addi
   assert.match(sql, /'1800\.0233','sales_comparable_site_influence','22\.03\.42'/);
   assert.match(sql, /PropertyStreetAccessAndSurface/);
   assert.match(sql, /sales_comparable_site_environmental/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22D water frontage fields, hierarchy, redisplays, and rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260907_uad_sales_comparison_water_frontage.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  assert.match(sql, /UAD1462/);
+  assert.match(sql, /PrivateAccessIndicator/);
+  assert.match(sql, /sales_comparable_body_of_water/);
+  assert.match(sql, /sales_comparable_waterfront_feature/);
+  assert.match(sql, /'1500\.0072','site_influence','22\.04\.01'/);
+  assert.match(sql, /'1800\.0317','sales_comparable_adjustment_water_frontage','22\.04\.05'/);
+  assert.match(sql, /WaterFrontage/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-WATER-005/);
+  assert.match(runner, /20260907_uad_sales_comparison_water_frontage\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

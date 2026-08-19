@@ -1,10 +1,38 @@
 const impactOptions = ["Adverse", "Beneficial", "Neutral"];
 
 const condition = (key, equals) => ({ key, equals });
+const bodyOfWaterInfluence = condition("site_influence:1500.0087", "BodyOfWater");
+const privateWaterAccess = condition("site_influence:1500.0075", true);
+
+export const UAD_SITE_CAPTION_TYPES = Object.freeze([
+  "PropertyAccess", "PropertyPhoto", "SiteInfluence", "View", "SiteCharacteristic",
+  "PropertyBoundaries", "Encroachment", "WaterFrontage", "SiteExhibit",
+]);
+
+export const UAD_SITE_IMAGE_CONTENT_TYPES = Object.freeze([
+  "image/avif", "image/bmp", "image/gif", "image/heic", "image/heif", "image/jpeg",
+  "image/png", "image/tiff", "image/webp",
+]);
 
 export const UAD_SITE_ENTITY_GROUPS = Object.freeze({
   site_parcel: { title: "Parcels", addLabel: "Add parcel", minItems: 0 },
   site_influence: { title: "Location and site influences", addLabel: "Add influence", minItems: 0 },
+  site_body_of_water: {
+    title: "Bodies of water",
+    addLabel: "Add body of water",
+    minItems: 0,
+    maxItems: 20,
+    parentEntityType: "site_influence",
+    showWhen: bodyOfWaterInfluence,
+  },
+  site_waterfront_feature: {
+    title: "Permanent waterfront features",
+    addLabel: "Add permanent waterfront feature",
+    minItems: 0,
+    maxItems: 10,
+    parentEntityType: "site_body_of_water",
+    showWhen: privateWaterAccess,
+  },
   site_view: { title: "Views", addLabel: "Add view", minItems: 0 },
   site_encumbrance: { title: "Restrictions, easements, and encroachments", addLabel: "Add encumbrance", minItems: 0 },
   site_feature: { title: "Other site features", addLabel: "Add site feature", minItems: 0 },
@@ -152,6 +180,20 @@ export const UAD_SITE_FIELDS = [
   { section: "site", entityType: "site_influence", group: "Location and site influences", contextKey: "site_influence", uid: "1500.0015", reportFieldId: "4.026", label: "Distance to influence", dataType: "measurement", units: ["Feet", "Kilometers", "Meters", "Miles"], minimum: 0 },
   { section: "site", entityType: "site_influence", group: "Location and site influences", contextKey: "site_influence", uid: "1500.0182", reportFieldId: "4.028", label: "Influence impact", dataType: "enum", required: true, options: impactOptions },
   { section: "site", entityType: "site_influence", group: "Location and site influences", contextKey: "site_influence", uid: "1500.0181", reportFieldId: "4.029", label: "Influence description", dataType: "text", required: true, maxLength: 500 },
+  { section: "site", entityType: "site_influence", group: "Location and site influences", contextKey: "site_influence", uid: "1500.0092", reportFieldId: "4.033", label: "Right to build waterfront features", dataType: "boolean", showWhen: bodyOfWaterInfluence },
+  { section: "site", entityType: "site_influence", group: "Location and site influences", contextKey: "site_influence", uid: "1500.0091", reportFieldId: "4.031", label: "Total private water frontage", dataType: "measurement", units: ["Feet", "Meters"], minimum: 0, maximum: 999999, showWhen: bodyOfWaterInfluence, guidance: "Enter the combined linear measurement for all bodies of water with private access." },
+
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0073", reportFieldId: "4.034", label: "Body of water", dataType: "enum", required: true, options: ["Bay", "Canal", "Cove", "Creek", "Gulf", "Lake", "Marsh", "Ocean", "Other", "Pond", "Reservoir", "River", "Sound"] },
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0074", reportFieldId: "4.034", label: "Other body of water", dataType: "string", maxLength: 21, showWhen: condition("site_influence:1500.0073", "Other"), requiredWhen: condition("site_influence:1500.0073", "Other") },
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0075", reportFieldId: "Does Not Display", label: "Private access to this body of water", dataType: "boolean", required: true },
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0072", reportFieldId: "4.035", label: "Body of water name", dataType: "string", maxLength: 45, showWhen: privateWaterAccess },
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0197", reportFieldId: "4.037", label: "Waterfront access depth", dataType: "enum", options: ["DeepWater", "NonNavigable", "Other", "ShallowWater"], showWhen: privateWaterAccess, requiredWhen: privateWaterAccess },
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0198", reportFieldId: "4.037", label: "Other waterfront access depth", dataType: "string", maxLength: 21, showWhen: condition("site_influence:1500.0197", "Other"), requiredWhen: condition("site_influence:1500.0197", "Other") },
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0079", reportFieldId: "4.036", label: "Waterfront access rights", dataType: "enum", options: ["Deeded", "Other", "Permitted", "PrivatelyOwned"], showWhen: privateWaterAccess, requiredWhen: privateWaterAccess },
+  { section: "site", entityType: "site_body_of_water", group: "Bodies of water", contextKey: "site_influence", uid: "1500.0080", reportFieldId: "4.036", label: "Other waterfront access rights", dataType: "string", maxLength: 45, showWhen: condition("site_influence:1500.0079", "Other"), requiredWhen: condition("site_influence:1500.0079", "Other") },
+
+  { section: "site", entityType: "site_waterfront_feature", group: "Permanent waterfront features", contextKey: "site_influence", uid: "1500.0082", reportFieldId: "4.032", label: "Permanent waterfront feature", dataType: "enum", required: true, options: ["Beach", "BoatLift", "BoatRamp", "BoatSlip", "Dock", "None", "Other", "Pier", "Riprap", "SeawallOrBulkhead"] },
+  { section: "site", entityType: "site_waterfront_feature", group: "Permanent waterfront features", contextKey: "site_influence", uid: "1500.0083", reportFieldId: "4.032", label: "Other permanent waterfront feature", dataType: "string", maxLength: 33, showWhen: condition("site_influence:1500.0082", "Other"), requiredWhen: condition("site_influence:1500.0082", "Other") },
 
   { section: "site", entityType: "site_view", group: "Views", contextKey: "site_view", uid: "1500.0117", reportFieldId: "4.039", label: "Primary view", dataType: "boolean", required: true },
   { section: "site", entityType: "site_view", group: "Views", contextKey: "site_view", uid: "1500.0120", reportFieldId: "4.039", label: "View type", dataType: "enum", required: true, options: ["Bay", "Canal", "CityStreet", "Commercial", "Cove", "Creek", "GolfCourse", "Gulf", "HighDensityResidential", "Highway", "Industrial", "Lake", "Marsh", "Mountain", "Ocean", "Other", "Park", "ParkingLot", "Pastoral", "Pond", "Reservoir", "Residential", "River", "School", "Skyline", "Sound", "TrafficWallBarriers", "Valley", "Woods"] },
@@ -180,3 +222,11 @@ export const UAD_SITE_FIELDS = [
   { section: "site", entityType: "site_defect", group: "Site defects", contextKey: "site_defect", uid: "3900.0124", reportFieldId: "4.103", label: "Affects soundness or structural integrity", dataType: "boolean", required: true },
   { section: "site", entityType: "site_defect", group: "Site defects", contextKey: "site_defect", uid: "3900.0128", reportFieldId: "4.104", label: "Required action", dataType: "enum", required: true, options: ["Completion", "Inspection", "None", "Repair"] },
 ];
+
+export function isVerifiedSiteAsset(asset, captionType = null) {
+  return asset?.section_number === 4
+    && asset?.status === "verified"
+    && UAD_SITE_CAPTION_TYPES.includes(asset?.caption_type)
+    && (!captionType || asset?.caption_type === captionType)
+    && UAD_SITE_IMAGE_CONTENT_TYPES.includes(String(asset?.content_type || "").toLowerCase());
+}

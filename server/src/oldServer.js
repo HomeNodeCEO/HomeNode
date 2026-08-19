@@ -118,6 +118,7 @@ import {
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
 } from "./services/customAppraisalWorkfiles.js";
+import { getCustomAppraisalReportPdf } from "./services/customAppraisalReportPdf.js";
 import {
   analyzePropertyContext,
   getPropertyContextStatus,
@@ -2015,6 +2016,47 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/download", async (r
   }
 });
 
+/** Generate a fixed-layout draft PDF or return the immutable signed PDF artifact. */
+app.get("/api/accounts/:id/assignment-files/:fileId/workfile/report.pdf", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await ensureCustomAppraisalWorkfilesAvailable();
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const download = await getCustomAppraisalWorkfileDownload(pool, {
+      accountId: canonicalId,
+      assignmentFileId,
+    });
+    const report = await getCustomAppraisalReportPdf(pool, {
+      accountId: canonicalId,
+      assignmentFileId,
+      download,
+    });
+    const fileName = String(report.canonical_file_name).replace(/[\r\n"]/g, "_");
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${fileName}"`,
+      "Content-Length": String(report.content.length),
+      "Cache-Control": report.immutable ? "private, max-age=86400, immutable" : "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-HomeNode-Immutable": String(report.immutable),
+      "X-HomeNode-Report-Pages": String(report.page_count),
+      "ETag": `"${report.content_sha256}"`,
+    });
+    return res.send(report.content);
+  } catch (error) {
+    if (error?.message === "assignment_file_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    console.error("custom appraisal report PDF failed", error);
+    return res.status(500).json({ error: "custom_appraisal_report_pdf_failed" });
+  }
+});
+
 /** Save one independently versioned Custom Appraisal section. */
 app.put("/api/accounts/:id/assignment-files/:fileId/workfile/sections/:sectionKey", async (req, res) => {
   const requestedId = String(req.params.id || "").trim();
@@ -2084,6 +2126,12 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
     }
     if (["custom_appraisal_workfile_signed", "custom_appraisal_workfile_empty"].includes(error?.message)) {
       return res.status(409).json({ error: error.message });
+    }
+    if (error?.message === "custom_appraisal_eo_incomplete") {
+      return res.status(422).json({
+        error: error.message,
+        readiness_errors: error.readinessErrors || [],
+      });
     }
     if (String(error?.message || "").startsWith("invalid_")) {
       return res.status(400).json({ error: error.message });

@@ -492,6 +492,13 @@ export interface CustomAppraisalWorkfile {
   } | null;
   sections: Record<string, CustomAppraisalWorkfileSection>;
   checksum_sha256?: string;
+  report_pdf?: {
+    canonical_file_name: string;
+    checksum_sha256: string;
+    page_count: number;
+    byte_size: number;
+    generated_at: string;
+  } | null;
 }
 
 export interface SalePhoto {
@@ -2461,6 +2468,43 @@ export async function downloadCustomAppraisalWorkfile(
     blob: await response.blob(),
     fileName,
     immutable: response.headers.get('x-homenode-immutable') === 'true',
+  };
+}
+
+/** Download the fixed-layout server PDF for the current draft or signed file. */
+export async function downloadCustomAppraisalReportPdf(
+  accountId: string,
+  assignmentFileId: number,
+  editorKey: string,
+): Promise<{ blob: Blob; fileName: string; immutable: boolean; pageCount: number | null }> {
+  const id = (accountId || '').trim();
+  const response = await fetch(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/report.pdf`,
+    ),
+    { headers: { 'x-homenode-editor-key': editorKey } },
+  );
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      message = Array.isArray(payload?.readiness_errors) && payload.readiness_errors.length
+        ? `${payload.error}: ${payload.readiness_errors.join(' ')}`
+        : payload?.error || message;
+    } catch {
+      // Preserve the HTTP status when an upstream proxy returns plain text.
+    }
+    throw new Error(message);
+  }
+  const disposition = response.headers.get('content-disposition') || '';
+  const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  const quotedName = disposition.match(/filename="([^"]+)"/i)?.[1];
+  const pages = Number(response.headers.get('x-homenode-report-pages'));
+  return {
+    blob: await response.blob(),
+    fileName: encodedName ? decodeURIComponent(encodedName) : quotedName || `custom-appraisal-${assignmentFileId}.pdf`,
+    immutable: response.headers.get('x-homenode-immutable') === 'true',
+    pageCount: Number.isSafeInteger(pages) && pages > 0 ? pages : null,
   };
 }
 

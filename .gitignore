@@ -28,4 +28,6 @@ venv/
 .pnpm-store/
 .tmp-pack/
 /server/tmp/
+/output/
+/tmp/
 .DS_Store

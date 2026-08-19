@@ -39,13 +39,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22K editor on canonical comparable entities", () => {
+test("adds the Section 22A-22L editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 246);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 246);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 270);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 270);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -74,6 +74,11 @@ test("adds the Section 22A-22K editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_kitchen_summary.parentEntityType, "unit_room");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_interior_quality_summary.parentEntityType, "unit_interior_feature");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_subject_interior_condition_summary.parentEntityType, "unit_interior_feature");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_amenity.parentEntityType, "sales_comparable");
+  assert.deepEqual(
+    UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_amenity.variants["Sales comparables — property amenities — Outdoor living"].createData,
+    { amenity_category: "OutdoorLiving" },
+  );
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
 });
 
@@ -131,6 +136,7 @@ test("accepts a complete settled comparable with a source and verified property 
     value(comparable.id, "sales_comparable_property", "1800.0364", false),
     value(comparable.id, "sales_comparable_property", "1800.0197", "Q3"),
     value(comparable.id, "sales_comparable_property", "1800.0196", "C3"),
+    value(comparable.id, "sales_comparable_property", "1800.0199", false),
     value(comparable.id, "sales_comparable_proximity", "1800.0065", { amount: 0, unit: "Miles" }),
     value(comparable.id, "sales_comparable_listing", "1800.0075", "SettledSale"),
     value(comparable.id, "sales_comparable_sale", "1800.0272", 425000),
@@ -563,6 +569,33 @@ test("validates Section 22K subject and comparable overall quality and condition
   assert.equal(normalizeAndValidateUadValue(conditionAdjustment, -12500).error, null);
 });
 
+test("validates Section 22L comparable property amenities and typed category adjustments", () => {
+  const comparable = { id: "79ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const deckOne = { id: "89ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_amenity", parent_entity_id: comparable.id, ordinal: 1, data: { amenity_category: "OutdoorLiving" } };
+  const deckTwo = { id: "99ba14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_amenity", parent_entity_id: comparable.id, ordinal: 2, data: { amenity_category: "OutdoorLiving" } };
+  const errors = validateCompleteSection(
+    "sales_comparison",
+    [],
+    [
+      value(null, "sales_comparison_scope", "1000.0032", true),
+      value(comparable.id, "sales_comparable_property", "1800.0199", true),
+      value(deckOne.id, "sales_comparable_amenity_outdoor_living", "1800.0256", "OutdoorLiving"),
+      value(deckOne.id, "sales_comparable_amenity_outdoor_living", "1800.0258", "Deck"),
+      value(deckTwo.id, "sales_comparable_amenity_outdoor_living", "1800.0256", "OutdoorLiving"),
+      value(deckTwo.id, "sales_comparable_amenity_outdoor_living", "1800.0258", "Deck"),
+    ],
+    [comparable, deckOne, deckTwo],
+  );
+  assert.equal(errors.some((error) => error.code === "sales_comparable_amenity_duplicate"), true);
+
+  const poolFeature = getUadField("sales_comparable_amenity_water_features", "1800.0401");
+  const miscellaneousOther = getUadField("sales_comparable_amenity_miscellaneous", "1800.0268");
+  const adjustment = getUadField("sales_comparable_adjustment_outdoor_living_amenity", "1800.0317");
+  assert.deepEqual(poolFeature.options, ["Caged", "Heated", "Indoor", "Other"]);
+  assert.equal(miscellaneousOther.maxLength, 33);
+  assert.equal(normalizeAndValidateUadValue(adjustment, -7500).error, null);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -746,6 +779,23 @@ test("seeds Section 22K overall ratings, typed aggregate adjustments, and offici
   assert.match(sql, /'1800\.0197','sales_comparable_property','22\.11\.03'/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-OVERALL-QC-003/);
   assert.match(runner, /20260914_uad_sales_comparison_overall_quality_condition\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22L property amenities, subject redisplays, and typed adjustments additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260915_uad_sales_comparison_property_amenities.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const adjustmentType of [
+    "OutdoorAccessoryAmenity", "OutdoorLivingAmenity", "WaterFeaturesAmenity",
+    "WholeHomeAmenity", "MiscellaneousAmenity",
+  ]) assert.match(sql, new RegExp(adjustmentType));
+  assert.match(sql, /sales_comparable_amenity/);
+  assert.match(sql, /PropertyAmenityExistsIndicator/);
+  assert.match(sql, /'0200\.0023','amenity_outdoor_living','22\.12\.02'/);
+  assert.match(sql, /'1800\.0258','sales_comparable_amenity_outdoor_living','22\.12\.08'/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-AMENITIES-004/);
+  assert.match(runner, /20260915_uad_sales_comparison_property_amenities\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

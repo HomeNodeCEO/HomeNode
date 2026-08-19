@@ -9,6 +9,10 @@ import {
 } from "./dwellingExteriorCatalog.js";
 import { UAD_CONDITION_RATINGS, UAD_QUALITY_RATINGS } from "./overallQualityConditionCatalog.js";
 import {
+  UAD_SUBJECT_AMENITY_CATEGORY_LIMITS,
+  UAD_SUBJECT_AMENITY_TYPES,
+} from "./subjectPropertyAmenitiesCatalog.js";
+import {
   UAD_INTERIOR_COMPONENT_TYPES,
   UAD_INTERIOR_OVERALL_UPDATE_STATUS_TYPES,
   UAD_INTERIOR_ROOM_UPDATE_STATUS_TYPES,
@@ -192,6 +196,64 @@ export const UAD_SALES_COMPARABLE_VIEW_TYPES = Object.freeze([
   "School", "Skyline", "Sound", "TrafficWallBarriers", "Valley", "Woods",
 ]);
 
+export const UAD_SALES_COMPARABLE_AMENITY_POOL_FEATURE_TYPES = Object.freeze([
+  "Caged", "Heated", "Indoor", "Other",
+]);
+
+export const UAD_SALES_COMPARABLE_AMENITY_CATEGORY_GROUPS = Object.freeze({
+  "Sales comparables — property amenities — Outdoor accessories": Object.freeze({
+    category: "OutdoorAccessories",
+    addLabel: "Add comparable outdoor accessory",
+  }),
+  "Sales comparables — property amenities — Outdoor living": Object.freeze({
+    category: "OutdoorLiving",
+    addLabel: "Add comparable outdoor living amenity",
+  }),
+  "Sales comparables — property amenities — Water features": Object.freeze({
+    category: "WaterFeatures",
+    addLabel: "Add comparable water feature",
+  }),
+  "Sales comparables — property amenities — Whole home": Object.freeze({
+    category: "WholeHome",
+    addLabel: "Add comparable whole-home amenity",
+  }),
+  "Sales comparables — property amenities — Miscellaneous": Object.freeze({
+    category: "Miscellaneous",
+    addLabel: "Add comparable miscellaneous amenity",
+  }),
+});
+
+export const UAD_SALES_COMPARABLE_AMENITY_FIELD_KEYS = Object.freeze({
+  OutdoorAccessories: Object.freeze({
+    category: "sales_comparable_amenity_outdoor_accessories:1800.0253",
+    count: "sales_comparable_amenity_outdoor_accessories:1800.0254",
+    type: "sales_comparable_amenity_outdoor_accessories:1800.0255",
+  }),
+  OutdoorLiving: Object.freeze({
+    category: "sales_comparable_amenity_outdoor_living:1800.0256",
+    count: "sales_comparable_amenity_outdoor_living:1800.0257",
+    type: "sales_comparable_amenity_outdoor_living:1800.0258",
+  }),
+  WaterFeatures: Object.freeze({
+    category: "sales_comparable_amenity_water_features:1800.0259",
+    count: "sales_comparable_amenity_water_features:1800.0260",
+    type: "sales_comparable_amenity_water_features:1800.0261",
+    poolFeatures: "sales_comparable_amenity_water_features:1800.0401",
+    poolFeatureOther: "sales_comparable_amenity_water_features:1800.0402",
+  }),
+  WholeHome: Object.freeze({
+    category: "sales_comparable_amenity_whole_home:1800.0262",
+    count: "sales_comparable_amenity_whole_home:1800.0263",
+    type: "sales_comparable_amenity_whole_home:1800.0264",
+  }),
+  Miscellaneous: Object.freeze({
+    category: "sales_comparable_amenity_miscellaneous:1800.0265",
+    count: "sales_comparable_amenity_miscellaneous:1800.0266",
+    type: "sales_comparable_amenity_miscellaneous:1800.0267",
+    typeOther: "sales_comparable_amenity_miscellaneous:1800.0268",
+  }),
+});
+
 export const salesComparisonIncluded = Object.freeze({
   key: "sales_comparison_scope:1000.0032",
   equals: true,
@@ -278,6 +340,10 @@ const comparableGreenCertificationExists = Object.freeze({
 });
 const comparableEfficiencyRatingExists = Object.freeze({
   key: "sales_comparable_energy_green:1800.0106",
+  equals: true,
+});
+const comparableAmenitiesExist = Object.freeze({
+  key: "sales_comparable_property:1800.0199",
   equals: true,
 });
 const subjectMaintainsExterior = Object.freeze({
@@ -443,6 +509,88 @@ const overallQualityConditionComp = (contextKey, uid, reportFieldId, label, data
   dataType,
   { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
 );
+const propertyAmenityComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — property amenities",
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
+const propertyAmenityChild = (
+  category,
+  group,
+  contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  options = {},
+) => field(group, contextKey, uid, reportFieldId, label, dataType, {
+  entityType: "sales_comparable_amenity",
+  entityDataFilter: { amenity_category: category },
+  ...options,
+});
+const comparableAmenityTypeIs = (contextKey, uid, ...types) => Object.freeze({
+  any: types.map((type) => ({ key: `${contextKey}:${uid}`, equals: type })),
+});
+
+function comparableAmenityCategoryFields({
+  category,
+  group,
+  contextKey,
+  categoryUid,
+  countUid,
+  typeUid,
+  reportFieldId,
+  typeOtherUid,
+  poolFeatureUid,
+  poolFeatureOtherUid,
+}) {
+  const typeIs = (...types) => comparableAmenityTypeIs(contextKey, typeUid, ...types);
+  const fields = [
+    propertyAmenityChild(category, group, contextKey, categoryUid, "Does Not Display", "Amenity category", "enum", {
+      required: true,
+      options: [category],
+    }),
+    propertyAmenityChild(category, group, contextKey, typeUid, reportFieldId, "Comparable property amenity", "enum", {
+      required: true,
+      options: UAD_SUBJECT_AMENITY_TYPES[category],
+    }),
+    propertyAmenityChild(category, group, contextKey, countUid, reportFieldId, "Amenity count", "integer", {
+      minimum: 1,
+      maximum: 99,
+    }),
+  ];
+  if (typeOtherUid) {
+    fields.push(propertyAmenityChild(
+      category,
+      group,
+      contextKey,
+      typeOtherUid,
+      reportFieldId,
+      "Other amenity description",
+      "string",
+      { maxLength: 33, showWhen: typeIs("Other"), requiredWhen: typeIs("Other") },
+    ));
+  }
+  if (poolFeatureUid) {
+    const poolType = typeIs("IngroundPool", "IngroundSpa", "Sauna");
+    fields.push(
+      propertyAmenityChild(category, group, contextKey, poolFeatureUid, reportFieldId, "Water feature details", "multi_enum", {
+        options: UAD_SALES_COMPARABLE_AMENITY_POOL_FEATURE_TYPES,
+        showWhen: poolType,
+      }),
+      propertyAmenityChild(category, group, contextKey, poolFeatureOtherUid, reportFieldId, "Other water feature detail", "string", {
+        maxLength: 45,
+        showWhen: { all: [poolType, { key: `${contextKey}:${poolFeatureUid}`, contains: "Other" }] },
+        requiredWhen: { key: `${contextKey}:${poolFeatureUid}`, contains: "Other" },
+      }),
+    );
+  }
+  return fields;
+}
 
 export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   field(
@@ -1412,6 +1560,67 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     guidance: "Enter the single supported aggregate condition adjustment. Use zero when the analysis supports no adjustment.",
   }),
 
+  propertyAmenityComp("sales_comparable_property", "1800.0199", "Does Not Display", "Property amenities exist", "boolean", {
+    requiredWhen: salesComparisonIncluded,
+    guidance: "Choose Yes when this comparable has at least one non-project property amenity. Site, view, waterfront, and project amenities remain in their own subsections.",
+  }),
+  ...comparableAmenityCategoryFields({
+    category: "OutdoorAccessories",
+    group: "Sales comparables — property amenities — Outdoor accessories",
+    contextKey: "sales_comparable_amenity_outdoor_accessories",
+    categoryUid: "1800.0253",
+    countUid: "1800.0254",
+    typeUid: "1800.0255",
+    reportFieldId: "22.12.06",
+  }),
+  ...comparableAmenityCategoryFields({
+    category: "OutdoorLiving",
+    group: "Sales comparables — property amenities — Outdoor living",
+    contextKey: "sales_comparable_amenity_outdoor_living",
+    categoryUid: "1800.0256",
+    countUid: "1800.0257",
+    typeUid: "1800.0258",
+    reportFieldId: "22.12.08",
+  }),
+  ...comparableAmenityCategoryFields({
+    category: "WaterFeatures",
+    group: "Sales comparables — property amenities — Water features",
+    contextKey: "sales_comparable_amenity_water_features",
+    categoryUid: "1800.0259",
+    countUid: "1800.0260",
+    typeUid: "1800.0261",
+    reportFieldId: "22.12.10",
+    poolFeatureUid: "1800.0401",
+    poolFeatureOtherUid: "1800.0402",
+  }),
+  ...comparableAmenityCategoryFields({
+    category: "WholeHome",
+    group: "Sales comparables — property amenities — Whole home",
+    contextKey: "sales_comparable_amenity_whole_home",
+    categoryUid: "1800.0262",
+    countUid: "1800.0263",
+    typeUid: "1800.0264",
+    reportFieldId: "22.12.12",
+  }),
+  ...comparableAmenityCategoryFields({
+    category: "Miscellaneous",
+    group: "Sales comparables — property amenities — Miscellaneous",
+    contextKey: "sales_comparable_amenity_miscellaneous",
+    categoryUid: "1800.0265",
+    countUid: "1800.0266",
+    typeUid: "1800.0267",
+    reportFieldId: "22.12.14",
+    typeOtherUid: "1800.0268",
+  }),
+  propertyAmenityComp("sales_comparable_adjustment_outdoor_accessory_amenity", "1800.0317", "22.12.07", "Outdoor accessories adjustment", "currency", {
+    maximum: 999999999,
+    guidance: "Enter the supported category adjustment, including zero when this comparison row is used.",
+  }),
+  propertyAmenityComp("sales_comparable_adjustment_outdoor_living_amenity", "1800.0317", "22.12.09", "Outdoor living adjustment", "currency", { maximum: 999999999 }),
+  propertyAmenityComp("sales_comparable_adjustment_water_features_amenity", "1800.0317", "22.12.11", "Water features adjustment", "currency", { maximum: 999999999 }),
+  propertyAmenityComp("sales_comparable_adjustment_whole_home_amenity", "1800.0317", "22.12.13", "Whole home adjustment", "currency", { maximum: 999999999 }),
+  propertyAmenityComp("sales_comparable_adjustment_miscellaneous_amenity", "1800.0317", "22.12.15", "Miscellaneous amenities adjustment", "currency", { maximum: 999999999 }),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -1744,6 +1953,25 @@ export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
     parentEntityType: "unit_interior_feature",
     showWhen: Object.freeze({ all: [salesComparisonIncluded, subjectInteriorFeatureTypeIs("WallsAndCeiling", "Other")] }),
   }),
+  sales_comparable_amenity: Object.freeze({
+    title: "Comparable property amenities",
+    addLabel: "Add comparable amenity",
+    minItems: 0,
+    maxItems: 32,
+    parentEntityType: "sales_comparable",
+    showWhen: comparableAmenitiesExist,
+    variants: Object.freeze(Object.fromEntries(
+      Object.entries(UAD_SALES_COMPARABLE_AMENITY_CATEGORY_GROUPS).map(([group, value]) => [group, {
+        addLabel: value.addLabel,
+        minItems: 0,
+        maxItems: UAD_SUBJECT_AMENITY_CATEGORY_LIMITS[value.category],
+        parentEntityType: "sales_comparable",
+        showWhen: comparableAmenitiesExist,
+        entityDataFilter: { amenity_category: value.category },
+        createData: { amenity_category: value.category },
+      }]),
+    )),
+  }),
 });
 
 export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
@@ -1915,6 +2143,15 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   overallQualityAdjustment: "sales_comparable_adjustment_overall_quality:1800.0317",
   overallCondition: "sales_comparable_property:1800.0196",
   overallConditionAdjustment: "sales_comparable_adjustment_overall_condition:1800.0317",
+  propertyAmenitiesExist: "sales_comparable_property:1800.0199",
+  amenityOutdoorAccessoriesType: "sales_comparable_amenity_outdoor_accessories:1800.0255",
+  amenityOutdoorLivingType: "sales_comparable_amenity_outdoor_living:1800.0258",
+  amenityWaterFeaturesType: "sales_comparable_amenity_water_features:1800.0261",
+  amenityWaterFeatureDetails: "sales_comparable_amenity_water_features:1800.0401",
+  amenityWaterFeatureOther: "sales_comparable_amenity_water_features:1800.0402",
+  amenityWholeHomeType: "sales_comparable_amenity_whole_home:1800.0264",
+  amenityMiscellaneousType: "sales_comparable_amenity_miscellaneous:1800.0267",
+  amenityMiscellaneousOther: "sales_comparable_amenity_miscellaneous:1800.0268",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

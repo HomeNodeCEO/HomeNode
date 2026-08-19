@@ -66,6 +66,13 @@ const SALES_CONTRACT_CAPTIONS = ["SalesContractExhibit"];
 const PRIOR_TRANSFER_CAPTIONS = ["PriorSaleAndTransferHistoryExhibit"];
 const SALES_COMPARABLE_PHOTO_CAPTIONS = ["PropertyPhoto"];
 const SALES_COMPARISON_EXHIBIT_CAPTIONS = ["SalesComparisonApproachExhibit"];
+const SUBJECT_AMENITY_REDISPLAY = [
+  { category: "OutdoorAccessories", label: "Outdoor accessories", context: "amenity_outdoor_accessories", typeUid: "0200.0007", countUid: "0200.0004", reportFieldId: "22.12.01" },
+  { category: "OutdoorLiving", label: "Outdoor living", context: "amenity_outdoor_living", typeUid: "0200.0023", reportFieldId: "22.12.02" },
+  { category: "WaterFeatures", label: "Water features", context: "amenity_water_features", typeUid: "0200.0032", countUid: "0200.0029", reportFieldId: "22.12.03" },
+  { category: "WholeHome", label: "Whole home", context: "amenity_whole_home", typeUid: "0200.0039", countUid: "0200.0036", reportFieldId: "22.12.04" },
+  { category: "Miscellaneous", label: "Miscellaneous", context: "amenity_miscellaneous", typeUid: "0200.0046", countUid: "0200.0043", reportFieldId: "22.12.05" },
+] as const;
 
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
@@ -173,6 +180,18 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const salesContractExists = draft[fieldValueKey("sales_contract", "0600.0016")];
   const salesComparisonIncluded = draft[fieldValueKey("sales_comparison_scope", "1000.0032")];
   const salesComparables = editor?.entities.filter((entity) => entity.entity_type === "sales_comparable") || [];
+  const section22SubjectAmenities = SUBJECT_AMENITY_REDISPLAY.map((category) => ({
+    ...category,
+    amenities: subjectAmenities
+      .filter((amenity) => amenity.data?.amenity_category === category.category)
+      .map((amenity) => ({
+        id: amenity.id,
+        type: draft[fieldValueKey(category.context, category.typeUid, amenity.id)],
+        count: "countUid" in category
+          ? draft[fieldValueKey(category.context, category.countUid, amenity.id)]
+          : null,
+      })),
+  }));
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -493,8 +512,33 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         )}
         {activeSection === "sales_comparison" && (
           <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-            Sections 22A–22K establish each comparable's official general information, source trail, property-rights details, project or PUD information, Site facts and water frontage, repeatable dwellings, mechanical systems, energy-efficient and green features, Unit(s), exterior quality and condition, separate interior comparisons for primary units and ADUs, and the reconciled overall Q/C ratings and aggregate adjustments, along with the required verified photo. Bodies of water remain linked to their Site Influence; construction, heating, cooling, living units, exterior components, kitchens, and interior components remain linked to the exact comparable structure or unit. Subject energy/green, unit, exterior, and interior facts redisplay from Sections 6, 8, 10, and 15 without duplicate entry; only the comparison-specific subject quality and condition summaries are added here and linked to their canonical feature. Unit, ADU, dwelling, and per-structure counts reconcile before completion. Quality and condition adjustments are entered only once in Overall Quality and Condition, where they aggregate exterior, primary-unit, and ADU analysis. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
+            Sections 22A–22L establish each comparable's official general information, source trail, property-rights details, project or PUD information, Site facts and water frontage, repeatable dwellings, mechanical systems, energy-efficient and green features, Unit(s), exterior quality and condition, separate interior comparisons for primary units and ADUs, reconciled overall Q/C ratings, and property amenities, along with the required verified photo. Bodies of water remain linked to their Site Influence; construction, heating, cooling, living units, exterior components, kitchens, interior components, and amenities remain linked to the exact comparable parent. Subject energy/green, unit, exterior, interior, and property-amenity facts redisplay from Sections 6, 8, 10, 14, and 15 without duplicate entry; only comparison-specific subject quality and condition summaries are added here and linked to their canonical feature. Unit, ADU, dwelling, and per-structure counts reconcile before completion. Quality and condition adjustments are entered only once in Overall Quality and Condition, where they aggregate exterior, primary-unit, and ADU analysis. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
           </div>
+        )}
+        {activeSection === "sales_comparison" && (
+          <section className="mb-5 rounded-xl border border-fuchsia-200 bg-fuchsia-50 p-4 text-fuchsia-950">
+            <h3 className="text-base font-semibold">Subject property amenities redisplayed from Section 14</h3>
+            <p className="mt-1 text-sm leading-6">Edit these facts in Subject Property Amenities. Section 22L reads the same canonical records so the workfile, comparison grid, and future MISMO XML cannot drift apart.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {section22SubjectAmenities.map((category) => (
+                <div className="rounded-lg border border-fuchsia-200 bg-white p-3" key={category.category}>
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold">{category.label}</h4>
+                    <span className="text-[11px] text-fuchsia-700">{category.reportFieldId}</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {category.amenities.map((amenity) => (
+                      <span className="rounded-full bg-fuchsia-100 px-2.5 py-1 text-xs font-semibold" key={amenity.id}>
+                        {amenity.type ? displayOption(String(amenity.type)) : "Incomplete amenity"}
+                        {typeof amenity.count === "number" && amenity.count > 1 ? ` × ${amenity.count}` : ""}
+                      </span>
+                    ))}
+                    {!category.amenities.length && <span className="text-xs text-fuchsia-700">No subject amenity in this category.</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}

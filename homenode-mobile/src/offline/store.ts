@@ -13,6 +13,7 @@ import type {
   MobileUser,
   PhotoUploadRequest,
   PropertyResult,
+  TargetFieldReview,
   ReportFile,
 } from "../api/client";
 import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
@@ -319,6 +320,13 @@ async function initializeDatabase() {
       updated_at INTEGER NOT NULL,
       PRIMARY KEY (owner_user_id, session_id)
     );
+    CREATE TABLE IF NOT EXISTS target_field_cache (
+      owner_user_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      review_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (owner_user_id, session_id)
+    );
     CREATE TABLE IF NOT EXISTS sketch_drafts (
       owner_user_id TEXT NOT NULL,
       session_id TEXT NOT NULL,
@@ -532,6 +540,30 @@ export class OfflineStore {
       : null;
   }
 
+
+  async cacheTargetFieldReview(ownerUserId: string, sessionId: string, review: TargetFieldReview) {
+    await this.database.runAsync(
+      `INSERT INTO target_field_cache (owner_user_id, session_id, review_json, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT (owner_user_id, session_id) DO UPDATE SET
+         review_json = excluded.review_json, updated_at = excluded.updated_at`,
+      ownerUserId,
+      sessionId,
+      JSON.stringify(review),
+      Date.now(),
+    );
+  }
+
+  async cachedTargetFieldReview(ownerUserId: string, sessionId: string) {
+    const row = await this.database.getFirstAsync<{ review_json: string }>(
+      "SELECT review_json FROM target_field_cache WHERE owner_user_id = ? AND session_id = ?",
+      ownerUserId,
+      sessionId,
+    );
+    return row
+      ? parseJson<TargetFieldReview>(row.review_json, null as unknown as TargetFieldReview)
+      : null;
+  }
   async sketchDraft(ownerUserId: string, sessionId: string) {
     const row = await this.database.getFirstAsync<SketchDraftRow>(
       "SELECT * FROM sketch_drafts WHERE owner_user_id = ? AND session_id = ?",
@@ -756,10 +788,22 @@ export class OfflineStore {
     ownerUserId: string,
     sessionId: string,
     changes: Record<string, FieldState>,
-    { sourceType = "appraiser", appraiserConfirmed = true } = {},
+    {
+      sourceType = "appraiser",
+      appraiserConfirmed = true,
+      targetBaseStates,
+      targetBaseRevision,
+    }: {
+      sourceType?: string; appraiserConfirmed?: boolean;
+      targetBaseStates?: Record<string, FieldState>; targetBaseRevision?: number;
+    } = {},
   ) {
     const entries = Object.entries(changes);
     if (!entries.length || entries.length > 25) throw new Error("invalid_offline_field_batch");
+    const hasTargetBase = targetBaseStates != null || targetBaseRevision != null;
+    if ((targetBaseStates == null) !== (targetBaseRevision == null)) throw new Error("invalid_target_field_base");
+    if (targetBaseRevision != null && (!Number.isInteger(targetBaseRevision) || targetBaseRevision < 1)) throw new Error("invalid_target_field_base");
+
     const session = await this.database.getFirstAsync<{ server_revision: number }>(
       `SELECT server_revision FROM cached_inspections WHERE owner_user_id = ? AND session_id = ?`,
       ownerUserId,
@@ -783,9 +827,15 @@ export class OfflineStore {
         sessionId,
         fieldPath,
       );
+      const targetBase = hasTargetBase ? targetBaseStates?.[fieldPath] : undefined;
+      if (hasTargetBase && !targetBase) throw new Error("invalid_target_field_base");
       const payload = {
         field_path: fieldPath,
         base: fieldState(current, "local"),
+        ...(targetBase ? {
+          target_base: targetBase,
+          target_base_revision: targetBaseRevision as number,
+        } : {}),
         ...(change.exists ? { value: change.value } : {}),
         source_type: sourceType,
         appraiser_confirmed: appraiserConfirmed,

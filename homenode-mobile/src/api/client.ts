@@ -173,6 +173,79 @@ export type CustomAppraisalReview = {
   };
 };
 
+export type TargetFieldDefinition = {
+  field_path: string;
+  group: string;
+  label: string;
+  value_type: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "number" | "percentage" | "measurement" | "date" | "year" | "state" | "postal_code";
+  target_reference: Record<string, JsonValue>;
+  options: string[];
+  units: string[];
+  required: boolean;
+  minimum: number | null;
+  maximum: number | null;
+  maximum_length: number | null;
+  multiline: boolean;
+};
+
+export type TargetFieldProposal = {
+  id: string;
+  field_edit_id: string;
+  workflow_type: "uad_3_6" | "property_tax_protest";
+  field_path: string;
+  label: string;
+  group: string;
+  target_reference: Record<string, JsonValue>;
+  base_target_revision: number;
+  base: FieldState;
+  proposed: FieldState;
+  current: FieldState | null;
+  source_type: string;
+  appraiser_confirmed: boolean;
+  status: "pending" | "accepted" | "rejected" | "conflict" | "superseded";
+  conflict: { base: FieldState; current: FieldState; detected_at: string } | null;
+  reviewed_at: string | null;
+  applied_target_revision: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TargetFieldReview = {
+  session: InspectionSession;
+  report_file: {
+    id: string;
+    account_id: string;
+    file_number: string;
+    workflow_type: "uad_3_6" | "property_tax_protest";
+    registry_revision: number;
+    target_id: string;
+  };
+  target: { revision: number; status: string; specification_release_key: string | null };
+  catalog: TargetFieldDefinition[];
+  values: Record<string, FieldState>;
+  entities: Array<{
+    id: string;
+    parent_entity_id: string | null;
+    entity_type: string;
+    entity_identifier: string;
+    ordinal: number;
+    label: string | null;
+  }>;
+  proposals: TargetFieldProposal[];
+  photos: {
+    verified_count: number;
+    items: Array<{
+      id: string;
+      category: string;
+      room_ref: string | null;
+      room_label: string | null;
+      caption: string | null;
+      position: number;
+      retention_until: string;
+      verified_at: string;
+    }>;
+  };
+};
 export type InspectionSketchSummary = {
   area_count: number;
   room_count: number;
@@ -429,6 +502,38 @@ export class MobileApi {
   async inspectionSketch(sessionId: string) {
     return this.request<{ session: InspectionSession; sketch: InspectionSketch | null }>(
       `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/sketch`,
+    );
+  }
+
+  async targetFieldReview(sessionId: string) {
+    return this.request<TargetFieldReview>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/target-fields`,
+    );
+  }
+
+  async refreshTargetFieldProposals(sessionId: string) {
+    return this.request<{
+      workflow_type: "uad_3_6" | "property_tax_protest";
+      created: TargetFieldProposal[];
+      invalid_fields: Array<{ field_path: string; error: string; details?: Array<{ message?: string }> }>;
+    }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/target-fields/proposals/refresh`,
+      { method: "POST", body: JSON.stringify({}) },
+    );
+  }
+
+  async reviewTargetFieldProposal(
+    sessionId: string,
+    proposalId: string,
+    decision: "accept" | "reject",
+    clientOperationId: string,
+  ) {
+    return this.request<{ proposal: TargetFieldProposal; report_registry_revision: number }>(
+      `/api/mobile/inspection-sessions/${encodeURIComponent(sessionId)}/target-fields/proposals/${encodeURIComponent(proposalId)}/review`,
+      {
+        method: "POST",
+        body: JSON.stringify({ client_operation_id: clientOperationId, decision }),
+      },
     );
   }
 

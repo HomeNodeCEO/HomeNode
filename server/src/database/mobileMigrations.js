@@ -11,6 +11,7 @@ const MIGRATIONS = Object.freeze([
   "20260823_mobile_photos.sql",
   "20260824_mobile_custom_appraisal.sql",
   "20260825_mobile_manual_sketch.sql",
+  "20260827_mobile_target_adapters.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

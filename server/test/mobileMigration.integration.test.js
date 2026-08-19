@@ -13,6 +13,11 @@ import {
   refreshCustomAppraisalProposals,
   reviewCustomAppraisalProposal,
 } from "../src/modules/mobile/customAppraisal.js";
+import {
+  getTargetFieldReview,
+  refreshTargetFieldProposals,
+  reviewTargetFieldProposal,
+} from "../src/modules/mobile/targetFields.js";
 import { getMobileProperty, searchMobileProperties } from "../src/modules/mobile/properties.js";
 import {
   createPhotoUploadBatch,
@@ -157,6 +162,110 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.ok(Number(uadFoundation.rows[0].entities) >= 4);
     assert.equal(Number(uadFoundation.rows[0].revisions), 1);
     assert.ok(Number(uadFoundation.rows[0].events) >= 1);
+
+    const uadSession = await createInspectionSession(pool, auth, {
+      report_file_id: uad.reportFile.id,
+    });
+    const uadTargetReview = await getTargetFieldReview(pool, auth, uadSession.session.id);
+    assert.ok(uadTargetReview.catalog.length > 100);
+    assert.ok(uadTargetReview.entities.length >= 4);
+    assert.match(uadTargetReview.target.specification_release_key, /^uad-3\.6-/);
+
+    const taxSession = await createInspectionSession(pool, auth, {
+      report_file_id: tax.reportFile.id,
+    });
+    const taxTargetReview = await getTargetFieldReview(pool, auth, taxSession.session.id);
+    const conditionPath = "property_tax_protest.subject.condition_rating";
+    assert.equal(taxTargetReview.catalog.length, 18);
+    assert.deepEqual(taxTargetReview.values[conditionPath], { exists: false });
+
+    const taxPayload = {
+      field_path: conditionPath,
+      base: { exists: false },
+      target_base: taxTargetReview.values[conditionPath],
+      target_base_revision: taxTargetReview.target.revision,
+      value: "C4",
+      source_type: "appraiser",
+      appraiser_confirmed: true,
+    };
+    await syncInspectionOperations(pool, auth, taxSession.session.id, {
+      operations: [syncOperation("field.upsert", taxSession.session.revision, taxPayload)],
+    });
+    const refreshedTax = await refreshTargetFieldProposals(pool, auth, taxSession.session.id);
+    assert.equal(refreshedTax.created.length, 1);
+    assert.equal(refreshedTax.created[0].base_target_revision, 1);
+    const acceptedTax = await reviewTargetFieldProposal(
+      pool,
+      auth,
+      taxSession.session.id,
+      refreshedTax.created[0].id,
+      { client_operation_id: randomUUID(), decision: "accept" },
+    );
+    assert.equal(acceptedTax.proposal.status, "accepted");
+    assert.equal(acceptedTax.proposal.applied_target_revision, 2);
+    const acceptedTaxReview = await getTargetFieldReview(pool, auth, taxSession.session.id);
+    assert.deepEqual(acceptedTaxReview.values[conditionPath], { exists: true, value: "C4" });
+    const persistedTax = await pool.query(
+      "SELECT revision, workfile_data #> '{subject,condition_rating}' AS condition_rating FROM app.tax_protest_files WHERE id = $1",
+      [tax.reportFile.target_id],
+    );
+    assert.equal(Number(persistedTax.rows[0].revision), 2);
+    assert.equal(persistedTax.rows[0].condition_rating, "C4");
+
+    const staleTaxPayload = {
+      field_path: conditionPath,
+      base: { exists: true, value: "C4" },
+      target_base: acceptedTaxReview.values[conditionPath],
+      target_base_revision: acceptedTaxReview.target.revision,
+      value: "C3",
+      source_type: "appraiser",
+      appraiser_confirmed: true,
+    };
+    await syncInspectionOperations(pool, auth, taxSession.session.id, {
+      operations: [syncOperation("field.upsert", acceptedTaxReview.session.revision, staleTaxPayload)],
+    });
+    const staleTax = await refreshTargetFieldProposals(pool, auth, taxSession.session.id);
+    assert.equal(staleTax.created.length, 1);
+    await pool.query(
+      `UPDATE app.tax_protest_files
+          SET workfile_data = jsonb_set(workfile_data, '{subject,condition_rating}', '"C5"'::jsonb),
+              revision = revision + 1,
+              updated_at = now()
+        WHERE id = $1`,
+      [tax.reportFile.target_id],
+    );
+    const conflictedTax = await reviewTargetFieldProposal(
+      pool,
+      auth,
+      taxSession.session.id,
+      staleTax.created[0].id,
+      { client_operation_id: randomUUID(), decision: "accept" },
+    );
+    assert.equal(conflictedTax.proposal.status, "conflict");
+    const reviewRequired = await pool.query(
+      "SELECT status FROM app.inspection_sessions WHERE id = $1",
+      [taxSession.session.id],
+    );
+    assert.equal(reviewRequired.rows[0].status, "review_required");
+
+    const rejectedConflict = await reviewTargetFieldProposal(
+      pool,
+      auth,
+      taxSession.session.id,
+      staleTax.created[0].id,
+      { client_operation_id: randomUUID(), decision: "reject" },
+    );
+    assert.equal(rejectedConflict.proposal.status, "rejected");
+    const resolvedSession = await pool.query(
+      "SELECT status FROM app.inspection_sessions WHERE id = $1",
+      [taxSession.session.id],
+    );
+    assert.equal(resolvedSession.rows[0].status, "synchronized");
+    const conflictPreservedCanonical = await pool.query(
+      "SELECT revision, workfile_data #> '{subject,condition_rating}' AS condition_rating FROM app.tax_protest_files WHERE id = $1",
+      [tax.reportFile.target_id],
+    );
+    assert.equal(Number(conflictPreservedCanonical.rows[0].revision), 3);
 
     const discovery = await listReportFiles(pool, auth, { accountId });
     assert.equal(discovery.files.length, 5);

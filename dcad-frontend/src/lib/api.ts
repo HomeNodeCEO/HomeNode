@@ -2964,3 +2964,68 @@ export function toSearchItems(rows: AccountRow[]): SearchItem[] {
   return rows.map(toTile);
 }
 
+export interface PropertyTaxProtestFile {
+  report_file_id: string;
+  tax_protest_file_id: string;
+  organization_id: string;
+  account_id: string;
+  file_number: string;
+  previous_file_id: string | null;
+  workfile_data: Record<string, unknown>;
+  status: string;
+  revision: number;
+  registry_revision: number;
+  is_current: boolean;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  photos: {
+    verified_count: number;
+    items: Array<{
+      id: string;
+      category: string;
+      room_label: string | null;
+      caption: string | null;
+      position: number;
+      verified_at: string;
+      retention_until: string;
+    }>;
+  };
+  sketch: null | {
+    revision: number;
+    summary: Record<string, unknown>;
+    review_status: string;
+    updated_at: string;
+  };
+}
+
+export async function getPropertyTaxProtestFile(
+  accountId: string,
+  fileId?: string,
+): Promise<PropertyTaxProtestFile | null> {
+  const params = fileId ? `?file_id=${encodeURIComponent(fileId)}` : '';
+  const response = await fetchJSON<{ account_id: string; file: PropertyTaxProtestFile | null }>(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest${params}`),
+  );
+  return response.file;
+}
+
+export async function updatePropertyTaxProtestFile(
+  accountId: string,
+  fileId: string,
+  input: { expected_revision: number; workfile_data: Record<string, unknown>; reviewer?: string },
+  editorKey: string,
+): Promise<PropertyTaxProtestFile> {
+  const response = await fetchJSON<{ ok: true; file: PropertyTaxProtestFile }>(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}`),
+    {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'x-homenode-editor-key': editorKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+  return response.file;
+}

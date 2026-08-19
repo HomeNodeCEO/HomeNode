@@ -38,6 +38,7 @@ const WRITE_ROLES = new Set(["appraiser", "supervisory_appraiser", "organization
 function errorStatus(error) {
   const message = String(error?.message || "");
   if (error?.statusCode) return error.statusCode;
+  if (message === "custom_appraisal_workfile_signed") return 409;
   if (message.endsWith("_not_found")) return 404;
   if (message.endsWith("_access_denied")) return 403;
   if (message.endsWith("_conflict")) return 409;

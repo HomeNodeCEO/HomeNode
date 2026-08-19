@@ -471,4 +471,14 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(targetSource, /CREATE TABLE IF NOT EXISTS app\.mobile_target_adapter_events/);
   assert.match(targetSource, /workflow_type IN \('uad_3_6', 'property_tax_protest'\)/);
   assert.doesNotMatch(targetSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+
+  const workfileSource = fs.readFileSync(
+    path.resolve(directory, "../migrations/20260828_custom_appraisal_workfiles.sql"),
+    "utf8",
+  );
+  assert.match(workfileSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_workfiles/);
+  assert.match(workfileSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_workfile_sections/);
+  assert.match(workfileSource, /CREATE TABLE IF NOT EXISTS app\.custom_appraisal_signed_snapshots/);
+  assert.match(workfileSource, /checksum_sha256 ~ '\^\[a-f0-9\]\{64\}\$'/);
+  assert.doesNotMatch(workfileSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });

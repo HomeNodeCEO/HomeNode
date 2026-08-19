@@ -195,16 +195,18 @@ function proposalResponse(row, current = null) {
 }
 
 async function customSession(client, auth, sessionId, { lock = false, writable = false } = {}) {
-  const locking = lock ? "FOR UPDATE OF session, report_file, assignment_file" : "";
+  const locking = lock ? "FOR UPDATE OF session, report_file, assignment_file, workfile" : "";
   const { rows } = await client.query(
     `SELECT session.*,
             report_file.workflow_type, report_file.account_id, report_file.file_number,
             report_file.registry_revision, report_file.custom_assignment_file_id,
             assignment_file.assignment_details, assignment_file.revision AS assignment_revision,
-            assignment_file.reviewer AS assignment_reviewer
+            assignment_file.reviewer AS assignment_reviewer,
+            workfile.status AS custom_appraisal_workfile_status
        FROM app.inspection_sessions session
        JOIN app.report_files report_file ON report_file.id = session.report_file_id
        JOIN app.assignment_files assignment_file ON assignment_file.id = report_file.custom_assignment_file_id
+       JOIN app.custom_appraisal_workfiles workfile ON workfile.assignment_file_id = assignment_file.id
       WHERE session.id = $1
         AND session.organization_id = ANY($2::uuid[])
         AND session.appraiser_user_id = $3
@@ -214,6 +216,9 @@ async function customSession(client, auth, sessionId, { lock = false, writable =
   );
   if (!rows.length) throw new Error("custom_appraisal_session_not_found");
   if (writable && rows[0].status === "completed") throw new Error("inspection_session_completed_conflict");
+  if (writable && rows[0].custom_appraisal_workfile_status === "signed") {
+    throw new Error("custom_appraisal_workfile_signed");
+  }
   return rows[0];
 }
 

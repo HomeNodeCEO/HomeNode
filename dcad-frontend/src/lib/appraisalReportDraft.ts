@@ -34,8 +34,9 @@ export type AppraisalReportComparable = {
 };
 
 export type AppraisalReportSalesDraft = {
-  version: 1;
+  version: 1 | 2;
   accountId: string;
+  assignmentFileId?: number | null;
   savedAt: string;
   source: "sales-comparison-workspace";
   subject: AppraisalReportSubject;
@@ -51,6 +52,24 @@ export type AppraisalReportSalesDraft = {
   };
   salesNotes: string;
   adjustmentNotes: string;
+  workspace?: {
+    selectedListings?: SaleRow[];
+    search?: {
+      asOfDate?: string;
+      periodMonths?: 12 | 24 | 36;
+      comparableSearchProfile?: string;
+      includeUnmatchedSales?: boolean;
+      sameNeighborhoodOnly?: boolean;
+      outlierScoreThreshold?: number;
+    };
+    appliedGroupedAdjustments?: Record<string, unknown>;
+    appliedConditionQualityAdjustments?: Record<string, unknown>;
+    conditionQualityRatings?: Record<string, {
+      condition: string;
+      quality: string;
+    }>;
+    ctcNotes?: string;
+  };
 };
 
 const STORAGE_PREFIX = "homenode-appraisal-report:";
@@ -68,6 +87,15 @@ export function saveAppraisalReportDraft(draft: AppraisalReportSalesDraft): void
   }
 }
 
+export function removeAppraisalReportDraft(accountId: string): void {
+  if (typeof window === "undefined" || !accountId.trim()) return;
+  try {
+    window.localStorage.removeItem(storageKey(accountId));
+  } catch {
+    // Legacy cleanup is best-effort after the database copy succeeds.
+  }
+}
+
 export function readAppraisalReportDraft(
   accountId: string,
 ): AppraisalReportSalesDraft | null {
@@ -77,7 +105,7 @@ export function readAppraisalReportDraft(
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AppraisalReportSalesDraft;
     if (
-      parsed?.version !== 1 ||
+      ![1, 2].includes(parsed?.version) ||
       parsed?.accountId !== accountId.trim() ||
       !Array.isArray(parsed?.comparables)
     ) {

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createUadWorkfileWithClient } from "../uad/workfiles.js";
+import { canonicalCustomAppraisalFileName } from "../../services/customAppraisalWorkfiles.js";
 import { allocateReportFileNumber, normalizeWorkflowType } from "./fileNumbers.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -148,6 +149,13 @@ async function insertCanonicalTarget(client, {
          assignment_file_id, account_id, file_number, assignment_details, reviewer, revision
        ) VALUES ($1, $2, $3, $4::jsonb, 'HomeNode mobile', 1)`,
       [rows[0].id, accountId, fileNumber, JSON.stringify(assignmentDetails)],
+    );
+    await client.query(
+      `INSERT INTO app.custom_appraisal_workfiles (
+         assignment_file_id, canonical_file_name
+       ) VALUES ($1, $2)
+       ON CONFLICT (assignment_file_id) DO NOTHING`,
+      [rows[0].id, canonicalCustomAppraisalFileName(fileNumber, rows[0].id)],
     );
     return { customAssignmentFileId: rows[0].id };
   }

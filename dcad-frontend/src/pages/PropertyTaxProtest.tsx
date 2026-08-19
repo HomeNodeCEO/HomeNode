@@ -4,7 +4,6 @@ import * as api from '@/lib/api';
 import PropertyTaxWorkfileReview from '@/components/PropertyTaxWorkfileReview';
 import {
   readAppraisalReportDraft,
-  saveAppraisalReportDraft,
   type AppraisalReportSalesDraft,
 } from '@/lib/appraisalReportDraft';
 
@@ -36,6 +35,8 @@ export default function PropertyTaxProtest() {
   const [subjectError, setSubjectError] = useState<string | null>(null);
   const [photoPreviews, setPhotoPreviews] = useState<PhotoPreview[]>([]);
   const [salesDraft, setSalesDraft] = useState<AppraisalReportSalesDraft | null>(null);
+  const [assignmentFileId, setAssignmentFileId] = useState<number | null>(null);
+  const workfileRevisionRef = useRef(0);
   const [salesNotes, setSalesNotes] = useState(DEFAULT_SALES_NOTES);
   const [adjustmentNotes, setAdjustmentNotes] = useState(DEFAULT_ADJUSTMENT_NOTES);
   const [costToCureNotes, setCostToCureNotes] = useState(
@@ -52,11 +53,13 @@ export default function PropertyTaxProtest() {
     : '/signup';
 
   useEffect(() => {
-    const draft = propertyId ? readAppraisalReportDraft(propertyId) : null;
-    setSalesDraft(draft);
-    setSalesNotes(draft?.salesNotes || DEFAULT_SALES_NOTES);
-    setAdjustmentNotes(draft?.adjustmentNotes || DEFAULT_ADJUSTMENT_NOTES);
-    if (draft?.opinionOfValue != null && draft?.opinionAfterCostToCure != null) {
+    let cancelled = false;
+    const hydrate = (draft: AppraisalReportSalesDraft | null) => {
+      if (cancelled) return;
+      setSalesDraft(draft);
+      setSalesNotes(draft?.salesNotes || DEFAULT_SALES_NOTES);
+      setAdjustmentNotes(draft?.adjustmentNotes || DEFAULT_ADJUSTMENT_NOTES);
+      if (draft?.opinionOfValue != null && draft?.opinionAfterCostToCure != null) {
       const measuredCost = Math.max(
         0,
         Math.round(draft.opinionOfValue - draft.opinionAfterCostToCure),
@@ -66,7 +69,33 @@ export default function PropertyTaxProtest() {
           `The current sales-comparison draft reflects a $${measuredCost.toLocaleString()} cost-to-cure impact. Necessary repairs and deferred maintenance should be considered in the final value reconciliation.`,
         );
       }
+      }
+    };
+    setAssignmentFileId(null);
+    workfileRevisionRef.current = 0;
+    if (!propertyId) {
+      hydrate(null);
+      return () => { cancelled = true; };
     }
+    void api.getAssignmentFiles(propertyId)
+      .then(async (response) => {
+        const file = response.latest_file;
+        if (!file || cancelled) {
+          hydrate(readAppraisalReportDraft(propertyId));
+          return;
+        }
+        setAssignmentFileId(file.id);
+        const result = await api.getCustomAppraisalWorkfile(propertyId, file.id);
+        if (cancelled) return;
+        const section = result.workfile.sections.sales_comparison;
+        workfileRevisionRef.current = Number(section?.revision || 0);
+        hydrate(
+          (section?.value as AppraisalReportSalesDraft | undefined) ||
+            readAppraisalReportDraft(propertyId),
+        );
+      })
+      .catch(() => hydrate(readAppraisalReportDraft(propertyId)));
+    return () => { cancelled = true; };
   }, [propertyId]);
 
   useEffect(() => {
@@ -77,11 +106,34 @@ export default function PropertyTaxProtest() {
       salesNotes,
       adjustmentNotes,
     };
-    saveAppraisalReportDraft(updatedDraft);
     setSalesDraft(updatedDraft);
+    if (propertyId && assignmentFileId) {
+      let editorKey = '';
+      try {
+        editorKey = window.sessionStorage.getItem('homenode-editor-key') || '';
+      } catch {
+        editorKey = '';
+      }
+      if (editorKey) {
+        void api.saveCustomAppraisalWorkfileSection(
+          propertyId,
+          assignmentFileId,
+          'sales_comparison',
+          {
+            value: updatedDraft,
+            expected_revision: workfileRevisionRef.current,
+            save_reason: 'manual_save',
+            reviewer: 'HomeNode property tax workspace',
+          },
+          editorKey,
+        ).then((response) => {
+          workfileRevisionRef.current = response.section.revision;
+        });
+      }
+    }
     // The state update above intentionally tracks the latest saved timestamp.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [salesNotes, adjustmentNotes]);
+  }, [salesNotes, adjustmentNotes, assignmentFileId, propertyId]);
 
   useEffect(() => {
     if (!propertyId) return;

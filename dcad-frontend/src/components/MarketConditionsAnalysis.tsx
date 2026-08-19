@@ -99,6 +99,7 @@ type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
 
 type Props = {
   subjectAccountId: string;
+  initialDraft?: MarketConditionsDraft | null;
   onCompletionChange?: (draft: MarketConditionsDraft | null) => void;
   initialCustomGeometry?: GeoJsonPolygon | null;
   initialCustomGeometrySource?: string | null;
@@ -864,6 +865,7 @@ function RecommendedDetermination({
 
 export default function MarketConditionsAnalysis({
   subjectAccountId,
+  initialDraft = null,
   onCompletionChange,
   initialCustomGeometry = null,
   initialCustomGeometrySource = null,
@@ -872,8 +874,8 @@ export default function MarketConditionsAnalysis({
   embedded = false,
 }: Props) {
   const savedDraft = useMemo(
-    () => readMarketConditionsDraft(subjectAccountId),
-    [subjectAccountId],
+    () => initialDraft || readMarketConditionsDraft(subjectAccountId),
+    [initialDraft, subjectAccountId],
   );
   const [subject, setSubject] = useState<MarketConditionsSubject | null>(
     savedDraft?.response.subject || null,
@@ -1599,7 +1601,8 @@ export default function MarketConditionsAnalysis({
       setAnalysisResult(response);
       setReconciliation(nextReconciliation);
       setRunSignature(signature);
-      saveMarketConditionsDraft(draft);
+      if (onCompletionChange) onCompletionChange(draft);
+      else saveMarketConditionsDraft(draft);
       setNotice(
         `${response.analyses.length} independent market ${
           response.analyses.length === 1 ? 'study is' : 'studies are'
@@ -1634,8 +1637,8 @@ export default function MarketConditionsAnalysis({
       response: analysisResult,
       reconciliation,
     };
-    saveMarketConditionsDraft(draft);
-    onCompletionChange?.(draft);
+    if (onCompletionChange) onCompletionChange(draft);
+    else saveMarketConditionsDraft(draft);
     setNotice('Market conclusion and reconciliation were saved to the appraisal workfile.');
     window.setTimeout(() => setSavingNarrative(false), 350);
   }

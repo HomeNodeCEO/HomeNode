@@ -10,6 +10,7 @@ import ComparableSalesAnalysis from './pages/ComparableSalesAnalysis';
 import AppraisalReport from './pages/AppraisalReport';
 import CostApproach from './pages/CostApproach';
 import IncomeApproach from './pages/IncomeApproach';
+import FinalReconciliation from './pages/FinalReconciliation';
 import SignUpForm from './pages/SignUpForm';
 import PropertyTaxProtest from './pages/PropertyTaxProtest';
 import UadWorkspaceEntry from './features/uad/pages/UadWorkspaceEntry';
@@ -31,6 +32,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/AppraisalReport" element={<AppraisalReport />} />
         <Route path="/CostApproach" element={<CostApproach />} />
         <Route path="/IncomeApproach" element={<IncomeApproach />} />
+        <Route path="/FinalReconciliation" element={<FinalReconciliation />} />
         <Route path="/PropertyTaxProtest" element={<PropertyTaxProtest />} />
         <Route path="/uad-3.6/:accountId" element={<UadWorkspaceEntry />} />
         <Route path="/signup" element={<SignUpForm />} />

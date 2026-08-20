@@ -8,6 +8,7 @@ import {
 } from "./customAppraisalReportPdf.js";
 import { normalizeCostApproachSection } from "./costApproach.js";
 import { normalizeIncomeApproachSection } from "./incomeApproach.js";
+import { normalizeFinalReconciliationSection } from "./finalReconciliation.js";
 import { normalizeSalesComparisonQualitativeAnalysis } from "../util/qualitativeAnalysis.js";
 
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
@@ -422,7 +423,7 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
   reviewer: reviewerValue,
 }) {
   const sectionKey = normalizeCustomAppraisalSectionKey(sectionKeyValue);
-  const sectionValue = normalizeCustomAppraisalSectionValue(
+  let sectionValue = normalizeCustomAppraisalSectionValue(
     sectionKey === "cost_approach"
       ? normalizeCostApproachSection(sectionValueInput)
       : sectionKey === "income_approach"
@@ -457,6 +458,24 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
       const error = new Error("custom_appraisal_section_revision_conflict");
       error.currentRevision = currentRevision;
       throw error;
+    }
+    if (sectionKey === "final_reconciliation") {
+      const sourceResult = await client.query(
+        `SELECT section_key, section_value, revision
+           FROM app.custom_appraisal_workfile_sections
+          WHERE assignment_file_id = $1
+            AND section_key = ANY($2::text[])
+          FOR SHARE`,
+        [assignmentFileId, ["sales_comparison", "income_approach", "cost_approach"]],
+      );
+      const sourceSections = {};
+      for (const source of sourceResult.rows) {
+        sourceSections[source.section_key] = source.section_value || {};
+        sourceSections[`${source.section_key}_revision`] = Number(source.revision || 0);
+      }
+      sectionValue = normalizeCustomAppraisalSectionValue(
+        normalizeFinalReconciliationSection(sectionValueInput, sourceSections),
+      );
     }
     const nextRevision = currentRevision + 1;
     const { rows } = await client.query(

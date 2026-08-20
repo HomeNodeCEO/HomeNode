@@ -6570,7 +6570,7 @@ function AddressHero({
           </SummarySection>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-5 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-6 grid grid-cols-1 gap-2 border-t border-slate-200 pt-5 sm:grid-cols-2 xl:grid-cols-6">
           <a
             href={
               accountId
@@ -6630,6 +6630,26 @@ function AddressHero({
             }`}
           >
             Income Approach
+          </a>
+          <a
+            href={
+              accountId
+                ? `/FinalReconciliation?propertyId=${encodeURIComponent(accountId)}${
+                    activeAssignmentFile
+                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
+                      : ""
+                  }`
+                : "#"
+            }
+            aria-label="Final Reconciliation"
+            aria-disabled={!accountId}
+            className={`btn normal-case rounded-md px-4 py-2 ${
+              accountId
+                ? "border-violet-700 bg-violet-700 text-white hover:border-violet-800 hover:bg-violet-800"
+                : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
+            }`}
+          >
+            Final Reconciliation
           </a>
           <a
             href={protestUrl}

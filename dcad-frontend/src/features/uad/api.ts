@@ -409,6 +409,8 @@ export interface UadCompletionSuggestions {
   suggestions: {
     assignment_fields: UadCompletionSuggestionField[];
     subject_entity_fields: UadCompletionSuggestionField[];
+    subject_amenity_fields: UadCompletionSuggestionField[];
+    subject_amenity_entities: UadCompletionSuggestionEntity[];
     condition_fields: UadCompletionSuggestionField[];
     project_fields: UadCompletionSuggestionField[];
     highest_best_use_fields: UadCompletionSuggestionField[];

@@ -80,10 +80,23 @@ test("builds a workflow-neutral completion document from the assignment snapshot
     area_sqft: 440,
     parking_spaces: null,
   }]);
+  assert.deepEqual(completion.subject.characteristics.additional_improvements, [{
+    description: "Attached Garage",
+    construction: "Frame",
+    area_sqft: 440,
+    year_built: 1978,
+    value: 12000,
+    parking_spaces: null,
+  }]);
   assert.equal(completion.subject.characteristics.condition_rating, "C4-C3");
   assert.equal(completion.analyses.neighborhood.boundary.north, "Arapaho Road");
   assert.equal(completion.analyses.market_conditions.status, "complete");
   assert.equal(completion.analyses.comparable_sales.primary_comparables.length, 6);
+  assert.equal(completion.analyses.comparable_sales.adjustments.cost_to_cure_total, 5000);
+  assert.deepEqual(completion.analyses.comparable_sales.adjustments.cost_to_cure_items, [{
+    description: "Repair damaged flooring",
+    cost: 5000,
+  }]);
   assert.equal(completion.analyses.approaches.sales_comparison.indicated_value, 302000);
   assert.equal(completion.analyses.final_reconciliation.final_value, 305000);
   assert.equal(completion.readiness.status, "complete");

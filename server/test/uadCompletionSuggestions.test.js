@@ -88,6 +88,7 @@ function fieldByKey(suggestions, key) {
   return [
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
+    ...suggestions.suggestions.subject_amenity_fields,
     ...suggestions.suggestions.condition_fields,
     ...suggestions.suggestions.project_fields,
     ...suggestions.suggestions.highest_best_use_fields,
@@ -128,6 +129,7 @@ test("maps exact assignment, subject, and highest-and-best-use facts for review"
   assert.equal(fieldByKey(suggestions, "dwelling:0300.0011").value, "1978");
   assert.equal(fieldByKey(suggestions, "dwelling:0300.0039").value, 31);
   assert.equal(fieldByKey(suggestions, "dwelling:0300.0030").value, "Traditional");
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0088"), undefined);
   assert.equal(fieldByKey(suggestions, "dwelling:0300.0022").value, true);
   assert.deepEqual(fieldByKey(suggestions, "dwelling:0300.0084").value, ["Centralized"]);
   assert.equal(fieldByKey(suggestions, "vehicle_storage:3200.0006").value, "Garage");
@@ -145,7 +147,56 @@ test("maps exact assignment, subject, and highest-and-best-use facts for review"
   });
   assert.equal(suggestions.omissions.some((item) => item.code === "zoning_compliance_requires_appraiser_selection"), true);
   assert.equal(suggestions.omissions.some((item) => item.code === "vehicle_storage_parking_count_requires_appraiser_entry"), true);
-  assert.equal(suggestions.omissions.some((item) => item.code === "subject_amenities_require_appraiser_classification"), true);
+  assert.equal(fieldByKey(suggestions, "subject_property_amenities:0200.0015").value, true);
+  assert.equal(suggestions.suggestions.subject_amenity_entities.length, 1);
+  assert.deepEqual(suggestions.suggestions.subject_amenity_entities[0].values, {
+    "amenity_whole_home:0200.0034": "WholeHome",
+    "amenity_whole_home:0200.0039": "IndoorFireplace",
+    "amenity_whole_home:0200.0036": 1,
+  });
+  assert.equal(suggestions.omissions.some((item) => item.code === "construction_method_requires_appraiser_selection"), true);
+  assert.equal(suggestions.omissions.some((item) => item.code === "heating_system_requires_appraiser_selection"), true);
+  assert.equal(suggestions.omissions.some((item) => item.code === "amenity_defects_require_appraiser_confirmation"), true);
+  assert.equal(suggestions.omissions.some((item) => item.code === "cost_to_cure_repairs_require_component_allocation"), true);
+});
+
+test("maps only complete, explicit construction and outdoor-living amenity evidence", () => {
+  const input = fixtureParts();
+  const property = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data;
+  property.improvement.construction_type = "Site Built";
+  property.improvement.heating = "Forced Air";
+  property.additional_improvements.push({
+    improvement_type: "Covered Patio",
+    construction: "Concrete",
+    area_sqft: 180,
+    year_built: 2008,
+    value: 7500,
+  });
+  property.additional_improvements.push({
+    improvement_type: "Deck",
+    construction: "Frame",
+    area_sqft: 120,
+    year_built: 2012,
+    value: 4000,
+  });
+  property.improvement.pool = true;
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0034").value, "SiteBuilt");
+  assert.deepEqual(fieldByKey(suggestions, "dwelling:0300.0088").value, ["ForcedWarmAir"]);
+  assert.equal(suggestions.suggestions.subject_amenity_entities.length, 2);
+  const patio = suggestions.suggestions.subject_amenity_entities.find((item) => item.source_key === "outdoor-living-2");
+  assert.deepEqual(patio.data, { amenity_category: "OutdoorLiving" });
+  assert.equal(patio.values["amenity_outdoor_living:0200.0023"], "Patio");
+  assert.equal(patio.values["amenity_outdoor_living:0200.0021"], "Concrete");
+  assert.deepEqual(patio.values["amenity_outdoor_living:0200.0025"], { amount: 180, unit: "SquareFeet" });
+  const omissionCodes = new Set(suggestions.omissions.map((item) => item.code));
+  assert.equal(omissionCodes.has("additional_improvement_requires_uad_classification"), true);
+  assert.equal(omissionCodes.has("pool_type_and_material_require_appraiser_classification"), true);
 });
 
 test("maps explicit project, HOA, condition, and nonconformity evidence for review", () => {
@@ -505,6 +556,7 @@ test("validates every generated suggestion against the official UAD catalog", ()
   const all = [
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
+    ...suggestions.suggestions.subject_amenity_fields,
     ...suggestions.suggestions.condition_fields,
     ...suggestions.suggestions.project_fields,
     ...suggestions.suggestions.highest_best_use_fields,
@@ -513,6 +565,7 @@ test("validates every generated suggestion against the official UAD catalog", ()
     ...suggestions.suggestions.subject_prior_transfer_fields,
     ...suggestions.suggestions.market_fields,
     ...suggestions.suggestions.sales_comparison_fields,
+    ...suggestions.suggestions.subject_amenity_entities,
     ...suggestions.suggestions.subject_listing_entities,
     ...suggestions.suggestions.subject_prior_transfer_entities,
     ...suggestions.suggestions.market_entities,

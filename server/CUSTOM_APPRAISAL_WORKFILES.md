@@ -32,12 +32,16 @@ storage rather than being duplicated inside the JSON snapshot.
    and the Sales Comparison page receives that file ID in its URL.
 3. Sales Comparison autosaves the complete grid/workspace to the
    `sales_comparison` section. Market Conditions saves to `market_conditions`.
+   Cost, Income, and Final Reconciliation use independent sections. Final
+   Reconciliation records the exact source-section revisions and the
+   appraiser-confirmed approach weights, value conclusion, and certification.
 4. A successful database save removes the old sales browser draft. Legacy
    browser drafts can still be imported once when a database section is empty.
 5. Finalize & Lock first calls the server-authoritative readiness endpoint. Its
    blockers cover assignment, contract, PUD/HOA, conformity, neighborhood,
-   market-study, comparable, and value-reconciliation requirements. Source-data
-   repair concerns (including an incomplete CAD status or missing owner, legal,
+   market-study, comparable, and value-reconciliation requirements. Changes to
+   a reconciled source approach block signing until reviewed and saved again.
+   Source-data repair concerns (including an incomplete CAD status or missing owner, legal,
    site, GLA, or condition evidence) are explicit warnings that the appraiser
    must acknowledge. The server reruns the same checks while signing so a stale
    browser cannot bypass a new blocker or warning.

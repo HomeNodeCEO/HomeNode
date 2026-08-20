@@ -34,8 +34,11 @@ Phase 2 property context
   80% of eligible sales have stored influence context. The established
   location/GLA/age/site/recency score remains the safe fallback while coverage
   is lower.
-- TODO: add the Secondary Comparable Sales Grid. It will retain sales that are
-  weaker overall but provide relevant evidence for a defining feature such as
-  commercial adjacency, railroad proximity, flood-zone exposure, corner lot,
-  or another mapped external influence.
+- The Secondary Comparable Sales Grid retains appraiser-selected supplemental
+  sales without including them in primary adjustments or the value conclusion
+  until they are promoted.
+- Final Reconciliation is a separately versioned workfile section. The server
+  reloads authoritative Sales, Income, and Cost indications, validates weights,
+  records the appraiser's concluded value and certification, and blocks signing
+  when a relied-upon source section changes.
 

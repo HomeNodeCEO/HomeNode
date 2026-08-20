@@ -90,3 +90,11 @@ test("vacant-land subjects do not receive an erroneous missing-GLA warning", () 
   const readiness = customAppraisalReportReadiness(snapshot, property);
   assert.equal(readiness.warning_codes.includes("subject_gla_missing"), false);
 });
+
+test("final reconciliation becomes stale when a source approach changes", () => {
+  const { snapshot, property } = customAppraisalReportFixture();
+  snapshot.sections.sales_comparison.revision += 1;
+  const readiness = customAppraisalReportReadiness(snapshot, property);
+  assert.equal(readiness.ready, false);
+  assert.ok(readiness.blockers.some((item) => item.code === "final_reconciliation_stale"));
+});

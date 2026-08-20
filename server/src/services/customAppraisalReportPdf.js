@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import PDFDocument from "pdfkit";
 
 import { getAccountPropertyActivityHistory } from "./accountSalesHistory.js";
+import { finalReconciliationReadinessErrors } from "./finalReconciliation.js";
 
 const PAGE = Object.freeze({ width: 612, height: 792, margin: 42 });
 const CONTENT_WIDTH = PAGE.width - (PAGE.margin * 2);
@@ -118,6 +119,10 @@ function sectionValue(snapshot, sectionKey) {
   return snapshot?.sections?.[sectionKey]?.value || snapshot?.sections?.[sectionKey] || {};
 }
 
+function sectionRevision(snapshot, sectionKey) {
+  return Number(snapshot?.sections?.[sectionKey]?.revision || 0);
+}
+
 function assignmentRecord(snapshot, property) {
   return snapshot?.assignment || property?.assignment || {};
 }
@@ -218,6 +223,7 @@ export function customAppraisalReportReadiness(snapshot, property = {}) {
   const details = assignmentDetails(snapshot, property);
   const sales = sectionValue(snapshot, "sales_comparison");
   const market = sectionValue(snapshot, "market_conditions");
+  const final = sectionValue(snapshot, "final_reconciliation");
   if (!Array.isArray(details.assignment_types) || !details.assignment_types.length) {
     addBlocker("assignment_type_missing", "Select an assignment type.");
   }
@@ -311,6 +317,24 @@ export function customAppraisalReportReadiness(snapshot, property = {}) {
   }
   if (!String(market?.reconciliation?.trendConclusion || "").trim()) {
     addBlocker("market_trend_conclusion_missing", "Complete the market trend conclusion.");
+  }
+  const finalErrors = finalReconciliationReadinessErrors(final);
+  if (finalErrors.length) {
+    addBlocker(
+      "final_reconciliation_incomplete",
+      `Complete the Final Reconciliation before signing. ${finalErrors.join(" ")}`,
+    );
+  }
+  const staleFinalSources = ["sales_comparison", "income_approach", "cost_approach"]
+    .filter((sectionKey) =>
+      Number(final?.approaches?.[sectionKey]?.source_revision || 0) !==
+      sectionRevision(snapshot, sectionKey)
+    );
+  if (final?.developed && staleFinalSources.length) {
+    addBlocker(
+      "final_reconciliation_stale",
+      `Review and save the Final Reconciliation again because these source sections changed: ${staleFinalSources.join(", ").replaceAll("_", " ")}.`,
+    );
   }
 
   const account = property?.account || {};
@@ -1054,15 +1078,25 @@ function renderReconciliationPage(doc, meta, snapshot, property) {
   const income = sectionValue(snapshot, "income_approach");
   const cost = sectionValue(snapshot, "cost_approach");
   const final = sectionValue(snapshot, "final_reconciliation");
-  const finalValue = numberValue(final.final_value) || numberValue(sales.opinionOfValue);
+  const salesValue = numberValue(final.approaches?.sales_comparison?.indicated_value) ||
+    numberValue(sales.opinionAfterCostToCure) || numberValue(sales.opinionOfValue);
+  const incomeValue = numberValue(final.approaches?.income_approach?.indicated_value) ||
+    numberValue(income.rounded_indicated_value || income.indicated_value);
+  const costValue = numberValue(final.approaches?.cost_approach?.indicated_value) ||
+    numberValue(cost.rounded_indicated_value || cost.indicated_value);
+  const finalValue = numberValue(final.final_value) || salesValue;
+  const weightLabel = (key) => {
+    const weight = numberValue(final.weights?.[key]);
+    return weight === null ? "0%" : `${weight}%`;
+  };
   let y = sectionTitle(doc, "Approach Reconciliation", 90);
   y = factsGrid(doc, [
-    { label: "Sales Comparison", value: money(sales.opinionOfValue) },
-    { label: "Income Approach", value: money(income.rounded_indicated_value || income.indicated_value) },
-    { label: "Cost Approach", value: money(cost.rounded_indicated_value || cost.indicated_value) },
+    { label: `Sales Comparison · ${weightLabel("sales_comparison")}`, value: money(salesValue) },
+    { label: `Income Approach · ${weightLabel("income_approach")}`, value: money(incomeValue) },
+    { label: `Cost Approach · ${weightLabel("cost_approach")}`, value: money(costValue) },
     { label: "Final Opinion of Value", value: money(finalValue) },
   ], y, 4);
-  y = noteBox(doc, final.explanation || sales.salesNotes || "The final value is reconciled to the Sales Comparison Approach because no other developed approach was saved in this workfile.", y + 8, { height: 86 });
+  y = noteBox(doc, final.explanation || sales.salesNotes || "Final reconciliation has not been completed.", y + 8, { height: 86 });
   y = sectionTitle(doc, "Appraiser Certification", y + 4);
   const certification = final.certification || "I certify that, to the best of my knowledge and belief, the statements of fact contained in this report are true and correct; the analyses, opinions, and conclusions are limited only by the reported assumptions and limiting conditions; and I have no undisclosed present or prospective interest in the property that is the subject of this report.";
   y = noteBox(doc, certification, y, { height: 112 });

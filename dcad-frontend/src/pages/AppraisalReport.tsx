@@ -33,6 +33,7 @@ import {
 } from "@/lib/neighborhoodCharacteristics";
 import type { CostApproachDraft } from "@/lib/costApproach";
 import type { IncomeApproachDraft } from "@/lib/incomeApproach";
+import type { FinalReconciliationDraft } from "@/lib/finalReconciliation";
 
 type Detail = {
   tax_year?: string | number;
@@ -327,6 +328,7 @@ export default function AppraisalReport() {
   );
   const [costDraft, setCostDraft] = useState<CostApproachDraft | null>(null);
   const [incomeDraft, setIncomeDraft] = useState<IncomeApproachDraft | null>(null);
+  const [finalDraft, setFinalDraft] = useState<FinalReconciliationDraft | null>(null);
   const [assignmentFile, setAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
   const [assignmentLoading, setAssignmentLoading] = useState(Boolean(propertyId));
   const [printBlocker, setPrintBlocker] = useState("");
@@ -352,6 +354,7 @@ export default function AppraisalReport() {
     setMarketDraft(readMarketConditionsDraft(propertyId));
     setCostDraft(null);
     setIncomeDraft(null);
+    setFinalDraft(null);
   }, [propertyId]);
 
   useEffect(() => {
@@ -386,6 +389,9 @@ export default function AppraisalReport() {
         );
         setIncomeDraft(
           (result.workfile.sections.income_approach?.value as IncomeApproachDraft | undefined) || null,
+        );
+        setFinalDraft(
+          (result.workfile.sections.final_reconciliation?.value as FinalReconciliationDraft | undefined) || null,
         );
       })
       .catch(() => {
@@ -1909,6 +1915,40 @@ export default function AppraisalReport() {
               <Fact label="Review Requirement" value={costApproachDeveloped ? "Appraiser reconciliation required" : "Cost and depreciation data required"} wide />
             </div>
             {costDraft?.methodology ? <p className="report-note">{costDraft.methodology}</p> : null}
+          </section>
+          <PageFooter generatedAt={generatedAt} />
+        </article>
+        <article className="report-page">
+          <PageHeader page={9} title="Final Reconciliation and Certification" address={address} />
+          <section className="report-approach-hero">
+            <div className="report-status">
+              {finalDraft?.developed ? "Final reconciliation completed" : "Final reconciliation required"}
+            </div>
+            <h2>Final Opinion of Value</h2>
+            <p>{finalDraft?.explanation || "Complete and save the Final Reconciliation before finalizing this appraisal file."}</p>
+          </section>
+          <section className="report-section">
+            <h2 className="report-section-title">Approach Reconciliation</h2>
+            <div className="report-facts">
+              <Fact label={`Sales Comparison · ${finalDraft?.weights.sales_comparison || 0}%`} value={money(finalDraft?.approaches.sales_comparison.indicated_value || draft?.opinionAfterCostToCure || opinionOfValue)} />
+              <Fact label={`Income Approach · ${finalDraft?.weights.income_approach || 0}%`} value={money(finalDraft?.approaches.income_approach.indicated_value || incomeDraft?.rounded_indicated_value)} />
+              <Fact label={`Cost Approach · ${finalDraft?.weights.cost_approach || 0}%`} value={money(finalDraft?.approaches.cost_approach.indicated_value || costDraft?.rounded_indicated_value)} />
+              <Fact label="Weight Total" value={finalDraft ? `${finalDraft.weight_total}%` : "Not reconciled"} />
+              <Fact label="Weighted Indication" value={money(finalDraft?.calculated_weighted_value)} />
+              <Fact label="Rounded Indication" value={money(finalDraft?.rounded_weighted_value)} />
+              <Fact label="Final Opinion of Value" value={money(finalDraft?.final_value || draft?.opinionAfterCostToCure || opinionOfValue)} />
+              <Fact label="Effective Date" value={finalDraft?.effective_date} />
+            </div>
+            {finalDraft?.override_explanation ? <p className="report-note"><strong>Material variance support:</strong> {finalDraft.override_explanation}</p> : null}
+          </section>
+          <section className="report-section">
+            <h2 className="report-section-title">Appraiser Certification</h2>
+            <p className="report-note">{finalDraft?.certification || "The appraiser certification has not yet been confirmed for this appraisal file."}</p>
+            <div className="report-reconciliation">
+              <div><span>Certification</span><strong>{finalDraft?.certification_confirmed ? "Confirmed" : "Confirmation required"}</strong></div>
+              <div><span>Assignment File</span><strong>{assignmentFile?.file_number || "Not selected"}</strong></div>
+              <div><span>Workfile Status</span><strong>{assignmentFile?.workfile?.status || "Draft"}</strong></div>
+            </div>
           </section>
           <PageFooter generatedAt={generatedAt} />
         </article>

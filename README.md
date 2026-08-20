@@ -3,6 +3,10 @@
 Trestle/RESO live-feed activation and operations are documented in
 `docs/TRESTLE_REPLICATION_READINESS.md`.
 
+Non-blocking acceptance work is tracked in `docs/TESTING_PRIORITIES.md`. The
+remaining Custom Appraisal feature sequence is documented in
+`docs/CUSTOM_APPRAISAL_REMAINING_ROADMAP.md`.
+
 Frontend:
 cd dcad-frontend
 npm install

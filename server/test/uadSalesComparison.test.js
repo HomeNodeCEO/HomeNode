@@ -13,7 +13,10 @@ import {
   uadFieldIsRequired,
   uadFieldIsVisible,
 } from "../src/modules/uad/fieldCatalog.js";
-import { validateCompleteSection } from "../src/modules/uad/editor.js";
+import {
+  calculateSalesComparisonSummaryValues,
+  validateCompleteSection,
+} from "../src/modules/uad/editor.js";
 import {
   UAD_NATIVE_AMERICAN_LAND_TYPES,
   UAD_PROPERTY_RIGHTS_NOT_INCLUDED,
@@ -24,6 +27,7 @@ import {
   UAD_SALES_COMPARABLE_FINANCING_TYPES,
   UAD_SALES_COMPARABLE_HEATING_SYSTEM_TYPES,
   UAD_SALES_COMPARABLE_LISTING_STATUSES,
+  UAD_SALES_COMPARABLE_WEIGHT_TYPES,
   UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES,
   UAD_SALES_COMPARABLE_SITE_INFLUENCE_TYPES,
   UAD_SALES_COMPARABLE_VIEW_TYPES,
@@ -40,13 +44,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22N editor on canonical comparable entities", () => {
+test("adds the Section 22A-22O editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 292);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 292);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 300);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 300);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -90,6 +94,10 @@ test("adds the Section 22A-22N editor on canonical comparable entities", () => {
   );
   assert.equal(
     section?.groups.find((group) => group.name === "Sales comparables — outbuilding adjustment")?.entityType,
+    "sales_comparable",
+  );
+  assert.equal(
+    section?.groups.find((group) => group.name === "Sales comparables — summary")?.entityType,
     "sales_comparable",
   );
 });
@@ -136,6 +144,7 @@ test("accepts a complete settled comparable with a source and verified property 
   const vehicleStorage = { id: "b34d53de-9c6e-441e-8b60-9958866649de", entity_type: "sales_comparable_vehicle_storage", parent_entity_id: comparable.id, ordinal: 1, data: {} };
   const values = [
     value(null, "sales_comparison_scope", "1000.0032", true),
+    value(null, "sales_comparison_summary", "1300.0006", 425000),
     value(null, "subject", "1600.0007", "Q3"),
     value(null, "subject", "1600.0006", "C3"),
     value(comparable.id, "sales_comparable", "1800.0192", 1),
@@ -152,6 +161,7 @@ test("accepts a complete settled comparable with a source and verified property 
     value(comparable.id, "sales_comparable_property", "1800.0199", false),
     value(comparable.id, "sales_comparable_proximity", "1800.0065", { amount: 0, unit: "Miles" }),
     value(comparable.id, "sales_comparable_listing", "1800.0075", "SettledSale"),
+    value(comparable.id, "sales_comparable_summary", "1800.0312", "Most"),
     value(comparable.id, "sales_comparable_sale", "1800.0272", 425000),
     value(comparable.id, "sales_comparable_sale", "1800.0274", "TypicallyMotivated"),
     value(comparable.id, "sales_comparable_concessions", "1800.0370", false),
@@ -694,6 +704,46 @@ test("validates Section 22N comparable outbuilding hierarchy, areas, utilities, 
   assert.equal(normalizeAndValidateUadValue(adjustment, -5000).error, null);
 });
 
+test("calculates Section 22O Summary from canonical prices, adjustments, units, and areas", () => {
+  const comparable = { id: "39ca14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
+  const dwelling = { id: "49ca14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_dwelling", parent_entity_id: comparable.id, ordinal: 1, data: {} };
+  const unit = { id: "59ca14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_unit", parent_entity_id: dwelling.id, ordinal: 1, data: {} };
+  const adu = { id: "69ca14db-34a8-4f07-8f6c-27e984671eed", entity_type: "sales_comparable_unit", parent_entity_id: dwelling.id, ordinal: 2, data: {} };
+  const submitted = [
+    value(null, "subject", "0100.0022", 1),
+    value(comparable.id, "sales_comparable_listing", "1800.0074", 449000),
+    value(comparable.id, "sales_comparable_listing", "1800.0075", "SettledSale"),
+    value(comparable.id, "sales_comparable_sale", "1800.0272", 442500),
+    value(comparable.id, "sales_comparable_property", "1800.0365", 1),
+    value(comparable.id, "sales_comparable_adjustment_sale_date", "1800.0317", -10000),
+    value(comparable.id, "sales_comparable_adjustment_outbuilding", "1800.0317", 2500),
+    value(unit.id, "sales_comparable_unit", "1800.0330", 3),
+    value(unit.id, "sales_comparable_unit", "1800.0390", { amount: 2050, unit: "SquareFeet" }),
+    value(unit.id, "sales_comparable_unit", "1800.0391", { amount: 0, unit: "SquareFeet" }),
+    value(adu.id, "sales_comparable_unit", "1800.0330", 1),
+    value(adu.id, "sales_comparable_unit", "1800.0390", { amount: 575, unit: "SquareFeet" }),
+  ];
+  const summary = new Map(calculateSalesComparisonSummaryValues(
+    [],
+    submitted,
+    [comparable, dwelling, unit, adu],
+  ).map((item) => [item.field.key, item.value]));
+
+  assert.equal(summary.get("sales_comparable_summary:1800.0313"), -7500);
+  assert.equal(summary.get("sales_comparable_summary:1800.0309"), 435000);
+  assert.equal(summary.get("sales_comparable_summary:1800.0315"), 169);
+  assert.equal(summary.get("sales_comparable_summary:1800.0311"), null);
+  assert.equal(summary.get("sales_comparable_summary:1800.0310"), null);
+
+  assert.deepEqual(UAD_SALES_COMPARABLE_WEIGHT_TYPES, ["Most", "Less", "NoWeight"]);
+  assert.equal(getUadField("sales_comparable_summary", "1800.0313").readOnly, true);
+  assert.equal(getUadField("sales_comparable_summary", "1800.0312").readOnly, undefined);
+  assert.equal(normalizeAndValidateUadValue(
+    getUadField("sales_comparable_summary", "1800.0312"),
+    "NoWeight",
+  ).error, null);
+});
+
 test("recognizes only verified entity-linked Section 22 comparable photos", () => {
   const asset = {
     section_number: 22,
@@ -927,6 +977,23 @@ test("seeds Section 22N outbuilding hierarchy, subject redisplays, typed adjustm
   assert.match(sql, /'1800\.0387','sales_comparable_outbuilding','22\.14\.16'/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-OUTBUILDING-006/);
   assert.match(runner, /20260917_uad_sales_comparison_outbuildings\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Section 22O Summary fields, redisplays, formulas, and official rules additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260918_uad_sales_comparison_summary.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const ruleId of ["UAD1253", "UAD1456", "UAD1457", "UAD1458", "UAD1459", "UAD1460", "UAD1461"]) {
+    assert.match(sql, new RegExp(ruleId));
+  }
+  assert.match(sql, /SalePriceNetTotalAdjustmentAmount/);
+  assert.match(sql, /ComparableWeightType/);
+  assert.match(sql, /ValueIndicatedBySalesComparisonAmount/);
+  assert.match(sql, /'0900\.0008','subject_listing','22\.15\.02'/);
+  assert.match(sql, /'1800\.0272','sales_comparable_sale','22\.15\.07'/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-SUMMARY-004/);
+  assert.match(runner, /20260918_uad_sales_comparison_summary\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

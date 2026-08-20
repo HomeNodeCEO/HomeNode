@@ -104,6 +104,157 @@ function valuesMap(values) {
   return new Map(values.map((value) => [valueKey(value), value.value]));
 }
 
+function finiteNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function measurementAmount(value) {
+  return finiteNumber(value?.amount);
+}
+
+function roundCurrency(value) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function roundWholeAmount(value) {
+  return Math.round(value);
+}
+
+function calculatedSalesComparisonFields() {
+  return UAD_PHASE_ONE_FIELDS.filter((field) => (
+    field.section === "sales_comparison" && field.calculated === true
+  ));
+}
+
+export function calculateSalesComparisonSummaryValues(existingRows = [], submitted = [], entities = []) {
+  const merged = valuesMap(existingRows);
+  for (const item of submitted) merged.set(fieldValueKey(item.field, item.entityId), item.value);
+
+  const fieldByKey = new Map(calculatedSalesComparisonFields().map((field) => [field.key, field]));
+  const rootLookup = valueLookup(merged);
+  const subjectUnitCount = finiteNumber(rootLookup("subject:0100.0022"));
+  const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
+  const structures = entities.filter((entity) => (
+    entity.entity_type === "sales_comparable_dwelling"
+    || entity.entity_type === "sales_comparable_outbuilding"
+  ));
+  const units = entities.filter((entity) => entity.entity_type === "sales_comparable_unit");
+  const result = [];
+
+  const add = (key, entityId, value) => {
+    const field = fieldByKey.get(key);
+    if (field) result.push({ field, entityId, value });
+  };
+
+  for (const comparable of comparables) {
+    const lookup = valueLookup(merged, comparable.id);
+    let netAdjustmentTotal = 0;
+    const adjustmentPrefix = `${comparable.id}:sales_comparable_adjustment_`;
+    for (const [key, rawValue] of merged) {
+      if (!key.startsWith(adjustmentPrefix) || !key.endsWith(":1800.0317")) continue;
+      const adjustment = finiteNumber(rawValue);
+      if (adjustment !== null) netAdjustmentTotal += adjustment;
+    }
+    netAdjustmentTotal = roundWholeAmount(netAdjustmentTotal);
+
+    const listingStatus = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.listingStatus);
+    const listPrice = finiteNumber(lookup("sales_comparable_listing:1800.0074"));
+    const contractPrice = finiteNumber(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.contractPrice));
+    const contractPriceUnknown = lookup(UAD_SALES_COMPARISON_FIELD_KEYS.contractPriceUnknown);
+    const salePrice = finiteNumber(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.salePrice));
+    const settled = listingStatus === "SettledSale";
+    const adjustedPriceBase = settled ? salePrice : listPrice;
+    const priceForAreaMetrics = settled
+      ? salePrice
+      : contractPriceUnknown === false && contractPrice !== null
+        ? contractPrice
+        : listPrice;
+    const adjustedPrice = adjustedPriceBase === null
+      ? null
+      : roundCurrency(adjustedPriceBase + netAdjustmentTotal);
+    const nonAduUnitCount = finiteNumber(lookup(UAD_SALES_COMPARISON_FIELD_KEYS.nonAduUnitCount));
+
+    const comparableStructureIds = new Set(
+      structures.filter((structure) => structure.parent_entity_id === comparable.id).map((structure) => structure.id),
+    );
+    const comparableUnits = units.filter((unit) => comparableStructureIds.has(unit.parent_entity_id));
+    const bedroomCount = comparableUnits.reduce((total, unit) => (
+      total + (finiteNumber(valueLookup(merged, unit.id)(UAD_SALES_COMPARISON_FIELD_KEYS.unitBedrooms)) || 0)
+    ), 0);
+    const finishedAreaAboveGrade = comparableUnits.reduce((total, unit) => {
+      const unitLookup = valueLookup(merged, unit.id);
+      return total
+        + (measurementAmount(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitStandardAbove)) || 0)
+        + (measurementAmount(unitLookup(UAD_SALES_COMPARISON_FIELD_KEYS.unitNonstandardAbove)) || 0);
+    }, 0);
+    const grossFinishedArea = measurementAmount(lookup("sales_comparable_dwelling_summary:1800.0345"));
+
+    add(UAD_SALES_COMPARISON_FIELD_KEYS.netAdjustmentTotal, comparable.id, netAdjustmentTotal);
+    add(
+      UAD_SALES_COMPARISON_FIELD_KEYS.adjustedPricePerUnit,
+      comparable.id,
+      nonAduUnitCount !== null && nonAduUnitCount > 1 && adjustedPrice !== null
+        ? roundWholeAmount(adjustedPrice / nonAduUnitCount)
+        : null,
+    );
+    add(
+      UAD_SALES_COMPARISON_FIELD_KEYS.adjustedPricePerBedroom,
+      comparable.id,
+      nonAduUnitCount !== null && nonAduUnitCount > 1 && bedroomCount > 0 && adjustedPrice !== null
+        ? roundWholeAmount(adjustedPrice / bedroomCount)
+        : null,
+    );
+    add(
+      UAD_SALES_COMPARISON_FIELD_KEYS.pricePerGrossFinishedArea,
+      comparable.id,
+      subjectUnitCount !== null && subjectUnitCount > 1 && grossFinishedArea !== null
+        && grossFinishedArea > 0 && priceForAreaMetrics !== null
+        ? roundWholeAmount(priceForAreaMetrics / grossFinishedArea)
+        : null,
+    );
+    add(
+      UAD_SALES_COMPARISON_FIELD_KEYS.pricePerFinishedAreaAboveGrade,
+      comparable.id,
+      nonAduUnitCount === 1 && finishedAreaAboveGrade > 0 && priceForAreaMetrics !== null
+        ? roundWholeAmount(priceForAreaMetrics / finishedAreaAboveGrade)
+        : null,
+    );
+    add(UAD_SALES_COMPARISON_FIELD_KEYS.adjustedPrice, comparable.id, adjustedPrice);
+  }
+  return result;
+}
+
+function withCalculatedSalesComparisonSummaryRows(rows, entities) {
+  const calculated = calculateSalesComparisonSummaryValues(rows, [], entities);
+  const calculatedKeys = new Set(calculated.map((item) => fieldValueKey(item.field, item.entityId)));
+  const existingByKey = new Map(rows.map((row) => [valueKey(row), row]));
+  const retained = rows.filter((row) => !calculatedKeys.has(valueKey(row)));
+  const now = new Date().toISOString();
+  const derivedRows = calculated.map(({ field, entityId, value }) => {
+    const key = fieldValueKey(field, entityId);
+    const existing = existingByKey.get(key);
+    return {
+      ...(existing || {}),
+      id: existing?.id || `calculated:${entityId || "root"}:${field.uid}`,
+      entity_id: entityId,
+      field_context: field.contextKey,
+      uad_uid: field.uid,
+      report_field_id: field.reportFieldId,
+      value,
+      source_type: "calculated",
+      source_reference: "uad.sales_comparison_summary",
+      is_appraiser_confirmed: true,
+      is_override: false,
+      override_reason: null,
+      created_at: existing?.created_at || now,
+      updated_at: now,
+    };
+  });
+  return [...retained, ...derivedRows];
+}
+
 const REQUIRED_UNIT_INTERIOR_ROOM_PHOTO_TYPES = new Set([
   "Bedroom",
   "DiningRoom",
@@ -610,7 +761,8 @@ export async function getUadEditor(pool, workfileIdValue) {
     listUadAssets(pool, workfileId),
   ]);
   const sections = getUadEditorSections();
-  const responseRows = rows.map(responseValue);
+  const effectiveRows = withCalculatedSalesComparisonSummaryRows(rows, entities);
+  const responseRows = effectiveRows.map(responseValue);
   const byKey = valuesMap(rows);
   return {
     workfile: { ...workfileResult.rows[0], current_revision: Number(workfileResult.rows[0].current_revision) },
@@ -620,7 +772,7 @@ export async function getUadEditor(pool, workfileIdValue) {
     })),
     entities,
     values: responseRows,
-    completion: completionFor(rows, entities, assets),
+    completion: completionFor(effectiveRows, entities, assets),
   };
 }
 
@@ -635,6 +787,11 @@ function validationError(field, entityId, code, message) {
 export function validateCompleteSection(section, existingRows, submitted, entities, assets = []) {
   const merged = valuesMap(existingRows);
   for (const item of submitted) merged.set(fieldValueKey(item.field, item.entityId), item.value);
+  if (section === "sales_comparison") {
+    for (const item of calculateSalesComparisonSummaryValues(existingRows, submitted, entities)) {
+      merged.set(fieldValueKey(item.field, item.entityId), item.value);
+    }
+  }
   const errors = [];
   for (const field of UAD_PHASE_ONE_FIELDS.filter((candidate) => candidate.section === section)) {
     const instances = field.entityType
@@ -4390,13 +4547,23 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     ]);
     const entityTypesById = new Map(entities.map((entity) => [entity.id, entity.entity_type]));
     const entityDataById = new Map(entities.map((entity) => [entity.id, entity.data]));
-    const validation = validateUadSectionValues(section, input.values, { entityTypesById, entityDataById });
+    const calculatedFieldKeys = new Set(calculatedSalesComparisonFields().map((field) => field.key));
+    const submittedValues = section === "sales_comparison" && Array.isArray(input.values)
+      ? input.values.filter((item) => !calculatedFieldKeys.has(`${item.context_key}:${item.uid}`))
+      : input.values;
+    const validation = validateUadSectionValues(section, submittedValues, { entityTypesById, entityDataById });
     if (validation.errors.length) {
       const error = new Error("invalid_uad_field_values");
       error.details = validation.errors;
       throw error;
     }
-    const completeSectionErrors = validateCompleteSection(section, existingRows, validation.normalized, entities, assets);
+    const normalized = section === "sales_comparison"
+      ? [
+          ...validation.normalized,
+          ...calculateSalesComparisonSummaryValues(existingRows, validation.normalized, entities),
+        ]
+      : validation.normalized;
+    const completeSectionErrors = validateCompleteSection(section, existingRows, normalized, entities, assets);
     if (completeSectionErrors.length) {
       const error = new Error("invalid_uad_field_values");
       error.details = completeSectionErrors;
@@ -4405,13 +4572,18 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
 
     const existingByKey = new Map(existingRows.map((row) => [valueKey(row), row]));
     const changed = [];
-    for (const { field, value, entityId } of validation.normalized) {
+    for (const { field, value, entityId } of normalized) {
       const key = fieldValueKey(field, entityId);
       const previous = existingByKey.get(key);
       const changedFromPrevious = !previous || !jsonEqual(previous.value, value);
-      const isOverride = Boolean(previous && previous.source_type !== "appraiser" && changedFromPrevious);
-      const sourceType = previous && !changedFromPrevious ? previous.source_type : "appraiser";
-      const sourceReference = previous && !changedFromPrevious ? previous.source_reference : "uad_workspace.section_save";
+      const calculated = field.calculated === true;
+      const isOverride = Boolean(!calculated && previous && previous.source_type !== "appraiser" && changedFromPrevious);
+      const sourceType = calculated
+        ? "calculated"
+        : previous && !changedFromPrevious ? previous.source_type : "appraiser";
+      const sourceReference = calculated
+        ? "uad.sales_comparison_summary"
+        : previous && !changedFromPrevious ? previous.source_reference : "uad_workspace.section_save";
       const overrideReason = isOverride ? "Appraiser edited a HomeNode-prefilled value." : null;
       const id = previous?.id || randomUUID();
 
@@ -4429,8 +4601,8 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
           `INSERT INTO appraisal.uad_field_values (
              id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
              source_type, source_reference, is_appraiser_confirmed
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, 'appraiser', 'uad_workspace.section_save', true)`,
-          [id, workfileId, entityId, field.contextKey, field.uid, field.reportFieldId, JSON.stringify(value)],
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, true)`,
+          [id, workfileId, entityId, field.contextKey, field.uid, field.reportFieldId, JSON.stringify(value), sourceType, sourceReference],
         );
       }
       if (changedFromPrevious || !previous?.is_appraiser_confirmed) {
@@ -4471,7 +4643,7 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
         section,
         JSON.stringify(changed.map(({ key, uid, context_key, entity_id, before }) => ({ key, uid, context_key, entity_id, value: before }))),
         JSON.stringify(changed.map(({ key, uid, context_key, entity_id, after }) => ({ key, uid, context_key, entity_id, value: after }))),
-        JSON.stringify({ revision_number: revisionNumber, submitted_field_count: validation.normalized.length }),
+        JSON.stringify({ revision_number: revisionNumber, submitted_field_count: normalized.length }),
       ],
     );
     await client.query("COMMIT");
@@ -4479,7 +4651,7 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     return {
       section,
       current_revision: revisionNumber,
-      saved_field_count: validation.normalized.length,
+      saved_field_count: normalized.length,
       changed_field_count: changed.length,
       values: allRows.map(responseValue),
       completion: completionFor(allRows, entities, assets),

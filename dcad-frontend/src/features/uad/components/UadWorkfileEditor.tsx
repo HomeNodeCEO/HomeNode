@@ -80,6 +80,12 @@ function displayOption(value: string) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("REO", "REO");
 }
 
+function displayCurrency(value: UadFieldValue | undefined) {
+  return typeof value === "number"
+    ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value)
+    : "Not provided";
+}
+
 function fieldValueKey(contextKey: string, uid: string, entityId: string | null = null) {
   return `${entityId || "root"}:${contextKey}:${uid}`;
 }
@@ -181,6 +187,27 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const salesContractExists = draft[fieldValueKey("sales_contract", "0600.0016")];
   const salesComparisonIncluded = draft[fieldValueKey("sales_comparison_scope", "1000.0032")];
   const salesComparables = editor?.entities.filter((entity) => entity.entity_type === "sales_comparable") || [];
+  const subjectListings = editor?.entities.filter((entity) => entity.entity_type === "subject_listing") || [];
+  const mostRecentSubjectListing = [...subjectListings].sort((left, right) => {
+    const leftDate = String(
+      draft[fieldValueKey("subject_listing", "0900.0010", left.id)]
+      || draft[fieldValueKey("subject_listing", "0900.0012", left.id)]
+      || "",
+    );
+    const rightDate = String(
+      draft[fieldValueKey("subject_listing", "0900.0010", right.id)]
+      || draft[fieldValueKey("subject_listing", "0900.0012", right.id)]
+      || "",
+    );
+    return rightDate.localeCompare(leftDate) || left.ordinal - right.ordinal;
+  })[0];
+  const subjectSummaryListPrice = mostRecentSubjectListing
+    ? draft[fieldValueKey("subject_listing", "0900.0008", mostRecentSubjectListing.id)]
+    : undefined;
+  const subjectSummaryContractPrice = draft[fieldValueKey("sales_contract", "0600.0008")];
+  const assignmentReason = draft[fieldValueKey("assignment", "1000.0034")];
+  const subjectSummaryContractVisible = ["Purchase", "Construction", "ShortSale"].includes(String(assignmentReason || ""))
+    || typeof subjectSummaryContractPrice === "number";
   const section22SubjectOutbuildings = outbuildings
     .filter((outbuilding) => {
       const type = draft[fieldValueKey("outbuilding", "0300.0025", outbuilding.id)];
@@ -246,6 +273,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   }
 
   function setValue(field: UadFieldDefinition, entityId: string | null, value: UadFieldValue) {
+    if (field.readOnly) return;
     setDraft((current) => ({ ...current, [fieldValueKey(field.contextKey, field.uid, entityId)]: value }));
     setDirty(true);
     setSavedMessage(null);
@@ -349,16 +377,19 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   function renderControl(field: UadFieldDefinition, entityId: string | null) {
     const key = fieldValueKey(field.contextKey, field.uid, entityId);
     const value = draft[key];
+    const controlClass = field.readOnly
+      ? `${inputClass} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-700`
+      : inputClass;
     if (field.dataType === "boolean") {
       return (
-        <select className={inputClass} onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : event.target.value === "true")} value={value === true ? "true" : value === false ? "false" : ""}>
+        <select className={controlClass} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : event.target.value === "true")} value={value === true ? "true" : value === false ? "false" : ""}>
           <option value="">Select Yes or No</option><option value="true">Yes</option><option value="false">No</option>
         </select>
       );
     }
     if (field.dataType === "enum") {
       return (
-        <select className={inputClass} onChange={(event) => setValue(field, entityId, event.target.value || null)} value={String(value ?? "")}>
+        <select className={controlClass} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, event.target.value || null)} value={String(value ?? "")}>
           <option value="">Select an option</option>
           {field.options?.map((option) => <option key={option} value={option}>{displayOption(option)}</option>)}
         </select>
@@ -370,7 +401,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {field.options?.map((option) => (
             <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm" key={option}>
-              <input checked={selected.includes(option)} onChange={(event) => setValue(field, entityId, event.target.checked ? [...selected, option] : selected.filter((item) => item !== option))} type="checkbox" />
+              <input checked={selected.includes(option)} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, event.target.checked ? [...selected, option] : selected.filter((item) => item !== option))} type="checkbox" />
               {displayOption(option)}
             </label>
           ))}
@@ -381,24 +412,25 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       const measurement = (typeof value === "object" && !Array.isArray(value) && value ? value : { amount: null, unit: "" }) as UadMeasurement;
       return (
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(9rem,0.7fr)] gap-2">
-          <input className={inputClass} max={field.maximum} min={field.minimum ?? field.minimumExclusive ?? 0} onChange={(event) => setValue(field, entityId, { ...measurement, amount: event.target.value === "" ? null : Number(event.target.value) })} step="any" type="number" value={measurement.amount ?? ""} />
-          <select className={inputClass} onChange={(event) => setValue(field, entityId, { ...measurement, unit: event.target.value })} value={measurement.unit}>
+          <input className={controlClass} max={field.maximum} min={field.minimum ?? field.minimumExclusive ?? 0} onChange={(event) => setValue(field, entityId, { ...measurement, amount: event.target.value === "" ? null : Number(event.target.value) })} readOnly={field.readOnly} step="any" type="number" value={measurement.amount ?? ""} />
+          <select className={controlClass} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, { ...measurement, unit: event.target.value })} value={measurement.unit}>
             <option value="">Unit</option>{field.units?.map((unit) => <option key={unit} value={unit}>{displayOption(unit)}</option>)}
           </select>
         </div>
       );
     }
     if (field.dataType === "text") {
-      return <textarea className={`${inputClass} min-h-24`} maxLength={field.maxLength} onChange={(event) => setValue(field, entityId, event.target.value)} value={String(value ?? "")} />;
+      return <textarea className={`${controlClass} min-h-24`} maxLength={field.maxLength} onChange={(event) => setValue(field, entityId, event.target.value)} readOnly={field.readOnly} value={String(value ?? "")} />;
     }
     const numeric = field.dataType === "integer" || field.dataType === "percentage" || field.dataType === "currency";
     return (
       <input
-        className={inputClass}
+        className={controlClass}
         max={field.maximum ?? (field.dataType === "percentage" ? 100 : undefined)}
         maxLength={field.maxLength}
-        min={field.minimum ?? (numeric ? 0 : undefined)}
+        min={field.minimum ?? (["integer", "percentage"].includes(field.dataType) ? 0 : undefined)}
         onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : numeric ? Number(event.target.value) : event.target.value)}
+        readOnly={field.readOnly}
         step={field.dataType === "currency" ? "0.01" : field.dataType === "percentage" ? "any" : undefined}
         type={numeric ? "number" : field.dataType === "date" ? "date" : field.dataType === "month" ? "month" : "text"}
         value={typeof value === "string" || typeof value === "number" ? value : ""}
@@ -422,7 +454,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               {renderControl(field, entityId)}
               {field.guidance && <span className="mt-1 block text-xs leading-5 text-slate-600">{field.guidance}</span>}
               <span className="mt-1 flex min-h-4 items-center gap-2 text-[11px] text-slate-500">
-                {saved && <span className={`rounded-full px-2 py-0.5 ${saved.is_appraiser_confirmed ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"}`}>{saved.is_appraiser_confirmed ? "Appraiser confirmed" : "HomeNode suggestion"}</span>}
+                {saved && <span className={`rounded-full px-2 py-0.5 ${saved.source_type === "calculated" ? "bg-violet-100 text-violet-800" : saved.is_appraiser_confirmed ? "bg-emerald-100 text-emerald-800" : "bg-blue-100 text-blue-800"}`}>{saved.source_type === "calculated" ? "HomeNode calculation" : saved.is_appraiser_confirmed ? "Appraiser confirmed" : "HomeNode suggestion"}</span>}
                 {field.maxLength && <span>{String(draft[key] ?? "").length}/{field.maxLength}</span>}
               </span>
             </label>
@@ -551,7 +583,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         )}
         {activeSection === "sales_comparison" && (
           <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
-            Sections 22A–22N establish each comparable's official general information, source trail, property-rights details, project or PUD information, Site facts and water frontage, repeatable dwellings and outbuildings, mechanical systems, energy-efficient and green features, Unit(s), exterior quality and condition, separate interior comparisons for primary units and ADUs, reconciled overall Q/C ratings, property amenities, and vehicle storage, along with the required verified photo. Bodies of water remain linked to their Site Influence; construction, heating, cooling, living units, exterior components, kitchens, interior components, amenities, vehicle-storage records, and outbuilding room summaries remain linked to the exact comparable parent. Subject energy/green, unit, exterior, interior, outbuilding, property-amenity, and vehicle-storage facts redisplay from Sections 6, 8, 10, 12, 13, 14, and 15 without duplicate entry; only comparison-specific subject quality and condition summaries are added here and linked to their canonical feature. Unit, ADU, dwelling, and per-structure counts reconcile before completion. Quality, condition, vehicle-storage, and outbuilding adjustments each use their single official typed row. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
+            Sections 22A–22O establish each comparable's official facts, evidence, adjustments, and Summary. Bodies of water, structures, living units, components, amenities, vehicle storage, and outbuildings remain linked to the exact comparable parent. Subject facts redisplay from their canonical source sections without duplicate entry. Section 22O calculates net adjustments, adjusted prices, and price metrics on the server; the appraiser assigns Comparable Weight and concludes the Indicated Value. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
           </div>
         )}
         {activeSection === "sales_comparison" && (
@@ -649,6 +681,30 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                   </div>
                 </div>
               ))}
+            </div>
+          </section>
+        )}
+        {activeSection === "sales_comparison" && salesComparisonIncluded === true && (
+          <section className="mb-5 rounded-xl border border-violet-200 bg-violet-50 p-4 text-violet-950">
+            <h3 className="text-base font-semibold">Section 22O subject Summary redisplays</h3>
+            <p className="mt-1 text-sm leading-6">The subject values below remain owned by Sections 19 and 20. Comparable list, contract, and sale prices remain owned by Section 22A; Summary calculations read those same values and cannot be edited independently.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="rounded-lg border border-violet-200 bg-white p-3">
+                <div className="flex items-center justify-between gap-2 text-sm font-semibold">
+                  <span>List price</span><span className="text-[11px] text-violet-700">22.15.02</span>
+                </div>
+                <div className="mt-2 text-lg font-semibold">{displayCurrency(subjectSummaryListPrice)}</div>
+                <div className="mt-1 text-xs text-violet-700">Most recent Section 19 current or final list price</div>
+              </div>
+              {subjectSummaryContractVisible && (
+                <div className="rounded-lg border border-violet-200 bg-white p-3">
+                  <div className="flex items-center justify-between gap-2 text-sm font-semibold">
+                    <span>Contract price</span><span className="text-[11px] text-violet-700">22.15.03</span>
+                  </div>
+                  <div className="mt-2 text-lg font-semibold">{displayCurrency(subjectSummaryContractPrice)}</div>
+                  <div className="mt-1 text-xs text-violet-700">Section 20 · {assignmentReason ? displayOption(String(assignmentReason)) : "assignment reason not provided"}</div>
+                </div>
+              )}
             </div>
           </section>
         )}

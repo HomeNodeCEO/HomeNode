@@ -97,6 +97,8 @@ export interface UadFieldDefinition {
   dataType: "string" | "text" | "enum" | "multi_enum" | "boolean" | "integer" | "percentage" | "currency" | "measurement" | "date" | "month" | "year" | "state" | "postal_code";
   entityType?: string;
   required?: boolean;
+  readOnly?: boolean;
+  calculated?: boolean;
   maxLength?: number;
   options?: string[];
   units?: string[];

@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.1";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.2";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -50,12 +50,18 @@ function sourceMetadata(completion, path) {
 
 function field(fieldKey, value, completion, path, options = {}) {
   if (value === null || value === undefined || value === "") return null;
+  const target = plainObject(options.target_entity) ? options.target_entity : null;
+  const suppliedSuggestionId = options.suggestion_id;
+  const metadata = { ...options };
+  delete metadata.suggestion_id;
+  delete metadata.target_entity;
   return {
-    suggestion_id: `field:${fieldKey}`,
+    suggestion_id: suppliedSuggestionId || `field:${target ? `${target.entity_type}:${target.entity_identifier}:` : ""}${fieldKey}`,
     field_key: fieldKey,
     value,
+    ...(target ? { target_entity: target } : {}),
     ...sourceMetadata(completion, path),
-    ...options,
+    ...metadata,
   };
 }
 
@@ -83,6 +89,215 @@ function preferredMarketStudy(studies) {
   return studies.find((study) => String(study?.market?.key || "").toLowerCase() === "appraiser")
     || studies.find((study) => String(study?.market?.key || "").toLowerCase() === "zip")
     || studies[0];
+}
+
+const ASSIGNMENT_REASON_BY_TYPE = Object.freeze({
+  construction: "Construction",
+  new_construction: "Construction",
+  heloc: "HomeEquity",
+  home_equity: "HomeEquity",
+  purchase: "Purchase",
+  purchase_transaction: "Purchase",
+  refinance: "Refinance",
+});
+
+function normalizedToken(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+
+function buildAssignmentSuggestions(completion, omissions) {
+  const fields = [];
+  const assignmentTypes = Array.isArray(completion.assignment?.assignment_types)
+    ? completion.assignment.assignment_types.map(normalizedToken).filter(Boolean)
+    : [];
+  const mappedReasons = [...new Set(assignmentTypes.map((value) => ASSIGNMENT_REASON_BY_TYPE[value]).filter(Boolean))];
+  if (assignmentTypes.length === 1 && mappedReasons.length === 1) {
+    addField(fields, field(
+      "assignment:1000.0034",
+      mappedReasons[0],
+      completion,
+      "assignment.assignment_types.0",
+    ));
+  } else if (assignmentTypes.length) {
+    addOmission(omissions, {
+      scope: "assignment",
+      code: mappedReasons.length > 1
+        ? "multiple_assignment_reasons_require_appraiser_selection"
+        : "assignment_reason_requires_appraiser_selection",
+      source_value: assignmentTypes,
+      target_field_key: "assignment:1000.0034",
+    });
+  }
+
+  addField(fields, field(
+    "appraiser_inspection:2400.0080",
+    isoDate(completion.assignment_scope?.inspection_date),
+    completion,
+    "assignment_scope.inspection_date",
+  ));
+  return { fields };
+}
+
+function occupancy(value) {
+  const normalized = normalizedToken(value);
+  if (["owner", "owner_occupied", "owneroccupied"].includes(normalized)) return "OwnerOccupied";
+  if (["tenant", "tenant_occupied", "tenantoccupied"].includes(normalized)) return "Tenant";
+  if (normalized === "vacant") return "Vacant";
+  return null;
+}
+
+function entityTarget(entityType, entityIdentifier) {
+  return { entity_type: entityType, entity_identifier: entityIdentifier };
+}
+
+function buildSubjectEntitySuggestions(completion, omissions) {
+  const fields = [];
+  const characteristics = completion.subject?.characteristics || {};
+  const unitTarget = entityTarget("unit", "unit-1");
+  const dwellingTarget = entityTarget("dwelling", "dwelling-1");
+  const parcelTarget = entityTarget("site_parcel", "site-parcel-1");
+  const addEntityField = (fieldKey, value, path, target) => addField(fields, field(
+    fieldKey,
+    value,
+    completion,
+    path,
+    { target_entity: target },
+  ));
+
+  const occupancyValue = occupancy(completion.assignment?.occupancy);
+  addEntityField("unit:0700.0070", occupancyValue, "assignment.occupancy", unitTarget);
+  if (text(completion.assignment?.occupancy, 80) && !occupancyValue) {
+    addOmission(omissions, {
+      scope: "subject",
+      code: "subject_occupancy_requires_appraiser_selection",
+      source_value: text(completion.assignment.occupancy, 80),
+      target_field_key: "unit:0700.0070",
+    });
+  }
+
+  const gla = number(characteristics.gross_living_area_sqft);
+  if (gla !== null && gla >= 0 && gla <= 999_999_999) {
+    addEntityField(
+      "unit:0700.0140",
+      { amount: gla, unit: "SquareFeet" },
+      "subject.characteristics.gross_living_area_sqft",
+      unitTarget,
+    );
+  }
+  addEntityField(
+    "unit:0700.0118",
+    integer(characteristics.bedrooms, 0, 99),
+    "subject.characteristics.bedrooms",
+    unitTarget,
+  );
+  addEntityField(
+    "unit:0700.0119",
+    integer(characteristics.full_baths, 0, 99),
+    "subject.characteristics.full_baths",
+    unitTarget,
+  );
+  addEntityField(
+    "unit:0700.0120",
+    integer(characteristics.half_baths, 0, 99),
+    "subject.characteristics.half_baths",
+    unitTarget,
+  );
+
+  const siteArea = number(characteristics.site_area_sqft);
+  if (siteArea !== null && siteArea > 0 && siteArea <= 999_999_999) {
+    addEntityField(
+      "site_parcel:1500.0022",
+      { amount: siteArea, unit: "SquareFeet" },
+      "subject.characteristics.site_area_sqft",
+      parcelTarget,
+    );
+  }
+
+  const yearBuilt = integer(characteristics.year_built, 1000, 9999);
+  addEntityField(
+    "dwelling:0300.0011",
+    yearBuilt === null ? null : String(yearBuilt),
+    "subject.characteristics.year_built",
+    dwellingTarget,
+  );
+  const effectiveYear = integer(characteristics.effective_year_built, 1000, 9999);
+  const effectiveDate = isoDate(completion.assignment_scope?.effective_date);
+  const effectiveDateYear = effectiveDate ? Number(effectiveDate.slice(0, 4)) : null;
+  const effectiveAge = effectiveYear !== null && effectiveDateYear !== null && effectiveDateYear >= effectiveYear
+    ? effectiveDateYear - effectiveYear
+    : null;
+  addEntityField(
+    "dwelling:0300.0039",
+    integer(effectiveAge, 0, 999),
+    "subject.characteristics.effective_year_built",
+    dwellingTarget,
+  );
+
+  const conditionRating = exactRating(characteristics.condition_rating, UAD_CONDITION);
+  const qualityRating = exactRating(characteristics.quality_rating, UAD_QUALITY);
+  addEntityField(
+    "dwelling:1600.0004",
+    conditionRating,
+    "subject.characteristics.condition_rating",
+    dwellingTarget,
+  );
+  addEntityField(
+    "dwelling:1600.0005",
+    qualityRating,
+    "subject.characteristics.quality_rating",
+    dwellingTarget,
+  );
+  if (text(characteristics.condition_rating, 20) && !conditionRating) {
+    addOmission(omissions, {
+      scope: "subject",
+      code: "subject_condition_range_requires_appraiser_reconciliation",
+      source_value: text(characteristics.condition_rating, 20),
+      target_field_key: "dwelling:1600.0004",
+    });
+  }
+  if (text(characteristics.quality_rating, 20) && !qualityRating) {
+    addOmission(omissions, {
+      scope: "subject",
+      code: "subject_quality_range_requires_appraiser_reconciliation",
+      source_value: text(characteristics.quality_rating, 20),
+      target_field_key: "dwelling:1600.0005",
+    });
+  }
+  return { fields };
+}
+
+function currentUseConclusion(value) {
+  const normalized = normalizedToken(value);
+  if (["current_use", "existing_use", "present_use"].includes(normalized)) return true;
+  if (["alternative_use", "not_current_use", "different_use"].includes(normalized)) return false;
+  return null;
+}
+
+function buildHighestBestUseSuggestions(completion, omissions) {
+  const fields = [];
+  const hbu = completion.assignment?.highest_best_use || {};
+  const conclusion = currentUseConclusion(hbu.conclusion);
+  addField(fields, field(
+    "highest_best_use:3100.0007",
+    conclusion,
+    completion,
+    "assignment.highest_best_use.conclusion",
+  ));
+  addField(fields, field(
+    "highest_best_use_commentary:3100.0010",
+    text(hbu.summary, 2_500),
+    completion,
+    "assignment.highest_best_use.summary",
+  ));
+  if (text(hbu.conclusion, 80) && conclusion === null) {
+    addOmission(omissions, {
+      scope: "highest_best_use",
+      code: "highest_best_use_conclusion_requires_appraiser_selection",
+      source_value: text(hbu.conclusion, 80),
+      target_field_key: "highest_best_use:3100.0007",
+    });
+  }
+  return { fields };
 }
 
 function demandSupply(value) {
@@ -441,6 +656,9 @@ export function buildUadCompletionSuggestions(completion) {
   }
 
   const omissions = [];
+  const assignment = buildAssignmentSuggestions(completion, omissions);
+  const subject = buildSubjectEntitySuggestions(completion, omissions);
+  const highestBestUse = buildHighestBestUseSuggestions(completion, omissions);
   const market = buildMarketSuggestions(completion, omissions);
   const sales = buildComparableSuggestions(completion, omissions);
   return {
@@ -458,6 +676,9 @@ export function buildUadCompletionSuggestions(completion) {
     status: completion.readiness?.status === "complete" ? "ready_for_review" : "source_review_required",
     source_readiness: completion.readiness || { status: "review_required", blockers: [], warnings: [] },
     suggestions: {
+      assignment_fields: assignment.fields,
+      subject_entity_fields: subject.fields,
+      highest_best_use_fields: highestBestUse.fields,
       market_fields: market.fields,
       market_entities: market.entities,
       sales_comparison_fields: sales.fields,
@@ -465,7 +686,8 @@ export function buildUadCompletionSuggestions(completion) {
     },
     omissions,
     counts: {
-      field_suggestions: market.fields.length + sales.fields.length,
+      field_suggestions: assignment.fields.length + subject.fields.length
+        + highestBestUse.fields.length + market.fields.length + sales.fields.length,
       entity_suggestions: market.entities.length + sales.entities.length,
       omissions: omissions.length,
     },

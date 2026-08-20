@@ -85,10 +85,47 @@ function canonicalCompletion() {
 
 function fieldByKey(suggestions, key) {
   return [
+    ...suggestions.suggestions.assignment_fields,
+    ...suggestions.suggestions.subject_entity_fields,
+    ...suggestions.suggestions.highest_best_use_fields,
     ...suggestions.suggestions.market_fields,
     ...suggestions.suggestions.sales_comparison_fields,
   ].find((item) => item.field_key === key);
 }
+
+test("maps exact assignment, subject, and highest-and-best-use facts for review", () => {
+  const completion = canonicalCompletion();
+  const suggestions = buildUadCompletionSuggestions(completion);
+
+  assert.equal(completion.assignment.assignment_types[0], "purchase_transaction");
+  assert.equal(fieldByKey(suggestions, "assignment:1000.0034").value, "Purchase");
+  assert.equal(fieldByKey(suggestions, "appraiser_inspection:2400.0080").value, "2026-08-17");
+  assert.equal(fieldByKey(suggestions, "unit:0700.0070").value, "OwnerOccupied");
+  assert.deepEqual(fieldByKey(suggestions, "unit:0700.0140").value, { amount: 1762, unit: "SquareFeet" });
+  assert.equal(fieldByKey(suggestions, "unit:0700.0118").value, 3);
+  assert.equal(fieldByKey(suggestions, "unit:0700.0119").value, 2);
+  assert.equal(fieldByKey(suggestions, "unit:0700.0120").value, 0);
+  assert.deepEqual(fieldByKey(suggestions, "site_parcel:1500.0022").value, { amount: 8050, unit: "SquareFeet" });
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0011").value, "1978");
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0039").value, 31);
+  assert.equal(fieldByKey(suggestions, "highest_best_use:3100.0007").value, true);
+  assert.match(fieldByKey(suggestions, "highest_best_use_commentary:3100.0010").value, /single-family residential use/);
+  assert.deepEqual(fieldByKey(suggestions, "unit:0700.0140").target_entity, {
+    entity_type: "unit",
+    entity_identifier: "unit-1",
+  });
+});
+
+test("includes assignment and subject facts in completion provenance", () => {
+  const before = canonicalCompletion();
+  const input = fixtureParts();
+  input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data.assignment.assignment_details.occupancy = "tenant";
+  const after = buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  });
+  assert.notEqual(before.provenance.source_digest_sha256, after.provenance.source_digest_sha256);
+});
 
 test("maps canonical market evidence to review-only official UAD fields", () => {
   const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
@@ -239,6 +276,9 @@ function applyInput(suggestions, selectedSuggestionIds) {
 test("validates every generated suggestion against the official UAD catalog", () => {
   const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
   const all = [
+    ...suggestions.suggestions.assignment_fields,
+    ...suggestions.suggestions.subject_entity_fields,
+    ...suggestions.suggestions.highest_best_use_fields,
     ...suggestions.suggestions.market_fields,
     ...suggestions.suggestions.sales_comparison_fields,
     ...suggestions.suggestions.market_entities,
@@ -247,6 +287,13 @@ test("validates every generated suggestion against the official UAD catalog", ()
   const plan = buildUadCompletionApplyPlan(
     suggestions,
     applyInput(suggestions, all.map((item) => item.suggestion_id)),
+    {
+      existingEntities: [
+        { id: "dwelling-id", entity_type: "dwelling", entity_identifier: "dwelling-1", data: {} },
+        { id: "unit-id", entity_type: "unit", entity_identifier: "unit-1", data: {} },
+        { id: "parcel-id", entity_type: "site_parcel", entity_identifier: "site-parcel-1", data: {} },
+      ],
+    },
   );
 
   assert.equal(plan.conflicts.length, 0);
@@ -277,6 +324,37 @@ test("preserves existing UAD values and populated entity groups", () => {
   ]);
 });
 
+test("targets the seeded subject entity and preserves an existing entity value", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const gla = fieldByKey(suggestions, "unit:0700.0140");
+  const entities = [{ id: "unit-id", entity_type: "unit", entity_identifier: "unit-1", data: {} }];
+
+  const available = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [gla.suggestion_id]),
+    { existingEntities: entities },
+  );
+  assert.equal(available.fields[0].entityId, "unit-id");
+  assert.deepEqual(available.fields[0].value, { amount: 1762, unit: "SquareFeet" });
+
+  const preserved = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [gla.suggestion_id]),
+    {
+      existingEntities: entities,
+      existingValues: [{ entity_id: "unit-id", field_context: "unit", uad_uid: "0700.0140" }],
+    },
+  );
+  assert.equal(preserved.fields.length, 0);
+  assert.equal(preserved.conflicts[0].reason, "existing_value_preserved");
+
+  const missing = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [gla.suggestion_id]),
+  );
+  assert.equal(missing.conflicts[0].reason, "target_entity_not_found");
+});
+
 test("requires explicit confirmation, preservation, revision, and exact provenance", () => {
   const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
   const selected = [suggestions.suggestions.market_fields[0].suggestion_id];
@@ -305,13 +383,14 @@ test("requires explicit confirmation, preservation, revision, and exact provenan
 });
 
 
-test("applies one reviewed root field in one revision and one audit transaction", async () => {
+test("applies reviewed root and seeded-subject fields in one revision and one audit transaction", async () => {
   const input = fixtureParts();
   const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
     ...input,
     generatedAt: "2026-08-20T12:00:00.000Z",
   }));
   const selected = suggestions.suggestions.market_fields[0];
+  const selectedGla = fieldByKey(suggestions, "unit:0700.0140");
   const insertedRows = [];
   let revisionInserts = 0;
   let auditInserts = 0;
@@ -337,7 +416,11 @@ test("applies one reviewed root field in one revision and one audit transaction"
         };
       }
       if (sql.includes("SELECT * FROM appraisal.uad_field_values")) return { rows: insertedRows };
-      if (sql.includes("SELECT *") && sql.includes("FROM appraisal.uad_entities")) return { rows: [] };
+      if (sql.includes("SELECT *") && sql.includes("FROM appraisal.uad_entities")) {
+        return {
+          rows: [{ id: "unit-id", entity_type: "unit", entity_identifier: "unit-1", data: {} }],
+        };
+      }
       if (sql.includes("INSERT INTO appraisal.uad_field_values")) {
         insertedRows.push({
           id: params[0], workfile_id: params[1], entity_id: params[2], field_context: params[3],
@@ -357,12 +440,13 @@ test("applies one reviewed root field in one revision and one audit transaction"
   const result = await applyUadCompletionSuggestions(
     pool,
     UAD_WORKFILE_ID,
-    applyInput(suggestions, [selected.suggestion_id]),
+    applyInput(suggestions, [selected.suggestion_id, selectedGla.suggestion_id]),
   );
 
   assert.equal(result.current_revision, 5);
-  assert.equal(result.applied_suggestion_count, 1);
-  assert.equal(insertedRows.length, 1);
+  assert.equal(result.applied_suggestion_count, 2);
+  assert.equal(insertedRows.length, 2);
+  assert.equal(insertedRows.find((row) => row.uad_uid === "0700.0140").entity_id, "unit-id");
   assert.equal(revisionInserts, 1);
   assert.equal(auditInserts, 1);
   assert.equal(releases, 1);

@@ -4,17 +4,18 @@ const TOKEN_PATTERN = /^Bearer\s+([^\s]+)$/i;
 const MAX_TOKEN_LENGTH = 16_384;
 const DEFAULT_CACHE_MILLISECONDS = 5 * 60 * 1000;
 
-function accessTokenError() {
+function accessTokenError(diagnostic = "unspecified") {
   const error = new Error("invalid_access_token");
   error.statusCode = 401;
+  error.diagnostic = diagnostic;
   return error;
 }
 
-function base64UrlJson(value) {
+function base64UrlJson(value, diagnostic) {
   try {
     return JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
   } catch {
-    throw accessTokenError();
+    throw accessTokenError(diagnostic);
   }
 }
 
@@ -43,7 +44,9 @@ export function normalizeOidcIssuer(value) {
 
 export function parseBearerToken(headerValue) {
   const match = TOKEN_PATTERN.exec(String(headerValue || "").trim());
-  if (!match || match[1].length > MAX_TOKEN_LENGTH) throw accessTokenError();
+  if (!match || match[1].length > MAX_TOKEN_LENGTH) {
+    throw accessTokenError("bearer_missing_or_malformed");
+  }
   return match[1];
 }
 
@@ -53,22 +56,25 @@ function audienceMatches(claim, expected) {
 }
 
 function validateClaims(payload, { issuer, audience, nowSeconds, clockToleranceSeconds }) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw accessTokenError();
-  if (payload.iss !== issuer || !audienceMatches(payload.aud, audience)) throw accessTokenError();
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw accessTokenError("payload_not_object");
+  }
+  if (payload.iss !== issuer) throw accessTokenError("issuer_mismatch");
+  if (!audienceMatches(payload.aud, audience)) throw accessTokenError("audience_mismatch");
   if (typeof payload.sub !== "string" || !payload.sub.trim() || payload.sub.length > 500) {
-    throw accessTokenError();
+    throw accessTokenError("subject_missing_or_invalid");
   }
   if (!Number.isFinite(payload.exp) || payload.exp < nowSeconds - clockToleranceSeconds) {
-    throw accessTokenError();
+    throw accessTokenError("expired_or_missing_expiration");
   }
   if (Number.isFinite(payload.nbf) && payload.nbf > nowSeconds + clockToleranceSeconds) {
-    throw accessTokenError();
+    throw accessTokenError("not_yet_valid");
   }
   if (Number.isFinite(payload.iat) && payload.iat > nowSeconds + clockToleranceSeconds) {
-    throw accessTokenError();
+    throw accessTokenError("issued_in_future");
   }
   if (Array.isArray(payload.aud) && payload.aud.length > 1 && payload.azp !== audience) {
-    throw accessTokenError();
+    throw accessTokenError("authorized_party_mismatch");
   }
 }
 
@@ -167,17 +173,21 @@ export function createOidcAccessTokenVerifier({
 
   async function verify(tokenValue) {
     const token = String(tokenValue || "");
-    if (!token || token.length > MAX_TOKEN_LENGTH) throw accessTokenError();
+    if (!token || token.length > MAX_TOKEN_LENGTH) {
+      throw accessTokenError("token_missing_or_too_large");
+    }
     const parts = token.split(".");
-    if (parts.length !== 3 || parts.some((part) => !part)) throw accessTokenError();
-    const header = base64UrlJson(parts[0]);
-    const payload = base64UrlJson(parts[1]);
+    if (parts.length !== 3 || parts.some((part) => !part)) {
+      throw accessTokenError("jwt_format_invalid");
+    }
+    const header = base64UrlJson(parts[0], "jwt_header_invalid");
+    const payload = base64UrlJson(parts[1], "jwt_payload_invalid");
     if (header?.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) {
-      throw accessTokenError();
+      throw accessTokenError("jwt_header_unsupported");
     }
     let key = (await keys()).get(header.kid);
     if (!key) key = (await keys({ refresh: true })).get(header.kid);
-    if (!key) throw accessTokenError();
+    if (!key) throw accessTokenError("signing_key_not_found");
     let valid = false;
     try {
       valid = verifySignature(
@@ -187,9 +197,9 @@ export function createOidcAccessTokenVerifier({
         Buffer.from(parts[2], "base64url"),
       );
     } catch {
-      throw accessTokenError();
+      throw accessTokenError("signature_verification_failed");
     }
-    if (!valid) throw accessTokenError();
+    if (!valid) throw accessTokenError("signature_invalid");
     validateClaims(payload, {
       issuer,
       audience,
@@ -235,6 +245,7 @@ export function createMobileAuthenticator({ pool, verifier }) {
       if (error?.statusCode === 503) {
         return res.status(503).json({ error: String(error.message || "oidc_unavailable") });
       }
+      console.warn(`[mobile] access token rejected reason=${error?.diagnostic || "unknown"}`);
       return res.status(401).json({ error: "invalid_access_token" });
     }
     try {

@@ -88,6 +88,8 @@ function fieldByKey(suggestions, key) {
   return [
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
+    ...suggestions.suggestions.condition_fields,
+    ...suggestions.suggestions.project_fields,
     ...suggestions.suggestions.highest_best_use_fields,
     ...suggestions.suggestions.subject_listing_fields,
     ...suggestions.suggestions.sales_contract_fields,
@@ -144,6 +146,105 @@ test("maps exact assignment, subject, and highest-and-best-use facts for review"
   assert.equal(suggestions.omissions.some((item) => item.code === "zoning_compliance_requires_appraiser_selection"), true);
   assert.equal(suggestions.omissions.some((item) => item.code === "vehicle_storage_parking_count_requires_appraiser_entry"), true);
   assert.equal(suggestions.omissions.some((item) => item.code === "subject_amenities_require_appraiser_classification"), true);
+});
+
+test("maps explicit project, HOA, condition, and nonconformity evidence for review", () => {
+  const input = fixtureParts();
+  const assignment = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data.assignment.assignment_details;
+  assignment.pud = true;
+  assignment.hoa_dues_amount = 1200;
+  assignment.hoa_frequency = "per_year";
+  assignment.hoa_explanation = "Mandatory dues cover common-area maintenance.";
+  assignment.subject_condition_rating = "C4";
+  assignment.subject_quality_rating = "Q4";
+  assignment.subject_condition_notes = "The subject has typical wear and tear with average-quality finishes.";
+  assignment.significant_physical_deficiencies = true;
+  assignment.subject_conforms_to_neighborhood = false;
+  assignment.subject_nonconformity_type = "under_improvement";
+  assignment.subject_nonconformity_explanation = "The subject is smaller and less improved than the predominant neighborhood housing stock.";
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+
+  assert.equal(fieldByKey(suggestions, "subject:0100.0026").value, true);
+  assert.equal(fieldByKey(suggestions, "project_association_dues:2500.0007").value, 100);
+  assert.equal(
+    fieldByKey(suggestions, "project_information_commentary:2500.0170").value,
+    "Mandatory dues cover common-area maintenance.",
+  );
+  assert.equal(fieldByKey(suggestions, "subject:1600.0006").value, "C4");
+  assert.equal(fieldByKey(suggestions, "subject:1600.0007").value, "Q4");
+  assert.equal(fieldByKey(suggestions, "dwelling:1600.0004"), undefined);
+  assert.equal(fieldByKey(suggestions, "dwelling:1600.0005"), undefined);
+  assert.match(
+    fieldByKey(suggestions, "overall_quality_condition_commentary:1600.0008").value,
+    /typical wear and tear/i,
+  );
+  assert.deepEqual(
+    fieldByKey(suggestions, "functional_obsolescence:3600.0002").value,
+    ["Underimprovement"],
+  );
+  assert.match(
+    fieldByKey(suggestions, "functional_obsolescence_commentary:3600.0006").value,
+    /smaller and less improved/i,
+  );
+  const omissionCodes = new Set(suggestions.omissions.map((item) => item.code));
+  assert.equal(omissionCodes.has("significant_physical_deficiencies_require_component_allocation"), true);
+  assert.equal(omissionCodes.has("exterior_and_interior_ratings_require_component_review"), true);
+  assert.equal(omissionCodes.has("project_data_source_requires_appraiser_selection"), true);
+  assert.equal(omissionCodes.has("project_common_amenities_require_appraiser_selection"), true);
+  assert.equal(omissionCodes.has("project_included_utilities_require_appraiser_selection"), true);
+});
+
+test("omits unnormalizable HOA dues, rating ranges, and conflicting conformity evidence", () => {
+  const input = fixtureParts();
+  const assignment = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data.assignment.assignment_details;
+  assignment.pud = true;
+  assignment.hoa_dues_amount = 725;
+  assignment.hoa_frequency = "other";
+  assignment.subject_condition_rating = "C4-C3";
+  assignment.subject_quality_rating = "Q4-Q3";
+  assignment.subject_condition_notes = "The range requires final appraiser reconciliation.";
+  assignment.subject_conforms_to_neighborhood = true;
+  assignment.subject_nonconformity_type = "over_improvement";
+  assignment.subject_nonconformity_explanation = "Stale prior classification.";
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+
+  assert.equal(fieldByKey(suggestions, "project_association_dues:2500.0007"), undefined);
+  assert.equal(fieldByKey(suggestions, "subject:1600.0006"), undefined);
+  assert.equal(fieldByKey(suggestions, "subject:1600.0007"), undefined);
+  assert.equal(fieldByKey(suggestions, "functional_obsolescence:3600.0002"), undefined);
+  const omissionCodes = new Set(suggestions.omissions.map((item) => item.code));
+  assert.equal(omissionCodes.has("hoa_frequency_requires_monthly_normalization"), true);
+  assert.equal(omissionCodes.has("subject_condition_range_requires_appraiser_reconciliation"), true);
+  assert.equal(omissionCodes.has("subject_quality_range_requires_appraiser_reconciliation"), true);
+  assert.equal(omissionCodes.has("conformity_evidence_conflict_requires_appraiser_review"), true);
+});
+
+test("flags a confirmed PUD when mandatory monthly dues still require entry", () => {
+  const input = fixtureParts();
+  const assignment = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data.assignment.assignment_details;
+  assignment.pud = true;
+  assignment.hoa_dues_amount = "";
+  assignment.hoa_frequency = "";
+  assignment.hoa_explanation = "The association is confirmed; dues remain pending verification.";
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+
+  assert.equal(fieldByKey(suggestions, "project_association_dues:2500.0007"), undefined);
+  assert.equal(
+    suggestions.omissions.some((item) => item.code === "mandatory_monthly_fee_requires_appraiser_entry"),
+    true,
+  );
 });
 
 test("omits ambiguous subject, zoning, and storage classifications instead of guessing", () => {
@@ -404,6 +505,8 @@ test("validates every generated suggestion against the official UAD catalog", ()
   const all = [
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
+    ...suggestions.suggestions.condition_fields,
+    ...suggestions.suggestions.project_fields,
     ...suggestions.suggestions.highest_best_use_fields,
     ...suggestions.suggestions.subject_listing_fields,
     ...suggestions.suggestions.sales_contract_fields,
@@ -432,6 +535,43 @@ test("validates every generated suggestion against the official UAD catalog", ()
   assert.equal(plan.fields.length, suggestions.counts.field_suggestions);
   assert.equal(plan.entities.length, suggestions.counts.entity_suggestions);
   assert.equal(plan.entities.some((item) => item.children.length > 0), true);
+});
+
+test("applies reviewed project and overall condition fields while preserving existing values", () => {
+  const input = fixtureParts();
+  const assignment = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data.assignment.assignment_details;
+  assignment.pud = true;
+  assignment.hoa_dues_amount = 450;
+  assignment.hoa_frequency = "per_quarter";
+  assignment.subject_condition_rating = "C3";
+  assignment.subject_quality_rating = "Q4";
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+  const pud = fieldByKey(suggestions, "subject:0100.0026");
+  const dues = fieldByKey(suggestions, "project_association_dues:2500.0007");
+  const condition = fieldByKey(suggestions, "subject:1600.0006");
+  const quality = fieldByKey(suggestions, "subject:1600.0007");
+  const plan = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [pud.suggestion_id, dues.suggestion_id, condition.suggestion_id, quality.suggestion_id]),
+    { existingValues: [{ entity_id: null, field_context: "subject", uad_uid: "1600.0007" }] },
+  );
+
+  assert.deepEqual(
+    plan.fields.map((item) => [item.suggestion.field_key, item.value]),
+    [
+      ["subject:0100.0026", true],
+      ["project_association_dues:2500.0007", 150],
+      ["subject:1600.0006", "C3"],
+    ],
+  );
+  assert.deepEqual(plan.conflicts, [{
+    suggestion_id: quality.suggestion_id,
+    reason: "existing_value_preserved",
+  }]);
 });
 
 test("preserves existing UAD values and populated entity groups", () => {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.5";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.6";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -65,6 +65,12 @@ function assignmentProfile(assignment) {
       .map((value) => text(value, 80))
       .filter(Boolean),
     occupancy: text(assignment.occupancy, 80),
+    project: {
+      pud: typeof assignment.pud === "boolean" ? assignment.pud : null,
+      hoa_dues_amount: number(assignment.hoa_dues_amount),
+      hoa_frequency: text(assignment.hoa_frequency, 80),
+      hoa_explanation: text(assignment.hoa_explanation, 3_000),
+    },
     contract: {
       exists: typeof assignment.subject_under_contract === "boolean"
         ? assignment.subject_under_contract
@@ -210,6 +216,15 @@ function subjectCharacteristics(subjectData, property, assignment) {
     vehicle_storage: vehicleStorage,
     condition_rating: text(assignment.subject_condition_rating, 20),
     quality_rating: text(assignment.subject_quality_rating, 20),
+    condition_notes: text(assignment.subject_condition_notes, 5_000),
+    significant_physical_deficiencies: typeof assignment.significant_physical_deficiencies === "boolean"
+      ? assignment.significant_physical_deficiencies
+      : null,
+    conforms_to_neighborhood: typeof assignment.subject_conforms_to_neighborhood === "boolean"
+      ? assignment.subject_conforms_to_neighborhood
+      : null,
+    nonconformity_type: text(assignment.subject_nonconformity_type, 80),
+    nonconformity_explanation: text(assignment.subject_nonconformity_explanation, 5_000),
   };
 }
 

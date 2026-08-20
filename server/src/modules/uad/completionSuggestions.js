@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.4";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.5";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -144,6 +144,82 @@ function occupancy(value) {
   if (["tenant", "tenant_occupied", "tenantoccupied"].includes(normalized)) return "Tenant";
   if (normalized === "vacant") return "Vacant";
   return null;
+}
+
+function normalizedMonthlyHoaDues(project) {
+  const amount = number(project?.hoa_dues_amount);
+  if (amount === null || amount < 0) return null;
+  const frequency = normalizedToken(project?.hoa_frequency);
+  const divisor = frequency === "per_month" ? 1
+    : frequency === "per_quarter" ? 3
+      : frequency === "per_year" ? 12
+        : null;
+  if (!divisor) return null;
+  return Math.round((amount / divisor) * 100) / 100;
+}
+
+function buildProjectSuggestions(completion, omissions) {
+  const fields = [];
+  const project = completion.assignment?.project || {};
+  const hasProjectEvidence = project.pud !== null && project.pud !== undefined
+    || number(project.hoa_dues_amount) !== null
+    || Boolean(text(project.hoa_frequency, 80))
+    || Boolean(text(project.hoa_explanation, 3_000));
+
+  if (typeof project.pud === "boolean") {
+    addField(fields, field("subject:0100.0026", project.pud, completion, "assignment.project.pud"));
+  } else if (hasProjectEvidence) {
+    addOmission(omissions, {
+      scope: "project_information", code: "pud_status_requires_appraiser_confirmation",
+      source_value: project, target_field_key: "subject:0100.0026",
+    });
+  }
+
+  if (project.pud === true) {
+    const monthlyDues = normalizedMonthlyHoaDues(project);
+    addField(fields, field(
+      "project_association_dues:2500.0007",
+      monthlyDues,
+      completion,
+      "assignment.project.hoa_dues_amount",
+    ));
+    addField(fields, field(
+      "project_information_commentary:2500.0170",
+      text(project.hoa_explanation, 2_500),
+      completion,
+      "assignment.project.hoa_explanation",
+    ));
+    if (number(project.hoa_dues_amount) !== null && monthlyDues === null) {
+      addOmission(omissions, {
+        scope: "project_information", code: "hoa_frequency_requires_monthly_normalization",
+        source_value: { amount: number(project.hoa_dues_amount), frequency: text(project.hoa_frequency, 80) },
+        target_field_key: "project_association_dues:2500.0007",
+      });
+    } else if (number(project.hoa_dues_amount) === null) {
+      addOmission(omissions, {
+        scope: "project_information", code: "mandatory_monthly_fee_requires_appraiser_entry",
+        source_value: { explanation: text(project.hoa_explanation, 3_000) },
+        target_field_key: "project_association_dues:2500.0007",
+      });
+    }
+    for (const [code, targetFieldKey] of [
+      ["project_data_source_requires_appraiser_selection", "project_data_source:0700.0125"],
+      ["project_common_amenities_require_appraiser_selection", "project_amenity:2500.0004"],
+      ["project_included_utilities_require_appraiser_selection", "project_utility:2500.0009"],
+    ]) {
+      addOmission(omissions, { scope: "project_information", code, target_field_key: targetFieldKey });
+    }
+  } else if (project.pud === false && hasProjectEvidence && (
+    number(project.hoa_dues_amount) !== null
+    || text(project.hoa_frequency, 80)
+    || text(project.hoa_explanation, 3_000)
+  )) {
+    addOmission(omissions, {
+      scope: "project_information", code: "non_pud_hoa_evidence_not_mapped",
+      source_value: project, target_field_key: "subject:0100.0026",
+    });
+  }
+  return { fields };
 }
 
 function entityTarget(entityType, entityIdentifier) {
@@ -396,24 +472,120 @@ function buildSubjectEntitySuggestions(completion, omissions) {
     });
   }
 
-  const conditionRating = exactRating(characteristics.condition_rating, UAD_CONDITION);
-  const qualityRating = exactRating(characteristics.quality_rating, UAD_QUALITY);
-  addEntityField("dwelling:1600.0004", conditionRating, "subject.characteristics.condition_rating", dwellingTarget);
-  addEntityField("dwelling:1600.0005", qualityRating, "subject.characteristics.quality_rating", dwellingTarget);
-  if (text(characteristics.condition_rating, 20) && !conditionRating) {
+  return { fields };
+}
+
+function functionalIssue(value) {
+  const normalized = normalizedToken(value);
+  if (normalized === "under_improvement") return "Underimprovement";
+  if (normalized === "over_improvement") return "Overimprovement";
+  if (normalized === "functional_obsolescence") return "NonConformity";
+  if (normalized === "other") return "Other";
+  return null;
+}
+
+function buildConditionSuggestions(completion, omissions) {
+  const fields = [];
+  const characteristics = completion.subject?.characteristics || {};
+  const conditionSource = text(characteristics.condition_rating, 20);
+  const qualitySource = text(characteristics.quality_rating, 20);
+  const conditionRating = exactRating(conditionSource, UAD_CONDITION);
+  const qualityRating = exactRating(qualitySource, UAD_QUALITY);
+
+  addField(fields, field(
+    "subject:1600.0006", conditionRating, completion, "subject.characteristics.condition_rating",
+  ));
+  addField(fields, field(
+    "subject:1600.0007", qualityRating, completion, "subject.characteristics.quality_rating",
+  ));
+  if (conditionSource && !conditionRating) {
     addOmission(omissions, {
-      scope: "subject", code: "subject_condition_range_requires_appraiser_reconciliation",
-      source_value: text(characteristics.condition_rating, 20), target_field_key: "dwelling:1600.0004",
+      scope: "overall_quality_condition", code: "subject_condition_range_requires_appraiser_reconciliation",
+      source_value: conditionSource, target_field_key: "subject:1600.0006",
     });
   }
-  if (text(characteristics.quality_rating, 20) && !qualityRating) {
+  if (qualitySource && !qualityRating) {
     addOmission(omissions, {
-      scope: "subject", code: "subject_quality_range_requires_appraiser_reconciliation",
-      source_value: text(characteristics.quality_rating, 20), target_field_key: "dwelling:1600.0005",
+      scope: "overall_quality_condition", code: "subject_quality_range_requires_appraiser_reconciliation",
+      source_value: qualitySource, target_field_key: "subject:1600.0007",
+    });
+  }
+
+  const conditionNotes = text(characteristics.condition_notes, 5_000);
+  addField(fields, field(
+    "overall_quality_condition_commentary:1600.0008",
+    conditionNotes,
+    completion,
+    "subject.characteristics.condition_notes",
+  ));
+  if ((conditionSource || qualitySource) && !conditionNotes) {
+    addOmission(omissions, {
+      scope: "overall_quality_condition", code: "overall_quality_condition_commentary_requires_appraiser_entry",
+      target_field_key: "overall_quality_condition_commentary:1600.0008",
+    });
+  }
+  if (conditionRating || qualityRating) {
+    addOmission(omissions, {
+      scope: "overall_quality_condition", code: "exterior_and_interior_ratings_require_component_review",
+      source_value: { condition_rating: conditionRating, quality_rating: qualityRating },
+    });
+  }
+
+  if (characteristics.significant_physical_deficiencies === true) {
+    addOmission(omissions, {
+      scope: "subject_defects", code: "significant_physical_deficiencies_require_component_allocation",
+      source_value: { notes: conditionNotes },
+    });
+  }
+
+  const conforms = characteristics.conforms_to_neighborhood;
+  const nonconformityType = text(characteristics.nonconformity_type, 80);
+  const nonconformityExplanation = text(characteristics.nonconformity_explanation, 5_000);
+  if (conforms === false) {
+    const issue = functionalIssue(nonconformityType);
+    if (issue) {
+      addField(fields, field(
+        "functional_obsolescence:3600.0002",
+        [issue],
+        completion,
+        "subject.characteristics.nonconformity_type",
+      ));
+      if (issue === "Other") {
+        addField(fields, field(
+          "functional_obsolescence:3600.0003",
+          "Neighborhood nonconformity",
+          completion,
+          "subject.characteristics.nonconformity_type",
+        ));
+      }
+      addField(fields, field(
+        "functional_obsolescence_commentary:3600.0006",
+        nonconformityExplanation,
+        completion,
+        "subject.characteristics.nonconformity_explanation",
+      ));
+      if (!nonconformityExplanation) {
+        addOmission(omissions, {
+          scope: "functional_obsolescence", code: "nonconformity_commentary_requires_appraiser_entry",
+          source_value: nonconformityType, target_field_key: "functional_obsolescence_commentary:3600.0006",
+        });
+      }
+    } else {
+      addOmission(omissions, {
+        scope: "functional_obsolescence", code: "nonconformity_type_requires_appraiser_selection",
+        source_value: nonconformityType, target_field_key: "functional_obsolescence:3600.0002",
+      });
+    }
+  } else if (conforms === true && (nonconformityType || nonconformityExplanation)) {
+    addOmission(omissions, {
+      scope: "functional_obsolescence", code: "conformity_evidence_conflict_requires_appraiser_review",
+      source_value: { nonconformity_type: nonconformityType, explanation: nonconformityExplanation },
+      target_field_key: "functional_obsolescence:3600.0002",
     });
   }
   return { fields };
 }
+
 function currentUseConclusion(value) {
   const normalized = normalizedToken(value);
   if (["current_use", "existing_use", "present_use"].includes(normalized)) return true;
@@ -1099,7 +1271,9 @@ export function buildUadCompletionSuggestions(completion) {
 
   const omissions = [];
   const assignment = buildAssignmentSuggestions(completion, omissions);
+  const project = buildProjectSuggestions(completion, omissions);
   const subject = buildSubjectEntitySuggestions(completion, omissions);
+  const condition = buildConditionSuggestions(completion, omissions);
   const highestBestUse = buildHighestBestUseSuggestions(completion, omissions);
   const subjectListings = buildSubjectListingSuggestions(completion, omissions);
   const salesContract = buildSalesContractSuggestions(completion, omissions);
@@ -1123,6 +1297,8 @@ export function buildUadCompletionSuggestions(completion) {
     suggestions: {
       assignment_fields: assignment.fields,
       subject_entity_fields: subject.fields,
+      condition_fields: condition.fields,
+      project_fields: project.fields,
       highest_best_use_fields: highestBestUse.fields,
       subject_listing_fields: subjectListings.fields,
       subject_listing_entities: subjectListings.entities,
@@ -1137,7 +1313,7 @@ export function buildUadCompletionSuggestions(completion) {
     omissions,
     counts: {
       field_suggestions: assignment.fields.length + subject.fields.length
-        + highestBestUse.fields.length + subjectListings.fields.length
+        + condition.fields.length + project.fields.length + highestBestUse.fields.length + subjectListings.fields.length
         + salesContract.fields.length + priorTransfers.fields.length
         + market.fields.length + sales.fields.length,
       entity_suggestions: subjectListings.entities.length + priorTransfers.entities.length

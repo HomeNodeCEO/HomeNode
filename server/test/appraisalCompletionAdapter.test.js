@@ -90,6 +90,39 @@ test("builds a workflow-neutral completion document from the assignment snapshot
   assert.match(completion.provenance.source_digest_sha256, /^[a-f0-9]{64}$/);
 });
 
+test("carries assignment-scoped project, HOA, condition, and conformity evidence", () => {
+  const input = fixtureInput("uad_3_6");
+  const details = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence
+    .property_report_data.assignment.assignment_details;
+  details.pud = true;
+  details.hoa_dues_amount = 1200;
+  details.hoa_frequency = "per_year";
+  details.hoa_explanation = "Mandatory dues cover common-area maintenance.";
+  details.subject_condition_rating = "C4";
+  details.subject_quality_rating = "Q4";
+  details.subject_condition_notes = "Typical wear and average-quality finishes.";
+  details.significant_physical_deficiencies = false;
+  details.subject_conforms_to_neighborhood = false;
+  details.subject_nonconformity_type = "under_improvement";
+  details.subject_nonconformity_explanation = "The subject is smaller than the predominant housing stock.";
+
+  const completion = buildCanonicalAppraisalCompletion(input);
+
+  assert.deepEqual(completion.assignment.project, {
+    pud: true,
+    hoa_dues_amount: 1200,
+    hoa_frequency: "per_year",
+    hoa_explanation: "Mandatory dues cover common-area maintenance.",
+  });
+  assert.equal(completion.subject.characteristics.condition_rating, "C4");
+  assert.equal(completion.subject.characteristics.quality_rating, "Q4");
+  assert.equal(completion.subject.characteristics.condition_notes, "Typical wear and average-quality finishes.");
+  assert.equal(completion.subject.characteristics.significant_physical_deficiencies, false);
+  assert.equal(completion.subject.characteristics.conforms_to_neighborhood, false);
+  assert.equal(completion.subject.characteristics.nonconformity_type, "under_improvement");
+  assert.match(completion.subject.characteristics.nonconformity_explanation, /smaller than/);
+});
+
 test("shares one Custom analysis with a UAD file only inside the same case and snapshot", () => {
   const completion = buildCanonicalAppraisalCompletion(fixtureInput("uad_3_6"));
 

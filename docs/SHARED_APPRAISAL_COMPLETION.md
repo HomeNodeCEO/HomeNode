@@ -41,4 +41,8 @@ Consumers must preserve unknown fields and select a mapper compatible with the r
 
 ## Current boundary
 
-This first stage provides the stable canonical contract and read-only API. It intentionally does not write UAD fields. The next stage is a field-by-field UAD mapper that translates this document into explicit UAD 3.6 classifications while preserving UAD validation, review, and certification controls. Any ambiguous or unsupported mapping must remain review-required rather than being guessed.
+The canonical contract remains read-only. The UAD completion-suggestion adapter now maps unambiguous market, subject-rating, comparable identity, transaction, physical-characteristic, and typed-adjustment evidence into review-only UAD 3.6 suggestions.
+
+The suggestions are returned in the existing UAD shared-data response under suggestions.custom_completion. Every field and entity retains the Custom source report, snapshot-scoped provenance digest, and appraiser-confirmation requirement. Rating ranges, combined room-count adjustments, out-of-range values, missing Custom sources, and other ambiguous translations are disclosed as omissions instead of being guessed.
+
+The next stage is a guarded apply workflow. It must show the proposed values and omissions, preserve existing appraiser-entered UAD values by default, require an explicit selection and confirmation, validate through the official UAD editor, and record one audit event and revision for the accepted changes.

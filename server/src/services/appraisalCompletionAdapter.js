@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.1";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.2";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -205,6 +205,8 @@ function salesAnalysis(section) {
       cost_to_cure_total: number(value.costToCureTotal),
     },
     indicated_value: number(value.opinionAfterCostToCure ?? value.opinionOfValue),
+    sales_notes: text(value.salesNotes, 10_000),
+    adjustment_notes: text(value.adjustmentNotes, 10_000),
   };
 }
 

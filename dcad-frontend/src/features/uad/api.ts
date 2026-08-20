@@ -1,5 +1,11 @@
 import { makeUrl } from "@/lib/api";
 
+export const UAD_WORKFILE_MUTATED_EVENT = "homenode:uad-workfile-mutated";
+
+function announceUadWorkfileMutation(workfileId: string) {
+  window.dispatchEvent(new CustomEvent(UAD_WORKFILE_MUTATED_EVENT, { detail: { workfileId } }));
+}
+
 async function uadFetchJSON<T = unknown>(input: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), init?.timeoutMs ?? 25_000);
@@ -255,6 +261,7 @@ export async function saveUadSection(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ values }),
   });
+  announceUadWorkfileMutation(workfileId);
 }
 
 export async function createUadEntity(
@@ -268,11 +275,13 @@ export async function createUadEntity(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ entity_type: entityType, parent_entity_id: parentEntityId || null, data: data || {} }),
   });
+  announceUadWorkfileMutation(workfileId);
   return response.entity;
 }
 
 export async function deleteUadEntity(workfileId: string, entityId: string): Promise<void> {
   await uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/entities/${encodeURIComponent(entityId)}`), { method: "DELETE" });
+  announceUadWorkfileMutation(workfileId);
 }
 
 export async function listUadAssets(workfileId: string): Promise<UadAsset[]> {
@@ -318,6 +327,7 @@ export async function uploadUadAsset(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/assets/${encodeURIComponent(created.asset_id)}/verify`),
     { method: "POST" },
   );
+  announceUadWorkfileMutation(workfileId);
   return verified.asset;
 }
 
@@ -326,6 +336,7 @@ export async function deleteUadAsset(workfileId: string, assetId: string): Promi
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/assets/${encodeURIComponent(assetId)}`),
     { method: "DELETE" },
   );
+  announceUadWorkfileMutation(workfileId);
 }
 
 export async function listUadSketches(workfileId: string): Promise<UadSketch[]> {
@@ -348,6 +359,7 @@ export async function saveUadSketch(
       body: JSON.stringify(input),
     },
   );
+  announceUadWorkfileMutation(workfileId);
   return response.sketch;
 }
 
@@ -436,7 +448,7 @@ export async function applyUadCompletionSuggestions(
     confirmed: true;
   },
 ): Promise<UadCompletionApplyResult> {
-  return uadFetchJSON<UadCompletionApplyResult>(
+  const result = await uadFetchJSON<UadCompletionApplyResult>(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/completion-suggestions/apply`),
     {
       method: "POST",
@@ -444,4 +456,66 @@ export async function applyUadCompletionSuggestions(
       body: JSON.stringify(input),
     },
   );
+  announceUadWorkfileMutation(workfileId);
+  return result;
+}
+
+export interface UadValidationFinding {
+  id: string;
+  rule_id: string | null;
+  severity: "fatal" | "warning";
+  uad_uid: string | null;
+  report_field_id: string | null;
+  entity_id: string | null;
+  message: string;
+  status: "open" | "resolved" | "accepted" | "superseded";
+  metadata: {
+    section?: UadSectionKey | "catalog";
+    field_key?: string | null;
+    context_key?: string | null;
+    code?: string;
+    validator_version?: string;
+  };
+  created_at: string;
+}
+
+export interface UadValidationRun {
+  id: string;
+  workfile_id: string;
+  revision_number: number;
+  specification_release_key: string;
+  validator_type: "local_compliance";
+  status: "passed" | "failed" | "error" | "running";
+  fatal_count: number;
+  warning_count: number;
+  started_at: string;
+  completed_at: string | null;
+  metadata: {
+    validator_version?: string;
+    applicable_sections?: UadSectionKey[];
+    field_value_count?: number;
+    entity_count?: number;
+    asset_count?: number;
+    sketch_count?: number;
+    input_digest_sha256?: string;
+  };
+  workfile_status: string;
+  is_current_revision: boolean;
+  ready_for_export: boolean;
+  findings: UadValidationFinding[];
+}
+
+export async function getLatestUadValidation(workfileId: string): Promise<UadValidationRun | null> {
+  const response = await uadFetchJSON<{ validation: UadValidationRun | null }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/validation`),
+  );
+  return response.validation;
+}
+
+export async function runLocalUadValidation(workfileId: string): Promise<UadValidationRun> {
+  const response = await uadFetchJSON<{ validation: UadValidationRun }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/validation`),
+    { method: "POST" },
+  );
+  return response.validation;
 }

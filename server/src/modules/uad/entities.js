@@ -169,7 +169,10 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
     );
   }
   if (touch) {
-    await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+    await client.query(
+      "UPDATE appraisal.uad_workfiles SET status = 'draft', updated_at = now() WHERE id = $1",
+      [workfileId],
+    );
   }
   return entityResponse(inserted.rows[0]);
 }
@@ -220,7 +223,10 @@ export async function deleteUadEntityWithClient(client, workfileIdValue, entityI
        ) VALUES ($1, $2, 'uad_entity.deleted', $3, $4, $5::jsonb)`,
     [workfileId, actorUserId, selected.rows[0].entity_type, entityId, JSON.stringify(deleted)],
   );
-  await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+  await client.query(
+    "UPDATE appraisal.uad_workfiles SET status = 'draft', updated_at = now() WHERE id = $1",
+    [workfileId],
+  );
   return deleted;
 }
 

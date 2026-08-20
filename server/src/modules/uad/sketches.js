@@ -132,6 +132,11 @@ export async function saveUadSketch(pool, workfileIdValue, input = {}) {
         );
 
     await client.query(
+      "UPDATE appraisal.uad_workfiles SET status = 'draft', updated_at = now() WHERE id = $1",
+      [workfileId],
+    );
+
+    await client.query(
       `INSERT INTO appraisal.uad_audit_events (
          workfile_id, event_type, entity_type, entity_id, before_data, after_data, metadata
        ) VALUES ($1, 'uad_sketch.saved', 'uad_sketch', $2, $3::jsonb, $4::jsonb, $5::jsonb)`,

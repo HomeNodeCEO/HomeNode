@@ -15,6 +15,7 @@ import {
 } from "../api";
 import UadAssetPanel from "./UadAssetPanel";
 import UadCompletionSuggestionPanel from "./UadCompletionSuggestionPanel";
+import UadValidationPanel from "./UadValidationPanel";
 
 interface Props {
   workfileId: string;
@@ -507,6 +508,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             setSavedMessage(`${result.applied_suggestion_count} reviewed Custom Appraisal suggestion${result.applied_suggestion_count === 1 ? "" : "s"} added in revision ${result.current_revision}.`);
           }}
           values={editor.values}
+          workfileId={workfileId}
+        />
+        <UadValidationPanel
+          currentRevision={editor.workfile.current_revision}
+          dirty={dirty}
+          onValidated={async (validation) => {
+            await loadEditor();
+            setSavedMessage(validation.ready_for_export
+              ? `Revision ${validation.revision_number} passed whole-workfile UAD validation.`
+              : `Validation found ${validation.fatal_count} blocking item${validation.fatal_count === 1 ? "" : "s"} in revision ${validation.revision_number}.`);
+          }}
           workfileId={workfileId}
         />
         {activeSection === "site" && (

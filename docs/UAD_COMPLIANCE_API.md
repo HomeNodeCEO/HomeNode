@@ -9,15 +9,17 @@ editor, local rules, MISMO XML, subschema validation, or native URAR rendering.
 ## Delivery sequence
 
 1. Keep Appendix A field mappings and Appendix H rules versioned by UAD release.
-2. Generate deterministic MISMO 3.6 XML from a locked workfile revision.
-3. Validate well-formed XML and the current GSE UAD subschema locally.
-4. Complete GSE technology-provider onboarding and obtain nonproduction
+2. Require a persisted, passing whole-workfile local validation run for the
+   current locked revision (see `UAD_LOCAL_VALIDATION.md`).
+3. Generate deterministic MISMO 3.6 XML from that revision.
+4. Validate well-formed XML and the current GSE UAD subschema locally.
+5. Complete GSE technology-provider onboarding and obtain nonproduction
    application credentials for the assigned ACPT/CLVE test environment.
-5. Submit the official scenarios, reconcile Compliance API findings with local
+6. Submit the official scenarios, reconcile Compliance API findings with local
    results, and retain request/response correlation metadata without logging
    access tokens or sensitive report contents.
-6. Complete verification before production credentials are enabled.
-7. Store production credentials only in the deployment secret manager, rotate
+7. Complete verification before production credentials are enabled.
+8. Store production credentials only in the deployment secret manager, rotate
    them independently for each GSE/environment, and keep the integration behind
    a disabled-by-default feature flag.
 

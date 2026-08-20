@@ -56,6 +56,12 @@ export const UAD_SALES_COMPARABLE_LISTING_STATUSES = Object.freeze([
   "SettledSale",
 ]);
 
+export const UAD_SALES_COMPARABLE_WEIGHT_TYPES = Object.freeze([
+  "Most",
+  "Less",
+  "NoWeight",
+]);
+
 export const UAD_SALES_COMPARABLE_DIRECTIONS = Object.freeze([
   "East", "North", "NorthEast", "NorthWest", "South", "SouthEast", "SouthWest", "West",
 ]);
@@ -640,6 +646,15 @@ const outbuildingRoomChild = (uid, reportFieldId, label, dataType, options = {})
 const outbuildingComp = (contextKey, uid, reportFieldId, label, dataType, options = {}) => field(
   "Sales comparables — outbuilding adjustment",
   contextKey,
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
+const summaryComp = (uid, reportFieldId, label, dataType, options = {}) => field(
+  "Sales comparables — summary",
+  "sales_comparable_summary",
   uid,
   reportFieldId,
   label,
@@ -1842,6 +1857,78 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
     guidance: "Enter the total supported outbuilding adjustment once for this comparable, including zero when applicable.",
   }),
 
+  summaryComp("1800.0313", "22.15.08", "Net adjustment total", "currency", {
+    requiredWhen: salesComparisonIncluded,
+    minimum: -999999999,
+    maximum: 999999999,
+    readOnly: true,
+    calculated: true,
+    guidance: "Calculated on save as the sum of every typed comparable adjustment, including positive, negative, and zero amounts.",
+  }),
+  summaryComp("1800.0311", "22.15.09", "Adjusted price per unit", "currency", {
+    requiredWhen: { key: "sales_comparable_property:1800.0365", greaterThan: 1 },
+    minimum: 0,
+    maximum: 999999999,
+    readOnly: true,
+    calculated: true,
+    showWhen: includedAnd({ key: "sales_comparable_property:1800.0365", greaterThan: 1 }),
+    guidance: "Calculated on save as adjusted price divided by living units excluding ADUs.",
+  }),
+  summaryComp("1800.0310", "22.15.10", "Adjusted price per bedroom", "currency", {
+    requiredWhen: { key: "sales_comparable_property:1800.0365", greaterThan: 1 },
+    minimum: 0,
+    maximum: 999999999,
+    readOnly: true,
+    calculated: true,
+    showWhen: includedAnd({ key: "sales_comparable_property:1800.0365", greaterThan: 1 }),
+    guidance: "Calculated on save as adjusted price divided by the bedrooms in all living units, including ADUs.",
+  }),
+  summaryComp("1800.0314", "22.15.11", "Price per gross building finished area", "currency", {
+    requiredWhen: { key: "subject:0100.0022", greaterThan: 1 },
+    minimum: 0,
+    maximum: 999999999,
+    readOnly: true,
+    calculated: true,
+    showWhen: includedAnd({ key: "subject:0100.0022", greaterThan: 1 }),
+    guidance: "Calculated on save from the applicable sale, known contract, or list price and the comparable gross building finished area.",
+  }),
+  summaryComp("1800.0315", "22.15.12", "Price per finished area above grade", "currency", {
+    minimum: 0,
+    maximum: 999999999,
+    readOnly: true,
+    calculated: true,
+    showWhen: includedAnd({ key: "sales_comparable_property:1800.0365", equals: 1 }),
+    guidance: "Calculated on save from the applicable sale, known contract, or list price and standard plus nonstandard finished area above grade for all units, including ADUs.",
+  }),
+  summaryComp("1800.0309", "22.15.13", "Adjusted price", "currency", {
+    requiredWhen: salesComparisonIncluded,
+    minimum: 0,
+    maximum: 999999999.99,
+    readOnly: true,
+    calculated: true,
+    guidance: "Calculated on save as sale price plus net adjustments for a settled sale, or list price plus net adjustments otherwise.",
+  }),
+  summaryComp("1800.0312", "22.15.14", "Comparable weight", "enum", {
+    requiredWhen: salesComparisonIncluded,
+    options: UAD_SALES_COMPARABLE_WEIGHT_TYPES,
+    guidance: "Choose Most, Less, or No Weight to record the relative emphasis used in the indicated value conclusion.",
+  }),
+  field(
+    "Sales Comparison Approach — indicated value",
+    "sales_comparison_summary",
+    "1300.0006",
+    "22.15.15",
+    "Indicated value",
+    "currency",
+    {
+      showWhen: salesComparisonIncluded,
+      requiredWhen: salesComparisonIncluded,
+      minimum: 1,
+      maximum: 999999999,
+      guidance: "Enter the subject property's indicated value by the Sales Comparison Approach. Overall reconciliation remains in Section 26.",
+    },
+  ),
+
   field(
     "Comparable data sources",
     "sales_comparable_data_source",
@@ -2420,6 +2507,14 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   vehicleStorageSurface: "sales_comparable_vehicle_storage:1800.0097",
   vehicleStorageSurfaceOther: "sales_comparable_vehicle_storage:1800.0098",
   vehicleStorageAdjustment: "sales_comparable_adjustment_vehicle_storage:1800.0317",
+  netAdjustmentTotal: "sales_comparable_summary:1800.0313",
+  adjustedPricePerUnit: "sales_comparable_summary:1800.0311",
+  adjustedPricePerBedroom: "sales_comparable_summary:1800.0310",
+  pricePerGrossFinishedArea: "sales_comparable_summary:1800.0314",
+  pricePerFinishedAreaAboveGrade: "sales_comparable_summary:1800.0315",
+  adjustedPrice: "sales_comparable_summary:1800.0309",
+  comparableWeight: "sales_comparable_summary:1800.0312",
+  indicatedValue: "sales_comparison_summary:1300.0006",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

@@ -853,6 +853,7 @@ try {
   );
   const salesComparableValues = [
     [null, "sales_comparison_scope", "1000.0032", "Does Not Display", true],
+    [null, "sales_comparison_summary", "1300.0006", "22.15.15", 445000],
     [salesComparableId, "sales_comparable", "1800.0192", "21.007", 1],
     [salesComparableId, "comparable_prior_transfer_summary", "1800.0198", "21.008", false],
     [comparableNoTransferSourceId, "comparable_no_prior_transfer_data_source", "0700.0125", "21.011", "MLS"],
@@ -892,6 +893,7 @@ try {
     [salesComparableOutbuildingKitchenId, "sales_comparable_outbuilding_room", "1800.0388", "22.14.22", "Kitchen"],
     [salesComparableOutbuildingKitchenId, "sales_comparable_outbuilding_room", "1800.0389", "22.14.22", 1],
     [salesComparableId, "sales_comparable_adjustment_outbuilding", "1800.0317", "22.14.15", 0],
+    [salesComparableId, "sales_comparable_summary", "1800.0312", "22.15.14", "Most"],
     [salesComparableId, "sales_comparable_proximity", "1800.0065", "22.01.19", { amount: 2.1, unit: "Miles" }],
     [salesComparableId, "sales_comparable_proximity", "1800.0066", "22.01.19", "NorthEast"],
     [salesComparableId, "sales_comparable_listing", "1800.0074", "22.01.20", 449000],

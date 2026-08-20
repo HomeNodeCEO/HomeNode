@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 292);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 300);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -534,6 +534,54 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1800.0272"
       ))?.value,
       442500,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_summary"
+        && item.uid === "1800.0313"
+      ))?.value,
+      0,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_summary"
+        && item.uid === "1800.0309"
+      ))?.value,
+      442500,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_summary"
+        && item.uid === "1800.0315"
+      ))?.value,
+      169,
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_summary"
+        && item.uid === "1800.0313"
+      ))?.source_type,
+      "calculated",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === salesComparable.id
+        && item.context_key === "sales_comparable_summary"
+        && item.uid === "1800.0312"
+      ))?.value,
+      "Most",
+    );
+    assert.equal(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === null
+        && item.context_key === "sales_comparison_summary"
+        && item.uid === "1300.0006"
+      ))?.value,
+      445000,
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

@@ -542,7 +542,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    assert.equal(salesComparisonFields.rows[0].count, 381);
+    assert.equal(salesComparisonFields.rows[0].count, 389);
 
     const salesComparisonLocations = await pool.query(`
       SELECT count(*)::integer AS count,
@@ -551,10 +551,10 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND section_number = 22
     `);
-    // Earlier source-section migrations plus Sections 22A-22N provide the
+    // Earlier source-section migrations plus Sections 22A-22O provide the
     // canonical comparable/grid locations and their subject redisplays.
-    assert.equal(salesComparisonLocations.rows[0].count, 512);
-    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 215);
+    assert.equal(salesComparisonLocations.rows[0].count, 526);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 221);
 
     const officialSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
@@ -673,13 +673,24 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.equal(officialSalesComparisonOutbuildingRules.rows[0].count, 2);
 
+    const officialSalesComparisonSummaryRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1253', 'UAD1456', 'UAD1457', 'UAD1458',
+           'UAD1459', 'UAD1460', 'UAD1461'
+         )
+    `);
+    assert.equal(officialSalesComparisonSummaryRules.rows[0].count, 7);
+
     const homeNodeSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
         FROM uad_ref.compliance_rules
        WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
          AND rule_id LIKE 'HN-UAD-SALES-COMPARISON-%'
     `);
-    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 67);
+    assert.equal(homeNodeSalesComparisonRules.rows[0].count, 71);
 
     const salesComparisonEntityConstraint = await pool.query(`
       SELECT pg_get_constraintdef(oid) AS definition

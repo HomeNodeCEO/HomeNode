@@ -14,6 +14,7 @@ import {
   type UadSectionKey,
 } from "../api";
 import UadAssetPanel from "./UadAssetPanel";
+import UadCompletionSuggestionPanel from "./UadCompletionSuggestionPanel";
 
 interface Props {
   workfileId: string;
@@ -496,6 +497,18 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
           Fields and IDs follow UAD 3.6 Appendix A-1 v1.4 and the Appendix C URAR layout. HomeNode data and automated location evidence remain suggestions until the appraiser saves them.
         </div>
+        <UadCompletionSuggestionPanel
+          currentRevision={editor.workfile.current_revision}
+          dirty={dirty}
+          entities={editor.entities}
+          fields={allFields}
+          onApplied={async (result) => {
+            await loadEditor();
+            setSavedMessage(`${result.applied_suggestion_count} reviewed Custom Appraisal suggestion${result.applied_suggestion_count === 1 ? "" : "s"} added in revision ${result.current_revision}.`);
+          }}
+          values={editor.values}
+          workfileId={workfileId}
+        />
         {activeSection === "site" && (
           <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
             Site uses repeatable records for parcels, influences, views, utilities, encumbrances, features, and defects. For a Body of Water influence, add each body of water and answer its private-access questions; private access also requires total frontage and a verified Water Frontage photo. These subject facts redisplay in Section 22D without duplicate entry.

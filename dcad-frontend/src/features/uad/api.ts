@@ -351,6 +351,60 @@ export async function saveUadSketch(
   return response.sketch;
 }
 
+export interface UadCompletionSuggestionField {
+  suggestion_id: string;
+  field_key: string;
+  value: UadFieldValue;
+  source_reference: string;
+  source_digest_sha256: string;
+  observed_at: string;
+  requires_appraiser_confirmation: true;
+}
+
+export interface UadCompletionSuggestionEntity {
+  suggestion_id: string;
+  entity_type: string;
+  ordinal: number;
+  values: Record<string, UadFieldValue>;
+  related_entities?: Array<Omit<UadCompletionSuggestionEntity, "suggestion_id">>;
+  source_reference: string;
+  source_digest_sha256: string;
+  observed_at: string;
+  requires_appraiser_confirmation: true;
+}
+
+export interface UadCompletionSuggestions {
+  schema_version: number;
+  adapter_version: string;
+  status: "ready_for_review" | "source_review_required";
+  source_completion: {
+    source_report_file_id: string;
+    target_report_file_id: string;
+    appraisal_case_id: string;
+    subject_snapshot_id: string;
+    source_digest_sha256: string;
+  };
+  suggestions: {
+    market_fields: UadCompletionSuggestionField[];
+    market_entities: UadCompletionSuggestionEntity[];
+    sales_comparison_fields: UadCompletionSuggestionField[];
+    sales_comparable_entities: UadCompletionSuggestionEntity[];
+  };
+  omissions: Array<{ scope?: string; code: string; source_value?: unknown; target_field_key?: string }>;
+  counts: { field_suggestions: number; entity_suggestions: number; omissions: number };
+  apply_mode: "review_only";
+  requires_appraiser_confirmation: true;
+}
+
+export interface UadCompletionApplyResult {
+  current_revision: number;
+  applied_suggestion_count: number;
+  applied_field_count?: number;
+  applied_entity_count?: number;
+  conflicts: Array<{ suggestion_id: string; reason: string }>;
+  created_entities: Array<{ id: string; entity_type: string }>;
+}
+
 export async function getUadSharedData(workfileId: string): Promise<{
   suggestions: {
     site_fields: unknown[];
@@ -360,22 +414,30 @@ export async function getUadSharedData(workfileId: string): Promise<{
     subject_listing_entities: unknown[];
     subject_prior_transfer_fields: unknown[];
     subject_prior_transfer_entities: unknown[];
-    custom_completion: {
-      schema_version: number;
-      adapter_version: string;
-      status: "ready_for_review" | "source_review_required";
-      suggestions: {
-        market_fields: unknown[];
-        market_entities: unknown[];
-        sales_comparison_fields: unknown[];
-        sales_comparable_entities: unknown[];
-      };
-      omissions: unknown[];
-      apply_mode: "review_only";
-      requires_appraiser_confirmation: true;
-    } | null;
+    custom_completion: UadCompletionSuggestions | null;
   };
   adapters: Record<string, { ready: boolean; mode: string; enabled_in_uad_editor: boolean }>;
 }> {
   return uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/shared-data`));
+}
+
+export async function applyUadCompletionSuggestions(
+  workfileId: string,
+  input: {
+    selected_suggestion_ids: string[];
+    expected_source_digest_sha256: string;
+    expected_adapter_version: string;
+    expected_revision: number;
+    preserve_existing: true;
+    confirmed: true;
+  },
+): Promise<UadCompletionApplyResult> {
+  return uadFetchJSON<UadCompletionApplyResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/completion-suggestions/apply`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
 }

@@ -51,6 +51,7 @@ function sourceMetadata(completion, path) {
 function field(fieldKey, value, completion, path, options = {}) {
   if (value === null || value === undefined || value === "") return null;
   return {
+    suggestion_id: `field:${fieldKey}`,
     field_key: fieldKey,
     value,
     ...sourceMetadata(completion, path),
@@ -176,6 +177,7 @@ function buildMarketSuggestions(completion, omissions) {
   ));
   if (studyLabel) {
     entities.push({
+      suggestion_id: "entity:market_price_trend_source:primary",
       entity_type: "market_price_trend_source",
       ordinal: 1,
       values: {
@@ -405,6 +407,7 @@ function buildComparableSuggestions(completion, omissions) {
     }
 
     entities.push({
+      suggestion_id: `entity:sales_comparable:${sourceKey}`,
       entity_type: "sales_comparable",
       source_key: sourceKey,
       ordinal,

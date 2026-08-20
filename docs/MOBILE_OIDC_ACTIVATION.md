@@ -58,7 +58,7 @@ Record only the non-secret AuthKit issuer and public OAuth `client_id`. Never co
 Create ignored `homenode-mobile/.env.local` values:
 
 ```text
-EXPO_PUBLIC_API_BASE_URL=https://homenode-api-staging.onrender.com
+EXPO_PUBLIC_API_BASE_URL=https://homenode.onrender.com
 EXPO_PUBLIC_OIDC_ISSUER=https://<environment>.authkit.app
 EXPO_PUBLIC_OIDC_CLIENT_ID=client_<public-oauth-application-id>
 ```

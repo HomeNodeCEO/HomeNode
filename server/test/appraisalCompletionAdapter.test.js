@@ -136,6 +136,62 @@ test("carries assignment-scoped project, HOA, condition, and conformity evidence
   assert.match(completion.subject.characteristics.nonconformity_explanation, /smaller than/);
 });
 
+test("carries bounded assignment-frozen inspection evidence without inferring component ratings", () => {
+  const input = fixtureInput("uad_3_6");
+  const property = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence
+    .property_report_data;
+  property.report_manual_values = {
+    "report.property_characteristics": {
+      attribute_value: {
+        main_improvement: {
+          ...property.improvement,
+          roof_type: "Gable",
+          roof_material: "Composition shingle",
+        },
+        inspection_details: {
+          skirting: "Not applicable",
+          window_type: "Vinyl double-pane",
+          interior_floor_type: "Carpet and ceramic tile",
+          bath_floor_type: "Ceramic tile",
+          kitchen_countertop_type: "Granite",
+          interior_wall_type: "Painted drywall",
+          garage_carport: "Attached two-car garage",
+          pool_amenities: "No pool observed",
+          updates_remodeling: "Kitchen updated approximately five years ago",
+          additions: "Enclosed rear sunroom",
+          defects_deferred_maintenance: "Damaged flooring in the living room",
+          repair_cost_to_cure: 12_500,
+          additional_improvements_notes: "Covered rear patio",
+          appraiser_comments: "All observations are subject to the final appraisal review.",
+        },
+      },
+    },
+  };
+
+  const evidence = buildCanonicalAppraisalCompletion(input)
+    .subject.characteristics.inspection_evidence;
+
+  assert.deepEqual(evidence.exterior, {
+    foundation: "Slab",
+    exterior_walls: "Brick",
+    skirting: "Not applicable",
+    windows: "Vinyl double-pane",
+    roof_type: "Gable",
+    roof_material: "Composition shingle",
+  });
+  assert.deepEqual(evidence.interior, {
+    flooring: "Carpet and ceramic tile",
+    bathroom_flooring: "Ceramic tile",
+    kitchen_countertops: "Granite",
+    walls: "Painted drywall",
+  });
+  assert.equal(evidence.systems_and_amenities.garage_carport, "Attached two-car garage");
+  assert.equal(evidence.alterations_and_repairs.repair_cost_to_cure, 12_500);
+  assert.match(evidence.alterations_and_repairs.appraiser_comments, /final appraisal review/);
+  assert.equal(Object.hasOwn(evidence.exterior, "condition_rating"), false);
+  assert.equal(Object.hasOwn(evidence.interior, "condition_rating"), false);
+});
+
 test("carries the frozen assignment location context even when it is stored outside the property report payload", () => {
   const input = fixtureInput("uad_3_6");
   input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_context = {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.8";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.9";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -140,6 +140,11 @@ function subjectCharacteristics(subjectData, property, assignment) {
     || property.housing_profile
     || subjectData?.uad_subject_snapshot?.housing_profile
     || {};
+  const inspection = captured.inspection_details
+    || manual.inspection_details
+    || property.inspection_details
+    || improvement.inspection_details
+    || {};
   const capturedLand = captured.land_detail;
   const manualLand = property?.report_manual_values?.["report.land_details"]
     ?.attribute_value?.land_detail;
@@ -212,6 +217,37 @@ function subjectCharacteristics(subjectData, property, assignment) {
     air_conditioning: text(improvement.air_conditioning, 200),
     fireplace_count: number(improvement.fireplaces),
     pool_present: typeof improvement.pool === "boolean" ? improvement.pool : null,
+    inspection_evidence: {
+      exterior: {
+        foundation: text(improvement.foundation, 200),
+        exterior_walls: text(improvement.exterior_material, 200),
+        skirting: text(inspection.skirting, 500),
+        windows: text(inspection.window_type, 500),
+        roof_type: text(improvement.roof_type, 500),
+        roof_material: text(improvement.roof_material, 500),
+      },
+      interior: {
+        flooring: text(inspection.interior_floor_type, 500),
+        bathroom_flooring: text(inspection.bath_floor_type, 500),
+        kitchen_countertops: text(inspection.kitchen_countertop_type, 500),
+        walls: text(inspection.interior_wall_type, 500),
+      },
+      systems_and_amenities: {
+        garage_carport: text(inspection.garage_carport, 1_000),
+        pool_amenities: text(inspection.pool_amenities, 1_000),
+      },
+      alterations_and_repairs: {
+        updates_remodeling: text(inspection.updates_remodeling, 3_000),
+        additions: text(inspection.additions, 3_000),
+        defects_deferred_maintenance: text(
+          inspection.defects_deferred_maintenance,
+          5_000,
+        ),
+        repair_cost_to_cure: number(inspection.repair_cost_to_cure),
+        additional_improvements: text(inspection.additional_improvements_notes, 3_000),
+        appraiser_comments: text(inspection.appraiser_comments, 5_000),
+      },
+    },
     site: {
       total_area_sqft: siteArea || null,
       dimensions: frontage > 0 && depth > 0

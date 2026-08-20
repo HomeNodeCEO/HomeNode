@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.7";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.8";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -677,6 +677,49 @@ function dimensionValue(value) {
   return Number.isInteger(parsed) ? String(parsed) : String(Math.round(parsed * 100) / 100);
 }
 
+function evidenceCommentary(label, facts, maxLength = 5_000) {
+  const parts = facts.flatMap(([factLabel, value]) => {
+    const normalized = text(value, 1_000);
+    return normalized ? [`${factLabel}: ${normalized}`] : [];
+  });
+  return parts.length ? text(`${label}: ${parts.join("; ")}.`, maxLength) : null;
+}
+
+function overallInspectionCommentary(characteristics) {
+  const evidence = plainObject(characteristics.inspection_evidence)
+    ? characteristics.inspection_evidence
+    : {};
+  const systems = plainObject(evidence.systems_and_amenities)
+    ? evidence.systems_and_amenities
+    : {};
+  const alterations = plainObject(evidence.alterations_and_repairs)
+    ? evidence.alterations_and_repairs
+    : {};
+  const parts = [];
+  const conditionNotes = text(characteristics.condition_notes, 5_000);
+  if (conditionNotes) parts.push(conditionNotes);
+  const add = (label, value, maxLength = 3_000) => {
+    const normalized = text(value, maxLength);
+    if (normalized) parts.push(`${label}: ${normalized}.`);
+  };
+  add("Updates/remodeling", alterations.updates_remodeling);
+  add("Additions", alterations.additions);
+  add("Additional improvements", alterations.additional_improvements);
+  add("Defects/deferred maintenance", alterations.defects_deferred_maintenance, 5_000);
+  const repairCost = number(alterations.repair_cost_to_cure);
+  if (repairCost !== null && repairCost >= 0 && repairCost <= 999_999_999.99) {
+    parts.push(`Reported repair cost to cure: ${new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      maximumFractionDigits: 2,
+    }).format(repairCost)}.`);
+  }
+  add("Garage/carport observation", systems.garage_carport, 1_000);
+  add("Pool/amenity observation", systems.pool_amenities, 1_000);
+  add("Appraiser field comments", alterations.appraiser_comments, 5_000);
+  return parts.length ? text(parts.join(" "), 5_000) : null;
+}
+
 function buildSubjectEntitySuggestions(completion, omissions) {
   const fields = [];
   const identity = completion.subject?.identity || {};
@@ -891,10 +934,52 @@ function buildSubjectEntitySuggestions(completion, omissions) {
     });
   }
 
-  if (text(characteristics.foundation, 200) || text(characteristics.exterior_material, 200)) {
+  const inspection = plainObject(characteristics.inspection_evidence)
+    ? characteristics.inspection_evidence
+    : {};
+  const exterior = plainObject(inspection.exterior) ? inspection.exterior : {};
+  const exteriorCommentary = evidenceCommentary("Custom Appraisal exterior evidence", [
+    ["foundation", exterior.foundation],
+    ["exterior walls", exterior.exterior_walls],
+    ["skirting", exterior.skirting],
+    ["windows", exterior.windows],
+    ["roof type", exterior.roof_type],
+    ["roof material", exterior.roof_material],
+  ]);
+  addEntityField(
+    "dwelling:0300.0096",
+    exteriorCommentary,
+    "subject.characteristics.inspection_evidence.exterior",
+    dwellingTarget,
+  );
+  if (exteriorCommentary) {
     addOmission(omissions, {
-      scope: "dwelling", code: "exterior_components_require_appraiser_condition_review",
-      source_value: { foundation: text(characteristics.foundation, 200), exterior_material: text(characteristics.exterior_material, 200) },
+      scope: "dwelling_exterior_features",
+      code: "exterior_components_require_appraiser_condition_and_classification_review",
+      source_value: exterior,
+      target_field_key: "dwelling_exterior_feature:0300.0055",
+    });
+  }
+
+  const interior = plainObject(inspection.interior) ? inspection.interior : {};
+  const interiorCommentary = evidenceCommentary("Custom Appraisal interior evidence", [
+    ["flooring", interior.flooring],
+    ["bathroom flooring", interior.bathroom_flooring],
+    ["kitchen countertops", interior.kitchen_countertops],
+    ["walls", interior.walls],
+  ]);
+  addEntityField(
+    "unit:0700.0115",
+    interiorCommentary,
+    "subject.characteristics.inspection_evidence.interior",
+    unitTarget,
+  );
+  if (interiorCommentary) {
+    addOmission(omissions, {
+      scope: "unit_interior_features",
+      code: "interior_components_require_appraiser_condition_and_classification_review",
+      source_value: interior,
+      target_field_key: "unit_interior_feature:0700.0046",
     });
   }
   return { fields };
@@ -936,12 +1021,12 @@ function buildConditionSuggestions(completion, omissions) {
     });
   }
 
-  const conditionNotes = text(characteristics.condition_notes, 5_000);
+  const conditionNotes = overallInspectionCommentary(characteristics);
   addField(fields, field(
     "overall_quality_condition_commentary:1600.0008",
     conditionNotes,
     completion,
-    "subject.characteristics.condition_notes",
+    "subject.characteristics",
   ));
   if ((conditionSource || qualitySource) && !conditionNotes) {
     addOmission(omissions, {
@@ -960,6 +1045,64 @@ function buildConditionSuggestions(completion, omissions) {
     addOmission(omissions, {
       scope: "subject_defects", code: "significant_physical_deficiencies_require_component_allocation",
       source_value: { notes: conditionNotes },
+    });
+  }
+
+  const inspection = plainObject(characteristics.inspection_evidence)
+    ? characteristics.inspection_evidence
+    : {};
+  const systems = plainObject(inspection.systems_and_amenities)
+    ? inspection.systems_and_amenities
+    : {};
+  const alterations = plainObject(inspection.alterations_and_repairs)
+    ? inspection.alterations_and_repairs
+    : {};
+  if (
+    text(alterations.updates_remodeling, 3_000)
+    || text(alterations.additions, 3_000)
+  ) {
+    addOmission(omissions, {
+      scope: "subject_alterations",
+      code: "inspection_alterations_require_room_and_timeframe_review",
+      source_value: {
+        updates_remodeling: text(alterations.updates_remodeling, 3_000),
+        additions: text(alterations.additions, 3_000),
+      },
+      target_field_key: "unit_room:0700.0036",
+    });
+  }
+  const repairCost = number(alterations.repair_cost_to_cure);
+  if (
+    text(alterations.defects_deferred_maintenance, 5_000)
+    || repairCost !== null
+  ) {
+    addOmission(omissions, {
+      scope: "subject_repairs",
+      code: "inspection_repairs_require_component_location_and_action_review",
+      source_value: {
+        defects_deferred_maintenance: text(
+          alterations.defects_deferred_maintenance,
+          5_000,
+        ),
+        repair_cost_to_cure: repairCost,
+      },
+      target_field_key: "dwelling:3900.0097",
+    });
+  }
+  if (text(systems.garage_carport, 1_000)) {
+    addOmission(omissions, {
+      scope: "vehicle_storage",
+      code: "inspection_vehicle_storage_details_require_appraiser_reconciliation",
+      source_value: text(systems.garage_carport, 1_000),
+      target_field_key: "vehicle_storage:3200.0006",
+    });
+  }
+  if (text(systems.pool_amenities, 1_000)) {
+    addOmission(omissions, {
+      scope: "subject_amenities",
+      code: "inspection_pool_amenities_require_appraiser_classification",
+      source_value: text(systems.pool_amenities, 1_000),
+      target_field_key: "amenity_water_features:0200.0032",
     });
   }
 

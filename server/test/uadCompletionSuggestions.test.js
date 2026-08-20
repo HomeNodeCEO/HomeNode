@@ -200,6 +200,104 @@ test("maps only complete, explicit construction and outdoor-living amenity evide
   assert.equal(omissionCodes.has("pool_type_and_material_require_appraiser_classification"), true);
 });
 
+test("maps inspection narratives while keeping incomplete component records in review", () => {
+  const input = fixtureParts();
+  const property = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence
+    .property_report_data;
+  property.report_manual_values = {
+    "report.property_characteristics": {
+      attribute_value: {
+        main_improvement: {
+          ...property.improvement,
+          roof_type: "Gable",
+          roof_material: "Composition shingle",
+        },
+        inspection_details: {
+          skirting: "Not applicable",
+          window_type: "Vinyl double-pane",
+          interior_floor_type: "Carpet and ceramic tile",
+          bath_floor_type: "Ceramic tile",
+          kitchen_countertop_type: "Granite",
+          interior_wall_type: "Painted drywall",
+          garage_carport: "Attached two-car garage",
+          pool_amenities: "No pool observed",
+          updates_remodeling: "Kitchen updated approximately five years ago",
+          additions: "Enclosed rear sunroom",
+          defects_deferred_maintenance: "Damaged flooring in the living room",
+          repair_cost_to_cure: 12_500,
+          additional_improvements_notes: "Covered rear patio",
+          appraiser_comments: "All observations are subject to the final appraisal review.",
+        },
+      },
+    },
+  };
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+  const exterior = fieldByKey(suggestions, "dwelling:0300.0096");
+  const interior = fieldByKey(suggestions, "unit:0700.0115");
+  const overall = fieldByKey(suggestions, "overall_quality_condition_commentary:1600.0008");
+
+  assert.match(exterior.value, /foundation: Slab/i);
+  assert.match(exterior.value, /windows: Vinyl double-pane/i);
+  assert.match(exterior.value, /roof material: Composition shingle/i);
+  assert.deepEqual(exterior.target_entity, {
+    entity_type: "dwelling",
+    entity_identifier: "dwelling-1",
+  });
+  assert.match(interior.value, /flooring: Carpet and ceramic tile/i);
+  assert.match(interior.value, /kitchen countertops: Granite/i);
+  assert.deepEqual(interior.target_entity, {
+    entity_type: "unit",
+    entity_identifier: "unit-1",
+  });
+  assert.match(overall.value, /Kitchen updated approximately five years ago/);
+  assert.match(overall.value, /Damaged flooring in the living room/);
+  assert.match(overall.value, /\$12,500\.00/);
+  assert.match(overall.value, /final appraisal review/);
+
+  const omissionCodes = new Set(suggestions.omissions.map((item) => item.code));
+  assert.equal(
+    omissionCodes.has("exterior_components_require_appraiser_condition_and_classification_review"),
+    true,
+  );
+  assert.equal(
+    omissionCodes.has("interior_components_require_appraiser_condition_and_classification_review"),
+    true,
+  );
+  assert.equal(
+    omissionCodes.has("inspection_alterations_require_room_and_timeframe_review"),
+    true,
+  );
+  assert.equal(
+    omissionCodes.has("inspection_repairs_require_component_location_and_action_review"),
+    true,
+  );
+  assert.equal(
+    omissionCodes.has("inspection_vehicle_storage_details_require_appraiser_reconciliation"),
+    true,
+  );
+  assert.equal(
+    omissionCodes.has("inspection_pool_amenities_require_appraiser_classification"),
+    true,
+  );
+
+  const entityTypes = [
+    ...suggestions.suggestions.subject_amenity_entities,
+    ...suggestions.suggestions.site_influence_entities,
+    ...suggestions.suggestions.subject_listing_entities,
+    ...suggestions.suggestions.subject_prior_transfer_entities,
+    ...suggestions.suggestions.market_entities,
+    ...suggestions.suggestions.sales_comparable_entities,
+  ].map((item) => item.entity_type);
+  assert.equal(entityTypes.includes("dwelling_exterior_feature"), false);
+  assert.equal(entityTypes.includes("unit_interior_feature"), false);
+  assert.equal(entityTypes.includes("dwelling_exterior_defect"), false);
+  assert.equal(entityTypes.includes("unit_interior_defect"), false);
+});
+
 test("preserves frozen location evidence as site commentary and does not guess influence impact", () => {
   const input = fixtureParts();
   input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_context = {

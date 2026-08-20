@@ -62,6 +62,27 @@ export const UAD_SALES_COMPARABLE_WEIGHT_TYPES = Object.freeze([
   "NoWeight",
 ]);
 
+export const UAD_ADDITIONAL_PROPERTY_NOT_USED_REASONS = Object.freeze([
+  "AccessoryDwellingUnit",
+  "Age",
+  "Amenities",
+  "AreaBelowGrade",
+  "BathroomCount",
+  "BedroomCount",
+  "Condition",
+  "DatedSale",
+  "DesignOrStyleVariance",
+  "GrossBuildingArea",
+  "GrossLivingArea",
+  "LotSize",
+  "Other",
+  "Outbuildings",
+  "Proximity",
+  "Quality",
+  "SaleOrTransferType",
+  "SiteInfluence",
+]);
+
 export const UAD_SALES_COMPARABLE_DIRECTIONS = Object.freeze([
   "East", "North", "NorthEast", "NorthWest", "South", "SouthEast", "SouthWest", "West",
 ]);
@@ -660,6 +681,15 @@ const summaryComp = (uid, reportFieldId, label, dataType, options = {}) => field
   label,
   dataType,
   { entityType: "sales_comparable", showWhen: salesComparisonIncluded, ...options },
+);
+const additionalProperty = (uid, reportFieldId, label, dataType, options = {}) => field(
+  "Additional properties analyzed not used",
+  "sales_comparison_additional_property",
+  uid,
+  reportFieldId,
+  label,
+  dataType,
+  { entityType: "sales_comparison_additional_property", ...options },
 );
 const comparableAmenityTypeIs = (contextKey, uid, ...types) => Object.freeze({
   any: types.map((type) => ({ key: `${contextKey}:${uid}`, equals: type })),
@@ -1930,6 +1960,81 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
   ),
 
   field(
+    "Sales Comparison Approach — reconciliation",
+    "sales_comparison_reconciliation",
+    "1800.0278",
+    "22.16.01",
+    "Reconciliation of Sales Comparison Approach",
+    "text",
+    {
+      showWhen: salesComparisonIncluded,
+      requiredWhen: salesComparisonIncluded,
+      maxLength: 10000,
+      guidance: "Explain the analysis supporting the Sales Comparison Approach conclusion, including how each Comparable Weight was determined. Overall value reconciliation remains in Section 26.",
+    },
+  ),
+
+  additionalProperty("1900.0017", "22.17.01", "Property number", "integer", {
+    required: true,
+    minimum: 1,
+    maximum: 99,
+    readOnly: true,
+    calculated: true,
+    guidance: "Assigned automatically from this property's saved order.",
+  }),
+  additionalProperty("1900.0001", "22.17.02", "Address line", "string", {
+    required: true,
+    maxLength: 100,
+    guidance: "Use USPS Publication 28 address formatting.",
+  }),
+  additionalProperty("1900.0002", "22.17.02", "Unit identifier", "string", {
+    maxLength: 12,
+  }),
+  additionalProperty("1900.0018", "22.17.02", "Unit designator", "enum", {
+    options: ["Unit"],
+    showWhen: { key: "sales_comparison_additional_property:1900.0002", present: true },
+    requiredWhen: { key: "sales_comparison_additional_property:1900.0002", present: true },
+  }),
+  additionalProperty("1900.0003", "22.17.02", "City", "string", {
+    required: true,
+    maxLength: 50,
+  }),
+  additionalProperty("1900.0005", "22.17.02", "State", "state", {
+    required: true,
+  }),
+  additionalProperty("1900.0004", "22.17.02", "ZIP code", "postal_code", {
+    required: true,
+    maxLength: 10,
+  }),
+  additionalProperty("1900.0007", "22.17.04", "Status", "enum", {
+    required: true,
+    options: UAD_SALES_COMPARABLE_LISTING_STATUSES,
+  }),
+  additionalProperty("1900.0013", "22.17.03", "Sale date", "date", {
+    showWhen: { key: "sales_comparison_additional_property:1900.0007", equals: "SettledSale" },
+    guidance: "Provide the most recent sale date when it is available for a settled sale.",
+  }),
+  additionalProperty("1900.0010", "Does Not Display", "Reconsideration requested", "boolean", {
+    required: true,
+    guidance: "Choose Yes when this property was supplied through a reconsideration-of-value request.",
+  }),
+  additionalProperty("1900.0011", "22.17.05", "Reason not used", "multi_enum", {
+    required: true,
+    options: UAD_ADDITIONAL_PROPERTY_NOT_USED_REASONS,
+    guidance: "Select every applicable reason. Finished Area is delivered as the UAD GrossLivingArea value. Land sales belong in the Site Valuation Methodology or Cost Approach, not this list.",
+  }),
+  additionalProperty("1900.0012", "22.17.05", "Other reason", "string", {
+    maxLength: 27,
+    showWhen: { key: "sales_comparison_additional_property:1900.0011", contains: "Other" },
+    requiredWhen: { key: "sales_comparison_additional_property:1900.0011", contains: "Other" },
+  }),
+  additionalProperty("1900.0009", "22.17.06", "Comment", "text", {
+    required: true,
+    maxLength: 360,
+    guidance: "Explain why this property was analyzed and not selected as a sales comparable.",
+  }),
+
+  field(
     "Comparable data sources",
     "sales_comparable_data_source",
     "0700.0125",
@@ -2000,6 +2105,13 @@ export const UAD_SALES_COMPARISON_FIELDS = Object.freeze([
 ]);
 
 export const UAD_SALES_COMPARISON_ENTITY_GROUPS = Object.freeze({
+  sales_comparison_additional_property: Object.freeze({
+    title: "Additional properties analyzed not used",
+    addLabel: "Add analyzed property",
+    minItems: 0,
+    maxItems: 25,
+    showWhen: salesComparisonIncluded,
+  }),
   sales_comparable_data_source: Object.freeze({
     title: "Comparable data sources",
     addLabel: "Add comparable data source",
@@ -2515,6 +2627,20 @@ export const UAD_SALES_COMPARISON_FIELD_KEYS = Object.freeze({
   adjustedPrice: "sales_comparable_summary:1800.0309",
   comparableWeight: "sales_comparable_summary:1800.0312",
   indicatedValue: "sales_comparison_summary:1300.0006",
+  reconciliationComment: "sales_comparison_reconciliation:1800.0278",
+  additionalPropertyOrdinal: "sales_comparison_additional_property:1900.0017",
+  additionalPropertyAddressLine: "sales_comparison_additional_property:1900.0001",
+  additionalPropertyUnitIdentifier: "sales_comparison_additional_property:1900.0002",
+  additionalPropertyUnitDesignator: "sales_comparison_additional_property:1900.0018",
+  additionalPropertyCity: "sales_comparison_additional_property:1900.0003",
+  additionalPropertyState: "sales_comparison_additional_property:1900.0005",
+  additionalPropertyPostalCode: "sales_comparison_additional_property:1900.0004",
+  additionalPropertyStatus: "sales_comparison_additional_property:1900.0007",
+  additionalPropertySaleDate: "sales_comparison_additional_property:1900.0013",
+  additionalPropertyReconsiderationRequested: "sales_comparison_additional_property:1900.0010",
+  additionalPropertyReasons: "sales_comparison_additional_property:1900.0011",
+  additionalPropertyOtherReason: "sales_comparison_additional_property:1900.0012",
+  additionalPropertyComment: "sales_comparison_additional_property:1900.0009",
   siteEnvironmental: "sales_comparable_site_environmental:1800.0116",
   siteEnvironmentalOther: "sales_comparable_site_environmental:1800.0117",
   siteView: "sales_comparable_site_view:1800.0243",

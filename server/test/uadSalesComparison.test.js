@@ -18,6 +18,7 @@ import {
   validateCompleteSection,
 } from "../src/modules/uad/editor.js";
 import {
+  UAD_ADDITIONAL_PROPERTY_NOT_USED_REASONS,
   UAD_NATIVE_AMERICAN_LAND_TYPES,
   UAD_PROPERTY_RIGHTS_NOT_INCLUDED,
   UAD_SALES_COMPARABLE_DATA_SOURCE_TYPES,
@@ -44,13 +45,13 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
   value: fieldValue,
 });
 
-test("adds the Section 22A-22O editor on canonical comparable entities", () => {
+test("adds the Section 22A-22Q editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
   assert.equal(sections.at(-1)?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
-  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 300);
-  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 300);
+  assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 314);
+  assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 314);
   assert.equal(
     section?.groups.find((group) => group.entityType === "sales_comparable")?.createEnabled,
     true,
@@ -88,6 +89,8 @@ test("adds the Section 22A-22O editor on canonical comparable entities", () => {
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_vehicle_storage.parentEntityType, "sales_comparable");
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_vehicle_storage.minItems, 1);
   assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparable_site_view.parentEntityType, "sales_comparable");
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_additional_property.parentEntityType, undefined);
+  assert.equal(UAD_REPEATABLE_ENTITY_GROUPS.sales_comparison_additional_property.maxItems, 25);
   assert.equal(
     section?.groups.find((group) => group.name === "Sales comparables — outbuilding comparison")?.createEnabled,
     false,
@@ -117,6 +120,8 @@ test("uses official Section 22 general-information enumerations and conditional 
   assert.equal(UAD_SALES_COMPARABLE_DISASTER_MITIGATION_TYPES.includes("FortifiedRoof"), true);
   assert.deepEqual(UAD_SALES_COMPARABLE_RENEWABLE_ENERGY_TYPES, ["Geothermal", "Other", "Solar", "WindTurbine"]);
   assert.deepEqual(UAD_PROPERTY_RIGHTS_NOT_INCLUDED, ["AirRights", "MineralRights", "Other", "TimberRights", "WaterRights"]);
+  assert.equal(UAD_ADDITIONAL_PROPERTY_NOT_USED_REASONS.includes("GrossLivingArea"), true);
+  assert.equal(UAD_ADDITIONAL_PROPERTY_NOT_USED_REASONS.includes("LandSale"), false);
 
   const ratio = getUadField("sales_comparable_listing", "1800.0316");
   const direction = getUadField("sales_comparable_proximity", "1800.0066");
@@ -145,6 +150,7 @@ test("accepts a complete settled comparable with a source and verified property 
   const values = [
     value(null, "sales_comparison_scope", "1000.0032", true),
     value(null, "sales_comparison_summary", "1300.0006", 425000),
+    value(null, "sales_comparison_reconciliation", "1800.0278", "Comparable 1 received Most weight because its location, site, design, condition, and finished area provide the strongest support for the indicated value."),
     value(null, "subject", "1600.0007", "Q3"),
     value(null, "subject", "1600.0006", "C3"),
     value(comparable.id, "sales_comparable", "1800.0192", 1),
@@ -216,6 +222,48 @@ test("accepts a complete settled comparable with a source and verified property 
     status: "verified",
   }];
   assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view, dwelling, method, heating, unit, accessibility, kitchen, flooring, walls, vehicleStorage], assets), []);
+});
+
+test("validates reconciliation and additional properties analyzed not used", () => {
+  const propertyOne = { id: "04da1080-7ef2-4dba-b2e3-dd93e9f449cf", entity_type: "sales_comparison_additional_property", parent_entity_id: null, ordinal: 1, data: {} };
+  const propertyTwo = { id: "a8157e02-4e77-48ab-8c7f-b1de71d77b3f", entity_type: "sales_comparison_additional_property", parent_entity_id: null, ordinal: 2, data: {} };
+  const completeValues = [
+    value(null, "sales_comparison_scope", "1000.0032", true),
+    value(null, "sales_comparison_reconciliation", "1800.0278", "The weighting reflects relative similarity, verification quality, and the support each selected comparable provides for the indicated value."),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0017", 1),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0001", "1400 Forest Lane"),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0003", "Garland"),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0005", "TX"),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0004", "75044"),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0007", "SettledSale"),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0013", "2026-06-10"),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0010", false),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0011", ["Proximity", "DatedSale"]),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0009", "Analyzed but not selected because it was farther from the subject and sold earlier than the selected evidence."),
+  ];
+  const completeErrors = validateCompleteSection("sales_comparison", [], completeValues, [propertyOne]);
+  assert.deepEqual(completeErrors.filter((error) => error.entity_id === propertyOne.id), []);
+
+  const contradictoryValues = [
+    ...completeValues,
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0007", "Active"),
+    value(propertyOne.id, "sales_comparison_additional_property", "1900.0012", "Unlisted difference"),
+    value(propertyTwo.id, "sales_comparison_additional_property", "1900.0017", 1),
+  ];
+  const codes = validateCompleteSection(
+    "sales_comparison",
+    [],
+    contradictoryValues,
+    [propertyOne, propertyTwo],
+  ).map((error) => error.code);
+  assert.equal(codes.includes("additional_property_sale_date_conflict"), true);
+  assert.equal(codes.includes("additional_property_other_reason_conflict"), true);
+  assert.equal(codes.includes("additional_property_ordinal_duplicate"), true);
+  assert.equal(codes.includes("additional_property_ordinal_conflict"), true);
+
+  assert.equal(getUadField("sales_comparison_reconciliation", "1800.0278").maxLength, 10000);
+  assert.equal(getUadField("sales_comparison_additional_property", "1900.0009").maxLength, 360);
+  assert.equal(getUadField("sales_comparison_additional_property", "1900.0012").maxLength, 27);
 });
 
 test("rejects missing evidence and contradictory comparable transaction records", () => {
@@ -994,6 +1042,20 @@ test("seeds Section 22O Summary fields, redisplays, formulas, and official rules
   assert.match(sql, /'1800\.0272','sales_comparable_sale','22\.15\.07'/);
   assert.match(sql, /HN-UAD-SALES-COMPARISON-SUMMARY-004/);
   assert.match(runner, /20260918_uad_sales_comparison_summary\.sql/);
+  assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
+});
+
+test("seeds Sections 22P and 22Q reconciliation and additional analyzed properties additively", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const sql = fs.readFileSync(path.resolve(directory, "../migrations/20260919_uad_sales_comparison_reconciliation.sql"), "utf8");
+  const runner = fs.readFileSync(path.resolve(directory, "../src/database/uadMigrations.js"), "utf8");
+  for (const ruleId of ["UAD1485", "UAD1704", "UAD1760"]) assert.match(sql, new RegExp(ruleId));
+  assert.match(sql, /SalesComparisonCommentDescription/);
+  assert.match(sql, /PropertyAnalyzedNotUsed/);
+  assert.match(sql, /sales_comparison_additional_property/);
+  assert.match(sql, /GrossLivingArea/);
+  assert.match(sql, /HN-UAD-SALES-COMPARISON-ADDITIONAL-PROPERTY-003/);
+  assert.match(runner, /20260919_uad_sales_comparison_reconciliation\.sql/);
   assert.doesNotMatch(sql, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

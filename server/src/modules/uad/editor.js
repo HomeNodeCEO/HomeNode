@@ -2217,6 +2217,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const salesField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
     const included = rootLookup(UAD_SALES_COMPARISON_FIELD_KEYS.included);
     const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
+    const additionalProperties = entities.filter((entity) => entity.entity_type === "sales_comparison_additional_property");
     const sources = entities.filter((entity) => entity.entity_type === "sales_comparable_data_source");
     const rights = entities.filter((entity) => entity.entity_type === "sales_comparable_right_not_included");
     const projectAmenities = entities.filter((entity) => entity.entity_type === "sales_comparable_project_amenity");
@@ -2309,6 +2310,62 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         "sales_comparable_scope_conflict",
         "Remove the saved sales comparables or change Sales Comparison Approach developed by appraiser to Yes.",
       ));
+    }
+    if (included === false && additionalProperties.length) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.included),
+        null,
+        "additional_property_scope_conflict",
+        "Remove the additional analyzed properties or change Sales Comparison Approach developed by appraiser to Yes.",
+      ));
+    }
+
+    const additionalPropertyOrdinals = new Set();
+    for (const property of additionalProperties) {
+      const propertyLookup = valueLookup(merged, property.id);
+      const ordinal = propertyLookup(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertyOrdinal);
+      if (isPresent(ordinal) && Number(ordinal) !== Number(property.ordinal)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertyOrdinal),
+          property.id,
+          "additional_property_ordinal_conflict",
+          "The property number must match the server-assigned saved order.",
+        ));
+      }
+      if (isPresent(ordinal)) {
+        const normalizedOrdinal = Number(ordinal);
+        if (additionalPropertyOrdinals.has(normalizedOrdinal)) {
+          errors.push(validationError(
+            salesField(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertyOrdinal),
+            property.id,
+            "additional_property_ordinal_duplicate",
+            "Additional property numbers must be unique.",
+          ));
+        }
+        additionalPropertyOrdinals.add(normalizedOrdinal);
+      }
+
+      const status = propertyLookup(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertyStatus);
+      const saleDate = propertyLookup(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertySaleDate);
+      if (status !== "SettledSale" && isPresent(saleDate)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertySaleDate),
+          property.id,
+          "additional_property_sale_date_conflict",
+          "Clear the sale date unless the additional property's status is Settled Sale.",
+        ));
+      }
+
+      const reasons = propertyLookup(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertyReasons);
+      const otherReason = propertyLookup(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertyOtherReason);
+      if ((!Array.isArray(reasons) || !reasons.includes("Other")) && isPresent(otherReason)) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.additionalPropertyOtherReason),
+          property.id,
+          "additional_property_other_reason_conflict",
+          "Clear the other reason description or select Other.",
+        ));
+      }
     }
     if (sources.some((source) => !comparableIds.has(source.parent_entity_id))) {
       errors.push(validationError(

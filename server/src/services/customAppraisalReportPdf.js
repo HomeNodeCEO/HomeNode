@@ -443,7 +443,10 @@ export async function loadCustomAppraisalPropertySnapshot(client, { accountId, a
          ORDER BY sec_imp_number NULLS LAST, id`,
       [accountId],
     ),
-    optionalRows(client, "core.account_locations", "SELECT latitude, longitude, geocode_source, geocoded_at FROM core.account_locations WHERE account_id = $1", [accountId]),
+    // Some long-lived production databases predate the geocode provenance columns.
+    // Selecting the row shape keeps snapshot capture compatible while still exposing
+    // provenance whenever those columns are present.
+    optionalRows(client, "core.account_locations", "SELECT * FROM core.account_locations WHERE account_id = $1", [accountId]),
     client.query(
       `SELECT id, account_id, file_number, revision, assignment_details, reviewer,
               created_at, updated_at FROM app.assignment_files

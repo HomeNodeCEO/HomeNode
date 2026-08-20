@@ -6,6 +6,7 @@ import {
   customAppraisalReportFileName,
   customAppraisalReportReadiness,
   customAppraisalReportReadinessErrors,
+  loadCustomAppraisalPropertySnapshot,
   renderCustomAppraisalReportPdf,
 } from "../src/services/customAppraisalReportPdf.js";
 import { customAppraisalReportFixture } from "./fixtures/customAppraisalReportFixture.js";
@@ -97,4 +98,38 @@ test("final reconciliation becomes stale when a source approach changes", () => 
   const readiness = customAppraisalReportReadiness(snapshot, property);
   assert.equal(readiness.ready, false);
   assert.ok(readiness.blockers.some((item) => item.code === "final_reconciliation_stale"));
+});
+
+test("property snapshot supports legacy account-location rows without provenance columns", async () => {
+  let locationSql = "";
+  const client = {
+    async query(sql, params = []) {
+      if (sql.includes("to_regclass")) return { rows: [{ name: params[0] }] };
+      if (sql.includes("FROM core.accounts a")) {
+        return { rows: [{ account_id: "legacy-location-account", address: "1 Main St" }] };
+      }
+      if (sql.includes("FROM app.assignment_files")) {
+        return { rows: [{ id: 7, account_id: "legacy-location-account", assignment_details: {} }] };
+      }
+      if (sql.includes("FROM core.account_locations")) {
+        locationSql = sql;
+        if (/geocode_source|geocoded_at/.test(sql)) {
+          const error = new Error("column does not exist");
+          error.code = "42703";
+          throw error;
+        }
+        return { rows: [{ account_id: "legacy-location-account", latitude: 32.9, longitude: -96.8 }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const snapshot = await loadCustomAppraisalPropertySnapshot(client, {
+    accountId: "legacy-location-account",
+    assignmentFileId: 7,
+  });
+
+  assert.match(locationSql, /SELECT \*/);
+  assert.equal(snapshot.location.latitude, 32.9);
+  assert.equal(snapshot.location.longitude, -96.8);
 });

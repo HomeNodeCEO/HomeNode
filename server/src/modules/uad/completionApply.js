@@ -139,6 +139,8 @@ export function buildUadCompletionApplyPlan(document, input, {
   const fieldSuggestions = [
     ...(document.suggestions?.assignment_fields || []),
     ...(document.suggestions?.subject_entity_fields || []),
+    ...(document.suggestions?.condition_fields || []),
+    ...(document.suggestions?.project_fields || []),
     ...(document.suggestions?.highest_best_use_fields || []),
     ...(document.suggestions?.subject_listing_fields || []),
     ...(document.suggestions?.sales_contract_fields || []),

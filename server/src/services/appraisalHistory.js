@@ -4,6 +4,17 @@ import { loadCustomAppraisalPropertySnapshot } from "./customAppraisalReportPdf.
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APPRAISAL_WORKFLOWS = new Set(["custom_appraisal", "uad_3_6"]);
+const CUSTOM_PROPERTY_SNAPSHOT_RELATIONS = Object.freeze([
+  "core.value_summary_current",
+  "core.market_values",
+  "core.primary_improvements",
+  "core.owner_summary",
+  "core.owner_parties",
+  "core.legal_description_current",
+  "core.land_detail",
+  "core.exemptions_summary",
+  "core.secondary_improvements",
+]);
 
 export function normalizeAppraisalReportFileId(value) {
   const id = String(value || "").trim().toLowerCase();
@@ -76,6 +87,17 @@ async function reportFileForCapture(client, reportFileId, { lock = false } = {})
   return rows[0];
 }
 
+async function missingCustomPropertySnapshotRelations(client) {
+  const { rows } = await client.query(
+    `SELECT relation_name
+       FROM unnest($1::text[]) AS required(relation_name)
+      WHERE to_regclass(relation_name) IS NULL
+      ORDER BY relation_name`,
+    [CUSTOM_PROPERTY_SNAPSHOT_RELATIONS],
+  );
+  return rows.map((row) => row.relation_name);
+}
+
 async function currentSubjectData(client, reportFile) {
   const accountResult = await client.query(
     `SELECT to_jsonb(account) AS account
@@ -86,10 +108,18 @@ async function currentSubjectData(client, reportFile) {
   if (!accountResult.rows.length) throw new Error("subject_account_not_found");
 
   if (reportFile.workflow_type === "custom_appraisal") {
-    const propertySnapshot = await loadCustomAppraisalPropertySnapshot(client, {
-      accountId: reportFile.account_id,
-      assignmentFileId: Number(reportFile.custom_assignment_file_id),
-    });
+    const unavailableRelations = await missingCustomPropertySnapshotRelations(client);
+    const propertySnapshot = unavailableRelations.length
+      ? {
+        account: accountResult.rows[0].account,
+        source_status: "partial",
+        unavailable_relations: unavailableRelations,
+        captured_at: new Date().toISOString(),
+      }
+      : await loadCustomAppraisalPropertySnapshot(client, {
+        accountId: reportFile.account_id,
+        assignmentFileId: Number(reportFile.custom_assignment_file_id),
+      });
     const target = await client.query(
       `SELECT assignment.assignment_details,
               COALESCE(section.section_value, '{}'::jsonb) AS property_characteristics,

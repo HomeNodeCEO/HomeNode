@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createUadWorkfileWithClient } from "../uad/workfiles.js";
+import { registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
 import { canonicalCustomAppraisalFileName } from "../../services/customAppraisalWorkfiles.js";
 import { allocateReportFileNumber, normalizeWorkflowType } from "./fileNumbers.js";
 
@@ -274,6 +275,12 @@ export async function createReportFile(pool, auth, input = {}) {
        ) VALUES ($1, $2, 'report_file.created', 1, $3::jsonb)`,
       [id, auth.userId, JSON.stringify({ workflow_type: workflowType, file_number: allocation.fileNumber })],
     );
+    if (workflowType === "custom_appraisal" || workflowType === "uad_3_6") {
+      await registerOriginalAppraisalReport(client, id, {
+        actorUserId: auth.userId,
+        captureReason: "mobile_report_file_created",
+      });
+    }
     const property = await client.query(
       "SELECT address, city, postal_code FROM core.accounts WHERE account_id = $1",
       [accountId],

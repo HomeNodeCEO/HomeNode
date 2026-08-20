@@ -6,6 +6,7 @@ import {
   INITIAL_UAD_PROPERTY_TYPE,
 } from "./constants.js";
 import { buildUadPrefillValues } from "./fieldCatalog.js";
+import { registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -325,6 +326,45 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
   try {
     await client.query("BEGIN");
     const workfile = await createUadWorkfileWithClient(client, accountIdValue, input);
+    const reportRegistry = await client.query(
+      "SELECT to_regclass('app.report_files') AS table_name",
+    );
+    if (reportRegistry.rows[0]?.table_name) {
+      const reportFileId = randomUUID();
+      const registered = await client.query(
+        `INSERT INTO app.report_files (
+           id, organization_id, account_id, workflow_type, file_number,
+           uad_workfile_id, is_current, registry_revision, created_by_user_id
+         ) VALUES ($1, $2, $3, 'uad_3_6', $4, $5, true, 1, $6)
+         ON CONFLICT (uad_workfile_id) WHERE uad_workfile_id IS NOT NULL
+         DO UPDATE SET updated_at = now()
+         RETURNING id`,
+        [
+          reportFileId,
+          workfile.organization_id || null,
+          workfile.account_id,
+          workfile.file_number,
+          workfile.id,
+          workfile.assigned_appraiser_user_id || null,
+        ],
+      );
+      await client.query(
+        `UPDATE app.report_files
+            SET is_current = (id = $3), updated_at = CASE WHEN id = $3 THEN now() ELSE updated_at END
+          WHERE account_id = $1 AND workflow_type = 'uad_3_6'
+            AND (organization_id IS NOT DISTINCT FROM $2::uuid)`,
+        [workfile.account_id, workfile.organization_id || null, registered.rows[0].id],
+      );
+      const historyRegistry = await client.query(
+        "SELECT to_regclass('app.appraisal_cases') AS table_name",
+      );
+      if (historyRegistry.rows[0]?.table_name) {
+        await registerOriginalAppraisalReport(client, registered.rows[0].id, {
+          actorUserId: workfile.assigned_appraiser_user_id || null,
+          captureReason: "desktop_uad_workfile_created",
+        });
+      }
+    }
     await client.query("COMMIT");
     return workfile;
   } catch (error) {

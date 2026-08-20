@@ -466,6 +466,93 @@ export interface AssignmentFilesResponse {
   legacy_assignment_details: AssignmentDetailsPayload | null;
 }
 
+export type AppraisalHistoryWorkflow = 'custom_appraisal' | 'uad_3_6';
+export type AppraisalReplicationMode = 'same_assignment_alternate' | 'new_assignment_template';
+
+export interface PreviousAppraisalFile {
+  id: string;
+  appraisal_case_id: string | null;
+  subject_snapshot_id: string | null;
+  snapshot_version: number | null;
+  snapshot_verification_status: 'captured' | 'unverified' | 'confirmed' | 'superseded' | null;
+  workflow_type: AppraisalHistoryWorkflow;
+  file_number: string;
+  status: string;
+  current_revision: number;
+  is_current: boolean;
+  effective_date: string | null;
+  inspection_date: string | null;
+  property_type: string | null;
+  inspection_method: string | null;
+  summary: {
+    condition_rating: string | null;
+    quality_rating: string | null;
+    gross_living_area_sqft: number | null;
+    site_area_sqft: number | null;
+    site_area_acres: number | null;
+    parcel_count: number | null;
+    legal_descriptions: string[];
+    photo_count: number;
+    has_confirmed_sketch: boolean;
+  };
+  replication: {
+    mode: AppraisalReplicationMode;
+    source_report_file_id: string | null;
+    source_file_number: string | null;
+    change_review_required: boolean;
+  } | null;
+  target_id: string | null;
+  view_url: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PreviousAppraisalFilesResponse {
+  account_id: string;
+  files: PreviousAppraisalFile[];
+}
+
+export async function getPreviousAppraisalFiles(
+  accountId: string,
+): Promise<PreviousAppraisalFilesResponse> {
+  return fetchJSON<PreviousAppraisalFilesResponse>(
+    makeUrl(`/api/accounts/${encodeURIComponent(String(accountId || '').trim())}/appraisal-history`),
+  );
+}
+
+export async function replicatePreviousAppraisalFile(
+  accountId: string,
+  reportFileId: string,
+  input: {
+    mode: AppraisalReplicationMode;
+    target_workflow_type: AppraisalHistoryWorkflow;
+    file_number?: string;
+    effective_date?: string;
+    inspection_date?: string;
+    same_assignment_confirmed?: boolean;
+  },
+  editorKey: string,
+): Promise<{
+  ok: true;
+  source_report_file_id: string;
+  report_file: PreviousAppraisalFile;
+  change_review_required: boolean;
+}> {
+  return fetchJSON(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(String(accountId || '').trim())}/appraisal-history/${encodeURIComponent(reportFileId)}/replicate`,
+    ),
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-homenode-editor-key': editorKey,
+      },
+      body: JSON.stringify(input),
+    },
+  );
+}
+
 export interface CustomAppraisalWorkfileSection<T extends object = Record<string, unknown>> {
   value: T;
   revision: number;

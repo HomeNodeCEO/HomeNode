@@ -41,6 +41,8 @@ import {
   syncInspectionOperations,
   syncPayloadSha256,
 } from "../src/modules/mobile/sync.js";
+import { listPreviousAppraisalFiles } from "../src/services/appraisalHistory.js";
+import { replicateAppraisalFile } from "../src/services/appraisalReplication.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -800,6 +802,67 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.equal(String(lineage.rows[0].inherited_from_file_id), firstCustom.reportFile.target_id);
     assert.equal(lineage.rows[0].assignment_details.client_name, "Preserved client");
     assert.equal(lineage.rows[0].prior_assignment_details.client_name, "Preserved client");
+
+    const appraisalHistory = await listPreviousAppraisalFiles(pool, accountId);
+    assert.equal(appraisalHistory.files.filter((file) => file.workflow_type === "custom_appraisal").length, 3);
+    assert.equal(appraisalHistory.files.filter((file) => file.workflow_type === "uad_3_6").length, 1);
+    assert.ok(appraisalHistory.files.find((file) => file.id === secondCustom.reportFile.id)?.subject_snapshot_id);
+    assert.ok(appraisalHistory.files.find((file) => file.id === uad.reportFile.id)?.appraisal_case_id);
+
+    const newAssignmentReplication = await replicateAppraisalFile(pool, {
+      accountId,
+      sourceReportFileId: secondCustom.reportFile.id,
+      input: {
+        mode: "new_assignment_template",
+        target_workflow_type: "uad_3_6",
+        effective_date: "2026-08-19",
+        inspection_date: "2026-08-18",
+      },
+    });
+    assert.equal(newAssignmentReplication.change_review_required, true);
+    assert.equal(newAssignmentReplication.report_file.workflow_type, "uad_3_6");
+    assert.notEqual(
+      newAssignmentReplication.report_file.appraisal_case_id,
+      appraisalHistory.files.find((file) => file.id === secondCustom.reportFile.id)?.appraisal_case_id,
+    );
+    const newReplicationRecord = await pool.query(
+      `SELECT replication.change_review_required,
+              replication.attestation ->> 'mutable_subject_data_copied_to_target' AS mutable_copied,
+              source.appraisal_case_id AS source_case_id,
+              target.appraisal_case_id AS target_case_id
+         FROM app.appraisal_file_replications replication
+         JOIN app.report_files source ON source.id = replication.source_report_file_id
+         JOIN app.report_files target ON target.id = replication.target_report_file_id
+        WHERE replication.target_report_file_id = $1`,
+      [newAssignmentReplication.report_file.id],
+    );
+    assert.equal(newReplicationRecord.rows[0].change_review_required, true);
+    assert.equal(newReplicationRecord.rows[0].mutable_copied, "false");
+    assert.notEqual(newReplicationRecord.rows[0].source_case_id, newReplicationRecord.rows[0].target_case_id);
+
+    const sameAssignmentReplication = await replicateAppraisalFile(pool, {
+      accountId,
+      sourceReportFileId: uad.reportFile.id,
+      input: {
+        mode: "same_assignment_alternate",
+        target_workflow_type: "custom_appraisal",
+        same_assignment_confirmed: true,
+      },
+    });
+    assert.equal(sameAssignmentReplication.change_review_required, false);
+    const sameReplicationRecord = await pool.query(
+      `SELECT source.appraisal_case_id AS source_case_id,
+              target.appraisal_case_id AS target_case_id,
+              source.subject_snapshot_id AS source_snapshot_id,
+              target.subject_snapshot_id AS target_snapshot_id
+         FROM app.appraisal_file_replications replication
+         JOIN app.report_files source ON source.id = replication.source_report_file_id
+         JOIN app.report_files target ON target.id = replication.target_report_file_id
+        WHERE replication.target_report_file_id = $1`,
+      [sameAssignmentReplication.report_file.id],
+    );
+    assert.equal(sameReplicationRecord.rows[0].target_case_id, sameReplicationRecord.rows[0].source_case_id);
+    assert.equal(sameReplicationRecord.rows[0].target_snapshot_id, sameReplicationRecord.rows[0].source_snapshot_id);
   } finally {
     await pool.end();
   }

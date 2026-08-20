@@ -165,6 +165,10 @@ import {
   getPropertyInfluenceContexts,
 } from "./services/propertyInfluenceStore.js";
 import { getRecentScheduledMaintenanceRuns } from "./services/scheduledMaintenance.js";
+import {
+  buildDataRepairReadiness,
+  createCachedScraperStatusLoader,
+} from "./services/operationalReadiness.js";
 import { getNeighborhoodEngineReadiness } from "./services/neighborhoodEngineReadiness.js";
 import {
   createRequestPerformanceMonitor,
@@ -195,6 +199,7 @@ pool.on("error", (error) => {
   console.error("[database] idle pool client error", error?.message || error);
 });
 const requestPerformance = createRequestPerformanceMonitor({ pool });
+const loadDcadScraperStatus = createCachedScraperStatusLoader();
 app.use(requestPerformance.middleware);
 app.use(express.json({ limit: "1mb" }));
 // Support comma-separated list in CORS_ORIGIN env (e.g. "http://localhost:5173,http://127.0.0.1:5173")
@@ -586,6 +591,66 @@ app.get("/api/system/performance", async (_req, res) => {
     maintenance: {
       status: maintenanceStatus,
       recent_runs: recentMaintenance,
+    },
+  });
+});
+
+/**
+ * Aggregate repair and enrichment readiness. This endpoint performs no repair
+ * work and exposes only counts, timings, and normalized queue state.
+ */
+app.get("/api/system/data-repair", async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  const [maintenanceResult, scraperResult] = await Promise.allSettled([
+    getRecentScheduledMaintenanceRuns(pool, { limit: 30 }),
+    loadDcadScraperStatus(),
+  ]);
+  if (maintenanceResult.status === "rejected") {
+    console.warn(
+      "[operations] maintenance history unavailable",
+      maintenanceResult.reason?.message || maintenanceResult.reason,
+    );
+  }
+  if (scraperResult.status === "rejected") {
+    console.warn(
+      "[operations] scraper status unavailable",
+      scraperResult.reason?.message || scraperResult.reason,
+    );
+  }
+  const memory = process.memoryUsage();
+  const readiness = buildDataRepairReadiness({
+    recentMaintenance: maintenanceResult.status === "fulfilled"
+      ? maintenanceResult.value
+      : [],
+    scraper: scraperResult.status === "fulfilled"
+      ? scraperResult.value
+      : {
+          payload: null,
+          stale: false,
+          error: String(
+            scraperResult.reason?.message ||
+            scraperResult.reason ||
+            "dcad_scraper_status_unavailable"
+          ),
+        },
+    requestPerformance: requestPerformance.snapshot(),
+  });
+  return res.json({
+    ...readiness,
+    runtime: {
+      uptime_seconds: Math.round(process.uptime()),
+      memory_mb: {
+        resident_set: Math.round(memory.rss / 1_048_576),
+        heap_used: Math.round(memory.heapUsed / 1_048_576),
+        heap_total: Math.round(memory.heapTotal / 1_048_576),
+      },
+      database_pool: {
+        total: Number(pool.totalCount || 0),
+        idle: Number(pool.idleCount || 0),
+        waiting: Number(pool.waitingCount || 0),
+      },
+      inline_bulk_workers_enabled:
+        censusGeographyInlineEnabled || locationBackfillInlineEnabled,
     },
   });
 });

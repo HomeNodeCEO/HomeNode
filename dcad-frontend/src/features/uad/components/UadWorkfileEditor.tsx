@@ -69,6 +69,7 @@ const SALES_CONTRACT_CAPTIONS = ["SalesContractExhibit"];
 const PRIOR_TRANSFER_CAPTIONS = ["PriorSaleAndTransferHistoryExhibit"];
 const SALES_COMPARABLE_PHOTO_CAPTIONS = ["PropertyPhoto"];
 const SALES_COMPARISON_EXHIBIT_CAPTIONS = ["SalesComparisonApproachExhibit"];
+const RECONCILIATION_EXHIBIT_CAPTIONS = ["ReconciliationExhibit"];
 const SUBJECT_AMENITY_REDISPLAY = [
   { category: "OutdoorAccessories", label: "Outdoor accessories", context: "amenity_outdoor_accessories", typeUid: "0200.0007", countUid: "0200.0004", reportFieldId: "22.12.01" },
   { category: "OutdoorLiving", label: "Outdoor living", context: "amenity_outdoor_living", typeUid: "0200.0023", reportFieldId: "22.12.02" },
@@ -171,6 +172,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const unitRooms = editor?.entities.filter((entity) => entity.entity_type === "unit_room") || [];
   const unitInteriorFeatures = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_feature") || [];
   const unitInteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_defect") || [];
+  const siteDefects = editor?.entities.filter((entity) => entity.entity_type === "site_defect") || [];
+  const dwellingExteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "dwelling_exterior_defect") || [];
   const outbuildings = editor?.entities.filter((entity) => entity.entity_type === "outbuilding") || [];
   const outbuildingRooms = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_room") || [];
   const outbuildingDefects = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_defect") || [];
@@ -261,6 +264,28 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           : null,
       })),
   }));
+  const reconciliationDefects = [
+    ...siteDefects.map((entity) => ({ entity, area: "Site", context: "site_defect", descriptionUid: "3900.0125", locationUid: "3900.0159", structuralUid: "3900.0124", actionUid: "3900.0128", costUid: "3900.0126" })),
+    ...dwellingExteriorDefects.map((entity) => ({ entity, area: "Dwelling exterior", context: "dwelling_exterior_defect", descriptionUid: "3900.0057", locationUid: "3900.0158", structuralUid: "3900.0056", actionUid: "3900.0059", costUid: "3900.0014" })),
+    ...unitInteriorDefects.map((entity) => ({ entity, area: "Unit interior", context: "unit_interior_defect", descriptionUid: "3900.0133", locationUid: "3900.0135", structuralUid: "3900.0132", actionUid: "3900.0136", costUid: "3900.0134" })),
+    ...outbuildingDefects.map((entity) => ({ entity, area: "Outbuilding", context: "outbuilding_defect", descriptionUid: "3900.0167", locationUid: "3900.0169", structuralUid: "3900.0166", actionUid: "3900.0171", costUid: "3900.0168" })),
+    ...vehicleStorageDefects.map((entity) => ({ entity, area: "Vehicle storage", context: "vehicle_storage_defect", descriptionUid: "3900.0181", locationUid: "3900.0184", structuralUid: "3900.0180", actionUid: "3900.0185", costUid: "3900.0182" })),
+    ...subjectAmenityDefects.map((entity) => ({ entity, area: "Amenity", context: "subject_property_amenity_defect", descriptionUid: "3900.0139", locationUid: "3900.0161", structuralUid: "3900.0138", actionUid: "3900.0142", costUid: "3900.0140" })),
+  ].map((item) => ({
+    ...item,
+    description: draft[fieldValueKey(item.context, item.descriptionUid, item.entity.id)],
+    location: draft[fieldValueKey(item.context, item.locationUid, item.entity.id)],
+    structural: draft[fieldValueKey(item.context, item.structuralUid, item.entity.id)],
+    action: draft[fieldValueKey(item.context, item.actionUid, item.entity.id)],
+    cost: draft[fieldValueKey(item.context, item.costUid, item.entity.id)],
+  }));
+  const reconciliationRepairMethod = draft[fieldValueKey("defect_summary", "3900.0001")];
+  const reconciliationRepairTotal = reconciliationRepairMethod === "Itemized"
+    ? reconciliationDefects.reduce((total, defect) => total + (typeof defect.cost === "number" ? defect.cost : 0), 0)
+    : draft[fieldValueKey("defect_summary", "3900.0002")];
+  const reconciliationSalesValue = draft[fieldValueKey("sales_comparison_summary", "1300.0006")];
+  const reconciliationIncomeValue = draft[fieldValueKey("income_approach_summary", "1200.0004")];
+  const reconciliationCostValue = draft[fieldValueKey("cost_approach_summary", "1300.0001")];
 
   function draftLookup(entityId: string | null) {
     return (requestedKey: string, uidOnly = false): UadFieldValue | undefined => {
@@ -346,7 +371,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract", "prior_sale_transfer_history", "sales_comparison"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract", "prior_sale_transfer_history", "sales_comparison", "reconciliation"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -380,19 +405,27 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   function renderControl(field: UadFieldDefinition, entityId: string | null) {
     const key = fieldValueKey(field.contextKey, field.uid, entityId);
     const value = draft[key];
-    const controlClass = field.readOnly
+    const readOnly = Boolean(
+      field.readOnly
+      || (
+        field.contextKey === "defect_summary"
+        && field.uid === "3900.0002"
+        && reconciliationRepairMethod === "Itemized"
+      ),
+    );
+    const controlClass = readOnly
       ? `${inputClass} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-700`
       : inputClass;
     if (field.dataType === "boolean") {
       return (
-        <select className={controlClass} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : event.target.value === "true")} value={value === true ? "true" : value === false ? "false" : ""}>
+        <select className={controlClass} disabled={readOnly} onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : event.target.value === "true")} value={value === true ? "true" : value === false ? "false" : ""}>
           <option value="">Select Yes or No</option><option value="true">Yes</option><option value="false">No</option>
         </select>
       );
     }
     if (field.dataType === "enum") {
       return (
-        <select className={controlClass} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, event.target.value || null)} value={String(value ?? "")}>
+        <select className={controlClass} disabled={readOnly} onChange={(event) => setValue(field, entityId, event.target.value || null)} value={String(value ?? "")}>
           <option value="">Select an option</option>
           {field.options?.map((option) => <option key={option} value={option}>{displayOption(option)}</option>)}
         </select>
@@ -404,7 +437,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {field.options?.map((option) => (
             <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm" key={option}>
-              <input checked={selected.includes(option)} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, event.target.checked ? [...selected, option] : selected.filter((item) => item !== option))} type="checkbox" />
+              <input checked={selected.includes(option)} disabled={readOnly} onChange={(event) => setValue(field, entityId, event.target.checked ? [...selected, option] : selected.filter((item) => item !== option))} type="checkbox" />
               {displayOption(option)}
             </label>
           ))}
@@ -415,15 +448,15 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       const measurement = (typeof value === "object" && !Array.isArray(value) && value ? value : { amount: null, unit: "" }) as UadMeasurement;
       return (
         <div className="grid grid-cols-[minmax(0,1fr)_minmax(9rem,0.7fr)] gap-2">
-          <input className={controlClass} max={field.maximum} min={field.minimum ?? field.minimumExclusive ?? 0} onChange={(event) => setValue(field, entityId, { ...measurement, amount: event.target.value === "" ? null : Number(event.target.value) })} readOnly={field.readOnly} step="any" type="number" value={measurement.amount ?? ""} />
-          <select className={controlClass} disabled={field.readOnly} onChange={(event) => setValue(field, entityId, { ...measurement, unit: event.target.value })} value={measurement.unit}>
+          <input className={controlClass} max={field.maximum} min={field.minimum ?? field.minimumExclusive ?? 0} onChange={(event) => setValue(field, entityId, { ...measurement, amount: event.target.value === "" ? null : Number(event.target.value) })} readOnly={readOnly} step="any" type="number" value={measurement.amount ?? ""} />
+          <select className={controlClass} disabled={readOnly} onChange={(event) => setValue(field, entityId, { ...measurement, unit: event.target.value })} value={measurement.unit}>
             <option value="">Unit</option>{field.units?.map((unit) => <option key={unit} value={unit}>{displayOption(unit)}</option>)}
           </select>
         </div>
       );
     }
     if (field.dataType === "text") {
-      return <textarea className={`${controlClass} min-h-24`} maxLength={field.maxLength} onChange={(event) => setValue(field, entityId, event.target.value)} readOnly={field.readOnly} value={String(value ?? "")} />;
+      return <textarea className={`${controlClass} min-h-24`} maxLength={field.maxLength} onChange={(event) => setValue(field, entityId, event.target.value)} readOnly={readOnly} value={String(value ?? "")} />;
     }
     const numeric = field.dataType === "integer" || field.dataType === "percentage" || field.dataType === "currency";
     return (
@@ -433,7 +466,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         maxLength={field.maxLength}
         min={field.minimum ?? (["integer", "percentage"].includes(field.dataType) ? 0 : undefined)}
         onChange={(event) => setValue(field, entityId, event.target.value === "" ? null : numeric ? Number(event.target.value) : event.target.value)}
-        readOnly={field.readOnly}
+        readOnly={readOnly}
         step={field.dataType === "currency" ? "0.01" : field.dataType === "percentage" ? "any" : undefined}
         type={numeric ? "number" : field.dataType === "date" ? "date" : field.dataType === "month" ? "month" : "text"}
         value={typeof value === "string" || typeof value === "number" ? value : ""}
@@ -616,6 +649,63 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-6 text-emerald-950">
             Sections 22A–22Q establish each comparable's official facts, evidence, adjustments, Summary, reconciliation, and any additional properties analyzed but not used. Bodies of water, structures, living units, components, amenities, vehicle storage, and outbuildings remain linked to the exact comparable parent. Subject facts redisplay from their canonical source sections without duplicate entry. Section 22O calculates net adjustments, adjusted prices, and price metrics on the server; the appraiser assigns Comparable Weight and concludes the Indicated Value. Section 22P explains that weighting and conclusion. Section 22Q records up to 25 other analyzed properties, including reconsideration-requested properties; land sales remain in the Site Valuation Methodology or Cost Approach. Those relationships keep future MISMO XML, mobile evidence, and comparable-search suggestions on one canonical record. Only an appraiser save confirms suggested data for the UAD report.
           </div>
+        )}
+        {activeSection === "reconciliation" && (
+          <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+            Section 26 concludes the assignment without duplicating earlier work. Approach values and the contract price redisplay from their canonical sections; defects redisplay from the exact Site, Dwelling Exterior, Unit Interior, Outbuilding, Vehicle Storage, and Amenity records. The final value, effective date, value condition, exposure time, and reconciliation narrative belong to this UAD workfile snapshot and require appraiser confirmation.
+          </div>
+        )}
+        {activeSection === "reconciliation" && (
+          <section className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
+            <h3 className="text-base font-semibold">Canonical values redisplayed in Section 26</h3>
+            <p className="mt-1 text-sm leading-6">Edit these conclusions in their approach or contract section. Reconciliation reads the same saved value, so the report and future MISMO XML cannot drift.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { label: "Sales Comparison", value: reconciliationSalesValue, source: "Section 22 · 26.000" },
+                { label: "Income", value: reconciliationIncomeValue, source: "Section 24 · 26.002" },
+                { label: "Cost", value: reconciliationCostValue, source: "Section 25 · 26.004" },
+                { label: "Contract price", value: subjectSummaryContractPrice, source: "Section 20 · 26.006" },
+              ].map(({ label, value, source }) => (
+                <div className="rounded-lg border border-emerald-200 bg-white p-3" key={label}>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">{source}</div>
+                  <div className="mt-1 text-sm font-semibold">{label}</div>
+                  <div className="mt-2 text-lg font-semibold">{displayCurrency(value)}</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        {activeSection === "reconciliation" && (
+          <section className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-950">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold">Apparent defects, damages, and deficiencies</h3>
+                <p className="mt-1 text-sm leading-6">Descriptions, locations, structural impact, and recommended actions redisplay from their original sections. Section 26 captures the official repair-cost method and any applicable itemized or total amount.</p>
+              </div>
+              {reconciliationRepairMethod && reconciliationRepairMethod !== "None" && (
+                <div className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold">
+                  {displayOption(String(reconciliationRepairMethod))}: {displayCurrency(reconciliationRepairTotal)}
+                </div>
+              )}
+            </div>
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {reconciliationDefects.map((defect) => (
+                <div className="rounded-lg border border-amber-200 bg-white p-3" key={defect.entity.id}>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-amber-700">{defect.area}</div>
+                  <div className="mt-1 text-sm font-semibold">{String(defect.description || defect.entity.label || `Defect ${defect.entity.ordinal}`)}</div>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold">Location: {defect.location ? displayOption(String(defect.location)) : "Incomplete"}</span>
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold">Structural impact: {defect.structural === true ? "Yes" : defect.structural === false ? "No" : "Incomplete"}</span>
+                    <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold">Action: {defect.action ? displayOption(String(defect.action)) : "Incomplete"}</span>
+                    {reconciliationRepairMethod === "Itemized" && defect.action === "Repair" && (
+                      <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold">Estimated repair: {displayCurrency(defect.cost)}</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {!reconciliationDefects.length && <div className="rounded-lg border border-dashed border-amber-300 bg-white p-4 text-sm">No defect records are present in the canonical subject sections.</div>}
+            </div>
+          </section>
         )}
         {activeSection === "sales_comparison" && (
           <section className="mb-5 rounded-xl border border-orange-200 bg-orange-50 p-4 text-orange-950">
@@ -1209,6 +1299,18 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               title="Sales Comparison Approach exhibits"
               uploadEnabled={salesComparisonIncluded === true}
               visibleCaptionTypes={SALES_COMPARISON_EXHIBIT_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "reconciliation" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={RECONCILIATION_EXHIBIT_CAPTIONS}
+              description="Upload optional photographs or images that support the primary or alternate value conclusions and belong specifically in Reconciliation. Evidence tied to another section remains with its canonical source record."
+              emptyMessage="No optional reconciliation exhibits uploaded."
+              sectionNumber={26}
+              title="Reconciliation exhibits"
+              visibleCaptionTypes={RECONCILIATION_EXHIBIT_CAPTIONS}
               workfileId={workfileId}
             />
           )}

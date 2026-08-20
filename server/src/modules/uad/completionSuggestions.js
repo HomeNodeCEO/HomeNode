@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.8";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.9";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -1821,6 +1821,104 @@ function buildComparableSuggestions(completion, omissions) {
   return { fields, entities };
 }
 
+function buildReconciliationSuggestions(completion, omissions) {
+  const fields = [];
+  const final = plainObject(completion.analyses?.final_reconciliation)
+    ? completion.analyses.final_reconciliation
+    : {};
+  const approaches = plainObject(final.approaches) ? final.approaches : {};
+  const sharedApproaches = plainObject(completion.analyses?.approaches)
+    ? completion.analyses.approaches
+    : {};
+  const approach = (key) => (
+    plainObject(approaches[key]) ? approaches[key]
+      : plainObject(sharedApproaches[key]) ? sharedApproaches[key]
+        : {}
+  );
+  const income = approach("income_approach");
+  const cost = approach("cost_approach");
+
+  if (typeof income.developed === "boolean") {
+    addField(fields, field(
+      "scope_of_work:1000.0030",
+      income.developed,
+      completion,
+      "analyses.final_reconciliation.approaches.income_approach.developed",
+    ));
+    const indicated = number(income.indicated_value);
+    addField(fields, field(
+      "income_approach_summary:1200.0004",
+      income.developed && indicated !== null && indicated > 0 && indicated <= 999_999_999 ? indicated : null,
+      completion,
+      "analyses.final_reconciliation.approaches.income_approach.indicated_value",
+    ));
+    if (!income.developed) {
+      addOmission(omissions, {
+        scope: "reconciliation",
+        code: "income_approach_exclusion_reason_requires_appraiser_selection",
+        target_field_key: "income_approach_exclusion:1300.0004",
+      });
+    }
+  }
+
+  if (typeof cost.developed === "boolean") {
+    addField(fields, field(
+      "scope_of_work:1000.0027",
+      cost.developed,
+      completion,
+      "analyses.final_reconciliation.approaches.cost_approach.developed",
+    ));
+    const indicated = number(cost.indicated_value);
+    addField(fields, field(
+      "cost_approach_summary:1300.0001",
+      cost.developed && indicated !== null && indicated > 0 && indicated <= 999_999_999 ? indicated : null,
+      completion,
+      "analyses.final_reconciliation.approaches.cost_approach.indicated_value",
+    ));
+    if (!cost.developed) {
+      addOmission(omissions, {
+        scope: "reconciliation",
+        code: "cost_approach_exclusion_reason_requires_appraiser_selection",
+        target_field_key: "cost_approach_exclusion:1300.0002",
+      });
+    }
+  }
+
+  const finalValue = number(final.final_value);
+  addField(fields, field(
+    "reconciliation:1300.0017",
+    finalValue !== null && finalValue > 0 && finalValue <= 999_999_999 ? finalValue : null,
+    completion,
+    "analyses.final_reconciliation.final_value",
+  ));
+  addField(fields, field(
+    "reconciliation:1300.0012",
+    isoDate(final.effective_date),
+    completion,
+    "analyses.final_reconciliation.effective_date",
+  ));
+  addField(fields, field(
+    "reconciliation:1300.0021",
+    text(final.explanation, 5_000),
+    completion,
+    "analyses.final_reconciliation.explanation",
+  ));
+
+  if (final.developed === true) {
+    addOmission(omissions, {
+      scope: "reconciliation",
+      code: "market_value_condition_requires_appraiser_selection",
+      target_field_key: "reconciliation:1300.0010",
+    });
+    addOmission(omissions, {
+      scope: "reconciliation",
+      code: "reasonable_exposure_time_requires_appraiser_entry",
+      target_field_key: "reconciliation:1300.0013",
+    });
+  }
+  return { fields };
+}
+
 export function buildUadCompletionSuggestions(completion) {
   if (!plainObject(completion) || completion.schema_version !== 1) {
     throw new Error("unsupported_appraisal_completion_schema");
@@ -1859,6 +1957,7 @@ export function buildUadCompletionSuggestions(completion) {
       source_value: { total: repairTotal, items: Array.isArray(repairItems) ? repairItems : [] },
     });
   }
+  const reconciliation = buildReconciliationSuggestions(completion, omissions);
   return {
     schema_version: UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION,
     adapter_version: UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION,
@@ -1892,6 +1991,7 @@ export function buildUadCompletionSuggestions(completion) {
       market_entities: market.entities,
       sales_comparison_fields: sales.fields,
       sales_comparable_entities: sales.entities,
+      reconciliation_fields: reconciliation.fields,
     },
     omissions,
     counts: {
@@ -1899,7 +1999,7 @@ export function buildUadCompletionSuggestions(completion) {
         + siteLocation.fields.length
         + condition.fields.length + project.fields.length + highestBestUse.fields.length + subjectListings.fields.length
         + salesContract.fields.length + priorTransfers.fields.length
-        + market.fields.length + sales.fields.length,
+        + market.fields.length + sales.fields.length + reconciliation.fields.length,
       entity_suggestions: subjectAmenities.entities.length + subjectListings.entities.length + priorTransfers.entities.length
         + siteLocation.entities.length + market.entities.length + sales.entities.length,
       omissions: omissions.length,

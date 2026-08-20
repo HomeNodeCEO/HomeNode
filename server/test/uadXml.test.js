@@ -38,8 +38,8 @@ test("locked delivery mapping covers every HomeNode UAD unique ID", () => {
     subschema_version: "1.3",
     mismo_reference_model_identifier: "3.6.0366",
     source_sha256: "10f470ed53ee6f70404aad850f3f3c15aaee9489f654535ee0a3e5d1a8adee29",
-    mapped_unique_ids: 798,
-    mapped_entity_types: 86,
+    mapped_unique_ids: 834,
+    mapped_entity_types: 87,
   });
 });
 
@@ -57,6 +57,49 @@ test("MISMO XML generation is deterministic and preserves subject/comparable ide
   assert.match(first.xml, /<AddressLineText>1909 Snowmass Ln &amp; Unit A<\/AddressLineText>/);
   assert.match(first.xml, /<UnitStandardAboveGradeFinishedAreaMeasure AreaUnitOfMeasureType="SquareFeet">2015<\/UnitStandardAboveGradeFinishedAreaMeasure>/);
   assert.match(first.xml, /<ParcelAreaMeasure AreaUnitOfMeasureType="Acres">0\.31<\/ParcelAreaMeasure>/);
+});
+
+test("MISMO XML generation places Section 26 conclusions and client conditions in their official structures", () => {
+  const editor = editorFixture();
+  const conditionId = "00000000-0000-4000-8000-000000000006";
+  const subjectProperty = editor.entities.find((entity) => entity.entity_type === "property");
+  const defectId = "00000000-0000-4000-8000-000000000007";
+  editor.entities.push({
+    id: conditionId,
+    parent_entity_id: null,
+    entity_type: "additional_requested_conditional_valuation",
+    entity_identifier: "client-condition-1",
+    ordinal: 1,
+  });
+  editor.entities.push({
+    id: defectId,
+    parent_entity_id: subjectProperty.id,
+    entity_type: "site_defect",
+    entity_identifier: "site-defect-1",
+    ordinal: 1,
+  });
+  editor.values.push(
+    { entity_id: null, context_key: "reconciliation", uid: "1300.0017", value: 305000 },
+    { entity_id: null, context_key: "reconciliation", uid: "1300.0010", value: ["AsIs"] },
+    { entity_id: null, context_key: "reconciliation", uid: "1300.0013", value: 45 },
+    { entity_id: conditionId, context_key: "additional_requested_conditional_valuation", uid: "1300.0022", value: ["SubjectToRepair"] },
+    { entity_id: conditionId, context_key: "additional_requested_conditional_valuation", uid: "1300.0027", value: 310000 },
+    { entity_id: null, context_key: "defect_summary", uid: "3900.0001", value: "Itemized" },
+    { entity_id: null, context_key: "defect_summary", uid: "3900.0002", value: 1250 },
+    { entity_id: defectId, context_key: "site_defect", uid: "3900.0126", value: 1250 },
+  );
+
+  const generated = buildUadMismoXml(editor);
+
+  assert.match(generated.xml, /<OpinionOfValueAmount>305000<\/OpinionOfValueAmount>/);
+  assert.match(generated.xml, /<PropertyValuationConditionalConclusionType>AsIs<\/PropertyValuationConditionalConclusionType>/);
+  assert.match(generated.xml, /<MarketingOrExposureDaysCount>45<\/MarketingOrExposureDaysCount>/);
+  assert.match(generated.xml, /<ADDITIONAL_REQUESTED_CONDITIONAL_VALUATION>/);
+  assert.match(generated.xml, /<PropertyValuationConditionalConclusionType>SubjectToRepair<\/PropertyValuationConditionalConclusionType>/);
+  assert.match(generated.xml, /<AdditionalOpinionOfValueAmount>310000<\/AdditionalOpinionOfValueAmount>/);
+  assert.match(generated.xml, /<CostToRepairType>Itemized<\/CostToRepairType>/);
+  assert.match(generated.xml, /<DefectItemEstimatedCostToRepairAmount>1250<\/DefectItemEstimatedCostToRepairAmount>/);
+  assert.match(generated.xml, /<DefectCostToRepairTotalAmount>1250<\/DefectCostToRepairTotalAmount>/);
 });
 
 test("the official subschema validator returns blocking structural findings", async () => {

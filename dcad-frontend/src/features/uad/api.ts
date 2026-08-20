@@ -75,7 +75,7 @@ export interface UadSubjectSummary {
   legal_description: string | null;
 }
 
-export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market" | "project_information" | "subject_listing_information" | "sales_contract" | "prior_sale_transfer_history" | "sales_comparison";
+export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market" | "project_information" | "subject_listing_information" | "sales_contract" | "prior_sale_transfer_history" | "sales_comparison" | "reconciliation";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
 
@@ -425,6 +425,7 @@ export interface UadCompletionSuggestions {
     market_entities: UadCompletionSuggestionEntity[];
     sales_comparison_fields: UadCompletionSuggestionField[];
     sales_comparable_entities: UadCompletionSuggestionEntity[];
+    reconciliation_fields: UadCompletionSuggestionField[];
   };
   omissions: Array<{ scope?: string; code: string; source_value?: unknown; target_field_key?: string }>;
   counts: { field_suggestions: number; entity_suggestions: number; omissions: number };

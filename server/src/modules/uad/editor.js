@@ -25,6 +25,7 @@ import {
   isVerifiedProjectInformationAsset,
 } from "./projectInformationCatalog.js";
 import { UAD_PRIOR_TRANSFER_FIELD_KEYS } from "./priorSaleTransferCatalog.js";
+import { UAD_RECONCILIATION_FIELD_KEYS } from "./reconciliationCatalog.js";
 import {
   UAD_SALES_COMPARABLE_AMENITY_FIELD_KEYS,
   UAD_SALES_COMPARISON_FIELD_KEYS,
@@ -226,6 +227,38 @@ export function calculateSalesComparisonSummaryValues(existingRows = [], submitt
   return result;
 }
 
+const RECONCILIATION_DEFECT_COST_FIELDS = Object.freeze([
+  { entityType: "site_defect", actionKey: "site_defect:3900.0128", costKey: "site_defect:3900.0126" },
+  { entityType: "dwelling_exterior_defect", actionKey: "dwelling_exterior_defect:3900.0059", costKey: "dwelling_exterior_defect:3900.0014" },
+  { entityType: "unit_interior_defect", actionKey: "unit_interior_defect:3900.0136", costKey: "unit_interior_defect:3900.0134" },
+  { entityType: "outbuilding_defect", actionKey: "outbuilding_defect:3900.0171", costKey: "outbuilding_defect:3900.0168" },
+  { entityType: "vehicle_storage_defect", actionKey: "vehicle_storage_defect:3900.0185", costKey: "vehicle_storage_defect:3900.0182" },
+  { entityType: "amenity_defect", actionKey: "subject_property_amenity_defect:3900.0142", costKey: "subject_property_amenity_defect:3900.0140" },
+]);
+
+function calculatedReconciliationRepairTotalField() {
+  const field = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+    candidate.key === UAD_RECONCILIATION_FIELD_KEYS.repairCostTotal
+  ));
+  return field ? { ...field, calculated: true } : null;
+}
+
+export function calculateReconciliationRepairTotal(existingRows = [], submitted = [], entities = []) {
+  const merged = valuesMap(existingRows);
+  for (const item of submitted) merged.set(fieldValueKey(item.field, item.entityId), item.value);
+  if (valueLookup(merged)(UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod) !== "Itemized") return [];
+  const field = calculatedReconciliationRepairTotalField();
+  if (!field) return [];
+  const total = RECONCILIATION_DEFECT_COST_FIELDS.reduce((sum, definition) => (
+    sum + entities
+      .filter((entity) => entity.entity_type === definition.entityType)
+      .reduce((entitySum, entity) => (
+        entitySum + (finiteNumber(valueLookup(merged, entity.id)(definition.costKey)) || 0)
+      ), 0)
+  ), 0);
+  return [{ field, entityId: null, value: roundWholeAmount(total) }];
+}
+
 function withCalculatedSalesComparisonSummaryRows(rows, entities) {
   const calculated = calculateSalesComparisonSummaryValues(rows, [], entities);
   const calculatedKeys = new Set(calculated.map((item) => fieldValueKey(item.field, item.entityId)));
@@ -253,6 +286,35 @@ function withCalculatedSalesComparisonSummaryRows(rows, entities) {
     };
   });
   return [...retained, ...derivedRows];
+}
+
+function withCalculatedReconciliationRepairRows(rows, entities) {
+  const calculated = calculateReconciliationRepairTotal(rows, [], entities);
+  if (!calculated.length) return rows;
+  const field = calculated[0].field;
+  const existingByKey = new Map(rows.map((row) => [valueKey(row), row]));
+  const key = fieldValueKey(field, null);
+  const existing = existingByKey.get(key);
+  const now = new Date().toISOString();
+  return [
+    ...rows.filter((row) => valueKey(row) !== key),
+    {
+      ...(existing || {}),
+      id: existing?.id || `calculated:root:${field.uid}`,
+      entity_id: null,
+      field_context: field.contextKey,
+      uad_uid: field.uid,
+      report_field_id: field.reportFieldId,
+      value: calculated[0].value,
+      source_type: "calculated",
+      source_reference: "uad.reconciliation_repair_total",
+      is_appraiser_confirmed: true,
+      is_override: false,
+      override_reason: null,
+      created_at: existing?.created_at || now,
+      updated_at: now,
+    },
+  ];
 }
 
 const REQUIRED_UNIT_INTERIOR_ROOM_PHOTO_TYPES = new Set([
@@ -724,6 +786,46 @@ function completionFor(values, entities, assets = []) {
         }
       }
     }
+    if (section === "reconciliation") {
+      const durationIsComplete = (entityId, singleKey, lowKey, highKey) => {
+        const lookup = valueLookup(byKey, entityId);
+        const single = lookup(singleKey);
+        const low = lookup(lowKey);
+        const high = lookup(highKey);
+        const hasSingle = isPresent(single);
+        const hasLow = isPresent(low);
+        const hasHigh = isPresent(high);
+        return (hasSingle && !hasLow && !hasHigh)
+          || (!hasSingle && hasLow && hasHigh && Number(low) <= Number(high));
+      };
+      required += 1;
+      if (durationIsComplete(
+        null,
+        UAD_RECONCILIATION_FIELD_KEYS.exposureDays,
+        UAD_RECONCILIATION_FIELD_KEYS.exposureLow,
+        UAD_RECONCILIATION_FIELD_KEYS.exposureHigh,
+      )) completed += 1;
+
+      for (const condition of entities.filter((entity) => (
+        entity.entity_type === "additional_requested_conditional_valuation"
+      ))) {
+        required += 1;
+        if (durationIsComplete(
+          condition.id,
+          "additional_requested_conditional_valuation:1300.0023",
+          "additional_requested_conditional_valuation:1300.0025",
+          "additional_requested_conditional_valuation:1300.0024",
+        )) completed += 1;
+      }
+      if (entities.some((entity) => (
+        RECONCILIATION_DEFECT_COST_FIELDS.some((definition) => definition.entityType === entity.entity_type)
+      ))) {
+        required += 1;
+        if (isPresent(valueLookup(byKey)(UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod))) {
+          completed += 1;
+        }
+      }
+    }
     result[section] = {
       completed,
       required,
@@ -761,7 +863,10 @@ export async function getUadEditor(pool, workfileIdValue) {
     listUadAssets(pool, workfileId),
   ]);
   const sections = getUadEditorSections();
-  const effectiveRows = withCalculatedSalesComparisonSummaryRows(rows, entities);
+  const effectiveRows = withCalculatedReconciliationRepairRows(
+    withCalculatedSalesComparisonSummaryRows(rows, entities),
+    entities,
+  );
   const responseRows = effectiveRows.map(responseValue);
   const byKey = valuesMap(rows);
   return {
@@ -792,6 +897,11 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       merged.set(fieldValueKey(item.field, item.entityId), item.value);
     }
   }
+  if (section === "reconciliation") {
+    for (const item of calculateReconciliationRepairTotal(existingRows, submitted, entities)) {
+      merged.set(fieldValueKey(item.field, item.entityId), item.value);
+    }
+  }
   const errors = [];
   for (const field of UAD_PHASE_ONE_FIELDS.filter((candidate) => candidate.section === section)) {
     const instances = field.entityType
@@ -807,6 +917,246 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       }
       const result = normalizeAndValidateUadValue(field, rawValue);
       if (result.error) errors.push({ ...result.error, entity_id: entityId });
+    }
+  }
+
+  if (section === "reconciliation") {
+    const rootLookup = valueLookup(merged);
+    const fieldFor = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+    const validateDuration = ({ entityId = null, singleKey, lowKey, highKey, label }) => {
+      const lookup = valueLookup(merged, entityId);
+      const single = lookup(singleKey);
+      const low = lookup(lowKey);
+      const high = lookup(highKey);
+      const hasSingle = isPresent(single);
+      const hasLow = isPresent(low);
+      const hasHigh = isPresent(high);
+      const errorField = fieldFor(singleKey);
+      if (!hasSingle && !hasLow && !hasHigh) {
+        errors.push(validationError(
+          errorField,
+          entityId,
+          "exposure_time_required",
+          `${label} requires either one duration or a low and high range.`,
+        ));
+      } else if (hasSingle && (hasLow || hasHigh)) {
+        errors.push(validationError(
+          errorField,
+          entityId,
+          "exposure_time_mutually_exclusive",
+          `${label} cannot include both one duration and a range.`,
+        ));
+      } else if (!hasSingle && hasLow !== hasHigh) {
+        errors.push(validationError(
+          errorField,
+          entityId,
+          "exposure_time_range_incomplete",
+          `${label} requires both the low and high values.`,
+        ));
+      } else if (!hasSingle && Number(low) > Number(high)) {
+        errors.push(validationError(
+          fieldFor(highKey),
+          entityId,
+          "exposure_time_range_order",
+          `${label} high value cannot be less than its low value.`,
+        ));
+      }
+    };
+
+    validateDuration({
+      singleKey: UAD_RECONCILIATION_FIELD_KEYS.exposureDays,
+      lowKey: UAD_RECONCILIATION_FIELD_KEYS.exposureLow,
+      highKey: UAD_RECONCILIATION_FIELD_KEYS.exposureHigh,
+      label: "Reasonable exposure time",
+    });
+
+    const marketValueConditions = rootLookup(UAD_RECONCILIATION_FIELD_KEYS.marketValueConditions);
+    if (
+      Array.isArray(marketValueConditions)
+      && marketValueConditions.includes("AsIs")
+      && marketValueConditions.length > 1
+    ) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.marketValueConditions),
+        null,
+        "as_is_condition_exclusive",
+        "As Is must be the only Market Value Condition when selected.",
+      ));
+    }
+
+    const defectActions = RECONCILIATION_DEFECT_COST_FIELDS.flatMap((definition) => (
+      entities
+        .filter((entity) => entity.entity_type === definition.entityType)
+        .map((entity) => ({
+          entity,
+          definition,
+          action: valueLookup(merged, entity.id)(definition.actionKey),
+        }))
+    ));
+    const actionableDefect = defectActions.some(({ action }) => isPresent(action) && action !== "None");
+    if (Array.isArray(marketValueConditions) && marketValueConditions.includes("AsIs") && actionableDefect) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.marketValueConditions),
+        null,
+        "as_is_defect_action_conflict",
+        "As Is cannot be selected while a reported defect recommends completion, inspection, or repair.",
+      ));
+    }
+    const actionConditions = new Map([
+      ["Completion", "SubjectToCompletionPerPlans"],
+      ["Inspection", "SubjectToInspection"],
+      ["Repair", "SubjectToRepair"],
+    ]);
+    for (const [action, condition] of actionConditions) {
+      if (
+        defectActions.some((item) => item.action === action)
+        && (!Array.isArray(marketValueConditions) || !marketValueConditions.includes(condition))
+      ) {
+        errors.push(validationError(
+          fieldFor(UAD_RECONCILIATION_FIELD_KEYS.marketValueConditions),
+          null,
+          "defect_action_value_condition_mismatch",
+          `Market Value Condition must include ${condition} because at least one defect recommends ${action}.`,
+        ));
+      }
+    }
+    for (const [condition, action] of [
+      ["SubjectToInspection", "Inspection"],
+      ["SubjectToRepair", "Repair"],
+    ]) {
+      if (
+        Array.isArray(marketValueConditions)
+        && marketValueConditions.includes(condition)
+        && !defectActions.some((item) => item.action === action)
+      ) {
+        errors.push(validationError(
+          fieldFor(UAD_RECONCILIATION_FIELD_KEYS.marketValueConditions),
+          null,
+          "value_condition_defect_action_required",
+          `${condition} requires at least one defect with Recommended Action ${action}.`,
+        ));
+      }
+    }
+
+    const repairCostMethod = rootLookup(UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod);
+    const hasDefects = defectActions.length > 0;
+    const hasRepair = defectActions.some((item) => item.action === "Repair");
+    if (hasDefects && !isPresent(repairCostMethod)) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod),
+        null,
+        "repair_cost_method_required",
+        "Select a Cost to Repair Reporting Method when the workfile contains a defect, damage, or deficiency.",
+      ));
+    }
+    if (!hasDefects && isPresent(repairCostMethod)) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod),
+        null,
+        "repair_cost_method_conflict",
+        "Clear the Cost to Repair Reporting Method because this workfile has no defect records.",
+      ));
+    }
+    if (["Itemized", "TotalCost"].includes(repairCostMethod) && !hasRepair) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod),
+        null,
+        "repair_cost_without_repair_action",
+        "Itemized or Total Cost reporting requires at least one defect with Recommended Action Repair.",
+      ));
+    }
+    for (const { entity, definition, action } of defectActions) {
+      const cost = valueLookup(merged, entity.id)(definition.costKey);
+      if (
+        isPresent(cost)
+        && (repairCostMethod !== "Itemized" || action !== "Repair")
+      ) {
+        errors.push(validationError(
+          fieldFor(definition.costKey),
+          entity.id,
+          "itemized_repair_cost_conflict",
+          "Clear the itemized repair cost unless the reporting method is Itemized and this defect's Recommended Action is Repair.",
+        ));
+      }
+    }
+    if (
+      !["Itemized", "TotalCost"].includes(repairCostMethod)
+      && isPresent(rootLookup(UAD_RECONCILIATION_FIELD_KEYS.repairCostTotal))
+    ) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.repairCostTotal),
+        null,
+        "repair_cost_total_conflict",
+        "Clear the total repair cost unless the reporting method is Itemized or Total Cost.",
+      ));
+    }
+
+    const requestedConditions = entities.filter((entity) => (
+      entity.entity_type === "additional_requested_conditional_valuation"
+    ));
+    const requestedConditionsExist = rootLookup(UAD_RECONCILIATION_FIELD_KEYS.additionalConditions);
+    if (requestedConditionsExist === true && requestedConditions.length === 0) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.additionalConditions),
+        null,
+        "client_requested_condition_required",
+        "Add at least one client requested condition when the indicator is Yes.",
+      ));
+    }
+    if (requestedConditionsExist === false && requestedConditions.length > 0) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.additionalConditions),
+        null,
+        "client_requested_condition_conflict",
+        "Remove client requested condition records or change the indicator to Yes.",
+      ));
+    }
+    for (const condition of requestedConditions) {
+      const lookup = valueLookup(merged, condition.id);
+      const valueConditions = lookup("additional_requested_conditional_valuation:1300.0022");
+      if (Array.isArray(valueConditions) && valueConditions.includes("AsIs") && valueConditions.length > 1) {
+        errors.push(validationError(
+          fieldFor("additional_requested_conditional_valuation:1300.0022"),
+          condition.id,
+          "as_is_condition_exclusive",
+          "As Is must be the only value condition in a client requested condition.",
+        ));
+      }
+      validateDuration({
+        entityId: condition.id,
+        singleKey: "additional_requested_conditional_valuation:1300.0023",
+        lowKey: "additional_requested_conditional_valuation:1300.0025",
+        highKey: "additional_requested_conditional_valuation:1300.0024",
+        label: condition.label || `Client requested condition ${condition.ordinal}`,
+      });
+    }
+
+    const developedApproaches = [
+      {
+        indicator: UAD_RECONCILIATION_FIELD_KEYS.salesDeveloped,
+        value: "sales_comparison_summary:1300.0006",
+        label: "Sales Comparison Approach",
+      },
+      {
+        indicator: UAD_RECONCILIATION_FIELD_KEYS.incomeDeveloped,
+        value: "income_approach_summary:1200.0004",
+        label: "Income Approach",
+      },
+      {
+        indicator: UAD_RECONCILIATION_FIELD_KEYS.costDeveloped,
+        value: "cost_approach_summary:1300.0001",
+        label: "Cost Approach",
+      },
+    ];
+    for (const approach of developedApproaches) {
+      if (rootLookup(approach.indicator) === true && !isPresent(rootLookup(approach.value))) {
+        errors.push(validationError(
+          fieldFor(approach.indicator),
+          null,
+          "developed_approach_value_required",
+          `${approach.label} is marked as developed but its canonical indicated value is not complete.`,
+        ));
+      }
     }
   }
 
@@ -4605,8 +4955,26 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     const entityTypesById = new Map(entities.map((entity) => [entity.id, entity.entity_type]));
     const entityDataById = new Map(entities.map((entity) => [entity.id, entity.data]));
     const calculatedFieldKeys = new Set(calculatedSalesComparisonFields().map((field) => field.key));
-    const submittedValues = section === "sales_comparison" && Array.isArray(input.values)
-      ? input.values.filter((item) => !calculatedFieldKeys.has(`${item.context_key}:${item.uid}`))
+    const submittedRepairMethod = Array.isArray(input.values)
+      ? input.values.find((item) => (
+          `${item.context_key}:${item.uid}` === UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod
+          && !item.entity_id
+        ))?.value
+      : undefined;
+    const existingRepairMethod = valueLookup(valuesMap(existingRows))(
+      UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod,
+    );
+    const repairCostMethod = submittedRepairMethod ?? existingRepairMethod;
+    const submittedValues = Array.isArray(input.values)
+      ? input.values.filter((item) => {
+          const key = `${item.context_key}:${item.uid}`;
+          if (section === "sales_comparison" && calculatedFieldKeys.has(key)) return false;
+          return !(
+            section === "reconciliation"
+            && repairCostMethod === "Itemized"
+            && key === UAD_RECONCILIATION_FIELD_KEYS.repairCostTotal
+          );
+        })
       : input.values;
     const validation = validateUadSectionValues(section, submittedValues, { entityTypesById, entityDataById });
     if (validation.errors.length) {
@@ -4619,7 +4987,12 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
           ...validation.normalized,
           ...calculateSalesComparisonSummaryValues(existingRows, validation.normalized, entities),
         ]
-      : validation.normalized;
+      : section === "reconciliation"
+        ? [
+            ...validation.normalized,
+            ...calculateReconciliationRepairTotal(existingRows, validation.normalized, entities),
+          ]
+        : validation.normalized;
     const completeSectionErrors = validateCompleteSection(section, existingRows, normalized, entities, assets);
     if (completeSectionErrors.length) {
       const error = new Error("invalid_uad_field_values");
@@ -4639,7 +5012,9 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
         ? "calculated"
         : previous && !changedFromPrevious ? previous.source_type : "appraiser";
       const sourceReference = calculated
-        ? "uad.sales_comparison_summary"
+        ? section === "reconciliation"
+          ? "uad.reconciliation_repair_total"
+          : "uad.sales_comparison_summary"
         : previous && !changedFromPrevious ? previous.source_reference : "uad_workspace.section_save";
       const overrideReason = isOverride ? "Appraiser edited a HomeNode-prefilled value." : null;
       const id = previous?.id || randomUUID();

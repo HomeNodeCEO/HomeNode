@@ -98,6 +98,7 @@ function fieldByKey(suggestions, key) {
     ...suggestions.suggestions.subject_prior_transfer_fields,
     ...suggestions.suggestions.market_fields,
     ...suggestions.suggestions.sales_comparison_fields,
+    ...suggestions.suggestions.reconciliation_fields,
   ].find((item) => item.field_key === key);
 }
 
@@ -649,6 +650,26 @@ test("maps only unambiguous comparable facts, ratings, and typed adjustments", (
   );
 });
 
+test("maps final reconciliation through review-only canonical UAD fields", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+
+  assert.equal(fieldByKey(suggestions, "scope_of_work:1000.0030").value, true);
+  assert.equal(fieldByKey(suggestions, "income_approach_summary:1200.0004").value, 325000);
+  assert.equal(fieldByKey(suggestions, "scope_of_work:1000.0027").value, true);
+  assert.equal(fieldByKey(suggestions, "cost_approach_summary:1300.0001").value, 300000);
+  assert.equal(fieldByKey(suggestions, "reconciliation:1300.0017").value, 305000);
+  assert.equal(fieldByKey(suggestions, "reconciliation:1300.0012").value, "2026-08-18");
+  assert.match(fieldByKey(suggestions, "reconciliation:1300.0021").value, /primary weight/);
+  assert.equal(
+    suggestions.omissions.some((item) => item.code === "market_value_condition_requires_appraiser_selection"),
+    true,
+  );
+  assert.equal(
+    suggestions.omissions.some((item) => item.code === "reasonable_exposure_time_requires_appraiser_entry"),
+    true,
+  );
+});
+
 test("omits a market count that exceeds the official UAD field bound", () => {
   const input = fixtureParts();
   input.customSections.market_conditions.value.response.analyses[0].population.eligible_sale_count = 1_200;
@@ -751,6 +772,7 @@ test("validates every generated suggestion against the official UAD catalog", ()
     ...suggestions.suggestions.sales_comparison_fields,
     ...suggestions.suggestions.subject_amenity_entities,
     ...suggestions.suggestions.site_influence_entities,
+    ...suggestions.suggestions.reconciliation_fields,
     ...suggestions.suggestions.subject_listing_entities,
     ...suggestions.suggestions.subject_prior_transfer_entities,
     ...suggestions.suggestions.market_entities,

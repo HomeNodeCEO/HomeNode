@@ -47,7 +47,7 @@ test("the official specification manifest matches the locked release", () => {
   assert.equal(manifest.releaseKey, CURRENT_UAD_RELEASE_KEY);
   assert.equal(manifest.components.length, 9);
   assert.ok(manifest.components.every((component) => /^[a-f0-9]{64}$/.test(component.sha256)));
-  assert.equal(manifest.runtimeAssets.deliveryMapping.mappedUniqueIds, 798);
+  assert.equal(manifest.runtimeAssets.deliveryMapping.mappedUniqueIds, 834);
   assert.match(manifest.runtimeAssets.combinedSubschema.sha256, /^[a-f0-9]{64}$/);
 });
 

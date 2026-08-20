@@ -149,6 +149,7 @@ export function buildUadCompletionApplyPlan(document, input, {
     ...(document.suggestions?.subject_prior_transfer_fields || []),
     ...(document.suggestions?.market_fields || []),
     ...(document.suggestions?.sales_comparison_fields || []),
+    ...(document.suggestions?.reconciliation_fields || []),
   ];
   const entitySuggestions = [
     ...(document.suggestions?.subject_amenity_entities || []),

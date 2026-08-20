@@ -27,6 +27,10 @@ import {
   UAD_PRIOR_TRANSFER_IMAGE_CONTENT_TYPES,
 } from "./priorSaleTransferCatalog.js";
 import {
+  UAD_RECONCILIATION_CAPTION_TYPES,
+  UAD_RECONCILIATION_IMAGE_CONTENT_TYPES,
+} from "./reconciliationCatalog.js";
+import {
   UAD_SALES_CONTRACT_CAPTION_TYPES,
   UAD_SALES_CONTRACT_IMAGE_CONTENT_TYPES,
 } from "./salesContractCatalog.js";
@@ -101,6 +105,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [20, new Set(UAD_SALES_CONTRACT_CAPTION_TYPES)],
   [21, new Set(UAD_PRIOR_TRANSFER_CAPTION_TYPES)],
   [22, new Set(UAD_SALES_COMPARISON_CAPTION_TYPES)],
+  [26, new Set(UAD_RECONCILIATION_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -260,6 +265,12 @@ function normalizeAssetInput(input = {}) {
   }
   if (sectionNumber === 22 && !caption) {
     throw new Error("invalid_uad_sales_comparison_asset_caption");
+  }
+  if (sectionNumber === 26 && !UAD_RECONCILIATION_IMAGE_CONTENT_TYPES.includes(contentType)) {
+    throw new Error("invalid_uad_reconciliation_content_type");
+  }
+  if (sectionNumber === 26 && !["photo", "image"].includes(kind)) {
+    throw new Error("invalid_uad_reconciliation_asset_kind");
   }
   return {
     kind,

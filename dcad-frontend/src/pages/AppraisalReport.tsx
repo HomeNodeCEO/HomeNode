@@ -280,7 +280,7 @@ function PageHeader({
       <div className="report-page-meta">
         <strong>Draft</strong>
         <span>{address}</span>
-        <span>Page {page} of 8</span>
+        <span>Page {page} of 9</span>
       </div>
     </header>
   );

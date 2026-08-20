@@ -27,6 +27,8 @@ venv/
 .testdeps/
 .pnpm-store/
 .tmp-pack/
+/homenode-mobile/.tooling/
+/homenode-mobile/.expo/
 /server/tmp/
 /output/
 /tmp/

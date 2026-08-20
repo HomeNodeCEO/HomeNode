@@ -1,7 +1,8 @@
 {
   "expo": {
     "name": "HomeNode Appraiser",
-    "slug": "homenode-appraiser",
+    "slug": "homenode",
+    "owner": "homenode-real-estate",
     "version": "0.2.0",
     "orientation": "portrait",
     "scheme": "homenode",
@@ -17,6 +18,11 @@
       "package": "com.homenode.appraiser",
       "adaptiveIcon": {
         "backgroundColor": "#f4f7f3"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "69a6e074-ffbd-4dc3-a47c-815526555eb6"
       }
     },
     "plugins": [

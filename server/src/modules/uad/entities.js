@@ -58,7 +58,7 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
     if (!UAD_SUBJECT_AMENITY_CATEGORIES.includes(amenityCategory)) {
       throw new Error("invalid_uad_amenity_category");
     }
-    entityData = { amenity_category: amenityCategory };
+    entityData = { ...entityData, amenity_category: amenityCategory };
   }
   let parentEntityId = input.parent_entity_id == null ? null : normalizeUadWorkfileId(input.parent_entity_id);
   const parentEntityTypes = group.parentEntityTypes

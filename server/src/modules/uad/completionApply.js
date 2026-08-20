@@ -139,6 +139,7 @@ export function buildUadCompletionApplyPlan(document, input, {
   const fieldSuggestions = [
     ...(document.suggestions?.assignment_fields || []),
     ...(document.suggestions?.subject_entity_fields || []),
+    ...(document.suggestions?.subject_amenity_fields || []),
     ...(document.suggestions?.condition_fields || []),
     ...(document.suggestions?.project_fields || []),
     ...(document.suggestions?.highest_best_use_fields || []),
@@ -149,6 +150,7 @@ export function buildUadCompletionApplyPlan(document, input, {
     ...(document.suggestions?.sales_comparison_fields || []),
   ];
   const entitySuggestions = [
+    ...(document.suggestions?.subject_amenity_entities || []),
     ...(document.suggestions?.subject_listing_entities || []),
     ...(document.suggestions?.subject_prior_transfer_entities || []),
     ...(document.suggestions?.market_entities || []),
@@ -224,7 +226,7 @@ async function insertEntityTree(client, workfileId, plan, source, parentEntityId
     entity_type: suggestion.entity_type,
     parent_entity_id: parentEntityId,
     label,
-    data: metadata,
+    data: { ...(suggestion.data || {}), ...metadata },
   }, { audit: false, touch: false });
   for (const item of plan.fields) await insertFieldValue(client, workfileId, entity.id, item);
   const children = [];

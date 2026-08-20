@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.7";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.8";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -359,6 +359,7 @@ function approachSummary(section, kind) {
 function locationInfluences(subjectData, property) {
   const context = property.property_context
     || subjectData?.property_context
+    || subjectData?.custom_signed_snapshot?.evidence?.property_context
     || subjectData?.custom_signed_snapshot?.evidence?.property_report_data?.property_context
     || null;
   if (!plainObject(context)) return { status: "not_available", assessment: null };

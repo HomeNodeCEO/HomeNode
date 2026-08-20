@@ -411,6 +411,8 @@ export interface UadCompletionSuggestions {
     subject_entity_fields: UadCompletionSuggestionField[];
     subject_amenity_fields: UadCompletionSuggestionField[];
     subject_amenity_entities: UadCompletionSuggestionEntity[];
+    site_fields: UadCompletionSuggestionField[];
+    site_influence_entities: UadCompletionSuggestionEntity[];
     condition_fields: UadCompletionSuggestionField[];
     project_fields: UadCompletionSuggestionField[];
     highest_best_use_fields: UadCompletionSuggestionField[];

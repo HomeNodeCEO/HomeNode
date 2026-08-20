@@ -136,6 +136,33 @@ test("carries assignment-scoped project, HOA, condition, and conformity evidence
   assert.match(completion.subject.characteristics.nonconformity_explanation, /smaller than/);
 });
 
+test("carries the frozen assignment location context even when it is stored outside the property report payload", () => {
+  const input = fixtureInput("uad_3_6");
+  input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_context = {
+    confidence: "high",
+    automatic_assessment: {
+      computed_at: "2026-08-17T15:30:00.000Z",
+      spatial_context: {
+        parcel_available: true,
+        adjacent_influences: [{
+          category: "commercial",
+          relationship: "rear",
+          site_address: "100 Retail Road",
+        }],
+      },
+    },
+  };
+
+  const completion = buildCanonicalAppraisalCompletion(input);
+
+  assert.equal(completion.analyses.location_influences.status, "available");
+  assert.equal(
+    completion.analyses.location_influences.assessment.automatic_assessment
+      .spatial_context.adjacent_influences[0].site_address,
+    "100 Retail Road",
+  );
+});
+
 test("shares one Custom analysis with a UAD file only inside the same case and snapshot", () => {
   const completion = buildCanonicalAppraisalCompletion(fixtureInput("uad_3_6"));
 

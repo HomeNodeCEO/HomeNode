@@ -115,6 +115,7 @@ export default function UadCompletionSuggestionPanel({
       ...(document.suggestions.assignment_fields || []),
       ...(document.suggestions.subject_entity_fields || []),
       ...(document.suggestions.subject_amenity_fields || []),
+      ...(document.suggestions.site_fields || []),
       ...(document.suggestions.condition_fields || []),
       ...(document.suggestions.project_fields || []),
       ...(document.suggestions.highest_best_use_fields || []),
@@ -147,6 +148,7 @@ export default function UadCompletionSuggestionPanel({
     });
     const suggestedEntities = [
       ...(document.suggestions.subject_amenity_entities || []),
+      ...(document.suggestions.site_influence_entities || []),
       ...(document.suggestions.subject_listing_entities || []),
       ...(document.suggestions.subject_prior_transfer_entities || []),
       ...document.suggestions.market_entities,

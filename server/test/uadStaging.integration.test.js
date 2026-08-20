@@ -355,7 +355,7 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const section22 = siteBuiltEditor.sections.find((section) => section.officialSectionNumber === 22);
     assert.equal(section22?.key, "sales_comparison");
     assert.equal(section22?.applicable, true);
-    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 300);
+    assert.equal(section22.groups.reduce((count, group) => count + group.fields.length, 0), 314);
     const salesComparable = siteBuiltEditor.entities.find((entity) => (
       entity.entity_type === "sales_comparable"
       && entity.entity_identifier === "sales-comparable-1"
@@ -582,6 +582,27 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
         && item.uid === "1300.0006"
       ))?.value,
       445000,
+    );
+    const additionalAnalyzedProperty = siteBuiltEditor.entities.find((entity) => (
+      entity.entity_type === "sales_comparison_additional_property"
+      && entity.entity_identifier === "sales-comparison-additional-property-1"
+    ));
+    assert.ok(additionalAnalyzedProperty);
+    assert.match(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === null
+        && item.context_key === "sales_comparison_reconciliation"
+        && item.uid === "1800.0278"
+      ))?.value,
+      /Most weight/,
+    );
+    assert.deepEqual(
+      siteBuiltEditor.values.find((item) => (
+        item.entity_id === additionalAnalyzedProperty.id
+        && item.context_key === "sales_comparison_additional_property"
+        && item.uid === "1900.0011"
+      ))?.value,
+      ["Proximity", "DatedSale"],
     );
     assert.equal(
       siteBuiltEditor.values.find((item) => (

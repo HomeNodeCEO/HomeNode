@@ -139,16 +139,25 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
         JSON.stringify(entityData),
       ],
     );
-  if (entityType === "sales_comparable") {
+  const calculatedOrdinal = entityType === "sales_comparable"
+    ? { context: "sales_comparable", uid: "1800.0192", reportFieldId: "21.007" }
+    : entityType === "sales_comparison_additional_property"
+      ? { context: "sales_comparison_additional_property", uid: "1900.0017", reportFieldId: "22.17.01" }
+      : null;
+  if (calculatedOrdinal) {
     await client.query(
       `INSERT INTO appraisal.uad_field_values (
          id, workfile_id, entity_id, field_context, uad_uid, report_field_id,
          value, source_type, source_reference, is_appraiser_confirmed
        ) VALUES (
-         $1, $2, $3, 'sales_comparable', '1800.0192', '21.007',
-         $4::jsonb, 'calculated', 'uad_entity.ordinal', false
+         $1, $2, $3, $4, $5, $6,
+         $7::jsonb, 'calculated', 'uad_entity.ordinal', false
        )`,
-      [randomUUID(), workfileId, id, JSON.stringify(ordinal)],
+      [
+        randomUUID(), workfileId, id,
+        calculatedOrdinal.context, calculatedOrdinal.uid, calculatedOrdinal.reportFieldId,
+        JSON.stringify(ordinal),
+      ],
     );
   }
   await client.query(

@@ -763,6 +763,14 @@ try {
     1,
     "Sales Comparable 1",
   );
+  const additionalAnalyzedPropertyId = await ensureEntity(
+    sfrWorkfileId,
+    null,
+    "sales_comparison_additional_property",
+    "sales-comparison-additional-property-1",
+    1,
+    "Additional Property 1",
+  );
   const salesComparableSourceId = await ensureEntity(
     sfrWorkfileId,
     salesComparableId,
@@ -854,6 +862,17 @@ try {
   const salesComparableValues = [
     [null, "sales_comparison_scope", "1000.0032", "Does Not Display", true],
     [null, "sales_comparison_summary", "1300.0006", "22.15.15", 445000],
+    [null, "sales_comparison_reconciliation", "1800.0278", "22.16.01", "The selected comparable received Most weight because its location, site utility, design, condition, and finished area most closely bracket the subject. The indicated value reflects the supported adjusted-price range and gives less or no weight to less similar evidence."],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0017", "22.17.01", 1],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0001", "22.17.02", "1400 Forest Lane"],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0003", "22.17.02", "Garland"],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0005", "22.17.02", "TX"],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0004", "22.17.02", "75044"],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0007", "22.17.04", "SettledSale"],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0013", "22.17.03", "2026-06-10"],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0010", "Does Not Display", false],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0011", "22.17.05", ["Proximity", "DatedSale"]],
+    [additionalAnalyzedPropertyId, "sales_comparison_additional_property", "1900.0009", "22.17.06", "Analyzed as market evidence but not selected because it is farther from the subject and its older sale date provides less current support than the chosen comparable."],
     [salesComparableId, "sales_comparable", "1800.0192", "21.007", 1],
     [salesComparableId, "comparable_prior_transfer_summary", "1800.0198", "21.008", false],
     [comparableNoTransferSourceId, "comparable_no_prior_transfer_data_source", "0700.0125", "21.011", "MLS"],

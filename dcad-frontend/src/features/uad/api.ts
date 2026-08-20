@@ -397,6 +397,15 @@ export interface UadCompletionSuggestions {
     subject_snapshot_id: string;
     source_digest_sha256: string;
   };
+  xml: {
+    specification_release_key: string;
+    delivery_specification_version: string;
+    subschema_version: string;
+    mismo_reference_model_identifier: string;
+    source_sha256: string;
+    mapped_unique_ids: number;
+    mapped_entity_types: number;
+  };
   suggestions: {
     assignment_fields: UadCompletionSuggestionField[];
     subject_entity_fields: UadCompletionSuggestionField[];
@@ -523,4 +532,96 @@ export async function runLocalUadValidation(workfileId: string): Promise<UadVali
     { method: "POST" },
   );
   return response.validation;
+}
+
+export interface UadXmlArtifact {
+  id: string;
+  workfile_id: string;
+  revision_number: number;
+  artifact_type: "xml";
+  storage_provider: string;
+  storage_bucket: string | null;
+  object_key: string;
+  content_type: string;
+  byte_size: number | null;
+  checksum_sha256: string | null;
+  generation_status: "pending" | "generating" | "ready" | "failed" | "superseded";
+  generated_at: string | null;
+  metadata: {
+    file_name?: string;
+    input_digest_sha256?: string;
+    validation_run_id?: string;
+    generator_version?: string;
+    delivery_specification_version?: string;
+    subschema_version?: string;
+    schema_valid?: boolean;
+    storage_etag?: string | null;
+    upload_error?: string;
+  };
+  created_at: string;
+  is_current_revision: boolean;
+  ready_for_download: boolean;
+  download?: {
+    method: "GET";
+    url: string;
+    expires_in_seconds: number;
+  };
+}
+
+export interface UadSchemaValidationFinding {
+  id: string;
+  rule_id: string | null;
+  severity: "fatal" | "warning";
+  message: string;
+  status: "open" | "resolved" | "accepted" | "superseded";
+  metadata: {
+    line?: number | null;
+    column?: number | null;
+    code?: string | null;
+    validator_version?: string;
+  };
+  created_at: string;
+}
+
+export interface UadSchemaValidationRun {
+  id: string;
+  workfile_id: string;
+  revision_number: number;
+  specification_release_key: string;
+  validator_type: "local_schema";
+  status: "passed" | "failed" | "error" | "running";
+  fatal_count: number;
+  warning_count: number;
+  started_at: string;
+  completed_at: string | null;
+  metadata: {
+    validator_version?: string;
+    subschema_version?: string;
+    schema_sha256?: string;
+    input_digest_sha256?: string;
+    xml_checksum_sha256?: string;
+    xml_byte_size?: number;
+    generator_version?: string;
+    delivery_specification_version?: string;
+    mapped_value_count?: number;
+  };
+  findings: UadSchemaValidationFinding[];
+}
+
+export interface UadXmlArtifactResult {
+  artifact: UadXmlArtifact | null;
+  schema_validation: UadSchemaValidationRun | null;
+}
+
+export async function getLatestUadXmlArtifact(workfileId: string): Promise<UadXmlArtifactResult> {
+  return uadFetchJSON<UadXmlArtifactResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/artifacts/xml`),
+  );
+}
+
+export async function generateUadXmlArtifact(workfileId: string): Promise<UadXmlArtifactResult> {
+  return uadFetchJSON<UadXmlArtifactResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/artifacts/xml`),
+    { method: "POST", timeoutMs: 60_000 },
+  );
 }

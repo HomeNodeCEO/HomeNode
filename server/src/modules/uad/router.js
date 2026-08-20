@@ -10,6 +10,8 @@ import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 import { applyUadCompletionSuggestions } from "./completionApply.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
+import { generateUadXmlArtifact, getLatestUadXmlArtifact } from "./uadArtifacts.js";
+import { getUadXmlMappingSummary } from "./uadXml.js";
 import { getUadSharedData } from "./sharedData.js";
 import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { getLatestUadValidation, runLocalUadValidation } from "./validation.js";
@@ -25,6 +27,8 @@ function errorStatus(error) {
   if (message.includes("not_found")) return 404;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
   if (message === "uad_validation_status_locked") return 409;
+  if (message.startsWith("uad_xml_local_validation_")) return 409;
+  if (message.startsWith("uad_xml_")) return 422;
   if (message.startsWith("uad_completion_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
@@ -53,6 +57,7 @@ export function createUadRouter({ pool, storage, enabled = false }) {
         provider: storage.provider,
         configured: storage.configured,
       },
+      xml: getUadXmlMappingSummary(),
     });
   });
 
@@ -118,6 +123,23 @@ export function createUadRouter({ pool, storage, enabled = false }) {
   router.post("/workfiles/:workfileId/validation", async (req, res) => {
     try {
       res.json({ validation: await runLocalUadValidation(pool, req.params.workfileId) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/artifacts/xml", async (req, res) => {
+    try {
+      res.json(await getLatestUadXmlArtifact(pool, storage, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/artifacts/xml", async (req, res) => {
+    try {
+      const result = await generateUadXmlArtifact(pool, storage, req.params.workfileId);
+      res.status(result.artifact?.generation_status === "ready" ? 201 : 200).json(result);
     } catch (error) {
       sendError(res, error);
     }

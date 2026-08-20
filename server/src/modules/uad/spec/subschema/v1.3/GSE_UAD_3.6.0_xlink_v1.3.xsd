@@ -1,0 +1,343 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xs="http://www.w3.org/2001/XMLSchema" targetNamespace="http://www.w3.org/1999/xlink" elementFormDefault="qualified" attributeFormDefault="qualified">
+	<xs:annotation>
+		<xs:documentation>Version: GSE 3.6.0 Build: v1.3 Date: 2024-08-05</xs:documentation>
+		<xs:documentation>GSE Subschema and Related Documentation © 2024 Fannie Mae and Freddie Mac. Subject to the UCDP Terms and Conditions published by Fannie Mae and Freddie Mac and as amended from time to time.</xs:documentation>
+		<xs:documentation>IMPORTANT NOTICE: The GSE Subschema and Related Documentation are based upon and/or incorporate elements of the XML Schema 3.6 (MISMO Components), which Schema is a MISMO Product as defined in version 2.0 of the Intellectual Property Rights Policy of the Mortgage Industry Standards Maintenance Organization, Inc. ("MISMO") (available for reference at http://www.mismo.org). Fannie Mae and Freddie Mac are licensed to distribute the MISMO Components pursuant to the then-current MISMO Distributor License, also published at http://www.mismo.org. </xs:documentation>
+		<xs:documentation>MISMO Products are encouraged to register with MISMO as a MISMO Product user (use https://www.mismo.org/get-involved/register-as-a-mismo-product-user). </xs:documentation>
+	</xs:annotation>
+	<xs:import namespace="http://www.w3.org/XML/1998/namespace" schemaLocation="xml.xsd"/>
+	<xs:simpleType name="ArcroleBase">
+		<xs:annotation>
+			<xs:documentation>The base set of arcroles defined by MISMO; the uri MUST have the initial version of the LDD (/mismo_n_n_n_0) that included  the definition. Once an LDD version is assigned, it never changes even when a new major version is built.</xs:documentation>
+		</xs:annotation>
+		<xs:restriction base="xs:anyURI">
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_AccessoryDwellingUnitLegallyRentableIndicator">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_COST_APPROACH">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_LISTING_INFORMATION_SUMMARY">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_MARKET_TREND">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_PriorSalesOrTransfersIndicator">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_PROJECT">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_PROPERTY">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_SALES_HISTORY">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DATA_SOURCE_IsDataSourceFor_PROPERTY_UNIT_AREA">
+				<xs:annotation>
+					<xs:documentation>Link DATA_SOURCE to the item that needs a source of information identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DEFECT_ContainsDefectOf_AMENITY">
+				<xs:annotation>
+					<xs:documentation>Link DEFECT container to the container where the defect has been identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DEFECT_ContainsDefectOf_CAR_STORAGE">
+				<xs:annotation>
+					<xs:documentation>Link DEFECT container to the container where the defect has been identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DEFECT_ContainsDefectOf_IMPROVEMENT">
+				<xs:annotation>
+					<xs:documentation>Link DEFECT container to the container where the defect has been identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DEFECT_ContainsDefectOf_PROPERTY_UNIT">
+				<xs:annotation>
+					<xs:documentation>Link DEFECT container to the container where the defect has been identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/DEFECT_ContainsDefectOf_SITE">
+				<xs:annotation>
+					<xs:documentation>Link DEFECT container to the container where the defect has been identified.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/IMPROVEMENT_COST_AND_DEPRECIATED_VALUE_IsAssociatedWith_IMPROVEMENT">
+				<xs:annotation>
+					<xs:documentation>The IMPROVEMENT_COST_AND_DEPRECIATED_VALUE is associated with IMPROVEMENT.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/INSPECTION_CompletedBy_ROLE">
+				<xs:annotation>
+					<xs:documentation>Link INSPECTION container to the person who completed the inspection.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/PROPERTY_UNIT_IsComparableFor_PROPERTY_UNIT">
+				<xs:annotation>
+					<xs:documentation>Link container instance that is used for comparison from the comparable property to subject property.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/RENTAL_INFORMATION_IsComparableFor_RENTAL_INFORMATION">
+				<xs:annotation>
+					<xs:documentation>Link container instance that is used for comparison from the comparable property to subject property.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+			<xs:enumeration value="urn:fdc:mismo.org:2009:residential/SIGNATORY_IsAssociatedWith_ROLE">
+				<xs:annotation>
+					<xs:documentation>The signature is associated with ROLE.</xs:documentation>
+				</xs:annotation>
+			</xs:enumeration>
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:attributeGroup name="MISMOarcLink">
+		<xs:annotation>
+			<xs:documentation>An xlink set of attributes that identifies two end points and the kind of relationship they have to each other.</xs:documentation>
+			<xs:documentation>term: Arc Link</xs:documentation>
+		</xs:annotation>
+		<xs:attribute name="arcrole" type="xlink:ArcroleBase" use="required"/>
+		<xs:attribute ref="xlink:from" use="required"/>
+		<xs:attribute ref="xlink:to" use="required"/>
+	</xs:attributeGroup>
+	<xs:attributeGroup name="MISMOresourceLink">
+		<xs:annotation>
+			<xs:documentation>An xlink attribute group for defining the end point of a relationship.</xs:documentation>
+			<xs:documentation>term: Resource Endpoint</xs:documentation>
+		</xs:annotation>
+		<xs:attribute ref="xlink:label"/>
+	</xs:attributeGroup>
+	<xs:annotation>
+		<xs:documentation>This schema document provides attribute declarations and
+attribute group, complex type and simple type definitions which can be used in
+the construction of user schemas to define the structure of particular linking
+constructs, e.g.
+
+&lt;xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:xl="http://www.w3.org/1999/xlink"&gt;&lt;xs:import namespace="http://www.w3.org/1999/xlink"
+            location="http://www.w3.org/1999/xlink.xsd"&gt;&lt;xs:element name="mySimple"&gt;&lt;xs:complexType&gt;
+   ...
+   &lt;xs:attributeGroup ref="xl:simpleAttrs"/&gt;
+   ...
+  &lt;/xs:complexType&gt;&lt;/xs:element&gt;
+ ...
+&lt;/xs:schema&gt;</xs:documentation>
+	</xs:annotation>
+	<xs:attribute name="type" type="xlink:typeType"/>
+	<xs:simpleType name="typeType">
+		<xs:restriction base="xs:token">
+			<xs:enumeration value="simple"/>
+			<xs:enumeration value="extended"/>
+			<xs:enumeration value="title"/>
+			<xs:enumeration value="resource"/>
+			<xs:enumeration value="locator"/>
+			<xs:enumeration value="arc"/>
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:attribute name="href" type="xlink:hrefType"/>
+	<xs:simpleType name="hrefType">
+		<xs:restriction base="xs:anyURI"/>
+	</xs:simpleType>
+	<xs:attribute name="role" type="xlink:roleType"/>
+	<xs:simpleType name="roleType">
+		<xs:restriction base="xs:anyURI">
+			<xs:minLength value="1"/>
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:attribute name="arcrole" type="xlink:arcroleType"/>
+	<xs:simpleType name="arcroleType">
+		<xs:restriction base="xs:anyURI">
+			<xs:minLength value="1"/>
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:attribute name="title" type="xlink:titleAttrType"/>
+	<xs:simpleType name="titleAttrType">
+		<xs:restriction base="xs:string"/>
+	</xs:simpleType>
+	<xs:attribute name="show" type="xlink:showType"/>
+	<xs:simpleType name="showType">
+		<xs:restriction base="xs:token">
+			<xs:enumeration value="new"/>
+			<xs:enumeration value="replace"/>
+			<xs:enumeration value="embed"/>
+			<xs:enumeration value="other"/>
+			<xs:enumeration value="none"/>
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:attribute name="actuate" type="xlink:actuateType"/>
+	<xs:simpleType name="actuateType">
+		<xs:restriction base="xs:token">
+			<xs:enumeration value="onLoad"/>
+			<xs:enumeration value="onRequest"/>
+			<xs:enumeration value="other"/>
+			<xs:enumeration value="none"/>
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:attribute name="label" type="xlink:labelType"/>
+	<xs:simpleType name="labelType">
+		<xs:restriction base="xs:NCName"/>
+	</xs:simpleType>
+	<xs:attribute name="from" type="xlink:fromType"/>
+	<xs:simpleType name="fromType">
+		<xs:restriction base="xs:NCName"/>
+	</xs:simpleType>
+	<xs:attribute name="to" type="xlink:toType"/>
+	<xs:simpleType name="toType">
+		<xs:restriction base="xs:NCName"/>
+	</xs:simpleType>
+	<xs:attributeGroup name="simpleAttrs">
+		<xs:attribute ref="xlink:type" fixed="simple"/>
+		<xs:attribute ref="xlink:href"/>
+		<xs:attribute ref="xlink:role"/>
+		<xs:attribute ref="xlink:arcrole"/>
+		<xs:attribute ref="xlink:title"/>
+		<xs:attribute ref="xlink:show"/>
+		<xs:attribute ref="xlink:actuate"/>
+	</xs:attributeGroup>
+	<xs:group name="simpleModel">
+		<xs:sequence>
+			<xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+		</xs:sequence>
+	</xs:group>
+	<xs:complexType name="simple" mixed="true">
+		<xs:annotation>
+			<xs:documentation>
+    Intended for use as the type of user-declared elements to make them
+    simple links.
+   </xs:documentation>
+		</xs:annotation>
+		<xs:group ref="xlink:simpleModel"/>
+		<xs:attributeGroup ref="xlink:simpleAttrs"/>
+	</xs:complexType>
+	<xs:attributeGroup name="extendedAttrs">
+		<xs:attribute ref="xlink:type" use="required" fixed="extended"/>
+		<xs:attribute ref="xlink:role"/>
+		<xs:attribute ref="xlink:title"/>
+	</xs:attributeGroup>
+	<xs:group name="extendedModel">
+		<xs:choice>
+			<xs:element ref="xlink:title"/>
+			<xs:element ref="xlink:resource"/>
+			<xs:element ref="xlink:locator"/>
+			<xs:element ref="xlink:arc"/>
+		</xs:choice>
+	</xs:group>
+	<xs:complexType name="extended">
+		<xs:annotation>
+			<xs:documentation>
+    Intended for use as the type of user-declared elements to make them
+    extended links.
+    Note that the elements referenced in the content model are all abstract.
+    The intention is that by simply declaring elements with these as their
+    substitutionGroup, all the right things will happen.
+   </xs:documentation>
+		</xs:annotation>
+		<xs:group ref="xlink:extendedModel" minOccurs="0" maxOccurs="unbounded"/>
+		<xs:attributeGroup ref="xlink:extendedAttrs"/>
+	</xs:complexType>
+	<xs:element name="title" type="xlink:titleEltType" abstract="true"/>
+	<xs:attributeGroup name="titleAttrs">
+		<xs:attribute ref="xlink:type" use="required" fixed="title"/>
+		<xs:attribute ref="xml:lang">
+			<xs:annotation>
+				<xs:documentation>
+     xml:lang is not required, but provides much of the
+     motivation for title elements in addition to attributes, and so
+     is provided here for convenience.
+    </xs:documentation>
+			</xs:annotation>
+		</xs:attribute>
+	</xs:attributeGroup>
+	<xs:group name="titleModel">
+		<xs:sequence>
+			<xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+		</xs:sequence>
+	</xs:group>
+	<xs:complexType name="titleEltType" mixed="true">
+		<xs:group ref="xlink:titleModel"/>
+		<xs:attributeGroup ref="xlink:titleAttrs"/>
+	</xs:complexType>
+	<xs:element name="resource" type="xlink:resourceType" abstract="true"/>
+	<xs:attributeGroup name="resourceAttrs">
+		<xs:attribute ref="xlink:type" use="required" fixed="resource"/>
+		<xs:attribute ref="xlink:role"/>
+		<xs:attribute ref="xlink:title"/>
+		<xs:attribute ref="xlink:label"/>
+	</xs:attributeGroup>
+	<xs:group name="resourceModel">
+		<xs:sequence>
+			<xs:any processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+		</xs:sequence>
+	</xs:group>
+	<xs:complexType name="resourceType" mixed="true">
+		<xs:group ref="xlink:resourceModel"/>
+		<xs:attributeGroup ref="xlink:resourceAttrs"/>
+	</xs:complexType>
+	<xs:element name="locator" type="xlink:locatorType" abstract="true"/>
+	<xs:attributeGroup name="locatorAttrs">
+		<xs:attribute ref="xlink:type" use="required" fixed="locator"/>
+		<xs:attribute ref="xlink:href" use="required"/>
+		<xs:attribute ref="xlink:role"/>
+		<xs:attribute ref="xlink:title"/>
+		<xs:attribute ref="xlink:label">
+			<xs:annotation>
+				<xs:documentation>
+     label is not required, but locators have no particular
+     XLink function if they are not labeled.
+    </xs:documentation>
+			</xs:annotation>
+		</xs:attribute>
+	</xs:attributeGroup>
+	<xs:group name="locatorModel">
+		<xs:sequence>
+			<xs:element ref="xlink:title" minOccurs="0" maxOccurs="unbounded"/>
+		</xs:sequence>
+	</xs:group>
+	<xs:complexType name="locatorType">
+		<xs:group ref="xlink:locatorModel"/>
+		<xs:attributeGroup ref="xlink:locatorAttrs"/>
+	</xs:complexType>
+	<xs:element name="arc" type="xlink:arcType" abstract="true"/>
+	<xs:attributeGroup name="arcAttrs">
+		<xs:attribute ref="xlink:type" use="required" fixed="arc"/>
+		<xs:attribute ref="xlink:arcrole"/>
+		<xs:attribute ref="xlink:title"/>
+		<xs:attribute ref="xlink:show"/>
+		<xs:attribute ref="xlink:actuate"/>
+		<xs:attribute ref="xlink:from"/>
+		<xs:attribute ref="xlink:to">
+			<xs:annotation>
+				<xs:documentation>
+     from and to have default behavior when values are missing
+    </xs:documentation>
+			</xs:annotation>
+		</xs:attribute>
+	</xs:attributeGroup>
+	<xs:group name="arcModel">
+		<xs:sequence>
+			<xs:element ref="xlink:title" minOccurs="0" maxOccurs="unbounded"/>
+		</xs:sequence>
+	</xs:group>
+	<xs:complexType name="arcType">
+		<xs:group ref="xlink:arcModel"/>
+		<xs:attributeGroup ref="xlink:arcAttrs"/>
+	</xs:complexType>
+</xs:schema>

@@ -16,6 +16,7 @@ import {
 import UadAssetPanel from "./UadAssetPanel";
 import UadCompletionSuggestionPanel from "./UadCompletionSuggestionPanel";
 import UadValidationPanel from "./UadValidationPanel";
+import UadXmlPanel from "./UadXmlPanel";
 
 interface Props {
   workfileId: string;
@@ -519,6 +520,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               ? `Revision ${validation.revision_number} passed whole-workfile UAD validation.`
               : `Validation found ${validation.fatal_count} blocking item${validation.fatal_count === 1 ? "" : "s"} in revision ${validation.revision_number}.`);
           }}
+          workfileId={workfileId}
+        />
+        <UadXmlPanel
+          currentRevision={editor.workfile.current_revision}
+          dirty={dirty}
           workfileId={workfileId}
         />
         {activeSection === "site" && (

@@ -42,6 +42,21 @@ export function buildUadObjectKey({ organizationId, workfileId, assetId, fileNam
   return `organizations/${organization}/uad/${workfileId}/assets/${assetId}/${sanitizeUadFileName(fileName)}`;
 }
 
+export function buildUadGeneratedArtifactObjectKey({
+  organizationId,
+  workfileId,
+  revisionNumber,
+  artifactType,
+  checksumSha256,
+  fileName,
+}) {
+  const organization = organizationId || "unassigned";
+  const revision = Math.max(1, Number(revisionNumber) || 1);
+  const checksum = String(checksumSha256 || "unverified").replace(/[^a-f0-9]/gi, "").toLowerCase().slice(0, 64)
+    || "unverified";
+  return `organizations/${organization}/uad/${workfileId}/generated/revision-${revision}/${artifactType}/${checksum}/${sanitizeUadFileName(fileName)}`;
+}
+
 export function createR2PresignedUrl({
   accountId,
   accessKeyId,
@@ -123,6 +138,33 @@ export function createUadObjectStorage(env = process.env) {
         }),
         headers: { "content-type": contentType },
         expires_in_seconds: config.uploadTtlSeconds,
+      };
+    },
+    createDownloadUrl({ objectKey, expiresInSeconds = 300 }) {
+      if (!configured) throw new Error("uad_object_storage_not_configured");
+      return {
+        method: "GET",
+        url: createR2PresignedUrl({
+          ...config,
+          objectKey,
+          method: "GET",
+          expiresInSeconds,
+        }),
+        expires_in_seconds: Math.max(1, Math.min(Number(expiresInSeconds) || 300, 604800)),
+      };
+    },
+    async putObject({ objectKey, contentType, body }) {
+      const upload = this.createUploadUrl({ objectKey, contentType });
+      const response = await fetch(upload.url, {
+        method: upload.method,
+        headers: upload.headers,
+        body,
+      });
+      if (!response.ok) throw new Error(`uad_object_upload_failed:${response.status}`);
+      return {
+        etag: response.headers.get("etag"),
+        byte_size: Buffer.byteLength(body),
+        content_type: contentType,
       };
     },
     async inspectObject({ objectKey }) {

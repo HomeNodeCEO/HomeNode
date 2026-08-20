@@ -401,6 +401,11 @@ export interface UadCompletionSuggestions {
     assignment_fields: UadCompletionSuggestionField[];
     subject_entity_fields: UadCompletionSuggestionField[];
     highest_best_use_fields: UadCompletionSuggestionField[];
+    subject_listing_fields: UadCompletionSuggestionField[];
+    subject_listing_entities: UadCompletionSuggestionEntity[];
+    sales_contract_fields: UadCompletionSuggestionField[];
+    subject_prior_transfer_fields: UadCompletionSuggestionField[];
+    subject_prior_transfer_entities: UadCompletionSuggestionEntity[];
     market_fields: UadCompletionSuggestionField[];
     market_entities: UadCompletionSuggestionEntity[];
     sales_comparison_fields: UadCompletionSuggestionField[];

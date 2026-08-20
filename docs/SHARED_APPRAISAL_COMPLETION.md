@@ -41,7 +41,7 @@ Consumers must preserve unknown fields and select a mapper compatible with the r
 
 ## Current boundary
 
-The canonical contract remains read-only. The UAD completion-suggestion adapter now maps unambiguous market, subject-rating, comparable identity, transaction, physical-characteristic, and typed-adjustment evidence into review-only UAD 3.6 suggestions.
+The canonical contract remains read-only. The UAD completion-suggestion adapter now maps unambiguous assignment, subject, highest-and-best-use, subject-listing, sales-contract, prior-sale/transfer, market, comparable identity, transaction, physical-characteristic, and typed-adjustment evidence into review-only UAD 3.6 suggestions.
 
 The suggestions are returned in the existing UAD shared-data response under suggestions.custom_completion. Every field and entity retains the Custom source report, snapshot-scoped provenance digest, and appraiser-confirmation requirement. Rating ranges, combined room-count adjustments, out-of-range values, missing Custom sources, and other ambiguous translations are disclosed as omissions instead of being guessed.
 

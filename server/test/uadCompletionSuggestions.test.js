@@ -89,6 +89,7 @@ function fieldByKey(suggestions, key) {
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
     ...suggestions.suggestions.subject_amenity_fields,
+    ...suggestions.suggestions.site_fields,
     ...suggestions.suggestions.condition_fields,
     ...suggestions.suggestions.project_fields,
     ...suggestions.suggestions.highest_best_use_fields,
@@ -197,6 +198,90 @@ test("maps only complete, explicit construction and outdoor-living amenity evide
   const omissionCodes = new Set(suggestions.omissions.map((item) => item.code));
   assert.equal(omissionCodes.has("additional_improvement_requires_uad_classification"), true);
   assert.equal(omissionCodes.has("pool_type_and_material_require_appraiser_classification"), true);
+});
+
+test("preserves frozen location evidence as site commentary and does not guess influence impact", () => {
+  const input = fixtureParts();
+  input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_context = {
+    confidence: "high",
+    automatic_assessment: {
+      computed_at: "2026-08-17T15:30:00.000Z",
+      spatial_context: {
+        parcel_available: true,
+        adjacent_influences: [{
+          category: "commercial",
+          category_label: "Commercial",
+          relationship: "rear",
+          site_address: "100 Retail Road",
+        }],
+        nearby_influences: [],
+        nearest_high_traffic_road: {
+          name: "Belt Line Road",
+          distance_feet: 240,
+          annual_average_daily_traffic: 31_500,
+        },
+        nearest_railroad: null,
+        corner_lot: false,
+      },
+    },
+  };
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+
+  assert.match(fieldByKey(suggestions, "site_commentary:0100.0044").value, /100 Retail Road borders the rear/i);
+  assert.match(fieldByKey(suggestions, "site_commentary:0100.0044").value, /31,500 vehicles per day/i);
+  assert.equal(suggestions.suggestions.site_influence_entities.length, 0);
+  const impactReview = suggestions.omissions.find(
+    (item) => item.code === "site_influence_impact_requires_appraiser_selection",
+  );
+  assert.equal(impactReview.source_value.type, "CommercialArea");
+  assert.equal(impactReview.source_value.proximity, "Bordering");
+  assert.equal(
+    suggestions.omissions.some((item) => item.code === "busy_roadway_influence_requires_appraiser_impact_review"),
+    true,
+  );
+});
+
+test("creates a complete site-influence suggestion only when the assignment snapshot contains an explicit impact", () => {
+  const input = fixtureParts();
+  input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_context = {
+    confidence: "high",
+    automatic_assessment: {
+      computed_at: "2026-08-17T15:30:00.000Z",
+      spatial_context: {
+        parcel_available: true,
+        adjacent_influences: [{
+          category: "commercial",
+          relationship: "rear",
+          site_address: "100 Retail Road",
+          appraiser_impact: "Adverse",
+        }],
+        nearby_influences: [],
+      },
+    },
+  };
+
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+  const entity = suggestions.suggestions.site_influence_entities[0];
+
+  assert.deepEqual(entity.values, {
+    "site_influence:1500.0087": "CommercialArea",
+    "site_influence:1500.0086": "Bordering",
+    "site_influence:1500.0182": "Adverse",
+    "site_influence:1500.0181": "100 Retail Road borders the rear of the subject.",
+  });
+  const plan = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [entity.suggestion_id]),
+  );
+  assert.equal(plan.entities.length, 1);
+  assert.equal(plan.entities[0].fields.length, 4);
 });
 
 test("maps explicit project, HOA, condition, and nonconformity evidence for review", () => {
@@ -557,6 +642,7 @@ test("validates every generated suggestion against the official UAD catalog", ()
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
     ...suggestions.suggestions.subject_amenity_fields,
+    ...suggestions.suggestions.site_fields,
     ...suggestions.suggestions.condition_fields,
     ...suggestions.suggestions.project_fields,
     ...suggestions.suggestions.highest_best_use_fields,
@@ -566,6 +652,7 @@ test("validates every generated suggestion against the official UAD catalog", ()
     ...suggestions.suggestions.market_fields,
     ...suggestions.suggestions.sales_comparison_fields,
     ...suggestions.suggestions.subject_amenity_entities,
+    ...suggestions.suggestions.site_influence_entities,
     ...suggestions.suggestions.subject_listing_entities,
     ...suggestions.suggestions.subject_prior_transfer_entities,
     ...suggestions.suggestions.market_entities,

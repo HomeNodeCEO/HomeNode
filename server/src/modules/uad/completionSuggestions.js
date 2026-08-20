@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.6";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.7";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -103,6 +103,265 @@ const ASSIGNMENT_REASON_BY_TYPE = Object.freeze({
 
 function normalizedToken(value) {
   return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+}
+
+const SITE_INFLUENCE_TYPE_BY_CATEGORY = Object.freeze({
+  agricultural: "Agricultural",
+  commercial: "CommercialArea",
+  greenspace: "GreenSpace",
+  green_space: "GreenSpace",
+  industrial: "IndustrialArea",
+  multifamily: "HighDensityResidential",
+  multi_family: "HighDensityResidential",
+  park: "Park",
+  residential: "Residential",
+  school: "School",
+});
+
+function uadImpact(value) {
+  const normalized = normalizedToken(value);
+  if (normalized === "adverse") return "Adverse";
+  if (normalized === "beneficial") return "Beneficial";
+  if (normalized === "neutral") return "Neutral";
+  return null;
+}
+
+function siteInfluenceType(value) {
+  return SITE_INFLUENCE_TYPE_BY_CATEGORY[normalizedToken(value)] || null;
+}
+
+function locationAssessment(completion) {
+  const stored = completion.analyses?.location_influences?.assessment;
+  if (!plainObject(stored)) return null;
+  return plainObject(stored.automatic_assessment) ? stored.automatic_assessment : stored;
+}
+
+function influenceDescription(influence, { bordering = false } = {}) {
+  const label = text(
+    influence.site_address
+      || influence.use_description
+      || influence.property_description
+      || influence.category_label
+      || influence.category,
+    250,
+  );
+  if (!label) return null;
+  const relationship = bordering
+    ? normalizedToken(influence.relationship) === "rear"
+      ? "borders the rear of the subject"
+      : normalizedToken(influence.relationship) === "side"
+        ? "borders the side of the subject"
+        : normalizedToken(influence.relationship) === "front"
+          ? "borders the front of the subject"
+          : "borders the subject"
+    : number(influence.distance_feet) !== null
+      ? `is approximately ${Math.max(0, Math.round(number(influence.distance_feet))).toLocaleString("en-US")} feet from the subject`
+      : "is located offsite near the subject";
+  return text(`${label} ${relationship}.`, 500);
+}
+
+function siteInfluenceEntity(completion, {
+  influence,
+  sourceIndex,
+  sourceGroup,
+  bordering,
+  omissions,
+}) {
+  const type = siteInfluenceType(influence.category);
+  const description = influenceDescription(influence, { bordering });
+  const impact = uadImpact(influence.uad_impact ?? influence.appraiser_impact);
+  if (!description) return null;
+  const proximity = bordering ? "Bordering" : "Offsite";
+  const distance = bordering ? null : number(influence.distance_feet);
+  if (!type) {
+    addOmission(omissions, {
+      scope: `site_influence:${sourceGroup}:${sourceIndex}`,
+      code: "site_influence_type_requires_appraiser_selection",
+      source_value: {
+        source_category: text(influence.category, 100),
+        proximity,
+        distance_feet: distance,
+        description,
+      },
+      target_field_key: "site_influence:1500.0087",
+    });
+    return null;
+  }
+  const sourceValue = {
+    type,
+    proximity,
+    distance_feet: distance,
+    description,
+    reported_impact: impact,
+  };
+  if (!impact) {
+    addOmission(omissions, {
+      scope: `site_influence:${sourceGroup}:${sourceIndex}`,
+      code: "site_influence_impact_requires_appraiser_selection",
+      source_value: sourceValue,
+      target_field_key: "site_influence:1500.0182",
+    });
+    return null;
+  }
+  const values = {
+    "site_influence:1500.0087": type,
+    "site_influence:1500.0086": proximity,
+    "site_influence:1500.0182": impact,
+    "site_influence:1500.0181": description,
+  };
+  if (distance !== null && distance >= 0 && distance <= 999_999_999) {
+    values["site_influence:1500.0015"] = { amount: distance, unit: "Feet" };
+  }
+  const sourceKey = `${sourceGroup}-${sourceIndex + 1}-${normalizedToken(influence.category)}`;
+  return {
+    suggestion_id: `entity:site_influence:${sourceKey}`,
+    entity_type: "site_influence",
+    source_key: sourceKey,
+    values,
+    ...sourceMetadata(
+      completion,
+      `analyses.location_influences.assessment.spatial_context.${sourceGroup}.${sourceIndex}`,
+    ),
+  };
+}
+
+function locationSiteCommentary(assessment) {
+  const spatial = plainObject(assessment?.spatial_context) ? assessment.spatial_context : {};
+  const facts = [];
+  const adjacent = Array.isArray(spatial.adjacent_influences) ? spatial.adjacent_influences : [];
+  for (const influence of adjacent.slice(0, 4)) {
+    const description = influenceDescription(influence, { bordering: true });
+    if (description) facts.push(description);
+  }
+  const nearby = Array.isArray(spatial.nearby_influences) ? spatial.nearby_influences : [];
+  for (const influence of nearby.filter((item) => {
+    const distance = number(item?.distance_feet);
+    return distance !== null && distance <= 500;
+  }).slice(0, 3)) {
+    const description = influenceDescription(influence);
+    if (description) facts.push(description);
+  }
+  const traffic = spatial.nearest_high_traffic_road;
+  if (plainObject(traffic) && number(traffic.distance_feet) !== null) {
+    const volume = number(traffic.annual_average_daily_traffic);
+    facts.push(text(
+      `${text(traffic.name, 100) || "The nearest measured roadway"} is approximately ${Math.round(number(traffic.distance_feet)).toLocaleString("en-US")} feet from the subject${volume === null ? "" : ` and carries approximately ${Math.round(volume).toLocaleString("en-US")} vehicles per day based on the saved TxDOT AADT source`}.`,
+      500,
+    ));
+  } else if (plainObject(spatial.nearest_major_road) && number(spatial.nearest_major_road.distance_feet) !== null) {
+    facts.push(text(
+      `${text(spatial.nearest_major_road.name, 100) || "The nearest mapped major road"} is approximately ${Math.round(number(spatial.nearest_major_road.distance_feet)).toLocaleString("en-US")} feet from the subject.`,
+      500,
+    ));
+  }
+  const railroad = spatial.nearest_railroad;
+  if (plainObject(railroad) && number(railroad.distance_feet) !== null && number(railroad.distance_feet) <= 1_000) {
+    facts.push(text(
+      `${text(railroad.name, 100) || "A mapped rail line"} is approximately ${Math.round(number(railroad.distance_feet)).toLocaleString("en-US")} feet from the subject.`,
+      500,
+    ));
+  }
+  if (spatial.corner_lot === true) {
+    const roadNames = Array.isArray(spatial.road_frontages)
+      ? spatial.road_frontages.map((value) => text(value, 100)).filter(Boolean).slice(0, 4)
+      : [];
+    facts.push(text(
+      `The saved parcel analysis identifies a corner lot${roadNames.length ? ` with frontage on ${roadNames.join(" and ")}` : ""}.`,
+      500,
+    ));
+  }
+  const flood = spatial.flood_context;
+  if (plainObject(flood) && flood.special_flood_hazard === true) {
+    facts.push(text(
+      `The saved FEMA layer identifies the parcel within a special flood hazard area${text(flood.flood_zone, 40) ? ` (zone ${text(flood.flood_zone, 40)})` : ""}; a property-specific flood determination remains subject to appraiser review.`,
+      500,
+    ));
+  }
+  const notes = text(assessment?.appraiser_notes, 1_500);
+  if (notes) facts.push(`Appraiser location-context notes: ${notes}`);
+  return text([...new Set(facts.filter(Boolean))].join(" "), 5_000);
+}
+
+function buildSiteLocationSuggestions(completion, omissions) {
+  const fields = [];
+  const entities = [];
+  const assessment = locationAssessment(completion);
+  if (!assessment) return { fields, entities };
+  const spatial = plainObject(assessment.spatial_context) ? assessment.spatial_context : {};
+  const observedAt = assessment.computed_at || completion.generated_at;
+  const commentary = locationSiteCommentary(assessment);
+  addField(fields, field(
+    "site_commentary:0100.0044",
+    commentary,
+    completion,
+    "analyses.location_influences.assessment",
+    { observed_at: observedAt },
+  ));
+
+  const adjacent = Array.isArray(spatial.adjacent_influences) ? spatial.adjacent_influences : [];
+  adjacent.slice(0, 6).forEach((influence, sourceIndex) => {
+    const entity = siteInfluenceEntity(completion, {
+      influence,
+      sourceIndex,
+      sourceGroup: "adjacent_influences",
+      bordering: true,
+      omissions,
+    });
+    if (entity) entities.push({ ...entity, observed_at: observedAt });
+  });
+  const nearby = Array.isArray(spatial.nearby_influences) ? spatial.nearby_influences : [];
+  nearby.filter((influence) => {
+    const distance = number(influence?.distance_feet);
+    return distance !== null && distance <= 500;
+  }).slice(0, 4).forEach((influence, sourceIndex) => {
+    const entity = siteInfluenceEntity(completion, {
+      influence,
+      sourceIndex,
+      sourceGroup: "nearby_influences",
+      bordering: false,
+      omissions,
+    });
+    if (entity) entities.push({ ...entity, observed_at: observedAt });
+  });
+
+  const reviewCandidates = [
+    plainObject(spatial.nearest_high_traffic_road) ? {
+      code: "busy_roadway_influence_requires_appraiser_impact_review",
+      target: "site_influence:1500.0182",
+      value: spatial.nearest_high_traffic_road,
+    } : null,
+    plainObject(spatial.nearest_railroad)
+      && number(spatial.nearest_railroad.distance_feet) !== null
+      && number(spatial.nearest_railroad.distance_feet) <= 1_000 ? {
+      code: "rail_line_influence_requires_appraiser_impact_review",
+      target: "site_influence:1500.0182",
+      value: spatial.nearest_railroad,
+    } : null,
+    plainObject(spatial.flood_context) && spatial.flood_context.special_flood_hazard === true ? {
+      code: "flood_hazard_requires_appraiser_classification",
+      target: null,
+      value: spatial.flood_context,
+    } : null,
+    spatial.corner_lot === true ? {
+      code: "corner_lot_site_feature_requires_appraiser_impact_review",
+      target: "site_feature:1500.0180",
+      value: { road_frontages: spatial.road_frontages || [] },
+    } : null,
+    number(spatial.parcel_compactness) !== null && number(spatial.parcel_compactness) < 0.4 ? {
+      code: "parcel_shape_requires_appraiser_impact_review",
+      target: "site_feature:1500.0180",
+      value: { parcel_compactness: number(spatial.parcel_compactness) },
+    } : null,
+  ].filter(Boolean);
+  for (const candidate of reviewCandidates) {
+    addOmission(omissions, {
+      scope: "site_location_context",
+      code: candidate.code,
+      source_value: candidate.value,
+      ...(candidate.target ? { target_field_key: candidate.target } : {}),
+    });
+  }
+  return { fields, entities };
 }
 
 function buildAssignmentSuggestions(completion, omissions) {
@@ -1440,6 +1699,7 @@ export function buildUadCompletionSuggestions(completion) {
   const project = buildProjectSuggestions(completion, omissions);
   const subject = buildSubjectEntitySuggestions(completion, omissions);
   const subjectAmenities = buildSubjectAmenitySuggestions(completion, omissions);
+  const siteLocation = buildSiteLocationSuggestions(completion, omissions);
   const condition = buildConditionSuggestions(completion, omissions);
   const highestBestUse = buildHighestBestUseSuggestions(completion, omissions);
   const subjectListings = buildSubjectListingSuggestions(completion, omissions);
@@ -1475,6 +1735,8 @@ export function buildUadCompletionSuggestions(completion) {
       subject_entity_fields: subject.fields,
       subject_amenity_fields: subjectAmenities.fields,
       subject_amenity_entities: subjectAmenities.entities,
+      site_fields: siteLocation.fields,
+      site_influence_entities: siteLocation.entities,
       condition_fields: condition.fields,
       project_fields: project.fields,
       highest_best_use_fields: highestBestUse.fields,
@@ -1491,11 +1753,12 @@ export function buildUadCompletionSuggestions(completion) {
     omissions,
     counts: {
       field_suggestions: assignment.fields.length + subject.fields.length + subjectAmenities.fields.length
+        + siteLocation.fields.length
         + condition.fields.length + project.fields.length + highestBestUse.fields.length + subjectListings.fields.length
         + salesContract.fields.length + priorTransfers.fields.length
         + market.fields.length + sales.fields.length,
       entity_suggestions: subjectAmenities.entities.length + subjectListings.entities.length + priorTransfers.entities.length
-        + market.entities.length + sales.entities.length,
+        + siteLocation.entities.length + market.entities.length + sales.entities.length,
       omissions: omissions.length,
     },
     apply_mode: "review_only",

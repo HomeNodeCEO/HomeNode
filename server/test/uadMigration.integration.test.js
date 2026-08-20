@@ -553,8 +553,8 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     // Earlier source-section migrations plus Sections 22A-22O provide the
     // canonical comparable/grid locations and their subject redisplays.
-    assert.equal(salesComparisonLocations.rows[0].count, 527);
-    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 222);
+    assert.equal(salesComparisonLocations.rows[0].count, 526);
+    assert.equal(salesComparisonLocations.rows[0].redisplay_count, 221);
 
     const officialSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count

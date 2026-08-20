@@ -301,7 +301,10 @@ export async function applyUadCompletionSuggestions(pool, workfileIdValue, input
     await client.query(
       `INSERT INTO appraisal.uad_audit_events (
          workfile_id, event_type, entity_type, entity_id, after_data, metadata
-       ) VALUES ($1, 'uad_completion_suggestions.applied', 'uad_workfile', $1, $2::jsonb, $3::jsonb)`,
+       ) VALUES (
+         $1::uuid, 'uad_completion_suggestions.applied', 'uad_workfile',
+         ($1::uuid)::text, $2::jsonb, $3::jsonb
+       )`,
       [
         workfileId,
         JSON.stringify({

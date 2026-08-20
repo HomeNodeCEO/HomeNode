@@ -10,11 +10,12 @@
     },
     "internal": {
       "distribution": "internal",
+      "autoIncrement": true,
       "environment": "preview",
       "env": {
         "EXPO_PUBLIC_API_BASE_URL": "https://homenode-api-staging.onrender.com",
         "EXPO_PUBLIC_OIDC_ISSUER": "https://navigable-experience-82-staging.authkit.app",
-        "EXPO_PUBLIC_OIDC_CLIENT_ID": "client_01M0DPCXBD1GH6QQ36KJS2EWFN"
+        "EXPO_PUBLIC_OIDC_CLIENT_ID": "client_01M0GJQ6A48FZ8KC2Y75NVZZQW"
       },
       "android": {
         "buildType": "apk"

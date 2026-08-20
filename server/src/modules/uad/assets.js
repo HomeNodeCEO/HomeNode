@@ -378,15 +378,21 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   const expiresAt = new Date(Date.now() + upload.expires_in_seconds * 1000);
 
   await pool.query(
-    `INSERT INTO appraisal.uad_assets (
-       id, workfile_id, entity_id, asset_kind, section_number,
-       caption_type, caption, storage_provider, storage_bucket, object_key,
-       original_file_name, content_type, status, capture_metadata, upload_expires_at
-     ) VALUES (
-       $1, $2, $3, $4, $5,
-       $6, $7, $8, $9, $10,
-       $11, $12, 'pending_upload', $13::jsonb, $14
-     )`,
+    `WITH inserted_asset AS (
+       INSERT INTO appraisal.uad_assets (
+         id, workfile_id, entity_id, asset_kind, section_number,
+         caption_type, caption, storage_provider, storage_bucket, object_key,
+         original_file_name, content_type, status, capture_metadata, upload_expires_at
+       ) VALUES (
+         $1, $2, $3, $4, $5,
+         $6, $7, $8, $9, $10,
+         $11, $12, 'pending_upload', $13::jsonb, $14
+       )
+       RETURNING workfile_id
+     )
+     UPDATE appraisal.uad_workfiles
+        SET status = 'draft', updated_at = now()
+      WHERE id = $2 AND EXISTS (SELECT 1 FROM inserted_asset)`,
     [
       assetId,
       workfileId,
@@ -441,15 +447,22 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     throw new Error("invalid_uad_uploaded_asset");
   }
   const updated = await pool.query(
-    `UPDATE appraisal.uad_assets
-        SET status = 'verified',
-            byte_size = $3,
-            uploaded_at = COALESCE(uploaded_at, now()),
-            verified_at = now(),
-            updated_at = now(),
-            capture_metadata = capture_metadata || jsonb_build_object('storage_etag', $4::text)
-      WHERE id = $1 AND workfile_id = $2
-      RETURNING *`,
+    `WITH updated_asset AS (
+       UPDATE appraisal.uad_assets
+          SET status = 'verified',
+              byte_size = $3,
+              uploaded_at = COALESCE(uploaded_at, now()),
+              verified_at = now(),
+              updated_at = now(),
+              capture_metadata = capture_metadata || jsonb_build_object('storage_etag', $4::text)
+        WHERE id = $1 AND workfile_id = $2
+        RETURNING *
+     ), touched_workfile AS (
+       UPDATE appraisal.uad_workfiles
+          SET status = 'draft', updated_at = now()
+        WHERE id = $2 AND EXISTS (SELECT 1 FROM updated_asset)
+     )
+     SELECT * FROM updated_asset`,
     [assetId, workfileId, inspected.byte_size, inspected.etag],
   );
   return assetResponse(updated.rows[0]);
@@ -459,10 +472,17 @@ export async function deleteUadAsset(pool, workfileIdValue, assetIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const assetId = normalizeUadWorkfileId(assetIdValue);
   const deleted = await pool.query(
-    `UPDATE appraisal.uad_assets
-        SET status = 'deleted', updated_at = now()
-      WHERE id = $1 AND workfile_id = $2 AND status <> 'deleted'
-      RETURNING id`,
+    `WITH deleted_asset AS (
+       UPDATE appraisal.uad_assets
+          SET status = 'deleted', updated_at = now()
+        WHERE id = $1 AND workfile_id = $2 AND status <> 'deleted'
+        RETURNING id
+     ), touched_workfile AS (
+       UPDATE appraisal.uad_workfiles
+          SET status = 'draft', updated_at = now()
+        WHERE id = $2 AND EXISTS (SELECT 1 FROM deleted_asset)
+     )
+     SELECT id FROM deleted_asset`,
     [assetId, workfileId],
   );
   if (!deleted.rows.length) throw new Error("uad_asset_not_found");

@@ -12,6 +12,7 @@ import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { getUadSharedData } from "./sharedData.js";
 import { listUadSketches, saveUadSketch } from "./sketches.js";
+import { getLatestUadValidation, runLocalUadValidation } from "./validation.js";
 import {
   createUadWorkfile,
   getUadSubjectSummary,
@@ -23,6 +24,7 @@ function errorStatus(error) {
   const message = String(error?.message || "");
   if (message.includes("not_found")) return 404;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
+  if (message === "uad_validation_status_locked") return 409;
   if (message.startsWith("uad_completion_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
@@ -100,6 +102,22 @@ export function createUadRouter({ pool, storage, enabled = false }) {
     try {
       const editor = await getUadEditor(pool, req.params.workfileId);
       res.json(editor);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/validation", async (req, res) => {
+    try {
+      res.json({ validation: await getLatestUadValidation(pool, req.params.workfileId) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/validation", async (req, res) => {
+    try {
+      res.json({ validation: await runLocalUadValidation(pool, req.params.workfileId) });
     } catch (error) {
       sendError(res, error);
     }

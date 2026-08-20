@@ -45,4 +45,8 @@ The database role needs the same schema-change privileges used by the earlier mo
 
 ## Next integration phase
 
-Build shared, versioned report-completion adapters above the existing Custom logic. Those adapters should produce a canonical analysis result for neighborhood and market analysis, comparable discovery and ranking, adjustments, reconciliation, and location influences, then map that result into Custom and UAD classifications separately. Assignment-scoped subject facts must always come from the selected snapshot, never from a timeless property row.
+The first shared, versioned report-completion adapter is implemented. It produces a canonical analysis result for neighborhood and market analysis, comparable discovery and ranking, adjustments, reconciliation, and location influences. Assignment-scoped subject facts always come from the selected snapshot, never from a timeless property row.
+
+`GET /api/accounts/:accountId/appraisal-history/:reportFileId/completion` exposes the read-only result. A UAD file can use a Custom source only when both report files share the exact appraisal case and subject snapshot.
+
+The next step is an explicit field-by-field UAD 3.6 mapper. It must translate the canonical document into UAD classifications without bypassing UAD validation, review, or certification controls. See `SHARED_APPRAISAL_COMPLETION.md`.

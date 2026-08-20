@@ -3,6 +3,7 @@ import { getAccountPropertyActivityHistory } from "../../services/accountSalesHi
 import { getStoredPropertyContext } from "../../services/propertyContext.js";
 import { getPropertyInfluenceContexts } from "../../services/propertyInfluenceStore.js";
 import { getPropertyZoningEvidence } from "../../services/zoningEvidence.js";
+import { loadUadCompletionSuggestions } from "./completionSuggestions.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const influenceTypeByHomeNodeCategory = Object.freeze({
@@ -174,18 +175,20 @@ export async function getUadSharedData(pool, workfileIdValue) {
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
   const accountId = workfileResult.rows[0].account_id;
 
-  const [contextResult, influenceResult, zoningResult, boundaryResult, activityResult] = await Promise.allSettled([
+  const [contextResult, influenceResult, zoningResult, boundaryResult, activityResult, completionResult] = await Promise.allSettled([
     getStoredPropertyContext(pool, { accountId }),
     getPropertyInfluenceContexts(pool, [accountId]).then((items) => items.get(accountId) || null),
     getPropertyZoningEvidence(pool, { accountId }),
     getLatestNeighborhoodBoundary(pool, { accountId }),
     getAccountPropertyActivityHistory(pool, accountId),
+    loadUadCompletionSuggestions(pool, workfileId),
   ]);
   const context = settledSource("property_context", contextResult);
   const influence = settledSource("property_influences", influenceResult);
   const zoning = settledSource("zoning_evidence", zoningResult);
   const boundary = settledSource("neighborhood_boundary", boundaryResult);
   const activity = settledSource("property_activity_history", activityResult);
+  const customCompletion = settledSource("custom_appraisal_completion", completionResult);
   const listingSuggestions = subjectListingSuggestions(activity.data);
   const priorTransferSuggestions = subjectPriorTransferSuggestions(activity.data);
 
@@ -198,6 +201,7 @@ export async function getUadSharedData(pool, workfileIdValue) {
       zoning_evidence: zoning,
       neighborhood_boundary: boundary,
       property_activity_history: activity,
+      custom_appraisal_completion: customCompletion,
     },
     suggestions: {
       site_fields: zoningSuggestions(zoning.data),
@@ -217,6 +221,7 @@ export async function getUadSharedData(pool, workfileIdValue) {
         requires_appraiser_confirmation: true,
       }] : [],
       subject_prior_transfer_entities: priorTransferSuggestions,
+      custom_completion: customCompletion.data || null,
     },
     adapters: {
       comparable_search: { ready: true, mode: "existing_homenode_services", enabled_in_uad_editor: false },
@@ -226,6 +231,11 @@ export async function getUadSharedData(pool, workfileIdValue) {
       subject_listing_history: { ready: true, mode: "existing_homenode_activity_service", enabled_in_uad_editor: false },
       subject_prior_transfer_history: { ready: true, mode: "existing_homenode_activity_service", enabled_in_uad_editor: false },
       comparable_prior_transfer_history: { ready: true, mode: "shared_sales_comparable_entities", enabled_in_uad_editor: false },
+      custom_appraisal_completion: {
+        ready: customCompletion.available,
+        mode: "canonical_review_only_suggestions",
+        enabled_in_uad_editor: false,
+      },
     },
   };
 }

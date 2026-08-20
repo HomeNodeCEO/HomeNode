@@ -360,6 +360,20 @@ export async function getUadSharedData(workfileId: string): Promise<{
     subject_listing_entities: unknown[];
     subject_prior_transfer_fields: unknown[];
     subject_prior_transfer_entities: unknown[];
+    custom_completion: {
+      schema_version: number;
+      adapter_version: string;
+      status: "ready_for_review" | "source_review_required";
+      suggestions: {
+        market_fields: unknown[];
+        market_entities: unknown[];
+        sales_comparison_fields: unknown[];
+        sales_comparable_entities: unknown[];
+      };
+      omissions: unknown[];
+      apply_mode: "review_only";
+      requires_appraiser_confirmation: true;
+    } | null;
   };
   adapters: Record<string, { ready: boolean; mode: string; enabled_in_uad_editor: boolean }>;
 }> {

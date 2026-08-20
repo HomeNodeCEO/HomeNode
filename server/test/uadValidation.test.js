@@ -85,6 +85,7 @@ test("persists revision-specific runs and exposes one GET and one POST route", (
   const directory = path.dirname(fileURLToPath(import.meta.url));
   const service = fs.readFileSync(path.resolve(directory, "../src/modules/uad/validation.js"), "utf8");
   const router = fs.readFileSync(path.resolve(directory, "../src/modules/uad/router.js"), "utf8");
+  const artifacts = fs.readFileSync(path.resolve(directory, "../src/modules/uad/uadArtifacts.js"), "utf8");
   const assets = fs.readFileSync(path.resolve(directory, "../src/modules/uad/assets.js"), "utf8");
   const entities = fs.readFileSync(path.resolve(directory, "../src/modules/uad/entities.js"), "utf8");
   const sketches = fs.readFileSync(path.resolve(directory, "../src/modules/uad/sketches.js"), "utf8");
@@ -95,6 +96,14 @@ test("persists revision-specific runs and exposes one GET and one POST route", (
   assert.match(service, /workfile\.status === "ready"/);
   assert.match(router, /router\.get\("\/workfiles\/:workfileId\/validation"/);
   assert.match(router, /router\.post\("\/workfiles\/:workfileId\/validation"/);
+  assert.match(router, /router\.get\("\/workfiles\/:workfileId\/artifacts\/xml"/);
+  assert.match(router, /router\.post\("\/workfiles\/:workfileId\/artifacts\/xml"/);
+  assert.match(artifacts, /validator_type = 'local_compliance'/);
+  assert.match(artifacts, /validator_type, status, fatal_count/);
+  assert.match(artifacts, /artifact_type, storage_provider/);
+  assert.match(artifacts, /input_digest_sha256/);
+  assert.match(artifacts, /DOWNLOADABLE_WORKFILE_STATUSES/);
+  assert.match(artifacts, /currentWorkfile = await pool\.query/);
   assert.match(assets, /SET status = 'draft', updated_at = now\(\)/);
   assert.match(entities, /SET status = 'draft', updated_at = now\(\)/);
   assert.match(sketches, /SET status = 'draft', updated_at = now\(\)/);

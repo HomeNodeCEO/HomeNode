@@ -9,6 +9,7 @@ import {
   UAD_ROLE_CODES,
 } from "../src/modules/uad/constants.js";
 import {
+  buildUadGeneratedArtifactObjectKey,
   buildUadObjectKey,
   createR2PresignedUrl,
   createUadObjectStorage,
@@ -46,6 +47,8 @@ test("the official specification manifest matches the locked release", () => {
   assert.equal(manifest.releaseKey, CURRENT_UAD_RELEASE_KEY);
   assert.equal(manifest.components.length, 9);
   assert.ok(manifest.components.every((component) => /^[a-f0-9]{64}$/.test(component.sha256)));
+  assert.equal(manifest.runtimeAssets.deliveryMapping.mappedUniqueIds, 798);
+  assert.match(manifest.runtimeAssets.combinedSubschema.sha256, /^[a-f0-9]{64}$/);
 });
 
 test("normalizes UAD workfile identity without accepting unsafe values", () => {
@@ -77,6 +80,17 @@ test("builds private mobile-upload object keys without trusting the original fil
     }),
     "organizations/org-1/uad/workfile-1/assets/asset-1/front-door.jpg",
   );
+  assert.equal(
+    buildUadGeneratedArtifactObjectKey({
+      organizationId: "org-1",
+      workfileId: "workfile-1",
+      revisionNumber: 7,
+      artifactType: "xml",
+      checksumSha256: "A".repeat(64),
+      fileName: "FAS / 007.xml",
+    }),
+    `organizations/org-1/uad/workfile-1/generated/revision-7/xml/${"a".repeat(64)}/FAS-007.xml`,
+  );
 });
 
 test("creates a bounded R2 presigned PUT URL and requires complete configuration", () => {
@@ -101,6 +115,40 @@ test("creates a bounded R2 presigned PUT URL and requires complete configuration
   assert.equal(url.searchParams.get("X-Amz-Expires"), "900");
   assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "content-type;host");
   assert.match(url.searchParams.get("X-Amz-Signature"), /^[a-f0-9]{64}$/);
+});
+
+test("uploads generated artifacts through a private signed R2 request", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(null, { status: 200, headers: { etag: '"artifact-etag"' } });
+  };
+  try {
+    const storage = createUadObjectStorage({
+      UAD_OBJECT_STORAGE_PROVIDER: "r2",
+      R2_ACCOUNT_ID: "example-account",
+      R2_ACCESS_KEY_ID: "example-key",
+      R2_SECRET_ACCESS_KEY: "example-secret",
+      R2_BUCKET: "homenode-uad",
+    });
+    const result = await storage.putObject({
+      objectKey: "organizations/org/uad/workfile/generated/revision-1/xml/hash/file.xml",
+      contentType: "application/xml",
+      body: "<MESSAGE/>",
+    });
+    assert.equal(request.init.method, "PUT");
+    assert.equal(request.init.headers["content-type"], "application/xml");
+    assert.equal(request.init.body, "<MESSAGE/>");
+    assert.match(request.url, /^https:\/\/example-account\.r2\.cloudflarestorage\.com\/homenode-uad\//);
+    assert.deepEqual(result, {
+      etag: '"artifact-etag"',
+      byte_size: 10,
+      content_type: "application/xml",
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("locks the phase-one Assignment and Subject catalog to context-aware official field IDs", () => {

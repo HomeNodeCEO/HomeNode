@@ -3,6 +3,18 @@
   "uadVersion": "3.6",
   "capturedOn": "2026-08-16",
   "officialLandingPage": "https://singlefamily.fanniemae.com/delivering/uniform-mortgage-data-program/uniform-appraisal-dataset",
+  "runtimeAssets": {
+    "deliveryMapping": {
+      "path": "delivery-mapping-v1.4.json",
+      "sourceComponent": "Appendix A-1 URAR Delivery Specification",
+      "sourceSha256": "10f470ed53ee6f70404aad850f3f3c15aaee9489f654535ee0a3e5d1a8adee29",
+      "mappedUniqueIds": 798
+    },
+    "combinedSubschema": {
+      "path": "subschema/v1.3/GSE_UAD_3.6.0_v1.3.xsd",
+      "sha256": "0bb6650ab465753fe2023be14d414ad6db45820201b7fdee1d90023e49cbf129"
+    }
+  },
   "components": [
     {
       "name": "Appendix A-1 URAR Delivery Specification",

@@ -1,5 +1,9 @@
 Signup Email Setup
 
+UAD 3.6 XML export
+
+- See [UAD_XML_EXPORT.md](./UAD_XML_EXPORT.md) for the locked Appendix A mapping, official GSE subschema validation gate, private R2 artifact flow, API endpoints, and current implementation boundary.
+
 - Frontend proxy to Node API
   - Create `dcad-frontend/.env.local` with: `VITE_PROXY_TARGET=http://127.0.0.1:4000`
 

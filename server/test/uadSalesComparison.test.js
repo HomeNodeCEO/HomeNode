@@ -48,7 +48,7 @@ const value = (entityId, contextKey, uid, fieldValue) => ({
 test("adds the Section 22A-22Q editor on canonical comparable entities", () => {
   const sections = getUadEditorSections();
   const section = sections.find((item) => item.key === "sales_comparison");
-  assert.equal(sections.at(-1)?.officialSectionNumber, 22);
+  assert.equal(sections.find((section) => section.key === "sales_comparison")?.officialSectionNumber, 22);
   assert.equal(section?.title, "Sales Comparison Approach");
   assert.equal(UAD_SALES_COMPARISON_FIELDS.length, 314);
   assert.equal(UAD_PHASE_ONE_FIELDS.filter((field) => field.section === "sales_comparison").length, 314);

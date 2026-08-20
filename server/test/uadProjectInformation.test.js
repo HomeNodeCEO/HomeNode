@@ -27,7 +27,7 @@ test("adds conditional official URAR Section 18", () => {
   const section = sections.find((item) => item.key === "project_information");
   assert.deepEqual(
     sections.map((item) => item.officialSectionNumber),
-    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22],
+    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26],
   );
   assert.equal(section?.title, "Project Information");
   assert.ok(section?.appliesWhen);

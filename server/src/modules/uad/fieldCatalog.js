@@ -28,6 +28,10 @@ import {
   UAD_PRIOR_SALE_TRANSFER_ENTITY_GROUPS,
   UAD_PRIOR_SALE_TRANSFER_FIELDS,
 } from "./priorSaleTransferCatalog.js";
+import {
+  UAD_RECONCILIATION_ENTITY_GROUPS,
+  UAD_RECONCILIATION_FIELDS,
+} from "./reconciliationCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import {
   UAD_SALES_COMPARISON_ENTITY_GROUPS,
@@ -66,6 +70,7 @@ export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
   ...UAD_SUBJECT_LISTING_ENTITY_GROUPS,
   ...UAD_PRIOR_SALE_TRANSFER_ENTITY_GROUPS,
   ...UAD_SALES_COMPARISON_ENTITY_GROUPS,
+  ...UAD_RECONCILIATION_ENTITY_GROUPS,
 });
 
 const UAD_EDITOR_SECTIONS = Object.freeze({
@@ -110,6 +115,10 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   sales_comparison: {
     title: "Sales Comparison Approach",
     officialSectionNumber: 22,
+  },
+  reconciliation: {
+    title: "Reconciliation",
+    officialSectionNumber: 26,
   },
 });
 
@@ -593,6 +602,7 @@ const fields = [
   ...UAD_SALES_CONTRACT_FIELDS,
   ...UAD_PRIOR_SALE_TRANSFER_FIELDS,
   ...UAD_SALES_COMPARISON_FIELDS,
+  ...UAD_RECONCILIATION_FIELDS,
 ];
 
 function fieldKey(field) {

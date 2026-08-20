@@ -9,7 +9,7 @@ HomeNode generates UAD XML inside the existing Node service and stores successfu
 - MISMO reference model identifier: `3.6.0366`.
 - Local XSD engine: `xmllint-wasm` 5.3.0 (libxml2 compiled to WebAssembly).
 
-The generated runtime mapping contains every one of the 798 unique Appendix A IDs currently represented by HomeNode's 905 context-aware editor fields. It preserves the XML sort number, XPath, data point, measurement attribute, supported attribute value, property context, and implementation note needed by the generator.
+The generated runtime mapping contains every one of the 834 unique Appendix A IDs currently represented by HomeNode's 941 context-aware editor fields. It preserves the XML sort number, XPath, data point, measurement attribute, supported attribute value, property context, and implementation note needed by the generator.
 
 The official combined XSD and its local dependencies live in `src/modules/uad/spec/subschema/v1.3`. Validation performs no network access and never follows an XML-supplied machine path.
 
@@ -43,6 +43,6 @@ A schema failure is a completed validation result, not an export. The artifact r
 
 ## Current boundary
 
-The generator intentionally does not invent missing report data. HomeNode currently maps the implemented editor scope through Sales Comparison. The official subschema also requires later report/package structures such as Scope of Work, Valuation Report Detail, Valuation Software Systems, Parties, Signatories, Views, About Versions, Document Classification, and Service Detail. Until those UAD sections and system-owned metadata are implemented, the official schema gate will report them as blocking findings. Those findings now provide the ordered backlog for the next implementation phase.
+The generator intentionally does not invent missing report data. HomeNode currently maps the implemented editor scope through Section 26 Reconciliation, including approach exclusions, final opinion, effective date, value conditions, exposure time, optional client-requested conditions, and the canonical defect redisplays. The official subschema also requires later report/package structures such as Certifications and Scope of Work, Valuation Report Detail, Valuation Software Systems, Parties, Signatories, Views, About Versions, Document Classification, and Service Detail. Until those UAD sections and system-owned metadata are implemented, the official schema gate will report them as blocking findings. Those findings provide the ordered backlog for the next implementation phase.
 
 This local schema gate is separate from Appendix H compliance validation and from Fannie Mae/Freddie Mac submission APIs. XML must pass both the local readiness rules and this official XSD gate before the later compliance and submission-package phases can run.

@@ -192,6 +192,7 @@ import {
   registerOriginalAppraisalReport,
 } from "./services/appraisalHistory.js";
 import { replicateAppraisalFile } from "./services/appraisalReplication.js";
+import { loadSharedAppraisalCompletion } from "./services/appraisalCompletionAdapter.js";
 
 const app = express();
 const pool = new pg.Pool({
@@ -1595,6 +1596,34 @@ app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
     }
     console.error("appraisal history list failed", error);
     return res.status(500).json({ error: "appraisal_history_list_failed" });
+  }
+});
+
+/** Load the workflow-neutral completion document anchored to one immutable subject snapshot. */
+app.get("/api/accounts/:id/appraisal-history/:reportFileId/completion", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const completion = await loadSharedAppraisalCompletion(pool, {
+      accountId: canonicalId,
+      reportFileId: req.params.reportFileId,
+    });
+    return res.json({ ok: true, account_id: canonicalId, completion });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
+    if (message.startsWith("invalid_")) return res.status(400).json({ error: message });
+    if (
+      message === "appraisal_subject_snapshot_required"
+      || message === "shared_appraisal_completion_source_not_found"
+    ) {
+      return res.status(409).json({ error: message });
+    }
+    console.error("shared appraisal completion load failed", error);
+    return res.status(500).json({ error: "shared_appraisal_completion_load_failed" });
   }
 });
 

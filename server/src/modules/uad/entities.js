@@ -42,7 +42,7 @@ export async function listUadEntities(queryable, workfileIdValue) {
   return rows.map(entityResponse);
 }
 
-export async function createUadEntityWithClient(client, workfileIdValue, input = {}, { actorUserId = null } = {}) {
+export async function createUadEntityWithClient(client, workfileIdValue, input = {}, { actorUserId = null, audit = true, touch = true } = {}) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const entityType = normalizeEntityType(input.entity_type);
   const id = randomUUID();
@@ -160,13 +160,17 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
       ],
     );
   }
-  await client.query(
-      `INSERT INTO appraisal.uad_audit_events (
-         workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data
-       ) VALUES ($1, $2, 'uad_entity.created', $3, $4, $5::jsonb)`,
-    [workfileId, actorUserId, entityType, id, JSON.stringify(entityResponse(inserted.rows[0]))],
-  );
-  await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+  if (audit) {
+    await client.query(
+        `INSERT INTO appraisal.uad_audit_events (
+           workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data
+         ) VALUES ($1, $2, 'uad_entity.created', $3, $4, $5::jsonb)`,
+      [workfileId, actorUserId, entityType, id, JSON.stringify(entityResponse(inserted.rows[0]))],
+    );
+  }
+  if (touch) {
+    await client.query("UPDATE appraisal.uad_workfiles SET updated_at = now() WHERE id = $1", [workfileId]);
+  }
   return entityResponse(inserted.rows[0]);
 }
 

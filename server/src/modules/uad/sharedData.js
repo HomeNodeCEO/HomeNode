@@ -233,8 +233,8 @@ export async function getUadSharedData(pool, workfileIdValue) {
       comparable_prior_transfer_history: { ready: true, mode: "shared_sales_comparable_entities", enabled_in_uad_editor: false },
       custom_appraisal_completion: {
         ready: customCompletion.available,
-        mode: "canonical_review_only_suggestions",
-        enabled_in_uad_editor: false,
+        mode: "guarded_review_apply",
+        enabled_in_uad_editor: true,
       },
     },
   };

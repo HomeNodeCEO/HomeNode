@@ -7,6 +7,7 @@ import {
   verifyUadAssetUpload,
 } from "./assets.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
+import { applyUadCompletionSuggestions } from "./completionApply.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { getUadSharedData } from "./sharedData.js";
@@ -21,6 +22,8 @@ import {
 function errorStatus(error) {
   const message = String(error?.message || "");
   if (message.includes("not_found")) return 404;
+  if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
+  if (message.startsWith("uad_completion_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
   if (["uad_parent_entity_required", "uad_entity_minimum_required"].includes(message)) return 400;
@@ -119,6 +122,18 @@ export function createUadRouter({ pool, storage, enabled = false }) {
   router.get("/workfiles/:workfileId/shared-data", async (req, res) => {
     try {
       res.json(await getUadSharedData(pool, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/completion-suggestions/apply", async (req, res) => {
+    try {
+      res.json(await applyUadCompletionSuggestions(
+        pool,
+        req.params.workfileId,
+        req.body || {},
+      ));
     } catch (error) {
       sendError(res, error);
     }

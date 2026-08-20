@@ -7,6 +7,7 @@ import {
   buildUadCompletionSuggestions,
   loadUadCompletionSuggestions,
 } from "../src/modules/uad/completionSuggestions.js";
+import { applyUadCompletionSuggestions, buildUadCompletionApplyPlan } from "../src/modules/uad/completionApply.js";
 import { customAppraisalReportFixture } from "./fixtures/customAppraisalReportFixture.js";
 
 const CASE_ID = "9be0a6ef-71a8-4503-bb4a-d1c6efb83fe7";
@@ -221,4 +222,148 @@ test("reports a missing UAD report registration without synthesizing an assignme
     loadUadCompletionSuggestions(pool, UAD_WORKFILE_ID),
     /uad_completion_report_file_not_registered/,
   );
+});
+
+
+function applyInput(suggestions, selectedSuggestionIds) {
+  return {
+    selected_suggestion_ids: selectedSuggestionIds,
+    expected_source_digest_sha256: suggestions.source_completion.source_digest_sha256,
+    expected_adapter_version: suggestions.adapter_version,
+    expected_revision: 4,
+    preserve_existing: true,
+    confirmed: true,
+  };
+}
+
+test("validates every generated suggestion against the official UAD catalog", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const all = [
+    ...suggestions.suggestions.market_fields,
+    ...suggestions.suggestions.sales_comparison_fields,
+    ...suggestions.suggestions.market_entities,
+    ...suggestions.suggestions.sales_comparable_entities,
+  ];
+  const plan = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, all.map((item) => item.suggestion_id)),
+  );
+
+  assert.equal(plan.conflicts.length, 0);
+  assert.equal(plan.fields.length, suggestions.counts.field_suggestions);
+  assert.equal(plan.entities.length, suggestions.counts.entity_suggestions);
+  assert.equal(plan.entities.some((item) => item.children.length > 0), true);
+});
+
+test("preserves existing UAD values and populated entity groups", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const root = suggestions.suggestions.market_fields[0];
+  const comparable = suggestions.suggestions.sales_comparable_entities[0];
+  const [context, uid] = root.field_key.split(":");
+  const plan = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [root.suggestion_id, comparable.suggestion_id]),
+    {
+      existingValues: [{ entity_id: null, field_context: context, uad_uid: uid }],
+      existingEntities: [{ id: "existing-comparable", entity_type: "sales_comparable", data: {} }],
+    },
+  );
+
+  assert.equal(plan.fields.length, 0);
+  assert.equal(plan.entities.length, 0);
+  assert.deepEqual(plan.conflicts.map((item) => item.reason), [
+    "existing_value_preserved",
+    "entity_type_already_populated",
+  ]);
+});
+
+test("requires explicit confirmation, preservation, revision, and exact provenance", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const selected = [suggestions.suggestions.market_fields[0].suggestion_id];
+  const valid = applyInput(suggestions, selected);
+
+  assert.throws(
+    () => buildUadCompletionApplyPlan(suggestions, { ...valid, confirmed: false }),
+    /uad_completion_confirmation_required/,
+  );
+  assert.throws(
+    () => buildUadCompletionApplyPlan(suggestions, { ...valid, preserve_existing: false }),
+    /uad_completion_preserve_existing_required/,
+  );
+  assert.throws(
+    () => buildUadCompletionApplyPlan(suggestions, { ...valid, expected_revision: 0 }),
+    /invalid_uad_completion_revision/,
+  );
+  assert.throws(
+    () => buildUadCompletionApplyPlan(suggestions, { ...valid, expected_source_digest_sha256: "0".repeat(64) }),
+    /uad_completion_source_changed/,
+  );
+  assert.throws(
+    () => buildUadCompletionApplyPlan(suggestions, { ...valid, selected_suggestion_ids: ["field:unknown:0000"] }),
+    /uad_completion_selection_changed/,
+  );
+});
+
+
+test("applies one reviewed root field in one revision and one audit transaction", async () => {
+  const input = fixtureParts();
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+  const selected = suggestions.suggestions.market_fields[0];
+  const insertedRows = [];
+  let revisionInserts = 0;
+  let auditInserts = 0;
+  let releases = 0;
+  const client = {
+    async query(sql, params = []) {
+      const normalized = String(sql).trim();
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(normalized)) return { rows: [] };
+      if (sql.includes("SELECT id, current_revision, specification_release_key")) {
+        return { rows: [{ id: UAD_WORKFILE_ID, current_revision: 4, specification_release_key: "uad-3.6-2026-01-26" }] };
+      }
+      if (sql.includes("WHERE uad_workfile_id = $1")) {
+        return { rows: [{ id: UAD_REPORT_ID, account_id: "26272500060150000" }] };
+      }
+      if (sql.includes("report_file.id = $1")) return { rows: [input.targetReportFile] };
+      if (sql.includes("FROM app.appraisal_subject_snapshots")) return { rows: [input.subjectSnapshot] };
+      if (sql.includes("report_file.workflow_type = 'custom_appraisal'")) return { rows: [input.sourceReportFile] };
+      if (sql.includes("FROM app.custom_appraisal_workfile_sections")) {
+        return {
+          rows: Object.entries(input.customSections).map(([sectionKey, section]) => ({
+            section_key: sectionKey, section_value: section.value, revision: section.revision,
+          })),
+        };
+      }
+      if (sql.includes("SELECT * FROM appraisal.uad_field_values")) return { rows: insertedRows };
+      if (sql.includes("SELECT *") && sql.includes("FROM appraisal.uad_entities")) return { rows: [] };
+      if (sql.includes("INSERT INTO appraisal.uad_field_values")) {
+        insertedRows.push({
+          id: params[0], workfile_id: params[1], entity_id: params[2], field_context: params[3],
+          uad_uid: params[4], report_field_id: params[5], value: JSON.parse(params[6]),
+          source_type: "homenode", source_reference: params[7], is_appraiser_confirmed: true,
+        });
+        return { rows: [] };
+      }
+      if (sql.includes("INSERT INTO appraisal.uad_revisions")) { revisionInserts += 1; return { rows: [] }; }
+      if (sql.includes("INSERT INTO appraisal.uad_audit_events")) { auditInserts += 1; return { rows: [] }; }
+      if (sql.includes("UPDATE appraisal.uad_workfiles")) return { rows: [] };
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    release() { releases += 1; },
+  };
+  const pool = { connect: async () => client };
+  const result = await applyUadCompletionSuggestions(
+    pool,
+    UAD_WORKFILE_ID,
+    applyInput(suggestions, [selected.suggestion_id]),
+  );
+
+  assert.equal(result.current_revision, 5);
+  assert.equal(result.applied_suggestion_count, 1);
+  assert.equal(insertedRows.length, 1);
+  assert.equal(revisionInserts, 1);
+  assert.equal(auditInserts, 1);
+  assert.equal(releases, 1);
 });

@@ -99,6 +99,19 @@ function validateEntitySuggestion(suggestion, parentType = null) {
   return { suggestion, fields, children };
 }
 
+function resolveTargetEntity(existingEntities, suggestion) {
+  if (!plainObject(suggestion.target_entity)) return { entity: null, conflict: null };
+  const entityType = String(suggestion.target_entity.entity_type || "").trim();
+  const entityIdentifier = String(suggestion.target_entity.entity_identifier || "").trim();
+  if (!entityType || !entityIdentifier) throw new Error("invalid_uad_completion_target_entity");
+  const matches = existingEntities.filter((entity) => (
+    entity.entity_type === entityType && entity.entity_identifier === entityIdentifier
+  ));
+  if (!matches.length) return { entity: null, conflict: "target_entity_not_found" };
+  if (matches.length > 1) return { entity: null, conflict: "target_entity_ambiguous" };
+  return { entity: matches[0], conflict: null };
+}
+
 function existingEntityConflict(existingEntities, suggestion) {
   const sameType = existingEntities.filter((entity) => entity.entity_type === suggestion.entity_type);
   const exact = sameType.find((entity) => (
@@ -124,6 +137,9 @@ export function buildUadCompletionApplyPlan(document, input, {
   }
 
   const fieldSuggestions = [
+    ...(document.suggestions?.assignment_fields || []),
+    ...(document.suggestions?.subject_entity_fields || []),
+    ...(document.suggestions?.highest_best_use_fields || []),
     ...(document.suggestions?.market_fields || []),
     ...(document.suggestions?.sales_comparison_fields || []),
   ];
@@ -143,12 +159,18 @@ export function buildUadCompletionApplyPlan(document, input, {
   for (const suggestionId of request.selectedSuggestionIds) {
     const suggestion = allById.get(suggestionId);
     if (suggestion.field_key) {
-      const validated = validateFieldSuggestion(suggestion);
-      const key = `root:${validated.field.contextKey}:${validated.field.uid}`;
+      const target = resolveTargetEntity(existingEntities, suggestion);
+      if (target.conflict) {
+        conflicts.push({ suggestion_id: suggestionId, reason: target.conflict });
+        continue;
+      }
+      const validated = validateFieldSuggestion(suggestion, target.entity);
+      const entityId = target.entity?.id || null;
+      const key = `${entityId || "root"}:${validated.field.contextKey}:${validated.field.uid}`;
       if (existingFieldKeys.has(key)) {
         conflicts.push({ suggestion_id: suggestionId, reason: "existing_value_preserved" });
       } else {
-        fields.push({ suggestion, ...validated });
+        fields.push({ suggestion, entityId, ...validated });
       }
       continue;
     }
@@ -245,7 +267,7 @@ export async function applyUadCompletionSuggestions(pool, workfileIdValue, input
     const plan = buildUadCompletionApplyPlan(suggestions, input, { existingValues, existingEntities });
     if (plan.request.expectedRevision !== currentRevision) throw new Error("uad_completion_stale_revision");
 
-    for (const item of plan.fields) await insertFieldValue(client, workfileId, null, item);
+    for (const item of plan.fields) await insertFieldValue(client, workfileId, item.entityId, item);
     const createdEntities = [];
     for (const entity of plan.entities) {
       createdEntities.push(await insertEntityTree(client, workfileId, entity, {

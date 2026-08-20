@@ -355,6 +355,7 @@ export interface UadCompletionSuggestionField {
   suggestion_id: string;
   field_key: string;
   value: UadFieldValue;
+  target_entity?: { entity_type: string; entity_identifier: string };
   source_reference: string;
   source_digest_sha256: string;
   observed_at: string;
@@ -385,6 +386,9 @@ export interface UadCompletionSuggestions {
     source_digest_sha256: string;
   };
   suggestions: {
+    assignment_fields: UadCompletionSuggestionField[];
+    subject_entity_fields: UadCompletionSuggestionField[];
+    highest_best_use_fields: UadCompletionSuggestionField[];
     market_fields: UadCompletionSuggestionField[];
     market_entities: UadCompletionSuggestionEntity[];
     sales_comparison_fields: UadCompletionSuggestionField[];

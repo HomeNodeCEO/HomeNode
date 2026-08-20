@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.2";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.3";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -57,6 +57,25 @@ function assignmentDetails(subjectData, property) {
   return subjectData?.assignment_details
     || property?.assignment?.assignment_details
     || {};
+}
+
+function assignmentProfile(assignment) {
+  return {
+    assignment_types: safeArray(assignment.assignment_types, 20)
+      .map((value) => text(value, 80))
+      .filter(Boolean),
+    occupancy: text(assignment.occupancy, 80),
+    highest_best_use: {
+      conclusion: text(assignment.highest_best_use_conclusion, 80),
+      summary: text(assignment.highest_best_use_summary, 2_500),
+      zoning_compatible: typeof assignment.highest_best_use_zoning_compatible === "boolean"
+        ? assignment.highest_best_use_zoning_compatible
+        : null,
+      flags: safeArray(assignment.highest_best_use_flags, 50),
+      analyzed_at: text(assignment.highest_best_use_analyzed_at, 40),
+      source: text(assignment.highest_best_use_source, 200),
+    },
+  };
 }
 
 function subjectCharacteristics(subjectData, property, assignment) {
@@ -298,6 +317,11 @@ export function buildCanonicalAppraisalCompletion({
   const income = sectionRecord(customSections, "income_approach");
   const cost = sectionRecord(customSections, "cost_approach");
   const final = sectionRecord(customSections, "final_reconciliation");
+  const assignmentProfileData = assignmentProfile(assignment);
+  const subjectProfileData = {
+    identity: subjectIdentity(targetReportFile, subjectData, property),
+    characteristics: subjectCharacteristics(subjectData, property, assignment),
+  };
   const analyses = {
     neighborhood: neighborhoodAnalysis(assignment),
     market_conditions: marketAnalysis(market),
@@ -336,6 +360,8 @@ export function buildCanonicalAppraisalCompletion({
     subject_snapshot_id: targetSnapshotId,
     subject_snapshot_version: Number(subjectSnapshot.snapshot_version || 1),
     source_section_revisions: sourceSectionRevisions,
+    assignment: assignmentProfileData,
+    subject: subjectProfileData,
     analyses,
   };
   const result = {
@@ -364,10 +390,8 @@ export function buildCanonicalAppraisalCompletion({
         || null,
       inspection_date: subjectSnapshot.inspection_date || null,
     },
-    subject: {
-      identity: subjectIdentity(targetReportFile, subjectData, property),
-      characteristics: subjectCharacteristics(subjectData, property, assignment),
-    },
+    assignment: assignmentProfileData,
+    subject: subjectProfileData,
     analyses,
     readiness: {
       status: blockers.length ? "review_required" : "complete",

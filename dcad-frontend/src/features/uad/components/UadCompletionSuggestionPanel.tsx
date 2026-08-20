@@ -87,17 +87,50 @@ export default function UadCompletionSuggestionPanel({
   const existingRootKeys = useMemo(() => new Set(
     values.filter((value) => !value.entity_id).map((value) => `${value.context_key}:${value.uid}`),
   ), [values]);
+  const entityTargets = useMemo(() => {
+    const result = new Map<string, UadEntity[]>();
+    entities.forEach((entity) => {
+      const key = `${entity.entity_type}:${entity.entity_identifier}`;
+      result.set(key, [...(result.get(key) || []), entity]);
+    });
+    return result;
+  }, [entities]);
+  const existingEntityValueKeys = useMemo(() => new Set(
+    values.filter((value) => value.entity_id).map((value) => (
+      `${value.entity_id}:${value.context_key}:${value.uid}`
+    )),
+  ), [values]);
   const existingEntityTypes = useMemo(() => new Set(entities.map((entity) => entity.entity_type)), [entities]);
   const suggestions = useMemo(() => {
     if (!document) return [];
     const suggestedFields = [
+      ...(document.suggestions.assignment_fields || []),
+      ...(document.suggestions.subject_entity_fields || []),
+      ...(document.suggestions.highest_best_use_fields || []),
       ...document.suggestions.market_fields,
       ...document.suggestions.sales_comparison_fields,
-    ].map((suggestion) => ({
-      kind: "field" as const,
-      suggestion,
-      conflict: existingRootKeys.has(suggestion.field_key),
-    }));
+    ].map((suggestion) => {
+      if (!suggestion.target_entity) {
+        return {
+          kind: "field" as const,
+          suggestion,
+          conflict: existingRootKeys.has(suggestion.field_key),
+          conflictReason: existingRootKeys.has(suggestion.field_key) ? "Existing UAD data preserved" : null,
+        };
+      }
+      const targetKey = `${suggestion.target_entity.entity_type}:${suggestion.target_entity.entity_identifier}`;
+      const matches = entityTargets.get(targetKey) || [];
+      const targetUnavailable = matches.length !== 1;
+      const existingValue = matches.length === 1 && existingEntityValueKeys.has(
+        `${matches[0].id}:${suggestion.field_key}`,
+      );
+      return {
+        kind: "field" as const,
+        suggestion,
+        conflict: targetUnavailable || existingValue,
+        conflictReason: targetUnavailable ? "Subject target unavailable" : existingValue ? "Existing UAD data preserved" : null,
+      };
+    });
     const suggestedEntities = [
       ...document.suggestions.market_entities,
       ...document.suggestions.sales_comparable_entities,
@@ -105,9 +138,10 @@ export default function UadCompletionSuggestionPanel({
       kind: "entity" as const,
       suggestion,
       conflict: existingEntityTypes.has(suggestion.entity_type),
+      conflictReason: existingEntityTypes.has(suggestion.entity_type) ? "Existing UAD data preserved" : null,
     }));
     return [...suggestedFields, ...suggestedEntities];
-  }, [document, existingEntityTypes, existingRootKeys]);
+  }, [document, entityTargets, existingEntityTypes, existingEntityValueKeys, existingRootKeys]);
   const selectable = suggestions.filter((item) => !item.conflict).map((item) => item.suggestion.suggestion_id);
 
   function toggle(id: string) {
@@ -185,7 +219,7 @@ export default function UadCompletionSuggestionPanel({
                   <span className="min-w-0">
                     <span className="block font-medium">{isField ? definition?.label || fieldSuggestion?.field_key : entityLabel(suggestion as UadCompletionSuggestionEntity)}</span>
                     <span className="mt-1 block break-words text-xs">{isField ? displayValue(fieldSuggestion?.value) : `${Object.keys((suggestion as UadCompletionSuggestionEntity).values).length} mapped fields`}</span>
-                    <span className="mt-1 block text-[11px]">{item.conflict ? "Existing UAD data preserved" : "Requires appraiser confirmation"}</span>
+                    <span className="mt-1 block text-[11px]">{item.conflict ? item.conflictReason || "Existing UAD data preserved" : "Requires appraiser confirmation"}</span>
                   </span>
                 </label>
               );

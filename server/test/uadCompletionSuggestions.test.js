@@ -18,6 +18,7 @@ const UAD_WORKFILE_ID = "57f26fb0-0ed7-42dc-a7dd-54a87f2b7ab5";
 
 function fixtureParts() {
   const { snapshot, property } = customAppraisalReportFixture();
+  property.account.state = "TX";
   const customSections = structuredClone(snapshot.sections);
   const first = customSections.sales_comparison.value.comparables[0];
   first.sale.distanceMiles = 0.42;
@@ -103,20 +104,72 @@ test("maps exact assignment, subject, and highest-and-best-use facts for review"
   assert.equal(completion.assignment.assignment_types[0], "purchase_transaction");
   assert.equal(fieldByKey(suggestions, "assignment:1000.0034").value, "Purchase");
   assert.equal(fieldByKey(suggestions, "appraiser_inspection:2400.0080").value, "2026-08-17");
+  assert.equal(fieldByKey(suggestions, "subject_address:0100.0007").value, "1909 Snowmass Ln");
+  assert.equal(fieldByKey(suggestions, "subject_address:0100.0009").value, "Garland");
+  assert.equal(fieldByKey(suggestions, "subject_address:0100.0012").value, "TX");
+  assert.equal(fieldByKey(suggestions, "subject_address:0100.0011").value, "75044");
+  assert.equal(fieldByKey(suggestions, "subject:0100.0010").value, "Dallas");
+  assert.equal(fieldByKey(suggestions, "subject:0100.0017").value, "Holiday Park North 6");
+  assert.equal(fieldByKey(suggestions, "subject_legal:0100.0067").value, "HOLIDAY PARK NORTH 6 BLK F LOT 15");
+  assert.equal(fieldByKey(suggestions, "subject:0100.0020").value, "Detached");
   assert.equal(fieldByKey(suggestions, "unit:0700.0070").value, "OwnerOccupied");
   assert.deepEqual(fieldByKey(suggestions, "unit:0700.0140").value, { amount: 1762, unit: "SquareFeet" });
   assert.equal(fieldByKey(suggestions, "unit:0700.0118").value, 3);
   assert.equal(fieldByKey(suggestions, "unit:0700.0119").value, 2);
   assert.equal(fieldByKey(suggestions, "unit:0700.0120").value, 0);
+  assert.deepEqual(fieldByKey(suggestions, "site:1500.0093").value, { amount: 8050, unit: "SquareFeet" });
   assert.deepEqual(fieldByKey(suggestions, "site_parcel:1500.0022").value, { amount: 8050, unit: "SquareFeet" });
+  assert.equal(fieldByKey(suggestions, "site:1500.0160").value, "70 ft x 115 ft");
+  assert.equal(fieldByKey(suggestions, "site:1500.0094").value, 1);
+  assert.equal(fieldByKey(suggestions, "site_parcel:1500.0027").value, "26272500060150000");
+  assert.equal(fieldByKey(suggestions, "site_zoning:1500.0122").value, "PD-SF");
   assert.equal(fieldByKey(suggestions, "dwelling:0300.0011").value, "1978");
   assert.equal(fieldByKey(suggestions, "dwelling:0300.0039").value, 31);
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0030").value, "Traditional");
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0022").value, true);
+  assert.deepEqual(fieldByKey(suggestions, "dwelling:0300.0084").value, ["Centralized"]);
+  assert.equal(fieldByKey(suggestions, "vehicle_storage:3200.0006").value, "Garage");
+  assert.equal(fieldByKey(suggestions, "vehicle_storage:3200.0005").value, "Attached");
+  assert.deepEqual(fieldByKey(suggestions, "vehicle_storage:3200.0004").value, { amount: 440, unit: "SquareFeet" });
   assert.equal(fieldByKey(suggestions, "highest_best_use:3100.0007").value, true);
   assert.match(fieldByKey(suggestions, "highest_best_use_commentary:3100.0010").value, /single-family residential use/);
   assert.deepEqual(fieldByKey(suggestions, "unit:0700.0140").target_entity, {
     entity_type: "unit",
     entity_identifier: "unit-1",
   });
+  assert.deepEqual(fieldByKey(suggestions, "vehicle_storage:3200.0006").target_entity, {
+    entity_type: "vehicle_storage",
+    entity_identifier: "vehicle-storage-1",
+  });
+  assert.equal(suggestions.omissions.some((item) => item.code === "zoning_compliance_requires_appraiser_selection"), true);
+  assert.equal(suggestions.omissions.some((item) => item.code === "vehicle_storage_parking_count_requires_appraiser_entry"), true);
+  assert.equal(suggestions.omissions.some((item) => item.code === "subject_amenities_require_appraiser_classification"), true);
+});
+
+test("omits ambiguous subject, zoning, and storage classifications instead of guessing", () => {
+  const input = fixtureParts();
+  const property = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data;
+  property.housing_profile.attachment_type = "Attached or Detached";
+  property.housing_profile.architectural_style = "Traditional / Ranch";
+  property.improvement.air_conditioning = "Mixed systems";
+  property.land.push({ line_number: 2, zoning: "R-7.5", area_sqft: 100 });
+  property.additional_improvements.push({ improvement_type: "Detached Carport", area_sqft: 220 });
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+
+  assert.equal(fieldByKey(suggestions, "subject:0100.0020"), undefined);
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0030"), undefined);
+  assert.equal(fieldByKey(suggestions, "dwelling:0300.0022"), undefined);
+  assert.equal(fieldByKey(suggestions, "site_zoning:1500.0122"), undefined);
+  assert.equal(fieldByKey(suggestions, "vehicle_storage:3200.0006"), undefined);
+  const omissionCodes = new Set(suggestions.omissions.map((item) => item.code));
+  assert.equal(omissionCodes.has("subject_attachment_requires_appraiser_selection"), true);
+  assert.equal(omissionCodes.has("dwelling_style_requires_appraiser_selection"), true);
+  assert.equal(omissionCodes.has("cooling_system_requires_appraiser_selection"), true);
+  assert.equal(omissionCodes.has("multiple_zoning_classifications_require_appraiser_reconciliation"), true);
+  assert.equal(omissionCodes.has("multiple_vehicle_storage_records_require_appraiser_reconciliation"), true);
 });
 
 test("includes assignment and subject facts in completion provenance", () => {
@@ -370,6 +423,7 @@ test("validates every generated suggestion against the official UAD catalog", ()
         { id: "dwelling-id", entity_type: "dwelling", entity_identifier: "dwelling-1", data: {} },
         { id: "unit-id", entity_type: "unit", entity_identifier: "unit-1", data: {} },
         { id: "parcel-id", entity_type: "site_parcel", entity_identifier: "site-parcel-1", data: {} },
+        { id: "vehicle-id", entity_type: "vehicle_storage", entity_identifier: "vehicle-storage-1", data: {} },
       ],
     },
   );
@@ -461,6 +515,29 @@ test("targets the seeded subject entity and preserves an existing entity value",
     applyInput(suggestions, [gla.suggestion_id]),
   );
   assert.equal(missing.conflicts[0].reason, "target_entity_not_found");
+});
+
+test("targets seeded site and vehicle entities while preserving existing values", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const parcelNumber = fieldByKey(suggestions, "site_parcel:1500.0027");
+  const garageType = fieldByKey(suggestions, "vehicle_storage:3200.0006");
+  const entities = [
+    { id: "parcel-id", entity_type: "site_parcel", entity_identifier: "site-parcel-1", data: {} },
+    { id: "vehicle-id", entity_type: "vehicle_storage", entity_identifier: "vehicle-storage-1", data: {} },
+  ];
+  const plan = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [parcelNumber.suggestion_id, garageType.suggestion_id]),
+    {
+      existingEntities: entities,
+      existingValues: [{ entity_id: "vehicle-id", field_context: "vehicle_storage", uad_uid: "3200.0006" }],
+    },
+  );
+
+  assert.equal(plan.fields.length, 1);
+  assert.equal(plan.fields[0].entityId, "parcel-id");
+  assert.equal(plan.fields[0].value, "26272500060150000");
+  assert.deepEqual(plan.conflicts, [{ suggestion_id: garageType.suggestion_id, reason: "existing_value_preserved" }]);
 });
 
 test("requires explicit confirmation, preservation, revision, and exact provenance", () => {

@@ -41,9 +41,11 @@ Consumers must preserve unknown fields and select a mapper compatible with the r
 
 ## Current boundary
 
-The canonical contract remains read-only. The UAD completion-suggestion adapter now maps unambiguous assignment, subject, highest-and-best-use, subject-listing, sales-contract, prior-sale/transfer, market, comparable identity, transaction, physical-characteristic, and typed-adjustment evidence into review-only UAD 3.6 suggestions.
+The canonical contract remains read-only. The UAD completion-suggestion adapter now maps unambiguous assignment, subject identity and legal description, subject classification, site and zoning facts, dwelling design and cooling, vehicle-storage evidence, highest-and-best-use, subject-listing, sales-contract, prior-sale/transfer, market, comparable identity, transaction, physical-characteristic, and typed-adjustment evidence into review-only UAD 3.6 suggestions.
 
-The suggestions are returned in the existing UAD shared-data response under suggestions.custom_completion. Every field and entity retains the Custom source report, snapshot-scoped provenance digest, and appraiser-confirmation requirement. Rating ranges, combined room-count adjustments, out-of-range values, missing Custom sources, and other ambiguous translations are disclosed as omissions instead of being guessed.
+The suggestions are returned in the existing UAD shared-data response under suggestions.custom_completion. Every field and entity retains the Custom source report, snapshot-scoped provenance digest, and appraiser-confirmation requirement. Root values and the seeded dwelling, unit, parcel, and vehicle-storage entities are addressed directly; the adapter never creates replacement subject entities.
+
+Rating ranges, combined room-count adjustments, out-of-range values, missing Custom sources, conflicting classifications, zoning compliance, parcel-use descriptions, parking-space counts, and amenity or exterior-component classifications that require appraisal judgment are disclosed as omissions instead of being guessed.
 
 The UAD editor now provides that guarded apply workflow. No suggestion is selected automatically. The appraiser chooses individual values or comparable/source records, reviews the disclosed omissions, confirms the selection, and accepts a second confirmation prompt. The server then regenerates the exact snapshot-scoped suggestions inside one transaction, verifies the source digest, adapter version, and editor revision, validates accepted values against the official UAD catalog, preserves every existing UAD value and populated entity group, and records the accepted changes in one revision and one audit event.
 

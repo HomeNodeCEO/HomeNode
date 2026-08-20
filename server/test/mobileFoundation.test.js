@@ -514,12 +514,21 @@ test("production mobile-user provisioning is transactional and fail-closed", () 
 
 test("rejects expired, wrong-audience, and tampered OIDC tokens", async () => {
   const oidc = verifier();
-  await assert.rejects(() => oidc.verify(token({ exp: Math.floor(NOW / 1000) - 120 })), /invalid_access_token/);
-  await assert.rejects(() => oidc.verify(token({ aud: "wrong-audience" })), /invalid_access_token/);
+  await assert.rejects(
+    () => oidc.verify(token({ exp: Math.floor(NOW / 1000) - 120 })),
+    (error) => error.message === "invalid_access_token" && error.diagnostic === "expired_or_missing_expiration",
+  );
+  await assert.rejects(
+    () => oidc.verify(token({ aud: "wrong-audience" })),
+    (error) => error.message === "invalid_access_token" && error.diagnostic === "audience_mismatch",
+  );
   const valid = token();
   const parts = valid.split(".");
   parts[1] = encoded({ ...JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")), sub: "attacker" });
-  await assert.rejects(() => oidc.verify(parts.join(".")), /invalid_access_token/);
+  await assert.rejects(
+    () => oidc.verify(parts.join(".")),
+    (error) => error.message === "invalid_access_token" && error.diagnostic === "signature_invalid",
+  );
 });
 
 test("mobile migration is additive and encodes retention, lineage, and sparse edits", () => {

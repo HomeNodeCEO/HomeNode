@@ -124,4 +124,3 @@ npm run provision:mobile-user -- --email appraiser@example.com --display-name "A
 ```
 
 UAD delivery credentials, submission endpoints, certification, and lender/GSE authorization remain independent from mobile OIDC and must be confirmed separately before production UAD submission.
-

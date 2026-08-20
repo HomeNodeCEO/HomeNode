@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+
+import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 
 import {
   createUadWorkfile,
@@ -22,6 +24,8 @@ const PROPERTY_TYPE_LABELS: Record<UadPropertyType, string> = {
 
 export default function UadWorkspaceEntry() {
   const { accountId = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const requestedWorkfileId = searchParams.get("workfileId");
   const [address, setAddress] = useState("");
   const [loading, setLoading] = useState(Boolean(accountId));
   const [creating, setCreating] = useState(false);
@@ -49,7 +53,12 @@ export default function UadWorkspaceEntry() {
         setCapabilities(capabilityResponse);
         if (capabilityResponse.enabled) {
           const existingWorkfiles = await listUadWorkfiles(accountId);
-          if (!cancelled) setWorkfiles(existingWorkfiles);
+          if (!cancelled) {
+            setWorkfiles(existingWorkfiles);
+            if (requestedWorkfileId && existingWorkfiles.some((item) => item.id === requestedWorkfileId)) {
+              setActiveWorkfileId(requestedWorkfileId);
+            }
+          }
         }
       })
       .catch((reason: unknown) => {
@@ -64,7 +73,7 @@ export default function UadWorkspaceEntry() {
     return () => {
       cancelled = true;
     };
-  }, [accountId]);
+  }, [accountId, requestedWorkfileId]);
 
   async function handleCreateWorkfile() {
     if (!accountId || creating) return;
@@ -189,6 +198,8 @@ export default function UadWorkspaceEntry() {
             workfileId={activeWorkfileId}
           />
         )}
+
+        {accountId ? <PreviousAppraisalFiles accountId={accountId} /> : null}
 
         <div className="mt-6 flex flex-wrap gap-3">
           <Link

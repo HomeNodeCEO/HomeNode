@@ -187,6 +187,11 @@ import {
   getDesktopPropertyTaxFile,
   saveDesktopPropertyTaxFile,
 } from "./modules/mobile/desktopPropertyTax.js";
+import {
+  listPreviousAppraisalFiles,
+  registerOriginalAppraisalReport,
+} from "./services/appraisalHistory.js";
+import { replicateAppraisalFile } from "./services/appraisalReplication.js";
 
 const app = express();
 const pool = new pg.Pool({
@@ -1569,6 +1574,63 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
   }
 });
 
+/** List Custom and UAD appraisal history without treating prior observations as current facts. */
+app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const schema = await pool.query(
+      "SELECT to_regclass('app.appraisal_cases') AS table_name",
+    );
+    if (!schema.rows[0]?.table_name) {
+      return res.status(503).json({ error: "appraisal_history_schema_unavailable" });
+    }
+    return res.json(await listPreviousAppraisalFiles(pool, canonicalId));
+  } catch (error) {
+    if (String(error?.message || "").startsWith("invalid_")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("appraisal history list failed", error);
+    return res.status(500).json({ error: "appraisal_history_list_failed" });
+  }
+});
+
+/** Create either an alternate report for the same assignment or a clean new appraisal template. */
+app.post("/api/accounts/:id/appraisal-history/:reportFileId/replicate", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const result = await replicateAppraisalFile(pool, {
+      accountId: canonicalId,
+      sourceReportFileId: req.params.reportFileId,
+      input: req.body || {},
+    });
+    return res.status(201).json({ ok: true, ...result });
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
+    if (
+      message.startsWith("invalid_")
+      || message === "same_assignment_confirmation_required"
+      || message === "same_assignment_requires_alternate_workflow"
+    ) {
+      return res.status(400).json({ error: message });
+    }
+    if (message.endsWith("_conflict") || error?.code === "23505") {
+      return res.status(409).json({ error: message || "appraisal_replication_conflict" });
+    }
+    console.error("appraisal file replication failed", error);
+    return res.status(500).json({ error: "appraisal_file_replication_failed" });
+  }
+});
+
 /** Download or embed the current report-file sketch as a scalable vector exhibit. */
 app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", async (req, res) => {
   const requestedId = String(req.params.id || "").trim();
@@ -1853,7 +1915,7 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
             AND is_current = true`,
         [canonicalId],
       );
-      await client.query(
+      const reportFileResult = await client.query(
         `INSERT INTO app.report_files (
            organization_id, account_id, workflow_type, file_number,
            previous_report_file_id, custom_assignment_file_id,
@@ -1861,7 +1923,8 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
          ) VALUES (NULL, $1, 'custom_appraisal', $2, $3, $4, true, 1)
          ON CONFLICT (custom_assignment_file_id)
            WHERE custom_assignment_file_id IS NOT NULL
-         DO UPDATE SET is_current = true, updated_at = now()`,
+         DO UPDATE SET is_current = true, updated_at = now()
+         RETURNING id`,
         [
           canonicalId,
           fileNumber,
@@ -1869,6 +1932,14 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
           assignmentFileId,
         ],
       );
+      const historyRegistry = await client.query(
+        "SELECT to_regclass('app.appraisal_cases') AS table_name",
+      );
+      if (historyRegistry.rows[0]?.table_name) {
+        await registerOriginalAppraisalReport(client, reportFileResult.rows[0].id, {
+          captureReason: "desktop_custom_appraisal_created",
+        });
+      }
     }
     await client.query(
       `INSERT INTO app.assignment_file_history (

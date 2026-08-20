@@ -80,6 +80,7 @@ import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 import DeferredReportSection from "@/components/DeferredReportSection";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
 import MobileSketchReview from "@/components/MobileSketchReview";
+import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 
 type DcadOwner = {
   owner_name?: string;
@@ -5059,6 +5060,10 @@ function AddressHero({
           </div>
         </details>
       </section>
+
+      {accountId ? (
+        <PreviousAppraisalFiles accountId={accountId} getEditorKey={editorKeyForSave} />
+      ) : null}
 
       <figure className="relative h-64 bg-slate-100 sm:h-72">
         {photos.length ? (

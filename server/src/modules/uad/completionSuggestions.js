@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.3";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.4";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -150,122 +150,270 @@ function entityTarget(entityType, entityIdentifier) {
   return { entity_type: entityType, entity_identifier: entityIdentifier };
 }
 
+const DWELLING_STYLE_BY_TOKEN = Object.freeze({
+  a_frame: "AFrame", aframe: "AFrame", barn: "Barn", bi_level: "BiLevel", bilevel: "BiLevel",
+  bungalow: "Bungalow", cape_cod: "CapeCod", chalet: "Chalet", colonial: "Colonial",
+  contemporary: "Contemporary", cottage: "Cottage", craftsman: "Craftsman", earth_berm: "EarthBerm",
+  farmhouse: "Farmhouse", geodesic_dome: "GeodesicDome", georgian: "Georgian", log: "Log",
+  mediterranean: "Mediterranean", modern: "Modern", neo_eclectic: "NeoEclectic",
+  raised_ranch: "RaisedRanch", rambler: "Rambler", ranch: "Ranch", southwest: "Southwest",
+  spanish: "Spanish", split_foyer: "SplitFoyerOrEntry", split_foyer_or_entry: "SplitFoyerOrEntry",
+  split_entry: "SplitFoyerOrEntry", split_level: "SplitLevel", stilt: "Stilt",
+  traditional: "Traditional", tudor: "Tudor", victorian: "Victorian",
+});
+
+function exactAttachment(value) {
+  const normalized = normalizedToken(value);
+  if (normalized === "attached") return "Attached";
+  if (normalized === "detached") return "Detached";
+  return null;
+}
+
+function exactDwellingStyle(value) {
+  const original = text(value, 200);
+  if (!original) return null;
+  const mapped = DWELLING_STYLE_BY_TOKEN[normalizedToken(original)];
+  if (mapped) return { value: mapped, other: null };
+  if (original.length <= 33 && !/[,/;&]/.test(original)) return { value: "Other", other: original };
+  return null;
+}
+
+function coolingProfile(value) {
+  const normalized = normalizedToken(value);
+  if (!normalized) return null;
+  if (["none", "no", "no_ac", "not_available"].includes(normalized)) return { exists: false, systems: null };
+  if (["central", "central_air", "central_ac", "centralized"].includes(normalized)) {
+    return { exists: true, systems: ["Centralized"] };
+  }
+  if (["individual", "window", "window_unit", "room_unit"].includes(normalized)) {
+    return { exists: true, systems: ["Individual"] };
+  }
+  return null;
+}
+
+function dimensionValue(value) {
+  const parsed = number(value);
+  if (parsed === null || parsed <= 0) return null;
+  return Number.isInteger(parsed) ? String(parsed) : String(Math.round(parsed * 100) / 100);
+}
+
 function buildSubjectEntitySuggestions(completion, omissions) {
   const fields = [];
+  const identity = completion.subject?.identity || {};
   const characteristics = completion.subject?.characteristics || {};
   const unitTarget = entityTarget("unit", "unit-1");
   const dwellingTarget = entityTarget("dwelling", "dwelling-1");
   const parcelTarget = entityTarget("site_parcel", "site-parcel-1");
+  const vehicleTarget = entityTarget("vehicle_storage", "vehicle-storage-1");
   const addEntityField = (fieldKey, value, path, target) => addField(fields, field(
-    fieldKey,
-    value,
-    completion,
-    path,
-    { target_entity: target },
+    fieldKey, value, completion, path, { target_entity: target },
   ));
+
+  addField(fields, field("subject_address:0100.0007", text(identity.address, 100), completion, "subject.identity.address"));
+  addField(fields, field("subject_address:0100.0009", text(identity.city, 50), completion, "subject.identity.city"));
+  const state = text(identity.state, 2)?.toUpperCase();
+  addField(fields, field("subject_address:0100.0012", state && /^[A-Z]{2}$/.test(state) ? state : null, completion, "subject.identity.state"));
+  addField(fields, field("subject_address:0100.0011", text(identity.postal_code, 10), completion, "subject.identity.postal_code"));
+  addField(fields, field("subject:0100.0010", text(identity.county, 24), completion, "subject.identity.county"));
+  addField(fields, field("subject:0100.0017", text(identity.neighborhood_name, 66), completion, "subject.identity.neighborhood_name"));
+
+  const legalDescriptions = Array.isArray(identity.legal_descriptions)
+    ? [...new Set(identity.legal_descriptions.map((value) => text(value, 15_000)).filter(Boolean))]
+    : [];
+  if (legalDescriptions.length === 1) {
+    addField(fields, field("subject_legal:0100.0067", legalDescriptions[0], completion, "subject.identity.legal_descriptions.0"));
+  } else if (legalDescriptions.length > 1) {
+    addOmission(omissions, {
+      scope: "subject", code: "multiple_legal_descriptions_require_appraiser_reconciliation",
+      source_value: legalDescriptions, target_field_key: "subject_legal:0100.0067",
+    });
+  }
+
+  const attachment = exactAttachment(characteristics.attachment_type);
+  addField(fields, field("subject:0100.0020", attachment, completion, "subject.characteristics.attachment_type"));
+  if (text(characteristics.attachment_type, 200) && !attachment) {
+    addOmission(omissions, {
+      scope: "subject", code: "subject_attachment_requires_appraiser_selection",
+      source_value: text(characteristics.attachment_type, 200), target_field_key: "subject:0100.0020",
+    });
+  }
+  if (text(characteristics.housing_type, 200)) {
+    addOmission(omissions, {
+      scope: "subject", code: "subject_unit_counts_require_appraiser_confirmation",
+      source_value: text(characteristics.housing_type, 200), target_field_key: "subject:0100.0022",
+    });
+  }
 
   const occupancyValue = occupancy(completion.assignment?.occupancy);
   addEntityField("unit:0700.0070", occupancyValue, "assignment.occupancy", unitTarget);
   if (text(completion.assignment?.occupancy, 80) && !occupancyValue) {
     addOmission(omissions, {
-      scope: "subject",
-      code: "subject_occupancy_requires_appraiser_selection",
-      source_value: text(completion.assignment.occupancy, 80),
-      target_field_key: "unit:0700.0070",
+      scope: "subject", code: "subject_occupancy_requires_appraiser_selection",
+      source_value: text(completion.assignment.occupancy, 80), target_field_key: "unit:0700.0070",
     });
   }
 
   const gla = number(characteristics.gross_living_area_sqft);
   if (gla !== null && gla >= 0 && gla <= 999_999_999) {
-    addEntityField(
-      "unit:0700.0140",
-      { amount: gla, unit: "SquareFeet" },
-      "subject.characteristics.gross_living_area_sqft",
-      unitTarget,
-    );
+    addEntityField("unit:0700.0140", { amount: gla, unit: "SquareFeet" }, "subject.characteristics.gross_living_area_sqft", unitTarget);
   }
-  addEntityField(
-    "unit:0700.0118",
-    integer(characteristics.bedrooms, 0, 99),
-    "subject.characteristics.bedrooms",
-    unitTarget,
-  );
-  addEntityField(
-    "unit:0700.0119",
-    integer(characteristics.full_baths, 0, 99),
-    "subject.characteristics.full_baths",
-    unitTarget,
-  );
-  addEntityField(
-    "unit:0700.0120",
-    integer(characteristics.half_baths, 0, 99),
-    "subject.characteristics.half_baths",
-    unitTarget,
-  );
+  addEntityField("unit:0700.0118", integer(characteristics.bedrooms, 0, 99), "subject.characteristics.bedrooms", unitTarget);
+  addEntityField("unit:0700.0119", integer(characteristics.full_baths, 0, 99), "subject.characteristics.full_baths", unitTarget);
+  addEntityField("unit:0700.0120", integer(characteristics.half_baths, 0, 99), "subject.characteristics.half_baths", unitTarget);
 
-  const siteArea = number(characteristics.site_area_sqft);
+  const site = plainObject(characteristics.site) ? characteristics.site : {};
+  const siteArea = number(site.total_area_sqft ?? characteristics.site_area_sqft);
   if (siteArea !== null && siteArea > 0 && siteArea <= 999_999_999) {
-    addEntityField(
-      "site_parcel:1500.0022",
-      { amount: siteArea, unit: "SquareFeet" },
-      "subject.characteristics.site_area_sqft",
-      parcelTarget,
-    );
+    addField(fields, field("site:1500.0093", { amount: siteArea, unit: "SquareFeet" }, completion, "subject.characteristics.site.total_area_sqft"));
+    addEntityField("site_parcel:1500.0022", { amount: siteArea, unit: "SquareFeet" }, "subject.characteristics.site.total_area_sqft", parcelTarget);
+  }
+  const frontage = dimensionValue(site.dimensions?.frontage_ft);
+  const depth = dimensionValue(site.dimensions?.depth_ft);
+  if (frontage && depth) {
+    addField(fields, field("site:1500.0160", frontage + " ft x " + depth + " ft", completion, "subject.characteristics.site.dimensions"));
+  }
+
+  const parcelIds = Array.isArray(identity.parcel_ids)
+    ? [...new Set(identity.parcel_ids.map((value) => text(value, 60)).filter(Boolean))]
+    : [];
+  if (parcelIds.length === 1) {
+    addField(fields, field("site:1500.0094", 1, completion, "subject.identity.parcel_ids"));
+    addEntityField("site_parcel:1500.0027", parcelIds[0], "subject.identity.parcel_ids.0", parcelTarget);
+    addOmission(omissions, { scope: "site_parcel", code: "site_parcel_description_requires_appraiser_selection", target_field_key: "site_parcel:1500.0023" });
+  } else if (parcelIds.length > 1) {
+    addField(fields, field("site:1500.0094", parcelIds.length, completion, "subject.identity.parcel_ids"));
+    addOmission(omissions, {
+      scope: "site", code: "multiple_site_parcels_require_appraiser_reconciliation",
+      source_value: parcelIds, target_field_key: "site_parcel:1500.0027",
+    });
+  }
+
+  const zoningClassifications = Array.isArray(site.zoning_classifications)
+    ? [...new Set(site.zoning_classifications.map((value) => text(value, 100)).filter(Boolean))]
+    : [];
+  const zoningDescriptions = Array.isArray(site.zoning_descriptions)
+    ? [...new Set(site.zoning_descriptions.map((value) => text(value, 500)).filter(Boolean))]
+    : [];
+  if (zoningClassifications.length === 1) {
+    addField(fields, field("site_zoning:1500.0122", text(zoningClassifications[0], 33), completion, "subject.characteristics.site.zoning_classifications.0"));
+    addOmission(omissions, {
+      scope: "site_zoning", code: "zoning_compliance_requires_appraiser_selection",
+      source_value: zoningClassifications[0], target_field_key: "site_zoning:1500.0125",
+    });
+    if (zoningDescriptions.length === 1) {
+      addField(fields, field("site_zoning:1500.0123", text(zoningDescriptions[0], 100), completion, "subject.characteristics.site.zoning_descriptions.0"));
+    } else {
+      addOmission(omissions, {
+        scope: "site_zoning",
+        code: zoningDescriptions.length > 1 ? "multiple_zoning_descriptions_require_appraiser_reconciliation" : "zoning_description_requires_appraiser_entry",
+        source_value: zoningDescriptions, target_field_key: "site_zoning:1500.0123",
+      });
+    }
+  } else if (zoningClassifications.length > 1) {
+    addOmission(omissions, {
+      scope: "site_zoning", code: "multiple_zoning_classifications_require_appraiser_reconciliation",
+      source_value: zoningClassifications, target_field_key: "site_zoning:1500.0122",
+    });
   }
 
   const yearBuilt = integer(characteristics.year_built, 1000, 9999);
-  addEntityField(
-    "dwelling:0300.0011",
-    yearBuilt === null ? null : String(yearBuilt),
-    "subject.characteristics.year_built",
-    dwellingTarget,
-  );
+  addEntityField("dwelling:0300.0011", yearBuilt === null ? null : String(yearBuilt), "subject.characteristics.year_built", dwellingTarget);
   const effectiveYear = integer(characteristics.effective_year_built, 1000, 9999);
   const effectiveDate = isoDate(completion.assignment_scope?.effective_date);
   const effectiveDateYear = effectiveDate ? Number(effectiveDate.slice(0, 4)) : null;
-  const effectiveAge = effectiveYear !== null && effectiveDateYear !== null && effectiveDateYear >= effectiveYear
-    ? effectiveDateYear - effectiveYear
-    : null;
-  addEntityField(
-    "dwelling:0300.0039",
-    integer(effectiveAge, 0, 999),
-    "subject.characteristics.effective_year_built",
-    dwellingTarget,
-  );
+  const effectiveAge = effectiveYear !== null && effectiveDateYear !== null && effectiveDateYear >= effectiveYear ? effectiveDateYear - effectiveYear : null;
+  addEntityField("dwelling:0300.0039", integer(effectiveAge, 0, 999), "subject.characteristics.effective_year_built", dwellingTarget);
+
+  const style = attachment === "Detached" ? exactDwellingStyle(characteristics.architectural_style) : null;
+  if (style) {
+    addEntityField("dwelling:0300.0030", style.value, "subject.characteristics.architectural_style", dwellingTarget);
+    addEntityField("dwelling:0300.0031", style.other, "subject.characteristics.architectural_style", dwellingTarget);
+  } else if (text(characteristics.architectural_style, 200)) {
+    addOmission(omissions, {
+      scope: "dwelling",
+      code: attachment === "Attached" ? "attached_structure_design_requires_appraiser_selection" : "dwelling_style_requires_appraiser_selection",
+      source_value: text(characteristics.architectural_style, 200),
+      target_field_key: attachment === "Attached" ? "dwelling:0300.0032" : "dwelling:0300.0030",
+    });
+  }
+
+  const cooling = coolingProfile(characteristics.air_conditioning);
+  if (cooling) {
+    addEntityField("dwelling:0300.0022", cooling.exists, "subject.characteristics.air_conditioning", dwellingTarget);
+    addEntityField("dwelling:0300.0084", cooling.systems, "subject.characteristics.air_conditioning", dwellingTarget);
+  } else if (text(characteristics.air_conditioning, 200)) {
+    addOmission(omissions, {
+      scope: "dwelling", code: "cooling_system_requires_appraiser_selection",
+      source_value: text(characteristics.air_conditioning, 200), target_field_key: "dwelling:0300.0084",
+    });
+  }
+
+  const vehicleStorage = Array.isArray(characteristics.vehicle_storage) ? characteristics.vehicle_storage.filter(plainObject) : [];
+  if (vehicleStorage.length === 1) {
+    const storage = vehicleStorage[0];
+    const description = text(storage.description, 200);
+    const storageType = /\bgarage\b/i.test(description || "") ? "Garage" : /\bcarport\b/i.test(description || "") ? "Carport" : null;
+    const storageAttachment = /\bbuilt[ -]?in\b/i.test(description || "") ? "BuiltIn"
+      : /\battached\b/i.test(description || "") ? "Attached"
+        : /\bdetached\b/i.test(description || "") ? "Detached" : null;
+    addEntityField("vehicle_storage:3200.0006", storageType, "subject.characteristics.vehicle_storage.0.description", vehicleTarget);
+    addEntityField("vehicle_storage:3200.0005", storageAttachment, "subject.characteristics.vehicle_storage.0.description", vehicleTarget);
+    const storageArea = number(storage.area_sqft);
+    if (storageArea !== null && storageArea > 0) {
+      addEntityField("vehicle_storage:3200.0004", { amount: storageArea, unit: "SquareFeet" }, "subject.characteristics.vehicle_storage.0.area_sqft", vehicleTarget);
+    }
+    const parkingSpaces = integer(storage.parking_spaces, 0, 99);
+    addEntityField("vehicle_storage:3200.0010", parkingSpaces, "subject.characteristics.vehicle_storage.0.parking_spaces", vehicleTarget);
+    if (!storageType || !storageAttachment) {
+      addOmission(omissions, {
+        scope: "vehicle_storage", code: "vehicle_storage_classification_requires_appraiser_selection",
+        source_value: description, target_field_key: !storageType ? "vehicle_storage:3200.0006" : "vehicle_storage:3200.0005",
+      });
+    }
+    if (parkingSpaces === null) {
+      addOmission(omissions, {
+        scope: "vehicle_storage", code: "vehicle_storage_parking_count_requires_appraiser_entry",
+        source_value: description, target_field_key: "vehicle_storage:3200.0010",
+      });
+    }
+  } else if (vehicleStorage.length > 1) {
+    addOmission(omissions, {
+      scope: "vehicle_storage", code: "multiple_vehicle_storage_records_require_appraiser_reconciliation",
+      source_value: vehicleStorage.map((item) => item.description).filter(Boolean), target_field_key: "vehicle_storage:3200.0006",
+    });
+  }
+
+  if (text(characteristics.foundation, 200) || text(characteristics.exterior_material, 200)) {
+    addOmission(omissions, {
+      scope: "dwelling", code: "exterior_components_require_appraiser_condition_review",
+      source_value: { foundation: text(characteristics.foundation, 200), exterior_material: text(characteristics.exterior_material, 200) },
+    });
+  }
+  if (number(characteristics.fireplace_count) > 0 || characteristics.pool_present === true) {
+    addOmission(omissions, {
+      scope: "subject_amenities", code: "subject_amenities_require_appraiser_classification",
+      source_value: { fireplace_count: number(characteristics.fireplace_count), pool_present: characteristics.pool_present === true },
+    });
+  }
 
   const conditionRating = exactRating(characteristics.condition_rating, UAD_CONDITION);
   const qualityRating = exactRating(characteristics.quality_rating, UAD_QUALITY);
-  addEntityField(
-    "dwelling:1600.0004",
-    conditionRating,
-    "subject.characteristics.condition_rating",
-    dwellingTarget,
-  );
-  addEntityField(
-    "dwelling:1600.0005",
-    qualityRating,
-    "subject.characteristics.quality_rating",
-    dwellingTarget,
-  );
+  addEntityField("dwelling:1600.0004", conditionRating, "subject.characteristics.condition_rating", dwellingTarget);
+  addEntityField("dwelling:1600.0005", qualityRating, "subject.characteristics.quality_rating", dwellingTarget);
   if (text(characteristics.condition_rating, 20) && !conditionRating) {
     addOmission(omissions, {
-      scope: "subject",
-      code: "subject_condition_range_requires_appraiser_reconciliation",
-      source_value: text(characteristics.condition_rating, 20),
-      target_field_key: "dwelling:1600.0004",
+      scope: "subject", code: "subject_condition_range_requires_appraiser_reconciliation",
+      source_value: text(characteristics.condition_rating, 20), target_field_key: "dwelling:1600.0004",
     });
   }
   if (text(characteristics.quality_rating, 20) && !qualityRating) {
     addOmission(omissions, {
-      scope: "subject",
-      code: "subject_quality_range_requires_appraiser_reconciliation",
-      source_value: text(characteristics.quality_rating, 20),
-      target_field_key: "dwelling:1600.0005",
+      scope: "subject", code: "subject_quality_range_requires_appraiser_reconciliation",
+      source_value: text(characteristics.quality_rating, 20), target_field_key: "dwelling:1600.0005",
     });
   }
   return { fields };
 }
-
 function currentUseConclusion(value) {
   const normalized = normalizedToken(value);
   if (["current_use", "existing_use", "present_use"].includes(normalized)) return true;

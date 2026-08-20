@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.4";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.5";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -146,10 +146,34 @@ function subjectCharacteristics(subjectData, property, assignment) {
           : uadLand,
     50,
   );
+  const capturedAdditional = captured.additional_improvements;
+  const manualAdditional = manual.additional_improvements;
+  const additionalImprovements = safeArray(
+    Array.isArray(capturedAdditional) && capturedAdditional.length ? capturedAdditional
+      : Array.isArray(manualAdditional) && manualAdditional.length ? manualAdditional
+        : property.additional_improvements,
+    50,
+  );
   const siteArea = land.reduce((total, row) => {
     const area = number(row?.area_sqft ?? row?.size_sqft ?? row?.land_size);
     return total + (area && area > 0 ? area : 0);
   }, 0);
+  const zoningClassifications = [...new Set(land
+    .map((row) => text(row?.zoning ?? row?.zoning_code ?? row?.zoning_classification, 100))
+    .filter(Boolean))];
+  const zoningDescriptions = [...new Set(land
+    .map((row) => text(row?.zoning_description ?? row?.zoning_use_description, 500))
+    .filter(Boolean))];
+  const singleLandRow = land.length === 1 ? land[0] : null;
+  const frontage = number(singleLandRow?.frontage_ft ?? singleLandRow?.frontage);
+  const depth = number(singleLandRow?.depth_ft ?? singleLandRow?.depth);
+  const vehicleStorage = additionalImprovements
+    .filter((row) => /\b(garage|carport)\b/i.test(String(row?.improvement_type ?? row?.type ?? "")))
+    .map((row) => ({
+      description: text(row.improvement_type ?? row.type, 200),
+      area_sqft: number(row.area_sqft ?? row.size_sqft),
+      parking_spaces: number(row.parking_spaces ?? row.space_count ?? row.garage_spaces),
+    }));
   return {
     gross_living_area_sqft: number(
       improvement.living_area_sqft
@@ -165,6 +189,25 @@ function subjectCharacteristics(subjectData, property, assignment) {
     half_baths: number(improvement.baths_half),
     housing_type: text(housing.housing_type ?? housing.property_sub_type, 200),
     attachment_type: text(housing.attachment_type, 200),
+    architectural_style: text(housing.architectural_style, 200),
+    stories: number(improvement.stories),
+    construction_type: text(improvement.construction_type, 200),
+    foundation: text(improvement.foundation, 200),
+    exterior_material: text(improvement.exterior_material, 200),
+    heating: text(improvement.heating, 200),
+    air_conditioning: text(improvement.air_conditioning, 200),
+    fireplace_count: number(improvement.fireplaces),
+    pool_present: typeof improvement.pool === "boolean" ? improvement.pool : null,
+    site: {
+      total_area_sqft: siteArea || null,
+      dimensions: frontage > 0 && depth > 0
+        ? { frontage_ft: frontage, depth_ft: depth }
+        : null,
+      zoning_classifications: zoningClassifications,
+      zoning_descriptions: zoningDescriptions,
+      land_line_count: land.length,
+    },
+    vehicle_storage: vehicleStorage,
     condition_rating: text(assignment.subject_condition_rating, 20),
     quality_rating: text(assignment.subject_quality_rating, 20),
   };
@@ -190,6 +233,7 @@ function subjectIdentity(targetReportFile, subjectData, property) {
     county: text(account.county || property?.property_location?.county, 120),
     state: text(account.state || property?.property_location?.state, 20),
     postal_code: text(account.postal_code || property?.property_location?.postal_code, 20),
+    neighborhood_name: text(account.subdivision || account.neighborhood_name, 120),
     parcel_ids: [...new Set([
       targetReportFile.account_id,
       account.account_id,

@@ -16,6 +16,7 @@ const UAD_REPORT_ID = "0f349b77-c91c-4ca7-829c-5edbe71b5a60";
 
 function fixtureInput(targetWorkflow = "custom_appraisal") {
   const { snapshot, property } = customAppraisalReportFixture();
+  property.account.state = "TX";
   const sourceReportFile = {
     id: CUSTOM_REPORT_ID,
     account_id: property.account.account_id,
@@ -63,7 +64,22 @@ test("builds a workflow-neutral completion document from the assignment snapshot
   assert.equal(completion.target.workflow_type, "custom_appraisal");
   assert.equal(completion.assignment_scope.subject_snapshot_id, SNAPSHOT_ID);
   assert.equal(completion.subject.identity.account_id, "26272500060150000");
+  assert.equal(completion.subject.identity.state, "TX");
+  assert.equal(completion.subject.identity.neighborhood_name, "Holiday Park North 6");
   assert.equal(completion.subject.characteristics.gross_living_area_sqft, 1762);
+  assert.equal(completion.subject.characteristics.architectural_style, "Traditional");
+  assert.deepEqual(completion.subject.characteristics.site, {
+    total_area_sqft: 8050,
+    dimensions: { frontage_ft: 70, depth_ft: 115 },
+    zoning_classifications: ["PD-SF"],
+    zoning_descriptions: [],
+    land_line_count: 1,
+  });
+  assert.deepEqual(completion.subject.characteristics.vehicle_storage, [{
+    description: "Attached Garage",
+    area_sqft: 440,
+    parking_spaces: null,
+  }]);
   assert.equal(completion.subject.characteristics.condition_rating, "C4-C3");
   assert.equal(completion.analyses.neighborhood.boundary.north, "Arapaho Road");
   assert.equal(completion.analyses.market_conditions.status, "complete");

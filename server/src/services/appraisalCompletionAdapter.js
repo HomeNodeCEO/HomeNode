@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.6";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.7";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -173,12 +173,20 @@ function subjectCharacteristics(subjectData, property, assignment) {
   const singleLandRow = land.length === 1 ? land[0] : null;
   const frontage = number(singleLandRow?.frontage_ft ?? singleLandRow?.frontage);
   const depth = number(singleLandRow?.depth_ft ?? singleLandRow?.depth);
-  const vehicleStorage = additionalImprovements
-    .filter((row) => /\b(garage|carport)\b/i.test(String(row?.improvement_type ?? row?.type ?? "")))
+  const normalizedAdditionalImprovements = additionalImprovements.map((row) => ({
+    description: text(row?.improvement_type ?? row?.type, 200),
+    construction: text(row?.construction ?? row?.material, 200),
+    area_sqft: number(row?.area_sqft ?? row?.size_sqft),
+    year_built: number(row?.year_built),
+    value: number(row?.value ?? row?.market_value),
+    parking_spaces: number(row?.parking_spaces ?? row?.space_count ?? row?.garage_spaces),
+  })).filter((row) => row.description || row.construction || row.area_sqft || row.year_built || row.value);
+  const vehicleStorage = normalizedAdditionalImprovements
+    .filter((row) => /\b(garage|carport)\b/i.test(String(row.description || "")))
     .map((row) => ({
-      description: text(row.improvement_type ?? row.type, 200),
-      area_sqft: number(row.area_sqft ?? row.size_sqft),
-      parking_spaces: number(row.parking_spaces ?? row.space_count ?? row.garage_spaces),
+      description: row.description,
+      area_sqft: row.area_sqft,
+      parking_spaces: row.parking_spaces,
     }));
   return {
     gross_living_area_sqft: number(
@@ -214,6 +222,7 @@ function subjectCharacteristics(subjectData, property, assignment) {
       land_line_count: land.length,
     },
     vehicle_storage: vehicleStorage,
+    additional_improvements: normalizedAdditionalImprovements,
     condition_rating: text(assignment.subject_condition_rating, 20),
     quality_rating: text(assignment.subject_quality_rating, 20),
     condition_notes: text(assignment.subject_condition_notes, 5_000),
@@ -322,7 +331,11 @@ function salesAnalysis(section) {
       grouped: jsonClone(workspace.appliedGroupedAdjustments, {}),
       condition_quality: jsonClone(workspace.appliedConditionQualityAdjustments, {}),
       qualitative: jsonClone(workspace.qualitativeAnalysis, null),
-      cost_to_cure_total: number(value.costToCureTotal),
+      cost_to_cure_total: number(value.costToCureTotal ?? value.costToCure?.total),
+      cost_to_cure_items: safeArray(value.costToCure?.items, 100).map((item) => ({
+        description: text(item?.description, 1_000),
+        cost: number(item?.cost),
+      })).filter((item) => item.description || item.cost !== null),
     },
     indicated_value: number(value.opinionAfterCostToCure ?? value.opinionOfValue),
     sales_notes: text(value.salesNotes, 10_000),

@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.5";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.6";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -267,6 +267,151 @@ function coolingProfile(value) {
   return null;
 }
 
+const CONSTRUCTION_METHOD_BY_TOKEN = Object.freeze({
+  container: "Container",
+  manufactured: "Manufactured",
+  manufactured_home: "Manufactured",
+  modular: "Modular",
+  on_frame_modular: "OnFrameModular",
+  onframe_modular: "OnFrameModular",
+  site_built: "SiteBuilt",
+  sitebuilt: "SiteBuilt",
+  three_dimensional_printing_technology: "ThreeDimensionalPrintingTechnology",
+  three_d_printed: "ThreeDimensionalPrintingTechnology",
+  three_d_printing: "ThreeDimensionalPrintingTechnology",
+});
+
+function exactConstructionMethod(value) {
+  return CONSTRUCTION_METHOD_BY_TOKEN[normalizedToken(value)] || null;
+}
+
+function heatingProfile(value) {
+  const normalized = normalizedToken(value);
+  if (!normalized) return null;
+  if (["none", "no", "no_heat"].includes(normalized)) return { systems: ["None"] };
+  if (["forced_air", "forced_warm_air"].includes(normalized)) {
+    return { systems: ["ForcedWarmAir"] };
+  }
+  const mapped = {
+    baseboard: "Baseboard",
+    fireplace: "Fireplace",
+    gravity_air: "GravityAir",
+    mini_split: "MiniSplit",
+    passive_solar: "PassiveSolar",
+    radiant: "Radiant",
+    radiators: "Radiators",
+    stove: "Stove",
+  }[normalized];
+  return mapped ? { systems: [mapped] } : null;
+}
+
+const AMENITY_MATERIAL_BY_TOKEN = Object.freeze({
+  asphalt: "Asphalt", brick: "Brick", composite: "Composite", concrete: "Concrete",
+  fiberglass: "Fiberglass", metal: "Metal", natural_stone: "NaturalStone",
+  pavers: "Pavers", vinyl: "Vinyl", wood: "Wood",
+});
+const OUTDOOR_LIVING_AMENITY_BY_TOKEN = Object.freeze({
+  balcony: "Balcony", deck: "Deck", gazebo: "Gazebo", patio: "Patio", porch: "Porch", portico: "Portico",
+});
+const OUTDOOR_LIVING_AREA_REQUIRED = new Set(["Balcony", "Deck", "Gazebo", "Porch", "Portico"]);
+const OUTDOOR_LIVING_MATERIAL_REQUIRED = new Set(["Balcony", "Deck", "Gazebo", "Patio", "Porch"]);
+
+function exactOutdoorLivingAmenity(value) {
+  const tokens = normalizedToken(value).split("_").filter(Boolean);
+  const matches = [...new Set(tokens.map((token) => OUTDOOR_LIVING_AMENITY_BY_TOKEN[token]).filter(Boolean))];
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function exactAmenityMaterial(value) {
+  return AMENITY_MATERIAL_BY_TOKEN[normalizedToken(value)] || null;
+}
+
+function buildSubjectAmenitySuggestions(completion, omissions) {
+  const fields = [];
+  const entities = [];
+  const characteristics = completion.subject?.characteristics || {};
+  const fireplaceSource = number(characteristics.fireplace_count);
+  const fireplaceCount = integer(fireplaceSource, 1, 99);
+
+  if (fireplaceCount !== null) {
+    entities.push({
+      suggestion_id: "entity:amenity:indoor-fireplace",
+      entity_type: "amenity",
+      source_key: "indoor-fireplace",
+      data: { amenity_category: "WholeHome" },
+      values: {
+        "amenity_whole_home:0200.0034": "WholeHome",
+        "amenity_whole_home:0200.0039": "IndoorFireplace",
+        "amenity_whole_home:0200.0036": fireplaceCount,
+      },
+      ...sourceMetadata(completion, "subject.characteristics.fireplace_count"),
+    });
+  } else if (fireplaceSource !== null && fireplaceSource > 0) {
+    addOmission(omissions, {
+      scope: "subject_amenities", code: "fireplace_count_requires_appraiser_reconciliation",
+      source_value: fireplaceSource, target_field_key: "amenity_whole_home:0200.0036",
+    });
+  }
+
+  const additionalImprovements = Array.isArray(characteristics.additional_improvements)
+    ? characteristics.additional_improvements.filter(plainObject)
+    : [];
+  additionalImprovements.forEach((improvement, index) => {
+    const description = text(improvement.description, 200);
+    if (!description || /\b(garage|carport)\b/i.test(description)) return;
+    const amenityType = exactOutdoorLivingAmenity(description);
+    const material = exactAmenityMaterial(improvement.construction);
+    const area = number(improvement.area_sqft);
+    const hasRequiredMaterial = !amenityType || !OUTDOOR_LIVING_MATERIAL_REQUIRED.has(amenityType) || material;
+    const hasRequiredArea = !amenityType || !OUTDOOR_LIVING_AREA_REQUIRED.has(amenityType)
+      || (area !== null && area > 0 && area <= 999_999);
+    if (!amenityType || !hasRequiredMaterial || !hasRequiredArea) {
+      addOmission(omissions, {
+        scope: "subject_amenities", code: "additional_improvement_requires_uad_classification",
+        source_value: improvement,
+      });
+      return;
+    }
+    const sourceKey = `outdoor-living-${index + 1}`;
+    const values = {
+      "amenity_outdoor_living:0200.0017": "OutdoorLiving",
+      "amenity_outdoor_living:0200.0023": amenityType,
+    };
+    if (material) values["amenity_outdoor_living:0200.0021"] = material;
+    if (area !== null && area > 0 && area <= 999_999) {
+      values["amenity_outdoor_living:0200.0025"] = { amount: area, unit: "SquareFeet" };
+    }
+    entities.push({
+      suggestion_id: `entity:amenity:${sourceKey}`,
+      entity_type: "amenity",
+      source_key: sourceKey,
+      data: { amenity_category: "OutdoorLiving" },
+      values,
+      ...sourceMetadata(completion, `subject.characteristics.additional_improvements.${index}`),
+    });
+  });
+
+  if (entities.length) {
+    addField(fields, field(
+      "subject_property_amenities:0200.0015",
+      true,
+      completion,
+      "subject.characteristics",
+    ));
+    addOmission(omissions, {
+      scope: "subject_amenities", code: "amenity_defects_require_appraiser_confirmation",
+      target_field_key: "subject_property_amenities:0200.0053",
+    });
+  }
+  if (characteristics.pool_present === true) {
+    addOmission(omissions, {
+      scope: "subject_amenities", code: "pool_type_and_material_require_appraiser_classification",
+      source_value: { pool_present: true }, target_field_key: "amenity_water_features:0200.0032",
+    });
+  }
+  return { fields, entities };
+}
+
 function dimensionValue(value) {
   const parsed = number(value);
   if (parsed === null || parsed <= 0) return null;
@@ -413,6 +558,34 @@ function buildSubjectEntitySuggestions(completion, omissions) {
     });
   }
 
+  const constructionMethod = exactConstructionMethod(characteristics.construction_type);
+  if (constructionMethod) {
+    addEntityField("dwelling:0300.0034", constructionMethod, "subject.characteristics.construction_type", dwellingTarget);
+  } else if (text(characteristics.construction_type, 200)) {
+    addOmission(omissions, {
+      scope: "dwelling", code: "construction_method_requires_appraiser_selection",
+      source_value: text(characteristics.construction_type, 200), target_field_key: "dwelling:0300.0034",
+    });
+  }
+
+  const heating = heatingProfile(characteristics.heating);
+  if (heating) {
+    addEntityField("dwelling:0300.0088", heating.systems, "subject.characteristics.heating", dwellingTarget);
+    addOmission(omissions, {
+      scope: "dwelling",
+      code: heating.systems.includes("None")
+        ? "lack_of_heating_market_typicality_requires_appraiser_confirmation"
+        : "heating_fuel_and_below_grade_location_require_appraiser_confirmation",
+      source_value: text(characteristics.heating, 200),
+      target_field_key: heating.systems.includes("None") ? "dwelling:0300.0083" : "dwelling:0300.0086",
+    });
+  } else if (text(characteristics.heating, 200)) {
+    addOmission(omissions, {
+      scope: "dwelling", code: "heating_system_requires_appraiser_selection",
+      source_value: text(characteristics.heating, 200), target_field_key: "dwelling:0300.0088",
+    });
+  }
+
   const cooling = coolingProfile(characteristics.air_conditioning);
   if (cooling) {
     addEntityField("dwelling:0300.0022", cooling.exists, "subject.characteristics.air_conditioning", dwellingTarget);
@@ -465,13 +638,6 @@ function buildSubjectEntitySuggestions(completion, omissions) {
       source_value: { foundation: text(characteristics.foundation, 200), exterior_material: text(characteristics.exterior_material, 200) },
     });
   }
-  if (number(characteristics.fireplace_count) > 0 || characteristics.pool_present === true) {
-    addOmission(omissions, {
-      scope: "subject_amenities", code: "subject_amenities_require_appraiser_classification",
-      source_value: { fireplace_count: number(characteristics.fireplace_count), pool_present: characteristics.pool_present === true },
-    });
-  }
-
   return { fields };
 }
 
@@ -1273,6 +1439,7 @@ export function buildUadCompletionSuggestions(completion) {
   const assignment = buildAssignmentSuggestions(completion, omissions);
   const project = buildProjectSuggestions(completion, omissions);
   const subject = buildSubjectEntitySuggestions(completion, omissions);
+  const subjectAmenities = buildSubjectAmenitySuggestions(completion, omissions);
   const condition = buildConditionSuggestions(completion, omissions);
   const highestBestUse = buildHighestBestUseSuggestions(completion, omissions);
   const subjectListings = buildSubjectListingSuggestions(completion, omissions);
@@ -1280,6 +1447,15 @@ export function buildUadCompletionSuggestions(completion) {
   const priorTransfers = buildPriorTransferSuggestions(completion, omissions);
   const market = buildMarketSuggestions(completion, omissions);
   const sales = buildComparableSuggestions(completion, omissions);
+  const repairItems = completion.analyses?.comparable_sales?.adjustments?.cost_to_cure_items;
+  const repairTotal = number(completion.analyses?.comparable_sales?.adjustments?.cost_to_cure_total);
+  if (repairTotal > 0 || (Array.isArray(repairItems) && repairItems.length)) {
+    addOmission(omissions, {
+      scope: "subject_repairs",
+      code: "cost_to_cure_repairs_require_component_allocation",
+      source_value: { total: repairTotal, items: Array.isArray(repairItems) ? repairItems : [] },
+    });
+  }
   return {
     schema_version: UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION,
     adapter_version: UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION,
@@ -1297,6 +1473,8 @@ export function buildUadCompletionSuggestions(completion) {
     suggestions: {
       assignment_fields: assignment.fields,
       subject_entity_fields: subject.fields,
+      subject_amenity_fields: subjectAmenities.fields,
+      subject_amenity_entities: subjectAmenities.entities,
       condition_fields: condition.fields,
       project_fields: project.fields,
       highest_best_use_fields: highestBestUse.fields,
@@ -1312,11 +1490,11 @@ export function buildUadCompletionSuggestions(completion) {
     },
     omissions,
     counts: {
-      field_suggestions: assignment.fields.length + subject.fields.length
+      field_suggestions: assignment.fields.length + subject.fields.length + subjectAmenities.fields.length
         + condition.fields.length + project.fields.length + highestBestUse.fields.length + subjectListings.fields.length
         + salesContract.fields.length + priorTransfers.fields.length
         + market.fields.length + sales.fields.length,
-      entity_suggestions: subjectListings.entities.length + priorTransfers.entities.length
+      entity_suggestions: subjectAmenities.entities.length + subjectListings.entities.length + priorTransfers.entities.length
         + market.entities.length + sales.entities.length,
       omissions: omissions.length,
     },

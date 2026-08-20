@@ -1,6 +1,7 @@
 export function customAppraisalReportFixture() {
   const assignmentDetails = {
     assignment_types: ["purchase_transaction"],
+    subject_condition_rating: "C4-C3",
     lender_client_name: "Freeman Appraisal Services LLC",
     occupancy: "owner",
     neighborhood_boundary_confirmed: true,

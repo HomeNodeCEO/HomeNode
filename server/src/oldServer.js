@@ -132,6 +132,7 @@ import {
   ensureCustomAppraisalWorkfileSchema,
   getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileDownload,
+  getCustomAppraisalWorkfileReadiness,
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
 } from "./services/customAppraisalWorkfiles.js";
@@ -1998,6 +1999,34 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile", async (req, res) 
   }
 });
 
+/** Run the authoritative finalization E&O checks without changing the file. */
+app.get("/api/accounts/:id/assignment-files/:fileId/workfile/readiness", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
+    await ensureCustomAppraisalWorkfilesAvailable();
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const readiness = await getCustomAppraisalWorkfileReadiness(pool, {
+      accountId: canonicalId,
+      assignmentFileId,
+    });
+    return res.json({ ok: true, account_id: canonicalId, readiness });
+  } catch (error) {
+    if (error?.message === "assignment_file_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (String(error?.message || "").startsWith("invalid_")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("custom appraisal workfile readiness failed", error);
+    return res.status(500).json({ error: "custom_appraisal_workfile_readiness_failed" });
+  }
+});
+
 /** Download the live draft or immutable signed snapshot under its unique name. */
 app.get("/api/accounts/:id/assignment-files/:fileId/workfile/download", async (req, res) => {
   const requestedId = String(req.params.id || "").trim();
@@ -2135,6 +2164,7 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
       accountId: canonicalId,
       assignmentFileId,
       signedBy: req.body?.signed_by || req.body?.reviewer,
+      acknowledgedWarningCodes: req.body?.acknowledged_warning_codes,
     });
     return res.json({ ok: true, account_id: canonicalId, workfile });
   } catch (error) {
@@ -2148,6 +2178,14 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
       return res.status(422).json({
         error: error.message,
         readiness_errors: error.readinessErrors || [],
+        readiness: error.readiness || null,
+      });
+    }
+    if (error?.message === "custom_appraisal_eo_warnings_unacknowledged") {
+      return res.status(422).json({
+        error: error.message,
+        readiness_warnings: error.readinessWarnings || [],
+        readiness: error.readiness || null,
       });
     }
     if (String(error?.message || "").startsWith("invalid_")) {

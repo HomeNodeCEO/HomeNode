@@ -126,6 +126,79 @@ function assignmentDetails(snapshot, property) {
   return assignmentRecord(snapshot, property)?.assignment_details || {};
 }
 
+function manualSectionValue(property, sectionKey) {
+  const row = property?.report_manual_values?.[sectionKey];
+  if (!row || typeof row !== "object") return {};
+  const value = row.attribute_value ?? row.value ?? row;
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function hasText(value) {
+  return String(value ?? "").trim().length > 0;
+}
+
+function positiveNumber(value) {
+  return (numberValue(value) || 0) > 0;
+}
+
+function validIsoDate(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const parsed = new Date(`${text}T12:00:00.000Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === text;
+}
+
+function normalizedQualityFlags(account) {
+  const flags = Array.isArray(account?.data_quality_flags)
+    ? account.data_quality_flags
+    : [];
+  return [...new Set(flags.map((flag) => String(flag || "").trim()).filter(Boolean))];
+}
+
+function isVacantLand(property) {
+  const manual = manualSectionValue(property, "report.land_details");
+  const manualRows = Array.isArray(manual.land_detail) ? manual.land_detail : [];
+  const landRows = manualRows.length
+    ? manualRows
+    : (Array.isArray(property?.land) ? property.land : []);
+  const stateCodes = landRows.map((row) => String(row?.state_code || "").toLowerCase());
+  const hasVacantCode = stateCodes.some((code) => /vacant|lot|tract/.test(code));
+  const marketValue = numberValue(property?.account?.market_value);
+  const landValue = numberValue(property?.account?.land_value);
+  return hasVacantCode || (!property?.improvement && marketValue !== null && landValue !== null && marketValue === landValue);
+}
+
+function propertyCharacteristicValue(property, path) {
+  const manual = manualSectionValue(property, "report.property_characteristics");
+  let current = manual;
+  for (const key of path) current = current && typeof current === "object" ? current[key] : undefined;
+  if (current !== null && current !== undefined && current !== "") return current;
+  current = property;
+  for (const key of path) current = current && typeof current === "object" ? current[key] : undefined;
+  return current;
+}
+
+function subjectIdentificationValue(property, key) {
+  const manual = manualSectionValue(property, "report.subject_identification");
+  const manualLocation = manual.property_location || {};
+  const manualOwner = manual.owner || {};
+  const manualLegal = manual.legal_description || {};
+  if (key === "address") return manualLocation.address || property?.account?.address;
+  if (key === "owner") return manualOwner.owner_name || property?.owner?.owner_name;
+  if (key === "legal") {
+    return manualLegal.legal_description || manual.legal_description ||
+      property?.legal?.legal_description || property?.account?.legal_description;
+  }
+  return null;
+}
+
+function siteArea(property) {
+  const manual = manualSectionValue(property, "report.land_details");
+  const manualRows = Array.isArray(manual.land_detail) ? manual.land_detail : [];
+  const rows = manualRows.length ? manualRows : (Array.isArray(property?.land) ? property.land : []);
+  return rows.reduce((total, row) => total + Math.max(0, numberValue(row?.area_sqft) || 0), 0);
+}
+
 function canonicalPdfFileName(snapshot) {
   const jsonName = cleanText(snapshot?.canonical_file_name || "custom-appraisal.homenode-appraisal.json");
   return jsonName.endsWith(".homenode-appraisal.json")
@@ -137,35 +210,147 @@ export function customAppraisalReportFileName(snapshot) {
   return canonicalPdfFileName(snapshot);
 }
 
-export function customAppraisalReportReadinessErrors(snapshot, property = {}) {
-  const errors = [];
+export function customAppraisalReportReadiness(snapshot, property = {}) {
+  const blockers = [];
+  const warnings = [];
+  const addBlocker = (code, message) => blockers.push({ code, message });
+  const addWarning = (code, message) => warnings.push({ code, message });
   const details = assignmentDetails(snapshot, property);
   const sales = sectionValue(snapshot, "sales_comparison");
   const market = sectionValue(snapshot, "market_conditions");
   if (!Array.isArray(details.assignment_types) || !details.assignment_types.length) {
-    errors.push("Select an assignment type.");
+    addBlocker("assignment_type_missing", "Select an assignment type.");
+  }
+  if (!hasText(subjectIdentificationValue(property, "address"))) {
+    addBlocker("subject_address_missing", "Enter and verify the subject property address.");
+  }
+  if (details.pud) {
+    const duesComplete = positiveNumber(details.hoa_dues_amount) && hasText(details.hoa_frequency);
+    if (!duesComplete && !hasText(details.hoa_explanation)) {
+      addBlocker("pud_hoa_support_missing", "Enter HOA dues and a frequency, or explain why they are unavailable.");
+    }
+    if (details.hoa_frequency === "other" && !hasText(details.hoa_explanation)) {
+      addBlocker("pud_hoa_other_explanation_missing", "Explain the Other HOA dues frequency.");
+    }
+  }
+  if (details.occupancy === "unknown" && !hasText(details.occupancy_explanation)) {
+    addBlocker("occupancy_unknown_unexplained", "Explain why occupancy is unknown.");
+  }
+  if (details.assignment_types?.includes("other") && !hasText(details.assignment_explanation)) {
+    addBlocker("assignment_other_unexplained", "Explain the Other assignment type.");
+  }
+  if (details.subject_under_contract) {
+    if (!details.assignment_types?.includes("purchase_transaction")) {
+      addBlocker("contract_assignment_type_conflict", "Subject Under Contract requires Purchase Transaction in Assignment Details.");
+    }
+    if (typeof details.contract_arms_length !== "boolean") {
+      addBlocker("contract_arms_length_missing", "Select Yes or No for Arms Length.");
+    }
+    if (!positiveNumber(details.contract_price)) {
+      addBlocker("contract_price_missing", "Enter the subject contract price.");
+    }
+    if (!validIsoDate(details.contract_date)) {
+      addBlocker("contract_date_missing", "Enter a valid subject contract date.");
+    }
+    if (typeof details.seller_matches_public_records !== "boolean") {
+      addBlocker("contract_seller_match_missing", "Select Yes or No for whether the seller matches public records.");
+    }
+    if (details.seller_matches_public_records === false && !hasText(details.seller_mismatch_explanation)) {
+      addBlocker("contract_seller_mismatch_unexplained", "Explain the difference between the contract seller and public records.");
+    }
+  }
+  if (details.subject_conforms_to_neighborhood === false) {
+    if (!hasText(details.subject_nonconformity_type)) {
+      addBlocker("subject_nonconformity_type_missing", "Select the subject's neighborhood nonconformity type.");
+    }
+    if (!hasText(details.subject_nonconformity_explanation)) {
+      addBlocker("subject_nonconformity_unexplained", "Explain why the subject does not conform to the neighborhood.");
+    }
+  }
+  const landUseValues = [
+    details.neighborhood_land_use_one_unit_pct,
+    details.neighborhood_land_use_two_to_four_unit_pct ??
+      details.neighborhood_land_use_two_to_four_pct,
+    details.neighborhood_land_use_multifamily_pct,
+    details.neighborhood_land_use_commercial_pct,
+    details.neighborhood_land_use_other_vacant_pct,
+  ].map(numberValue);
+  if (landUseValues.some((value) => value !== null)) {
+    const total = landUseValues.reduce((sum, value) => sum + (value || 0), 0);
+    if (Math.abs(total - 100) > 0.1) {
+      addBlocker("land_use_total_invalid", "Present land use percentages must total 100%.");
+    }
   }
   if (!details.neighborhood_boundary_confirmed) {
-    errors.push("Confirm the neighborhood boundary.");
+    addBlocker("neighborhood_boundary_unconfirmed", "Confirm the neighborhood boundary.");
   }
   for (const direction of ["north", "east", "south", "west"]) {
     if (!String(details[`neighborhood_boundary_${direction}`] || "").trim()) {
-      errors.push(`Enter the ${direction} neighborhood boundary.`);
+      addBlocker(`neighborhood_boundary_${direction}_missing`, `Enter the ${direction} neighborhood boundary.`);
     }
   }
   if (!Array.isArray(sales.comparables) || !sales.comparables.length) {
-    errors.push("Select and save at least one comparable sale.");
+    addBlocker("comparable_sales_missing", "Select and save at least one comparable sale.");
+  } else {
+    const incomplete = sales.comparables.reduce((count, comparable) => {
+      const sale = comparable?.sale || comparable || {};
+      return count + Number(!hasText(sale.address) || !positiveNumber(sale.sale_price) || !hasText(sale.closing_date));
+    }, 0);
+    if (incomplete > 0) {
+      addBlocker("comparable_sale_core_data_missing", `${incomplete} selected comparable ${incomplete === 1 ? "is" : "are"} missing an address, sale price, or closing date.`);
+    }
+    if (sales.comparables.length < 3) {
+      addWarning("comparable_count_below_three", "Fewer than three comparable sales are saved; confirm the limited comparable set is adequately supported.");
+    }
   }
   if (!(numberValue(sales.opinionOfValue) > 0)) {
-    errors.push("Reconcile a positive Sales Comparison Approach value.");
+    addBlocker("sales_value_missing", "Reconcile a positive Sales Comparison Approach value.");
   }
   if (!Array.isArray(market?.response?.analyses) || !market.response.analyses.length) {
-    errors.push("Complete and save at least one market conditions study.");
+    addBlocker("market_study_missing", "Complete and save at least one market conditions study.");
   }
   if (!String(market?.reconciliation?.trendConclusion || "").trim()) {
-    errors.push("Complete the market trend conclusion.");
+    addBlocker("market_trend_conclusion_missing", "Complete the market trend conclusion.");
   }
-  return errors;
+
+  const account = property?.account || {};
+  const qualityStatus = String(account.data_quality_status || "").trim().toLowerCase();
+  if (qualityStatus && !["complete", "verified", "legacy_resolved"].includes(qualityStatus)) {
+    addWarning("account_data_quality_review", `The CAD account data-quality status is ${qualityStatus.replaceAll("_", " ")}; review the source data before signing.`);
+  }
+  const qualityFlags = normalizedQualityFlags(account);
+  if (qualityFlags.length) {
+    addWarning("account_data_quality_flags", `CAD source flags remain: ${qualityFlags.join(", ").replaceAll("_", " ")}.`);
+  }
+  if (!hasText(subjectIdentificationValue(property, "owner"))) {
+    addWarning("subject_owner_missing", "The subject owner name is not available from CAD or a manually verified Subject Identification section.");
+  }
+  if (!hasText(subjectIdentificationValue(property, "legal"))) {
+    addWarning("subject_legal_description_missing", "The subject legal description is not available from CAD or a manually verified Subject Identification section.");
+  }
+  if (!(siteArea(property) > 0)) {
+    addWarning("subject_site_area_missing", "The subject site area is not available from CAD or a manually verified Land Details section.");
+  }
+  const gla = propertyCharacteristicValue(property, ["main_improvement", "living_area_sqft"]) ??
+    property?.improvement?.living_area_sqft ?? property?.improvement?.total_living_area;
+  if (!isVacantLand(property) && !positiveNumber(gla)) {
+    addWarning("subject_gla_missing", "The improved subject has no verified gross living area.");
+  }
+  if (!hasText(details.subject_condition_rating)) {
+    addWarning("subject_condition_rating_missing", "The subject condition rating is not selected.");
+  }
+  return {
+    ready: blockers.length === 0,
+    blockers,
+    warnings,
+    blocker_messages: blockers.map((item) => item.message),
+    warning_messages: warnings.map((item) => item.message),
+    warning_codes: warnings.map((item) => item.code),
+  };
+}
+
+export function customAppraisalReportReadinessErrors(snapshot, property = {}) {
+  return customAppraisalReportReadiness(snapshot, property).blocker_messages;
 }
 
 async function optionalRows(client, tableName, sql, params) {
@@ -180,6 +365,7 @@ export async function loadCustomAppraisalPropertySnapshot(client, { accountId, a
     client.query(
       `SELECT a.account_id, a.address, a.city, a.postal_code, a.county,
               a.neighborhood_code, a.subdivision, a.legal_description,
+              a.data_quality_status, a.data_quality_flags,
               COALESCE(v.certified_year, mv.tax_year) AS latest_tax_year,
               COALESCE(v.market_value, mv.total_value) AS market_value,
               COALESCE(v.improvement_value, mv.imp_value) AS improvement_value,
@@ -881,8 +1067,25 @@ function renderReconciliationPage(doc, meta, snapshot, property) {
   doc.font("Helvetica-Bold").fontSize(7).fillColor("#64748b").text("WORKFILE SHA-256", PAGE.margin, y + 12);
   doc.font("Courier").fontSize(6.5).fillColor("#0f172a").text(cleanText(meta.checksum, "Draft - checksum assigned at finalization"), PAGE.margin, y + 26, { width: CONTENT_WIDTH, characterSpacing: 0.3 });
   y += 58;
-  const readiness = customAppraisalReportReadinessErrors(snapshot, property);
-  noteBox(doc, readiness.length ? `E&O REVIEW INCOMPLETE: ${readiness.join(" ")}` : "E&O READINESS COMPLETE: assignment type, confirmed neighborhood boundary, market conditions, comparable selection, and value reconciliation were present when this report was generated.", y, { color: readiness.length ? "#dc2626" : "#047857", height: 64 });
+  const readiness = customAppraisalReportReadiness(snapshot, property);
+  const acknowledgedWarnings = new Set(
+    Array.isArray(snapshot?.eo_readiness?.acknowledged_warning_codes)
+      ? snapshot.eo_readiness.acknowledged_warning_codes
+      : [],
+  );
+  const allWarningsAcknowledged = readiness.warnings.length > 0 &&
+    readiness.warnings.every((warning) => acknowledgedWarnings.has(warning.code));
+  const readinessText = readiness.blockers.length
+    ? `E&O REVIEW INCOMPLETE: ${readiness.blocker_messages.join(" ")}`
+    : readiness.warnings.length
+      ? allWarningsAcknowledged
+        ? `E&O READINESS COMPLETE WITH APPRAISER-ACKNOWLEDGED WARNINGS: ${readiness.warning_messages.join(" ")}`
+        : `E&O REVIEW WARNINGS - APPRAISER ACKNOWLEDGMENT REQUIRED BEFORE FINALIZATION: ${readiness.warning_messages.join(" ")}`
+      : "E&O READINESS COMPLETE: assignment type, confirmed neighborhood boundary, market conditions, comparable selection, and value reconciliation were present when this report was generated.";
+  noteBox(doc, readinessText, y, {
+    color: readiness.blockers.length ? "#dc2626" : readiness.warnings.length ? "#b45309" : "#047857",
+    height: 64,
+  });
 }
 
 export async function renderCustomAppraisalReportPdf({ snapshot, property, images = {}, checksum = null }) {

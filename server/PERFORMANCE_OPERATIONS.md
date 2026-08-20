@@ -90,6 +90,11 @@ Production acceptance targets for the stabilization pass:
 6. Server tests, frontend checks, and a production frontend build pass before
    deployment.
 
+Final appraisal E&O preflight is intentionally on-demand. It loads the durable
+workfile and current property evidence only when the appraiser selects Finalize
+& Lock, so unresolved scraper-repair warnings remain visible without adding
+queries to initial Property Report rendering.
+
 ## Rollback
 
 If the scheduled service is unavailable, temporarily set the affected inline

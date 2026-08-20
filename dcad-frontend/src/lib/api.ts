@@ -501,6 +501,23 @@ export interface CustomAppraisalWorkfile {
   } | null;
 }
 
+export interface CustomAppraisalReadinessIssue {
+  code: string;
+  message: string;
+}
+
+export interface CustomAppraisalReadiness {
+  ready: boolean;
+  blockers: CustomAppraisalReadinessIssue[];
+  warnings: CustomAppraisalReadinessIssue[];
+  blocker_messages: string[];
+  warning_messages: string[];
+  warning_codes: string[];
+  assignment_file_id: number;
+  workfile_status: CustomAppraisalWorkfile['status'];
+  evaluated_at: string;
+}
+
 export interface SalePhoto {
   id: string | number;
   source_record_id: string | number;
@@ -2644,11 +2661,26 @@ export async function saveCustomAppraisalWorkfileSection<T extends object>(
   );
 }
 
+/** Run the server-authoritative E&O preflight without changing the file. */
+export async function getCustomAppraisalWorkfileReadiness(
+  accountId: string,
+  assignmentFileId: number,
+  editorKey: string,
+): Promise<{ ok: true; account_id: string; readiness: CustomAppraisalReadiness }> {
+  const id = (accountId || '').trim();
+  return fetchJSON(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/readiness`,
+    ),
+    { headers: { 'x-homenode-editor-key': editorKey } },
+  );
+}
+
 /** Finalize the current file as an immutable, checksummed appraisal snapshot. */
 export async function signCustomAppraisalWorkfile(
   accountId: string,
   assignmentFileId: number,
-  input: { signed_by: string },
+  input: { signed_by: string; acknowledged_warning_codes?: string[] },
   editorKey: string,
 ): Promise<{ ok: true; account_id: string; workfile: CustomAppraisalWorkfile }> {
   const id = (accountId || '').trim();

@@ -7,6 +7,7 @@ import {
   normalizeCustomAppraisalSectionKey,
   normalizeCustomAppraisalSectionRevision,
   normalizeCustomAppraisalSectionValue,
+  normalizeCustomAppraisalWarningCodes,
 } from "../src/services/customAppraisalWorkfiles.js";
 
 test("builds stable unique Custom Appraisal workfile names", () => {
@@ -39,5 +40,25 @@ test("rejects oversized workfile sections before a database write", () => {
   assert.throws(
     () => normalizeCustomAppraisalSectionValue({ payload: "x".repeat(900_000) }),
     /custom_appraisal_section_too_large/,
+  );
+});
+
+test("normalizes an exact bounded set of acknowledged E&O warning codes", () => {
+  assert.deepEqual(
+    normalizeCustomAppraisalWarningCodes([
+      " Subject_GLA_Missing ",
+      "subject_gla_missing",
+      "account_data_quality_review",
+    ]),
+    ["subject_gla_missing", "account_data_quality_review"],
+  );
+  assert.deepEqual(normalizeCustomAppraisalWarningCodes(undefined), []);
+  assert.throws(
+    () => normalizeCustomAppraisalWarningCodes(["bad.warning"]),
+    /invalid_custom_appraisal_warning_codes/,
+  );
+  assert.throws(
+    () => normalizeCustomAppraisalWarningCodes("subject_gla_missing"),
+    /invalid_custom_appraisal_warning_codes/,
   );
 });

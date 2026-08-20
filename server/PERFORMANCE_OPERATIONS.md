@@ -95,6 +95,36 @@ workfile and current property evidence only when the appraiser selects Finalize
 & Lock, so unresolved scraper-repair warnings remain visible without adding
 queries to initial Property Report rendering.
 
+
+## Data-repair readiness and import bursts
+
+GET /api/system/data-repair is the aggregate operational view for this work. It
+does not mutate a property and it never returns account identifiers. It combines:
+
+- normalized web request timing and PostgreSQL pool pressure;
+- the latest Census, sale-coordinate, influence, and sales-reconciliation queue
+  snapshots from scheduled-maintenance history;
+- cached Dallas County scraper campaign, outage-circuit, owner, market-value,
+  field-repair, legacy-reconciliation, and manual-review counts;
+- a compact action_items list and a healthy, attention, or degraded status.
+
+The scraper request runs only when this operational endpoint is requested,
+times out independently, and is cached for five minutes. A source outage keeps
+the last successful snapshot and marks it stale rather than slowing property
+reports or removing known data.
+
+Routine maintenance now has enough bounded capacity to drain up to 10,000
+location rows and 10,000 influence rows per run, subject to the existing
+45-minute deadline. Queue ordering still prioritizes the newest sale activity.
+After a large CSV import, run the background-only burst command:
+
+    npm run maintenance:sales
+
+This command processes locations and influences without running Census, parcel,
+road, flood, zoning, or document work. When Trestle replication is enabled, its
+background job automatically runs the same bounded sales-enrichment pass after
+each successful feed sync. Trestle ingestion remains durable even if enrichment
+fails; the next run resumes the queue.
 ## Rollback
 
 If the scheduled service is unavailable, temporarily set the affected inline

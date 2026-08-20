@@ -21,6 +21,7 @@
         "sync:property-context": "node scripts/syncPropertyContext.js",
         "sync:property-context:full": "node scripts/syncPropertyContext.js --source=all --mode=full",
         "maintenance:scheduled": "node scripts/runScheduledMaintenance.js --task=routine",
+        "maintenance:sales": "node scripts/runScheduledMaintenance.js --task=sales",
         "maintenance:roads": "node scripts/runScheduledMaintenance.js --task=roads",
         "maintenance:traffic": "node scripts/runScheduledMaintenance.js --task=traffic",
         "maintenance:context": "node scripts/runScheduledMaintenance.js --task=context",

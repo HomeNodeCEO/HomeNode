@@ -108,12 +108,24 @@ export function createRequestPerformanceMonitor({
       byRoute.set(key, current);
     }
     const slowestRoutes = [...byRoute.entries()]
-      .map(([route, routeDurations]) => ({
-        route,
-        requests: routeDurations.length,
-        p95_ms: roundedMilliseconds(percentile(routeDurations, 95)),
-        maximum_ms: roundedMilliseconds(Math.max(...routeDurations)),
-      }))
+      .map(([route, routeDurations]) => {
+        const routeSamples = samples.filter(
+          (sample) => `${sample.method} ${sample.path}` === route,
+        );
+        return {
+          route,
+          requests: routeDurations.length,
+          average_ms: roundedMilliseconds(
+            routeDurations.reduce((sum, duration) => sum + duration, 0) /
+              routeDurations.length,
+          ),
+          p50_ms: roundedMilliseconds(percentile(routeDurations, 50)),
+          p95_ms: roundedMilliseconds(percentile(routeDurations, 95)),
+          maximum_ms: roundedMilliseconds(Math.max(...routeDurations)),
+          above_target: routeDurations.filter((duration) => duration >= warnMs).length,
+          server_errors: routeSamples.filter((sample) => sample.status >= 500).length,
+        };
+      })
       .sort((left, right) => right.p95_ms - left.p95_ms)
       .slice(0, 10);
 
@@ -122,6 +134,8 @@ export function createRequestPerformanceMonitor({
       window: {
         capacity: windowSize,
         requests: samples.length,
+        minimum_ready_samples: Math.min(25, windowSize),
+        sample_state: samples.length >= Math.min(25, windowSize) ? "ready" : "warming",
         p50_ms: roundedMilliseconds(percentile(durations, 50)),
         p95_ms: roundedMilliseconds(percentile(durations, 95)),
         maximum_ms: roundedMilliseconds(durations.length ? Math.max(...durations) : 0),

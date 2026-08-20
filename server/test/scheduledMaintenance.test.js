@@ -15,6 +15,7 @@ test("maintenance tasks can be scheduled independently", () => {
   assert.deepEqual(resolveMaintenanceTasks("roads"), ["roads"]);
   assert.deepEqual(resolveMaintenanceTasks("census"), ["census"]);
   assert.deepEqual(resolveMaintenanceTasks("traffic"), ["traffic"]);
+  assert.deepEqual(resolveMaintenanceTasks("sales"), ["locations", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("documents"), ["documents"]);
   assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "traffic", "floods", "zoning", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("all"), [
@@ -80,4 +81,31 @@ test("a scheduled run records completion and always releases its lock", async ()
   assert.deepEqual(result.results.census, { task: "census", claimed: 0 });
   assert.equal(statements.some((sql) => /status = \$2/.test(sql)), true);
   assert.equal(statements.some((sql) => /pg_advisory_unlock/.test(sql)), true);
+});
+
+test("sales maintenance defaults can drain an import-sized backlog while staying bounded", async () => {
+  const optionsByTask = new Map();
+  const pool = {
+    async query(sql) {
+      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+      if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) {
+        return { rows: [{ id: 92 }] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await runScheduledMaintenance(pool, {
+    task: "sales",
+    taskRunner: async (_pool, task, options) => {
+      optionsByTask.set(task, options);
+      return { task };
+    },
+    logger: { info() {}, warn() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(optionsByTask.get("locations").locationMaximumBatches, 100);
+  assert.equal(optionsByTask.get("locations").locationBatchSize, 100);
+  assert.equal(optionsByTask.get("locations").locationSeedLimit, 10_000);
+  assert.equal(optionsByTask.get("influences").influenceMaximumBatches, 100);
+  assert.equal(optionsByTask.get("influences").influenceBatchSize, 100);
 });

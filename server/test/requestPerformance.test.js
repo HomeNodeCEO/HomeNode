@@ -63,6 +63,10 @@ test("request monitor records bounded, aggregated samples", () => {
   assert.equal(status.window.requests, 1);
   assert.equal(status.window.above_target, 1);
   assert.equal(status.window.p95_ms, 125);
+  assert.equal(status.window.sample_state, "warming");
+  assert.equal(status.window.minimum_ready_samples, 25);
   assert.equal(status.slowest_routes[0].route, "GET /api/accounts/:accountId");
+  assert.equal(status.slowest_routes[0].average_ms, 125);
+  assert.equal(status.slowest_routes[0].above_target, 1);
   assert.deepEqual(status.database_pool, { total: 4, idle: 3, waiting: 0 });
 });

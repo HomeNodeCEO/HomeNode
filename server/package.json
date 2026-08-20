@@ -13,6 +13,7 @@
         "test:mobile-migration": "node scripts/prepareUadCiDatabase.js && node scripts/runUadMigrations.js && node scripts/prepareMobileCiDatabase.js && node scripts/runMobileMigrations.js && node scripts/runMobileMigrations.js && node --test test/mobileMigration.integration.test.js",
         "render:sample:appraisal-pdf": "node scripts/renderCustomAppraisalReportSample.js",
         "provision:mobile-identity": "node scripts/provisionMobileOidcIdentity.js",
+        "provision:mobile-user": "node scripts/provisionMobileUser.js",
         "verify:mobile-oidc": "node scripts/verifyMobileOidcConfiguration.js",
         "backfill:locations": "node scripts/backfillAccountLocations.js",
         "backfill:census": "node scripts/backfillCensusGeographies.js",

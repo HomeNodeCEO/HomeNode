@@ -116,4 +116,11 @@ If any step fails, set `MOBILE_INSPECTION_ENABLED=false`. This leaves UAD and we
 
 Production activation is separate. It requires a WorkOS production environment, billing information, new production identifiers, separately invited real users, an approved internal distribution channel, and device testing. Never copy the synthetic staging principal or staging issuer/subject mapping into production.
 
+Create a real internal appraiser and its OIDC mapping with the production-safe onboarding command. It is transactional, rejects synthetic `.invalid` users in production, refuses inactive or ambiguous records, and will not reassign an existing identity:
+
+```powershell
+cd server
+npm run provision:mobile-user -- --email appraiser@example.com --display-name "Appraiser Name" --organization-legal-name "Example Appraisal Services, LLC" --organization-display-name "Example Appraisal" --organization-dba-name "Example Appraisal" --roles appraiser,organization_admin --issuer https://<environment>.authkit.app --subject user_123
+```
+
 UAD delivery credentials, submission endpoints, certification, and lender/GSE authorization remain independent from mobile OIDC and must be confirmed separately before production UAD submission.

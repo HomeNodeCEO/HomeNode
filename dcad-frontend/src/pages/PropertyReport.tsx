@@ -24,6 +24,7 @@ import {
   runNeighborhoodLandUseAnalysis,
   getAssignmentFiles,
   getCustomAppraisalWorkfile,
+  getCustomAppraisalWorkfileReadiness,
   getAccountPhotos,
   getRelatedParcels,
   lookupAccountCensusGeography,
@@ -572,6 +573,18 @@ function assignmentValidationErrors(assignment: AssignmentDetails): string[] {
   }
   if (
     assignment.subject_under_contract &&
+    !((parseNumber(assignment.contract_price) || 0) > 0)
+  ) {
+    errors.push("Enter the subject contract price.");
+  }
+  if (
+    assignment.subject_under_contract &&
+    !/^\d{4}-\d{2}-\d{2}$/.test(String(assignment.contract_date || ""))
+  ) {
+    errors.push("Enter a valid subject contract date.");
+  }
+  if (
+    assignment.subject_under_contract &&
     typeof assignment.seller_matches_public_records !== "boolean"
   ) {
     errors.push("Select Yes or No for whether the seller matches public records.");
@@ -582,6 +595,18 @@ function assignmentValidationErrors(assignment: AssignmentDetails): string[] {
     !String(assignment.seller_mismatch_explanation || "").trim()
   ) {
     errors.push("Explain the difference between the contract seller and public records.");
+  }
+  if (
+    assignment.subject_conforms_to_neighborhood === false &&
+    !String(assignment.subject_nonconformity_type || "").trim()
+  ) {
+    errors.push("Select the subject's neighborhood nonconformity type.");
+  }
+  if (
+    assignment.subject_conforms_to_neighborhood === false &&
+    !String(assignment.subject_nonconformity_explanation || "").trim()
+  ) {
+    errors.push("Explain why the subject does not conform to the neighborhood.");
   }
   const landUseTotal = neighborhoodLandUseTotal(assignment);
   if (landUseTotal !== null && Math.abs(landUseTotal - 100) > 0.1) {
@@ -4603,7 +4628,7 @@ function AddressHero({
 
   const finalizeCustomAppraisalFile = async () => {
     if (!accountId || !activeAssignmentFile) return;
-    const blockers = [
+    const localBlockers = [
       ...assignmentValidationErrors(assignmentDraft),
       ...neighborhoodBoundaryReadinessErrors(assignmentDraft),
       ...(salesComparisonDraft?.comparables?.length
@@ -4617,28 +4642,54 @@ function AddressHero({
         : ["Complete and save at least one Market Conditions study before finalizing."]),
       ...(assignmentDirty ? ["Save the current Property Report changes before finalizing."] : []),
     ];
-    if (blockers.length) {
-      setAssignmentSaveMessage(`Cannot finalize yet: ${blockers.join(" ")}`);
+    if (localBlockers.length) {
+      setAssignmentSaveMessage(`Cannot finalize yet: ${localBlockers.join(" ")}`);
       return;
     }
-    const confirmed = window.confirm(
-      `Finalize and lock ${activeAssignmentFile.file_number}? This creates the immutable signed snapshot. Future changes must be made in a new appraisal file.`,
-    );
-    if (!confirmed) return;
-    const signedBy = window.prompt(
-      "Enter the appraiser name that is signing/finalizing this file:",
-      activeAssignmentFile.reviewer || "",
-    )?.trim();
-    if (!signedBy) return;
     const editorKey = editorKeyForSave();
     if (!editorKey) return;
     setSavingAssignmentFile(true);
     try {
       await marketWorkfileSaveQueueRef.current;
+      setWorkfileStatusMessage("Running final E&O and source-data readiness checks...");
+      const preflight = await getCustomAppraisalWorkfileReadiness(
+        accountId,
+        activeAssignmentFile.id,
+        editorKey,
+      );
+      if (!preflight.readiness.ready) {
+        setAssignmentSaveMessage(
+          `Cannot finalize yet: ${preflight.readiness.blocker_messages.join(" ")}`,
+        );
+        setWorkfileStatusMessage("Final E&O review found required corrections.");
+        return;
+      }
+      const warningCodes = preflight.readiness.warning_codes;
+      if (preflight.readiness.warnings.length) {
+        const warningAccepted = window.confirm(
+          `E&O review found ${preflight.readiness.warnings.length} item${preflight.readiness.warnings.length === 1 ? "" : "s"} requiring appraiser acknowledgment:\n\n${preflight.readiness.warning_messages.join("\n\n")}\n\nContinue only if you reviewed and accept these items for this appraisal file.`,
+        );
+        if (!warningAccepted) {
+          setWorkfileStatusMessage("Finalization paused for source-data review.");
+          return;
+        }
+      }
+      const confirmed = window.confirm(
+        `Finalize and lock ${activeAssignmentFile.file_number}? This creates the immutable signed snapshot. Future changes must be made in a new appraisal file.`,
+      );
+      if (!confirmed) return;
+      const signedBy = window.prompt(
+        "Enter the appraiser name that is signing/finalizing this file:",
+        activeAssignmentFile.reviewer || "",
+      )?.trim();
+      if (!signedBy) return;
       const response = await signCustomAppraisalWorkfile(
         accountId,
         activeAssignmentFile.id,
-        { signed_by: signedBy },
+        {
+          signed_by: signedBy,
+          acknowledged_warning_codes: warningCodes,
+        },
         editorKey,
       );
       const workfile = response.workfile;
@@ -4664,8 +4715,15 @@ function AddressHero({
         `Finalized ${activeAssignmentFile.file_number}. The signed snapshot is immutable.`,
       );
     } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "The appraisal file could not be finalized.";
       setAssignmentSaveMessage(
-        error instanceof Error ? error.message : "The appraisal file could not be finalized.",
+        message === "custom_appraisal_eo_warnings_unacknowledged"
+          ? "Finalization stopped because the source-data warnings changed after preflight. Run Finalize & Lock again to review the current warnings."
+          : message === "custom_appraisal_eo_incomplete"
+            ? "Finalization stopped because a required E&O item changed after preflight. Run Finalize & Lock again to see the current blockers."
+            : message,
       );
     } finally {
       setSavingAssignmentFile(false);

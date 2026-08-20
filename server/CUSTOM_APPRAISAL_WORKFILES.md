@@ -34,11 +34,23 @@ storage rather than being duplicated inside the JSON snapshot.
    `sales_comparison` section. Market Conditions saves to `market_conditions`.
 4. A successful database save removes the old sales browser draft. Legacy
    browser drafts can still be imported once when a database section is empty.
-5. Finalize & Lock runs the report E&O checks, records the signer, creates the
-   signed snapshot and checksum, and rejects later assignment/section/mobile
-   field edits. Corrections belong in a new appraisal file.
-6. The Assignment Log can download either the current database draft or the
+5. Finalize & Lock first calls the server-authoritative readiness endpoint. Its
+   blockers cover assignment, contract, PUD/HOA, conformity, neighborhood,
+   market-study, comparable, and value-reconciliation requirements. Source-data
+   repair concerns (including an incomplete CAD status or missing owner, legal,
+   site, GLA, or condition evidence) are explicit warnings that the appraiser
+   must acknowledge. The server reruns the same checks while signing so a stale
+   browser cannot bypass a new blocker or warning.
+6. The signed snapshot records the appraiser, exact acknowledged warning codes,
+   E&O evaluation, checksum, and immutable PDF. Later assignment/section/mobile
+   edits are rejected; corrections belong in a new appraisal file.
+7. The Assignment Log can download either the current database draft or the
    immutable signed snapshot using its canonical filename.
+
+`GET /api/accounts/:id/assignment-files/:fileId/workfile/readiness` is an
+on-demand preflight and does not run during normal Property Report loading.
+That preserves the lazy-rendered fast path while giving the appraiser an exact
+preview of what the signing transaction will enforce.
 
 ## Deployment and testing
 

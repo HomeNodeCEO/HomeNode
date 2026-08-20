@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
-  customAppraisalReportReadinessErrors,
+  customAppraisalReportReadiness,
   ensureCustomAppraisalReportArtifactSchema,
   ensureSignedCustomAppraisalReportArtifact,
   loadCustomAppraisalPropertySnapshot,
@@ -13,6 +13,7 @@ import { normalizeSalesComparisonQualitativeAnalysis } from "../util/qualitative
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
 const MAX_SECTION_BYTES = 850_000;
+const READINESS_WARNING_CODE_PATTERN = /^[a-z][a-z0-9_]{1,95}$/;
 const schemaReadyByPool = new WeakMap();
 
 function jsonBytes(value) {
@@ -51,6 +52,18 @@ export function normalizeCustomAppraisalSaveReason(value) {
     throw new Error("invalid_custom_appraisal_save_reason");
   }
   return reason;
+}
+
+export function normalizeCustomAppraisalWarningCodes(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 50) {
+    throw new Error("invalid_custom_appraisal_warning_codes");
+  }
+  const codes = value.map((code) => String(code || "").trim().toLowerCase());
+  if (codes.some((code) => !READINESS_WARNING_CODE_PATTERN.test(code))) {
+    throw new Error("invalid_custom_appraisal_warning_codes");
+  }
+  return [...new Set(codes)];
 }
 
 export function canonicalCustomAppraisalFileName(fileNumber, assignmentFileId) {
@@ -244,6 +257,33 @@ export async function getCustomAppraisalWorkfile(pool, { accountId, assignmentFi
   ]);
   if (!workfileRows.length) throw new Error("assignment_file_not_found");
   return workfileResponse(workfileRows[0], sectionRows, signedRows[0] || null);
+}
+
+/**
+ * Run the authoritative server E&O preflight without mutating or locking the
+ * appraisal file. This is deliberately on-demand so property-report loading
+ * remains fast; final signing runs the same checks again inside its transaction.
+ */
+export async function getCustomAppraisalWorkfileReadiness(pool, {
+  accountId,
+  assignmentFileId,
+}) {
+  const [workfile, property] = await Promise.all([
+    getCustomAppraisalWorkfile(pool, { accountId, assignmentFileId }),
+    loadCustomAppraisalPropertySnapshot(pool, { accountId, assignmentFileId }),
+  ]);
+  const snapshot = {
+    record_kind: "homenode_custom_appraisal_readiness_preview",
+    ...workfile,
+    assignment: property.assignment,
+    evidence: { property_report_data: property },
+  };
+  return {
+    ...customAppraisalReportReadiness(snapshot, property),
+    assignment_file_id: Number(assignmentFileId),
+    workfile_status: workfile.status,
+    evaluated_at: new Date().toISOString(),
+  };
 }
 
 async function queryJsonRowsIfAvailable(client, tableName, sql, params) {
@@ -467,9 +507,13 @@ export async function signCustomAppraisalWorkfile(pool, {
   accountId,
   assignmentFileId,
   signedBy: signedByValue,
+  acknowledgedWarningCodes: acknowledgedWarningCodesValue,
 }) {
   const signedBy = String(signedByValue || "HomeNode editor").trim().slice(0, 200);
   if (!signedBy) throw new Error("invalid_custom_appraisal_signer");
+  const acknowledgedWarningCodes = normalizeCustomAppraisalWarningCodes(
+    acknowledgedWarningCodesValue,
+  );
   await ensureCustomAppraisalWorkfileSchema(pool);
   await ensureCustomAppraisalReportArtifactSchema(pool);
   const client = await pool.connect();
@@ -504,15 +548,34 @@ export async function signCustomAppraisalWorkfile(pool, {
     snapshot.status = "signed";
     snapshot.signed_at = signedAt;
     snapshot.signed_by = signedBy;
-    const readinessErrors = customAppraisalReportReadinessErrors(
+    const readiness = customAppraisalReportReadiness(
       snapshot,
       manifest.evidence.property_report_data,
     );
-    if (readinessErrors.length) {
+    if (readiness.blockers.length) {
       const error = new Error("custom_appraisal_eo_incomplete");
-      error.readinessErrors = readinessErrors;
+      error.readinessErrors = readiness.blocker_messages;
+      error.readiness = readiness;
       throw error;
     }
+    const acknowledgedSet = new Set(acknowledgedWarningCodes);
+    const unacknowledgedWarnings = readiness.warnings.filter(
+      (warning) => !acknowledgedSet.has(warning.code),
+    );
+    if (unacknowledgedWarnings.length) {
+      const error = new Error("custom_appraisal_eo_warnings_unacknowledged");
+      error.readinessWarnings = unacknowledgedWarnings;
+      error.readiness = readiness;
+      throw error;
+    }
+    snapshot.eo_readiness = {
+      version: 1,
+      evaluated_at: signedAt,
+      blockers: [],
+      warnings: readiness.warnings,
+      acknowledged_warning_codes: readiness.warning_codes,
+      acknowledged_by: signedBy,
+    };
     const serialized = JSON.stringify(snapshot);
     const checksum = createHash("sha256").update(serialized).digest("hex");
     const signedResult = await client.query(

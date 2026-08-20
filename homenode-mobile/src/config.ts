@@ -43,5 +43,13 @@ export function createMobileConfig(environment: Environment): MobileConfig {
 }
 
 export function loadMobileConfig(): MobileConfig {
-  return createMobileConfig(process.env);
+  // Expo replaces EXPO_PUBLIC_* values only when they are referenced through
+  // direct process.env property access. Passing process.env through unchanged
+  // leaves these values undefined in a compiled native bundle.
+  return createMobileConfig({
+    EXPO_PUBLIC_API_BASE_URL: process.env.EXPO_PUBLIC_API_BASE_URL,
+    EXPO_PUBLIC_OIDC_ISSUER: process.env.EXPO_PUBLIC_OIDC_ISSUER,
+    EXPO_PUBLIC_OIDC_CLIENT_ID: process.env.EXPO_PUBLIC_OIDC_CLIENT_ID,
+    EXPO_PUBLIC_WORKOS_CLIENT_ID: process.env.EXPO_PUBLIC_WORKOS_CLIENT_ID,
+  });
 }

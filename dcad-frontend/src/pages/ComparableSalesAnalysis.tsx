@@ -49,6 +49,7 @@ import {
 import { resolveComparableCharacteristic } from '@/lib/propertySourceResolution';
 
 const COMPARABLE_COUNT = 6;
+const SECONDARY_COMPARABLE_COUNT = 6;
 const LISTING_COUNT = 6;
 type SalesAnalysisPeriodMonths = 12 | 24 | 36;
 type ComparableSearchProfileOption = {
@@ -456,6 +457,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [selectedSales, setSelectedSales] = useState<Array<SaleRow | null>>(
     () => Array(COMPARABLE_COUNT).fill(null),
   );
+  const [selectedSecondarySales, setSelectedSecondarySales] = useState<SaleRow[]>([]);
   const [recommendationDetailsExpanded, setRecommendationDetailsExpanded] =
     useState(false);
   const [listingQuery, setListingQuery] = useState('');
@@ -604,6 +606,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setRecommendationSummary(null);
     setSalesResults([]);
     setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
+    setSelectedSecondarySales([]);
     setCompAddresses(Array(COMPARABLE_COUNT).fill(''));
     setCompGla(Array(COMPARABLE_COUNT).fill(null));
     setCompPrices(Array(COMPARABLE_COUNT).fill(null));
@@ -1675,6 +1678,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         ...(draft.workspace?.selectedListings || []).slice(0, LISTING_COUNT),
         ...Array(Math.max(0, LISTING_COUNT - (draft.workspace?.selectedListings?.length || 0))).fill(null),
       ]);
+      setSelectedSecondarySales(
+        (draft.workspace?.secondaryComparables || []).slice(0, SECONDARY_COMPARABLE_COUNT),
+      );
       setAppliedGroupedAdjustments(
         (draft.workspace?.appliedGroupedAdjustments || {}) as Record<string, AppliedGroupedAdjustment>,
       );
@@ -1701,6 +1707,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       }
     } else {
       setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
+      setSelectedSecondarySales([]);
       setCompAddresses(Array(COMPARABLE_COUNT).fill(''));
       setCompGla(Array(COMPARABLE_COUNT).fill(null));
       setCompPrices(Array(COMPARABLE_COUNT).fill(null));
@@ -1735,7 +1742,47 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesError('Six comparables are already selected. Remove one before adding another sale.');
       return;
     }
+    setSelectedSecondarySales((current) => current.filter(
+      (item) => saleKey(item) !== saleKey(sale),
+    ));
     applySaleToSlot(sale, openSlot);
+  };
+
+  const addSaleToSecondaryGrid = (sale: SaleRow) => {
+    if (selectedSales.some((item) => item && saleKey(item) === saleKey(sale))) {
+      setSalesNotice(`${saleDisplayAddress(sale)} is already in the primary grid.`);
+      return;
+    }
+    if (selectedSecondarySales.some((item) => saleKey(item) === saleKey(sale))) {
+      setSalesNotice(`${saleDisplayAddress(sale)} is already in the secondary grid.`);
+      return;
+    }
+    if (selectedSecondarySales.length >= SECONDARY_COMPARABLE_COUNT) {
+      setSalesError('Six secondary comparables are already selected. Remove one before adding another sale.');
+      return;
+    }
+    setSelectedSecondarySales((current) => [...current, sale]);
+    setSalesError(null);
+    setSalesNotice(`${saleDisplayAddress(sale)} was retained in the secondary evidence grid.`);
+  };
+
+  const removeSecondaryComparable = (slot: number) => {
+    const removed = selectedSecondarySales[slot];
+    if (!removed) return;
+    setSelectedSecondarySales((current) => current.filter((_, index) => index !== slot));
+    setSalesNotice(`${saleDisplayAddress(removed)} was removed from the secondary grid.`);
+  };
+
+  const moveSecondaryComparable = (from: number, to: number) => {
+    if (
+      from < 0 ||
+      from >= selectedSecondarySales.length ||
+      to < 0 ||
+      to >= selectedSecondarySales.length
+    ) return;
+    const moved = selectedSecondarySales[from];
+    setSelectedSecondarySales((current) => swapArrayItems(current, from, to));
+    setSalesNotice(`${saleDisplayAddress(moved)} moved to Secondary ${to + 1}.`);
   };
 
   const addCompetitiveSaleToPrimaryGrid = (sale: SaleRow) => {
@@ -1745,17 +1792,39 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }
     const openSlot = selectedSales.findIndex((item) => item === null);
     if (openSlot >= 0) {
+      setSelectedSecondarySales((current) => current.filter(
+        (item) => saleKey(item) !== saleKey(sale),
+      ));
       applySaleToSlot(sale, openSlot);
       setSalesNotice(`${saleDisplayAddress(sale)} was added to Comparable ${openSlot + 1}.`);
       return;
     }
     setCompetitiveReplacementSale(sale);
+    setRecommendationDetailsExpanded(true);
+    setSalesNotice('Choose the primary comparable to replace in the expanded recommendation details.');
   };
 
   const replacePrimaryComparable = (slot: number) => {
     if (!competitiveReplacementSale) return;
     const address = saleDisplayAddress(competitiveReplacementSale);
+    const incomingKey = saleKey(competitiveReplacementSale);
+    const replacedSale = selectedSales[slot];
+    const promotedFromSecondary = selectedSecondarySales.some(
+      (sale) => saleKey(sale) === incomingKey,
+    );
     applySaleToSlot(competitiveReplacementSale, slot);
+    if (promotedFromSecondary) {
+      setSelectedSecondarySales((current) => {
+        const withoutPromoted = current.filter((sale) => saleKey(sale) !== incomingKey);
+        if (
+          replacedSale &&
+          !withoutPromoted.some((sale) => saleKey(sale) === saleKey(replacedSale))
+        ) {
+          return [...withoutPromoted, replacedSale].slice(0, SECONDARY_COMPARABLE_COUNT);
+        }
+        return withoutPromoted;
+      });
+    }
     setCompetitiveReplacementSale(null);
     setSalesNotice(`${address} replaced Comparable ${slot + 1} in the primary grid.`);
   };
@@ -1828,6 +1897,21 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSalesNotice(`${movedAddress} moved to Comparable ${to + 1}.`);
   };
 
+  const movePrimaryComparableToSecondary = (slot: number) => {
+    const sale = selectedSales[slot];
+    if (!sale) return;
+    if (selectedSecondarySales.length >= SECONDARY_COMPARABLE_COUNT) {
+      setSalesError('The secondary grid already contains six sales. Remove one before moving a primary comparable.');
+      return;
+    }
+    if (!selectedSecondarySales.some((item) => saleKey(item) === saleKey(sale))) {
+      setSelectedSecondarySales((current) => [...current, sale]);
+    }
+    removeComparable(slot);
+    setSalesError(null);
+    setSalesNotice(`${saleDisplayAddress(sale)} moved to the secondary grid. Remaining primary comparables shifted left.`);
+  };
+
   const focusComparableSearch = () => {
     salesSearchInputRef.current?.focus();
     salesSearchInputRef.current?.scrollIntoView({
@@ -1839,6 +1923,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   const clearComparables = () => {
     Array.from({ length: COMPARABLE_COUNT }, (_, index) => index).forEach(removeComparable);
+    setSelectedSecondarySales([]);
     setSalesError(null);
   };
 
@@ -2539,7 +2624,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   useEffect(() => {
     if (!propertyId || !subject || !activeAssignmentFile || !workfileReady || workfileLocked) return;
     const draft: AppraisalReportSalesDraft = {
-      version: 2,
+      version: 3,
       accountId: propertyId,
       assignmentFileId: activeAssignmentFile.id,
       savedAt: new Date().toISOString(),
@@ -2590,6 +2675,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       adjustmentNotes,
       workspace: {
         selectedListings: selectedListings.filter((listing): listing is SaleRow => Boolean(listing)),
+        secondaryComparables: selectedSecondarySales,
         search: {
           asOfDate: salesAnalysisAsOf,
           periodMonths: salesPeriodMonths,
@@ -2632,6 +2718,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     workfileLocked,
     workfileDraftToRestore,
     selectedSales,
+    selectedSecondarySales,
     selectedListings,
     subjectCondition,
     subjectQuality,
@@ -4144,10 +4231,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-base font-semibold text-slate-950">
-                    Secondary Comparable Sales Grid
+                    Additional Competitive Sales
                   </h3>
                   <p className="mt-1 text-sm text-slate-600">
-                    {(recommendationSummary.secondary_sales || recommendationSummary.competitive_sales).length} additional sales are retained for appraiser review. Exact influence matches outside the normal search radius are surfaced here even when their physical score is lower.
+                    Candidate inventory for the primary or secondary grid. Exact influence matches outside the normal search radius remain visible even when their physical score is lower.
                   </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
@@ -4173,6 +4260,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         (item) => item && saleKey(item) === saleKey(sale),
                       );
                       const selected = selectedSlot >= 0;
+                      const selectedSecondarySlot = selectedSecondarySales.findIndex(
+                        (item) => saleKey(item) === saleKey(sale),
+                      );
+                      const selectedSecondary = selectedSecondarySlot >= 0;
                       const livingArea = sale.cad_living_area_sqft ?? sale.mls_living_area;
                       const bedrooms = sale.cad_bedroom_count ?? sale.mls_bedrooms_total;
                       const baths = sale.cad_bath_count ?? sale.mls_bathrooms_total_integer;
@@ -4250,17 +4341,33 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                             )}
                           </td>
                           <td className="px-3 py-3 text-right">
-                            <button
-                              type="button"
-                              onClick={() => selected ? removeComparable(selectedSlot) : addCompetitiveSaleToPrimaryGrid(sale)}
-                              className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${
-                                selected
-                                  ? 'border-red-300 bg-white text-red-700 hover:bg-red-50'
-                                  : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700'
-                              }`}
-                            >
-                              {selected ? 'Remove from Grid' : 'Add To Primary Grid'}
-                            </button>
+                            <div className="flex flex-col items-end gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => selected ? removeComparable(selectedSlot) : addCompetitiveSaleToPrimaryGrid(sale)}
+                                className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${
+                                  selected
+                                    ? 'border-red-300 bg-white text-red-700 hover:bg-red-50'
+                                    : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700'
+                                }`}
+                              >
+                                {selected ? 'Remove from Primary' : selectedSecondary ? 'Promote to Primary' : 'Add To Primary'}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={selected}
+                                onClick={() => selectedSecondary ? removeSecondaryComparable(selectedSecondarySlot) : addSaleToSecondaryGrid(sale)}
+                                className={`rounded-md border px-3 py-1.5 text-xs font-semibold ${
+                                  selected
+                                    ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                                    : selectedSecondary
+                                      ? 'border-red-200 bg-white text-red-700 hover:bg-red-50'
+                                      : 'border-violet-600 bg-violet-600 text-white hover:bg-violet-700'
+                                }`}
+                              >
+                                {selected ? 'Already Primary' : selectedSecondary ? 'Remove Secondary' : 'Add To Secondary'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -4311,6 +4418,48 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
         </div>
+
+        <section className="rounded-2xl border-2 border-violet-200 bg-violet-50/60 p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">Secondary Comparable Sales Grid</h2>
+              <p className="mt-1 max-w-4xl text-sm text-slate-700">
+                Retain up to six supplemental sales with a relevant location influence or defining feature. These sales are saved with the appraisal file but remain outside the primary adjustments and value conclusion until promoted.
+              </p>
+            </div>
+            <div className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-950">
+              {selectedSecondarySales.length} of {SECONDARY_COMPARABLE_COUNT} retained
+            </div>
+          </div>
+
+          {selectedSecondarySales.length ? (
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {selectedSecondarySales.map((sale, slot) => (
+                <article key={`secondary-selected-${saleKey(sale)}`} className="rounded-xl border border-violet-200 bg-white p-3">
+                  <div className="flex items-start gap-3">
+                    <MlsPhoto src={sale.primary_photo_url} alt={saleDisplayAddress(sale)} photoCount={Number(sale.photo_count || 0)} onOpen={sale.primary_photo_url ? () => void openSaleGallery(sale) : undefined} compact />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-violet-700">Secondary {slot + 1}</div>
+                      <div className="mt-0.5 font-semibold text-slate-950">{saleDisplayAddress(sale)}</div>
+                      <div className="mt-1 text-xs text-slate-500">MLS {sale.listing_id || '—'} · {sale.distanceMiles?.toFixed(2) ?? '—'} mi · Score {sale.comparableScore?.toFixed(1) ?? '—'}</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-900">{fmtCurrency(sale.sale_price) || 'Price unavailable'} · {saleDateDisplay(sale.closing_date)}</div>
+                      <div className="mt-1 text-xs text-slate-600">{sale.structural_style || sale.housing_type || 'Housing type review needed'}</div>
+                      {sale.influence_support_candidate && <div className="mt-2 inline-flex rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-950">Similar location influence support</div>}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <button type="button" aria-label={`Move Secondary ${slot + 1} left`} disabled={slot === 0} onClick={() => moveSecondaryComparable(slot, slot - 1)} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-35">←</button>
+                    <button type="button" aria-label={`Move Secondary ${slot + 1} right`} disabled={slot === selectedSecondarySales.length - 1} onClick={() => moveSecondaryComparable(slot, slot + 1)} className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-35">→</button>
+                    <button type="button" onClick={() => addCompetitiveSaleToPrimaryGrid(sale)} className="rounded border border-indigo-600 bg-indigo-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-indigo-700">Promote to Primary</button>
+                    <button type="button" onClick={() => removeSecondaryComparable(slot)} className="rounded border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-50">Remove</button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-xl border border-dashed border-violet-300 bg-white/80 px-4 py-5 text-sm text-slate-600">No supplemental sales are retained yet. Expand the recommendation details and use “Add To Secondary” on a competitive sale.</div>
+          )}
+        </section>
 
         {gallery && (
           <div
@@ -4597,7 +4746,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   onClick={clearComparables}
                   className="inline-flex items-center gap-2 px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
                 >
-                  Clear Comparables
+                  Clear All Comparables
                 </button>
                 <button
                   type="button"
@@ -4673,6 +4822,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                             className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-xs text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-35"
                           >
                             →
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Move Comparable ${i + 1} to secondary grid`}
+                            title="Move to secondary evidence"
+                            onClick={() => movePrimaryComparableToSecondary(i)}
+                            className="rounded border border-violet-200 bg-white px-1.5 py-0.5 text-xs font-medium text-violet-700 hover:bg-violet-50"
+                          >
+                            To Secondary
                           </button>
                           <button
                             type="button"

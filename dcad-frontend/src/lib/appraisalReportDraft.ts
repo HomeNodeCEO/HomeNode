@@ -36,7 +36,7 @@ export type AppraisalReportComparable = {
 };
 
 export type AppraisalReportSalesDraft = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   accountId: string;
   assignmentFileId?: number | null;
   savedAt: string;
@@ -56,6 +56,7 @@ export type AppraisalReportSalesDraft = {
   adjustmentNotes: string;
   workspace?: {
     selectedListings?: SaleRow[];
+    secondaryComparables?: SaleRow[];
     search?: {
       asOfDate?: string;
       periodMonths?: 12 | 24 | 36;
@@ -108,7 +109,7 @@ export function readAppraisalReportDraft(
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AppraisalReportSalesDraft;
     if (
-      ![1, 2].includes(parsed?.version) ||
+      ![1, 2, 3].includes(parsed?.version) ||
       parsed?.accountId !== accountId.trim() ||
       !Array.isArray(parsed?.comparables)
     ) {

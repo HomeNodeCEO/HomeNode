@@ -541,7 +541,7 @@ export default function AppraisalReport() {
   const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(neighborhoodDetails);
   const landUseTotal = neighborhoodLandUseTotal(neighborhoodDetails);
   const neighborhoodRepresentativeness = calculateNeighborhoodRepresentativeness(neighborhoodDetails);
-  const propertyContext = detail.property_context || null;
+  const propertyContext = detail?.property_context || null;
 
   const downloadServerReport = async () => {
     if (assignmentLoading) {

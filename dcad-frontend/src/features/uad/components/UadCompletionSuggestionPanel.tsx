@@ -44,6 +44,14 @@ function entityLabel(entity: UadCompletionSuggestionEntity) {
   if (entity.entity_type === "sales_comparable") {
     return `Comparable ${entity.ordinal}: ${String(entity.values["sales_comparable_address:1800.0001"] || "Address pending")}`;
   }
+  if (entity.entity_type === "subject_listing") {
+    const listingId = entity.values["subject_listing:0900.0011"];
+    return `Subject listing ${entity.ordinal}${listingId ? `: ${String(listingId)}` : ""}`;
+  }
+  if (entity.entity_type === "subject_prior_transfer") {
+    const transferDate = entity.values["subject_prior_transfer:0800.0011"];
+    return `Subject prior transfer ${entity.ordinal}${transferDate ? `: ${String(transferDate)}` : ""}`;
+  }
   return String(entity.values["market_price_trend_source:3000.0051"] || titleCase(entity.entity_type));
 }
 
@@ -107,6 +115,9 @@ export default function UadCompletionSuggestionPanel({
       ...(document.suggestions.assignment_fields || []),
       ...(document.suggestions.subject_entity_fields || []),
       ...(document.suggestions.highest_best_use_fields || []),
+      ...(document.suggestions.subject_listing_fields || []),
+      ...(document.suggestions.sales_contract_fields || []),
+      ...(document.suggestions.subject_prior_transfer_fields || []),
       ...document.suggestions.market_fields,
       ...document.suggestions.sales_comparison_fields,
     ].map((suggestion) => {
@@ -132,6 +143,8 @@ export default function UadCompletionSuggestionPanel({
       };
     });
     const suggestedEntities = [
+      ...(document.suggestions.subject_listing_entities || []),
+      ...(document.suggestions.subject_prior_transfer_entities || []),
       ...document.suggestions.market_entities,
       ...document.suggestions.sales_comparable_entities,
     ].map((suggestion) => ({

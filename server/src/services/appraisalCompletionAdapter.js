@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 
 export const APPRAISAL_COMPLETION_SCHEMA_VERSION = 1;
-export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.3";
+export const APPRAISAL_COMPLETION_ADAPTER_VERSION = "2026-08-20.4";
 
 const REPORT_FILE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const MAX_CANONICAL_JSON_BYTES = 1_500_000;
@@ -65,6 +65,25 @@ function assignmentProfile(assignment) {
       .map((value) => text(value, 80))
       .filter(Boolean),
     occupancy: text(assignment.occupancy, 80),
+    contract: {
+      exists: typeof assignment.subject_under_contract === "boolean"
+        ? assignment.subject_under_contract
+        : null,
+      arms_length: typeof assignment.contract_arms_length === "boolean"
+        ? assignment.contract_arms_length
+        : null,
+      seller_names: text(assignment.contract_seller_names, 1_000),
+      contract_price: number(assignment.contract_price),
+      contract_date: text(assignment.contract_date, 40),
+      loan_amount: number(assignment.loan_amount),
+      down_payment: number(assignment.down_payment),
+      earnest_money: number(assignment.earnest_money),
+      seller_concessions: number(assignment.seller_concessions),
+      seller_matches_public_records: typeof assignment.seller_matches_public_records === "boolean"
+        ? assignment.seller_matches_public_records
+        : null,
+      seller_mismatch_explanation: text(assignment.seller_mismatch_explanation, 3_000),
+    },
     highest_best_use: {
       conclusion: text(assignment.highest_best_use_conclusion, 80),
       summary: text(assignment.highest_best_use_summary, 2_500),
@@ -76,6 +95,29 @@ function assignmentProfile(assignment) {
       source: text(assignment.highest_best_use_source, 200),
     },
   };
+}
+
+function subjectActivity(property) {
+  const candidates = [
+    ...safeArray(property?.property_activity_history, 100),
+    ...safeArray(property?.sales_history, 100),
+  ].filter(plainObject);
+  const seen = new Set();
+  const rows = [];
+  for (const row of candidates) {
+    const key = text(row.source_record_id || row.id, 160)
+      || [
+        text(row.record_type, 40),
+        text(row.listing_id || row.listing_key, 80),
+        text(row.closing_date || row.contract_date || row.listing_date || row.activity_date, 40),
+        number(row.sale_price ?? row.list_price),
+      ].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(jsonClone(row, {}));
+    if (rows.length >= 150) break;
+  }
+  return rows;
 }
 
 function subjectCharacteristics(subjectData, property, assignment) {
@@ -321,6 +363,7 @@ export function buildCanonicalAppraisalCompletion({
   const subjectProfileData = {
     identity: subjectIdentity(targetReportFile, subjectData, property),
     characteristics: subjectCharacteristics(subjectData, property, assignment),
+    activity_history: subjectActivity(property),
   };
   const analyses = {
     neighborhood: neighborhoodAnalysis(assignment),

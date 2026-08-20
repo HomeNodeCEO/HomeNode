@@ -140,10 +140,15 @@ export function buildUadCompletionApplyPlan(document, input, {
     ...(document.suggestions?.assignment_fields || []),
     ...(document.suggestions?.subject_entity_fields || []),
     ...(document.suggestions?.highest_best_use_fields || []),
+    ...(document.suggestions?.subject_listing_fields || []),
+    ...(document.suggestions?.sales_contract_fields || []),
+    ...(document.suggestions?.subject_prior_transfer_fields || []),
     ...(document.suggestions?.market_fields || []),
     ...(document.suggestions?.sales_comparison_fields || []),
   ];
   const entitySuggestions = [
+    ...(document.suggestions?.subject_listing_entities || []),
+    ...(document.suggestions?.subject_prior_transfer_entities || []),
     ...(document.suggestions?.market_entities || []),
     ...(document.suggestions?.sales_comparable_entities || []),
   ];

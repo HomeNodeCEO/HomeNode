@@ -88,6 +88,9 @@ function fieldByKey(suggestions, key) {
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
     ...suggestions.suggestions.highest_best_use_fields,
+    ...suggestions.suggestions.subject_listing_fields,
+    ...suggestions.suggestions.sales_contract_fields,
+    ...suggestions.suggestions.subject_prior_transfer_fields,
     ...suggestions.suggestions.market_fields,
     ...suggestions.suggestions.sales_comparison_fields,
   ].find((item) => item.field_key === key);
@@ -125,6 +128,76 @@ test("includes assignment and subject facts in completion provenance", () => {
     generatedAt: "2026-08-20T12:00:00.000Z",
   });
   assert.notEqual(before.provenance.source_digest_sha256, after.provenance.source_digest_sha256);
+});
+
+test("maps immutable listing, contract, and prior-transfer evidence for review", () => {
+  const completion = canonicalCompletion();
+  const suggestions = buildUadCompletionSuggestions(completion);
+
+  assert.equal(completion.subject.activity_history.length, 3);
+  assert.equal(suggestions.suggestions.subject_listing_entities.length, 1);
+  const listing = suggestions.suggestions.subject_listing_entities[0];
+  assert.equal(listing.values["subject_listing:0900.0013"], "Pending");
+  assert.equal(listing.values["subject_listing:0900.0015"], "MLS");
+  assert.equal(listing.values["subject_listing:0900.0011"], "21062330");
+  assert.equal(listing.values["subject_listing:0900.0007"], 18);
+  assert.equal(listing.values["subject_listing:0900.0008"], 315000);
+  assert.equal(fieldByKey(suggestions, "subject_listing_summary:0900.0004").value, true);
+  assert.equal(fieldByKey(suggestions, "subject_listing_summary:0900.0003").value, 18);
+
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0016").value, true);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0002").value, true);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0008").value, 315000);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0009").value, "2026-08-12");
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0006").value, true);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0011").value, 6000);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0010"), undefined);
+  assert.match(fieldByKey(suggestions, "sales_contract_commentary:0600.0014").value, /contract seller does not match/i);
+
+  assert.equal(suggestions.suggestions.subject_prior_transfer_entities.length, 2);
+  const sale = suggestions.suggestions.subject_prior_transfer_entities[0];
+  const deed = suggestions.suggestions.subject_prior_transfer_entities[1];
+  assert.equal(sale.values["subject_prior_transfer:0800.0018"], "Sale");
+  assert.equal(sale.values["subject_prior_transfer:0800.0012"], 280000);
+  assert.equal(
+    sale.related_entities[0].values["subject_prior_transfer_data_source:0700.0125"],
+    "MLS",
+  );
+  assert.equal(deed.values["subject_prior_transfer:0800.0018"], "DeedTransferOnly");
+  assert.equal(deed.values["subject_prior_transfer:0800.0009"], "NotRecorded");
+  assert.equal(fieldByKey(suggestions, "subject_prior_transfer_summary:0800.0005").value, true);
+  assert.equal(
+    suggestions.omissions.some((item) => item.code === "sales_contract_review_requires_appraiser_selection"),
+    true,
+  );
+  assert.equal(
+    suggestions.omissions.some((item) => item.code === "subject_prior_transfer_sale_type_requires_appraiser_selection"),
+    true,
+  );
+});
+
+test("maps an explicit no-contract answer without inventing contract details", () => {
+  const input = fixtureParts();
+  const assignment = input.subjectSnapshot.subject_data.custom_signed_snapshot.evidence.property_report_data.assignment.assignment_details;
+  assignment.subject_under_contract = false;
+  assignment.contract_arms_length = true;
+  assignment.contract_price = 315000;
+  assignment.contract_date = "2026-08-12";
+  assignment.seller_concessions = 6000;
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0016").value, false);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0002"), undefined);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0008"), undefined);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0009"), undefined);
+  assert.equal(fieldByKey(suggestions, "sales_contract:0600.0011"), undefined);
+  assert.equal(
+    suggestions.omissions.some((item) => item.scope === "sales_contract"),
+    false,
+  );
 });
 
 test("maps canonical market evidence to review-only official UAD fields", () => {
@@ -279,8 +352,13 @@ test("validates every generated suggestion against the official UAD catalog", ()
     ...suggestions.suggestions.assignment_fields,
     ...suggestions.suggestions.subject_entity_fields,
     ...suggestions.suggestions.highest_best_use_fields,
+    ...suggestions.suggestions.subject_listing_fields,
+    ...suggestions.suggestions.sales_contract_fields,
+    ...suggestions.suggestions.subject_prior_transfer_fields,
     ...suggestions.suggestions.market_fields,
     ...suggestions.suggestions.sales_comparison_fields,
+    ...suggestions.suggestions.subject_listing_entities,
+    ...suggestions.suggestions.subject_prior_transfer_entities,
     ...suggestions.suggestions.market_entities,
     ...suggestions.suggestions.sales_comparable_entities,
   ];
@@ -322,6 +400,36 @@ test("preserves existing UAD values and populated entity groups", () => {
     "existing_value_preserved",
     "entity_type_already_populated",
   ]);
+});
+
+test("preserves existing subject listing and prior-transfer groups independently", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const listing = suggestions.suggestions.subject_listing_entities[0];
+  const transfer = suggestions.suggestions.subject_prior_transfer_entities[0];
+
+  const listingPreserved = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [listing.suggestion_id, transfer.suggestion_id]),
+    { existingEntities: [{ id: "listing-id", entity_type: "subject_listing", data: {} }] },
+  );
+  assert.equal(listingPreserved.entities.length, 1);
+  assert.equal(listingPreserved.entities[0].suggestion.entity_type, "subject_prior_transfer");
+  assert.deepEqual(listingPreserved.conflicts, [{
+    suggestion_id: listing.suggestion_id,
+    reason: "entity_type_already_populated",
+  }]);
+
+  const transferPreserved = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [listing.suggestion_id, transfer.suggestion_id]),
+    { existingEntities: [{ id: "transfer-id", entity_type: "subject_prior_transfer", data: {} }] },
+  );
+  assert.equal(transferPreserved.entities.length, 1);
+  assert.equal(transferPreserved.entities[0].suggestion.entity_type, "subject_listing");
+  assert.deepEqual(transferPreserved.conflicts, [{
+    suggestion_id: transfer.suggestion_id,
+    reason: "entity_type_already_populated",
+  }]);
 });
 
 test("targets the seeded subject entity and preserves an existing entity value", () => {

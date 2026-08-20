@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.2";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.3";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -298,6 +298,300 @@ function buildHighestBestUseSuggestions(completion, omissions) {
     });
   }
   return { fields };
+}
+
+function activityRows(completion) {
+  return Array.isArray(completion.subject?.activity_history)
+    ? completion.subject.activity_history.filter(plainObject)
+    : [];
+}
+
+function activitySourceKey(row, ordinal) {
+  return text(
+    row.source_record_id
+      || row.id
+      || row.listing_key
+      || row.listing_id
+      || [row.record_type, row.activity_date, row.closing_date, ordinal].filter(Boolean).join("-"),
+    160,
+  ) || `ordinal-${ordinal}`;
+}
+
+function activityIsMls(row) {
+  return Boolean(
+    text(row.listing_id || row.listing_key, 80)
+    || /\bmls\b/i.test(String(row.source || "")),
+  );
+}
+
+function listingStatus(row) {
+  const normalized = String(row.mls_status || row.record_type || "").toLowerCase();
+  if (/pending|contract|option/.test(normalized)) return "Pending";
+  if (/active/.test(normalized)) return "Active";
+  return "OffMarket";
+}
+
+function validCurrency(value, { minimum = 0 } = {}) {
+  const parsed = number(value);
+  return parsed !== null && parsed >= minimum && parsed <= 999_999_999.99 ? parsed : null;
+}
+
+function buildSubjectListingSuggestions(completion, omissions) {
+  const fields = [];
+  const entities = activityRows(completion)
+    .map((row, sourceIndex) => ({ row, sourceIndex }))
+    .filter(({ row }) => ["listing", "contract"].includes(normalizedToken(row.record_type)))
+    .slice(0, 6)
+    .map(({ row, sourceIndex }, index) => {
+      const ordinal = index + 1;
+      const sourceKey = activitySourceKey(row, ordinal);
+      const isMls = activityIsMls(row);
+      const values = {
+        "subject_listing:0900.0013": listingStatus(row),
+        "subject_listing:0900.0015": isMls ? "MLS" : "Other",
+      };
+      const setValue = (key, value) => {
+        if (value !== null && value !== undefined && value !== "") values[key] = value;
+      };
+      setValue("subject_listing:0900.0011", text(row.listing_id || row.listing_key, 45));
+      setValue("subject_listing:0900.0012", isoDate(row.listing_date));
+      setValue("subject_listing:0900.0007", integer(row.days_on_market, 0, 9_999));
+      setValue("subject_listing:0900.0008", validCurrency(row.list_price));
+      if (!isMls) {
+        setValue("subject_listing:0900.0016", text(row.source || "Other listing source", 45));
+      }
+      if (integer(row.days_on_market, 0, 9_999) === null) {
+        addOmission(omissions, {
+          scope: `subject_listing:${sourceKey}`,
+          code: "subject_listing_days_on_market_requires_appraiser_entry",
+          target_field_key: "subject_listing:0900.0007",
+        });
+      }
+      if (validCurrency(row.list_price) === null) {
+        addOmission(omissions, {
+          scope: `subject_listing:${sourceKey}`,
+          code: "subject_listing_final_price_requires_appraiser_entry",
+          target_field_key: "subject_listing:0900.0008",
+        });
+      }
+      return {
+        suggestion_id: `entity:subject_listing:${sourceKey}`,
+        entity_type: "subject_listing",
+        source_key: sourceKey,
+        ordinal,
+        values,
+        ...sourceMetadata(completion, `subject.activity_history.${sourceIndex}`),
+        data_quality_flags: Array.isArray(row.data_quality_flags)
+          ? row.data_quality_flags.slice(0, 25)
+          : [],
+        requires_additional_review: Boolean(row.requires_additional_review),
+      };
+    });
+
+  if (entities.length) {
+    addField(fields, field(
+      "subject_listing_summary:0900.0004",
+      true,
+      completion,
+      "subject.activity_history",
+    ));
+    const days = entities.map((entity) => entity.values["subject_listing:0900.0007"]);
+    if (days.every((value) => Number.isInteger(value))) {
+      addField(fields, field(
+        "subject_listing_summary:0900.0003",
+        days.reduce((sum, value) => sum + value, 0),
+        completion,
+        "subject.activity_history",
+      ));
+    }
+    addField(fields, field(
+      "subject_listing_commentary:0900.0020",
+      text(
+        `The immutable Custom Appraisal snapshot contains ${entities.length} current or relevant subject listing record${entities.length === 1 ? "" : "s"} for appraiser review.`,
+        5_000,
+      ),
+      completion,
+      "subject.activity_history",
+    ));
+  }
+  return { fields, entities };
+}
+
+function contractAnalysisCommentary(contract) {
+  const parts = [
+    text(contract.seller_names, 1_000) ? `Contract seller(s): ${text(contract.seller_names, 1_000)}.` : null,
+    contract.seller_matches_public_records === true
+      ? "The contract seller matches the public-record owner identified in the Custom Appraisal."
+      : contract.seller_matches_public_records === false
+        ? "The contract seller does not match the public-record owner identified in the Custom Appraisal."
+        : null,
+    text(contract.seller_mismatch_explanation, 3_000),
+    number(contract.loan_amount) !== null ? `Reported loan amount: ${number(contract.loan_amount)}.` : null,
+    number(contract.down_payment) !== null ? `Reported down payment: ${number(contract.down_payment)}.` : null,
+    number(contract.earnest_money) !== null ? `Reported earnest money: ${number(contract.earnest_money)}.` : null,
+  ].filter(Boolean);
+  return text(parts.join(" "), 5_000);
+}
+
+function buildSalesContractSuggestions(completion, omissions) {
+  const fields = [];
+  const contract = completion.assignment?.contract || {};
+  if (typeof contract.exists !== "boolean") return { fields };
+
+  addField(fields, field(
+    "sales_contract:0600.0016",
+    contract.exists,
+    completion,
+    "assignment.contract.exists",
+  ));
+  if (!contract.exists) return { fields };
+
+  addField(fields, field(
+    "sales_contract:0600.0002",
+    typeof contract.arms_length === "boolean" ? contract.arms_length : null,
+    completion,
+    "assignment.contract.arms_length",
+  ));
+  addField(fields, field(
+    "sales_contract:0600.0008",
+    validCurrency(contract.contract_price, { minimum: 0.01 }),
+    completion,
+    "assignment.contract.contract_price",
+  ));
+  addField(fields, field(
+    "sales_contract:0600.0009",
+    isoDate(contract.contract_date),
+    completion,
+    "assignment.contract.contract_date",
+  ));
+
+  const concessions = validCurrency(contract.seller_concessions);
+  if (concessions !== null) {
+    addField(fields, field(
+      "sales_contract:0600.0006",
+      concessions > 0,
+      completion,
+      "assignment.contract.seller_concessions",
+    ));
+    if (concessions > 0) {
+      addField(fields, field(
+        "sales_contract:0600.0005",
+        true,
+        completion,
+        "assignment.contract.seller_concessions",
+      ));
+      addField(fields, field(
+        "sales_contract:0600.0011",
+        concessions,
+        completion,
+        "assignment.contract.seller_concessions",
+      ));
+    }
+  }
+  addField(fields, field(
+    "sales_contract_commentary:0600.0014",
+    contractAnalysisCommentary(contract),
+    completion,
+    "assignment.contract",
+  ));
+
+  addOmission(omissions, {
+    scope: "sales_contract",
+    code: "sales_contract_review_requires_appraiser_selection",
+    target_field_key: "sales_contract:0600.0010",
+  });
+  addOmission(omissions, {
+    scope: "sales_contract",
+    code: "sales_contract_transfer_terms_require_appraiser_selection",
+    target_field_key: "sales_contract:0600.0017",
+  });
+  return { fields };
+}
+
+function priorTransferDataSource(row) {
+  const source = String(row.source || "");
+  if (/\bmls\b/i.test(source) || activityIsMls(row)) return { type: "MLS", other: null };
+  if (/\b(deed|cad|assessor)\b/i.test(source) || normalizedToken(row.record_type) === "cad_transfer") {
+    return { type: "Deed", other: null };
+  }
+  if (/aggregator/i.test(source)) return { type: "DataAggregator", other: null };
+  return { type: "Other", other: text(source || "Custom Appraisal activity record", 66) };
+}
+
+function buildPriorTransferSuggestions(completion, omissions) {
+  const fields = [];
+  const effectiveDate = isoDate(completion.assignment_scope?.effective_date);
+  const entities = activityRows(completion)
+    .map((row, sourceIndex) => ({ row, sourceIndex }))
+    .filter(({ row }) => ["closed_sale", "cad_transfer"].includes(normalizedToken(row.record_type)))
+    .filter(({ row }) => {
+      const transferDate = isoDate(row.closing_date || row.activity_date);
+      return transferDate && (!effectiveDate || transferDate < effectiveDate);
+    })
+    .slice(0, 12)
+    .map(({ row, sourceIndex }, index) => {
+      const ordinal = index + 1;
+      const sourceKey = activitySourceKey(row, ordinal);
+      const isDeedOnly = normalizedToken(row.record_type) === "cad_transfer";
+      const amount = validCurrency(row.sale_price);
+      const dataSource = priorTransferDataSource(row);
+      const values = {
+        "subject_prior_transfer:0800.0018": isDeedOnly ? "DeedTransferOnly" : "Sale",
+        "subject_prior_transfer:0800.0011": isoDate(row.closing_date || row.activity_date),
+        ...(amount !== null
+          ? { "subject_prior_transfer:0800.0012": amount }
+          : { "subject_prior_transfer:0800.0009": "NotRecorded" }),
+      };
+      if (!isDeedOnly) {
+        addOmission(omissions, {
+          scope: `subject_prior_transfer:${sourceKey}`,
+          code: "subject_prior_transfer_sale_type_requires_appraiser_selection",
+          target_field_key: "subject_prior_transfer:0800.0013",
+        });
+      }
+      return {
+        suggestion_id: `entity:subject_prior_transfer:${sourceKey}`,
+        entity_type: "subject_prior_transfer",
+        source_key: sourceKey,
+        ordinal,
+        values,
+        related_entities: [{
+          entity_type: "subject_prior_transfer_data_source",
+          ordinal: 1,
+          values: {
+            "subject_prior_transfer_data_source:0700.0125": dataSource.type,
+            ...(dataSource.other
+              ? { "subject_prior_transfer_data_source:0700.0126": dataSource.other }
+              : {}),
+          },
+          ...sourceMetadata(completion, `subject.activity_history.${sourceIndex}`),
+        }],
+        ...sourceMetadata(completion, `subject.activity_history.${sourceIndex}`),
+        data_quality_flags: Array.isArray(row.data_quality_flags)
+          ? row.data_quality_flags.slice(0, 25)
+          : [],
+        requires_additional_review: Boolean(row.requires_additional_review),
+      };
+    });
+
+  if (entities.length) {
+    addField(fields, field(
+      "subject_prior_transfer_summary:0800.0005",
+      true,
+      completion,
+      "subject.activity_history",
+    ));
+    addField(fields, field(
+      "subject_prior_transfer_commentary:1600.0008",
+      text(
+        `The immutable Custom Appraisal snapshot contains ${entities.length} prior subject sale or transfer record${entities.length === 1 ? "" : "s"} for appraiser reconciliation.`,
+        5_000,
+      ),
+      completion,
+      "subject.activity_history",
+    ));
+  }
+  return { fields, entities };
 }
 
 function demandSupply(value) {
@@ -659,6 +953,9 @@ export function buildUadCompletionSuggestions(completion) {
   const assignment = buildAssignmentSuggestions(completion, omissions);
   const subject = buildSubjectEntitySuggestions(completion, omissions);
   const highestBestUse = buildHighestBestUseSuggestions(completion, omissions);
+  const subjectListings = buildSubjectListingSuggestions(completion, omissions);
+  const salesContract = buildSalesContractSuggestions(completion, omissions);
+  const priorTransfers = buildPriorTransferSuggestions(completion, omissions);
   const market = buildMarketSuggestions(completion, omissions);
   const sales = buildComparableSuggestions(completion, omissions);
   return {
@@ -679,6 +976,11 @@ export function buildUadCompletionSuggestions(completion) {
       assignment_fields: assignment.fields,
       subject_entity_fields: subject.fields,
       highest_best_use_fields: highestBestUse.fields,
+      subject_listing_fields: subjectListings.fields,
+      subject_listing_entities: subjectListings.entities,
+      sales_contract_fields: salesContract.fields,
+      subject_prior_transfer_fields: priorTransfers.fields,
+      subject_prior_transfer_entities: priorTransfers.entities,
       market_fields: market.fields,
       market_entities: market.entities,
       sales_comparison_fields: sales.fields,
@@ -687,8 +989,11 @@ export function buildUadCompletionSuggestions(completion) {
     omissions,
     counts: {
       field_suggestions: assignment.fields.length + subject.fields.length
-        + highestBestUse.fields.length + market.fields.length + sales.fields.length,
-      entity_suggestions: market.entities.length + sales.entities.length,
+        + highestBestUse.fields.length + subjectListings.fields.length
+        + salesContract.fields.length + priorTransfers.fields.length
+        + market.fields.length + sales.fields.length,
+      entity_suggestions: subjectListings.entities.length + priorTransfers.entities.length
+        + market.entities.length + sales.entities.length,
       omissions: omissions.length,
     },
     apply_mode: "review_only",

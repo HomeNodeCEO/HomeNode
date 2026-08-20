@@ -496,7 +496,6 @@ test("reports an unconfigured OIDC verifier without contacting a provider", asyn
   const status = await createOidcAccessTokenVerifier().preflight();
   assert.deepEqual(status, { configured: false });
 });
-
 test("production mobile-user provisioning is transactional and fail-closed", () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(
@@ -619,4 +618,3 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(completionSource, /UNIQUE \(inspection_session_id\)/);
   assert.doesNotMatch(completionSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });
-

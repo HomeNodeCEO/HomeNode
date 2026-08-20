@@ -496,6 +496,23 @@ test("reports an unconfigured OIDC verifier without contacting a provider", asyn
   const status = await createOidcAccessTokenVerifier().preflight();
   assert.deepEqual(status, { configured: false });
 });
+
+test("production mobile-user provisioning is transactional and fail-closed", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(
+    path.resolve(directory, "../scripts/provisionMobileUser.js"),
+    "utf8",
+  );
+  assert.match(source, /process\.env\.NODE_ENV === "production"/);
+  assert.match(source, /synthetic users cannot be provisioned in production/);
+  assert.match(source, /await client\.query\("BEGIN"\)/);
+  assert.match(source, /await client\.query\("COMMIT"\)/);
+  assert.match(source, /await client\.query\("ROLLBACK"\)/);
+  assert.match(source, /OIDC identity is already mapped to another HomeNode user/);
+  assert.match(source, /HomeNode user is already mapped to another subject for this issuer/);
+  assert.doesNotMatch(source, /DELETE\s+FROM/i);
+});
+
 test("rejects expired, wrong-audience, and tampered OIDC tokens", async () => {
   const oidc = verifier();
   await assert.rejects(() => oidc.verify(token({ exp: Math.floor(NOW / 1000) - 120 })), /invalid_access_token/);
@@ -602,3 +619,4 @@ test("mobile migration is additive and encodes retention, lineage, and sparse ed
   assert.match(completionSource, /UNIQUE \(inspection_session_id\)/);
   assert.doesNotMatch(completionSource, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });
+

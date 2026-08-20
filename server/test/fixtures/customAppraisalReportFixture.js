@@ -82,7 +82,7 @@ export function customAppraisalReportFixture() {
     },
   });
   const sales = {
-    version: 2,
+    version: 3,
     accountId: "26272500060150000",
     assignmentFileId: 125,
     savedAt: "2026-08-18T20:00:00.000Z",
@@ -110,6 +110,14 @@ export function customAppraisalReportFixture() {
     costToCure: { items: [{ description: "Repair damaged flooring", cost: 5000 }], total: 5000 },
     salesNotes: "The final value emphasizes the most physically similar recent sales after market-supported adjustments.",
     adjustmentNotes: "Living area, condition, quality, garage, pool, and cost-to-cure differences were reviewed.",
+    workspace: {
+      secondaryComparables: [{
+        ...comparable(7, 287500, 305000, "2214 Swiss Court", 32.948, -96.646).sale,
+        comparableScore: 71.4,
+        distanceMiles: 2.8,
+        influence_support_candidate: true,
+      }],
+    },
   };
   const market = {
     asOfDate: "2026-08-18",

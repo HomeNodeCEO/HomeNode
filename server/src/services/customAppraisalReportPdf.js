@@ -922,13 +922,14 @@ function renderMarketPage(doc, meta, snapshot) {
 function renderSalesPage(doc, meta, snapshot, property) {
   addPage(doc, meta, "Sales Comparison Approach", 5);
   const sales = sectionValue(snapshot, "sales_comparison");
+  const secondaryComparables = (sales.workspace?.secondaryComparables || []).slice(0, 6);
   let y = sectionTitle(doc, "Comparable Location Exhibit", 90);
-  plotPoints(doc, reportCoordinates(property, sales), { x: PAGE.margin, y, width: CONTENT_WIDTH, height: 146 });
-  y += 160;
+  plotPoints(doc, reportCoordinates(property, sales), { x: PAGE.margin, y, width: CONTENT_WIDTH, height: 132 });
+  y += 146;
   y = sectionTitle(doc, "Comparable Sales Grid", y);
   y = drawTable(doc, {
     y,
-    rowHeight: 42,
+    rowHeight: 38,
     fontSize: 6.5,
     columns: [
       { key: "number", label: "#", width: 24 },
@@ -945,11 +946,19 @@ function renderSalesPage(doc, meta, snapshot, property) {
   y = sectionTitle(doc, "Sales Reconciliation", y + 3);
   y = factsGrid(doc, [
     { label: "Selected Comparables", value: (sales.comparables || []).length },
+    { label: "Secondary Evidence", value: secondaryComparables.length },
     { label: "Indicated Value", value: money(sales.opinionOfValue) },
     { label: "After Cost to Cure", value: money(sales.opinionAfterCostToCure) },
-    { label: "Saved", value: dateText(sales.savedAt) },
   ], y, 4);
-  noteBox(doc, sales.salesNotes || sales.adjustmentNotes || "No final sales-comparison narrative was saved.", y, { height: 60 });
+  y = noteBox(doc, sales.salesNotes || sales.adjustmentNotes || "No final sales-comparison narrative was saved.", y, { height: 54 });
+  if (secondaryComparables.length) {
+    y = sectionTitle(doc, "Supplemental Comparable Evidence", y);
+    noteBox(doc, secondaryComparables.map((sale, index) => {
+      const address = cleanText([sale.address, sale.city].filter(Boolean).join(", "), sale.primary_account_id || "Address unavailable");
+      const support = sale.influence_support_candidate ? "similar mapped influence" : "supplemental market evidence";
+      return `Secondary ${index + 1}: ${address} (${support})`;
+    }).join("; "), y, { height: 50, color: "#7c3aed" });
+  }
 }
 
 function renderAdjustmentPage(doc, meta, snapshot, property, images) {

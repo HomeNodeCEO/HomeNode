@@ -146,6 +146,12 @@ and Section 29 Certifications and Scope of Work:
   software, service, document-classification, appraisal-version, and embedded
   PDF-reference data points are cataloged as `system_package`, never exposed as
   appraiser-editable facts, and bring the delivery mapping to 857 unique IDs.
+- The native UAD report renderer reads the same revision-bound editor, entity,
+  asset, sketch, and credential state as validation and XML. It produces a
+  deterministic legal-size PDF in private R2, exposes only short-lived download
+  URLs for the current revision, and remains isolated from the existing Custom
+  Appraisal PDF engine. Its API and in-editor Review PDF control are documented
+  in `server/UAD_NATIVE_PDF.md`.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 

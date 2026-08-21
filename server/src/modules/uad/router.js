@@ -12,6 +12,7 @@ import { getUadCertificationReadiness, signUadWorkfile } from "./certifications.
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { generateUadXmlArtifact, getLatestUadXmlArtifact } from "./uadArtifacts.js";
+import { generateUadPdfArtifact, getLatestUadPdfArtifact } from "./uadPdfArtifacts.js";
 import { getUadXmlMappingSummary } from "./uadXml.js";
 import { getUadSharedData } from "./sharedData.js";
 import { listUadSketches, saveUadSketch } from "./sketches.js";
@@ -34,6 +35,8 @@ function errorStatus(error) {
   if (message.startsWith("uad_signature_") && (message.endsWith("_incomplete") || message.endsWith("_verified") || message.endsWith("_date"))) return 400;
   if (message.startsWith("uad_xml_local_validation_")) return 409;
   if (message.startsWith("uad_xml_")) return 422;
+  if (message.startsWith("uad_pdf_local_validation_")) return 409;
+  if (message.startsWith("uad_pdf_")) return 422;
   if (message.startsWith("uad_completion_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
@@ -174,6 +177,23 @@ export function createUadRouter({ pool, storage, verifier, enabled = false }) {
     try {
       const result = await generateUadXmlArtifact(pool, storage, req.params.workfileId);
       res.status(result.artifact?.generation_status === "ready" ? 201 : 200).json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/artifacts/pdf", async (req, res) => {
+    try {
+      res.json(await getLatestUadPdfArtifact(pool, storage, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/artifacts/pdf", async (req, res) => {
+    try {
+      const result = await generateUadPdfArtifact(pool, storage, req.params.workfileId);
+      res.status(201).json(result);
     } catch (error) {
       sendError(res, error);
     }

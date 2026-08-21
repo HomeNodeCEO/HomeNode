@@ -7,6 +7,25 @@ OWASP Web Security Testing Guide, NIST SP 800-115, and the current GSE UAD test
 materials. It is an engineering acceptance program, not a representation that
 HomeNode has received a third-party certification.
 
+## Coverage model
+
+This is one HomeNode security program with product-specific lanes, not three
+duplicated penetration tests:
+
+- shared identity, authorization, organization isolation, PostgreSQL, R2,
+  property data, frontend, mobile, API, CI/CD, and operational controls are
+  tested once and apply to all three report tiles;
+- UAD 3.6 receives the deepest format, signing, package, compliance-provider,
+  and GSE delivery tests;
+- Custom Appraisal receives targeted calculation, comparable, adjustment,
+  reconciliation, report-generation, and prior-file replication tests; and
+- Property Tax Protest receives targeted workfile, evidence, filing-output,
+  deadline/state, and appraisal-data-isolation tests.
+
+A release cannot treat a passing UAD lane as proof that Custom Appraisal or
+Property Tax behavior is safe. Conversely, a shared-platform defect blocks all
+affected lanes rather than being retested as three unrelated findings.
+
 ## Mandatory environment boundary
 
 Active scanning, fuzzing, concurrency testing, parser abuse, and load testing
@@ -77,9 +96,11 @@ GSE. File tests use bounded inert fixtures that demonstrate parser behavior.
 
 Every pull request runs the existing application suites plus:
 
-- CodeQL JavaScript/TypeScript `security-extended` analysis;
+- CodeQL JavaScript/TypeScript and Python `security-extended` analysis;
 - dependency review for newly introduced High/Critical vulnerabilities;
-- `npm audit --audit-level=high` for server, web, and mobile packages;
+- `npm audit --audit-level=high` for server/web, `pnpm audit` for mobile, and
+  `pip-audit` for both Python dependency manifests;
+- Python source compilation and scraper regression tests;
 - UAD authentication/authorization matrix tests;
 - strict CORS, header, rate-limit, and readiness tests; and
 - existing UAD schema, migration, validation, revision, PDF, XML, package,

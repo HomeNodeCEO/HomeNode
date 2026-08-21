@@ -9,7 +9,10 @@ paths:
   - dcad-frontend/src
   - dcad-frontend/scripts
   - homenode-mobile/src
+  - dcad-scraper-with-api/scraper
+  - dcad-scraper-with-api/tools
 
 paths-ignore:
   - server/src/modules/uad/spec
-
+  - dcad-scraper-with-api/backup
+  - dcad-scraper-with-api/dcad-scraper

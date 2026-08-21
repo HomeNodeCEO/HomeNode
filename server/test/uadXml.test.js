@@ -13,7 +13,12 @@ function editorFixture() {
   const parcelId = "00000000-0000-4000-8000-000000000004";
   const comparableId = "00000000-0000-4000-8000-000000000005";
   return {
-    workfile: { specification_release_key: RELEASE_KEY },
+    workfile: {
+      id: "00000000-0000-4000-8000-000000000000",
+      file_number: "UAD-STAGING-SFR-0001",
+      current_revision: 1,
+      specification_release_key: RELEASE_KEY,
+    },
     entities: [
       { id: propertyId, parent_entity_id: null, entity_type: "property", entity_identifier: "subject", ordinal: 1 },
       { id: dwellingId, parent_entity_id: propertyId, entity_type: "dwelling", entity_identifier: "dwelling-1", ordinal: 1 },
@@ -39,6 +44,8 @@ test("locked delivery mapping covers every HomeNode UAD unique ID", () => {
     mismo_reference_model_identifier: "3.6.0366",
     source_sha256: "10f470ed53ee6f70404aad850f3f3c15aaee9489f654535ee0a3e5d1a8adee29",
     mapped_unique_ids: 845,
+    mapped_system_unique_ids: 12,
+    mapped_total_unique_ids: 857,
     mapped_entity_types: 87,
   });
 });
@@ -57,6 +64,17 @@ test("MISMO XML generation is deterministic and preserves subject/comparable ide
   assert.match(first.xml, /<AddressLineText>1909 Snowmass Ln &amp; Unit A<\/AddressLineText>/);
   assert.match(first.xml, /<UnitStandardAboveGradeFinishedAreaMeasure AreaUnitOfMeasureType="SquareFeet">2015<\/UnitStandardAboveGradeFinishedAreaMeasure>/);
   assert.match(first.xml, /<ParcelAreaMeasure AreaUnitOfMeasureType="Acres">0\.31<\/ParcelAreaMeasure>/);
+  assert.match(first.xml, /<ValuationReportContentIdentifier>URAR Delivery Specification v1\.4<\/ValuationReportContentIdentifier>/);
+  assert.match(first.xml, /<ValuationSoftwareProductIdentifier>HOMENODE-UAD-3\.6<\/ValuationSoftwareProductIdentifier>/);
+  assert.match(first.xml, /<ServiceType>Valuation<\/ServiceType>/);
+  assert.match(first.xml, /<ObjectURL>\\\\UAD-STAGING-SFR-0001\.pdf<\/ObjectURL>/);
+  assert.match(first.xml, /<MIMETypeIdentifier>application\/pdf<\/MIMETypeIdentifier>/);
+  assert.match(first.xml, /<AboutVersionIdentifier>1<\/AboutVersionIdentifier>/);
+  assert.match(first.xml, /<DocumentType>AppraisalReport<\/DocumentType>/);
+  assert.match(first.xml, /<DocumentFormIssuingEntityNameType>FNM_FRE<\/DocumentFormIssuingEntityNameType>/);
+  assert.match(first.xml, /<DocumentFormIssuingEntityVersionIdentifier>September 2024<\/DocumentFormIssuingEntityVersionIdentifier>/);
+  assert.equal(first.system_value_count, 12);
+  assert.equal(first.pdf_file_name, "UAD-STAGING-SFR-0001.pdf");
 });
 
 test("MISMO XML generation places Section 26 conclusions and client conditions in their official structures", () => {

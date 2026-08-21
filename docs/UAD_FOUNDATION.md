@@ -141,6 +141,11 @@ and Section 29 Certifications and Scope of Work:
   OIDC identity mapping and freezes company, license, appraiser, execution date,
   workfile digest, and credential digest per revision. Later profile changes do
   not mutate a signed report.
+- System and package metadata is generated server-side from a locked HomeNode
+  software profile plus the immutable workfile revision. The 12 required
+  software, service, document-classification, appraisal-version, and embedded
+  PDF-reference data points are cataloged as `system_package`, never exposed as
+  appraiser-editable facts, and bring the delivery mapping to 857 unique IDs.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 

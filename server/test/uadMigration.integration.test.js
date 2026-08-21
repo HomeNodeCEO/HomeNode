@@ -733,6 +733,24 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.equal(signatureColumns.rows[0].count, 4);
 
+    const systemPackageFields = await pool.query(`
+      SELECT count(*)::integer AS count,
+             count(*) FILTER (WHERE metadata->>'system_owned' = 'true')::integer AS system_owned_count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND property_context = 'system_package'
+    `);
+    assert.equal(systemPackageFields.rows[0].count, 12);
+    assert.equal(systemPackageFields.rows[0].system_owned_count, 12);
+
+    const systemPackageLocations = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.field_report_locations
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND property_context = 'system_package'
+    `);
+    assert.equal(systemPackageLocations.rows[0].count, 12);
+
     const homeNodeSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
         FROM uad_ref.compliance_rules

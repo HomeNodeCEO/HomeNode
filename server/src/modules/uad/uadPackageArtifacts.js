@@ -229,7 +229,6 @@ export async function generateUadSubmissionPackage(pool, storage, workfileIdValu
   const zip = buildDeterministicZip([
     { path: pdfFileName, body: pdf.body },
     { path: xmlFileName, body: xml.body },
-    { path: manifestFileName, body: manifest.content },
     ...verifiedEntries.map((entry) => ({ path: entry.package_path, body: entry.body })),
   ]);
   if (zip.byte_size > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");

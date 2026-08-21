@@ -9,6 +9,7 @@ import {
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 import { applyUadCompletionSuggestions } from "./completionApply.js";
 import { getUadCertificationReadiness, signUadWorkfile } from "./certifications.js";
+import { getUadComplianceStatus, runUadCompliance } from "./uadComplianceService.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { generateUadXmlArtifact, getLatestUadXmlArtifact } from "./uadArtifacts.js";
@@ -45,6 +46,22 @@ function errorStatus(error) {
     message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_changed")
   )) return 409;
   if (message.startsWith("uad_package_")) return 422;
+  if (message === "uad_compliance_authentication_required") return 401;
+  if (
+    message === "uad_compliance_disabled"
+    || (message.includes("uad_compliance_") && message.endsWith("_not_configured"))
+  ) return 503;
+  if (message === "uad_compliance_timeout") return 504;
+  if ([
+    "uad_compliance_network_error",
+    "uad_compliance_token_response_invalid",
+    "uad_compliance_response_invalid",
+    "uad_compliance_response_too_large",
+  ].includes(message) || message.startsWith("uad_compliance_token_failed:")) return 502;
+  if (message.startsWith("uad_compliance_") && (
+    message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_changed")
+  )) return 409;
+  if (message.startsWith("uad_compliance_")) return 422;
   if (message.startsWith("uad_completion_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
@@ -61,7 +78,13 @@ function sendError(res, error) {
   res.status(status).json({ error: code, ...(error?.details ? { details: error.details } : {}) });
 }
 
-export function createUadRouter({ pool, storage, verifier, enabled = false }) {
+export function createUadRouter({
+  pool,
+  storage,
+  verifier,
+  compliance = { enabled: false, providers: {} },
+  enabled = false,
+}) {
   const router = express.Router();
   const authenticateSigner = verifier?.verify
     ? createMobileAuthenticator({ pool, verifier })
@@ -81,6 +104,10 @@ export function createUadRouter({ pool, storage, verifier, enabled = false }) {
         profile: "UAD 3.6 URAR Delivery Specification 1.4",
         requires_signed_revision: true,
         includes_external_images: true,
+      },
+      compliance: {
+        enabled: compliance.enabled,
+        providers: compliance.providers,
       },
     });
   });
@@ -223,6 +250,35 @@ export function createUadRouter({ pool, storage, verifier, enabled = false }) {
   router.post("/workfiles/:workfileId/artifacts/submission-package", async (req, res) => {
     try {
       res.status(201).json(await generateUadSubmissionPackage(pool, storage, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/compliance", authenticateSigner, async (req, res) => {
+    try {
+      res.json(await getUadComplianceStatus(
+        pool,
+        compliance,
+        req.params.workfileId,
+        req.mobileAuth.userId,
+      ));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/compliance/:provider", authenticateSigner, async (req, res) => {
+    try {
+      const result = await runUadCompliance(
+        pool,
+        storage,
+        compliance,
+        req.params.workfileId,
+        req.params.provider,
+        req.mobileAuth.userId,
+      );
+      res.status(201).json({ validation: result });
     } catch (error) {
       sendError(res, error);
     }

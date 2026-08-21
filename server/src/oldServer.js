@@ -183,6 +183,7 @@ import {
 } from "./util/requestPerformance.js";
 import { createUadRouter } from "./modules/uad/router.js";
 import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
+import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.js";
 import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
 import {
@@ -226,6 +227,7 @@ const corsOrigins = !corsEnv
 app.use(cors({ origin: corsOrigins }));
 
 const uadObjectStorage = createUadObjectStorage();
+const uadComplianceRegistry = createUadComplianceRegistry();
 const documentOcrProvider = createDocumentOcrProvider();
 const mobileOidcVerifier = createOidcAccessTokenVerifier({
   issuer: process.env.OIDC_ISSUER,
@@ -237,6 +239,7 @@ app.use("/api/uad", createUadRouter({
   pool,
   storage: uadObjectStorage,
   verifier: mobileOidcVerifier,
+  compliance: uadComplianceRegistry,
   enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
 }));
 

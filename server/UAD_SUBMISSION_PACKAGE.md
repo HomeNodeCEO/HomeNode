@@ -18,11 +18,14 @@ Package generation refuses stale input digests, mismatched revisions, unsigned w
 <file-number>-revision-<revision>.zip
 ├── <file-number>.pdf
 ├── <file-number>.xml
-├── images-manifest.json
 └── Images/
     ├── 001-<asset-id>-<sanitized-original-name>
     └── ...
 ```
+
+`images-manifest.json` is generated and retained as a separate private audit
+artifact. It is intentionally not inserted into the delivery ZIP because the
+official UCDP examples contain only the XML, PDF, and `Images/` directory.
 
 The XML uses the Appendix A image structure and references external files with `\\Images\...` object URLs. HomeNode maps verified evidence to the subject/comparable property inspection, room, interior component, vehicle storage, amenity, or defect branch based on its canonical entity relationship. Supported delivery MIME types are the official Appendix A image MIME enumerations plus PDF exhibits.
 

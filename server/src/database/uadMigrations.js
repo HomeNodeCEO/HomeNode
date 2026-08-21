@@ -44,6 +44,7 @@ const MIGRATIONS = Object.freeze([
   "20260921_uad_reconciliation.sql",
   "20260922_uad_certifications.sql",
   "20260923_uad_system_package.sql",
+  "20260924_uad_compliance_api.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 

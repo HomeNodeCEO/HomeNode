@@ -87,7 +87,7 @@ export default function UadSubmissionPackagePanel({
             {loading
               ? "Loading the latest delivery package…"
               : ready
-                ? `Revision ${result.package?.revision_number} has a verified PDF, MISMO XML, image manifest, and external evidence files in one ZIP.`
+                ? `Revision ${result.package?.revision_number} has a verified PDF, MISMO XML, and external evidence files in the delivery ZIP, plus a separate audit manifest.`
                 : stale
                   ? "The workfile revision changed after this package was created. Revalidate, regenerate PDF and XML, sign, and package the current revision."
                   : !signed

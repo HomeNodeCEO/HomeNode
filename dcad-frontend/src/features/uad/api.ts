@@ -50,6 +50,15 @@ export interface UadCapabilities {
     requires_signed_revision: boolean;
     includes_external_images: boolean;
   };
+  compliance?: {
+    enabled: boolean;
+    providers: Record<string, {
+      provider: string;
+      enabled: boolean;
+      configured: boolean;
+      environment: string | null;
+    }>;
+  };
 }
 
 export interface UadWorkfile {

@@ -120,3 +120,13 @@ test("wires package routes and keeps the legacy report renderer isolated", () =>
   assert.match(router, /generateUadSubmissionPackage/);
   assert.doesNotMatch(legacy, /submission_package|images_manifest/);
 });
+
+test("keeps the audit manifest outside the strict UCDP delivery ZIP", () => {
+  const service = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/uadPackageArtifacts.js"), "utf8");
+  const zipInputs = service.match(/buildDeterministicZip\(\[([\s\S]*?)\]\);/)?.[1] || "";
+  assert.match(zipInputs, /pdfFileName/);
+  assert.match(zipInputs, /xmlFileName/);
+  assert.match(zipInputs, /entry\.package_path/);
+  assert.doesNotMatch(zipInputs, /manifest\.content|manifestFileName/);
+  assert.match(service, /artifactType: "images_manifest"/);
+});

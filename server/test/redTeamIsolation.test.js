@@ -4,11 +4,14 @@ import test from "node:test";
 
 import {
   assertRedTeamDatabaseName,
+  assertRedTeamFixtureAccountId,
   createRedTeamIsolationConfiguration,
   verifyRedTeamSyntheticBoundary,
 } from "../src/security/redTeamIsolation.js";
 
 const serverSource = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
+const redTeamBaseSource = fs.readFileSync(new URL("../scripts/prepareRedteamBaseDatabase.js", import.meta.url), "utf8");
+const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 function safeEnvironment(overrides = {}) {
   return {
@@ -59,6 +62,12 @@ test("accepts a fully isolated synthetic red-team configuration", () => {
     external_status_enabled: false,
   });
   assert.equal(assertRedTeamDatabaseName("homenode_redteam"), "homenode_redteam");
+  assert.equal(assertRedTeamFixtureAccountId("UAD-REDTEAM-SFR-0001"), "UAD-REDTEAM-SFR-0001");
+});
+
+test("rejects fixture accounts outside the red-team namespace", () => {
+  assert.throws(() => assertRedTeamFixtureAccountId("UAD-STAGING-SFR-0001"), /redteam_fixture_account_invalid/);
+  assert.throws(() => assertRedTeamFixtureAccountId("100 Test Subject Dr"), /redteam_fixture_account_invalid/);
 });
 
 test("accepts a dedicated WorkOS application with a generated client audience", () => {
@@ -141,6 +150,22 @@ test("server startup evaluates isolation before database construction", () => {
   const databasePool = serverSource.indexOf("new pg.Pool");
   assert.ok(isolation > 0);
   assert.ok(databasePool > isolation);
+});
+
+test("red-team startup bootstraps the guarded synthetic base before migrations", () => {
+  assert.equal(
+    packageJson.scripts["start:redteam:uad"],
+    "npm run verify:redteam:isolation && npm run prepare:redteam:base && npm run migrate:uad && npm run migrate:mobile && npm run prepare:redteam:uad && npm start",
+  );
+  const isolation = redTeamBaseSource.indexOf("createRedTeamIsolationConfiguration()");
+  const databasePool = redTeamBaseSource.indexOf("new pg.Pool");
+  const databaseAssertion = redTeamBaseSource.indexOf("assertRedTeamDatabaseName(identity");
+  const syntheticBoundary = redTeamBaseSource.indexOf("verifyRedTeamSyntheticBoundary(pool)");
+  const schemaMutation = redTeamBaseSource.indexOf("CREATE SCHEMA IF NOT EXISTS core");
+  assert.ok(isolation > 0);
+  assert.ok(databasePool > isolation);
+  assert.ok(databaseAssertion > 0 && databaseAssertion < schemaMutation);
+  assert.ok(syntheticBoundary > databasePool && syntheticBoundary < schemaMutation);
 });
 
 test("database boundary accepts only explicitly synthetic protected records", async () => {

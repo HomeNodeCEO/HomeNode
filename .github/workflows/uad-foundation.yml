@@ -87,3 +87,76 @@ jobs:
           NODE_ENV=staging npm run prepare:staging:uad
           NODE_ENV=staging npm run prepare:staging:uad
           node --test test/uadStaging.integration.test.js
+
+  redteam-bootstrap:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_DB: homenode_redteam_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d homenode_redteam_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: server
+    env:
+      NODE_ENV: production
+      HOMENODE_DEPLOYMENT_ENVIRONMENT: redteam
+      REDTEAM_ISOLATION_STRICT: "true"
+      REDTEAM_DATA_CLASSIFICATION: synthetic_only
+      REDTEAM_INTEGRATION: "true"
+      REDTEAM_FIXTURE_ACCOUNT_ID: UAD-REDTEAM-SFR-0001
+      REDTEAM_OIDC_SUBJECTS_JSON: >-
+        {"assigned_appraiser_a":"user_redteam_assigned_a","unassigned_appraiser_a":"user_redteam_unassigned_a","supervisor_a":"user_redteam_supervisor_a","reviewer_a":"user_redteam_reviewer_a","organization_admin_a":"user_redteam_org_admin_a","appraiser_b":"user_redteam_appraiser_b","organization_admin_b":"user_redteam_org_admin_b","homenode_admin":"user_redteam_homenode_admin","inactive_user":"user_redteam_inactive","suspended_member":"user_redteam_suspended","member_without_role":"user_redteam_no_role"}
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/homenode_redteam_test
+      CORS_ORIGIN: https://homenode-uad-redteam.example.com
+      R2_ACCOUNT_ID: redteam-test-account
+      R2_ACCESS_KEY_ID: redteam-test-key
+      R2_SECRET_ACCESS_KEY: redteam-test-secret
+      R2_BUCKET: homenode-uad-redteam
+      OIDC_ISSUER: https://identity-redteam.example.com/
+      OIDC_AUDIENCE: homenode-redteam-api
+      OIDC_JWKS_URI: https://identity-redteam.example.com/oauth2/jwks
+      DOCUMENT_OCR_PROVIDER: disabled
+      UAD_SECURITY_STRICT: "true"
+      UAD_AUTHENTICATION_REQUIRED: "true"
+      UAD_RATE_LIMIT_ENABLED: "true"
+      UAD_WORKSPACE_ENABLED: "true"
+      MOBILE_INSPECTION_ENABLED: "true"
+      UAD_COMPLIANCE_API_ENABLED: "false"
+      FANNIE_UAD_COMPLIANCE_ENABLED: "false"
+      FREDDIE_UAD_COMPLIANCE_ENABLED: "false"
+      TRESTLE_ENABLED: "false"
+      TRESTLE_REPLICATION_ENABLED: "false"
+      TRESTLE_MEDIA_ENABLED: "false"
+      LOCATION_BACKFILL_ENABLED: "false"
+      CENSUS_GEOGRAPHY_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Bootstrap, migrate, and seed the isolated database
+        run: |
+          npm run prepare:redteam:base
+          npm run migrate:uad
+          npm run migrate:mobile
+          npm run prepare:redteam:uad
+      - name: Verify the complete sequence is idempotent
+        run: |
+          npm run prepare:redteam:base
+          npm run migrate:uad
+          npm run migrate:mobile
+          npm run prepare:redteam:uad
+      - run: node --test test/redTeamBootstrap.integration.test.js

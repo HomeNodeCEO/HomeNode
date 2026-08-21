@@ -5,6 +5,7 @@ import { normalizeOidcIssuer } from "../src/modules/mobile/auth.js";
 import { createUadWorkfile } from "../src/modules/uad/workfiles.js";
 import {
   assertRedTeamDatabaseName,
+  assertRedTeamFixtureAccountId,
   createRedTeamIsolationConfiguration,
   verifyRedTeamSyntheticBoundary,
 } from "../src/security/redTeamIsolation.js";
@@ -18,8 +19,9 @@ const isolation = createRedTeamIsolationConfiguration();
 if (!isolation.enabled || !isolation.ready) throw new Error("redteam_isolation_not_enabled");
 const oidcIssuer = normalizeOidcIssuer(process.env.OIDC_ISSUER);
 const oidcSubjects = parseRedTeamOidcSubjects(process.env.REDTEAM_OIDC_SUBJECTS_JSON);
-const fixtureAccountId = String(process.env.REDTEAM_FIXTURE_ACCOUNT_ID || "UAD-STAGING-SFR-0001").trim();
-if (!fixtureAccountId || fixtureAccountId.length > 64) throw new Error("redteam_fixture_account_invalid");
+const fixtureAccountId = assertRedTeamFixtureAccountId(
+  process.env.REDTEAM_FIXTURE_ACCOUNT_ID || "UAD-REDTEAM-SFR-0001",
+);
 
 const usesRender = /\.render\.com(?:[/:]|$)/i.test(process.env.DATABASE_URL || "");
 const pool = new pg.Pool({

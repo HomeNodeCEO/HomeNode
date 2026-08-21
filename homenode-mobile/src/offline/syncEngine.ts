@@ -9,6 +9,7 @@ import { OfflineStore, type QueueSummary } from "./store";
 const EMPTY_SUMMARY: QueueSummary = { pending: 0, conflicts: 0, synchronized: 0 };
 
 export async function synchronizeDueOperations(store: OfflineStore, api: MobileApi, ownerUserId: string) {
+  await store.ensureReady();
   const [rows, entityRows] = await Promise.all([
     store.dueOperations(ownerUserId),
     store.dueUadEntityProposals(ownerUserId),
@@ -89,14 +90,16 @@ export function useOfflineSync(store: OfflineStore | null, api: MobileApi, owner
     await refresh();
   }, [api, online, ownerUserId, refresh, store]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh().catch(() => undefined); }, [refresh]);
   useEffect(() => {
-    if (online) void syncNow();
+    if (online) void syncNow().catch(() => undefined);
   }, [online, syncNow]);
   useEffect(() => {
-    const timer = setInterval(() => { if (online) void syncNow(); }, 15_000);
+    const timer = setInterval(() => { if (online) void syncNow().catch(() => undefined); }, 15_000);
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active" && online) void syncNow();
+      if (state === "active" && online) {
+        void store?.ensureReady({ reopen: true }).then(syncNow).catch(() => undefined);
+      }
     });
     return () => {
       clearInterval(timer);

@@ -64,6 +64,7 @@ async function synchronizePhoto(store: OfflineStore, api: MobileApi, ownerUserId
 }
 
 export async function synchronizeDuePhotos(store: OfflineStore, api: MobileApi, ownerUserId: string) {
+  await store.ensureReady();
   const due = await store.duePhotoDrafts(ownerUserId);
   for (const photo of due) {
     try {
@@ -86,6 +87,7 @@ export function usePhotoSync(
 ) {
   const [summary, setSummary] = useState<PhotoQueueSummary>(EMPTY_SUMMARY);
   const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const active = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async () => {
@@ -96,21 +98,36 @@ export function usePhotoSync(
     if (!online) return;
     if (!active.current) {
       setSyncing(true);
-      active.current = synchronizeDuePhotos(store, api, ownerUserId).finally(() => {
-        active.current = null;
-        setSyncing(false);
-      });
+      active.current = synchronizeDuePhotos(store, api, ownerUserId)
+        .then(() => setError(null))
+        .catch((reason) => {
+          setError(reason instanceof Error ? reason.message : "mobile_photo_sync_failed");
+        })
+        .finally(() => {
+          active.current = null;
+          setSyncing(false);
+        });
     }
     await active.current;
-    await refresh();
+    try {
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "mobile_photo_database_unavailable");
+    }
   }, [api, online, ownerUserId, refresh, store]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh().catch((reason) => {
+    setError(reason instanceof Error ? reason.message : "mobile_photo_database_unavailable");
+  }); }, [refresh]);
   useEffect(() => { if (online) void syncNow(); }, [online, syncNow]);
   useEffect(() => {
     const timer = setInterval(() => { if (online) void syncNow(); }, 15_000);
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active" && online) void syncNow();
+      if (state === "active" && online) {
+        void store.ensureReady({ reopen: true }).then(syncNow).catch((reason) => {
+          setError(reason instanceof Error ? reason.message : "mobile_photo_database_unavailable");
+        });
+      }
     });
     return () => {
       clearInterval(timer);
@@ -118,5 +135,5 @@ export function usePhotoSync(
     };
   }, [online, syncNow]);
 
-  return { refresh, summary, syncing, syncNow };
+  return { error, refresh, summary, syncing, syncNow };
 }

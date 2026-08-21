@@ -2,6 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { networkAvailable, retryDelayMs, stableJson } from "../src/offline/model";
+import { isUnreadableSqliteDatabaseError } from "../src/offline/databaseRecovery";
+
+test("recognizes native SQLite error 26 through wrapped causes", () => {
+  assert.equal(isUnreadableSqliteDatabaseError(new Error("file is not a database")), true);
+  assert.equal(isUnreadableSqliteDatabaseError({
+    message: "prepareAsync failed",
+    cause: { message: "SQLiteErrorException: Error code 26" },
+  }), true);
+  assert.equal(isUnreadableSqliteDatabaseError(new Error("database is busy")), false);
+});
 
 test("offline payloads use deterministic canonical JSON", () => {
   assert.equal(stableJson({ z: 1, a: [true, null] }), '{"a":[true,null],"z":1}');

@@ -25,8 +25,12 @@ import {
 } from "./model";
 import { usePhotoSync } from "./sync";
 import type { SelectedSketchRoom } from "../sketch/SketchEditorPanel";
+import { isUnreadableSqliteDatabaseError } from "../offline/databaseRecovery";
 
 function photoError(reason: unknown) {
+  if (isUnreadableSqliteDatabaseError(reason)) {
+    return "HomeNode is reopening the encrypted offline file. Try the photo once more.";
+  }
   const code = reason instanceof Error ? reason.message : "mobile_photo_failed";
   const messages: Record<string, string> = {
     mobile_camera_permission_required: "Camera access is required to take appraisal photos.",
@@ -149,7 +153,9 @@ export function PhotoCapturePanel({
     await refreshPhotoSummary();
   }, [ownerUserId, refreshPhotoSummary, sessionId, store]);
 
-  useEffect(() => { void load(); }, [load, photoSync.summary.pending, photoSync.summary.synchronized]);
+  useEffect(() => {
+    void load().catch((reason) => setError(photoError(reason)));
+  }, [load, photoSync.summary.pending, photoSync.summary.synchronized]);
 
   useEffect(() => {
     if (selectedSketchRoom) setUseSketchRoom(true);
@@ -205,11 +211,23 @@ export function PhotoCapturePanel({
   }, []);
 
   const takePhoto = async () => {
-    try { await prepare(await captureCameraPhoto(), "camera"); } catch (reason) { setError(photoError(reason)); }
+    try {
+      const assets = await captureCameraPhoto();
+      await store.ensureReady({ reopen: true });
+      await prepare(assets, "camera");
+    } catch (reason) {
+      setError(photoError(reason));
+    }
   };
 
   const importPhotos = async () => {
-    try { await prepare(await importLibraryPhotos(remaining), "library"); } catch (reason) { setError(photoError(reason)); }
+    try {
+      const assets = await importLibraryPhotos(remaining);
+      await store.ensureReady({ reopen: true });
+      await prepare(assets, "library");
+    } catch (reason) {
+      setError(photoError(reason));
+    }
   };
 
   const saveCaption = async (photo: LocalPhotoDraft) => {
@@ -267,7 +285,7 @@ export function PhotoCapturePanel({
       <Text style={styles.syncLine}>
         {online ? "Online" : "Offline"} · {photoSync.summary.pending} pending · {photoSync.summary.failed} failed · {photoSync.summary.synchronized} verified
       </Text>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error || photoSync.error ? <Text style={styles.error}>{error || photoError(new Error(photoSync.error || ""))}</Text> : null}
       {online && (photoSync.summary.pending || photoSync.summary.failed) ? (
         <Action title="Retry photo sync" secondary disabled={photoSync.syncing} onPress={() => void syncPhotosNow().then(load)} />
       ) : null}

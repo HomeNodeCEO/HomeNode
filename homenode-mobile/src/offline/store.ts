@@ -1,4 +1,5 @@
 import * as Crypto from "expo-crypto";
+import { Directory, File } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 
@@ -21,6 +22,7 @@ import type {
 import { localInspectionCompletionReadiness } from "../completion/model";
 import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
 import { draftFromApiDocument, type ManualSketchDraft } from "../sketch/model";
+import { isUnreadableSqliteDatabaseError } from "./databaseRecovery";
 import {
   retryDelayMs,
   stableJson,
@@ -292,12 +294,13 @@ async function databasePassword() {
   return generated;
 }
 
-async function initializeDatabase() {
+async function openInitializedDatabase() {
   const password = await databasePassword();
   const database = await SQLite.openDatabaseAsync(DATABASE_NAME);
-  await database.execAsync(`PRAGMA key = '${password}'`);
-  await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-  await database.execAsync(`
+  try {
+    await database.execAsync(`PRAGMA key = '${password}'`);
+    await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
+    await database.execAsync(`
     CREATE TABLE IF NOT EXISTS mobile_users (
       user_id TEXT PRIMARY KEY NOT NULL,
       user_json TEXT NOT NULL,
@@ -448,38 +451,68 @@ async function initializeDatabase() {
       ON photo_drafts (owner_user_id, state, next_attempt_at, created_at);
     CREATE INDEX IF NOT EXISTS photo_drafts_session_idx
       ON photo_drafts (owner_user_id, session_id, position, created_at);
-  `);
-  await database.runAsync(
-    `UPDATE sync_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
-      WHERE state = 'uploading'`,
-    Date.now(),
-    Date.now(),
-  );
-  await database.runAsync(
-    `UPDATE photo_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
-      WHERE state IN ('registering', 'uploading', 'verifying')`,
-    Date.now(),
-    Date.now(),
-  );
-  await database.runAsync(
-    `UPDATE sketch_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
-      WHERE state = 'synchronizing'`,
-    Date.now(),
-    Date.now(),
-  );
-  await database.runAsync(
-    `UPDATE uad_entity_proposal_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
-      WHERE state = 'uploading'`,
-    Date.now(),
-    Date.now(),
-  );
-  return database;
+    `);
+    await database.runAsync(
+      `UPDATE sync_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
+        WHERE state = 'uploading'`,
+      Date.now(),
+      Date.now(),
+    );
+    await database.runAsync(
+      `UPDATE photo_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
+        WHERE state IN ('registering', 'uploading', 'verifying')`,
+      Date.now(),
+      Date.now(),
+    );
+    await database.runAsync(
+      `UPDATE sketch_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
+        WHERE state = 'synchronizing'`,
+      Date.now(),
+      Date.now(),
+    );
+    await database.runAsync(
+      `UPDATE uad_entity_proposal_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
+        WHERE state = 'uploading'`,
+      Date.now(),
+      Date.now(),
+    );
+    await database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+    return database;
+  } catch (reason) {
+    await database.closeAsync().catch(() => undefined);
+    throw reason;
+  }
+}
+
+async function quarantineUnreadableDatabase() {
+  const recoveryDirectory = new Directory(SQLite.defaultDatabaseDirectory, "homenode-recovery");
+  await recoveryDirectory.create({ idempotent: true, intermediates: true });
+  const timestamp = new Date().toISOString().replace(/[^0-9]/g, "");
+  for (const suffix of ["-wal", "-shm", ""] as const) {
+    const source = new File(SQLite.defaultDatabaseDirectory, `${DATABASE_NAME}${suffix}`);
+    if (!source.exists) continue;
+    const destination = new File(recoveryDirectory, `${timestamp}-${DATABASE_NAME}${suffix}`);
+    await source.move(destination);
+  }
+}
+
+async function initializeDatabase() {
+  try {
+    return await openInitializedDatabase();
+  } catch (reason) {
+    if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
+    await quarantineUnreadableDatabase();
+    return openInitializedDatabase();
+  }
 }
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 function openDatabase() {
-  databasePromise ||= initializeDatabase();
+  databasePromise ||= initializeDatabase().catch((reason) => {
+    databasePromise = null;
+    throw reason;
+  });
   return databasePromise;
 }
 
@@ -488,10 +521,36 @@ export async function clearActiveOfflineUser() {
 }
 
 export class OfflineStore {
-  private constructor(private readonly database: SQLite.SQLiteDatabase) {}
+  private connectionRepair: Promise<void> | null = null;
+  private lastReconnectAt = 0;
+
+  private constructor(private database: SQLite.SQLiteDatabase) {}
 
   static async open() {
     return new OfflineStore(await openDatabase());
+  }
+
+  async ensureReady({ reopen = false }: { reopen?: boolean } = {}) {
+    if (this.connectionRepair) return this.connectionRepair;
+    const recentlyReconnected = reopen && Date.now() - this.lastReconnectAt < 2_000;
+    if (!reopen || recentlyReconnected) {
+      try {
+        await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+        return;
+      } catch (reason) {
+        if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
+      }
+    }
+    this.connectionRepair = (async () => {
+      const previous = this.database;
+      databasePromise = null;
+      await previous.closeAsync().catch(() => undefined);
+      this.database = await openDatabase();
+      this.lastReconnectAt = Date.now();
+    })().finally(() => {
+      this.connectionRepair = null;
+    });
+    return this.connectionRepair;
   }
 
   async cacheUser(user: MobileUser) {

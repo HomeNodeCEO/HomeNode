@@ -214,6 +214,12 @@ export function appendMeasuredWall(vertices: SketchPoint[], distanceFeet: number
   return vertices.length ? [...vertices, next] : [start, next];
 }
 
+export function normalizeSketchBearing(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  const normalized = ((value % 360) + 360) % 360;
+  return rounded(normalized, 1);
+}
+
 export function closeSketchOutline(vertices: SketchPoint[]): SketchPoint[] {
   if (vertices.length < 3) throw new Error("sketch_needs_three_walls");
   const first = vertices[0]!;

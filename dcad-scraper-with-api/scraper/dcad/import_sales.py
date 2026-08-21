@@ -456,6 +456,7 @@ def _migration_sql() -> str:
         root / "migrations" / "017_native_county_account_identifiers.sql",
         root / "migrations" / "018_trestle_replication_readiness.sql",
         root / "migrations" / "019_sales_auto_reconciliation.sql",
+        root / "migrations" / "020_account_address_aliases.sql",
     )
     return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
 

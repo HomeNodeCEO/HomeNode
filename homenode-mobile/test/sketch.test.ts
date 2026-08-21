@@ -6,10 +6,12 @@ import {
   calculateSketchOutline,
   canvasToModel,
   closeSketchOutline,
+  connectSketchTarget,
   draftFromApiDocument,
   emptySketchDraft,
   modelToCanvas,
   normalizeSketchBearing,
+  sketchClosureTargets,
   sketchReadyForConfirmation,
   sketchRoomRef,
   toSketchApiDocument,
@@ -33,6 +35,39 @@ test("builds and closes a measured rectangular outline", () => {
   assert.equal(calculation.reportedAreaSqft, 1200);
   assert.equal(calculation.perimeterFeet, 140);
   assert.deepEqual(calculation.centroid, { x: 20, y: 15 });
+});
+
+test("projects a closing corner and closes a 10 by 10 outline from tappable targets", () => {
+  let vertices = appendMeasuredWall([], 10, 90);
+  vertices = appendMeasuredWall(vertices, 10, 0);
+
+  const projected = sketchClosureTargets(vertices);
+  assert.equal(projected.length, 1);
+  assert.equal(projected[0]!.kind, "projected_corner");
+  assert.deepEqual(projected[0]!.point, { x: 10, y: 0 });
+  vertices = connectSketchTarget(vertices, projected[0]!);
+
+  const startingPoint = sketchClosureTargets(vertices);
+  assert.equal(startingPoint.length, 1);
+  assert.equal(startingPoint[0]!.kind, "starting_point");
+  assert.deepEqual(startingPoint[0]!.point, { x: 0, y: 0 });
+  vertices = connectSketchTarget(vertices, startingPoint[0]!);
+
+  const calculation = calculateSketchOutline(vertices);
+  assert.equal(calculation.closed, true);
+  assert.equal(calculation.reportedAreaSqft, 100);
+  assert.equal(calculation.perimeterFeet, 40);
+});
+
+test("projects the closing corner for rotated walls", () => {
+  let vertices = appendMeasuredWall([], 10, 45);
+  vertices = appendMeasuredWall(vertices, 8, 315);
+  vertices = connectSketchTarget(vertices, sketchClosureTargets(vertices)[0]!);
+  vertices = connectSketchTarget(vertices, sketchClosureTargets(vertices)[0]!);
+  const calculation = calculateSketchOutline(vertices);
+  assert.equal(calculation.closed, true);
+  assert.equal(calculation.selfIntersecting, false);
+  assert.equal(calculation.reportedAreaSqft, 80);
 });
 
 test("keeps model and canvas points reversible for room placement", () => {

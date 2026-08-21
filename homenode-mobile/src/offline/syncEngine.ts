@@ -98,7 +98,7 @@ export function useOfflineSync(store: OfflineStore | null, api: MobileApi, owner
     const timer = setInterval(() => { if (online) void syncNow().catch(() => undefined); }, 15_000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active" && online) {
-        void store?.ensureReady({ reopen: true }).then(syncNow).catch(() => undefined);
+        void store?.ensureReady().then(syncNow).catch(() => undefined);
       }
     });
     return () => {

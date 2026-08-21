@@ -35,6 +35,12 @@ export type SketchClassification = typeof SKETCH_CLASSIFICATIONS[number][0];
 export type SketchRoomType = typeof SKETCH_ROOM_TYPES[number][0];
 export type SketchPoint = Readonly<{ x: number; y: number }>;
 
+export type SketchClosureTarget = Readonly<{
+  kind: "projected_corner" | "starting_point";
+  point: SketchPoint;
+  label: string;
+}>;
+
 export type SketchCalculation = Readonly<{
   closed: boolean;
   closureGapFeet: number;
@@ -218,6 +224,70 @@ export function normalizeSketchBearing(value: number) {
   if (!Number.isFinite(value)) return 0;
   const normalized = ((value % 360) + 360) % 360;
   return rounded(normalized, 1);
+}
+
+function lineIntersection(
+  firstOrigin: SketchPoint,
+  firstDirection: SketchPoint,
+  secondOrigin: SketchPoint,
+  secondDirection: SketchPoint,
+) {
+  const cross = (firstDirection.x * secondDirection.y) - (firstDirection.y * secondDirection.x);
+  if (Math.abs(cross) < 1e-9) return null;
+  const offset = {
+    x: secondOrigin.x - firstOrigin.x,
+    y: secondOrigin.y - firstOrigin.y,
+  };
+  const scalar = ((offset.x * secondDirection.y) - (offset.y * secondDirection.x)) / cross;
+  return {
+    x: rounded(firstOrigin.x + (scalar * firstDirection.x)),
+    y: rounded(firstOrigin.y + (scalar * firstDirection.y)),
+  };
+}
+
+export function sketchClosureTargets(vertices: SketchPoint[]): SketchClosureTarget[] {
+  if (vertices.length < 3 || calculateSketchOutline(vertices).closed) return [];
+  const start = vertices[0]!;
+  const current = vertices[vertices.length - 1]!;
+
+  if (vertices.length === 3) {
+    const firstDirection = {
+      x: vertices[1]!.x - start.x,
+      y: vertices[1]!.y - start.y,
+    };
+    const recentDirection = {
+      x: current.x - vertices[1]!.x,
+      y: current.y - vertices[1]!.y,
+    };
+    const projected = lineIntersection(current, firstDirection, start, recentDirection);
+    const duplicatesExistingPoint = projected
+      ? vertices.some((vertex) => distance(vertex, projected) <= 0.05)
+      : true;
+    if (projected
+      && !duplicatesExistingPoint
+      && distance(current, projected) >= 0.1
+      && distance(start, projected) >= 0.1) {
+      return [{
+        kind: "projected_corner",
+        point: projected,
+        label: "Add aligned closing corner",
+      }];
+    }
+  }
+
+  return [{
+    kind: "starting_point",
+    point: { ...start },
+    label: "Connect to the starting point and calculate area",
+  }];
+}
+
+export function connectSketchTarget(vertices: SketchPoint[], target: SketchClosureTarget): SketchPoint[] {
+  if (vertices.length < 3) throw new Error("sketch_needs_three_walls");
+  if (target.kind === "starting_point") return closeSketchOutline(vertices);
+  const current = vertices[vertices.length - 1]!;
+  if (distance(current, target.point) < 0.1) throw new Error("invalid_sketch_wall_length");
+  return [...vertices, { x: rounded(target.point.x), y: rounded(target.point.y) }];
 }
 
 export function closeSketchOutline(vertices: SketchPoint[]): SketchPoint[] {

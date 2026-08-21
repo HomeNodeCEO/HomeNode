@@ -17,16 +17,19 @@ import {
   calculateSketchOutline,
   canvasToModel,
   closeSketchOutline,
+  connectSketchTarget,
   emptySketchDraft,
   modelToCanvas,
   normalizeSketchBearing,
   pointInArea,
+  sketchClosureTargets,
   SKETCH_CLASSIFICATIONS,
   SKETCH_ROOM_TYPES,
   sketchReadyForConfirmation,
   sketchRoomRef,
   type ManualSketchDraft,
   type SketchAreaDraft,
+  type SketchClosureTarget,
   type SketchRoomDraft,
   type SketchRoomType,
 } from "./model";
@@ -123,16 +126,19 @@ function updateArea(draft: ManualSketchDraft, areaId: string, update: (area: Ske
   };
 }
 
-function SketchCanvas({ area, rooms, selectedRoomId, onSelectRoom, onMoveRoom }: {
+function SketchCanvas({ area, rooms, closureTargets, selectedRoomId, onSelectRoom, onMoveRoom, onConnectTarget }: {
   area: SketchAreaDraft;
   rooms: SketchRoomDraft[];
+  closureTargets: SketchClosureTarget[];
   selectedRoomId: string | null;
   onSelectRoom: (room: SketchRoomDraft) => void;
   onMoveRoom: (roomId: string, point: { x: number; y: number }) => void;
+  onConnectTarget: (target: SketchClosureTarget) => void;
 }) {
+  const displayVertices = [...area.vertices, ...closureTargets.map((target) => target.point)];
   const canvasVertices = area.vertices.map((point) => modelToCanvas(
     point,
-    area.vertices,
+    displayVertices,
     CANVAS_WIDTH,
     CANVAS_HEIGHT,
   ));
@@ -160,7 +166,7 @@ function SketchCanvas({ area, rooms, selectedRoomId, onSelectRoom, onMoveRoom }:
     if (!selectedRoomId || area.vertices.length < 2) return;
     const point = canvasToModel(
       { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY },
-      area.vertices,
+      displayVertices,
       CANVAS_WIDTH,
       CANVAS_HEIGHT,
     );
@@ -175,8 +181,42 @@ function SketchCanvas({ area, rooms, selectedRoomId, onSelectRoom, onMoveRoom }:
           {line.length.toFixed(1)}′
         </Text>
       </React.Fragment>)}
+      {closureTargets.map((target) => {
+        const point = modelToCanvas(target.point, displayVertices, CANVAS_WIDTH, CANVAS_HEIGHT);
+        const current = modelToCanvas(
+          area.vertices[area.vertices.length - 1]!,
+          displayVertices,
+          CANVAS_WIDTH,
+          CANVAS_HEIGHT,
+        );
+        const guideLength = Math.hypot(point.x - current.x, point.y - current.y);
+        const guideAngle = Math.atan2(point.y - current.y, point.x - current.x);
+        return <React.Fragment key={`${target.kind}-${target.point.x}-${target.point.y}`}>
+          <View style={[styles.closureGuide, {
+            left: ((current.x + point.x) / 2) - (guideLength / 2),
+            top: ((current.y + point.y) / 2) - 1,
+            width: guideLength,
+            transform: [{ rotate: `${guideAngle}rad` }],
+          }]} />
+          <Pressable
+            accessibilityLabel={target.label}
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={(event) => {
+              event.stopPropagation();
+              onConnectTarget(target);
+            }}
+            style={[styles.closureTarget, { left: point.x - 18, top: point.y - 18 }]}
+          >
+            <View style={[
+              styles.closureDot,
+              target.kind === "starting_point" ? styles.closureDotStart : styles.closureDotProjected,
+            ]} />
+          </Pressable>
+        </React.Fragment>;
+      })}
       {rooms.map((room) => {
-        const point = modelToCanvas(room.anchor, area.vertices, CANVAS_WIDTH, CANVAS_HEIGHT);
+        const point = modelToCanvas(room.anchor, displayVertices, CANVAS_WIDTH, CANVAS_HEIGHT);
         const selected = room.id === selectedRoomId;
         return (
           <Pressable
@@ -237,6 +277,7 @@ export function SketchEditorPanel({
   const selectedArea = (draft.areas.find((area) => area.id === selectedAreaId) || draft.areas[0])!;
   const areaRooms = draft.rooms.filter((room) => room.areaId === selectedArea.id);
   const calculation = calculateSketchOutline(selectedArea.vertices);
+  const closureTargets = sketchClosureTargets(selectedArea.vertices);
 
   const setNormalizedBearing = (value: number) => setBearing(String(normalizeSketchBearing(value)));
   const adjustBearing = (change: number) => setNormalizedBearing(Number(bearing) + change);
@@ -296,6 +337,14 @@ export function SketchEditorPanel({
   const closeOutline = () => {
     try {
       changeArea((area) => ({ ...area, vertices: closeSketchOutline(area.vertices) }));
+    } catch (reason) {
+      setError(sketchError(reason));
+    }
+  };
+
+  const connectTarget = (target: SketchClosureTarget) => {
+    try {
+      changeArea((area) => ({ ...area, vertices: connectSketchTarget(area.vertices, target) }));
     } catch (reason) {
       setError(sketchError(reason));
     }
@@ -514,15 +563,22 @@ export function SketchEditorPanel({
       <View style={styles.actionsRow}>
         <Action title="Add wall" onPress={addWall} />
         <Action title="Undo" secondary disabled={selectedArea.vertices.length < 2} onPress={undoWall} />
-        <Action title="Close" secondary disabled={selectedArea.vertices.length < 3} onPress={closeOutline} />
+        <Action title="Close to start" secondary disabled={selectedArea.vertices.length < 3} onPress={closeOutline} />
       </View>
       <SketchCanvas
         area={selectedArea}
         rooms={areaRooms}
+        closureTargets={closureTargets}
         selectedRoomId={selectedRoomId}
         onSelectRoom={selectRoom}
         onMoveRoom={moveRoom}
+        onConnectTarget={connectTarget}
       />
+      {closureTargets[0]?.kind === "projected_corner" ? (
+        <Text style={styles.closureHelp}>Tap the orange dot to add the aligned corner. Then tap the green starting dot to close the outline and calculate square footage.</Text>
+      ) : closureTargets[0]?.kind === "starting_point" ? (
+        <Text style={styles.closureHelp}>Tap the green starting dot to connect the final wall and calculate square footage.</Text>
+      ) : null}
       <Text style={[styles.status, calculation.ready ? styles.statusReady : styles.statusPending]}>
         {calculation.ready
           ? `${calculation.reportedAreaSqft?.toLocaleString()} sf · ${calculation.perimeterFeet.toFixed(1)} ft perimeter · closed`
@@ -619,6 +675,12 @@ const styles = StyleSheet.create({
   canvas: { alignSelf: "center", backgroundColor: "#fbfcfb", borderColor: "#cdd9d2", borderRadius: 12, borderWidth: 1, height: CANVAS_HEIGHT, overflow: "hidden", width: CANVAS_WIDTH },
   canvasEmpty: { color: "#7b8983", left: 30, position: "absolute", right: 30, textAlign: "center", top: 115 },
   wall: { backgroundColor: "#183f31", height: 3, position: "absolute" },
+  closureGuide: { backgroundColor: "#d67b2f", height: 2, opacity: 0.55, position: "absolute" },
+  closureTarget: { alignItems: "center", height: 36, justifyContent: "center", position: "absolute", width: 36 },
+  closureDot: { borderColor: "white", borderRadius: 9, borderWidth: 3, height: 18, width: 18 },
+  closureDotProjected: { backgroundColor: "#d67b2f" },
+  closureDotStart: { backgroundColor: "#1d8a5b" },
+  closureHelp: { backgroundColor: "#fff7e7", borderRadius: 8, color: "#714a14", fontSize: 12, fontWeight: "700", lineHeight: 18, padding: 9 },
   dimension: { backgroundColor: "#fbfcfb", color: "#456457", fontSize: 10, fontWeight: "700", paddingHorizontal: 2, position: "absolute", width: 42 },
   roomPin: { alignItems: "center", backgroundColor: "#e8f1ed", borderColor: "#1d5a43", borderRadius: 13, borderWidth: 1, height: 28, justifyContent: "center", paddingHorizontal: 5, position: "absolute", width: 60 },
   roomPinSelected: { backgroundColor: "#1d5a43" },

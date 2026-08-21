@@ -29,7 +29,7 @@ import { isUnreadableSqliteDatabaseError } from "../offline/databaseRecovery";
 
 function photoError(reason: unknown) {
   if (isUnreadableSqliteDatabaseError(reason)) {
-    return "HomeNode is reopening the encrypted offline file. Try the photo once more.";
+    return "HomeNode could not repair encrypted offline storage. Close and reopen HomeNode, and do not delete the app.";
   }
   const code = reason instanceof Error ? reason.message : "mobile_photo_failed";
   const messages: Record<string, string> = {
@@ -213,7 +213,7 @@ export function PhotoCapturePanel({
   const takePhoto = async () => {
     try {
       const assets = await captureCameraPhoto();
-      await store.ensureReady({ reopen: true });
+      await store.ensureReady();
       await prepare(assets, "camera");
     } catch (reason) {
       setError(photoError(reason));
@@ -223,7 +223,7 @@ export function PhotoCapturePanel({
   const importPhotos = async () => {
     try {
       const assets = await importLibraryPhotos(remaining);
-      await store.ensureReady({ reopen: true });
+      await store.ensureReady();
       await prepare(assets, "library");
     } catch (reason) {
       setError(photoError(reason));

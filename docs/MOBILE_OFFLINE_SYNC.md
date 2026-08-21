@@ -53,7 +53,7 @@ Conflict resolution is another idempotent operation:
 
 The native app uses SQLCipher-enabled `expo-sqlite`. Its random 256-bit database password is held in the platform secure credential store. Queue rows survive process termination; interrupted `uploading` rows return to `failed` during database initialization.
 
-Camera and photo-library transitions can move iOS between foreground and background native states. HomeNode verifies and, when necessary, reopens and rekeys the SQLCipher connection before it caches or synchronizes returned photos. If SQLCipher reports that the underlying file is unreadable, HomeNode moves the database and its journal sidecars into the private `homenode-recovery` directory before creating a clean encrypted database. The unreadable file is preserved for support recovery and is never silently deleted.
+Camera and photo-library transitions can move iOS between foreground and background native states. HomeNode verifies and, when necessary, opens a new native SQLCipher connection and reapplies the key before it caches or synchronizes returned photos. If SQLCipher reports that the active file is unreadable, HomeNode switches to a fresh encrypted database with a unique private filename. The unreadable database and its journal sidecars are left untouched for support recovery and are never silently deleted.
 
 Retries occur on network restoration, foreground activation, manual request, and a foreground timer. Backoff starts at two seconds, includes bounded jitter, and caps at five minutes. Permanent server conflicts stay visible for appraiser review instead of being retried as last-write-wins updates.
 

@@ -65,6 +65,14 @@ try {
       "influence-statement-timeout-ms",
       process.env.MAINTENANCE_INFLUENCE_STATEMENT_TIMEOUT_MS || "60000",
     ),
+    salesReconciliationMaximumBatches: option(
+      "sales-reconciliation-maximum-batches",
+      process.env.MAINTENANCE_SALES_RECONCILIATION_MAX_BATCHES || "10",
+    ),
+    salesReconciliationBatchSize: option(
+      "sales-reconciliation-batch-size",
+      process.env.MAINTENANCE_SALES_RECONCILIATION_BATCH_SIZE || "500",
+    ),
     hazardBatchSize: option(
       "hazard-batch-size",
       process.env.MAINTENANCE_HAZARD_BATCH_SIZE || "200",

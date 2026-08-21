@@ -12,8 +12,8 @@ function encodeRfc3986(value) {
   return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
-function objectPath(bucket, objectKey) {
-  return `/${[bucket, ...String(objectKey).split("/")].map(encodeRfc3986).join("/")}`;
+function objectPath(objectKey) {
+  return `/${String(objectKey).split("/").map(encodeRfc3986).join("/")}`;
 }
 
 function amzTimestamp(date) {
@@ -69,7 +69,7 @@ export function createR2PresignedUrl({
   now = new Date(),
 }) {
   const expires = Math.max(1, Math.min(Number(expiresInSeconds) || 900, 604800));
-  const host = `${accountId}.r2.cloudflarestorage.com`;
+  const host = `${bucket}.${accountId}.r2.cloudflarestorage.com`;
   const timestamp = amzTimestamp(now);
   const dateStamp = timestamp.slice(0, 8);
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
@@ -95,7 +95,7 @@ export function createR2PresignedUrl({
     .join("&");
   const canonicalRequest = [
     method.toUpperCase(),
-    objectPath(bucket, objectKey),
+    objectPath(objectKey),
     canonicalQuery,
     canonicalHeaders,
     signedHeaders,
@@ -108,7 +108,7 @@ export function createR2PresignedUrl({
     sha256(canonicalRequest),
   ].join("\n");
   const signature = hmac(signingKey(secretAccessKey, dateStamp), stringToSign, "hex");
-  return `https://${host}${objectPath(bucket, objectKey)}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  return `https://${host}${objectPath(objectKey)}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
 export function createUadObjectStorage(env = process.env) {

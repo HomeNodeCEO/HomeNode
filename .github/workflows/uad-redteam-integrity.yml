@@ -38,7 +38,9 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - name: Run bounded integrity and storage abuse checks
-        run: npm run --silent verify:redteam:integrity | tee uad-redteam-integrity.json
+        run: |
+          set -o pipefail
+          npm run --silent verify:redteam:integrity | tee uad-redteam-integrity.json
       - name: Preserve sanitized evidence
         if: always()
         uses: actions/upload-artifact@v6

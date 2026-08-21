@@ -11,6 +11,11 @@ import {
 
 const serverSource = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
 const redTeamBaseSource = fs.readFileSync(new URL("../scripts/prepareRedteamBaseDatabase.js", import.meta.url), "utf8");
+const redTeamFixturesSource = fs.readFileSync(new URL("../scripts/prepareRedteamDatabase.js", import.meta.url), "utf8");
+const redTeamIntegrityWorkflow = fs.readFileSync(
+  new URL("../../.github/workflows/uad-redteam-integrity.yml", import.meta.url),
+  "utf8",
+);
 const mobileMigrationSource = fs.readFileSync(new URL("../src/database/mobileMigrations.js", import.meta.url), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -202,6 +207,24 @@ test("red-team startup bootstraps the guarded synthetic base before migrations",
   assert.ok(databasePool > isolation);
   assert.ok(databaseAssertion > 0 && databaseAssertion < schemaMutation);
   assert.ok(syntheticBoundary > databasePool && syntheticBoundary < schemaMutation);
+});
+
+test("red-team workfiles receive an idempotent complete assignment baseline", () => {
+  assert.match(redTeamFixturesSource, /REDTEAM_ASSIGNMENT_DEFAULTS/);
+  assert.match(redTeamFixturesSource, /saveUadSection\(pool, workfileId, "assignment"/);
+  assert.match(redTeamFixturesSource, /assignment_baselines_created/);
+  assert.ok(
+    redTeamFixturesSource.indexOf("verifyRedTeamSyntheticBoundary(pool)")
+      < redTeamFixturesSource.indexOf("ensureRedTeamAssignmentBaseline(organizationAWorkfile)"),
+  );
+});
+
+test("red-team integrity workflow preserves the verifier exit code through evidence capture", () => {
+  assert.match(redTeamIntegrityWorkflow, /set -o pipefail/);
+  assert.match(
+    redTeamIntegrityWorkflow,
+    /verify:redteam:integrity \| tee uad-redteam-integrity\.json/,
+  );
 });
 
 test("fresh databases create assignment files before dependent mobile tables", () => {

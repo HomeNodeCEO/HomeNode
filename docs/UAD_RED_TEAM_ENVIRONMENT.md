@@ -193,7 +193,12 @@ service and runs a small, deterministic set of adversarial checks:
 
 The runner restores the original synthetic commentary after its revision race
 and deletes every asset record and R2 object it creates, including rejected or
-partially uploaded objects. The evidence contains only status codes, counts,
+partially uploaded objects. Before creating an object, it also removes only
+prior assets carrying the synthetic red-team marker and one of its fixed probe
+filenames. R2 presigned URLs use Cloudflare's documented virtual-host form
+(`<bucket>.<account>.r2.cloudflarestorage.com`). The workflow enables shell
+pipeline failure propagation so a failed verifier cannot be hidden by evidence
+capture through `tee`. The evidence contains only status codes, counts,
 booleans, and safe error codes; it excludes presigned URLs, object keys, access
 tokens, private keys, request bodies, and response bodies. Treat a failed
 cleanup control as a stop condition and inspect the isolated bucket before

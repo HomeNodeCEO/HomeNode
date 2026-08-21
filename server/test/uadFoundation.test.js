@@ -111,7 +111,8 @@ test("creates a bounded R2 presigned PUT URL and requires complete configuration
     expiresInSeconds: 900,
     now: new Date("2026-08-16T12:00:00.000Z"),
   }));
-  assert.equal(url.hostname, "example-account.r2.cloudflarestorage.com");
+  assert.equal(url.hostname, "homenode-uad.example-account.r2.cloudflarestorage.com");
+  assert.equal(url.pathname, "/organizations/org/uad/workfile/assets/asset/front.jpg");
   assert.equal(url.searchParams.get("X-Amz-Expires"), "900");
   assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "content-type;host");
   assert.match(url.searchParams.get("X-Amz-Signature"), /^[a-f0-9]{64}$/);
@@ -140,7 +141,7 @@ test("uploads generated artifacts through a private signed R2 request", async ()
     assert.equal(request.init.method, "PUT");
     assert.equal(request.init.headers["content-type"], "application/xml");
     assert.equal(request.init.body, "<MESSAGE/>");
-    assert.match(request.url, /^https:\/\/example-account\.r2\.cloudflarestorage\.com\/homenode-uad\//);
+    assert.match(request.url, /^https:\/\/homenode-uad\.example-account\.r2\.cloudflarestorage\.com\//);
     assert.deepEqual(result, {
       etag: '"artifact-etag"',
       byte_size: 10,
@@ -170,7 +171,7 @@ test("deletes private R2 objects with a short-lived method-bound signature", asy
       deleted: true,
     });
     assert.equal(request.init.method, "DELETE");
-    assert.match(request.url, /^https:\/\/example-account\.r2\.cloudflarestorage\.com\//);
+    assert.match(request.url, /^https:\/\/homenode-uad-redteam\.example-account\.r2\.cloudflarestorage\.com\//);
     assert.match(request.url, /X-Amz-Expires=60/);
     assert.doesNotMatch(request.url, /example-secret/);
   } finally {

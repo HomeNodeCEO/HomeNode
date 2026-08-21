@@ -140,6 +140,14 @@ function scopedObjectKey(objectKey, workfileId, assetId) {
     && !/%2e|%2f|%5c/i.test(objectKey);
 }
 
+function isRedTeamProbeAsset(asset) {
+  const fileName = String(asset?.original_file_name || "").replaceAll("\\", "/");
+  return asset?.capture_metadata?.synthetic === true
+    && asset.capture_metadata?.purpose === "redteam_storage_boundary"
+    && ["redteam-storage-probe.png", "verified-probe.png", "size-mismatch.png"]
+      .some((candidate) => fileName.endsWith(candidate));
+}
+
 export async function runUadRedTeamIntegrityChecks({
   baseUrl = REDTEAM_API_ORIGIN,
   fixtureAccountId = "UAD-REDTEAM-SFR-0001",
@@ -333,6 +341,10 @@ export async function runUadRedTeamIntegrityChecks({
       ? postRaceRevision - initialRevision
       : null,
     restored: restorationReady,
+    race_http_statuses: raceResponses.map((result) => result.status),
+    race_error_codes: raceResponses.map((result) => (
+      result.transportError || safeErrorCode(result.body?.error)
+    )),
   });
 
   const uploadInput = (overrides = {}) => ({
@@ -378,6 +390,47 @@ export async function runUadRedTeamIntegrityChecks({
     if (response.status === 204 || response.status === 404) pendingCleanup.delete(assetId);
     return response;
   };
+
+  const assetsBefore = await api("assigned_appraiser_a", `/api/uad/workfiles/${workfileA}/assets`);
+  const priorProbeAssets = Array.isArray(assetsBefore.body?.assets)
+    ? assetsBefore.body.assets.filter(isRedTeamProbeAsset)
+    : [];
+  const preflightDeletes = [];
+  for (const asset of priorProbeAssets) preflightDeletes.push(await deleteAsset(asset.id));
+  const assetsAfterPreflight = await api("assigned_appraiser_a", `/api/uad/workfiles/${workfileA}/assets`);
+  const priorProbesRemaining = Array.isArray(assetsAfterPreflight.body?.assets)
+    ? assetsAfterPreflight.body.assets.filter(isRedTeamProbeAsset).length
+    : null;
+  const preflightCleanupReady = assetsBefore.status === 200
+    && assetsAfterPreflight.status === 200
+    && preflightDeletes.every((result) => [204, 404].includes(result.status))
+    && priorProbesRemaining === 0;
+  checks.preflight_cleanup = Object.freeze({
+    ready: preflightCleanupReady,
+    stale_probe_count: priorProbeAssets.length,
+    delete_success_count: preflightDeletes.filter((result) => [204, 404].includes(result.status)).length,
+    remaining_probe_count: priorProbesRemaining,
+  });
+  if (!preflightCleanupReady) {
+    checks.storage_scope_and_signature = Object.freeze({ ready: false, skipped: true });
+    checks.verified_storage_lifecycle = Object.freeze({ ready: false, skipped: true });
+    checks.storage_verification = Object.freeze({ ready: false, skipped: true });
+    checks.cleanup = Object.freeze({
+      ready: false,
+      remaining_asset_count: priorProbesRemaining,
+    });
+    return Object.freeze({
+      ok: false,
+      profile: "uad_redteam_integrity_and_storage_v1",
+      checked_at: checkedAt,
+      base_url: base,
+      fixture_account_id: String(fixtureAccountId),
+      request_count: requestCount,
+      storage_request_count: storageRequestCount,
+      checks: Object.freeze(checks),
+    });
+  }
+
   let cleanupReady = true;
   try {
     const signedHeaderUpload = await api(
@@ -404,6 +457,7 @@ export async function runUadRedTeamIntegrityChecks({
         && signedHeaderDelete.status === 204,
       object_key_scoped: Boolean(pathScoped),
       wrong_content_type_http_status: wrongHeaderPut.status,
+      wrong_content_type_transport_error: wrongHeaderPut.transportError,
       cleanup_http_status: signedHeaderDelete.status,
     });
 
@@ -451,6 +505,7 @@ export async function runUadRedTeamIntegrityChecks({
         && verifiedDelete.status === 204
         && absentAfterDelete,
       upload_http_status: validPut.status,
+      upload_transport_error: validPut.transportError,
       verification_http_status: verification.status,
       cross_tenant_http_status: crossTenantList.status,
       cleanup_http_status: verifiedDelete.status,
@@ -482,6 +537,7 @@ export async function runUadRedTeamIntegrityChecks({
         && exactError(mismatchVerification, 400, "invalid_uad_uploaded_asset")
         && mismatchDelete.status === 204,
       upload_http_status: mismatchPut.status,
+      upload_transport_error: mismatchPut.transportError,
       verification_http_status: mismatchVerification.status,
       verification_error_code: safeErrorCode(mismatchVerification.body?.error),
       cleanup_http_status: mismatchDelete.status,
@@ -492,7 +548,17 @@ export async function runUadRedTeamIntegrityChecks({
       if (![204, 404].includes(cleanup.status)) cleanupReady = false;
     }
   }
-  checks.cleanup = Object.freeze({ ready: cleanupReady && pendingCleanup.size === 0, remaining_asset_count: pendingCleanup.size });
+  const assetsAfterCleanup = await api("assigned_appraiser_a", `/api/uad/workfiles/${workfileA}/assets`);
+  const remainingProbeCount = Array.isArray(assetsAfterCleanup.body?.assets)
+    ? assetsAfterCleanup.body.assets.filter(isRedTeamProbeAsset).length
+    : null;
+  checks.cleanup = Object.freeze({
+    ready: cleanupReady
+      && pendingCleanup.size === 0
+      && assetsAfterCleanup.status === 200
+      && remainingProbeCount === 0,
+    remaining_asset_count: remainingProbeCount,
+  });
 
   return Object.freeze({
     ok: Object.values(checks).every((check) => check.ready === true),

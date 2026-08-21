@@ -557,6 +557,7 @@ export async function processAssignmentDocument(pool, documentId, {
   logger = console,
   force = false,
   storage = null,
+  ocrProvider = null,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const id = positiveInteger(documentId);
@@ -579,6 +580,7 @@ export async function processAssignmentDocument(pool, documentId, {
          )
        )
        OR processing_status = 'uploaded'
+       OR (processing_status = 'ocr_required' AND $4::boolean)
        OR (
          processing_status = 'extraction_failed'
          AND (next_processing_at IS NULL OR next_processing_at <= now())
@@ -590,7 +592,7 @@ export async function processAssignmentDocument(pool, documentId, {
        )
      )
      RETURNING *`,
-    [id, force === true, STALE_PROCESSING_MINUTES],
+    [id, force === true, STALE_PROCESSING_MINUTES, Boolean(ocrProvider?.configured)],
   );
   const document = rows[0];
   if (!document) {
@@ -613,6 +615,7 @@ export async function processAssignmentDocument(pool, documentId, {
     const extraction = await extractPdfEvidence(documentWithContent.content, {
       requestedType: document.document_type,
       fileName: document.file_name,
+      ocrProvider,
     });
     const client = await pool.connect();
     try {
@@ -694,6 +697,7 @@ export async function processAssignmentDocument(pool, documentId, {
             candidate_count: extraction.candidates.length,
             suggested_candidate_count: suggestedCandidateCount,
             review_reason: extraction.review_reason,
+            ocr: extraction.ocr_metadata,
             processing_attempts: Number(document.processing_attempts || 0),
           }),
         ],
@@ -737,6 +741,7 @@ export async function processPendingAssignmentDocuments(pool, {
   logger = console,
   maximumAttempts = MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
   storage = null,
+  ocrProvider = null,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 10, 50));
@@ -767,6 +772,11 @@ export async function processPendingAssignmentDocuments(pool, {
      FROM app.assignment_documents
      WHERE processing_status = 'uploaded'
         OR (
+          processing_status = 'ocr_required'
+          AND $4::boolean
+          AND processing_attempts < $2
+        )
+        OR (
           processing_status = 'extraction_failed'
           AND processing_attempts < $2
           AND (next_processing_at IS NULL OR next_processing_at <= now())
@@ -783,12 +793,17 @@ export async function processPendingAssignmentDocuments(pool, {
       boundedLimit,
       boundedMaximumAttempts,
       STALE_PROCESSING_MINUTES,
+      Boolean(ocrProvider?.configured),
     ],
   );
   const results = [];
   for (const row of rows) {
     try {
-      const document = await processAssignmentDocument(pool, row.id, { logger, storage });
+      const document = await processAssignmentDocument(pool, row.id, {
+        logger,
+        storage,
+        ocrProvider,
+      });
       results.push({ id: Number(row.id), ok: true, status: document.processing_status });
     } catch (error) {
       results.push({ id: Number(row.id), ok: false, error: String(error?.message || error) });

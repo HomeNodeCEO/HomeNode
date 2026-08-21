@@ -3,6 +3,7 @@ import pg from "pg";
 
 import { runScheduledMaintenance } from "../src/services/scheduledMaintenance.js";
 import { createUadObjectStorage } from "../src/modules/uad/r2Storage.js";
+import { createDocumentOcrProvider } from "../src/services/documentOcr.js";
 
 function option(name, fallback = null) {
   const prefix = `--${name}=`;
@@ -19,6 +20,7 @@ const pool = new pg.Pool({
   application_name: "homenode-scheduled-maintenance",
 });
 const objectStorage = createUadObjectStorage();
+const ocrProvider = createDocumentOcrProvider();
 
 try {
   const result = await runScheduledMaintenance(pool, {
@@ -80,6 +82,7 @@ try {
       process.env.MAINTENANCE_DOCUMENT_STORAGE_BATCH_SIZE || "5",
     ),
     objectStorage,
+    ocrProvider,
     fetchConcurrency: process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || "3",
   });
   console.log(JSON.stringify(result, null, 2));

@@ -160,6 +160,7 @@ import {
   processAssignmentDocument,
   reviewAssignmentDocumentCandidate,
 } from "./services/assignmentDocuments.js";
+import { createDocumentOcrProvider } from "./services/documentOcr.js";
 import {
   createAssignmentPhotoUpload,
   listAssignmentPhotos,
@@ -225,6 +226,7 @@ const corsOrigins = !corsEnv
 app.use(cors({ origin: corsOrigins }));
 
 const uadObjectStorage = createUadObjectStorage();
+const documentOcrProvider = createDocumentOcrProvider();
 app.use("/api/uad", createUadRouter({
   pool,
   storage: uadObjectStorage,
@@ -598,6 +600,12 @@ app.get("/api/system/performance", async (_req, res) => {
         sales_location_backfill: locationBackfillInlineEnabled,
       },
       scheduled_maintenance_expected: !censusGeographyInlineEnabled && !locationBackfillInlineEnabled,
+    },
+    document_evidence: {
+      private_object_storage_configured: uadObjectStorage.configured,
+      ocr_provider: documentOcrProvider.provider,
+      ocr_configured: documentOcrProvider.configured,
+      ocr_runs_in_scheduled_maintenance: true,
     },
     requests: requestPerformance.snapshot(),
     maintenance: {
@@ -6017,6 +6025,7 @@ app.post("/api/documents/:id/reprocess", async (req, res) => {
     const document = await processAssignmentDocument(pool, req.params.id, {
       force: true,
       storage: uadObjectStorage,
+      ocrProvider: documentOcrProvider,
     });
     return res.json({ ok: true, document });
   } catch (error) {

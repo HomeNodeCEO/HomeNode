@@ -244,6 +244,7 @@ async function runTask(pool, task, options) {
       limit: options.documentBatchSize,
       logger: options.logger,
       storage: options.objectStorage,
+      ocrProvider: options.ocrProvider,
     });
     return { storage_migration: storageMigration, processing };
   }
@@ -313,6 +314,7 @@ export async function runScheduledMaintenance(pool, {
   fetchConcurrency = 3,
   logger = console,
   objectStorage = null,
+  ocrProvider = null,
   taskRunner = runTask,
 } = {}) {
   const tasks = resolveMaintenanceTasks(task);
@@ -370,6 +372,7 @@ export async function runScheduledMaintenance(pool, {
       fetchConcurrency: boundedInteger(fetchConcurrency, 3, 1, 8),
       logger,
       objectStorage,
+      ocrProvider,
     };
 
     for (const taskName of tasks) {

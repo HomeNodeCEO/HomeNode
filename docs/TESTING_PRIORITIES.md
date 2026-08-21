@@ -107,6 +107,20 @@ test assignment, expected result, actual result, and any follow-up issue or PR.
   usable, then run `maintenance:documents` and confirm migration clears the
   fallback bytes only after the R2 object is verified.
 
+### TQ-009 — Scanned-PDF OCR evidence
+
+- Priority: P1
+- Status: queued; activation requires Azure Document Intelligence credentials
+- Upload scanned purchase-contract, engagement-letter, MLS-sheet, and zoning
+  fixtures with known page-level values; confirm local extraction first marks
+  them `ocr_required` and scheduled maintenance later produces page-cited OCR
+  suggestions.
+- Verify credentials never reach either client, polling cannot leave the
+  configured Azure origin, throttling/timeouts use bounded retry, and unreadable
+  output remains review-required without invented values.
+- Confirm every OCR-derived candidate retains provider/method provenance and no
+  value enters an appraisal section until the appraiser confirms and saves it.
+
 ## Promotion rule
 
 When a queued test fails, create a focused issue or repair branch and promote it

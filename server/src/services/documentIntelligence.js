@@ -312,6 +312,7 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
 export async function extractPdfEvidence(buffer, {
   requestedType = "other",
   fileName = "",
+  ocrProvider = null,
 } = {}) {
   if (!Buffer.isBuffer(buffer) || buffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
     throw new Error("document_not_pdf");
@@ -321,22 +322,45 @@ export async function extractPdfEvidence(buffer, {
   try {
     if (pdf.numPages > MAX_PDF_PAGES) throw new Error("document_page_limit_exceeded");
     const extracted = await extractText(pdf, { mergePages: false });
-    const pages = (Array.isArray(extracted.text) ? extracted.text : [extracted.text])
+    let pages = (Array.isArray(extracted.text) ? extracted.text : [extracted.text])
       .map((text) => cleanText(text, 500_000));
-    const textLength = pages.reduce((sum, text) => sum + text.length, 0);
+    let textLength = pages.reduce((sum, text) => sum + text.length, 0);
+    let extractionMethod = textLength >= 40 ? "pdf_text" : "none";
+    let ocrMetadata = null;
+    if (textLength < 40 && ocrProvider?.configured) {
+      const ocrResult = await ocrProvider.analyzePdf(buffer);
+      pages = (Array.isArray(ocrResult?.pages) ? ocrResult.pages : [])
+        .slice(0, MAX_PDF_PAGES)
+        .map((text) => cleanText(text, 500_000));
+      textLength = pages.reduce((sum, text) => sum + text.length, 0);
+      extractionMethod = textLength >= 40
+        ? cleanText(ocrResult?.extraction_method, 100) || "configured_ocr"
+        : "ocr_no_reliable_text";
+      ocrMetadata = {
+        provider: ocrResult?.provider || "configured_ocr",
+        model_id: ocrResult?.model_id || null,
+        api_version: ocrResult?.api_version || null,
+        operation_id: ocrResult?.operation_id || null,
+      };
+    }
     const documentType = classifyDocument({ requestedType, fileName, pages });
-    const candidates = buildDocumentFieldCandidates({ documentType, pages });
+    const candidates = buildDocumentFieldCandidates({ documentType, pages })
+      .map((candidate) => (ocrMetadata ? {
+        ...candidate,
+        extraction_method: `${extractionMethod}:${candidate.extraction_method}`,
+      } : candidate));
     return {
       document_type: documentType,
       page_count: extracted.totalPages,
       extraction_status: textLength >= 40 ? "review_required" : "ocr_required",
-      extraction_method: textLength >= 40 ? "pdf_text" : "none",
+      extraction_method: extractionMethod,
       text_length: textLength,
       pages,
       candidates,
+      ocr_metadata: ocrMetadata,
       review_reason: textLength >= 40
-        ? "Machine-extracted values are suggestions and require appraiser confirmation."
-        : "No reliable text layer was found. Visual review or OCR is required.",
+        ? `${ocrMetadata ? "OCR-extracted" : "Machine-extracted"} values are suggestions and require appraiser confirmation.`
+        : "No reliable text was found after available extraction. Visual review is required.",
     };
   } finally {
     await pdf.cleanup?.();

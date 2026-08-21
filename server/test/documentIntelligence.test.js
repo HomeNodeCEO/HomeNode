@@ -120,3 +120,40 @@ test("an image-only or blank PDF is routed to OCR review without invented fields
   assert.equal(extraction.extraction_method, "none");
   assert.deepEqual(extraction.candidates, []);
 });
+
+test("a configured OCR provider turns a scanned PDF into page-cited review suggestions", async () => {
+  const buffer = await textPdf([]);
+  const extraction = await extractPdfEvidence(buffer, {
+    fileName: "scanned-contract.pdf",
+    ocrProvider: {
+      configured: true,
+      async analyzePdf() {
+        return {
+          provider: "test_ocr",
+          extraction_method: "test_ocr",
+          model_id: "read",
+          api_version: "test",
+          operation_id: "operation-1",
+          pages: [
+            "ONE TO FOUR FAMILY RESIDENTIAL CONTRACT\nContract Price: $425,000\nContract Date: 08/19/2026",
+          ],
+        };
+      },
+    },
+  });
+  assert.equal(extraction.extraction_status, "review_required");
+  assert.equal(extraction.extraction_method, "test_ocr");
+  assert.equal(extraction.ocr_metadata.operation_id, "operation-1");
+  assert.equal(
+    extraction.candidates.find((candidate) => candidate.field_key === "contract_price")?.normalized_value,
+    "425000.00",
+  );
+  assert.equal(
+    extraction.candidates.find((candidate) => candidate.field_key === "contract_date")?.page_number,
+    1,
+  );
+  assert.equal(
+    extraction.candidates.find((candidate) => candidate.field_key === "contract_price")?.extraction_method,
+    "test_ocr:labeled_text",
+  );
+});

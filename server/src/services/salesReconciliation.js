@@ -167,7 +167,8 @@ export async function ensureSalesReconciliationSchema(pool) {
         match_method = ANY (
           ARRAY[
             'exact', 'punctuation_normalized', 'embedded_full_id',
-            'concatenated_full_ids', 'unmatched', 'manual_verified'
+            'concatenated_full_ids', 'unmatched', 'address_fallback',
+            'manual_verified'
           ]::text[]
         )
       );
@@ -219,6 +220,30 @@ export async function ensureSalesReconciliationSchema(pool) {
 
     CREATE INDEX IF NOT EXISTS sales_reconciliation_history_source_idx
       ON app.sales_reconciliation_history (source_record_id, verified_at DESC);
+
+    CREATE TABLE IF NOT EXISTS app.sales_auto_reconciliation_history (
+      id                    bigserial PRIMARY KEY,
+      source_record_id      bigint NOT NULL
+                                REFERENCES core.sales_source_records(id)
+                                ON DELETE CASCADE,
+      account_id            text NOT NULL
+                                REFERENCES core.accounts(account_id),
+      resolution_method     text NOT NULL CHECK (
+                                resolution_method IN (
+                                  'trusted_existing_link',
+                                  'unique_exact_address'
+                                )
+                              ),
+      address_key           text,
+      city_key              text,
+      previous_match_status text,
+      raw_parcel_number     text,
+      resolved_at           timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (source_record_id, resolution_method)
+    );
+
+    CREATE INDEX IF NOT EXISTS sales_auto_reconciliation_history_resolved_idx
+      ON app.sales_auto_reconciliation_history (resolved_at DESC);
   `);
 }
 

@@ -41,6 +41,8 @@
         "maintenance:influences": "node scripts/runScheduledMaintenance.js --task=influences",
         "sync:collin-account-ids": "node scripts/syncCollinAccountIdentifiers.js",
         "backfill:collin-sales": "node scripts/backfillCollinSales.js",
+        "audit:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js",
+        "repair:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js --apply",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"
     },

@@ -8,18 +8,18 @@ import {
 } from "../src/services/scheduledMaintenance.js";
 
 test("routine maintenance refreshes cached parcel influences but excludes slower monthly source mirrors", () => {
-  assert.deepEqual(resolveMaintenanceTasks("routine"), ["documents", "census", "locations", "parcels", "influences"]);
+  assert.deepEqual(resolveMaintenanceTasks("routine"), ["documents", "sales-reconciliation", "census", "locations", "parcels", "influences"]);
 });
 
 test("maintenance tasks can be scheduled independently", () => {
   assert.deepEqual(resolveMaintenanceTasks("roads"), ["roads"]);
   assert.deepEqual(resolveMaintenanceTasks("census"), ["census"]);
   assert.deepEqual(resolveMaintenanceTasks("traffic"), ["traffic"]);
-  assert.deepEqual(resolveMaintenanceTasks("sales"), ["locations", "influences"]);
+  assert.deepEqual(resolveMaintenanceTasks("sales"), ["sales-reconciliation", "locations", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("documents"), ["documents"]);
   assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "traffic", "floods", "zoning", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("all"), [
-    "documents", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
+    "documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
   ]);
 });
 
@@ -103,6 +103,8 @@ test("sales maintenance defaults can drain an import-sized backlog while staying
     logger: { info() {}, warn() {} },
   });
   assert.equal(result.ok, true);
+  assert.equal(optionsByTask.get("sales-reconciliation").salesReconciliationMaximumBatches, 10);
+  assert.equal(optionsByTask.get("sales-reconciliation").salesReconciliationBatchSize, 500);
   assert.equal(optionsByTask.get("locations").locationMaximumBatches, 100);
   assert.equal(optionsByTask.get("locations").locationBatchSize, 100);
   assert.equal(optionsByTask.get("locations").locationSeedLimit, 10_000);

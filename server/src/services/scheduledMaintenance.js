@@ -30,13 +30,14 @@ import {
   migrateAssignmentDocumentStorageBatch,
   processPendingAssignmentDocuments,
 } from "./assignmentDocuments.js";
+import { runSalesAutoReconciliationBatch } from "./salesAutoReconciliation.js";
 
 const MAINTENANCE_LOCK_A = 48_632_941;
 const MAINTENANCE_LOCK_B = 20_260_812;
 const TASK_ALIASES = Object.freeze({
-  routine: ["documents", "census", "locations", "parcels", "influences"],
-  sales: ["locations", "influences"],
-  all: ["documents", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences"],
+  routine: ["documents", "sales-reconciliation", "census", "locations", "parcels", "influences"],
+  sales: ["sales-reconciliation", "locations", "influences"],
+  all: ["documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences"],
   context: ["roads", "traffic", "floods", "zoning", "influences"],
   census: ["census"],
   locations: ["locations"],
@@ -47,6 +48,7 @@ const TASK_ALIASES = Object.freeze({
   zoning: ["zoning"],
   documents: ["documents"],
   influences: ["influences"],
+  "sales-reconciliation": ["sales-reconciliation"],
 });
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -233,6 +235,44 @@ async function runInfluenceTask(pool, options) {
   return { recovered_stale_claims: recovered, ...totals, status: await getPropertyInfluenceStatus(pool) };
 }
 
+async function runSalesReconciliationTask(pool, options) {
+  const maximumBatches = boundedInteger(
+    options.salesReconciliationMaximumBatches,
+    10,
+    1,
+    100,
+  );
+  const batchSize = boundedInteger(
+    options.salesReconciliationBatchSize,
+    500,
+    1,
+    2_000,
+  );
+  const totals = {
+    batches: 0,
+    trustedExistingLinks: 0,
+    uniqueExactAddresses: 0,
+    inspectedUnmatchedAddresses: 0,
+    resolved: 0,
+  };
+  for (
+    let batch = 0;
+    batch < maximumBatches && Date.now() < options.deadline;
+    batch += 1
+  ) {
+    const result = await runSalesAutoReconciliationBatch(pool, { batchSize });
+    totals.batches += 1;
+    totals.trustedExistingLinks += Number(result.trusted_existing_links || 0);
+    totals.uniqueExactAddresses += Number(result.unique_exact_addresses || 0);
+    totals.inspectedUnmatchedAddresses += Number(
+      result.inspected_unmatched_addresses || 0,
+    );
+    totals.resolved += Number(result.resolved || 0);
+    if (!result.resolved) break;
+  }
+  return totals;
+}
+
 async function runTask(pool, task, options) {
   if (task === "documents") {
     const storageMigration = await migrateAssignmentDocumentStorageBatch(
@@ -247,6 +287,9 @@ async function runTask(pool, task, options) {
       ocrProvider: options.ocrProvider,
     });
     return { storage_migration: storageMigration, processing };
+  }
+  if (task === "sales-reconciliation") {
+    return runSalesReconciliationTask(pool, options);
   }
   if (task === "census") return runCensusTask(pool, options);
   if (task === "locations") return runLocationTask(pool, options);
@@ -311,6 +354,8 @@ export async function runScheduledMaintenance(pool, {
   influenceSeedLimit = 10_000,
   influenceConcurrency = 4,
   influenceStatementTimeoutMs = 60_000,
+  salesReconciliationMaximumBatches = 10,
+  salesReconciliationBatchSize = 500,
   fetchConcurrency = 3,
   logger = console,
   objectStorage = null,
@@ -369,6 +414,8 @@ export async function runScheduledMaintenance(pool, {
         5_000,
         300_000,
       ),
+      salesReconciliationMaximumBatches,
+      salesReconciliationBatchSize,
       fetchConcurrency: boundedInteger(fetchConcurrency, 3, 1, 8),
       logger,
       objectStorage,

@@ -118,6 +118,21 @@ environment.
    sanitized evidence, and rebuild the disposable resources when integrity is
    uncertain.
 
+## Low-volume baseline
+
+Before active scanning, manually dispatch `.github/workflows/uad-redteam-baseline.yml`.
+The workflow has no target input: both Render origins and the synthetic fixture
+namespace are compiled into the runner, so it cannot be redirected to staging,
+production, or an attacker-controlled host. It sends eight bounded requests to
+verify health/readiness, disabled external GSE providers, strict headers/CORS,
+and generic missing/malformed-token rejection. The retained artifact contains
+only status codes and boolean control results; access tokens and response bodies
+are never written to evidence.
+
+This baseline is not authorization to run load tests or broad fuzzing. Complete
+the rules-of-engagement record, snapshot/restore exercise, monitoring checks,
+and kill-switch rehearsal before any higher-intensity test window.
+
 ## Kill conditions
 
 Disable `UAD_WORKSPACE_ENABLED`, block the test source at Cloudflare, and revoke

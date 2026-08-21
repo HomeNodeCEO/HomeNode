@@ -151,6 +151,33 @@ test("uploads generated artifacts through a private signed R2 request", async ()
   }
 });
 
+test("deletes private R2 objects with a short-lived method-bound signature", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const storage = createUadObjectStorage({
+      UAD_OBJECT_STORAGE_PROVIDER: "r2",
+      R2_ACCOUNT_ID: "example-account",
+      R2_ACCESS_KEY_ID: "example-key",
+      R2_SECRET_ACCESS_KEY: "example-secret",
+      R2_BUCKET: "homenode-uad-redteam",
+    });
+    assert.deepEqual(await storage.deleteObject({ objectKey: "organizations/org/uad/workfile/assets/id/file.png" }), {
+      deleted: true,
+    });
+    assert.equal(request.init.method, "DELETE");
+    assert.match(request.url, /^https:\/\/example-account\.r2\.cloudflarestorage\.com\//);
+    assert.match(request.url, /X-Amz-Expires=60/);
+    assert.doesNotMatch(request.url, /example-secret/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("downloads private object bytes through a short-lived signed R2 request", async () => {
   const originalFetch = globalThis.fetch;
   let request;

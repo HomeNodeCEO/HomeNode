@@ -3,7 +3,7 @@ import test from "node:test";
 
 import express from "express";
 
-import { createUadRouter } from "../src/modules/uad/router.js";
+import { createUadRouter, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
 
 const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
 const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
@@ -33,6 +33,7 @@ async function withServer(pool, callback, securityOverrides = {}) {
       ...securityOverrides,
     },
   }));
+  app.use("/api/uad", uadBodyParserErrorHandler);
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
   });
@@ -139,4 +140,26 @@ test("strict UAD routes return a bounded generic response after the configured r
     assert.deepEqual(await blocked.json(), { error: "rate_limit_exceeded" });
     assert.ok(blocked.headers.get("retry-after"));
   }, { rateLimitMax: 2 });
+});
+
+test("UAD JSON parser failures return bounded JSON without reaching authentication or data access", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const malformed = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: "{",
+    });
+    assert.equal(malformed.status, 400);
+    assert.deepEqual(await malformed.json(), { error: "invalid_json_body" });
+
+    const oversized = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: JSON.stringify({ padding: "x".repeat(110_000) }),
+    });
+    assert.equal(oversized.status, 413);
+    assert.deepEqual(await oversized.json(), { error: "request_body_too_large" });
+    assert.equal(pool.accessQueries.length, 0);
+  });
 });

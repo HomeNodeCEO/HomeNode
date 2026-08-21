@@ -66,7 +66,7 @@ function matrixFetch({ leakCrossTenant = false, reviewerCanWrite = false } = {})
       const allowed = access.write.includes(label)
         || (reviewerCanWrite && persona === "reviewer_a" && label === "organization_a");
       return allowed
-        ? json({ error: "invalid_uad_section" }, 400)
+        ? json({ error: "invalid_uad_expected_revision" }, 400)
         : json({ error: "uad_workfile_access_denied" }, 403);
     }
     const allowed = access.read.includes(label)
@@ -91,7 +91,7 @@ test("authenticated red-team matrix proves role and tenant boundaries without mu
   assert.equal(Object.keys(result.personas).length, REDTEAM_AUTHORIZATION_PERSONAS.length);
   assert.equal(result.personas.reviewer_a.targets.organization_a.read.http_status, 200);
   assert.equal(result.personas.reviewer_a.targets.organization_a.write_probe.http_status, 403);
-  assert.equal(result.personas.homenode_admin.targets.organization_b.write_probe.error_code, "invalid_uad_section");
+  assert.equal(result.personas.homenode_admin.targets.organization_b.write_probe.error_code, "invalid_uad_expected_revision");
   assert.equal(result.personas.unprovisioned_user.identity.error_code, "mobile_identity_not_provisioned");
   assert.doesNotMatch(JSON.stringify(result), /redteam-token-|Bearer\s/i);
 });

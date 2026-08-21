@@ -183,6 +183,18 @@ export function createUadObjectStorage(env = process.env) {
         content_type: response.headers.get("content-type"),
       };
     },
+    async deleteObject({ objectKey }) {
+      if (!configured) throw new Error("uad_object_storage_not_configured");
+      const url = createR2PresignedUrl({
+        ...config,
+        objectKey,
+        method: "DELETE",
+        expiresInSeconds: 60,
+      });
+      const response = await fetch(url, { method: "DELETE" });
+      if (!response.ok) throw new Error(`uad_object_delete_failed:${response.status}`);
+      return { deleted: true };
+    },
     async getObject({ objectKey }) {
       const download = this.createDownloadUrl({ objectKey, expiresInSeconds: 60 });
       const response = await fetch(download.url, { method: download.method });

@@ -16,9 +16,17 @@ async function uadFetchJSON<T = unknown>(input: string, init?: RequestInit & { t
       const body = isJson ? await response.json().catch(() => null) as {
         error?: string;
         message?: string;
-        details?: Array<{ message?: string }>;
+        details?: unknown;
       } | null : null;
-      const details = body?.details?.map((detail) => detail.message).filter(Boolean) || [];
+      const details = Array.isArray(body?.details)
+        ? body.details
+            .map((detail) => (
+              detail && typeof detail === "object" && "message" in detail
+                ? String(detail.message || "")
+                : ""
+            ))
+            .filter(Boolean)
+        : [];
       throw new Error(details.length ? details.join(" ") : body?.error || body?.message || `HTTP ${response.status}`);
     }
     return (isJson ? response.json() : response.text()) as Promise<T>;
@@ -269,13 +277,15 @@ export async function saveUadSection(
   workfileId: string,
   section: UadSectionKey,
   values: Array<{ uid: string; context_key: string; entity_id?: string | null; value: UadFieldValue }>,
-): Promise<void> {
-  await uadFetchJSON(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
+  expectedRevision: number,
+): Promise<{ current_revision: number }> {
+  const result = await uadFetchJSON<{ current_revision: number }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ values }),
+    body: JSON.stringify({ values, expected_revision: expectedRevision }),
   });
   announceUadWorkfileMutation(workfileId);
+  return result;
 }
 
 export async function createUadEntity(

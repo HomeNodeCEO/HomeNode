@@ -1,0 +1,49 @@
+name: UAD red-team integrity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uad-redteam-security
+  cancel-in-progress: false
+
+jobs:
+  integrity-and-storage:
+    name: Revision, parser, and private-storage abuse checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: uad-redteam
+    defaults:
+      run:
+        working-directory: server
+    env:
+      UAD_REDTEAM_BASE_URL: https://homenode-api-redteam.onrender.com
+      UAD_REDTEAM_FIXTURE_ACCOUNT_ID: UAD-REDTEAM-SFR-0001
+      UAD_REDTEAM_TIMEOUT_MS: "20000"
+      UAD_REDTEAM_OIDC_ISSUER: https://uad-redteam-identity.homenode.invalid
+      UAD_REDTEAM_OIDC_AUDIENCE: homenode-uad-redteam-api
+      UAD_REDTEAM_JWT_KEY_ID: uad-redteam-a44e618bc440bbbf
+      UAD_REDTEAM_UNPROVISIONED_SUBJECT: uad-redteam-unprovisioned-user
+      UAD_REDTEAM_JWT_PRIVATE_KEY: ${{ secrets.UAD_REDTEAM_JWT_PRIVATE_KEY }}
+      UAD_REDTEAM_OIDC_SUBJECTS_JSON: ${{ secrets.UAD_REDTEAM_OIDC_SUBJECTS_JSON }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Run bounded integrity and storage abuse checks
+        run: npm run --silent verify:redteam:integrity | tee uad-redteam-integrity.json
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: uad-redteam-integrity-${{ github.run_id }}
+          path: server/uad-redteam-integrity.json
+          if-no-files-found: error
+          retention-days: 14

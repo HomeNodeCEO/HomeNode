@@ -394,11 +394,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     setError(null);
     setSavedMessage(null);
     try {
-      await saveUadSection(workfileId, activeSection, submitted);
+      await saveUadSection(workfileId, activeSection, submitted, editor.workfile.current_revision);
       await loadEditor();
       setSavedMessage(`${section.title} saved and added to the workfile audit history.`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The UAD section could not be saved.");
+      setError(
+        reason instanceof Error && reason.message === "uad_section_stale_revision"
+          ? "Another session changed this workfile. Your edits were not saved; reload the workfile and reconcile them with the latest version."
+          : reason instanceof Error
+            ? reason.message
+            : "The UAD section could not be saved.",
+      );
     } finally {
       setSaving(false);
     }

@@ -15,6 +15,8 @@
         "provision:mobile-identity": "node scripts/provisionMobileOidcIdentity.js",
         "provision:mobile-user": "node scripts/provisionMobileUser.js",
         "verify:mobile-oidc": "node scripts/verifyMobileOidcConfiguration.js",
+        "verify:staging:uad": "node scripts/verifyUadStagingReadiness.js",
+        "audit:retention:uad": "node scripts/auditUadRetention.js",
         "backfill:locations": "node scripts/backfillAccountLocations.js",
         "backfill:census": "node scripts/backfillCensusGeographies.js",
         "enrich:non-dallas": "node scripts/runNonDallasEnrichment.js",

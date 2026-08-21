@@ -302,6 +302,9 @@ Compliance credential ownership and onboarding gates are documented in
 Native report generation is documented in `server/UAD_NATIVE_PDF.md`, and the
 revision-scoped image manifest and delivery ZIP are documented in
 `server/UAD_SUBMISSION_PACKAGE.md`.
+Environment readiness, deployment ordering, safe rollback, read-only staging
+smoke verification, retention review, and the remaining external gates are
+documented in `docs/UAD_PRODUCTION_READINESS.md`.
 
 ## Applying the migration
 

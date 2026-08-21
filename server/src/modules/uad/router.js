@@ -19,6 +19,7 @@ import {
   getLatestUadSubmissionPackage,
 } from "./uadPackageArtifacts.js";
 import { getUadXmlMappingSummary } from "./uadXml.js";
+import { createCachedUadReadinessLoader } from "./uadOperationalReadiness.js";
 import { getUadSharedData } from "./sharedData.js";
 import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { getLatestUadValidation, runLocalUadValidation } from "./validation.js";
@@ -89,6 +90,12 @@ export function createUadRouter({
   const authenticateSigner = verifier?.verify
     ? createMobileAuthenticator({ pool, verifier })
     : (_req, res) => res.status(503).json({ error: "mobile_oidc_not_configured" });
+  const loadOperationalReadiness = createCachedUadReadinessLoader(pool, {
+    enabled,
+    storage,
+    verifier,
+    compliance,
+  });
 
   router.get("/capabilities", (_req, res) => {
     res.json({
@@ -110,6 +117,12 @@ export function createUadRouter({
         providers: compliance.providers,
       },
     });
+  });
+
+  router.get("/readiness", async (_req, res) => {
+    const readiness = await loadOperationalReadiness();
+    res.set("cache-control", "no-store");
+    return res.status(readiness.ok ? 200 : 503).json(readiness);
   });
 
   router.use((req, res, next) => {

@@ -3363,13 +3363,13 @@ app.get("/api/search", async (req, res) => {
       matchSql = `'exact_account'`;
       orderSql = "a.account_id";
     } else if (parsed.isAddressPrefix) {
-      const addressLineSql = `upper(btrim(split_part(a.address, ',', 1))) COLLATE "C"`;
+      const addressLineSql = `upper(btrim(split_part(COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address), ',', 1))) COLLATE "C"`;
       const normalizedAddressPlaceholder = bind(parsed.normalizedAddress);
       const addressPrefixPlaceholder = bind(`${parsed.normalizedAddress}%`);
       const cityFilter = cityWhere(parsed.city);
 
       where = `
-        a.address IS NOT NULL
+        COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) IS NOT NULL
         AND a.canonical_account_id IS NULL
         AND ${addressLineSql} LIKE ${addressPrefixPlaceholder}
         ${cityFilter}

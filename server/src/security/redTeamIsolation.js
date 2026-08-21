@@ -108,6 +108,14 @@ export function assertRedTeamDatabaseName(name) {
   return String(name);
 }
 
+export function assertRedTeamFixtureAccountId(accountId) {
+  const normalized = String(accountId || "").trim();
+  if (!/^UAD-REDTEAM-[A-Z0-9-]+$/.test(normalized) || normalized.length > 64) {
+    throw new Error("redteam_fixture_account_invalid");
+  }
+  return normalized;
+}
+
 export async function verifyRedTeamSyntheticBoundary(pool) {
   const relations = await pool.query(
     `SELECT relation_name, to_regclass(relation_name) IS NOT NULL AS available

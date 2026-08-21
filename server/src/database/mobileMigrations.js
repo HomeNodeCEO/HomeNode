@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIRECTORY = path.resolve(MODULE_DIRECTORY, "../..");
 const MIGRATIONS = Object.freeze([
+  "005_assignment_files.sql",
   "20260821_mobile_foundation.sql",
   "20260822_mobile_offline_sync.sql",
   "20260823_mobile_photos.sql",

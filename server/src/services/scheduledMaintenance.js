@@ -31,6 +31,10 @@ import {
   processPendingAssignmentDocuments,
 } from "./assignmentDocuments.js";
 import { runSalesAutoReconciliationBatch } from "./salesAutoReconciliation.js";
+import {
+  getAccountAddressAliasStatus,
+  seedAccountAddressAliasBatch,
+} from "./accountAddressAliases.js";
 
 const MAINTENANCE_LOCK_A = 48_632_941;
 const MAINTENANCE_LOCK_B = 20_260_812;
@@ -236,6 +240,31 @@ async function runInfluenceTask(pool, options) {
 }
 
 async function runSalesReconciliationTask(pool, options) {
+  const aliasMaximumBatches = boundedInteger(
+    options.salesAddressAliasMaximumBatches,
+    100,
+    1,
+    200,
+  );
+  const aliasBatchSize = boundedInteger(
+    options.salesAddressAliasBatchSize,
+    10_000,
+    1,
+    25_000,
+  );
+  const aliasTotals = { batches: 0, scanned: 0, written: 0, completed: false };
+  for (
+    let batch = 0;
+    batch < aliasMaximumBatches && Date.now() < options.deadline;
+    batch += 1
+  ) {
+    const result = await seedAccountAddressAliasBatch(pool, { batchSize: aliasBatchSize });
+    aliasTotals.batches += 1;
+    aliasTotals.scanned += Number(result.scanned || 0);
+    aliasTotals.written += Number(result.written || 0);
+    aliasTotals.completed = Boolean(result.completed) || result.reason === "alias_index_current";
+    if (result.skipped || result.completed || !result.scanned) break;
+  }
   const maximumBatches = boundedInteger(
     options.salesReconciliationMaximumBatches,
     10,
@@ -270,7 +299,11 @@ async function runSalesReconciliationTask(pool, options) {
     totals.resolved += Number(result.resolved || 0);
     if (!result.resolved) break;
   }
-  return totals;
+  return {
+    address_alias_seed: aliasTotals,
+    address_alias_status: await getAccountAddressAliasStatus(pool),
+    ...totals,
+  };
 }
 
 async function runTask(pool, task, options) {
@@ -356,6 +389,8 @@ export async function runScheduledMaintenance(pool, {
   influenceStatementTimeoutMs = 60_000,
   salesReconciliationMaximumBatches = 10,
   salesReconciliationBatchSize = 500,
+  salesAddressAliasMaximumBatches = 100,
+  salesAddressAliasBatchSize = 10_000,
   fetchConcurrency = 3,
   logger = console,
   objectStorage = null,
@@ -416,6 +451,8 @@ export async function runScheduledMaintenance(pool, {
       ),
       salesReconciliationMaximumBatches,
       salesReconciliationBatchSize,
+      salesAddressAliasMaximumBatches,
+      salesAddressAliasBatchSize,
       fetchConcurrency: boundedInteger(fetchConcurrency, 3, 1, 8),
       logger,
       objectStorage,
@@ -478,3 +515,4 @@ export async function runScheduledMaintenance(pool, {
     });
   }
 }
+

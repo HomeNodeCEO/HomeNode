@@ -82,6 +82,18 @@ test assignment, expected result, actual result, and any follow-up issue or PR.
   conflict, sketch confirmation, verified-photo metadata, 100-photo handling,
   and the finish-on-site readiness gate.
 
+### TQ-007 — Shared desktop/mobile photo evidence
+
+- Priority: P2
+- Status: queued
+- Upload JPEG, PNG, and WebP originals from the desktop Property Report; confirm
+  that the display derivative and original are verified, visible, and scoped to
+  the correct assignment file.
+- Capture photos with the mobile device offline, restart the app, reconnect, and
+  confirm resumable upload into the same desktop gallery without duplicates.
+- Confirm that signed files are read-only and removing a verified desktop photo
+  excludes it from the report while retaining the original for five years.
+
 ## Promotion rule
 
 When a queued test fails, create a focused issue or repair branch and promote it

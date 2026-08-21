@@ -40,6 +40,20 @@ Machine-readable PDFs are processed locally with `unpdf`. Image-only, scanned, o
 
 The original PDF currently remains in PostgreSQL so the source, extraction, and assignment file are transactional and deployable without another credentialed service. Before high-volume production use, migrate original bytes to the already established private R2 object-storage pattern while retaining checksums, provenance, extraction pages, candidates, and review history in PostgreSQL. The API contract and viewer URL should remain stable during that migration.
 
+## Shared photo evidence
+
+Custom Appraisal photos use the existing private R2 evidence contract. Desktop
+uploads preserve the selected original and create a bandwidth-friendly JPEG
+display derivative in the browser before direct upload. Mobile capture preserves
+the original and display derivative in encrypted offline storage, then retries
+the short-lived R2 upload and server verification when connectivity returns.
+
+Both channels are scoped to the same canonical report-file ID and appear in one
+Property Report gallery. A photo is not report evidence until the server verifies
+its object size and content type. Verified originals are retained for five years;
+removing one from the report records an exclusion instead of deleting evidence.
+R2 credentials are never sent to either client.
+
 ## Operations
 
 Immediate extraction starts after upload. The scheduled recovery command is:

@@ -11,6 +11,7 @@ import {
 
 const serverSource = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
 const redTeamBaseSource = fs.readFileSync(new URL("../scripts/prepareRedteamBaseDatabase.js", import.meta.url), "utf8");
+const mobileMigrationSource = fs.readFileSync(new URL("../src/database/mobileMigrations.js", import.meta.url), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 function safeEnvironment(overrides = {}) {
@@ -166,6 +167,12 @@ test("red-team startup bootstraps the guarded synthetic base before migrations",
   assert.ok(databasePool > isolation);
   assert.ok(databaseAssertion > 0 && databaseAssertion < schemaMutation);
   assert.ok(syntheticBoundary > databasePool && syntheticBoundary < schemaMutation);
+});
+
+test("fresh databases create assignment files before dependent mobile tables", () => {
+  const assignmentFiles = mobileMigrationSource.indexOf('"005_assignment_files.sql"');
+  const mobileFoundation = mobileMigrationSource.indexOf('"20260821_mobile_foundation.sql"');
+  assert.ok(assignmentFiles > 0 && assignmentFiles < mobileFoundation);
 });
 
 test("database boundary accepts only explicitly synthetic protected records", async () => {

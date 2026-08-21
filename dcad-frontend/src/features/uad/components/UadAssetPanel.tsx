@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { deleteUadAsset, listUadAssets, uploadUadAsset, type UadAsset } from "../api";
 
-const DEFAULT_ACCEPT = "image/avif,image/bmp,image/gif,image/jpeg,image/png,image/tiff,image/webp,image/heic,image/heif,image/svg+xml,application/pdf,application/json";
+const DEFAULT_ACCEPT = "image/avif,image/bmp,image/gif,image/jpeg,image/png,image/tiff,image/webp,image/heic,image/heif,application/pdf,application/json";
 
 function displayOption(value: string) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2");
@@ -72,9 +72,7 @@ export default function UadAssetPanel({
         ? "supporting_document"
         : file.type === "application/json" || extension === "json"
           ? "measurement_source"
-          : file.type === "image/svg+xml" || extension === "svg"
-            ? "sketch"
-            : "photo";
+          : "photo";
       await uploadUadAsset(workfileId, file, {
         asset_kind: assetKind,
         section_number: sectionNumber,

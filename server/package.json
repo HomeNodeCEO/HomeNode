@@ -13,6 +13,7 @@
         "verify:redteam:baseline": "node scripts/verifyUadRedTeamBaseline.js",
         "verify:redteam:authorization": "node scripts/verifyUadRedTeamAuthorization.js",
         "verify:redteam:integrity": "node scripts/verifyUadRedTeamIntegrity.js",
+        "verify:redteam:artifacts": "node scripts/verifyUadArtifactSecurity.js",
         "verify:redteam:recovery": "node scripts/verifyRedteamRecoveryDatabase.js",
         "prepare:redteam:base": "node scripts/prepareRedteamBaseDatabase.js",
         "prepare:redteam:uad": "node scripts/prepareRedteamDatabase.js",

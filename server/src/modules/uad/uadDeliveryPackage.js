@@ -16,6 +16,11 @@ export const UAD_DELIVERY_IMAGE_CONTENT_TYPES = Object.freeze([
 ]);
 
 const DELIVERY_IMAGE_CONTENT_TYPES = new Set(UAD_DELIVERY_IMAGE_CONTENT_TYPES);
+export const UAD_ZIP_LIMITS = Object.freeze({
+  max_entries: 502,
+  max_path_bytes: 240,
+  max_uncompressed_bytes: 500 * 1024 * 1024,
+});
 const IMAGE_CATEGORY_TYPES = new Set([
   "AbsorptionRateGraph", "AssignmentExhibit", "CostApproachExhibit", "DisasterMitigationExhibit",
   "DwellingExteriorExhibit", "DwellingFront", "DwellingRear", "Encroachment",
@@ -142,24 +147,38 @@ function crc32(buffer) {
 }
 
 function validateZipPath(value) {
-  const path = String(value || "").replaceAll("\\", "/");
-  if (!path || path.startsWith("/") || path.includes("../") || path.includes("\0")) {
+  const path = String(value || "").normalize("NFKC").replaceAll("\\", "/");
+  const segments = path.split("/");
+  const reserved = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
+  if (!path || path.startsWith("/") || /^[A-Za-z]:/.test(path) || path.includes(":")
+    || /[\0-\x1f\x7f]/.test(path) || Buffer.byteLength(path, "utf8") > UAD_ZIP_LIMITS.max_path_bytes
+    || segments.some((segment) => !segment || segment === "." || segment === ".."
+      || /[. ]$/.test(segment) || reserved.test(segment))) {
     throw new Error("uad_package_entry_path_invalid");
   }
   return path;
 }
 
 export function buildDeterministicZip(files = []) {
+  if (!Array.isArray(files) || files.length > UAD_ZIP_LIMITS.max_entries) {
+    throw new Error("uad_package_entry_count_exceeded");
+  }
   const localParts = [];
   const centralParts = [];
   let offset = 0;
   const seen = new Set();
+  let totalUncompressedBytes = 0;
   for (const file of [...files].sort((left, right) => String(left.path).localeCompare(String(right.path)))) {
     const path = validateZipPath(file.path);
-    if (seen.has(path)) throw new Error("uad_package_entry_duplicate");
-    seen.add(path);
+    const portablePath = path.toLocaleLowerCase("en-US");
+    if (seen.has(portablePath)) throw new Error("uad_package_entry_duplicate");
+    seen.add(portablePath);
     const name = Buffer.from(path, "utf8");
     const body = Buffer.isBuffer(file.body) ? file.body : Buffer.from(file.body);
+    totalUncompressedBytes += body.length;
+    if (totalUncompressedBytes > UAD_ZIP_LIMITS.max_uncompressed_bytes) {
+      throw new Error("uad_package_bytes_exceeded");
+    }
     const crc = crc32(body);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -188,7 +207,6 @@ export function buildDeterministicZip(files = []) {
     centralParts.push(central, name);
     offset += local.length + name.length + body.length;
   }
-  if (files.length > 0xffff) throw new Error("uad_package_entry_count_exceeded");
   const centralDirectory = Buffer.concat(centralParts);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);

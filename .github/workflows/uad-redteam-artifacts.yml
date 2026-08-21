@@ -1,0 +1,42 @@
+name: UAD red-team artifact boundaries
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uad-redteam-security
+  cancel-in-progress: false
+
+jobs:
+  artifact-boundaries:
+    name: XML, PDF asset, and ZIP abuse checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Run bounded artifact parser checks
+        run: |
+          set -o pipefail
+          npm run --silent verify:redteam:artifacts | tee uad-redteam-artifacts.json
+      - name: Run artifact boundary regression tests
+        run: node --test test/uadArtifactSecurity.test.js test/uadDeliveryPackage.test.js test/uadPdf.test.js test/uadXml.test.js
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: uad-redteam-artifacts-${{ github.run_id }}
+          path: server/uad-redteam-artifacts.json
+          if-no-files-found: error
+          retention-days: 14

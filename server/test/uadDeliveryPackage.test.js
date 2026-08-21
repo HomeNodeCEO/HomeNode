@@ -111,6 +111,7 @@ test("ZIP output is deterministic and rejects unsafe entry paths", () => {
   assert.equal(first.content.readUInt32LE(0), 0x04034b50);
   assert.equal(first.content.readUInt32LE(first.content.length - 22), 0x06054b50);
   assert.throws(() => buildDeterministicZip([{ path: "../escape", body: "x" }]), /uad_package_entry_path_invalid/);
+  assert.throws(() => buildDeterministicZip([{ path: "C:\\escape", body: "x" }]), /uad_package_entry_path_invalid/);
 });
 
 test("wires package routes and keeps the legacy report renderer isolated", () => {

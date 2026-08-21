@@ -1032,9 +1032,9 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           )}
           {activeSection === "sketch" && sketchProvided === true && (
             <UadAssetPanel
-              accept="application/json,application/pdf,image/svg+xml"
+              accept="application/json,application/pdf"
               captionTypes={SKETCH_SOURCE_CAPTIONS}
-              description="Optional source geometry, measurement exports, and supporting diagrams remain in the private workfile for mobile synchronization and future sketch rendering; they do not replace the required report image."
+              description="Optional JSON source geometry, measurement exports, and inert PDF diagrams remain in the private workfile for mobile synchronization and future sketch rendering; active SVG documents are not accepted and these sources do not replace the required report image."
               emptyMessage="No supporting measurement source uploaded."
               sectionNumber={7}
               title="Structured measurement sources"

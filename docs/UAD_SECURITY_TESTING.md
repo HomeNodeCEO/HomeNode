@@ -106,6 +106,20 @@ Every pull request runs the existing application suites plus:
 - existing UAD schema, migration, validation, revision, PDF, XML, package,
   signature, compliance, storage, and smoke tests.
 
+The manual `UAD red-team artifact boundaries` workflow adds a bounded,
+credential-free parser lane. It rejects MIME-spoofed images, unreasonable image
+dimensions, active PDF actions, XML DTD/entity and processing-instruction
+payloads, ZIP traversal/device/control-character paths, and portable filename
+collisions. The live integrity workflow separately verifies that draft artifact
+generation fails closed and that artifact routes cannot cross organizations.
+
+Successful asset verification downloads and inspects the object, calculates a
+SHA-256 digest, copies the reviewed bytes to a checksum-addressed private key,
+updates PostgreSQL to the immutable key, and removes the temporary upload key.
+An unexpired client PUT URL can therefore affect only an unreferenced temporary
+key after verification; PDF and package generation recheck payload structure
+and the saved checksum before using verified bytes.
+
 Later red-team workflows must be manual dispatches, accept only an allowlisted
 red-team base URL, use environment-protected secrets, cap concurrency, upload
 sanitized evidence, and refuse any hostname containing the production or shared

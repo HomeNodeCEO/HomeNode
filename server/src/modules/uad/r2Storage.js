@@ -111,6 +111,19 @@ export function createR2PresignedUrl({
   return `https://${host}${objectPath(objectKey)}?${canonicalQuery}&X-Amz-Signature=${signature}`;
 }
 
+export function buildUadVerifiedAssetObjectKey({
+  organizationId,
+  workfileId,
+  assetId,
+  checksumSha256,
+  fileName,
+}) {
+  const organization = organizationId || "unassigned";
+  const checksum = String(checksumSha256 || "").replace(/[^a-f0-9]/gi, "").toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(checksum)) throw new Error("invalid_uad_asset_checksum");
+  return `organizations/${organization}/uad/${workfileId}/verified-assets/${assetId}/${checksum}/${sanitizeUadFileName(fileName)}`;
+}
+
 export function createUadObjectStorage(env = process.env) {
   const provider = String(env.UAD_OBJECT_STORAGE_PROVIDER || "r2").trim().toLowerCase();
   const config = {

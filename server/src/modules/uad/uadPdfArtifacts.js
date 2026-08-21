@@ -5,6 +5,7 @@ import { getUadEditor } from "./editor.js";
 import { buildUadGeneratedArtifactObjectKey } from "./r2Storage.js";
 import { listUadSketches } from "./sketches.js";
 import { renderUadNativePdf } from "./uadPdf.js";
+import { inspectUadAssetPayload } from "./uadFileSecurity.js";
 import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
@@ -102,6 +103,15 @@ async function attachRenderableBodies(storage, assets) {
     const downloaded = await storage.getObject({ objectKey: asset.object_key });
     if (asset.byte_size != null && Number(downloaded.byte_size) !== Number(asset.byte_size)) {
       throw new Error("uad_pdf_image_size_mismatch");
+    }
+    let inspected;
+    try {
+      inspected = inspectUadAssetPayload(downloaded.body, asset.content_type);
+    } catch {
+      throw new Error("uad_pdf_image_payload_invalid");
+    }
+    if (asset.checksum_sha256 && asset.checksum_sha256 !== inspected.checksum_sha256) {
+      throw new Error("uad_pdf_image_checksum_mismatch");
     }
     result.push({ ...asset, body: downloaded.body });
   }

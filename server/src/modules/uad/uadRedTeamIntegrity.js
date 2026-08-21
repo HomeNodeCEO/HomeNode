@@ -8,6 +8,7 @@ const PNG_PROBE = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const MIME_SPOOF_PROBE = Buffer.alloc(PNG_PROBE.length, 0x41);
 const COMMENTARY_FIELD = Object.freeze({
   context_key: "assignment_commentary",
   uid: "0100.0044",
@@ -144,7 +145,7 @@ function isRedTeamProbeAsset(asset) {
   const fileName = String(asset?.original_file_name || "").replaceAll("\\", "/");
   return asset?.capture_metadata?.synthetic === true
     && asset.capture_metadata?.purpose === "redteam_storage_boundary"
-    && ["redteam-storage-probe.png", "verified-probe.png", "size-mismatch.png"]
+    && ["redteam-storage-probe.png", "verified-probe.png", "size-mismatch.png", "mime-spoof.png"]
       .some((candidate) => fileName.endsWith(candidate));
 }
 
@@ -347,6 +348,42 @@ export async function runUadRedTeamIntegrityChecks({
     )),
   });
 
+  const artifactRoutes = Object.freeze([
+    { type: "xml", blockedCode: "uad_xml_local_validation_required" },
+    { type: "pdf", blockedCode: "uad_pdf_local_validation_required" },
+    { type: "submission-package", blockedCode: "uad_package_signature_required" },
+  ]);
+  const artifactBefore = [];
+  const artifactCrossTenant = [];
+  const artifactGeneration = [];
+  const artifactAfter = [];
+  for (const route of artifactRoutes) {
+    const pathA = `/api/uad/workfiles/${workfileA}/artifacts/${route.type}`;
+    const pathB = `/api/uad/workfiles/${workfileB}/artifacts/${route.type}`;
+    artifactBefore.push(await api("assigned_appraiser_a", pathA));
+    artifactCrossTenant.push(await api("assigned_appraiser_a", pathB));
+    artifactGeneration.push(await api("assigned_appraiser_a", pathA, { method: "POST", jsonBody: {} }));
+    artifactAfter.push(await api("assigned_appraiser_a", pathA));
+  }
+  const artifactOwnReadsReady = artifactBefore.every((result) => result.status === 200 && !result.transportError);
+  const artifactCrossTenantReady = artifactCrossTenant.every((result) => (
+    exactError(result, 403, "uad_workfile_access_denied")
+  ));
+  const artifactStateGateReady = artifactGeneration.every((result, index) => (
+    exactError(result, 409, artifactRoutes[index].blockedCode)
+  ));
+  const artifactUnchanged = artifactAfter.every((result, index) => (
+    result.status === 200 && !result.transportError && jsonEqual(result.body, artifactBefore[index].body)
+  ));
+  checks.artifact_access_and_state = Object.freeze({
+    ready: artifactOwnReadsReady && artifactCrossTenantReady && artifactStateGateReady && artifactUnchanged,
+    own_read_http_statuses: artifactBefore.map((result) => result.status),
+    cross_tenant_http_statuses: artifactCrossTenant.map((result) => result.status),
+    blocked_generation_http_statuses: artifactGeneration.map((result) => result.status),
+    blocked_generation_error_codes: artifactGeneration.map((result) => safeErrorCode(result.body?.error)),
+    unchanged_after_blocked_generation: artifactUnchanged,
+  });
+
   const uploadInput = (overrides = {}) => ({
     asset_kind: "photo",
     content_type: "image/png",
@@ -541,6 +578,37 @@ export async function runUadRedTeamIntegrityChecks({
       verification_http_status: mismatchVerification.status,
       verification_error_code: safeErrorCode(mismatchVerification.body?.error),
       cleanup_http_status: mismatchDelete.status,
+    });
+
+    const spoofUpload = await api(
+      "assigned_appraiser_a",
+      `/api/uad/workfiles/${workfileA}/assets/upload-url`,
+      { method: "POST", jsonBody: uploadInput({ file_name: "mime-spoof.png" }) },
+    );
+    const spoofAssetId = spoofUpload.body?.asset_id;
+    if (spoofAssetId) pendingCleanup.add(spoofAssetId);
+    const spoofPut = spoofUpload.status === 201
+      && validUploadDescriptor(spoofUpload.body?.upload, "image/png")
+      ? await storagePut(spoofUpload.body.upload, MIME_SPOOF_PROBE, "image/png")
+      : { status: null, transportError: "upload_not_created" };
+    const spoofVerification = spoofAssetId && spoofPut.status >= 200 && spoofPut.status < 300
+      ? await api(
+          "assigned_appraiser_a",
+          `/api/uad/workfiles/${workfileA}/assets/${spoofAssetId}/verify`,
+          { method: "POST", jsonBody: {} },
+        )
+      : { status: null, body: null, transportError: "upload_not_completed" };
+    const spoofDelete = await deleteAsset(spoofAssetId);
+    checks.storage_content_validation = Object.freeze({
+      ready: spoofPut.status >= 200
+        && spoofPut.status < 300
+        && exactError(spoofVerification, 400, "invalid_uad_uploaded_asset")
+        && spoofDelete.status === 204,
+      upload_http_status: spoofPut.status,
+      upload_transport_error: spoofPut.transportError,
+      verification_http_status: spoofVerification.status,
+      verification_error_code: safeErrorCode(spoofVerification.body?.error),
+      cleanup_http_status: spoofDelete.status,
     });
   } finally {
     for (const assetId of [...pendingCleanup]) {

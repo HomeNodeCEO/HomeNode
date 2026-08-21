@@ -1,5 +1,4 @@
 import * as Crypto from "expo-crypto";
-import { Directory, File } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 
@@ -34,6 +33,7 @@ import {
 } from "./model";
 
 const DATABASE_KEY = "homenode.mobile.offline-database-key.v1";
+const ACTIVE_DATABASE_NAME_KEY = "homenode.mobile.active-offline-database.v1";
 const ACTIVE_USER_KEY = "homenode.mobile.active-offline-user.v1";
 const DATABASE_NAME = "homenode-field-v1.db";
 const GENERAL_COMMENTS_PATH = "inspection.general.appraiser_comments";
@@ -294,9 +294,18 @@ async function databasePassword() {
   return generated;
 }
 
-async function openInitializedDatabase() {
+async function activeDatabaseName() {
+  const stored = await SecureStore.getItemAsync(ACTIVE_DATABASE_NAME_KEY);
+  return stored && /^homenode-field-[a-z0-9-]+\.db$/.test(stored) ? stored : DATABASE_NAME;
+}
+
+function recoveredDatabaseName() {
+  return `homenode-field-recovered-${Date.now()}-${Crypto.randomUUID()}.db`;
+}
+
+async function openInitializedDatabase(databaseName: string) {
   const password = await databasePassword();
-  const database = await SQLite.openDatabaseAsync(DATABASE_NAME);
+  const database = await SQLite.openDatabaseAsync(databaseName, { useNewConnection: true });
   try {
     await database.execAsync(`PRAGMA key = '${password}'`);
     await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
@@ -484,25 +493,23 @@ async function openInitializedDatabase() {
   }
 }
 
-async function quarantineUnreadableDatabase() {
-  const recoveryDirectory = new Directory(SQLite.defaultDatabaseDirectory, "homenode-recovery");
-  await recoveryDirectory.create({ idempotent: true, intermediates: true });
-  const timestamp = new Date().toISOString().replace(/[^0-9]/g, "");
-  for (const suffix of ["-wal", "-shm", ""] as const) {
-    const source = new File(SQLite.defaultDatabaseDirectory, `${DATABASE_NAME}${suffix}`);
-    if (!source.exists) continue;
-    const destination = new File(recoveryDirectory, `${timestamp}-${DATABASE_NAME}${suffix}`);
-    await source.move(destination);
-  }
-}
-
 async function initializeDatabase() {
+  const databaseName = await activeDatabaseName();
   try {
-    return await openInitializedDatabase();
+    return await openInitializedDatabase(databaseName);
   } catch (reason) {
     if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
-    await quarantineUnreadableDatabase();
-    return openInitializedDatabase();
+    const replacementName = recoveredDatabaseName();
+    const replacement = await openInitializedDatabase(replacementName);
+    try {
+      await SecureStore.setItemAsync(ACTIVE_DATABASE_NAME_KEY, replacementName, {
+        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+      });
+      return replacement;
+    } catch (secureStoreError) {
+      await replacement.closeAsync().catch(() => undefined);
+      throw secureStoreError;
+    }
   }
 }
 
@@ -522,7 +529,6 @@ export async function clearActiveOfflineUser() {
 
 export class OfflineStore {
   private connectionRepair: Promise<void> | null = null;
-  private lastReconnectAt = 0;
 
   private constructor(private database: SQLite.SQLiteDatabase) {}
 
@@ -530,23 +536,20 @@ export class OfflineStore {
     return new OfflineStore(await openDatabase());
   }
 
-  async ensureReady({ reopen = false }: { reopen?: boolean } = {}) {
+  async ensureReady() {
     if (this.connectionRepair) return this.connectionRepair;
-    const recentlyReconnected = reopen && Date.now() - this.lastReconnectAt < 2_000;
-    if (!reopen || recentlyReconnected) {
-      try {
-        await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
-        return;
-      } catch (reason) {
-        if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
-      }
+    try {
+      await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+      return;
+    } catch (reason) {
+      if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
     }
+    if (this.connectionRepair) return this.connectionRepair;
     this.connectionRepair = (async () => {
       const previous = this.database;
       databasePromise = null;
       await previous.closeAsync().catch(() => undefined);
       this.database = await openDatabase();
-      this.lastReconnectAt = Date.now();
     })().finally(() => {
       this.connectionRepair = null;
     });

@@ -124,7 +124,7 @@ export function usePhotoSync(
     const timer = setInterval(() => { if (online) void syncNow(); }, 15_000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active" && online) {
-        void store.ensureReady({ reopen: true }).then(syncNow).catch((reason) => {
+        void store.ensureReady().then(syncNow).catch((reason) => {
           setError(reason instanceof Error ? reason.message : "mobile_photo_database_unavailable");
         });
       }

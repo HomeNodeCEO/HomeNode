@@ -2,6 +2,7 @@ import "dotenv/config";
 import pg from "pg";
 
 import { normalizeOidcIssuer } from "../src/modules/mobile/auth.js";
+import { saveUadSection } from "../src/modules/uad/editor.js";
 import { createUadWorkfile } from "../src/modules/uad/workfiles.js";
 import {
   assertRedTeamDatabaseName,
@@ -30,6 +31,15 @@ const pool = new pg.Pool({
   max: 1,
   application_name: "homenode-redteam-fixtures",
 });
+
+const REDTEAM_ASSIGNMENT_DEFAULTS = Object.freeze([
+  { context_key: "assignment", uid: "1000.0034", value: "PortfolioEvaluation" },
+  { context_key: "assignment", uid: "1000.0158", value: "TraditionalAppraisal" },
+  { context_key: "assignment", uid: "1000.0043", value: false },
+  { context_key: "appraiser_inspection", uid: "2400.0081", value: "Physical" },
+  { context_key: "appraiser_inspection", uid: "2400.0082", value: "Physical" },
+  { context_key: "appraiser_inspection", uid: "2400.0080", value: "2026-01-15" },
+]);
 
 function organizationFor(persona) {
   const organization = REDTEAM_ORGANIZATIONS[persona.organization];
@@ -162,6 +172,41 @@ async function ensureWorkfile(accountId, fileNumber, organizationId, appraiserId
   return workfile.id;
 }
 
+async function ensureRedTeamAssignmentBaseline(workfileId) {
+  const workfile = await pool.query(
+    "SELECT current_revision FROM appraisal.uad_workfiles WHERE id = $1",
+    [workfileId],
+  );
+  if (workfile.rows.length !== 1) throw new Error("redteam_fixture_workfile_missing");
+  const values = await pool.query(
+    `SELECT field_context, uad_uid, value
+       FROM appraisal.uad_field_values
+      WHERE workfile_id = $1
+        AND entity_id IS NULL
+        AND (field_context, uad_uid) IN (
+          ('assignment', '1000.0034'),
+          ('assignment', '1000.0158'),
+          ('assignment', '1000.0043'),
+          ('appraiser_inspection', '2400.0081'),
+          ('appraiser_inspection', '2400.0082'),
+          ('appraiser_inspection', '2400.0080')
+        )`,
+    [workfileId],
+  );
+  const existing = new Set(values.rows
+    .filter((row) => row.value !== null && row.value !== "")
+    .map((row) => `${row.field_context}:${row.uad_uid}`));
+  const missing = REDTEAM_ASSIGNMENT_DEFAULTS.filter(
+    (field) => !existing.has(`${field.context_key}:${field.uid}`),
+  );
+  if (!missing.length) return false;
+  await saveUadSection(pool, workfileId, "assignment", {
+    expected_revision: Number(workfile.rows[0].current_revision),
+    values: missing,
+  });
+  return true;
+}
+
 try {
   const identity = await pool.query("SELECT current_database() AS database_name");
   assertRedTeamDatabaseName(identity.rows[0]?.database_name);
@@ -196,6 +241,10 @@ try {
     REDTEAM_ORGANIZATIONS.organizationB.id,
     appraiserB.id,
   );
+  const assignmentBaselinesCreated = [
+    await ensureRedTeamAssignmentBaseline(organizationAWorkfile),
+    await ensureRedTeamAssignmentBaseline(organizationBWorkfile),
+  ].filter(Boolean).length;
   console.log(JSON.stringify({
     prepared: true,
     environment: "redteam",
@@ -203,6 +252,7 @@ try {
     organizations: Object.keys(REDTEAM_ORGANIZATIONS).length,
     personas: REDTEAM_PERSONAS.length,
     workfiles: [organizationAWorkfile, organizationBWorkfile].length,
+    assignment_baselines_created: assignmentBaselinesCreated,
   }));
 } finally {
   await pool.end();

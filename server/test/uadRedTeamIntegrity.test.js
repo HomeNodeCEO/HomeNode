@@ -16,7 +16,12 @@ function json(body, status = 200) {
   });
 }
 
-function integrityFetch({ allowLostUpdate = false, failInitialEditor = false, unsafeObjectKey = false } = {}) {
+function integrityFetch({
+  allowLostUpdate = false,
+  failInitialEditor = false,
+  staleProbe = false,
+  unsafeObjectKey = false,
+} = {}) {
   const state = {
     revision: 5,
     commentary: null,
@@ -25,6 +30,18 @@ function integrityFetch({ allowLostUpdate = false, failInitialEditor = false, un
     nextAsset: 1,
     assets: new Map(),
   };
+  if (staleProbe) {
+    state.assets.set("30000000-0000-4000-8000-000000000099", {
+      id: "30000000-0000-4000-8000-000000000099",
+      expectedSize: 1,
+      contentType: "image/png",
+      objectKey: `organizations/${ORGANIZATION_A}/uad/${WORKFILE_A}/assets/stale/probe.png`,
+      originalFileName: "size-mismatch.png",
+      captureMetadata: { synthetic: true, purpose: "redteam_storage_boundary" },
+      status: "pending_upload",
+      bytes: null,
+    });
+  }
 
   const fetchImpl = async (url, init = {}) => {
     const parsed = new URL(url);
@@ -111,6 +128,8 @@ function integrityFetch({ allowLostUpdate = false, failInitialEditor = false, un
         expectedSize: body.byte_size,
         contentType: body.content_type,
         objectKey,
+        originalFileName: body.file_name,
+        captureMetadata: body.capture_metadata,
         status: "pending_upload",
         bytes: null,
       };
@@ -131,6 +150,8 @@ function integrityFetch({ allowLostUpdate = false, failInitialEditor = false, un
       if (persona === "appraiser_b") return json({ error: "uad_workfile_access_denied" }, 403);
       return json({ assets: [...state.assets.values()].map((asset) => ({
         id: asset.id,
+        original_file_name: asset.originalFileName,
+        capture_metadata: asset.captureMetadata,
         status: asset.status,
         byte_size: asset.bytes?.length ?? null,
       })) });
@@ -213,5 +234,15 @@ test("integrity runner does not mutate a fixture it could not snapshot", async (
   assert.equal(state.validSectionWrites, 0);
   assert.equal(state.revision, 5);
   assert.equal(state.commentary, null);
+  assert.equal(state.assets.size, 0);
+});
+
+test("integrity runner removes a stale synthetic probe before creating new objects", async () => {
+  const { fetchImpl, state } = integrityFetch({ staleProbe: true });
+  const result = await runUadRedTeamIntegrityChecks({ fetchImpl, getAccessToken });
+  assert.equal(result.ok, true);
+  assert.equal(result.checks.preflight_cleanup.stale_probe_count, 1);
+  assert.equal(result.checks.preflight_cleanup.delete_success_count, 1);
+  assert.equal(result.checks.cleanup.remaining_asset_count, 0);
   assert.equal(state.assets.size, 0);
 });

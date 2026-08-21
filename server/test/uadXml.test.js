@@ -77,6 +77,54 @@ test("MISMO XML generation is deterministic and preserves subject/comparable ide
   assert.equal(first.pdf_file_name, "UAD-STAGING-SFR-0001.pdf");
 });
 
+test("MISMO XML generation references deterministic external delivery images", async () => {
+  const editor = editorFixture();
+  const comparable = editor.entities.find((entity) => entity.entity_type === "sales_comparable");
+  const generated = buildUadMismoXml(editor, {
+    assets: [
+      {
+        id: "10000000-0000-4000-8000-000000000001",
+        entity_id: comparable.id,
+        asset_kind: "photo",
+        section_number: 22,
+        caption_type: "PropertyPhoto",
+        caption: "Comparable one",
+        object_key: "private/comparable-one.png",
+        original_file_name: "Comparable One.png",
+        content_type: "image/png",
+        byte_size: 123,
+        checksum_sha256: "a".repeat(64),
+        status: "verified",
+        created_at: "2026-08-20T00:00:00.000Z",
+      },
+      {
+        id: "10000000-0000-4000-8000-000000000002",
+        entity_id: null,
+        asset_kind: "photo",
+        section_number: 8,
+        caption_type: "DwellingFront",
+        caption: null,
+        object_key: "private/subject-front.jpg",
+        original_file_name: "Subject Front.jpg",
+        content_type: "image/jpeg",
+        byte_size: 456,
+        checksum_sha256: "b".repeat(64),
+        status: "verified",
+        created_at: "2026-08-19T00:00:00.000Z",
+      },
+    ],
+  });
+
+  assert.equal(generated.image_reference_count, 2);
+  assert.match(generated.xml, /<ImageCategoryType>DwellingFront<\/ImageCategoryType>/);
+  assert.match(generated.xml, /<ImageFileLocationIdentifier>\\\\Images\\001-100000000000-Subject-Front\.jpg<\/ImageFileLocationIdentifier>/);
+  assert.match(generated.xml, /<PROPERTY ValuationUseType="SalesComparable" xlink:label="PROPERTY_SalesComparable1">[\s\S]*?<ImageCategoryType>PropertyPhoto<\/ImageCategoryType>/);
+  assert.match(generated.xml, /<MIMETypeIdentifier>image\/png<\/MIMETypeIdentifier>/);
+  assert.doesNotMatch(generated.xml, /private\/subject-front/);
+  const schema = await validateUadSubschema(generated.xml);
+  assert.equal(schema.errors.some((error) => /IMAGE|ImageFileLocationIdentifier|ImageCategoryType/.test(error.message)), false);
+});
+
 test("MISMO XML generation places Section 26 conclusions and client conditions in their official structures", () => {
   const editor = editorFixture();
   const conditionId = "00000000-0000-4000-8000-000000000006";

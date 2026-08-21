@@ -299,6 +299,9 @@ other appraisal workflows.
 Required server variables are documented in `server/.env.example`.
 Compliance credential ownership and onboarding gates are documented in
 `docs/UAD_COMPLIANCE_API.md`; credentials are never committed to the repository.
+Native report generation is documented in `server/UAD_NATIVE_PDF.md`, and the
+revision-scoped image manifest and delivery ZIP are documented in
+`server/UAD_SUBMISSION_PACKAGE.md`.
 
 ## Applying the migration
 

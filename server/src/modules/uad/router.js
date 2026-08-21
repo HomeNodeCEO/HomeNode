@@ -13,6 +13,10 @@ import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { generateUadXmlArtifact, getLatestUadXmlArtifact } from "./uadArtifacts.js";
 import { generateUadPdfArtifact, getLatestUadPdfArtifact } from "./uadPdfArtifacts.js";
+import {
+  generateUadSubmissionPackage,
+  getLatestUadSubmissionPackage,
+} from "./uadPackageArtifacts.js";
 import { getUadXmlMappingSummary } from "./uadXml.js";
 import { getUadSharedData } from "./sharedData.js";
 import { listUadSketches, saveUadSketch } from "./sketches.js";
@@ -37,6 +41,10 @@ function errorStatus(error) {
   if (message.startsWith("uad_xml_")) return 422;
   if (message.startsWith("uad_pdf_local_validation_")) return 409;
   if (message.startsWith("uad_pdf_")) return 422;
+  if (message.startsWith("uad_package_") && (
+    message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_changed")
+  )) return 409;
+  if (message.startsWith("uad_package_")) return 422;
   if (message.startsWith("uad_completion_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
@@ -69,6 +77,11 @@ export function createUadRouter({ pool, storage, verifier, enabled = false }) {
         configured: storage.configured,
       },
       xml: getUadXmlMappingSummary(),
+      delivery_package: {
+        profile: "UAD 3.6 URAR Delivery Specification 1.4",
+        requires_signed_revision: true,
+        includes_external_images: true,
+      },
     });
   });
 
@@ -194,6 +207,22 @@ export function createUadRouter({ pool, storage, verifier, enabled = false }) {
     try {
       const result = await generateUadPdfArtifact(pool, storage, req.params.workfileId);
       res.status(201).json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/artifacts/submission-package", async (req, res) => {
+    try {
+      res.json(await getLatestUadSubmissionPackage(pool, storage, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/artifacts/submission-package", async (req, res) => {
+    try {
+      res.status(201).json(await generateUadSubmissionPackage(pool, storage, req.params.workfileId));
     } catch (error) {
       sendError(res, error);
     }

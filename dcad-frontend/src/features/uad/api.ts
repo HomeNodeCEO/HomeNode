@@ -45,6 +45,11 @@ export interface UadCapabilities {
     provider: string;
     configured: boolean;
   };
+  delivery_package?: {
+    profile: string;
+    requires_signed_revision: boolean;
+    includes_external_images: boolean;
+  };
 }
 
 export interface UadWorkfile {
@@ -562,6 +567,7 @@ export interface UadXmlArtifact {
     delivery_specification_version?: string;
     subschema_version?: string;
     schema_valid?: boolean;
+    image_reference_count?: number;
     storage_etag?: string | null;
     upload_error?: string;
   };
@@ -683,4 +689,60 @@ export async function generateUadPdfArtifact(workfileId: string): Promise<UadPdf
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/artifacts/pdf`),
     { method: "POST", timeoutMs: 120_000 },
   );
+}
+
+export interface UadPackageArtifact {
+  id: string;
+  workfile_id: string;
+  revision_number: number;
+  artifact_type: "images_manifest" | "submission_package";
+  storage_provider: string;
+  storage_bucket: string | null;
+  object_key: string;
+  content_type: "application/json" | "application/zip";
+  byte_size: number | null;
+  checksum_sha256: string | null;
+  generation_status: "pending" | "generating" | "ready" | "failed" | "superseded";
+  generated_at: string | null;
+  metadata: {
+    file_name?: string;
+    input_digest_sha256?: string;
+    source_pdf_artifact_id?: string;
+    source_xml_artifact_id?: string;
+    source_pdf_checksum_sha256?: string;
+    source_xml_checksum_sha256?: string;
+    image_count?: number;
+    entry_count?: number;
+    manifest_artifact_id?: string;
+    storage_etag?: string | null;
+    upload_error?: string;
+  };
+  created_at: string;
+  is_current_revision: boolean;
+  ready_for_download: boolean;
+  download?: {
+    method: "GET";
+    url: string;
+    expires_in_seconds: number;
+  };
+}
+
+export interface UadSubmissionPackageResult {
+  manifest: UadPackageArtifact | null;
+  package: UadPackageArtifact | null;
+}
+
+export async function getLatestUadSubmissionPackage(workfileId: string): Promise<UadSubmissionPackageResult> {
+  return uadFetchJSON<UadSubmissionPackageResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/artifacts/submission-package`),
+  );
+}
+
+export async function generateUadSubmissionPackage(workfileId: string): Promise<UadSubmissionPackageResult> {
+  const result = await uadFetchJSON<UadSubmissionPackageResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/artifacts/submission-package`),
+    { method: "POST", timeoutMs: 180_000 },
+  );
+  announceUadWorkfileMutation(workfileId);
+  return result;
 }

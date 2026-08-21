@@ -103,6 +103,19 @@ async function loadCurrentLocalValidation(queryable, workfileId) {
   return result.rows[0] || null;
 }
 
+async function loadDeliveryAssets(queryable, workfileId) {
+  const result = await queryable.query(
+    `SELECT id, entity_id, asset_kind, section_number, caption_type, caption,
+            object_key, original_file_name, content_type, byte_size,
+            checksum_sha256, status, created_at
+       FROM appraisal.uad_assets
+      WHERE workfile_id = $1 AND status = 'verified'
+      ORDER BY section_number NULLS LAST, created_at, id`,
+    [workfileId],
+  );
+  return result.rows;
+}
+
 async function persistUploadFailure(pool, artifactId, message) {
   await pool.query(
     `UPDATE appraisal.uad_generated_artifacts
@@ -157,6 +170,7 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
 
     const editor = await getUadEditor(client, workfileId);
     const assets = await listUadAssets(client, workfileId);
+    const deliveryAssets = await loadDeliveryAssets(client, workfileId);
     const sketches = await listUadSketches(client, workfileId);
     const inputDigest = buildUadValidationInputDigest(editor, assets, sketches);
     const localValidation = await loadCurrentLocalValidation(client, workfileId);
@@ -177,7 +191,10 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
     if (workfile.status === "signed" && !signaturesResult.rows.length) {
       throw new Error("uad_xml_signatures_missing");
     }
-    generated = buildUadMismoXml(editor, { signers: signaturesResult.rows });
+    generated = buildUadMismoXml(editor, {
+      signers: signaturesResult.rows,
+      assets: deliveryAssets,
+    });
     const schema = await validateUadSubschema(generated.xml);
     const schemaRunId = randomUUID();
     const schemaStatus = schema.valid ? "passed" : "failed";
@@ -193,6 +210,7 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
       mapped_value_count: generated.mapped_value_count,
       signer_count: generated.signer_count,
       system_value_count: generated.system_value_count,
+      image_reference_count: generated.image_reference_count,
       referenced_pdf_file_name: generated.pdf_file_name,
     };
     const insertedSchemaRun = await client.query(
@@ -264,6 +282,7 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
       delivery_specification_version: generated.delivery_specification_version,
       subschema_version: generated.subschema_version,
       system_value_count: generated.system_value_count,
+      image_reference_count: generated.image_reference_count,
       referenced_pdf_file_name: generated.pdf_file_name,
       schema_valid: schema.valid,
     };

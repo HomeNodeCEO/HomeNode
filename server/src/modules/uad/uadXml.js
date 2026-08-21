@@ -6,6 +6,7 @@ import {
   buildUadSystemPackageMetadata,
   UAD_SYSTEM_PACKAGE_UIDS,
 } from "./systemPackage.js";
+import { buildUadDeliveryAssetEntries } from "./uadDeliveryPackage.js";
 
 const require = createRequire(import.meta.url);
 const deliveryMapping = require("./spec/delivery-mapping-v1.4.json");
@@ -16,7 +17,7 @@ const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 const repeatableElements = new Set(deliveryMapping.repeatable_elements);
 const MAX_SORT = Number.MAX_SAFE_INTEGER;
 
-export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v3";
+export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v4";
 export const UAD_XML_DELIVERY_SPECIFICATION_VERSION = deliveryMapping.delivery_specification_version;
 export const UAD_XML_SUBSCHEMA_VERSION = deliveryMapping.subschema_version;
 
@@ -414,7 +415,68 @@ function appendSystemPackage(root, workfile) {
   return metadata;
 }
 
-export function buildUadMismoXml(editor, { signers = [] } = {}) {
+const DELIVERY_IMAGE_PATHS = Object.freeze({
+  property_inspection: ["PROPERTIES", "PROPERTY", "INSPECTIONS", "INSPECTION", "IMAGES", "IMAGE"],
+  room: ["PROPERTIES", "PROPERTY", "IMPROVEMENTS", "IMPROVEMENT", "PROPERTY_UNITS", "PROPERTY_UNIT", "ROOMS", "ROOM", "IMAGES", "IMAGE"],
+  interior_component: ["PROPERTIES", "PROPERTY", "IMPROVEMENTS", "IMPROVEMENT", "PROPERTY_UNITS", "PROPERTY_UNIT", "INTERIOR_COMPONENTS", "INTERIOR_COMPONENT", "IMAGES", "IMAGE"],
+  vehicle_storage: ["PROPERTIES", "PROPERTY", "CAR_STORAGES", "CAR_STORAGE", "IMAGES", "IMAGE"],
+  amenity: ["PROPERTIES", "PROPERTY", "PROPERTY_AMENITY", "AMENITY_CATEGORIES", "AMENITY_CATEGORY", "AMENITIES", "AMENITY", "IMAGES", "IMAGE"],
+  defect: ["PROPERTIES", "PROPERTY", "PROPERTY_DEFECT", "DEFECTS", "DEFECT", "IMAGES", "IMAGE"],
+});
+
+function appendDeliveryImage(root, entry, entitiesById, order) {
+  const suffix = DELIVERY_IMAGE_PATHS[entry.xml_branch] || DELIVERY_IMAGE_PATHS.property_inspection;
+  const path = [
+    "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET",
+    "DEALS", "DEAL", "SERVICES", "SERVICE", "VALUATION", "VALUATION_RESPONSE",
+    "VALUATION_ANALYSES", "VALUATION_ANALYSIS", ...suffix,
+  ];
+  const currentEntity = entry.entity_id ? entitiesById.get(entry.entity_id) : null;
+  const chain = entityChain(currentEntity, entitiesById);
+  const assignments = assignedEntityAnchors(path, chain);
+  const baseSort = entry.xml_branch === "vehicle_storage" ? 134
+    : entry.xml_branch === "interior_component" ? 400
+      : entry.xml_branch === "room" ? 511
+        : entry.xml_branch === "amenity" ? 1100
+          : entry.xml_branch === "defect" ? 1170
+            : currentEntity?.entity_type === "sales_comparable" ? 1880 : 680;
+  let parent = root;
+  let lastAssignedEntity = null;
+  for (let index = 1; index < path.length - 1; index += 1) {
+    const name = path[index];
+    let key = "singleton";
+    let nodeOrder = 0;
+    let assignedEntity = assignments.get(index) || null;
+    if (index > path.indexOf("VALUATION_ANALYSIS") && repeatableElements.has(name)) {
+      const owner = repeatOwnerKey({
+        pathIndex: index,
+        path,
+        assignments,
+        lastAssignedEntity,
+        currentEntity,
+        field: { dataType: "string" },
+        occurrenceIndex: 0,
+      });
+      key = owner.key;
+      nodeOrder = owner.order;
+      assignedEntity = assignedEntity || owner.entity;
+    }
+    const attributes = structuralAttributes(name, assignments.get(index), name === "PROPERTY" && !assignments.get(index));
+    parent = ensureChild(parent, name, { sort: baseSort, key, order: nodeOrder, attributes });
+    if (assignments.get(index)) lastAssignedEntity = assignments.get(index);
+  }
+  const image = ensureChild(parent, "IMAGE", {
+    sort: baseSort,
+    key: `asset:${entry.asset_id}`,
+    order,
+  });
+  appendText(image, "ImageCaptionCommentDescription", entry.caption, { sort: baseSort });
+  appendText(image, "ImageCategoryType", entry.image_category_type, { sort: baseSort + 1 });
+  appendText(image, "ImageFileLocationIdentifier", entry.xml_object_url, { sort: baseSort + 2 });
+  appendText(image, "MIMETypeIdentifier", entry.content_type, { sort: baseSort + 3 });
+}
+
+export function buildUadMismoXml(editor, { signers = [], assets = [] } = {}) {
   if (editor?.workfile?.specification_release_key !== deliveryMapping.specification_release_key) {
     throw new Error("uad_xml_specification_release_mismatch");
   }
@@ -447,6 +509,8 @@ export function buildUadMismoXml(editor, { signers = [] } = {}) {
       (left.signer_role === "appraiser" ? 0 : 1) - (right.signer_role === "appraiser" ? 0 : 1)
     ))
     .forEach((signer, index) => appendSigner(root, signer, index));
+  const deliveryAssets = buildUadDeliveryAssetEntries(assets, editor.entities || []);
+  deliveryAssets.forEach((asset, index) => appendDeliveryImage(root, asset, entitiesById, index));
   const systemPackage = appendSystemPackage(root, editor.workfile);
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n${serializeNode(root)}\n`;
   return {
@@ -458,6 +522,8 @@ export function buildUadMismoXml(editor, { signers = [] } = {}) {
     subschema_version: UAD_XML_SUBSCHEMA_VERSION,
     mapped_value_count: values.length,
     signer_count: signers.length,
+    image_reference_count: deliveryAssets.length,
+    delivery_assets: deliveryAssets,
     system_value_count: UAD_SYSTEM_PACKAGE_UIDS.length,
     pdf_file_name: systemPackage.pdfFileName,
   };

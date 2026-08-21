@@ -133,6 +133,20 @@ This baseline is not authorization to run load tests or broad fuzzing. Complete
 the rules-of-engagement record, snapshot/restore exercise, monitoring checks,
 and kill-switch rehearsal before any higher-intensity test window.
 
+## Recovery rehearsal
+
+Create a logical export from the isolated Render database, then perform a
+point-in-time recovery into a disposable database whose name includes
+`redteam`. Copy its external URL only into the temporary
+`REDTEAM_RECOVERY_DATABASE_URL` environment variable and set
+`REDTEAM_RECOVERY_DATABASE_SERVICE_ID` to the restored Render database ID. Run
+`npm run verify:redteam:recovery` from `server/`. The verifier refuses the
+primary database, enforces the restored service identity, checks that every
+protected row remains synthetic, validates all UAD migration checksums, and
+requires the exact synthetic fixture counts without printing the connection
+URL. Preserve its credential-free JSON result, then delete the disposable
+recovery database.
+
 ## Kill conditions
 
 Disable `UAD_WORKSPACE_ENABLED`, block the test source at Cloudflare, and revoke

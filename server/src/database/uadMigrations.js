@@ -50,7 +50,9 @@ export const UAD_MIGRATION_NAMES = MIGRATIONS;
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 
 function checksum(contents) {
-  return createHash("sha256").update(contents).digest("hex");
+  // Git may materialize SQL files with CRLF on Windows while Render and CI use
+  // LF. Migration identity must describe the SQL, not the checkout platform.
+  return createHash("sha256").update(contents.replace(/\r\n/g, "\n")).digest("hex");
 }
 
 export async function getUadMigrationManifest() {

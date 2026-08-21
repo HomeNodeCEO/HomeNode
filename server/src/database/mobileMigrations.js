@@ -25,7 +25,8 @@ const MIGRATIONS = Object.freeze([
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 
 function checksum(contents) {
-  return createHash("sha256").update(contents).digest("hex");
+  // Keep migration checksums stable across Windows and Linux checkouts.
+  return createHash("sha256").update(contents.replace(/\r\n/g, "\n")).digest("hex");
 }
 
 export async function applyMobileMigrations(pool, { logger = console } = {}) {

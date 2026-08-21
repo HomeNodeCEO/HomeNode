@@ -3363,13 +3363,13 @@ app.get("/api/search", async (req, res) => {
       matchSql = `'exact_account'`;
       orderSql = "a.account_id";
     } else if (parsed.isAddressPrefix) {
-      const addressLineSql = `upper(btrim(split_part(COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address), ',', 1))) COLLATE "C"`;
+      const addressLineSql = `upper(btrim(split_part(a.address, ',', 1))) COLLATE "C"`;
       const normalizedAddressPlaceholder = bind(parsed.normalizedAddress);
       const addressPrefixPlaceholder = bind(`${parsed.normalizedAddress}%`);
       const cityFilter = cityWhere(parsed.city);
 
       where = `
-        COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) IS NOT NULL
+        a.address IS NOT NULL
         AND a.canonical_account_id IS NULL
         AND ${addressLineSql} LIKE ${addressPrefixPlaceholder}
         ${cityFilter}
@@ -3409,7 +3409,7 @@ app.get("/api/search", async (req, res) => {
     const sql = `
       SELECT
         a.account_id,
-        COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) AS address,
+        a.address,
         a.street_name,
         a.city,
         a.postal_code,
@@ -3444,20 +3444,6 @@ app.get("/api/search", async (req, res) => {
         ORDER BY m.tax_year DESC
         LIMIT 1
       ) mv ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
-               ) AS address
-        FROM core.dcad_json_raw r
-        WHERE r.account_id = a.account_id
-          AND COALESCE(
-                NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
-                NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
-              ) IS NOT NULL
-        ORDER BY r.tax_year DESC, r.fetched_at DESC
-        LIMIT 1
-      ) raw_loc ON NULLIF(BTRIM(a.address), '') IS NULL
       WHERE ${where}
       ORDER BY ${orderSql}
       LIMIT ${bind(limit)} OFFSET ${bind(offset)}

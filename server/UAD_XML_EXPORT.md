@@ -9,7 +9,7 @@ HomeNode generates UAD XML inside the existing Node service and stores successfu
 - MISMO reference model identifier: `3.6.0366`.
 - Local XSD engine: `xmllint-wasm` 5.3.0 (libxml2 compiled to WebAssembly).
 
-The generated runtime mapping contains every one of the 834 unique Appendix A IDs currently represented by HomeNode's 941 context-aware editor fields. It preserves the XML sort number, XPath, data point, measurement attribute, supported attribute value, property context, and implementation note needed by the generator.
+The generated runtime mapping contains every one of the 845 unique Appendix A IDs currently represented by HomeNode's 952 context-aware editor fields. It preserves the XML sort number, XPath, data point, measurement attribute, supported attribute value, property context, and implementation note needed by the generator.
 
 The official combined XSD and its local dependencies live in `src/modules/uad/spec/subschema/v1.3`. Validation performs no network access and never follows an XML-supplied machine path.
 
@@ -18,9 +18,9 @@ The official combined XSD and its local dependencies live in `src/modules/uad/sp
 `POST /api/uad/workfiles/:workfileId/artifacts/xml` performs these steps:
 
 1. Locks the workfile.
-2. Requires workfile status `ready` and a passed `local_compliance` run for the current revision.
+2. Requires workfile status `ready` or `signed` and a passed `local_compliance` run for the current revision.
 3. Recomputes the exact editor/entity/asset/sketch SHA-256 digest and rejects stale validation.
-4. Builds deterministic UTF-8 MISMO XML from the saved, appraiser-reviewed workfile state.
+4. Builds deterministic UTF-8 MISMO XML from the saved, appraiser-reviewed workfile state. A signed revision also supplies immutable appraiser/supervisory credential snapshots and execution dates for the official `PARTY` and `SIGNATORY` structures.
 5. Validates that XML against the checked-in official GSE subschema.
 6. Persists a `local_schema` validation run and every XSD finding.
 7. Creates or replaces the revision-specific `xml` artifact record.
@@ -43,6 +43,8 @@ A schema failure is a completed validation result, not an export. The artifact r
 
 ## Current boundary
 
-The generator intentionally does not invent missing report data. HomeNode currently maps the implemented editor scope through Section 26 Reconciliation, including approach exclusions, final opinion, effective date, value conditions, exposure time, optional client-requested conditions, and the canonical defect redisplays. The official subschema also requires later report/package structures such as Certifications and Scope of Work, Valuation Report Detail, Valuation Software Systems, Parties, Signatories, Views, About Versions, Document Classification, and Service Detail. Until those UAD sections and system-owned metadata are implemented, the official schema gate will report them as blocking findings. Those findings provide the ordered backlog for the next implementation phase.
+The generator intentionally does not invent missing report data. HomeNode currently maps the implemented editor scope through Section 26 Reconciliation and Section 29 Certifications and Scope of Work. Section 29 includes the required indicators, conditional assignment-specific text, prior-services disclosure, inspection attestation, and Appendix H consistency warnings. Signed revisions generate official appraiser/supervisory `PARTY` and `SIGNATORY` structures from credential snapshots rather than mutable live profiles.
+
+The official subschema still requires later system/package structures such as Valuation Software Systems, Views, About Versions, Document Classification, Service Detail, and the native PDF reference. Until those system-owned structures and the remaining optional valuation approaches are implemented, the official schema gate will continue to report their absence as blocking findings. Those findings provide the ordered backlog for the next implementation phase.
 
 This local schema gate is separate from Appendix H compliance validation and from Fannie Mae/Freddie Mac submission APIs. XML must pass both the local readiness rules and this official XSD gate before the later compliance and submission-package phases can run.

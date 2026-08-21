@@ -34,8 +34,9 @@ The UAD API is off by default. Apply the migration and set
 
 ## Current editor scope
 
-The editor currently implements Appendix A-1 v1.4 Sections 2 through 21 and
-Sections 22A-22G of the Sales Comparison Approach:
+The editor currently implements Appendix A-1 v1.4 Sections 2 through 21,
+Sections 22A-22Q of the Sales Comparison Approach, Section 26 Reconciliation,
+and Section 29 Certifications and Scope of Work:
 
 - Assignment Information and Subject Property use isolated, context-aware UIDs.
 - Site includes conditional zoning, mixed-use, access, utility, and defect
@@ -122,10 +123,24 @@ Sections 22A-22G of the Sales Comparison Approach:
   facts, and thirteen typed adjustment rows. Unit, ADU, dwelling, and
   per-structure counts reconcile against the saved hierarchy; dwelling
   structure identifiers are required for multiple primary units, while unit
-  identifiers are required for multiple primary units or any ADU. Each included comparable requires a verified
-  entity-linked Property Photo. Remaining quality/condition, amenity,
-  reconciliation, and summary grid subsections will extend these same records
-  in later Section 22 increments rather than creating parallel comparables.
+  identifiers are required for multiple primary units or any ADU. Sections
+  22H-22N capture exterior and interior ratings/components, ADU interiors,
+  overall quality and condition, amenities, vehicle storage, outbuildings, and
+  typed adjustments on those same records. Section 22O calculates the grid
+  summary, Section 22P captures comparable reconciliation, and Section 22Q
+  records additional properties analyzed but not used. Each included comparable
+  requires a verified entity-linked Property Photo.
+- Reconciliation reads the same canonical Sales, Income, Cost, and defect
+  records used by their owning sections. It captures final value, effective
+  date, value conditions, exposure time, optional client-requested conditions,
+  and server-calculated itemized repair totals without duplicating analysis.
+- Certifications and Scope of Work captures only assignment-specific additions
+  to the predefined URAR language, prior services, intended users, and the
+  inspection certification. Appendix H inspection inconsistencies are warnings;
+  missing required certification data remains fatal. Signing uses the existing
+  OIDC identity mapping and freezes company, license, appraiser, execution date,
+  workfile digest, and credential digest per revision. Later profile changes do
+  not mutate a signed report.
 - All HomeNode-prefilled or automated values retain source provenance and stay
   unconfirmed until the appraiser saves them.
 
@@ -253,6 +268,10 @@ categories. Section 7 accepts UAD-compatible sketch or floor-plan images and
   each canonical sales comparable and permits optional workfile-level
   `SalesComparisonApproachExhibit` images. Both use the same private R2 upload
   and verification contract that the mobile capture client will call.
+- Section 29 accepts only verified PNG, JPEG, or WebP signature assets. The
+  image is optional for MISMO execution-date delivery and reserved for the
+  native report renderer; signing itself requires an authenticated assigned
+  appraiser or supervisory-appraiser session.
 
 Object keys are scoped by organization, UAD workfile, and asset UUID. PostgreSQL
 stores the UAD section, entity, caption, capture metadata, checksum, byte size,

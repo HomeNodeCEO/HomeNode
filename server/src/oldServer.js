@@ -227,18 +227,19 @@ app.use(cors({ origin: corsOrigins }));
 
 const uadObjectStorage = createUadObjectStorage();
 const documentOcrProvider = createDocumentOcrProvider();
-app.use("/api/uad", createUadRouter({
-  pool,
-  storage: uadObjectStorage,
-  enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
-}));
-
 const mobileOidcVerifier = createOidcAccessTokenVerifier({
   issuer: process.env.OIDC_ISSUER,
   audience: process.env.OIDC_AUDIENCE,
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });
+app.use("/api/uad", createUadRouter({
+  pool,
+  storage: uadObjectStorage,
+  verifier: mobileOidcVerifier,
+  enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
+}));
+
 app.use("/api/mobile", createMobileRouter({
   pool,
   verifier: mobileOidcVerifier,

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { listUadAssets } from "./assets.js";
+import { UAD_CERTIFICATION_FIELD_KEYS } from "./certificationsCatalog.js";
 import { isVerifiedDwellingFrontAsset } from "./dwellingExteriorCatalog.js";
 import { UAD_FUNCTIONAL_ISSUE_TYPES } from "./functionalObsolescenceCatalog.js";
 import { listUadEntities } from "./entities.js";
@@ -259,6 +260,20 @@ export function calculateReconciliationRepairTotal(existingRows = [], submitted 
   return [{ field, entityId: null, value: roundWholeAmount(total) }];
 }
 
+export function calculateCertificationSystemValues(existingRows = [], submitted = []) {
+  const merged = valuesMap(existingRows);
+  for (const item of submitted) merged.set(fieldValueKey(item.field, item.entityId), item.value);
+  const governmentAgencyField = UAD_PHASE_ONE_FIELDS.find((candidate) => (
+    candidate.key === UAD_CERTIFICATION_FIELD_KEYS.governmentAgency
+  ));
+  if (!governmentAgencyField) return [];
+  return [{
+    field: governmentAgencyField,
+    entityId: null,
+    value: isPresent(valueLookup(merged)("assignment:1000.0029")),
+  }];
+}
+
 function withCalculatedSalesComparisonSummaryRows(rows, entities) {
   const calculated = calculateSalesComparisonSummaryValues(rows, [], entities);
   const calculatedKeys = new Set(calculated.map((item) => fieldValueKey(item.field, item.entityId)));
@@ -314,6 +329,36 @@ function withCalculatedReconciliationRepairRows(rows, entities) {
       created_at: existing?.created_at || now,
       updated_at: now,
     },
+  ];
+}
+
+function withCalculatedCertificationRows(rows) {
+  const calculated = calculateCertificationSystemValues(rows);
+  if (!calculated.length) return rows;
+  const existingByKey = new Map(rows.map((row) => [valueKey(row), row]));
+  const calculatedKeys = new Set(calculated.map((item) => fieldValueKey(item.field, item.entityId)));
+  const now = new Date().toISOString();
+  return [
+    ...rows.filter((row) => !calculatedKeys.has(valueKey(row))),
+    ...calculated.map(({ field, entityId, value }) => {
+      const existing = existingByKey.get(fieldValueKey(field, entityId));
+      return {
+        ...(existing || {}),
+        id: existing?.id || `calculated:${entityId || "root"}:${field.uid}`,
+        entity_id: entityId,
+        field_context: field.contextKey,
+        uad_uid: field.uid,
+        report_field_id: field.reportFieldId,
+        value,
+        source_type: "calculated",
+        source_reference: "uad.certifications_government_agency",
+        is_appraiser_confirmed: true,
+        is_override: false,
+        override_reason: null,
+        created_at: existing?.created_at || now,
+        updated_at: now,
+      };
+    }),
   ];
 }
 
@@ -863,9 +908,11 @@ export async function getUadEditor(pool, workfileIdValue) {
     listUadAssets(pool, workfileId),
   ]);
   const sections = getUadEditorSections();
-  const effectiveRows = withCalculatedReconciliationRepairRows(
-    withCalculatedSalesComparisonSummaryRows(rows, entities),
-    entities,
+  const effectiveRows = withCalculatedCertificationRows(
+    withCalculatedReconciliationRepairRows(
+      withCalculatedSalesComparisonSummaryRows(rows, entities),
+      entities,
+    ),
   );
   const responseRows = effectiveRows.map(responseValue);
   const byKey = valuesMap(rows);
@@ -899,6 +946,11 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
   }
   if (section === "reconciliation") {
     for (const item of calculateReconciliationRepairTotal(existingRows, submitted, entities)) {
+      merged.set(fieldValueKey(item.field, item.entityId), item.value);
+    }
+  }
+  if (section === "certifications") {
+    for (const item of calculateCertificationSystemValues(existingRows, submitted)) {
       merged.set(fieldValueKey(item.field, item.entityId), item.value);
     }
   }
@@ -4954,7 +5006,10 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     ]);
     const entityTypesById = new Map(entities.map((entity) => [entity.id, entity.entity_type]));
     const entityDataById = new Map(entities.map((entity) => [entity.id, entity.data]));
-    const calculatedFieldKeys = new Set(calculatedSalesComparisonFields().map((field) => field.key));
+    const calculatedFieldKeys = new Set([
+      ...calculatedSalesComparisonFields().map((field) => field.key),
+      UAD_CERTIFICATION_FIELD_KEYS.governmentAgency,
+    ]);
     const submittedRepairMethod = Array.isArray(input.values)
       ? input.values.find((item) => (
           `${item.context_key}:${item.uid}` === UAD_RECONCILIATION_FIELD_KEYS.repairCostMethod
@@ -4968,7 +5023,7 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     const submittedValues = Array.isArray(input.values)
       ? input.values.filter((item) => {
           const key = `${item.context_key}:${item.uid}`;
-          if (section === "sales_comparison" && calculatedFieldKeys.has(key)) return false;
+          if (["sales_comparison", "certifications"].includes(section) && calculatedFieldKeys.has(key)) return false;
           return !(
             section === "reconciliation"
             && repairCostMethod === "Itemized"
@@ -4992,6 +5047,11 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
             ...validation.normalized,
             ...calculateReconciliationRepairTotal(existingRows, validation.normalized, entities),
           ]
+        : section === "certifications"
+          ? [
+              ...validation.normalized,
+              ...calculateCertificationSystemValues(existingRows, validation.normalized),
+            ]
         : validation.normalized;
     const completeSectionErrors = validateCompleteSection(section, existingRows, normalized, entities, assets);
     if (completeSectionErrors.length) {
@@ -5014,7 +5074,9 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
       const sourceReference = calculated
         ? section === "reconciliation"
           ? "uad.reconciliation_repair_total"
-          : "uad.sales_comparison_summary"
+          : section === "certifications"
+            ? "uad.certifications_government_agency"
+            : "uad.sales_comparison_summary"
         : previous && !changedFromPrevious ? previous.source_reference : "uad_workspace.section_save";
       const overrideReason = isOverride ? "Appraiser edited a HomeNode-prefilled value." : null;
       const id = previous?.id || randomUUID();

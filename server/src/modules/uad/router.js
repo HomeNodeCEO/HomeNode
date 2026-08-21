@@ -8,6 +8,7 @@ import {
 } from "./assets.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 import { applyUadCompletionSuggestions } from "./completionApply.js";
+import { getUadCertificationReadiness, signUadWorkfile } from "./certifications.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { generateUadXmlArtifact, getLatestUadXmlArtifact } from "./uadArtifacts.js";
@@ -21,12 +22,16 @@ import {
   getUadWorkfile,
   listUadWorkfiles,
 } from "./workfiles.js";
+import { createMobileAuthenticator } from "../mobile/auth.js";
 
 function errorStatus(error) {
   const message = String(error?.message || "");
   if (message.includes("not_found")) return 404;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
   if (message === "uad_validation_status_locked") return 409;
+  if (message.endsWith("_access_denied")) return 403;
+  if (message.startsWith("uad_signature_") && (message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_mismatch"))) return 409;
+  if (message.startsWith("uad_signature_") && (message.endsWith("_incomplete") || message.endsWith("_verified") || message.endsWith("_date"))) return 400;
   if (message.startsWith("uad_xml_local_validation_")) return 409;
   if (message.startsWith("uad_xml_")) return 422;
   if (message.startsWith("uad_completion_")) return 400;
@@ -45,8 +50,11 @@ function sendError(res, error) {
   res.status(status).json({ error: code, ...(error?.details ? { details: error.details } : {}) });
 }
 
-export function createUadRouter({ pool, storage, enabled = false }) {
+export function createUadRouter({ pool, storage, verifier, enabled = false }) {
   const router = express.Router();
+  const authenticateSigner = verifier?.verify
+    ? createMobileAuthenticator({ pool, verifier })
+    : (_req, res) => res.status(503).json({ error: "mobile_oidc_not_configured" });
 
   router.get("/capabilities", (_req, res) => {
     res.json({
@@ -125,6 +133,32 @@ export function createUadRouter({ pool, storage, enabled = false }) {
       res.json({ validation: await runLocalUadValidation(pool, req.params.workfileId) });
     } catch (error) {
       sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/certification-readiness", authenticateSigner, async (req, res) => {
+    try {
+      const readiness = await getUadCertificationReadiness(pool, req.params.workfileId);
+      if (!readiness.signers.some((signer) => signer.user_id === req.mobileAuth.userId)) {
+        return res.status(403).json({ error: "uad_signature_access_denied" });
+      }
+      return res.json({ readiness });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/signatures", authenticateSigner, async (req, res) => {
+    try {
+      const result = await signUadWorkfile(
+        pool,
+        req.params.workfileId,
+        req.mobileAuth,
+        req.body || {},
+      );
+      return res.status(201).json(result);
+    } catch (error) {
+      return sendError(res, error);
     }
   });
 

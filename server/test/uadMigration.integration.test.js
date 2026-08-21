@@ -692,6 +692,47 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.equal(officialSalesComparisonReconciliationRules.rows[0].count, 3);
 
+    const certificationFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND section_number = 29
+    `);
+    assert.equal(certificationFields.rows[0].count, 25);
+
+    const certificationProfileFields = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND property_context IN ('appraiser_party', 'supervisory_appraiser_party')
+         AND metadata->>'system_owned' = 'true'
+    `);
+    assert.equal(certificationProfileFields.rows[0].count, 28);
+
+    const certificationRules = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.compliance_rules
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND rule_id IN (
+           'UAD1505', 'UAD1506', 'UAD1507', 'UAD1508', 'UAD1509', 'UAD1510',
+           'UAD1511', 'UAD1512', 'UAD1513', 'UAD1514', 'UAD1515', 'UAD1516',
+           'UAD1517', 'UAD1518', 'UAD1523', 'UAD1535', 'UAD1536'
+         )
+    `);
+    assert.equal(certificationRules.rows[0].count, 17);
+
+    const signatureColumns = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM information_schema.columns
+       WHERE table_schema = 'appraisal'
+         AND table_name = 'uad_signatures'
+         AND column_name IN (
+           'execution_date', 'workfile_input_digest_sha256',
+           'credential_snapshot_sha256', 'attestation'
+         )
+    `);
+    assert.equal(signatureColumns.rows[0].count, 4);
+
     const homeNodeSalesComparisonRules = await pool.query(`
       SELECT count(*)::integer AS count
         FROM uad_ref.compliance_rules

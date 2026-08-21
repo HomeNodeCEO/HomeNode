@@ -10,6 +10,7 @@ const MANUFACTURED_HOME_ACCOUNT_ID = "UAD-STAGING-MH-0001";
 const MANUFACTURED_HOME_FILE_NUMBER = "HN-UAD-STAGING-MH-0001";
 const STAGING_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000901";
 const STAGING_USER_ID = "00000000-0000-4000-8000-000000000902";
+const STAGING_LICENSE_ID = "00000000-0000-4000-8000-000000000903";
 const STAGING_USER_EMAIL = "mobile-appraiser@staging.homenode.invalid";
 
 if (process.env.NODE_ENV !== "staging") {
@@ -68,11 +69,18 @@ try {
 
   await pool.query(
     `INSERT INTO app_auth.organizations (
-       id, legal_name, display_name, active, metadata
-     ) VALUES ($1, 'HomeNode Staging', 'HomeNode Staging', true, '{"synthetic":true,"environment":"staging"}'::jsonb)
+       id, legal_name, display_name, address_line_1, city, state_code, postal_code,
+       active, metadata
+     ) VALUES ($1, 'HomeNode Staging', 'HomeNode Staging', '100 Test Office Dr',
+               'Garland', 'TX', '75044', true,
+               '{"synthetic":true,"environment":"staging"}'::jsonb)
      ON CONFLICT (id) DO UPDATE SET
        legal_name = EXCLUDED.legal_name,
        display_name = EXCLUDED.display_name,
+       address_line_1 = EXCLUDED.address_line_1,
+       city = EXCLUDED.city,
+       state_code = EXCLUDED.state_code,
+       postal_code = EXCLUDED.postal_code,
        active = true,
        metadata = EXCLUDED.metadata,
        updated_at = now()`,
@@ -82,7 +90,8 @@ try {
   await pool.query(
     `INSERT INTO app_auth.users (
        id, email, display_name, active, metadata
-     ) VALUES ($1, $2, 'Mobile Staging Appraiser', true, '{"synthetic":true,"environment":"staging"}'::jsonb)
+     ) VALUES ($1, $2, 'Taylor Appraiser', true,
+               '{"synthetic":true,"environment":"staging","first_name":"Taylor","last_name":"Appraiser"}'::jsonb)
      ON CONFLICT (id) DO UPDATE SET
        email = EXCLUDED.email,
        display_name = EXCLUDED.display_name,
@@ -113,7 +122,7 @@ try {
   await pool.query(
     `INSERT INTO app_auth.appraiser_profiles (
        user_id, default_organization_id, signature_policy, profile_status, metadata
-     ) VALUES ($1, $2, 'reauthentication', 'active', '{"synthetic":true,"environment":"staging"}'::jsonb)
+     ) VALUES ($1, $2, 'session', 'active', '{"synthetic":true,"environment":"staging"}'::jsonb)
      ON CONFLICT (user_id) DO UPDATE SET
        default_organization_id = EXCLUDED.default_organization_id,
        signature_policy = EXCLUDED.signature_policy,
@@ -121,6 +130,25 @@ try {
        metadata = EXCLUDED.metadata,
        updated_at = now()`,
     [STAGING_USER_ID, STAGING_ORGANIZATION_ID],
+  );
+
+  await pool.query(
+    `INSERT INTO app_auth.appraiser_licenses (
+       id, user_id, jurisdiction, license_number, license_type,
+       issued_on, expires_on, status, metadata
+     ) VALUES (
+       $1, $2, 'TX', 'STAGING-CR-0001', 'Certified Residential',
+       DATE '2025-01-01', DATE '2028-12-31', 'active',
+       '{"synthetic":true,"environment":"staging","uad_license_type":"CertifiedResidential"}'::jsonb
+     )
+     ON CONFLICT (user_id, jurisdiction, license_number) DO UPDATE SET
+       license_type = EXCLUDED.license_type,
+       issued_on = EXCLUDED.issued_on,
+       expires_on = EXCLUDED.expires_on,
+       status = 'active',
+       metadata = EXCLUDED.metadata,
+       updated_at = now()`,
+    [STAGING_LICENSE_ID, STAGING_USER_ID],
   );
 
   await pool.query(`

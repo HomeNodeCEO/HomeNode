@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { listUadAssets } from "./assets.js";
+import { buildUadCertificationWarnings } from "./certificationsCatalog.js";
 import { getUadEditor, validateCompleteSection } from "./editor.js";
 import {
   getUadField,
@@ -177,6 +178,15 @@ export function buildLocalUadValidationFindings(editor, assets = []) {
     for (const error of validateCompleteSection(section, rows, [], editor.entities, assets)) {
       findings.push(findingFromError(section, error));
     }
+  }
+  if (applicableSections.has("certifications")) {
+    findings.push(...buildUadCertificationWarnings(editor).map((finding) => ({
+      ...finding,
+      metadata: {
+        ...finding.metadata,
+        validator_version: UAD_LOCAL_VALIDATOR_VERSION,
+      },
+    })));
   }
 
   const valuesByKey = new Map(editor.values.map((value) => [valueKey(value), value.value]));

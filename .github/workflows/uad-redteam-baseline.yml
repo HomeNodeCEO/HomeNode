@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: uad-redteam-baseline
+  group: uad-redteam-security
   cancel-in-progress: false
 
 jobs:

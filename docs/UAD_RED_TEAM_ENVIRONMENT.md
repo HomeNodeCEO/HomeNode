@@ -12,7 +12,7 @@ OIDC application, credentials, or GSE configuration.
 | Web | New frontend service whose API target is only the red-team API |
 | Database | New database named with `redteam`, containing synthetic fixtures only |
 | R2 | Private bucket and bucket-scoped read/write credential dedicated to red team |
-| OIDC | Separate public PKCE client/audience and synthetic role identities |
+| OIDC | Separate provider boundary or deterministic test issuer and synthetic role identities |
 | GSE | Disabled or local mock; official ACPT only in a separately approved window |
 | DNS | Unique hostname, not an alias of staging or production |
 | Observability | Request IDs, auth failures, 403/429/5xx, DB saturation, R2 requests/cost |
@@ -42,6 +42,25 @@ services; no source sale rows are copied. The configured fixture account must
 use the `UAD-REDTEAM-` namespace. Static checks do not prove cloud credential
 scope, so independently inspect the R2 token policy, Render resource links, and
 OIDC application before opening a test window.
+
+### Deterministic authorization-test issuer
+
+Authenticated authorization testing may use `REDTEAM_OIDC_PROVIDER=static_redteam`
+instead of a human-login provider. This mode exists only for the disposable,
+synthetic red-team service. The issuer hostname must contain `red team` and end
+in the reserved `.invalid` top-level domain, the audience must contain
+`red team`, and the HTTPS JWKS URL must itself carry a red-team marker. Startup
+rejects an unknown provider or a production-shaped issuer.
+
+Publish only the RSA public JWK. Keep the matching 2048-bit-or-stronger private
+key in the GitHub `uad-redteam` environment secret
+`UAD_REDTEAM_JWT_PRIVATE_KEY`; never add it to Render, R2, source control, or a
+test artifact. Store the synthetic subject map in
+`UAD_REDTEAM_OIDC_SUBJECTS_JSON`. The matrix runner creates ten-minute RS256
+tokens in memory, never prints them, and uses an intentionally invalid section
+name to prove write authorization after middleware without changing a
+workfile. Rotate the key and public JWKS after a test program or suspected
+exposure.
 
 ### WorkOS AuthKit boundary
 
@@ -132,6 +151,29 @@ are never written to evidence.
 This baseline is not authorization to run load tests or broad fuzzing. Complete
 the rules-of-engagement record, snapshot/restore exercise, monitoring checks,
 and kill-switch rehearsal before any higher-intensity test window.
+
+## Authenticated authorization matrix
+
+After the baseline passes, manually dispatch
+`.github/workflows/uad-redteam-authorization.yml`. The workflow is pinned to
+the red-team API and fixture namespace and sends 73 sequential, bounded
+requests. It verifies the assigned and unassigned appraisers, supervisor,
+reviewer, both organization administrators, both tenants, HomeNode
+administrator, inactive user, suspended membership, member without a role, and
+an unprovisioned subject. Cross-tenant reads and writes must return 403;
+reviewers must remain read-only. The uploaded evidence contains only status
+codes, safe error codes, counts, and booleans—never access tokens, private keys,
+response bodies, or user details.
+
+Run locally only with the same environment variables used by the workflow:
+
+```powershell
+npm run --silent verify:redteam:authorization
+```
+
+Treat any failed matrix cell as a stop condition. Do not proceed to parser,
+upload, concurrency, or active scanning tests until it is understood and the
+matrix passes again.
 
 ## Recovery rehearsal
 

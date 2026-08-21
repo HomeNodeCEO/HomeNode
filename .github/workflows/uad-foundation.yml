@@ -122,9 +122,10 @@ jobs:
       R2_ACCESS_KEY_ID: redteam-test-key
       R2_SECRET_ACCESS_KEY: redteam-test-secret
       R2_BUCKET: homenode-uad-redteam
-      OIDC_ISSUER: https://identity-redteam.example.com/
+      REDTEAM_OIDC_PROVIDER: static_redteam
+      OIDC_ISSUER: https://uad-redteam-identity.homenode.invalid/
       OIDC_AUDIENCE: homenode-redteam-api
-      OIDC_JWKS_URI: https://identity-redteam.example.com/oauth2/jwks
+      OIDC_JWKS_URI: https://public-keys.example.com/jwks.json?v=uad-redteam-ci
       DOCUMENT_OCR_PROVIDER: disabled
       UAD_SECURITY_STRICT: "true"
       UAD_AUTHENTICATION_REQUIRED: "true"

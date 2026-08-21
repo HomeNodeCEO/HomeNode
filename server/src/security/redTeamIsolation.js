@@ -111,6 +111,22 @@ function workosRedTeamApplicationBoundary(environment) {
     && !jwks.search;
 }
 
+function staticRedTeamIssuerBoundary(environment) {
+  if (value(environment, "REDTEAM_OIDC_PROVIDER").toLowerCase() !== "static_redteam") return false;
+
+  const issuer = parsedSecureUrl(environment.OIDC_ISSUER);
+  const jwks = parsedSecureUrl(environment.OIDC_JWKS_URI);
+  const audience = value(environment, "OIDC_AUDIENCE");
+  if (!issuer || !jwks) return false;
+
+  return issuer.hostname.endsWith(".invalid")
+    && namedRedTeam(issuer.hostname)
+    && issuer.pathname === "/"
+    && !issuer.search
+    && namedRedTeam(audience)
+    && namedRedTeam(jwks.toString());
+}
+
 export function assertRedTeamDatabaseName(name) {
   if (!markedRedTeam(name)) throw new Error("redteam_database_identity_mismatch");
   return String(name);
@@ -211,7 +227,7 @@ export function createRedTeamIsolationConfiguration(environment = process.env) {
   const oidcProvider = value(environment, "REDTEAM_OIDC_PROVIDER").toLowerCase();
   const oidcAudienceIsolated = oidcProvider === "workos_authkit"
     ? workosRedTeamApplicationBoundary(environment)
-    : markedRedTeam(value(environment, "OIDC_AUDIENCE"));
+    : staticRedTeamIssuerBoundary(environment);
   if (!oidcAudienceIsolated) failures.push("oidc_audience_marker");
   if (!secureUrl(environment.OIDC_JWKS_URI)) failures.push("oidc_jwks_https");
 

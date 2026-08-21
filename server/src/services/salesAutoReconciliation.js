@@ -7,12 +7,31 @@ import {
   ensureSalesReconciliationSchema,
   salesSourceLocationEvidence,
 } from "./salesReconciliation.js";
+import {
+  ensureAccountAddressAliasSchema,
+  resolveUniqueAddressAliases,
+} from "./accountAddressAliases.js";
 
 const AUTO_MATCH_STATUSES = Object.freeze([
   "exact",
   "normalized",
   "secondary",
   "address",
+]);
+
+const SOURCE_CITY_HINTS = Object.freeze([
+  "FARMERS BRANCH",
+  "UNIVERSITY PARK",
+  "HIGHLAND PARK",
+  "DUNCANVILLE",
+  "RICHARDSON",
+  "LANCASTER",
+  "COPPELL",
+  "GARLAND",
+  "IRVING",
+  "ROWLETT",
+  "WILMER",
+  "DALLAS",
 ]);
 
 function boundedInteger(value, fallback, minimum, maximum) {
@@ -64,7 +83,21 @@ function cityFromAddress(address) {
   return parts.length > 1 ? parts[1] : null;
 }
 
-export function salesAddressMatchEvidence(rawPayload) {
+function postalCode5(value) {
+  return String(value || "").match(/\b\d{5}\b/)?.[0] || null;
+}
+
+export function cityHintFromSalesSource(sourceName, sourceFiles = []) {
+  const evidence = normalizeSearchText([
+    sourceName,
+    ...(Array.isArray(sourceFiles) ? sourceFiles : []),
+  ].filter(Boolean).join(" ")).replace(/[#/-]+/g, " ");
+  return SOURCE_CITY_HINTS.find((city) =>
+    new RegExp(`(^| )${city.replace(/ /g, " ")}( |$)`).test(evidence)
+  ) || null;
+}
+
+export function salesAddressMatchEvidence(rawPayload, { fallbackCity = null } = {}) {
   const location = salesSourceLocationEvidence(rawPayload);
   const values = payloadValues(rawPayload);
   const addressHint = location.address_hint;
@@ -72,12 +105,18 @@ export function salesAddressMatchEvidence(rawPayload) {
     "propertycity",
     "city",
     "municipality",
-  ]) || cityFromAddress(addressHint);
+  ]) || cityFromAddress(addressHint) || fallbackCity;
   const countyHint = firstValue(values, [
     "countyorparish",
     "propertycounty",
     "county",
   ]);
+  const postalHint = firstValue(values, [
+    "postalcode",
+    "propertypostalcode",
+    "zipcode",
+    "zip",
+  ]) || addressHint;
   const addressKey = normalizePropertyAddress(
     String(addressHint || "").split(",", 1)[0],
   );
@@ -87,6 +126,7 @@ export function salesAddressMatchEvidence(rawPayload) {
     address_key: addressKey || null,
     city_key: cityKey || null,
     county_key: normalizeCounty(countyHint),
+    postal_code5: postalCode5(postalHint),
   };
 }
 
@@ -99,6 +139,7 @@ function resolutionRecord(row, method, evidence = {}) {
     raw_parcel_number: row.parcel_number_raw || null,
     address_key: evidence.address_key || null,
     city_key: evidence.city_key || null,
+    postal_code5: evidence.postal_code5 || null,
   };
 }
 
@@ -141,7 +182,9 @@ async function loadUnmatchedAddressCandidates(queryable, limit) {
         source.id AS source_record_id,
         source.match_status,
         source.parcel_number_raw,
-        source.raw_payload
+        source.raw_payload,
+        source.source_name,
+        source.source_files
       FROM core.sales_source_records source
       WHERE source.record_type = 'closed_sale'
         AND source.match_status = 'unmatched'
@@ -154,7 +197,12 @@ async function loadUnmatchedAddressCandidates(queryable, limit) {
     [Math.min(limit * 5, 10_000)],
   );
   return rows
-    .map((row) => ({ row, evidence: salesAddressMatchEvidence(row.raw_payload) }))
+    .map((row) => ({
+      row,
+      evidence: salesAddressMatchEvidence(row.raw_payload, {
+        fallbackCity: cityHintFromSalesSource(row.source_name, row.source_files),
+      }),
+    }))
     .filter(({ evidence }) => evidence.address_key && evidence.city_key)
     .slice(0, limit);
 }
@@ -162,55 +210,13 @@ async function loadUnmatchedAddressCandidates(queryable, limit) {
 async function resolveUniqueExactAddresses(queryable, candidates) {
   if (!candidates.length) return [];
   const requested = candidates.map(({ row, evidence }) => ({
-    source_record_id: Number(row.source_record_id),
+    request_id: String(row.source_record_id),
     address_key: evidence.address_key,
     city_key: evidence.city_key,
     county_key: evidence.county_key,
+    postal_code5: evidence.postal_code5,
   }));
-  const { rows } = await queryable.query(
-    `
-      WITH requested AS (
-        SELECT *
-        FROM jsonb_to_recordset($1::jsonb) AS item(
-          source_record_id bigint,
-          address_key text,
-          city_key text,
-          county_key text
-        )
-      ), candidate_matches AS (
-        SELECT
-          requested.source_record_id,
-          account.account_id,
-          COUNT(*) OVER (PARTITION BY requested.source_record_id) AS candidate_count
-        FROM requested
-        JOIN core.accounts account
-          ON upper(btrim(split_part(account.address, ',', 1))) COLLATE "C"
-               = requested.address_key COLLATE "C"
-         AND upper(btrim(regexp_replace(
-               COALESCE(account.city, ''),
-               '\\s*\\([^)]*\\)\\s*$',
-               ''
-             ))) COLLATE "C" = requested.city_key COLLATE "C"
-         AND (
-           requested.county_key IS NULL
-           OR upper(btrim(regexp_replace(
-                COALESCE(account.county, ''),
-                '\\s+COUNTY$',
-                '',
-                'i'
-              ))) = requested.county_key
-         )
-        WHERE account.canonical_account_id IS NULL
-      )
-      SELECT source_record_id, account_id
-      FROM candidate_matches
-      WHERE candidate_count = 1
-    `,
-    [JSON.stringify(requested)],
-  );
-  const matches = new Map(
-    rows.map((row) => [String(row.source_record_id), row.account_id]),
-  );
+  const matches = await resolveUniqueAddressAliases(queryable, requested);
   return candidates
     .filter(({ row }) => matches.has(String(row.source_record_id)))
     .map(({ row, evidence }) => resolutionRecord(
@@ -446,6 +452,7 @@ export async function auditSalesAutoReconciliation(pool, {
 } = {}) {
   const safeBatchSize = boundedInteger(batchSize, 500, 1, 2_000);
   await ensureSalesReconciliationSchema(pool);
+  await ensureAccountAddressAliasSchema(pool);
   const linked = await loadTrustedExistingLinks(pool, safeBatchSize);
   const candidates = await loadUnmatchedAddressCandidates(pool, safeBatchSize);
   const address = await resolveUniqueExactAddresses(pool, candidates);
@@ -465,6 +472,7 @@ export async function runSalesAutoReconciliationBatch(pool, {
 } = {}) {
   const safeBatchSize = boundedInteger(batchSize, 500, 1, 2_000);
   await ensureSalesReconciliationSchema(pool);
+  await ensureAccountAddressAliasSchema(pool);
   const linked = await loadTrustedExistingLinks(pool, safeBatchSize);
   const candidates = await loadUnmatchedAddressCandidates(pool, safeBatchSize);
   const address = await resolveUniqueExactAddresses(pool, candidates);
@@ -500,3 +508,4 @@ export async function runSalesAutoReconciliationBatch(pool, {
     client.release();
   }
 }
+

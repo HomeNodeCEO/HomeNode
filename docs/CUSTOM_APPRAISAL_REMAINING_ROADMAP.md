@@ -20,9 +20,11 @@ and evidence-retention boundary.
    Cloudflare R2 pattern while metadata, checksums, extracted pages, candidates,
    review decisions, and audit history remain in PostgreSQL. A durable database
    fallback and scheduled legacy migration protect uploads during R2 outages.
-2. **Next:** add a production OCR adapter for scanned or image-only PDFs currently marked
-   `ocr_required`.
-3. Expand reviewed extraction/autofill coverage for engagement letters,
+2. **Implemented; activation pending credentials:** the provider-neutral OCR
+   boundary now supports Azure AI Document Intelligence Read for scanned or
+   image-only PDFs, with page-preserving text, bounded asynchronous polling,
+   retry recovery, and mandatory appraiser review.
+3. **Next:** expand reviewed extraction/autofill coverage for engagement letters,
    contracts, MLS sheets, zoning maps and ordinances, maps, and other appraisal
    evidence. No extracted value becomes authoritative without appraiser review.
 4. Add operational telemetry, bounded retry/recovery, and acceptance fixtures

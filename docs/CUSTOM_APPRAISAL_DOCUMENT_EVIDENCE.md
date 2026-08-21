@@ -36,7 +36,29 @@ The current form mappings include lender/client name and address, assignment typ
 
 ## OCR and storage boundary
 
-Machine-readable PDFs are processed locally with `unpdf`. Image-only, scanned, or unreadable PDFs are marked `ocr_required`; HomeNode does not pretend that an empty text layer produced reliable data. A production OCR provider should be added behind the document-intelligence interface before scanned documents are eligible for automatic field suggestions.
+Machine-readable PDFs are processed locally with `unpdf`. Image-only, scanned,
+or unreadable PDFs are marked `ocr_required`; HomeNode does not pretend that an
+empty text layer produced reliable data. When explicitly configured, the
+scheduled document worker submits those PDFs to Azure AI Document Intelligence
+Read (`prebuilt-read`, GA API `2024-11-30`). OCR output remains page-preserving,
+each derived field retains its OCR extraction provenance, and every value is
+still only a suggestion until an appraiser confirms it.
+
+OCR is intentionally disabled without credentials. Configure:
+
+- `DOCUMENT_OCR_PROVIDER=azure`
+- `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`
+- `AZURE_DOCUMENT_INTELLIGENCE_KEY`
+- Optional bounded polling controls: `DOCUMENT_OCR_POLL_INTERVAL_MS`,
+  `DOCUMENT_OCR_MAX_POLL_MS`, and `DOCUMENT_OCR_REQUEST_TIMEOUT_MS`
+
+The upload request performs only local text-layer extraction. Cost-bearing OCR
+runs in scheduled maintenance or after an explicit manual reprocess, keeping the
+web request responsive. Azure bills document analysis by processed page; its F0
+tier processes only the first two pages and accepts files up to 4 MB, while the
+S0 limits are substantially higher. See the official
+[Read model](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/prebuilt/read?view=doc-intel-4.0.0)
+and [service limits](https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/service-limits?view=doc-intel-4.0.0).
 
 New originals use the established private R2 object-storage boundary. The server
 verifies object size after upload and verifies both byte size and SHA-256 checksum

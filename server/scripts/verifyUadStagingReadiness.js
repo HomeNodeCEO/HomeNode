@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 import { runUadStagingSmoke } from "../src/modules/uad/uadStagingSmoke.js";
 
 function option(name) {

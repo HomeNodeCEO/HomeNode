@@ -5,6 +5,11 @@ import { ensureLocationBackfillQueueSchema } from "./locationBackfillQueue.js";
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
 import { ensurePropertyEnrichmentSchema } from "./propertyEnrichment.js";
 import { mapTrestleProperty } from "./trestleClient.js";
+import { ensureAccountAddressAliasSchema } from "./accountAddressAliases.js";
+import {
+  normalizePropertyAddress,
+  normalizePropertyCity,
+} from "../util/propertySearch.js";
 
 const TRESTLE_REPLICATION_LOCK_A = 48_632_941;
 const TRESTLE_REPLICATION_LOCK_B = 20_260_819;
@@ -71,22 +76,7 @@ function normalizedPlace(value) {
 }
 
 function normalizedAddress(value) {
-  return String(value ?? "")
-    .split(",")[0]
-    .trim()
-    .toUpperCase()
-    .replace(/\bSTREET\b/g, "ST")
-    .replace(/\bROAD\b/g, "RD")
-    .replace(/\bLANE\b/g, "LN")
-    .replace(/\bDRIVE\b/g, "DR")
-    .replace(/\bAVENUE\b/g, "AVE")
-    .replace(/\bCOURT\b/g, "CT")
-    .replace(/\bBOULEVARD\b/g, "BLVD")
-    .replace(/\bCIRCLE\b/g, "CIR")
-    .replace(/\bPARKWAY\b/g, "PKWY")
-    .replace(/\bPLACE\b/g, "PL")
-    .replace(/\bTRAIL\b/g, "TRL")
-    .replace(/[^0-9A-Z]/g, "");
+  return normalizePropertyAddress(String(value ?? "").split(",")[0]);
 }
 
 function propertyAddress(record) {
@@ -218,7 +208,7 @@ export function mapTrestleSourceRecord(record = {}) {
     address,
     address_key: normalizedAddress(address),
     city,
-    city_key: normalizedPlace(city),
+    city_key: normalizePropertyCity(city),
     state: text(record.StateOrProvince, 50) || "TX",
     postal_code: text(record.PostalCode, 30),
     county,
@@ -235,6 +225,7 @@ export function mapTrestleSourceRecord(record = {}) {
 }
 
 export async function ensureTrestleReplicationSchema(pool) {
+  await ensureAccountAddressAliasSchema(pool);
   await ensureAccountLocationsTable(pool);
   await ensureLocationBackfillQueueSchema(pool);
   await ensurePropertyContextSchema(pool);
@@ -358,20 +349,21 @@ export async function resolveTrestleAccountMatches(pool, records) {
        FROM parcel_candidates
        GROUP BY listing_key HAVING COUNT(DISTINCT account_id) = 1
      ), address_candidates AS (
-       SELECT request.listing_key, account.account_id
+       SELECT request.listing_key, alias.account_id
        FROM requested request
-       JOIN core.accounts account
+       JOIN app.account_address_aliases alias
          ON request.address_key IS NOT NULL AND request.address_key <> ''
         AND request.city_key IS NOT NULL AND request.city_key <> ''
-        AND REGEXP_REPLACE(UPPER(BTRIM(COALESCE(account.address, ''))), '[^0-9A-Z]', '', 'g') = request.address_key
-        AND REGEXP_REPLACE(UPPER(BTRIM(COALESCE(account.city, ''))), '[^0-9A-Z]', '', 'g') = request.city_key
+        AND alias.is_current = true
+        AND alias.address_key = request.address_key
+        AND alias.city_key = request.city_key
         AND (
           request.county_key IS NULL OR request.county_key = ''
-          OR REGEXP_REPLACE(
-               UPPER(REGEXP_REPLACE(BTRIM(COALESCE(account.county, '')), '\\s+COUNTY$', '', 'i')),
-               '[^0-9A-Z]', '', 'g'
-             ) = request.county_key
+          OR alias.county_key = request.county_key
         )
+       JOIN core.accounts account
+         ON account.account_id = alias.account_id
+        AND account.canonical_account_id IS NULL
      ), address_unique AS (
        SELECT listing_key, MIN(account_id) AS account_id
        FROM address_candidates

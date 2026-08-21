@@ -73,6 +73,14 @@ try {
       "sales-reconciliation-batch-size",
       process.env.MAINTENANCE_SALES_RECONCILIATION_BATCH_SIZE || "500",
     ),
+    salesAddressAliasMaximumBatches: option(
+      "sales-address-alias-maximum-batches",
+      process.env.MAINTENANCE_SALES_ADDRESS_ALIAS_MAX_BATCHES || "100",
+    ),
+    salesAddressAliasBatchSize: option(
+      "sales-address-alias-batch-size",
+      process.env.MAINTENANCE_SALES_ADDRESS_ALIAS_BATCH_SIZE || "10000",
+    ),
     hazardBatchSize: option(
       "hazard-batch-size",
       process.env.MAINTENANCE_HAZARD_BATCH_SIZE || "200",
@@ -101,3 +109,4 @@ try {
 } finally {
   await pool.end();
 }
+

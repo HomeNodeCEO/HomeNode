@@ -1,0 +1,173 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { createUadAssetUpload, verifyUadAssetUpload } from "../src/modules/uad/assets.js";
+import { buildDeterministicZip } from "../src/modules/uad/uadDeliveryPackage.js";
+import { inspectUadAssetPayload } from "../src/modules/uad/uadFileSecurity.js";
+import { validateUadSubschema } from "../src/modules/uad/uadSubschema.js";
+import { runUadArtifactSecurityChecks } from "../src/modules/uad/uadArtifactSecurity.js";
+
+const WORKFILE_ID = "00000000-0000-4000-8000-000000000001";
+const ASSET_ID = "00000000-0000-4000-8000-000000000002";
+const ORGANIZATION_ID = "00000000-0000-4000-8000-000000000003";
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+
+function assetRow(overrides = {}) {
+  return {
+    id: ASSET_ID,
+    object_key: `organizations/${ORGANIZATION_ID}/uad/${WORKFILE_ID}/assets/${ASSET_ID}/probe.png`,
+    original_file_name: "probe.png",
+    content_type: "image/png",
+    capture_metadata: { expected_byte_size: PNG.length },
+    organization_id: ORGANIZATION_ID,
+    entity_id: null,
+    asset_kind: "photo",
+    section_number: 8,
+    caption_type: "DwellingFront",
+    caption: null,
+    byte_size: PNG.length,
+    status: "verified",
+    uploaded_at: "2026-08-21T00:00:00.000Z",
+    verified_at: "2026-08-21T00:00:00.000Z",
+    created_at: "2026-08-21T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+test("verified asset inspection rejects MIME spoofing, unsafe PDFs, and image bombs", () => {
+  const inspected = inspectUadAssetPayload(PNG, "image/png");
+  assert.equal(inspected.byte_size, PNG.length);
+  assert.equal(inspected.dimensions.pixels, 1);
+  assert.match(inspected.checksum_sha256, /^[a-f0-9]{64}$/);
+
+  assert.throws(() => inspectUadAssetPayload(Buffer.alloc(PNG.length, 0x41), "image/png"), /content_type_mismatch/);
+  assert.throws(
+    () => inspectUadAssetPayload(Buffer.from("%PDF-1.7\n1 0 obj <</OpenAction 2 0 R>>", "ascii"), "application/pdf"),
+    /pdf_active_content/,
+  );
+  const oversizedDimensions = Buffer.from(PNG);
+  oversizedDimensions.writeUInt32BE(20_001, 16);
+  assert.throws(() => inspectUadAssetPayload(oversizedDimensions, "image/png"), /image_dimensions/);
+});
+
+test("new UAD uploads reject active SVG documents before issuing a storage URL", async () => {
+  await assert.rejects(
+    () => createUadAssetUpload(
+      { query: async () => assert.fail("invalid content must not reach PostgreSQL") },
+      { createUploadUrl: () => assert.fail("invalid content must not receive a signed URL") },
+      WORKFILE_ID,
+      { asset_kind: "sketch", content_type: "image/svg+xml", file_name: "active.svg", byte_size: 100 },
+    ),
+    /invalid_uad_asset_content_type/,
+  );
+});
+
+test("asset verification copies reviewed bytes to a checksum-addressed immutable key", async () => {
+  const source = assetRow({ status: "pending_upload", byte_size: null });
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
+      if (/WITH updated_asset/.test(sql)) return { rows: [assetRow({ object_key: params[5] })] };
+      throw new Error(`unexpected_query:${sql}`);
+    },
+  };
+  const operations = [];
+  const storage = {
+    async inspectObject({ objectKey }) {
+      operations.push(["inspect", objectKey]);
+      return { byte_size: PNG.length, content_type: "image/png", etag: "source-etag" };
+    },
+    async getObject({ objectKey }) {
+      operations.push(["get", objectKey]);
+      return { body: PNG, byte_size: PNG.length, content_type: "image/png" };
+    },
+    async putObject({ objectKey, contentType, body }) {
+      operations.push(["put", objectKey, contentType, body.length]);
+      return { byte_size: body.length, etag: "verified-etag" };
+    },
+    async deleteObject({ objectKey }) {
+      operations.push(["delete", objectKey]);
+      return { deleted: true };
+    },
+  };
+
+  const result = await verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID);
+  const update = queries.find((query) => /WITH updated_asset/.test(query.sql));
+  assert.equal(result.status, "verified");
+  assert.match(update.params[4], /^[a-f0-9]{64}$/);
+  assert.match(update.params[5], new RegExp(`/verified-assets/${ASSET_ID}/${update.params[4]}/probe\\.png$`));
+  assert.deepEqual(operations.map(([operation]) => operation), ["inspect", "get", "put", "delete"]);
+  assert.equal(operations.at(-1)[1], source.object_key);
+});
+
+test("asset verification rejects and removes a same-size MIME-spoofed upload", async () => {
+  const source = assetRow({ status: "pending_upload", byte_size: null });
+  const spoof = Buffer.alloc(PNG.length, 0x41);
+  let rejected = false;
+  const pool = {
+    async query(sql) {
+      if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
+      if (/SET status = 'rejected'/.test(sql)) {
+        rejected = true;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected_query:${sql}`);
+    },
+  };
+  const deleted = [];
+  const storage = {
+    inspectObject: async () => ({ byte_size: spoof.length, content_type: "image/png", etag: "spoof" }),
+    getObject: async () => ({ body: spoof, byte_size: spoof.length, content_type: "image/png" }),
+    putObject: async () => assert.fail("spoofed bytes must never be copied"),
+    deleteObject: async ({ objectKey }) => deleted.push(objectKey),
+  };
+  await assert.rejects(
+    () => verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID),
+    /invalid_uad_uploaded_asset/,
+  );
+  assert.equal(rejected, true);
+  assert.deepEqual(deleted, [source.object_key]);
+});
+
+test("ZIP construction rejects portable traversal, device, collision, and control-character paths", () => {
+  for (const path of [
+    "../escape.txt",
+    "C:/escape.txt",
+    "Images//empty.jpg",
+    "Images/./dot.jpg",
+    "Images/CON.txt",
+    "Images/name:stream.jpg",
+    "Images/line\nfeed.jpg",
+  ]) {
+    assert.throws(() => buildDeterministicZip([{ path, body: "x" }]), /uad_package_entry_path_invalid/);
+  }
+  assert.throws(
+    () => buildDeterministicZip([{ path: "Report.xml", body: "a" }, { path: "report.xml", body: "b" }]),
+    /uad_package_entry_duplicate/,
+  );
+});
+
+test("the local subschema boundary fails closed on DTD and processing-instruction payloads", async () => {
+  await assert.rejects(
+    () => validateUadSubschema('<?xml version="1.0"?><!DOCTYPE x [<!ENTITY e SYSTEM "file:///etc/passwd">]><x>&e;</x>'),
+    /uad_xml_dtd_forbidden/,
+  );
+  await assert.rejects(
+    () => validateUadSubschema('<?xml version="1.0"?><?xml-stylesheet href="https://invalid.example/x"?><MESSAGE/>'),
+    /uad_xml_processing_instruction_forbidden/,
+  );
+});
+
+test("the artifact security evidence runner reports only bounded control results", async () => {
+  const result = await runUadArtifactSecurityChecks({ checkedAt: "2026-08-21T23:00:00.000Z" });
+  assert.equal(result.ok, true);
+  assert.equal(result.checks.verified_asset_payload.mime_spoof_rejected, true);
+  assert.equal(result.checks.deterministic_package.unsafe_paths_rejected, true);
+  assert.equal(result.checks.local_xml_parser.dtd_rejected, true);
+  assert.doesNotMatch(JSON.stringify(result), /file:\/\/\/etc\/passwd|invalid\.example|OpenAction|checksum_sha256/);
+});

@@ -109,6 +109,25 @@ function integrityFetch({
       return json({ current_revision: state.revision, saved_field_count: 1 });
     }
 
+    const artifactMatch = path.match(/\/api\/uad\/workfiles\/([^/]+)\/artifacts\/(xml|pdf|submission-package)$/);
+    if (artifactMatch) {
+      const [, workfileId, artifactType] = artifactMatch;
+      if (workfileId === WORKFILE_B && persona === "assigned_appraiser_a") {
+        return json({ error: "uad_workfile_access_denied" }, 403);
+      }
+      if (init.method === "POST") {
+        const code = artifactType === "xml"
+          ? "uad_xml_local_validation_required"
+          : artifactType === "pdf"
+            ? "uad_pdf_local_validation_required"
+            : "uad_package_signature_required";
+        return json({ error: code }, 409);
+      }
+      if (artifactType === "xml") return json({ artifact: null, schema_validation: null });
+      if (artifactType === "pdf") return json({ artifact: null });
+      return json({ manifest: null, package: null });
+    }
+
     if (path.endsWith("/assets/upload-url") && init.method === "POST") {
       if (path.includes(WORKFILE_B) && persona === "assigned_appraiser_a") {
         return json({ error: "uad_workfile_access_denied" }, 403);
@@ -161,7 +180,8 @@ function integrityFetch({
     if (verifyMatch && init.method === "POST") {
       const asset = state.assets.get(verifyMatch[1]);
       if (!asset) return json({ error: "uad_asset_not_found" }, 404);
-      if (!asset.bytes || asset.bytes.length !== asset.expectedSize || asset.storedType !== asset.contentType) {
+      const validPng = asset.bytes?.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      if (!asset.bytes || asset.bytes.length !== asset.expectedSize || asset.storedType !== asset.contentType || !validPng) {
         asset.status = "rejected";
         return json({ error: "invalid_uad_uploaded_asset" }, 400);
       }
@@ -196,7 +216,11 @@ test("integrity runner proves revision, parser, tenant, upload, and cleanup cont
   assert.equal(result.checks.optimistic_concurrency.restored, true);
   assert.equal(result.checks.json_parser.oversized.http_status, 413);
   assert.equal(result.checks.storage_scope_and_signature.wrong_content_type_http_status, 403);
+  assert.equal(result.checks.artifact_access_and_state.ready, true);
+  assert.deepEqual(result.checks.artifact_access_and_state.cross_tenant_http_statuses, [403, 403, 403]);
+  assert.deepEqual(result.checks.artifact_access_and_state.blocked_generation_http_statuses, [409, 409, 409]);
   assert.equal(result.checks.storage_verification.verification_error_code, "invalid_uad_uploaded_asset");
+  assert.equal(result.checks.storage_content_validation.verification_error_code, "invalid_uad_uploaded_asset");
   assert.equal(result.checks.cleanup.remaining_asset_count, 0);
   assert.equal(state.assets.size, 0);
   assert.equal(state.commentary, null);

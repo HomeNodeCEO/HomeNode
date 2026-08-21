@@ -7,6 +7,8 @@ const SCHEMA_VERSION = "1.3";
 const SCHEMA_FILE = `GSE_UAD_3.6.0_v${SCHEMA_VERSION}.xsd`;
 const XLINK_FILE = `GSE_UAD_3.6.0_xlink_v${SCHEMA_VERSION}.xsd`;
 const SCHEMA_BASE = new URL(`./spec/subschema/v${SCHEMA_VERSION}/`, import.meta.url);
+const MAX_UAD_XML_BYTES = 16 * 1024 * 1024;
+const MAX_UAD_XML_MARKUP_TOKENS = 250_000;
 
 export const UAD_SUBSCHEMA_VALIDATOR_VERSION = `gse-uad-3.6.0-v${SCHEMA_VERSION}-xmllint-wasm-5.3.0`;
 
@@ -43,6 +45,14 @@ function normalizeError(error, index) {
 export async function validateUadSubschema(xml) {
   const contents = String(xml || "");
   if (!contents.trim()) throw new Error("uad_xml_empty");
+  if (Buffer.byteLength(contents, "utf8") > MAX_UAD_XML_BYTES) throw new Error("uad_xml_bytes_exceeded");
+  if (contents.includes("\0")) throw new Error("uad_xml_unsafe_markup");
+  if (/<!DOCTYPE\b|<!ENTITY\b/i.test(contents)) throw new Error("uad_xml_dtd_forbidden");
+  const withoutDeclaration = contents.replace(/^\s*<\?xml\s[^?]*\?>/i, "");
+  if (/<\?/.test(withoutDeclaration)) throw new Error("uad_xml_processing_instruction_forbidden");
+  if ((contents.match(/</g) || []).length > MAX_UAD_XML_MARKUP_TOKENS) {
+    throw new Error("uad_xml_complexity_exceeded");
+  }
   const files = await loadSchemaFiles();
   const result = await validateXML({
     xml: [{ fileName: "homenode-uad.xml", contents }],

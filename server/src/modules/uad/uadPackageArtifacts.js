@@ -10,6 +10,7 @@ import {
   buildUadImagesManifest,
 } from "./uadDeliveryPackage.js";
 import { buildUadValidationInputDigest } from "./validation.js";
+import { inspectUadAssetPayload } from "./uadFileSecurity.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const MANIFEST_CONTENT_TYPE = "application/json";
@@ -217,6 +218,11 @@ export async function generateUadSubmissionPackage(pool, storage, workfileIdValu
   let totalAssetBytes = 0;
   for (const entry of deliveryEntries) {
     const downloaded = await downloadVerified(storage, entry, "uad_package_asset");
+    try {
+      inspectUadAssetPayload(downloaded.body, entry.content_type);
+    } catch {
+      throw new Error("uad_package_asset_payload_invalid");
+    }
     totalAssetBytes += downloaded.byte_size;
     if (totalAssetBytes > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");
     verifiedEntries.push({ ...entry, ...downloaded });

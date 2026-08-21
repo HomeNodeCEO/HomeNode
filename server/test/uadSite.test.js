@@ -132,5 +132,8 @@ test("R2 asset workflow bounds uploads and verifies the stored object before acc
   assert.match(source, /50 \* 1024 \* 1024/);
   assert.match(source, /expected_byte_size/);
   assert.match(source, /storage\.inspectObject/);
+  assert.match(source, /storage\.getObject/);
+  assert.match(source, /buildUadVerifiedAssetObjectKey/);
+  assert.match(source, /checksum_sha256 = \$5/);
   assert.match(source, /status = 'rejected'/);
 });

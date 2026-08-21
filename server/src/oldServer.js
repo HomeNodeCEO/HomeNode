@@ -180,7 +180,7 @@ import {
   createRequestPerformanceMonitor,
   environmentFlag,
 } from "./util/requestPerformance.js";
-import { createUadRouter } from "./modules/uad/router.js";
+import { createUadRouter, uadBodyParserErrorHandler } from "./modules/uad/router.js";
 import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
 import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.js";
 import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
@@ -252,6 +252,7 @@ app.use("/api/uad", createUadRouter({
   authenticationRequired: httpSecurity.authenticationRequired,
   security: httpSecurity,
 }));
+app.use("/api/uad", uadBodyParserErrorHandler);
 
 app.use("/api/mobile", createMobileRouter({
   pool,

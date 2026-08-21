@@ -57,8 +57,8 @@ key in the GitHub `uad-redteam` environment secret
 `UAD_REDTEAM_JWT_PRIVATE_KEY`; never add it to Render, R2, source control, or a
 test artifact. Store the synthetic subject map in
 `UAD_REDTEAM_OIDC_SUBJECTS_JSON`. The matrix runner creates ten-minute RS256
-tokens in memory, never prints them, and uses an intentionally invalid section
-name to prove write authorization after middleware without changing a
+tokens in memory, never prints them, and uses an intentionally invalid revision
+probe to prove write authorization after middleware without changing a
 workfile. Rotate the key and public JWKS after a test program or suspected
 exposure.
 
@@ -174,6 +174,30 @@ npm run --silent verify:redteam:authorization
 Treat any failed matrix cell as a stop condition. Do not proceed to parser,
 upload, concurrency, or active scanning tests until it is understood and the
 matrix passes again.
+
+## Integrity and private-storage checks
+
+After the authenticated matrix passes, dispatch
+`.github/workflows/uad-redteam-integrity.yml`. It remains fixed to the isolated
+service and runs a small, deterministic set of adversarial checks:
+
+- two simultaneous saves with one expected revision, requiring exactly one
+  success and one `409 uad_section_stale_revision`;
+- malformed, oversized, and deeply nested JSON, requiring bounded JSON errors;
+- cross-tenant, invalid-type, and invalid-size upload requests;
+- path traversal in an original filename, requiring an organization/workfile
+  scoped sanitized object key;
+- a content-type signature mismatch, requiring R2 to reject the PUT;
+- a valid small synthetic PNG upload, verification, listing, and deletion; and
+- a byte-size mismatch, requiring rejection and cleanup.
+
+The runner restores the original synthetic commentary after its revision race
+and deletes every asset record and R2 object it creates, including rejected or
+partially uploaded objects. The evidence contains only status codes, counts,
+booleans, and safe error codes; it excludes presigned URLs, object keys, access
+tokens, private keys, request bodies, and response bodies. Treat a failed
+cleanup control as a stop condition and inspect the isolated bucket before
+another run.
 
 ## Recovery rehearsal
 

@@ -4985,8 +4985,17 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
   return errors;
 }
 
+export function normalizeUadExpectedRevision(value) {
+  const revision = Number(value);
+  if (!Number.isInteger(revision) || revision < 1) {
+    throw new Error("invalid_uad_expected_revision");
+  }
+  return revision;
+}
+
 export async function saveUadSection(pool, workfileIdValue, section, input = {}) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  const expectedRevision = normalizeUadExpectedRevision(input.expected_revision);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -4998,6 +5007,12 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
       [workfileId],
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+    const currentRevision = Number(locked.rows[0].current_revision);
+    if (expectedRevision !== currentRevision) {
+      const error = new Error("uad_section_stale_revision");
+      error.details = { current_revision: currentRevision };
+      throw error;
+    }
 
     const [existingRows, entities, assets] = await Promise.all([
       loadValues(client, workfileId, "FOR UPDATE"),
@@ -5104,7 +5119,7 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
       }
     }
 
-    const revisionNumber = Number(locked.rows[0].current_revision) + 1;
+    const revisionNumber = currentRevision + 1;
     const allRows = await loadValues(client, workfileId);
     const revisionDocument = {
       entities,

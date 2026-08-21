@@ -88,6 +88,16 @@ function sendError(res, error) {
   res.status(status).json({ error: code, ...(error?.details ? { details: error.details } : {}) });
 }
 
+export function uadBodyParserErrorHandler(error, _req, res, next) {
+  if (error?.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "invalid_json_body" });
+  }
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({ error: "request_body_too_large" });
+  }
+  return next(error);
+}
+
 function workfileCreationInput(value) {
   const input = value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
   delete input.actor_user_id;
@@ -458,7 +468,7 @@ export function createUadRouter({
 
   router.delete("/workfiles/:workfileId/assets/:assetId", async (req, res) => {
     try {
-      await deleteUadAsset(pool, req.params.workfileId, req.params.assetId);
+      await deleteUadAsset(pool, storage, req.params.workfileId, req.params.assetId);
       res.status(204).end();
     } catch (error) {
       sendError(res, error);

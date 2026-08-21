@@ -243,10 +243,10 @@ export async function runUadRedTeamAuthorizationMatrix({
           && !readResponse.error
           && readResponse.body?.workfile?.id === workfileId
         : exactFailure(readResponse, 403, deniedError);
-      // An authorized invalid-section request is rejected after middleware and
-      // before persistence. It proves write authorization without mutating the fixture.
+      // A missing expected revision is rejected after authorization middleware
+      // and before persistence. It proves write access without mutating the fixture.
       const writeReady = canWrite
-        ? exactFailure(writeResponse, 400, "invalid_uad_section")
+        ? exactFailure(writeResponse, 400, "invalid_uad_expected_revision")
         : exactFailure(writeResponse, 403, deniedError);
       targetEvidence[label] = Object.freeze({
         read: evidence(readResponse, { ready: readReady }),

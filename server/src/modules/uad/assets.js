@@ -491,22 +491,41 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   return assetResponse(updated.rows[0]);
 }
 
-export async function deleteUadAsset(pool, workfileIdValue, assetIdValue) {
+export async function deleteUadAsset(pool, storage, workfileIdValue, assetIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const assetId = normalizeUadWorkfileId(assetIdValue);
-  const deleted = await pool.query(
-    `WITH deleted_asset AS (
-       UPDATE appraisal.uad_assets
-          SET status = 'deleted', updated_at = now()
+  if (!storage?.deleteObject) throw new Error("uad_object_storage_not_configured");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const selected = await client.query(
+      `SELECT id, object_key
+         FROM appraisal.uad_assets
         WHERE id = $1 AND workfile_id = $2 AND status <> 'deleted'
-        RETURNING id
-     ), touched_workfile AS (
-       UPDATE appraisal.uad_workfiles
-          SET status = 'draft', updated_at = now()
-        WHERE id = $2 AND EXISTS (SELECT 1 FROM deleted_asset)
-     )
-     SELECT id FROM deleted_asset`,
-    [assetId, workfileId],
-  );
-  if (!deleted.rows.length) throw new Error("uad_asset_not_found");
+        FOR UPDATE`,
+      [assetId, workfileId],
+    );
+    if (!selected.rows.length) throw new Error("uad_asset_not_found");
+    await storage.deleteObject({ objectKey: selected.rows[0].object_key });
+    await client.query(
+      `WITH deleted_asset AS (
+         UPDATE appraisal.uad_assets
+            SET status = 'deleted', updated_at = now()
+          WHERE id = $1 AND workfile_id = $2 AND status <> 'deleted'
+          RETURNING id
+       ), touched_workfile AS (
+         UPDATE appraisal.uad_workfiles
+            SET status = 'draft', updated_at = now()
+          WHERE id = $2 AND EXISTS (SELECT 1 FROM deleted_asset)
+       )
+       SELECT id FROM deleted_asset`,
+      [assetId, workfileId],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }

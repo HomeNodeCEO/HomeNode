@@ -19,5 +19,6 @@ test("property context schema retains influence versions and queues changed sale
   assert.match(schemaSql, /UPDATE OF primary_account_id ON core\.sales_source_records/);
   assert.match(schemaSql, /NEW\.record_type = ''closed_sale''/);
   assert.match(schemaSql, /UPDATE OF account_id ON core\.sales/);
+  assert.doesNotMatch(schemaSql, /'core\.sales(?:_source_records)?'::regclass/);
   assert.doesNotMatch(schemaSql, /DROP TRIGGER/);
 });

@@ -19,6 +19,7 @@ import {
   closeSketchOutline,
   emptySketchDraft,
   modelToCanvas,
+  normalizeSketchBearing,
   pointInArea,
   SKETCH_CLASSIFICATIONS,
   SKETCH_ROOM_TYPES,
@@ -33,6 +34,24 @@ import { useSketchSync } from "./sync";
 
 const CANVAS_WIDTH = 320;
 const CANVAS_HEIGHT = 260;
+
+const DIRECTION_PAD = Object.freeze([
+  [
+    { symbol: "↖", label: "Northwest, 135 degrees", bearing: 135 },
+    { symbol: "↑", label: "North, 90 degrees", bearing: 90 },
+    { symbol: "↗", label: "Northeast, 45 degrees", bearing: 45 },
+  ],
+  [
+    { symbol: "←", label: "West, 180 degrees", bearing: 180 },
+    null,
+    { symbol: "→", label: "East, 0 degrees", bearing: 0 },
+  ],
+  [
+    { symbol: "↙", label: "Southwest, 225 degrees", bearing: 225 },
+    { symbol: "↓", label: "South, 270 degrees", bearing: 270 },
+    { symbol: "↘", label: "Southeast, 315 degrees", bearing: 315 },
+  ],
+]);
 
 export type SelectedSketchRoom = Readonly<{
   id: string;
@@ -69,6 +88,29 @@ function Choice({ label, selected, onPress }: { label: string; selected: boolean
   return (
     <Pressable onPress={onPress} style={[styles.choice, selected && styles.choiceSelected]}>
       <Text style={[styles.choiceText, selected && styles.choiceSelectedText]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function DirectionButton({ symbol, label, selected, onPress }: {
+  symbol: string;
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel={label}
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.directionButton,
+        selected && styles.directionButtonSelected,
+        pressed && styles.pressed,
+      ]}
+    >
+      <Text style={[styles.directionSymbol, selected && styles.directionSymbolSelected]}>{symbol}</Text>
     </Pressable>
   );
 }
@@ -195,6 +237,9 @@ export function SketchEditorPanel({
   const selectedArea = (draft.areas.find((area) => area.id === selectedAreaId) || draft.areas[0])!;
   const areaRooms = draft.rooms.filter((room) => room.areaId === selectedArea.id);
   const calculation = calculateSketchOutline(selectedArea.vertices);
+
+  const setNormalizedBearing = (value: number) => setBearing(String(normalizeSketchBearing(value)));
+  const adjustBearing = (change: number) => setNormalizedBearing(Number(bearing) + change);
 
   const initialize = useCallback(async () => {
     if (dirty) return;
@@ -443,9 +488,29 @@ export function SketchEditorPanel({
         <TextInput keyboardType="decimal-pad" onChangeText={setWallLength} placeholder="Length ft" style={[styles.input, styles.measureInput]} value={wallLength} />
         <TextInput keyboardType="decimal-pad" onChangeText={setBearing} placeholder="Bearing°" style={[styles.input, styles.measureInput]} value={bearing} />
       </View>
-      <View style={styles.choices}>{([["E", "0"], ["N", "90"], ["W", "180"], ["S", "270"]] as const).map(([label, value]) => (
-        <Choice key={label} label={label} selected={bearing === value} onPress={() => setBearing(value)} />
+      <Text style={styles.label}>Wall direction</Text>
+      <View style={styles.directionPad}>{DIRECTION_PAD.map((row, rowIndex) => (
+        <View key={rowIndex} style={styles.directionRow}>{row.map((direction, columnIndex) => direction ? (
+          <DirectionButton
+            key={direction.bearing}
+            symbol={direction.symbol}
+            label={direction.label}
+            selected={normalizeSketchBearing(Number(bearing)) === direction.bearing}
+            onPress={() => setNormalizedBearing(direction.bearing)}
+          />
+        ) : (
+          <View accessibilityLabel={`Current bearing ${normalizeSketchBearing(Number(bearing))} degrees`} key={`center-${columnIndex}`} style={styles.bearingCenter}>
+            <Text style={styles.bearingValue}>{normalizeSketchBearing(Number(bearing))}°</Text>
+          </View>
+        ))}</View>
       ))}</View>
+      <View style={styles.angleAdjustments}>
+        <Choice label="↶ 5°" selected={false} onPress={() => adjustBearing(5)} />
+        <Choice label="↶ 1°" selected={false} onPress={() => adjustBearing(1)} />
+        <Choice label="↷ 1°" selected={false} onPress={() => adjustBearing(-1)} />
+        <Choice label="↷ 5°" selected={false} onPress={() => adjustBearing(-5)} />
+      </View>
+      <Text style={styles.help}>Use an arrow for the nearest direction, then rotate by 1° or 5° for angled walls. You can still enter an exact bearing above.</Text>
       <View style={styles.actionsRow}>
         <Action title="Add wall" onPress={addWall} />
         <Action title="Undo" secondary disabled={selectedArea.vertices.length < 2} onPress={undoWall} />
@@ -534,6 +599,15 @@ const styles = StyleSheet.create({
   rowBetween: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
   measureRow: { flexDirection: "row", gap: 8 },
   measureInput: { flex: 1 },
+  directionPad: { alignSelf: "center", gap: 6 },
+  directionRow: { flexDirection: "row", gap: 6 },
+  directionButton: { alignItems: "center", backgroundColor: "white", borderColor: "#a9bbb2", borderRadius: 10, borderWidth: 1, height: 52, justifyContent: "center", width: 58 },
+  directionButtonSelected: { backgroundColor: "#1d5a43", borderColor: "#1d5a43" },
+  directionSymbol: { color: "#29493c", fontSize: 27, fontWeight: "800" },
+  directionSymbolSelected: { color: "white" },
+  bearingCenter: { alignItems: "center", backgroundColor: "#e8f1ed", borderColor: "#b8cec2", borderRadius: 10, borderWidth: 1, height: 52, justifyContent: "center", width: 58 },
+  bearingValue: { color: "#1d5a43", fontSize: 13, fontWeight: "800" },
+  angleAdjustments: { alignSelf: "center", flexDirection: "row", gap: 7 },
   actionsRow: { flexDirection: "row", gap: 7 },
   action: { alignItems: "center", backgroundColor: "#1d5a43", borderRadius: 10, justifyContent: "center", minHeight: 45, paddingHorizontal: 14 },
   actionSecondary: { backgroundColor: "white", borderColor: "#1d5a43", borderWidth: 1 },

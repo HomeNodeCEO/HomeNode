@@ -9,10 +9,18 @@ import {
   draftFromApiDocument,
   emptySketchDraft,
   modelToCanvas,
+  normalizeSketchBearing,
   sketchReadyForConfirmation,
   sketchRoomRef,
   toSketchApiDocument,
 } from "../src/sketch/model";
+
+test("normalizes fine-angle sketch bearings in either direction", () => {
+  assert.equal(normalizeSketchBearing(361), 1);
+  assert.equal(normalizeSketchBearing(-1), 359);
+  assert.equal(normalizeSketchBearing(45.25), 45.3);
+  assert.equal(normalizeSketchBearing(Number.NaN), 0);
+});
 
 test("builds and closes a measured rectangular outline", () => {
   let vertices = appendMeasuredWall([], 40, 0);

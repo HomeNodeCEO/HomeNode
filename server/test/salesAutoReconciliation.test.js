@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   auditSalesAutoReconciliation,
+  cityHintFromSalesSource,
   runSalesAutoReconciliationBatch,
   salesAddressMatchEvidence,
 } from "../src/services/salesAutoReconciliation.js";
@@ -18,15 +19,27 @@ test("sales address evidence canonicalizes MLS suffixes and place names", () => 
       address_key: "3901 GREENSBORO CIR",
       city_key: "GARLAND",
       county_key: "DALLAS",
+      postal_code5: "75044",
     },
   );
+});
+
+test("sales source filenames supply a conservative city fallback", () => {
+  assert.equal(
+    cityHintFromSalesSource("MLS sales export", ["University Park Two Year Sales.csv"]),
+    "UNIVERSITY PARK",
+  );
+  assert.equal(cityHintFromSalesSource("MLS sales export", ["unknown.csv"]), null);
 });
 
 function auditPool() {
   return {
     async query(sql, params) {
       const statement = String(sql);
-      if (statement.includes("CREATE TABLE IF NOT EXISTS app.sales_auto_reconciliation_history")) {
+      if (
+        statement.includes("CREATE TABLE IF NOT EXISTS app.sales_auto_reconciliation_history") ||
+        statement.includes("CREATE TABLE IF NOT EXISTS app.account_address_aliases")
+      ) {
         return { rows: [], rowCount: 0 };
       }
       if (statement.includes("source.has_unresolved_parcel = true")) {
@@ -59,12 +72,12 @@ function auditPool() {
           rowCount: 2,
         };
       }
-      if (statement.includes("candidate_matches AS")) {
+      if (statement.includes("app.account_address_aliases")) {
         const requested = JSON.parse(params[0]);
         assert.equal(requested[0].address_key, "100 MAIN ST");
         assert.equal(requested[1].address_key, "200 OAK RD");
         return {
-          rows: [{ source_record_id: 44, account_id: "00000000000000044" }],
+          rows: [{ request_id: "44", account_id: "00000000000000044" }],
           rowCount: 1,
         };
       }
@@ -98,3 +111,4 @@ test("batch dry run never opens a write transaction", async () => {
   assert.equal(result.resolved, 0);
   assert.equal(result.remaining_candidate_count, 2);
 });
+

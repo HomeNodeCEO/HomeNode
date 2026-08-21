@@ -26,7 +26,10 @@ import {
   seedPropertyInfluenceQueue,
 } from "./propertyInfluenceQueue.js";
 import { syncOfficialZoningDocuments } from "./zoningEvidence.js";
-import { processPendingAssignmentDocuments } from "./assignmentDocuments.js";
+import {
+  migrateAssignmentDocumentStorageBatch,
+  processPendingAssignmentDocuments,
+} from "./assignmentDocuments.js";
 
 const MAINTENANCE_LOCK_A = 48_632_941;
 const MAINTENANCE_LOCK_B = 20_260_812;
@@ -232,7 +235,17 @@ async function runInfluenceTask(pool, options) {
 
 async function runTask(pool, task, options) {
   if (task === "documents") {
-    return processPendingAssignmentDocuments(pool, { limit: options.documentBatchSize });
+    const storageMigration = await migrateAssignmentDocumentStorageBatch(
+      pool,
+      options.objectStorage,
+      { limit: options.documentStorageBatchSize, logger: options.logger },
+    );
+    const processing = await processPendingAssignmentDocuments(pool, {
+      limit: options.documentBatchSize,
+      logger: options.logger,
+      storage: options.objectStorage,
+    });
+    return { storage_migration: storageMigration, processing };
   }
   if (task === "census") return runCensusTask(pool, options);
   if (task === "locations") return runLocationTask(pool, options);
@@ -291,6 +304,7 @@ export async function runScheduledMaintenance(pool, {
   zoningBatchSize = 1_000,
   zoningJurisdictions = null,
   documentBatchSize = 5,
+  documentStorageBatchSize = 5,
   influenceMaximumBatches = 100,
   influenceBatchSize = 100,
   influenceSeedLimit = 10_000,
@@ -298,6 +312,7 @@ export async function runScheduledMaintenance(pool, {
   influenceStatementTimeoutMs = 60_000,
   fetchConcurrency = 3,
   logger = console,
+  objectStorage = null,
   taskRunner = runTask,
 } = {}) {
   const tasks = resolveMaintenanceTasks(task);
@@ -341,6 +356,7 @@ export async function runScheduledMaintenance(pool, {
       zoningBatchSize: boundedInteger(zoningBatchSize, 1_000, 100, 2_000),
       zoningJurisdictions,
       documentBatchSize: boundedInteger(documentBatchSize, 5, 1, 25),
+      documentStorageBatchSize: boundedInteger(documentStorageBatchSize, 5, 1, 25),
       influenceMaximumBatches,
       influenceBatchSize,
       influenceSeedLimit,
@@ -352,6 +368,8 @@ export async function runScheduledMaintenance(pool, {
         300_000,
       ),
       fetchConcurrency: boundedInteger(fetchConcurrency, 3, 1, 8),
+      logger,
+      objectStorage,
     };
 
     for (const taskName of tasks) {

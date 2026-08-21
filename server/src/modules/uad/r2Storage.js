@@ -183,5 +183,17 @@ export function createUadObjectStorage(env = process.env) {
         content_type: response.headers.get("content-type"),
       };
     },
+    async getObject({ objectKey }) {
+      const download = this.createDownloadUrl({ objectKey, expiresInSeconds: 60 });
+      const response = await fetch(download.url, { method: download.method });
+      if (!response.ok) throw new Error(`uad_object_download_failed:${response.status}`);
+      const body = Buffer.from(await response.arrayBuffer());
+      return {
+        body,
+        byte_size: body.length,
+        etag: response.headers.get("etag"),
+        content_type: response.headers.get("content-type"),
+      };
+    },
   };
 }

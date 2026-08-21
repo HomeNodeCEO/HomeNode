@@ -5,6 +5,7 @@ import {
   findZoningDescriptionInPages,
   normalizeDocumentType,
 } from "./documentIntelligence.js";
+import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
@@ -18,6 +19,34 @@ function cleanText(value, maximum = 4_000) {
 function positiveInteger(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+export function buildAssignmentDocumentObjectKey({
+  accountId,
+  assignmentFileId = null,
+  checksumSha256,
+  fileName,
+} = {}) {
+  const account = sanitizeUadFileName(accountId || "unassigned-account");
+  const assignment = positiveInteger(assignmentFileId) || "property-evidence";
+  const checksum = String(checksumSha256 || "unverified")
+    .replace(/[^a-f0-9]/gi, "")
+    .toLowerCase()
+    .slice(0, 64) || "unverified";
+  return `organizations/unassigned/custom-appraisal/accounts/${account}`
+    + `/assignment-files/${assignment}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
+}
+
+function verifiedR2Object(inspected, { content, checksumSha256 }) {
+  const actualSize = Number(inspected?.byte_size || 0);
+  if (actualSize !== content.length) throw new Error("assignment_document_storage_size_mismatch");
+  if (createHash("sha256").update(content).digest("hex") !== checksumSha256) {
+    throw new Error("assignment_document_storage_checksum_mismatch");
+  }
+  return {
+    storage_etag: cleanText(inspected?.etag, 500),
+    storage_content_type: cleanText(inspected?.content_type, 200) || "application/pdf",
+  };
 }
 
 export function assignmentDocumentRetryDelayMs(attempts) {
@@ -104,6 +133,10 @@ function publicDocument(row, candidates = undefined) {
     extraction_summary: row.extraction_summary || {},
     source_kind: row.source_kind,
     source_url: row.source_url,
+    storage_provider: row.storage_provider || "postgres",
+    storage_status: row.storage_status || "stored",
+    storage_verified_at: row.storage_verified_at,
+    storage_last_error: row.storage_last_error,
     uploaded_by: row.uploaded_by,
     uploaded_at: row.uploaded_at,
     processed_at: row.processed_at,
@@ -129,9 +162,19 @@ export async function ensureAssignmentDocumentsSchema(pool) {
       title text NOT NULL,
       file_name text NOT NULL,
       content_type text NOT NULL DEFAULT 'application/pdf',
-      content bytea NOT NULL,
+      content bytea,
       checksum_sha256 text NOT NULL,
       file_size_bytes bigint NOT NULL,
+      storage_provider text NOT NULL DEFAULT 'postgres'
+        CHECK (storage_provider IN ('postgres', 'r2')),
+      storage_status text NOT NULL DEFAULT 'stored'
+        CHECK (storage_status IN ('stored', 'migration_failed')),
+      storage_bucket text,
+      object_key text,
+      storage_etag text,
+      storage_content_type text,
+      storage_verified_at timestamptz,
+      storage_last_error text,
       page_count integer,
       processing_status text NOT NULL DEFAULT 'uploaded'
         CHECK (processing_status IN (
@@ -158,6 +201,56 @@ export async function ensureAssignmentDocumentsSchema(pool) {
       ADD COLUMN IF NOT EXISTS next_processing_at timestamptz;
     ALTER TABLE app.assignment_documents
       ADD COLUMN IF NOT EXISTS last_processing_error text;
+    ALTER TABLE app.assignment_documents ALTER COLUMN content DROP NOT NULL;
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS storage_provider text NOT NULL DEFAULT 'postgres';
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS storage_status text NOT NULL DEFAULT 'stored';
+    ALTER TABLE app.assignment_documents ADD COLUMN IF NOT EXISTS storage_bucket text;
+    ALTER TABLE app.assignment_documents ADD COLUMN IF NOT EXISTS object_key text;
+    ALTER TABLE app.assignment_documents ADD COLUMN IF NOT EXISTS storage_etag text;
+    ALTER TABLE app.assignment_documents ADD COLUMN IF NOT EXISTS storage_content_type text;
+    ALTER TABLE app.assignment_documents ADD COLUMN IF NOT EXISTS storage_verified_at timestamptz;
+    ALTER TABLE app.assignment_documents ADD COLUMN IF NOT EXISTS storage_last_error text;
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'assignment_documents_storage_provider_check'
+          AND conrelid = 'app.assignment_documents'::regclass
+      ) THEN
+        ALTER TABLE app.assignment_documents
+          ADD CONSTRAINT assignment_documents_storage_provider_check
+          CHECK (storage_provider IN ('postgres', 'r2'));
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'assignment_documents_storage_status_check'
+          AND conrelid = 'app.assignment_documents'::regclass
+      ) THEN
+        ALTER TABLE app.assignment_documents
+          ADD CONSTRAINT assignment_documents_storage_status_check
+          CHECK (storage_status IN ('stored', 'migration_failed'));
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'assignment_documents_storage_payload_check'
+          AND conrelid = 'app.assignment_documents'::regclass
+      ) THEN
+        ALTER TABLE app.assignment_documents
+          ADD CONSTRAINT assignment_documents_storage_payload_check
+          CHECK (
+            (storage_provider = 'postgres' AND content IS NOT NULL)
+            OR
+            (
+              storage_provider = 'r2' AND content IS NULL
+              AND storage_bucket IS NOT NULL AND object_key IS NOT NULL
+              AND storage_verified_at IS NOT NULL
+            )
+          );
+      END IF;
+    END
+    $$;
     CREATE UNIQUE INDEX IF NOT EXISTS assignment_documents_scope_checksum_uidx
       ON app.assignment_documents (
         account_id, COALESCE(assignment_file_id, 0), checksum_sha256
@@ -167,6 +260,9 @@ export async function ensureAssignmentDocumentsSchema(pool) {
     CREATE INDEX IF NOT EXISTS assignment_documents_processing_idx
       ON app.assignment_documents (processing_status, uploaded_at)
       WHERE processing_status IN ('uploaded', 'processing', 'extraction_failed');
+    CREATE INDEX IF NOT EXISTS assignment_documents_storage_migration_idx
+      ON app.assignment_documents (storage_status, uploaded_at)
+      WHERE storage_provider = 'postgres' AND content IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS app.assignment_document_pages (
       document_id bigint NOT NULL
@@ -229,6 +325,8 @@ export async function createAssignmentDocument(pool, {
   contentType,
   content,
   uploadedBy,
+  storage = null,
+  logger = console,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   if (!Buffer.isBuffer(content) || !content.length) throw new Error("document_content_required");
@@ -238,11 +336,52 @@ export async function createAssignmentDocument(pool, {
   const safeFileName = cleanText(fileName, 255) || "document.pdf";
   const safeTitle = cleanText(title, 300) || safeFileName;
   const checksum = createHash("sha256").update(content).digest("hex");
+  let storedContent = content;
+  let storageProvider = "postgres";
+  let storageStatus = "stored";
+  let storageBucket = null;
+  let objectKey = null;
+  let storageEtag = null;
+  let storageContentType = null;
+  let storageVerifiedAt = null;
+  let storageLastError = null;
+  if (storage?.configured) {
+    try {
+      objectKey = buildAssignmentDocumentObjectKey({
+        accountId,
+        assignmentFileId,
+        checksumSha256: checksum,
+        fileName: safeFileName,
+      });
+      await storage.putObject({
+        objectKey,
+        contentType: "application/pdf",
+        body: content,
+      });
+      const inspected = await storage.inspectObject({ objectKey });
+      const verified = verifiedR2Object(inspected, { content, checksumSha256: checksum });
+      storedContent = null;
+      storageProvider = "r2";
+      storageBucket = storage.bucket;
+      storageEtag = verified.storage_etag;
+      storageContentType = verified.storage_content_type;
+      storageVerifiedAt = new Date();
+    } catch (error) {
+      storageStatus = "migration_failed";
+      storageLastError = cleanText(error?.message || error, 2_000);
+      logger.warn?.("[documents] private object upload failed; retaining PostgreSQL fallback", storageLastError);
+    }
+  }
   const { rows } = await pool.query(
     `INSERT INTO app.assignment_documents (
        account_id, assignment_file_id, document_type, title, file_name,
-       content_type, content, checksum_sha256, file_size_bytes, uploaded_by
-     ) VALUES ($1, $2, $3, $4, $5, 'application/pdf', $6, $7, $8, $9)
+       content_type, content, checksum_sha256, file_size_bytes, uploaded_by,
+       storage_provider, storage_status, storage_bucket, object_key,
+       storage_etag, storage_content_type, storage_verified_at, storage_last_error
+     ) VALUES (
+       $1, $2, $3, $4, $5, 'application/pdf', $6, $7, $8, $9,
+       $10, $11, $12, $13, $14, $15, $16, $17
+     )
      ON CONFLICT (
        account_id, (COALESCE(assignment_file_id, 0)), checksum_sha256
      ) DO UPDATE SET
@@ -253,6 +392,33 @@ export async function createAssignmentDocument(pool, {
          ELSE app.assignment_documents.document_type
        END,
        uploaded_by = COALESCE(EXCLUDED.uploaded_by, app.assignment_documents.uploaded_by),
+       content = CASE
+         WHEN EXCLUDED.storage_provider = 'r2' THEN NULL
+         ELSE app.assignment_documents.content
+       END,
+       storage_provider = CASE
+         WHEN EXCLUDED.storage_provider = 'r2' THEN EXCLUDED.storage_provider
+         ELSE app.assignment_documents.storage_provider
+       END,
+       storage_status = CASE
+         WHEN EXCLUDED.storage_provider = 'r2' THEN EXCLUDED.storage_status
+         ELSE app.assignment_documents.storage_status
+       END,
+       storage_bucket = COALESCE(EXCLUDED.storage_bucket, app.assignment_documents.storage_bucket),
+       object_key = COALESCE(EXCLUDED.object_key, app.assignment_documents.object_key),
+       storage_etag = COALESCE(EXCLUDED.storage_etag, app.assignment_documents.storage_etag),
+       storage_content_type = COALESCE(
+         EXCLUDED.storage_content_type,
+         app.assignment_documents.storage_content_type
+       ),
+       storage_verified_at = COALESCE(
+         EXCLUDED.storage_verified_at,
+         app.assignment_documents.storage_verified_at
+       ),
+       storage_last_error = CASE
+         WHEN EXCLUDED.storage_provider = 'r2' THEN NULL
+         ELSE app.assignment_documents.storage_last_error
+       END,
        updated_at = now()
      RETURNING *`,
     [
@@ -261,18 +427,136 @@ export async function createAssignmentDocument(pool, {
       normalizedType,
       safeTitle,
       safeFileName,
-      content,
+      storedContent,
       checksum,
       content.length,
       cleanText(uploadedBy, 200),
+      storageProvider,
+      storageStatus,
+      storageBucket,
+      objectKey,
+      storageEtag,
+      storageContentType,
+      storageVerifiedAt,
+      storageLastError,
     ],
   );
   return publicDocument(rows[0]);
 }
 
+export async function loadAssignmentDocumentContent(pool, documentId, { storage = null } = {}) {
+  await ensureAssignmentDocumentsSchema(pool);
+  const id = positiveInteger(documentId);
+  if (!id) return null;
+  const { rows } = await pool.query(
+    `SELECT * FROM app.assignment_documents WHERE id = $1`,
+    [id],
+  );
+  const document = rows[0];
+  if (!document) return null;
+  if (Buffer.isBuffer(document.content) && document.content.length) return document;
+  if (document.storage_provider !== "r2" || !document.object_key) {
+    throw new Error("assignment_document_content_unavailable");
+  }
+  if (!storage?.configured) throw new Error("assignment_document_storage_not_configured");
+  const downloaded = await storage.getObject({ objectKey: document.object_key });
+  if (downloaded.byte_size !== Number(document.file_size_bytes || 0)) {
+    throw new Error("assignment_document_storage_size_mismatch");
+  }
+  const checksum = createHash("sha256").update(downloaded.body).digest("hex");
+  if (checksum !== document.checksum_sha256) {
+    throw new Error("assignment_document_storage_checksum_mismatch");
+  }
+  return { ...document, content: downloaded.body };
+}
+
+export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
+  limit = 5,
+  logger = console,
+} = {}) {
+  await ensureAssignmentDocumentsSchema(pool);
+  const boundedLimit = Math.max(1, Math.min(Number(limit) || 5, 25));
+  if (!storage?.configured) {
+    return { configured: false, attempted: 0, migrated: 0, failed: 0, results: [] };
+  }
+  const { rows } = await pool.query(
+    `SELECT id
+     FROM app.assignment_documents
+     WHERE storage_provider = 'postgres' AND content IS NOT NULL
+     ORDER BY CASE WHEN storage_status = 'migration_failed' THEN 0 ELSE 1 END,
+              uploaded_at
+     LIMIT $1`,
+    [boundedLimit],
+  );
+  const results = [];
+  for (const candidate of rows) {
+    const id = Number(candidate.id);
+    try {
+      const current = await pool.query(
+        `SELECT * FROM app.assignment_documents
+         WHERE id = $1 AND storage_provider = 'postgres' AND content IS NOT NULL`,
+        [id],
+      );
+      const document = current.rows[0];
+      if (!document) continue;
+      const objectKey = buildAssignmentDocumentObjectKey({
+        accountId: document.account_id,
+        assignmentFileId: document.assignment_file_id,
+        checksumSha256: document.checksum_sha256,
+        fileName: document.file_name,
+      });
+      await storage.putObject({
+        objectKey,
+        contentType: "application/pdf",
+        body: document.content,
+      });
+      const inspected = await storage.inspectObject({ objectKey });
+      const verified = verifiedR2Object(inspected, {
+        content: document.content,
+        checksumSha256: document.checksum_sha256,
+      });
+      const { rowCount } = await pool.query(
+        `UPDATE app.assignment_documents
+         SET content = NULL,
+             storage_provider = 'r2', storage_status = 'stored',
+             storage_bucket = $2, object_key = $3, storage_etag = $4,
+             storage_content_type = $5, storage_verified_at = now(),
+             storage_last_error = NULL, updated_at = now()
+         WHERE id = $1 AND storage_provider = 'postgres' AND content IS NOT NULL`,
+        [
+          id,
+          storage.bucket,
+          objectKey,
+          verified.storage_etag,
+          verified.storage_content_type,
+        ],
+      );
+      results.push({ id, ok: Boolean(rowCount), object_key: objectKey });
+    } catch (error) {
+      const message = cleanText(error?.message || error, 2_000);
+      logger.warn?.(`[documents] storage migration failed for document ${id}`, message);
+      await pool.query(
+        `UPDATE app.assignment_documents
+         SET storage_status = 'migration_failed', storage_last_error = $2, updated_at = now()
+         WHERE id = $1 AND storage_provider = 'postgres'`,
+        [id, message],
+      ).catch(() => {});
+      results.push({ id, ok: false, error: message });
+    }
+  }
+  return {
+    configured: true,
+    attempted: results.length,
+    migrated: results.filter((result) => result.ok).length,
+    failed: results.filter((result) => !result.ok).length,
+    results,
+  };
+}
+
 export async function processAssignmentDocument(pool, documentId, {
   logger = console,
   force = false,
+  storage = null,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const id = positiveInteger(documentId);
@@ -323,7 +607,10 @@ export async function processAssignmentDocument(pool, documentId, {
     throw new Error("document_not_processable");
   }
   try {
-    const extraction = await extractPdfEvidence(document.content, {
+    const documentWithContent = Buffer.isBuffer(document.content) && document.content.length
+      ? document
+      : await loadAssignmentDocumentContent(pool, id, { storage });
+    const extraction = await extractPdfEvidence(documentWithContent.content, {
       requestedType: document.document_type,
       fileName: document.file_name,
     });
@@ -449,6 +736,7 @@ export async function processPendingAssignmentDocuments(pool, {
   limit = 10,
   logger = console,
   maximumAttempts = MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
+  storage = null,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 10, 50));
@@ -500,7 +788,7 @@ export async function processPendingAssignmentDocuments(pool, {
   const results = [];
   for (const row of rows) {
     try {
-      const document = await processAssignmentDocument(pool, row.id, { logger });
+      const document = await processAssignmentDocument(pool, row.id, { logger, storage });
       results.push({ id: Number(row.id), ok: true, status: document.processing_status });
     } catch (error) {
       results.push({ id: Number(row.id), ok: false, error: String(error?.message || error) });
@@ -542,7 +830,10 @@ export async function listAssignmentDocuments(pool, {
   }));
 }
 
-export async function getAssignmentDocument(pool, documentId, { includeContent = false } = {}) {
+export async function getAssignmentDocument(pool, documentId, {
+  includeContent = false,
+  storage = null,
+} = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const id = positiveInteger(documentId);
   if (!id) return null;
@@ -552,7 +843,7 @@ export async function getAssignmentDocument(pool, documentId, { includeContent =
   );
   const document = rows[0];
   if (!document) return null;
-  if (includeContent) return document;
+  if (includeContent) return loadAssignmentDocumentContent(pool, id, { storage });
   const { rows: candidateRows } = await pool.query(
     `SELECT * FROM app.assignment_document_field_candidates
      WHERE document_id = $1

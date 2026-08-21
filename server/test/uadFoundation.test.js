@@ -151,6 +151,35 @@ test("uploads generated artifacts through a private signed R2 request", async ()
   }
 });
 
+test("downloads private object bytes through a short-lived signed R2 request", async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (url, init) => {
+    request = { url: String(url), init };
+    return new Response(Buffer.from("%PDF-test"), {
+      status: 200,
+      headers: { "content-type": "application/pdf", etag: '"pdf-etag"' },
+    });
+  };
+  try {
+    const storage = createUadObjectStorage({
+      UAD_OBJECT_STORAGE_PROVIDER: "r2",
+      R2_ACCOUNT_ID: "example-account",
+      R2_ACCESS_KEY_ID: "example-key",
+      R2_SECRET_ACCESS_KEY: "example-secret",
+      R2_BUCKET: "homenode-uad",
+    });
+    const result = await storage.getObject({ objectKey: "documents/example.pdf" });
+    assert.equal(request.init.method, "GET");
+    assert.equal(result.body.toString("ascii"), "%PDF-test");
+    assert.equal(result.byte_size, 9);
+    assert.equal(result.content_type, "application/pdf");
+    assert.equal(result.etag, '"pdf-etag"');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("locks the phase-one Assignment and Subject catalog to context-aware official field IDs", () => {
   assert.ok(UAD_PHASE_ONE_FIELDS.length >= 50);
   assert.equal(new Set(UAD_PHASE_ONE_FIELDS.map((field) => field.key)).size, UAD_PHASE_ONE_FIELDS.length);

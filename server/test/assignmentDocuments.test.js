@@ -4,8 +4,105 @@ import test from "node:test";
 import {
   assignmentDocumentCandidateReviewKey,
   assignmentDocumentRetryDelayMs,
+  buildAssignmentDocumentObjectKey,
+  createAssignmentDocument,
+  loadAssignmentDocumentContent,
   retainedAssignmentDocumentReview,
 } from "../src/services/assignmentDocuments.js";
+
+test("assignment document object keys are assignment-scoped and content-addressed", () => {
+  assert.equal(
+    buildAssignmentDocumentObjectKey({
+      accountId: "26272500060150000",
+      assignmentFileId: 91,
+      checksumSha256: "A".repeat(64),
+      fileName: "Purchase Contract / Final.pdf",
+    }),
+    `organizations/unassigned/custom-appraisal/accounts/26272500060150000/assignment-files/91/documents/${"a".repeat(64)}/Purchase-Contract-Final.pdf`,
+  );
+});
+
+test("a verified private upload stores metadata without duplicating PDF bytes in PostgreSQL", async () => {
+  const pdf = Buffer.from("%PDF-test-private-storage");
+  let insertValues;
+  const pool = {
+    async query(sql, values) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      insertValues = values;
+      return {
+        rows: [{
+          id: 41,
+          account_id: values[0],
+          assignment_file_id: values[1],
+          document_type: values[2],
+          title: values[3],
+          file_name: values[4],
+          content_type: "application/pdf",
+          content: values[5],
+          checksum_sha256: values[6],
+          file_size_bytes: values[7],
+          storage_provider: values[9],
+          storage_status: values[10],
+          storage_bucket: values[11],
+          object_key: values[12],
+          storage_etag: values[13],
+          storage_content_type: values[14],
+          storage_verified_at: values[15],
+          processing_status: "uploaded",
+          extraction_summary: {},
+        }],
+      };
+    },
+  };
+  const storage = {
+    configured: true,
+    bucket: "private-evidence",
+    async putObject() {},
+    async inspectObject() {
+      return { byte_size: pdf.length, etag: '"verified"', content_type: "application/pdf" };
+    },
+  };
+  const result = await createAssignmentDocument(pool, {
+    accountId: "26272500060150000",
+    assignmentFileId: 91,
+    fileName: "contract.pdf",
+    content: pdf,
+    storage,
+  });
+  assert.equal(insertValues[5], null);
+  assert.equal(insertValues[9], "r2");
+  assert.equal(result.storage_provider, "r2");
+  assert.ok(result.storage_verified_at instanceof Date);
+});
+
+test("private document reads fail closed when downloaded bytes do not match the checksum", async () => {
+  const expected = Buffer.from("%PDF-expected");
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      return {
+        rows: [{
+          id: 42,
+          file_size_bytes: expected.length,
+          checksum_sha256: "0".repeat(64),
+          storage_provider: "r2",
+          object_key: "documents/42.pdf",
+          content: null,
+        }],
+      };
+    },
+  };
+  const storage = {
+    configured: true,
+    async getObject() {
+      return { body: expected, byte_size: expected.length };
+    },
+  };
+  await assert.rejects(
+    loadAssignmentDocumentContent(pool, 42, { storage }),
+    /storage_checksum_mismatch/,
+  );
+});
 
 test("document extraction retries use bounded exponential backoff", () => {
   assert.equal(assignmentDocumentRetryDelayMs(1), 30_000);

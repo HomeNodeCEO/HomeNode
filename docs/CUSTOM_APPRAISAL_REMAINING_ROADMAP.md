@@ -16,10 +16,11 @@ the desktop Property Report can add files to the same report-scoped gallery.
 The remaining document-intelligence work below uses the same private-storage
 and evidence-retention boundary.
 
-1. Move immutable source-document bytes from PostgreSQL to the existing private
-   Cloudflare R2 pattern while retaining metadata, checksums, extracted pages,
-   candidates, review decisions, and audit history in PostgreSQL.
-2. Add a production OCR adapter for scanned or image-only PDFs currently marked
+1. **Completed:** immutable source-document bytes use the existing private
+   Cloudflare R2 pattern while metadata, checksums, extracted pages, candidates,
+   review decisions, and audit history remain in PostgreSQL. A durable database
+   fallback and scheduled legacy migration protect uploads during R2 outages.
+2. **Next:** add a production OCR adapter for scanned or image-only PDFs currently marked
    `ocr_required`.
 3. Expand reviewed extraction/autofill coverage for engagement letters,
    contracts, MLS sheets, zoning maps and ordinances, maps, and other appraisal

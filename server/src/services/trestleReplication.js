@@ -5,6 +5,11 @@ import { ensureLocationBackfillQueueSchema } from "./locationBackfillQueue.js";
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
 import { ensurePropertyEnrichmentSchema } from "./propertyEnrichment.js";
 import { mapTrestleProperty } from "./trestleClient.js";
+import { ensureAccountAddressAliasSchema } from "./accountAddressAliases.js";
+import {
+  normalizePropertyAddress,
+  normalizePropertyCity,
+} from "../util/propertySearch.js";
 
 const TRESTLE_REPLICATION_LOCK_A = 48_632_941;
 const TRESTLE_REPLICATION_LOCK_B = 20_260_819;
@@ -71,22 +76,7 @@ function normalizedPlace(value) {
 }
 
 function normalizedAddress(value) {
-  return String(value ?? "")
-    .split(",")[0]
-    .trim()
-    .toUpperCase()
-    .replace(/\bSTREET\b/g, "ST")
-    .replace(/\bROAD\b/g, "RD")
-    .replace(/\bLANE\b/g, "LN")
-    .replace(/\bDRIVE\b/g, "DR")
-    .replace(/\bAVENUE\b/g, "AVE")
-    .replace(/\bCOURT\b/g, "CT")
-    .replace(/\bBOULEVARD\b/g, "BLVD")
-    .replace(/\bCIRCLE\b/g, "CIR")
-    .replace(/\bPARKWAY\b/g, "PKWY")
-    .replace(/\bPLACE\b/g, "PL")
-    .replace(/\bTRAIL\b/g, "TRL")
-    .replace(/[^0-9A-Z]/g, "");
+  return normalizePropertyAddress(String(value ?? "").split(",")[0]);
 }
 
 function propertyAddress(record) {
@@ -218,7 +208,7 @@ export function mapTrestleSourceRecord(record = {}) {
     address,
     address_key: normalizedAddress(address),
     city,
-    city_key: normalizedPlace(city),
+    city_key: normalizePropertyCity(city),
     state: text(record.StateOrProvince, 50) || "TX",
     postal_code: text(record.PostalCode, 30),
     county,
@@ -235,6 +225,7 @@ export function mapTrestleSourceRecord(record = {}) {
 }
 
 export async function ensureTrestleReplicationSchema(pool) {
+  await ensureAccountAddressAliasSchema(pool);
   await ensureAccountLocationsTable(pool);
   await ensureLocationBackfillQueueSchema(pool);
   await ensurePropertyContextSchema(pool);
@@ -358,20 +349,21 @@ export async function resolveTrestleAccountMatches(pool, records) {
        FROM parcel_candidates
        GROUP BY listing_key HAVING COUNT(DISTINCT account_id) = 1
      ), address_candidates AS (
-       SELECT request.listing_key, account.account_id
+       SELECT request.listing_key, alias.account_id
        FROM requested request
-       JOIN core.accounts account
+       JOIN app.account_address_aliases alias
          ON request.address_key IS NOT NULL AND request.address_key <> ''
         AND request.city_key IS NOT NULL AND request.city_key <> ''
-        AND REGEXP_REPLACE(UPPER(BTRIM(COALESCE(account.address, ''))), '[^0-9A-Z]', '', 'g') = request.address_key
-        AND REGEXP_REPLACE(UPPER(BTRIM(COALESCE(account.city, ''))), '[^0-9A-Z]', '', 'g') = request.city_key
+        AND alias.is_current = true
+        AND alias.address_key = request.address_key
+        AND alias.city_key = request.city_key
         AND (
           request.county_key IS NULL OR request.county_key = ''
-          OR REGEXP_REPLACE(
-               UPPER(REGEXP_REPLACE(BTRIM(COALESCE(account.county, '')), '\\s+COUNTY$', '', 'i')),
-               '[^0-9A-Z]', '', 'g'
-             ) = request.county_key
+          OR alias.county_key = request.county_key
         )
+       JOIN core.accounts account
+         ON account.account_id = alias.account_id
+        AND account.canonical_account_id IS NULL
      ), address_unique AS (
        SELECT listing_key, MIN(account_id) AS account_id
        FROM address_candidates
@@ -457,263 +449,7 @@ async function upsertTrestleSourceRecords(client, records) {
          source_row_number, source_record_hash, transaction_fingerprint,
          bedrooms_total, bathrooms_total_integer, bathrooms_full, bathrooms_half,
          living_area, lot_size_area, current_price,
-         ratio_current_price_by_living_area, ratio_close_price_by_list_price,
-         ratio_close_price_by_original_list_price, ratio_close_price_by_living_area,
-         days_on_market, year_built, close_date, seller_contributions, mls_status,
-         garage_spaces, garage_yn, pool_yn, listing_contract_date,
-         parcel_number_raw, parcel_number2_raw, buyer_financing, record_type,
-         structural_style, housing_type, attachment_type, architectural_style,
-         listing_key, listing_id, primary_account_id, match_status,
-         parcel_number2_raw IS NOT NULL, CASE WHEN parcel_number2_raw IS NULL THEN 'single' ELSE 'possible' END,
-         has_unresolved_parcel, requires_additional_review, data_quality_flags,
-         raw_payload, source_modified_at, originating_system_name
-       FROM input
-       ON CONFLICT (listing_key)
-         WHERE listing_key IS NOT NULL AND BTRIM(listing_key) <> ''
-       DO UPDATE SET
-         source_name = EXCLUDED.source_name,
-         source_files = CASE
-           WHEN core.sales_source_records.source_files @> EXCLUDED.source_files
-             THEN core.sales_source_records.source_files
-           ELSE core.sales_source_records.source_files || EXCLUDED.source_files
-         END,
-         bedrooms_total = COALESCE(EXCLUDED.bedrooms_total, core.sales_source_records.bedrooms_total),
-         bathrooms_total_integer = COALESCE(EXCLUDED.bathrooms_total_integer, core.sales_source_records.bathrooms_total_integer),
-         bathrooms_full = COALESCE(EXCLUDED.bathrooms_full, core.sales_source_records.bathrooms_full),
-         bathrooms_half = COALESCE(EXCLUDED.bathrooms_half, core.sales_source_records.bathrooms_half),
-         living_area = COALESCE(EXCLUDED.living_area, core.sales_source_records.living_area),
-         lot_size_area = COALESCE(EXCLUDED.lot_size_area, core.sales_source_records.lot_size_area),
-         current_price = COALESCE(EXCLUDED.current_price, core.sales_source_records.current_price),
-         ratio_current_price_by_living_area = COALESCE(EXCLUDED.ratio_current_price_by_living_area, core.sales_source_records.ratio_current_price_by_living_area),
-         ratio_close_price_by_list_price = COALESCE(EXCLUDED.ratio_close_price_by_list_price, core.sales_source_records.ratio_close_price_by_list_price),
-         ratio_close_price_by_original_list_price = COALESCE(EXCLUDED.ratio_close_price_by_original_list_price, core.sales_source_records.ratio_close_price_by_original_list_price),
-         ratio_close_price_by_living_area = COALESCE(EXCLUDED.ratio_close_price_by_living_area, core.sales_source_records.ratio_close_price_by_living_area),
-         days_on_market = COALESCE(EXCLUDED.days_on_market, core.sales_source_records.days_on_market),
-         year_built = COALESCE(EXCLUDED.year_built, core.sales_source_records.year_built),
-         close_date = COALESCE(EXCLUDED.close_date, core.sales_source_records.close_date),
-         seller_contributions = COALESCE(EXCLUDED.seller_contributions, core.sales_source_records.seller_contributions),
-         mls_status = COALESCE(EXCLUDED.mls_status, core.sales_source_records.mls_status),
-         garage_spaces = COALESCE(EXCLUDED.garage_spaces, core.sales_source_records.garage_spaces),
-         garage_yn = COALESCE(EXCLUDED.garage_yn, core.sales_source_records.garage_yn),
-         pool_yn = COALESCE(EXCLUDED.pool_yn, core.sales_source_records.pool_yn),
-         listing_contract_date = COALESCE(EXCLUDED.listing_contract_date, core.sales_source_records.listing_contract_date),
-         parcel_number_raw = COALESCE(EXCLUDED.parcel_number_raw, core.sales_source_records.parcel_number_raw),
-         parcel_number2_raw = COALESCE(EXCLUDED.parcel_number2_raw, core.sales_source_records.parcel_number2_raw),
-         buyer_financing = COALESCE(EXCLUDED.buyer_financing, core.sales_source_records.buyer_financing),
-         record_type = EXCLUDED.record_type,
-         structural_style = COALESCE(EXCLUDED.structural_style, core.sales_source_records.structural_style),
-         housing_type = COALESCE(EXCLUDED.housing_type, core.sales_source_records.housing_type),
-         attachment_type = CASE WHEN EXCLUDED.attachment_type = 'unknown'
-           THEN core.sales_source_records.attachment_type ELSE EXCLUDED.attachment_type END,
-         architectural_style = COALESCE(EXCLUDED.architectural_style, core.sales_source_records.architectural_style),
-         listing_id = COALESCE(EXCLUDED.listing_id, core.sales_source_records.listing_id),
-         primary_account_id = CASE WHEN core.sales_source_records.match_status = 'manual_verified'
-           THEN core.sales_source_records.primary_account_id ELSE EXCLUDED.primary_account_id END,
-         match_status = CASE WHEN core.sales_source_records.match_status = 'manual_verified'
-           THEN core.sales_source_records.match_status ELSE EXCLUDED.match_status END,
-         has_multiple_parcel_numbers = EXCLUDED.has_multiple_parcel_numbers,
-         multi_parcel_status = EXCLUDED.multi_parcel_status,
-         has_unresolved_parcel = CASE WHEN core.sales_source_records.match_status = 'manual_verified'
-           THEN core.sales_source_records.has_unresolved_parcel ELSE EXCLUDED.has_unresolved_parcel END,
-         requires_additional_review = CASE WHEN core.sales_source_records.match_status = 'manual_verified'
-           THEN core.sales_source_records.requires_additional_review ELSE EXCLUDED.requires_additional_review END,
-         data_quality_flags = CASE WHEN core.sales_source_records.match_status = 'manual_verified'
-           THEN core.sales_source_records.data_quality_flags ELSE EXCLUDED.data_quality_flags END,
-         raw_payload = EXCLUDED.raw_payload,
-         source_modified_at = COALESCE(
-           EXCLUDED.source_modified_at,
-           core.sales_source_records.source_modified_at
-         ),
-         source_system_name = COALESCE(EXCLUDED.source_system_name, core.sales_source_records.source_system_name),
-         updated_at = now()
-       WHERE core.sales_source_records.source_modified_at IS NULL
-          OR EXCLUDED.source_modified_at IS NULL
-          OR EXCLUDED.source_modified_at >= core.sales_source_records.source_modified_at
-       RETURNING id, listing_key, primary_account_id, match_status, record_type,
-                 close_date, current_price, days_on_market, seller_contributions
-     )
-     SELECT upserted.*, input.address, input.city, input.state, input.postal_code,
-            input.county, input.latitude, input.longitude, input.parcel_number_raw,
-            input.photos_change_timestamp, input.photos_count
-     FROM upserted JOIN input USING (listing_key)`,
-    [JSON.stringify(records)],
-  );
-  return rows;
-}
-
-async function rebuildParcelLinks(client, persisted) {
-  const replaceable = persisted.filter((row) => row.match_status !== "manual_verified");
-  if (!replaceable.length) return;
-  await client.query(
-    `DELETE FROM core.sale_parcels parcel
-     USING JSONB_TO_RECORDSET($1::jsonb) AS item(source_record_id bigint)
-     WHERE parcel.source_record_id = item.source_record_id`,
-    [JSON.stringify(replaceable.map((row) => ({ source_record_id: row.id })))],
-  );
-  const links = replaceable
-    .filter((row) => row.parcel_number_raw)
-    .map((row) => ({
-      source_record_id: row.id,
-      parcel_number_raw: row.parcel_number_raw,
-      account_id: row.primary_account_id,
-      match_method: row.primary_account_id
-        ? (row.match_status === "exact" ? "exact" : "punctuation_normalized")
-        : "unmatched",
-      is_resolved: Boolean(row.primary_account_id),
-    }));
-  if (!links.length) return;
-  await client.query(
-    `INSERT INTO core.sale_parcels (
-       source_record_id, source_position, parcel_sequence, parcel_role,
-       parcel_number_raw, parcel_number_normalized, account_id,
-       match_method, is_resolved
-     )
-     SELECT source_record_id, 1, 1, 'primary', parcel_number_raw,
-            CASE WHEN is_resolved THEN account_id ELSE NULL END,
-            account_id, match_method, is_resolved
-     FROM JSONB_TO_RECORDSET($1::jsonb) AS item(
-       source_record_id bigint, parcel_number_raw text, account_id text,
-       match_method text, is_resolved boolean
-     )`,
-    [JSON.stringify(links)],
-  );
-}
-
-async function upsertCanonicalSales(client, persisted) {
-  const eligible = persisted.filter((row) => (
-    row.primary_account_id &&
-    row.record_type === "closed_sale" &&
-    row.close_date &&
-    Number(row.current_price) > 0
-  ));
-  if (!eligible.length) return 0;
-  const { rowCount } = await client.query(
-    `INSERT INTO core.sales (
-       account_id, address, city, state, zip, closing_date, sale_price,
-       days_on_market, concessions, source, source_record_id
-     )
-     SELECT primary_account_id, address, city, COALESCE(state, 'TX'), postal_code,
-            close_date, current_price, days_on_market,
-            CASE WHEN seller_contributions IS NULL THEN NULL
-                 ELSE seller_contributions::text END,
-            'Trestle RESO Web API', id
-     FROM JSONB_TO_RECORDSET($1::jsonb) AS item(
-       id bigint, primary_account_id text, address text, city text, state text,
-       postal_code text, close_date date, current_price numeric,
-       days_on_market integer, seller_contributions numeric
-     )
-     ON CONFLICT (source_record_id) WHERE source_record_id IS NOT NULL
-     DO UPDATE SET
-       account_id = EXCLUDED.account_id,
-       address = COALESCE(EXCLUDED.address, core.sales.address),
-       city = COALESCE(EXCLUDED.city, core.sales.city),
-       state = COALESCE(EXCLUDED.state, core.sales.state),
-       zip = COALESCE(EXCLUDED.zip, core.sales.zip),
-       closing_date = EXCLUDED.closing_date,
-       sale_price = EXCLUDED.sale_price,
-       days_on_market = EXCLUDED.days_on_market,
-       concessions = EXCLUDED.concessions,
-       source = EXCLUDED.source,
-       loaded_at = now()`,
-    [JSON.stringify(eligible)],
-  );
-  return rowCount || eligible.length;
-}
-
-async function cacheTrestleCoordinates(client, persisted) {
-  const eligible = persisted.filter((row) => (
-    row.primary_account_id &&
-    row.latitude >= 25.5 && row.latitude <= 36.6 &&
-    row.longitude >= -106.7 && row.longitude <= -93.4 &&
-    normalizedPlace(row.county) !== "DALLAS"
-  ));
-  if (!eligible.length) return 0;
-  const { rowCount } = await client.query(
-    `INSERT INTO core.account_locations (
-       account_id, latitude, longitude, status, source, precision, confidence,
-       match_method, source_parcel_id, source_site_address, source_updated_at,
-       feature_count, review_required, metadata, geocoded_at, updated_at
-     )
-     SELECT primary_account_id, latitude, longitude, 'matched', 'trestle_reso',
-            'listing_point', 'high', match_status, parcel_number_raw, address,
-            source_modified_at, 1, false,
-            jsonb_build_object('listing_key', listing_key), now(), now()
-     FROM JSONB_TO_RECORDSET($1::jsonb) AS item(
-       primary_account_id text, latitude double precision, longitude double precision,
-       match_status text, parcel_number_raw text, address text,
-       source_modified_at timestamptz, listing_key text
-     )
-     ON CONFLICT (account_id) DO NOTHING`,
-    [JSON.stringify(eligible)],
-  );
-  return rowCount || 0;
-}
-
-async function storeTrestlePropertyObservations(client, persisted, preparedByListingKey) {
-  const observations = [];
-  for (const row of persisted) {
-    const prepared = preparedByListingKey.get(row.listing_key);
-    if (!row.primary_account_id || !prepared || normalizedPlace(prepared.county) === "DALLAS") {
-      continue;
-    }
-    for (const [attributeKey, attributeValue] of Object.entries(
-      prepared.property_attributes || {},
-    )) {
-      if (!hasValue(attributeValue)) continue;
-      observations.push({
-        account_id: row.primary_account_id,
-        county: prepared.county || "Unknown",
-        attribute_key: attributeKey,
-        attribute_value: attributeValue,
-        source_reference: prepared.listing_key,
-        source_observed_at: prepared.source_modified_at,
-        raw_payload: {
-          ListingKey: prepared.listing_key,
-          ListingId: prepared.listing_id,
-          OriginatingSystemName: prepared.originating_system_name,
-        },
-      });
-    }
-  }
-  if (!observations.length) return 0;
-  const { rowCount } = await client.query(
-    `INSERT INTO app.property_attribute_observations (
-       account_id, county, attribute_key, attribute_value, source_type,
-       source_reference, source_observed_at, confidence, raw_payload
-     )
-     SELECT account_id, county, attribute_key, attribute_value, 'trestle',
-            source_reference, source_observed_at, 1.000, raw_payload
-     FROM JSONB_TO_RECORDSET($1::jsonb) AS item(
-       account_id text, county text, attribute_key text, attribute_value jsonb,
-       source_reference text, source_observed_at timestamptz, raw_payload jsonb
-     )
-     WHERE NOT EXISTS (
-       SELECT 1 FROM app.property_attribute_observations existing
-       WHERE existing.account_id = item.account_id
-         AND existing.attribute_key = item.attribute_key
-         AND existing.source_type = 'trestle'
-         AND existing.source_reference = item.source_reference
-         AND existing.source_observed_at IS NOT DISTINCT FROM item.source_observed_at
-     )`,
-    [JSON.stringify(observations)],
-  );
-  return rowCount || observations.length;
-}
-
-async function queueTrestleMedia(client, persisted) {
-  // A zero count with a newer PhotosChangeTimestamp is meaningful: it removes
-  // photos that disappeared upstream instead of leaving stale MLS imagery.
-  const eligible = persisted.filter((row) => (
-    Number(row.photos_count) > 0 || row.photos_change_timestamp
-  ));
-  if (!eligible.length) return 0;
-  const { rowCount } = await client.query(
-    `INSERT INTO app.trestle_media_queue (
-       listing_key, source_record_id, photos_change_timestamp,
-       expected_photo_count, status, attempts, available_at, completed_at,
-       last_error, updated_at
-     )
-     SELECT listing_key, id, photos_change_timestamp, photos_count,
+         ratio_current_price_by_living_area, ratio_close_…3551 tokens truncated…, id, photos_change_timestamp, photos_count,
             'pending', 0, now(), NULL, NULL, now()
      FROM JSONB_TO_RECORDSET($1::jsonb) AS item(
        listing_key text, id bigint, photos_change_timestamp timestamptz,
@@ -1181,3 +917,4 @@ export async function runTrestleMediaBatch(pool, trestleClient, {
   }
   return { skipped: false, claimed: rows.length, completed, retry, manualReview };
 }
+

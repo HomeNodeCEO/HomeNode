@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 
 import { getUadField } from "./fieldCatalog.js";
+import {
+  buildUadSystemPackageMetadata,
+  UAD_SYSTEM_PACKAGE_UIDS,
+} from "./systemPackage.js";
 
 const require = createRequire(import.meta.url);
 const deliveryMapping = require("./spec/delivery-mapping-v1.4.json");
@@ -12,7 +16,7 @@ const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 const repeatableElements = new Set(deliveryMapping.repeatable_elements);
 const MAX_SORT = Number.MAX_SAFE_INTEGER;
 
-export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v2";
+export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v3";
 export const UAD_XML_DELIVERY_SPECIFICATION_VERSION = deliveryMapping.delivery_specification_version;
 export const UAD_XML_SUBSCHEMA_VERSION = deliveryMapping.subschema_version;
 
@@ -327,6 +331,89 @@ function appendSigner(root, signer, order) {
   appendText(execution, "ExecutionDate", signer.execution_date, { sort: 3304 + order });
 }
 
+function appendSystemPackage(root, workfile) {
+  const metadata = buildUadSystemPackageMetadata(workfile);
+  const valuationReport = ensureStructuralPath(root, [
+    "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET",
+    "DEALS", "DEAL", "SERVICES", "SERVICE", "VALUATION", "VALUATION_RESPONSE",
+    "VALUATION_ANALYSES", "VALUATION_ANALYSIS", "VALUATION_REPORT",
+  ], { sort: 2774 });
+  const reportDetail = ensureChild(valuationReport, "VALUATION_REPORT_DETAIL", { sort: 2774 });
+  appendText(
+    reportDetail,
+    "ValuationReportContentIdentifier",
+    metadata.valuationReportContentIdentifier,
+    { sort: 2775 },
+  );
+  const softwareSystems = ensureChild(valuationReport, "VALUATION_SOFTWARE_SYSTEMS", { sort: 2786 });
+  const softwareSystem = ensureChild(softwareSystems, "VALUATION_SOFTWARE_SYSTEM", { sort: 2786 });
+  appendText(
+    softwareSystem,
+    "ValuationSoftwareProductIdentifier",
+    metadata.valuationSoftwareProductIdentifier,
+    { sort: 2787 },
+  );
+  appendText(
+    softwareSystem,
+    "ValuationSoftwareProductName",
+    metadata.valuationSoftwareProductName,
+    { sort: 2788 },
+  );
+  appendText(
+    softwareSystem,
+    "ValuationSoftwareProductVersionIdentifier",
+    metadata.valuationSoftwareProductVersionIdentifier,
+    { sort: 2789 },
+  );
+  appendText(
+    softwareSystem,
+    "ValuationSoftwareVendorName",
+    metadata.valuationSoftwareVendorName,
+    { sort: 2790 },
+  );
+
+  const service = ensureStructuralPath(root, [
+    "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET",
+    "DEALS", "DEAL", "SERVICES", "SERVICE",
+  ], { sort: 3291 });
+  const serviceDetail = ensureChild(service, "SERVICE_DETAIL", { sort: 3291 });
+  appendText(serviceDetail, "ServiceType", metadata.serviceType, { sort: 3292 });
+
+  const document = ensureStructuralPath(root, ["DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT"], { sort: 3322 });
+  const foreignObject = ensureStructuralPath(document, [
+    "VIEWS", "VIEW", "VIEW_FILES", "VIEW_FILE", "FOREIGN_OBJECT",
+  ], { sort: 3322 });
+  appendText(foreignObject, "ObjectURL", metadata.pdfObjectUrl, { sort: 3323 });
+  appendText(foreignObject, "MIMETypeIdentifier", metadata.pdfMimeType, { sort: 3324 });
+
+  const aboutVersion = ensureStructuralPath(document, ["ABOUT_VERSIONS", "ABOUT_VERSION"], { sort: 3331 });
+  appendText(aboutVersion, "AboutVersionIdentifier", metadata.appraisalVersionIdentifier, { sort: 3332 });
+
+  const documentClassification = ensureChild(document, "DOCUMENT_CLASSIFICATION", { sort: 3337 });
+  const documentClass = ensureStructuralPath(documentClassification, [
+    "DOCUMENT_CLASSES", "DOCUMENT_CLASS",
+  ], { sort: 3337 });
+  appendText(documentClass, "DocumentType", metadata.documentType, { sort: 3338 });
+  const classificationDetail = ensureChild(
+    documentClassification,
+    "DOCUMENT_CLASSIFICATION_DETAIL",
+    { sort: 3341 },
+  );
+  appendText(
+    classificationDetail,
+    "DocumentFormIssuingEntityNameType",
+    metadata.documentFormIssuingEntityNameType,
+    { sort: 3342 },
+  );
+  appendText(
+    classificationDetail,
+    "DocumentFormIssuingEntityVersionIdentifier",
+    metadata.documentFormIssuingEntityVersionIdentifier,
+    { sort: 3343 },
+  );
+  return metadata;
+}
+
 export function buildUadMismoXml(editor, { signers = [] } = {}) {
   if (editor?.workfile?.specification_release_key !== deliveryMapping.specification_release_key) {
     throw new Error("uad_xml_specification_release_mismatch");
@@ -360,6 +447,7 @@ export function buildUadMismoXml(editor, { signers = [] } = {}) {
       (left.signer_role === "appraiser" ? 0 : 1) - (right.signer_role === "appraiser" ? 0 : 1)
     ))
     .forEach((signer, index) => appendSigner(root, signer, index));
+  const systemPackage = appendSystemPackage(root, editor.workfile);
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n${serializeNode(root)}\n`;
   return {
     xml,
@@ -370,6 +458,8 @@ export function buildUadMismoXml(editor, { signers = [] } = {}) {
     subschema_version: UAD_XML_SUBSCHEMA_VERSION,
     mapped_value_count: values.length,
     signer_count: signers.length,
+    system_value_count: UAD_SYSTEM_PACKAGE_UIDS.length,
+    pdf_file_name: systemPackage.pdfFileName,
   };
 }
 
@@ -381,6 +471,8 @@ export function getUadXmlMappingSummary() {
     mismo_reference_model_identifier: deliveryMapping.mismo_reference_model_identifier,
     source_sha256: deliveryMapping.source_sha256,
     mapped_unique_ids: Object.keys(deliveryMapping.fields).length,
+    mapped_system_unique_ids: UAD_SYSTEM_PACKAGE_UIDS.length,
+    mapped_total_unique_ids: Object.keys(deliveryMapping.fields).length + UAD_SYSTEM_PACKAGE_UIDS.length,
     mapped_entity_types: Object.keys(deliveryMapping.entity_anchor_elements).length,
   };
 }

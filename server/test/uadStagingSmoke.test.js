@@ -34,7 +34,7 @@ test("verifies health, release, storage, readiness, and the synthetic SFR fixtur
       enabled: true,
       specification_release_key: "uad-3.6-2026-08-13-h1.5",
       object_storage: { provider: "r2", configured: true },
-      xml: { mapped_total: 857 },
+      xml: { mapped_total_unique_ids: 857 },
     });
     if (url.endsWith("/api/uad/readiness")) return response({
       ok: true,
@@ -77,7 +77,7 @@ test("can require external compliance without exposing response bodies", async (
       enabled: true,
       specification_release_key: "uad-3.6-2026-08-13-h1.5",
       object_storage: { configured: true },
-      xml: { mapped_total: 857 },
+      xml: { mapped_total_unique_ids: 857 },
     });
     if (url.endsWith("/api/uad/readiness")) return response({
       ok: true,

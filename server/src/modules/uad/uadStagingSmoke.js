@@ -86,7 +86,7 @@ export async function runUadStagingSmoke({
     && capabilities.body?.enabled === true
     && capabilities.body?.specification_release_key === CURRENT_UAD_RELEASE_KEY
     && capabilities.body?.object_storage?.configured === true
-    && Number(capabilities.body?.xml?.mapped_total || 0) > 0;
+    && Number(capabilities.body?.xml?.mapped_total_unique_ids || 0) > 0;
   const operationalReady = readiness.ok
     && readiness.body?.ok === true
     && readiness.body?.specification_release_key === CURRENT_UAD_RELEASE_KEY
@@ -104,7 +104,7 @@ export async function runUadStagingSmoke({
       http_status: capabilities.status,
       enabled: capabilities.body?.enabled === true,
       specification_release_key: capabilities.body?.specification_release_key || null,
-      mapped_field_count: Number(capabilities.body?.xml?.mapped_total || 0),
+      mapped_field_count: Number(capabilities.body?.xml?.mapped_total_unique_ids || 0),
       object_storage_configured: capabilities.body?.object_storage?.configured === true,
       error_code: capabilities.error_code,
     },

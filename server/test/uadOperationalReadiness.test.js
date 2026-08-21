@@ -1,0 +1,176 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import test from "node:test";
+
+import { getUadMigrationManifest } from "../src/database/uadMigrations.js";
+import {
+  buildUadOperationalReadiness,
+  createCachedUadReadinessLoader,
+  getUadOperationalReadiness,
+} from "../src/modules/uad/uadOperationalReadiness.js";
+
+const routerSource = fs.readFileSync(new URL("../src/modules/uad/router.js", import.meta.url), "utf8");
+
+function readyDatabase(overrides = {}) {
+  return {
+    connected: true,
+    ready: true,
+    expected_migration_count: 39,
+    applied_migration_count: 39,
+    missing_migration_count: 0,
+    checksum_mismatch_count: 0,
+    latest_expected_migration: "20260924_uad_compliance_api.sql",
+    release_current: true,
+    required_relation_count: 8,
+    missing_relation_count: 0,
+    error_code: null,
+    ...overrides,
+  };
+}
+
+test("builds a credential-safe local-delivery readiness result", () => {
+  const readiness = buildUadOperationalReadiness({
+    enabled: true,
+    storage: { provider: "r2", configured: true, bucket: "must-not-display" },
+    verifier: {
+      configured: true,
+      issuer: "https://identity.private.example",
+      audience: "private-audience",
+    },
+    compliance: {
+      enabled: false,
+      providers: {
+        fannie: { enabled: false, configured: false, environment: "acpt", secret: "hidden" },
+      },
+    },
+    database: readyDatabase(),
+    checkedAt: "2026-08-21T12:00:00.000Z",
+  });
+
+  assert.equal(readiness.ok, true);
+  assert.equal(readiness.local_delivery_ready, true);
+  assert.deepEqual(readiness.blockers, []);
+  assert.deepEqual(readiness.checks.object_storage, {
+    provider: "r2",
+    configured: true,
+    ready: true,
+  });
+  assert.equal(readiness.checks.compliance.providers.fannie.ready, false);
+  const serialized = JSON.stringify(readiness);
+  assert.doesNotMatch(serialized, /must-not-display|identity\.private|private-audience|hidden/);
+});
+
+test("mounts readiness before the disabled-workspace guard", () => {
+  const route = routerSource.indexOf('router.get("/readiness"');
+  const guard = routerSource.indexOf("router.use((req, res, next)");
+  assert.ok(route > 0);
+  assert.ok(guard > route);
+  assert.match(routerSource, /cache-control", "no-store"/);
+});
+
+test("reports bounded blocker codes without leaking database errors", () => {
+  const readiness = buildUadOperationalReadiness({
+    enabled: false,
+    storage: { provider: "r2", configured: false },
+    verifier: { configured: false },
+    compliance: { enabled: false, providers: {} },
+    database: readyDatabase({
+      connected: false,
+      ready: false,
+      applied_migration_count: 0,
+      missing_migration_count: 39,
+      release_current: false,
+      missing_relation_count: 8,
+      error_code: "uad_database_connection_failed",
+    }),
+  });
+
+  assert.equal(readiness.ok, false);
+  assert.deepEqual(readiness.blockers, [
+    "uad_workspace_disabled",
+    "uad_database_unavailable",
+    "uad_migrations_incomplete",
+    "uad_release_not_current",
+    "uad_relations_missing",
+    "uad_object_storage_not_configured",
+    "uad_oidc_not_configured",
+  ]);
+});
+
+test("checks applied migration checksums, current release, and required relations", async () => {
+  const manifest = await getUadMigrationManifest();
+  const queries = [];
+  const pool = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      if (sql === "SELECT 1 AS ok") return { rows: [{ ok: 1 }] };
+      if (sql.includes("app.schema_migrations")) return { rows: manifest };
+      if (sql.includes("uad_ref.specification_releases")) return { rows: [{ release_current: true }] };
+      if (sql.includes("to_regclass")) return { rows: [{ missing_count: 0 }] };
+      throw new Error("unexpected query");
+    },
+  };
+
+  const readiness = await getUadOperationalReadiness(pool, {
+    enabled: true,
+    storage: { provider: "r2", configured: true },
+    verifier: { configured: true },
+    compliance: { enabled: false, providers: {} },
+  });
+
+  assert.equal(readiness.ok, true);
+  assert.equal(readiness.checks.database.expected_migration_count, manifest.length);
+  assert.equal(readiness.checks.database.applied_migration_count, manifest.length);
+  assert.equal(queries.length, 4);
+});
+
+test("maps schema-query failures to a stable public error code", async () => {
+  let queryNumber = 0;
+  const pool = {
+    async query() {
+      queryNumber += 1;
+      if (queryNumber === 1) return { rows: [{ ok: 1 }] };
+      throw new Error("sensitive-internal-database-diagnostic");
+    },
+  };
+  const readiness = await getUadOperationalReadiness(pool, {
+    enabled: true,
+    storage: { provider: "r2", configured: true },
+    verifier: { configured: true },
+    compliance: { enabled: false, providers: {} },
+  });
+
+  assert.equal(readiness.ok, false);
+  assert.equal(readiness.checks.database.error_code, "uad_database_schema_unavailable");
+  assert.doesNotMatch(JSON.stringify(readiness), /sensitive|internal-database-diagnostic/);
+});
+
+test("coalesces concurrent public readiness probes and caches the result briefly", async () => {
+  const manifest = await getUadMigrationManifest();
+  let queries = 0;
+  let currentTime = 1_000;
+  const pool = {
+    async query(sql) {
+      queries += 1;
+      if (sql === "SELECT 1 AS ok") return { rows: [{ ok: 1 }] };
+      if (sql.includes("app.schema_migrations")) return { rows: manifest };
+      if (sql.includes("uad_ref.specification_releases")) return { rows: [{ release_current: true }] };
+      return { rows: [{ missing_count: 0 }] };
+    },
+  };
+  const load = createCachedUadReadinessLoader(pool, {
+    enabled: true,
+    storage: { configured: true, provider: "r2" },
+    verifier: { configured: true },
+    compliance: { enabled: false, providers: {} },
+  }, { cacheMilliseconds: 1_000, now: () => currentTime });
+
+  const [first, concurrent] = await Promise.all([load(), load()]);
+  assert.equal(first, concurrent);
+  assert.equal(queries, 4);
+  assert.equal(await load(), first);
+  assert.equal(queries, 4);
+  currentTime += 1_001;
+  await load();
+  assert.equal(queries, 8);
+});

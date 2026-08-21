@@ -111,6 +111,10 @@ The team should re-check the official onboarding instructions and assigned URLs
 at credential issuance time; endpoints and portal procedures are external
 configuration and may change independently of HomeNode releases.
 
+Deployment sequencing, the credential-safe readiness endpoint, provider
+activation/rollback, and the external-gate acceptance matrix are documented in
+`UAD_PRODUCTION_READINESS.md`.
+
 As of the August 2026 official materials, the GSEs describe the Compliance API
 as a system-to-system XML validation service. Production use still requires the
 GSE verification process; ACPT/lower-environment access, credentials, exact

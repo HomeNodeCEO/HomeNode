@@ -1,0 +1,41 @@
+name: UAD staging smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Public base URL of the deployed UAD API
+        required: true
+        default: https://homenode-api-staging.onrender.com
+        type: string
+      app_url:
+        description: Public base URL of the deployed UAD web app
+        required: true
+        default: https://homenode-uad-staging.onrender.com
+        type: string
+      require_compliance:
+        description: Require at least one configured external GSE provider
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    env:
+      UAD_STAGING_BASE_URL: ${{ inputs.base_url }}
+      UAD_STAGING_APP_URL: ${{ inputs.app_url }}
+      UAD_STAGING_REQUIRE_COMPLIANCE: ${{ inputs.require_compliance }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify deployed UAD staging environment
+        run: npm run verify:staging:uad

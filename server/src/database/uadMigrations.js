@@ -46,10 +46,22 @@ const MIGRATIONS = Object.freeze([
   "20260923_uad_system_package.sql",
   "20260924_uad_compliance_api.sql",
 ]);
+export const UAD_MIGRATION_NAMES = MIGRATIONS;
 const ADVISORY_LOCK_KEY = 3_603_600_816;
 
 function checksum(contents) {
   return createHash("sha256").update(contents).digest("hex");
+}
+
+export async function getUadMigrationManifest() {
+  return Promise.all(MIGRATIONS.map(async (migrationName) => {
+    const migrationPath = path.join(SERVER_DIRECTORY, "migrations", migrationName);
+    const sql = await fs.readFile(migrationPath, "utf8");
+    return Object.freeze({
+      migration_name: migrationName,
+      checksum_sha256: checksum(sql),
+    });
+  }));
 }
 
 export async function applyUadMigrations(pool, { logger = console } = {}) {

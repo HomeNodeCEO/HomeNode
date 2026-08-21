@@ -54,8 +54,8 @@ function encoded(value) {
   return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
-function token(overrides = {}) {
-  const header = encoded({ alg: "RS256", typ: "JWT", kid: publicJwk.kid });
+function token(overrides = {}, headerOverrides = {}) {
+  const header = encoded({ alg: "RS256", typ: "JWT", kid: publicJwk.kid, ...headerOverrides });
   const payload = encoded({
     iss: ISSUER,
     aud: AUDIENCE,
@@ -529,6 +529,30 @@ test("rejects expired, wrong-audience, and tampered OIDC tokens", async () => {
     () => oidc.verify(parts.join(".")),
     (error) => error.message === "invalid_access_token" && error.diagnostic === "signature_invalid",
   );
+});
+
+test("rejects adversarial OIDC claim and algorithm combinations", async () => {
+  const oidc = verifier();
+  const nowSeconds = Math.floor(NOW / 1000);
+  const cases = [
+    [token({ iss: "https://attacker.example" }), "issuer_mismatch"],
+    [token({ nbf: nowSeconds + 301 }), "not_yet_valid"],
+    [token({ iat: nowSeconds + 301 }), "issued_in_future"],
+    [token({ aud: [AUDIENCE, "another-audience"] }), "authorized_party_mismatch"],
+    [token({}, { alg: "none" }), "jwt_header_unsupported"],
+    [token({}, { kid: "attacker-key" }), "signing_key_not_found"],
+  ];
+  for (const [candidate, diagnostic] of cases) {
+    await assert.rejects(
+      () => oidc.verify(candidate),
+      (error) => error.message === "invalid_access_token" && error.diagnostic === diagnostic,
+    );
+  }
+  const multiAudience = await oidc.verify(token({
+    aud: [AUDIENCE, "another-audience"],
+    azp: AUDIENCE,
+  }));
+  assert.equal(multiAudience.azp, AUDIENCE);
 });
 
 test("mobile migration is additive and encodes retention, lineage, and sparse edits", () => {

@@ -153,8 +153,9 @@ test("registers the additive Section 29 catalog, rules, and tamper-evident signa
 test("keeps certification readiness and signing behind the existing OIDC identity boundary", () => {
   const router = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/router.js"), "utf8");
   const server = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/oldServer.js"), "utf8");
-  assert.match(router, /certification-readiness", authenticateSigner/);
-  assert.match(router, /signatures", authenticateSigner/);
+  assert.match(router, /certification-readiness", authenticateIfNeeded/);
+  assert.match(router, /signatures", authenticateIfNeeded/);
+  assert.match(router, /req\.mobileAuth \? next\(\) : authenticateSigner/);
   assert.match(router, /signUadWorkfile/);
   assert.match(server, /verifier: mobileOidcVerifier/);
 });

@@ -30,10 +30,18 @@ import {
   listUadWorkfiles,
 } from "./workfiles.js";
 import { createMobileAuthenticator } from "../mobile/auth.js";
+import {
+  authorizeUadCreation,
+  buildUadAccessScope,
+  createUadWorkfileAuthorizer,
+  verifyUadAssigneeMembership,
+} from "./access.js";
 
 function errorStatus(error) {
   const message = String(error?.message || "");
   if (message.includes("not_found")) return 404;
+  if (message === "uad_authentication_required") return 401;
+  if (message === "uad_organization_required") return 400;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
   if (message === "uad_validation_status_locked") return 409;
   if (message.endsWith("_access_denied")) return 403;
@@ -79,12 +87,20 @@ function sendError(res, error) {
   res.status(status).json({ error: code, ...(error?.details ? { details: error.details } : {}) });
 }
 
+function workfileCreationInput(value) {
+  const input = value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {};
+  delete input.actor_user_id;
+  return input;
+}
+
 export function createUadRouter({
   pool,
   storage,
   verifier,
   compliance = { enabled: false, providers: {} },
   enabled = false,
+  authenticationRequired = false,
+  security = {},
 }) {
   const router = express.Router();
   const authenticateSigner = verifier?.verify
@@ -95,7 +111,16 @@ export function createUadRouter({
     storage,
     verifier,
     compliance,
+    security: {
+      strict: Boolean(security.strict),
+      authenticationRequired: Boolean(authenticationRequired),
+      corsRestricted: Boolean(security.corsRestricted),
+      rateLimitEnabled: Boolean(security.rateLimitEnabled),
+    },
   });
+  const authenticateIfNeeded = (req, res, next) => (
+    req.mobileAuth ? next() : authenticateSigner(req, res, next)
+  );
 
   router.get("/capabilities", (_req, res) => {
     res.json({
@@ -116,6 +141,16 @@ export function createUadRouter({
         enabled: compliance.enabled,
         providers: compliance.providers,
       },
+      authentication: {
+        protocol: "oidc",
+        required: Boolean(authenticationRequired),
+        configured: Boolean(verifier?.configured),
+      },
+      security: {
+        strict: Boolean(security.strict),
+        cors_restricted: Boolean(security.corsRestricted),
+        rate_limit_enabled: Boolean(security.rateLimitEnabled),
+      },
     });
   });
 
@@ -129,10 +164,15 @@ export function createUadRouter({
     if (enabled) return next();
     return res.status(503).json({ error: "uad_workspace_disabled" });
   });
+  router.use((req, res, next) => {
+    if (!authenticationRequired) return next();
+    return authenticateSigner(req, res, next);
+  });
 
   router.get("/accounts/:accountId/workfiles", async (req, res) => {
     try {
-      const workfiles = await listUadWorkfiles(pool, req.params.accountId);
+      const accessScope = authenticationRequired ? buildUadAccessScope(req.mobileAuth) : null;
+      const workfiles = await listUadWorkfiles(pool, req.params.accountId, accessScope);
       res.json({ account_id: req.params.accountId, workfiles });
     } catch (error) {
       sendError(res, error);
@@ -150,12 +190,22 @@ export function createUadRouter({
 
   router.post("/accounts/:accountId/workfiles", async (req, res) => {
     try {
-      const workfile = await createUadWorkfile(pool, req.params.accountId, req.body || {});
+      const requestedInput = workfileCreationInput(req.body);
+      let input = authenticationRequired
+        ? authorizeUadCreation(req.mobileAuth, requestedInput)
+        : requestedInput;
+      if (authenticationRequired) input = await verifyUadAssigneeMembership(pool, input);
+      const workfile = await createUadWorkfile(pool, req.params.accountId, input);
       res.status(201).json({ workfile });
     } catch (error) {
       sendError(res, error);
     }
   });
+
+  router.use(
+    "/workfiles/:workfileId",
+    createUadWorkfileAuthorizer({ pool, authenticationRequired }),
+  );
 
   router.get("/workfiles/:workfileId", async (req, res) => {
     try {
@@ -192,7 +242,7 @@ export function createUadRouter({
     }
   });
 
-  router.get("/workfiles/:workfileId/certification-readiness", authenticateSigner, async (req, res) => {
+  router.get("/workfiles/:workfileId/certification-readiness", authenticateIfNeeded, async (req, res) => {
     try {
       const readiness = await getUadCertificationReadiness(pool, req.params.workfileId);
       if (!readiness.signers.some((signer) => signer.user_id === req.mobileAuth.userId)) {
@@ -204,7 +254,7 @@ export function createUadRouter({
     }
   });
 
-  router.post("/workfiles/:workfileId/signatures", authenticateSigner, async (req, res) => {
+  router.post("/workfiles/:workfileId/signatures", authenticateIfNeeded, async (req, res) => {
     try {
       const result = await signUadWorkfile(
         pool,
@@ -268,7 +318,7 @@ export function createUadRouter({
     }
   });
 
-  router.get("/workfiles/:workfileId/compliance", authenticateSigner, async (req, res) => {
+  router.get("/workfiles/:workfileId/compliance", authenticateIfNeeded, async (req, res) => {
     try {
       res.json(await getUadComplianceStatus(
         pool,
@@ -281,7 +331,7 @@ export function createUadRouter({
     }
   });
 
-  router.post("/workfiles/:workfileId/compliance/:provider", authenticateSigner, async (req, res) => {
+  router.post("/workfiles/:workfileId/compliance/:provider", authenticateIfNeeded, async (req, res) => {
     try {
       const result = await runUadCompliance(
         pool,

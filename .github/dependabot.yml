@@ -1,0 +1,47 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "09:00"
+      timezone: America/Chicago
+    groups:
+      server-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /dcad-frontend
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "09:10"
+      timezone: America/Chicago
+    groups:
+      frontend-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /homenode-mobile
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "09:20"
+      timezone: America/Chicago
+    groups:
+      mobile-security-updates:
+        applies-to: security-updates
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "09:30"
+      timezone: America/Chicago
+    open-pull-requests-limit: 5
+

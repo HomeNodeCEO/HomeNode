@@ -27,8 +27,10 @@ test("keeps provider calls behind OIDC, assignment authorization, and feature fl
   const router = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/router.js"), "utf8");
   const service = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/uadComplianceService.js"), "utf8");
   const server = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/oldServer.js"), "utf8");
-  assert.match(router, /compliance", authenticateSigner/);
-  assert.match(router, /compliance\/:provider", authenticateSigner/);
+  assert.match(router, /compliance", authenticateIfNeeded/);
+  assert.match(router, /compliance\/:provider", authenticateIfNeeded/);
+  assert.match(router, /authenticationRequired/);
+  assert.match(router, /createUadWorkfileAuthorizer/);
   assert.match(service, /assigned_appraiser_user_id/);
   assert.match(service, /supervisory_appraiser_user_id/);
   assert.match(service, /organization_admin/);

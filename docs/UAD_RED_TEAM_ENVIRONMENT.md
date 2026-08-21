@@ -140,3 +140,10 @@ the red-team R2/OIDC credentials if any stop condition in the security program
 occurs. Do not delete the database or bucket until evidence has been preserved
 and the incident owner confirms that no real data or external system was
 reached.
+
+The red-team startup boundary requires `UAD_WORKSPACE_ENABLED` to be explicitly
+set, but accepts `false` as the fail-closed state. The service therefore remains
+healthy enough to expose `/api/uad/capabilities` and `/api/uad/readiness` while
+all UAD workfile routes return `503 uad_workspace_disabled`. Re-enable the
+workspace only after the stop condition is resolved and the low-volume baseline
+passes again.

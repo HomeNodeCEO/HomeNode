@@ -428,7 +428,7 @@ export async function ensurePropertyContextSchema(pool) {
       IF to_regclass('core.sales_source_records') IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM pg_trigger
         WHERE tgname = 'queue_property_influence_on_source_sale'
-          AND tgrelid = 'core.sales_source_records'::regclass
+          AND tgrelid = to_regclass('core.sales_source_records')
           AND NOT tgisinternal
       ) THEN
         EXECUTE 'CREATE TRIGGER queue_property_influence_on_source_sale
@@ -439,7 +439,7 @@ export async function ensurePropertyContextSchema(pool) {
       IF to_regclass('core.sales') IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM pg_trigger
         WHERE tgname = 'queue_property_influence_on_canonical_sale'
-          AND tgrelid = 'core.sales'::regclass
+          AND tgrelid = to_regclass('core.sales')
           AND NOT tgisinternal
       ) THEN
         EXECUTE 'CREATE TRIGGER queue_property_influence_on_canonical_sale

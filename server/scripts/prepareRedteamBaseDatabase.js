@@ -28,6 +28,7 @@ try {
   await verifyRedTeamSyntheticBoundary(pool);
 
   await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS postgis;
     CREATE SCHEMA IF NOT EXISTS core;
     CREATE SCHEMA IF NOT EXISTS app;
 
@@ -62,6 +63,24 @@ try {
       failure_reason text,
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+
+    ALTER TABLE core.account_locations
+      ADD COLUMN IF NOT EXISTS source text NOT NULL DEFAULT 'redteam_fixture',
+      ADD COLUMN IF NOT EXISTS precision text,
+      ADD COLUMN IF NOT EXISTS confidence text,
+      ADD COLUMN IF NOT EXISTS match_method text,
+      ADD COLUMN IF NOT EXISTS source_parcel_id text,
+      ADD COLUMN IF NOT EXISTS source_updated_at timestamptz,
+      ADD COLUMN IF NOT EXISTS geocoded_at timestamptz NOT NULL DEFAULT now(),
+      ADD COLUMN IF NOT EXISTS feature_count integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS review_required boolean NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS review_reason text;
+
+    CREATE INDEX IF NOT EXISTS account_locations_coordinate_idx
+      ON core.account_locations(latitude, longitude)
+      WHERE status = 'matched';
+    CREATE INDEX IF NOT EXISTS account_locations_geocoded_at_idx
+      ON core.account_locations(geocoded_at);
 
     CREATE TABLE IF NOT EXISTS core.primary_improvements (
       account_id text PRIMARY KEY REFERENCES core.accounts(account_id) ON DELETE CASCADE,
@@ -122,6 +141,124 @@ try {
       fetched_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY (account_id, tax_year)
     );
+
+    -- Empty shared sales relations allow the custom/UAD comparable, rating,
+    -- reconciliation, and market-analysis services to initialize without
+    -- copying any MLS or production sale into the red-team boundary.
+    CREATE TABLE IF NOT EXISTS core.sales_source_records (
+      id bigserial PRIMARY KEY,
+      source_name text NOT NULL,
+      source_filename text NOT NULL,
+      source_files text[] NOT NULL DEFAULT ARRAY[]::text[],
+      source_sha256 text NOT NULL,
+      source_row_number integer NOT NULL,
+      source_record_hash text NOT NULL,
+      transaction_fingerprint text NOT NULL,
+      bedrooms_total integer,
+      bathrooms_total_integer integer,
+      bathrooms_full integer,
+      bathrooms_half integer,
+      living_area numeric,
+      lot_size_area numeric,
+      current_price numeric,
+      ratio_current_price_by_living_area numeric,
+      ratio_close_price_by_list_price numeric,
+      ratio_close_price_by_original_list_price numeric,
+      ratio_close_price_by_living_area numeric,
+      days_on_market integer,
+      year_built integer,
+      close_date date,
+      seller_contributions numeric,
+      mls_status text,
+      record_type text NOT NULL DEFAULT 'closed_sale',
+      structural_style text,
+      housing_type text,
+      attachment_type text NOT NULL DEFAULT 'unknown',
+      architectural_style text,
+      garage_spaces numeric,
+      garage_yn boolean,
+      pool_yn boolean,
+      listing_contract_date date,
+      parcel_number_raw text,
+      parcel_number2_raw text,
+      buyer_financing text,
+      primary_account_id text REFERENCES core.accounts(account_id),
+      match_status text NOT NULL,
+      has_multiple_parcel_numbers boolean NOT NULL DEFAULT false,
+      multi_parcel_status text NOT NULL DEFAULT 'single',
+      has_unresolved_parcel boolean NOT NULL DEFAULT false,
+      requires_additional_review boolean NOT NULL DEFAULT false,
+      data_quality_flags jsonb NOT NULL DEFAULT '[]'::jsonb,
+      raw_payload jsonb NOT NULL,
+      loaded_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT sales_source_records_hash_unique UNIQUE (source_record_hash),
+      CONSTRAINT sales_source_records_source_row_unique UNIQUE (source_sha256, source_row_number),
+      CONSTRAINT sales_source_records_match_status_check CHECK (
+        match_status IN (
+          'exact', 'normalized', 'secondary', 'multiple', 'unmatched',
+          'address', 'manual_verified'
+        )
+      ),
+      CONSTRAINT sales_source_records_multi_status_check CHECK (
+        multi_parcel_status IN ('single', 'possible', 'confirmed')
+      ),
+      CONSTRAINT sales_source_records_record_type_check CHECK (
+        record_type IN ('closed_sale', 'listing')
+      ),
+      CONSTRAINT sales_source_records_attachment_type_check CHECK (
+        attachment_type IN ('detached', 'attached', 'mixed', 'unknown')
+      ),
+      CONSTRAINT sales_source_records_flags_array_check CHECK (
+        jsonb_typeof(data_quality_flags) = 'array'
+      )
+    );
+
+    CREATE INDEX IF NOT EXISTS sales_source_records_primary_account_idx
+      ON core.sales_source_records (primary_account_id);
+    CREATE INDEX IF NOT EXISTS sales_source_records_close_date_idx
+      ON core.sales_source_records (close_date DESC);
+    CREATE INDEX IF NOT EXISTS sales_source_records_fingerprint_idx
+      ON core.sales_source_records (transaction_fingerprint);
+    CREATE INDEX IF NOT EXISTS sales_source_records_review_idx
+      ON core.sales_source_records (requires_additional_review, close_date DESC);
+    CREATE INDEX IF NOT EXISTS sales_source_records_record_type_idx
+      ON core.sales_source_records (
+        record_type,
+        COALESCE(close_date, listing_contract_date) DESC
+      );
+
+    CREATE TABLE IF NOT EXISTS core.sale_parcels (
+      id bigserial PRIMARY KEY,
+      source_record_id bigint NOT NULL
+        REFERENCES core.sales_source_records(id) ON DELETE CASCADE,
+      source_position smallint NOT NULL,
+      parcel_sequence smallint NOT NULL DEFAULT 1,
+      parcel_role text NOT NULL,
+      parcel_number_raw text NOT NULL,
+      parcel_number_normalized text,
+      account_id text REFERENCES core.accounts(account_id),
+      match_method text NOT NULL,
+      is_resolved boolean NOT NULL,
+      loaded_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT sale_parcels_source_position_check CHECK (source_position IN (1, 2)),
+      CONSTRAINT sale_parcels_sequence_check CHECK (parcel_sequence > 0),
+      CONSTRAINT sale_parcels_role_check CHECK (parcel_role IN ('primary', 'additional')),
+      CONSTRAINT sale_parcels_match_method_check CHECK (
+        match_method IN (
+          'exact', 'punctuation_normalized', 'embedded_full_id',
+          'concatenated_full_ids', 'unmatched', 'manual_verified'
+        )
+      ),
+      CONSTRAINT sale_parcels_source_unique
+        UNIQUE (source_record_id, source_position, parcel_sequence)
+    );
+
+    CREATE INDEX IF NOT EXISTS sale_parcels_account_idx
+      ON core.sale_parcels (account_id, source_record_id);
+    CREATE INDEX IF NOT EXISTS sale_parcels_unresolved_idx
+      ON core.sale_parcels (source_record_id)
+      WHERE NOT is_resolved;
 
     CREATE TABLE IF NOT EXISTS app.county_account_identifiers (
       county text NOT NULL,

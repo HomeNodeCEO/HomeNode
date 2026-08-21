@@ -36,10 +36,12 @@ UAD workfile, or report registry row before creating its authorization matrix.
 The red-team database must begin empty and must never be cloned from production.
 `npm run prepare:redteam:base` creates only the minimum shared property schema
 and one deterministic single-family fixture before the additive UAD/mobile
-migrations run. The configured fixture account must use the `UAD-REDTEAM-`
-namespace. Static checks do not prove cloud credential scope, so independently
-inspect the R2 token policy, Render resource links, and OIDC application before
-opening a test window.
+migrations run. It also creates empty sales/reconciliation relations and the
+PostGIS/location columns needed by the shared custom/UAD market and neighborhood
+services; no source sale rows are copied. The configured fixture account must
+use the `UAD-REDTEAM-` namespace. Static checks do not prove cloud credential
+scope, so independently inspect the R2 token policy, Render resource links, and
+OIDC application before opening a test window.
 
 ### WorkOS AuthKit boundary
 

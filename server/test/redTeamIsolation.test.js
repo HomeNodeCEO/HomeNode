@@ -31,9 +31,10 @@ function safeEnvironment(overrides = {}) {
     R2_ACCOUNT_ID: "synthetic-account",
     R2_ACCESS_KEY_ID: "bucket-scoped-key",
     R2_SECRET_ACCESS_KEY: "bucket-scoped-secret",
-    OIDC_ISSUER: "https://identity.example.com/",
+    REDTEAM_OIDC_PROVIDER: "static_redteam",
+    OIDC_ISSUER: "https://uad-redteam-identity.homenode.invalid/",
     OIDC_AUDIENCE: "homenode-redteam-api",
-    OIDC_JWKS_URI: "https://identity.example.com/jwks",
+    OIDC_JWKS_URI: "https://public-keys.example.com/jwks.json?v=uad-redteam-key",
     DOCUMENT_OCR_PROVIDER: "disabled",
     UAD_COMPLIANCE_API_ENABLED: "false",
     FANNIE_UAD_COMPLIANCE_ENABLED: "false",
@@ -64,6 +65,20 @@ test("accepts a fully isolated synthetic red-team configuration", () => {
   });
   assert.equal(assertRedTeamDatabaseName("homenode_redteam"), "homenode_redteam");
   assert.equal(assertRedTeamFixtureAccountId("UAD-REDTEAM-SFR-0001"), "UAD-REDTEAM-SFR-0001");
+});
+
+test("static red-team issuer must remain synthetic and use a marked JWKS URL", () => {
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    REDTEAM_OIDC_PROVIDER: "static_redteam",
+    OIDC_ISSUER: "https://login.homenode.com/",
+  })), /oidc_audience_marker/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    REDTEAM_OIDC_PROVIDER: "static_redteam",
+    OIDC_JWKS_URI: "https://public-keys.example.com/jwks.json",
+  })), /oidc_audience_marker/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    REDTEAM_OIDC_PROVIDER: "custom",
+  })), /oidc_audience_marker/);
 });
 
 test("accepts an explicitly disabled UAD workspace for kill-switch operation", () => {

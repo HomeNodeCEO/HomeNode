@@ -113,7 +113,7 @@ test("account matching sends parcel and exact address evidence in one batch", as
     listing_key: "NTREIS-3",
     parcel_number_raw: "A 100",
     parcel_key: "A100",
-    address_key: "100MAINST",
+    address_key: "100 MAIN ST",
     city_key: "DALLAS",
     county_key: "DALLAS",
   }]);
@@ -202,3 +202,4 @@ test("replication follows pages, advances the durable cursor, and aggregates out
   assert.deepEqual(batches.map((batch) => batch[0].ListingKey), ["A", "B"]);
   assert.equal(statements.some((sql) => /pg_advisory_unlock/.test(sql)), true);
 });
+

@@ -44,6 +44,7 @@
         "backfill:collin-sales": "node scripts/backfillCollinSales.js",
         "audit:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js",
         "repair:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js --apply",
+        "backfill:account-address-aliases": "node scripts/runSalesAutoReconciliation.js --seed-only",
         "start": "node src/oldServer.js",
         "dev": "nodemon src/oldServer.js"
     },

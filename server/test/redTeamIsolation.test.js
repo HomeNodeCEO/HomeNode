@@ -66,6 +66,26 @@ test("accepts a fully isolated synthetic red-team configuration", () => {
   assert.equal(assertRedTeamFixtureAccountId("UAD-REDTEAM-SFR-0001"), "UAD-REDTEAM-SFR-0001");
 });
 
+test("accepts an explicitly disabled UAD workspace for kill-switch operation", () => {
+  assert.deepEqual(createRedTeamIsolationConfiguration(safeEnvironment({
+    UAD_WORKSPACE_ENABLED: "false",
+  })), {
+    enabled: true,
+    ready: true,
+    synthetic_only: true,
+    external_status_enabled: false,
+  });
+});
+
+test("rejects a missing or malformed UAD workspace switch", () => {
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    UAD_WORKSPACE_ENABLED: "",
+  })), /workspace_switch_explicit/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    UAD_WORKSPACE_ENABLED: "sometimes",
+  })), /workspace_switch_explicit/);
+});
+
 test("rejects fixture accounts outside the red-team namespace", () => {
   assert.throws(() => assertRedTeamFixtureAccountId("UAD-STAGING-SFR-0001"), /redteam_fixture_account_invalid/);
   assert.throws(() => assertRedTeamFixtureAccountId("100 Test Subject Dr"), /redteam_fixture_account_invalid/);

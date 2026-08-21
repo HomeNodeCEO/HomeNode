@@ -1,4 +1,5 @@
 const ENABLED_VALUES = new Set(["1", "true", "yes", "on"]);
+const DISABLED_VALUES = new Set(["0", "false", "no", "off"]);
 const EXTERNAL_ENABLE_FLAGS = Object.freeze([
   "UAD_COMPLIANCE_API_ENABLED",
   "FANNIE_UAD_COMPLIANCE_ENABLED",
@@ -27,6 +28,13 @@ const FORBIDDEN_EXTERNAL_SECRETS = Object.freeze([
 
 function enabled(value) {
   return ENABLED_VALUES.has(String(value || "").trim().toLowerCase());
+}
+
+function explicitBoolean(valueToCheck) {
+  const normalized = String(valueToCheck ?? "").trim().toLowerCase();
+  if (ENABLED_VALUES.has(normalized)) return true;
+  if (DISABLED_VALUES.has(normalized)) return false;
+  return null;
 }
 
 function value(environment, key) {
@@ -184,7 +192,12 @@ export function createRedTeamIsolationConfiguration(environment = process.env) {
   if (!enabled(environment.UAD_SECURITY_STRICT)) failures.push("uad_security_strict");
   if (!enabled(environment.UAD_AUTHENTICATION_REQUIRED)) failures.push("authentication_required");
   if (!enabled(environment.UAD_RATE_LIMIT_ENABLED)) failures.push("rate_limit_required");
-  if (!enabled(environment.UAD_WORKSPACE_ENABLED)) failures.push("workspace_required");
+  // The workspace switch must be explicit, but false is a valid fail-closed
+  // red-team state. This lets the isolated service boot and expose only its
+  // public readiness/capability diagnostics during a kill-switch event.
+  if (explicitBoolean(environment.UAD_WORKSPACE_ENABLED) === null) {
+    failures.push("workspace_switch_explicit");
+  }
   if (!enabled(environment.MOBILE_INSPECTION_ENABLED)) failures.push("mobile_workspace_required");
 
   const configuredDatabaseName = databaseName(value(environment, "DATABASE_URL"));

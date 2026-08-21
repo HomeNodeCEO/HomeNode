@@ -1,0 +1,44 @@
+name: UAD red-team baseline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uad-redteam-baseline
+  cancel-in-progress: false
+
+jobs:
+  unauthenticated-baseline:
+    name: Low-volume isolated API baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: uad-redteam
+    defaults:
+      run:
+        working-directory: server
+    env:
+      UAD_REDTEAM_BASE_URL: https://homenode-api-redteam.onrender.com
+      UAD_REDTEAM_APP_URL: https://homenode-uad-redteam.onrender.com
+      UAD_REDTEAM_FIXTURE_ACCOUNT_ID: UAD-REDTEAM-SFR-0001
+      UAD_REDTEAM_TIMEOUT_MS: "20000"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Run sanitized red-team baseline
+        run: npm run --silent verify:redteam:baseline | tee uad-redteam-baseline.json
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uad-redteam-baseline-${{ github.run_id }}
+          path: server/uad-redteam-baseline.json
+          if-no-files-found: error
+          retention-days: 14

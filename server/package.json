@@ -10,6 +10,7 @@
         "prepare:staging:uad": "node scripts/prepareUadStagingDatabase.js",
         "start:staging:uad": "npm run migrate:uad && npm run migrate:mobile && npm run prepare:staging:uad && npm run verify:mobile-oidc && npm start",
         "verify:redteam:isolation": "node scripts/verifyRedteamEnvironment.js",
+        "verify:redteam:baseline": "node scripts/verifyUadRedTeamBaseline.js",
         "prepare:redteam:base": "node scripts/prepareRedteamBaseDatabase.js",
         "prepare:redteam:uad": "node scripts/prepareRedteamDatabase.js",
         "start:redteam:uad": "npm run verify:redteam:isolation && npm run prepare:redteam:base && npm run migrate:uad && npm run migrate:mobile && npm run prepare:redteam:uad && npm start",

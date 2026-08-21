@@ -94,6 +94,19 @@ test assignment, expected result, actual result, and any follow-up issue or PR.
 - Confirm that signed files are read-only and removing a verified desktop photo
   excludes it from the report while retaining the original for five years.
 
+### TQ-008 — Private assignment-document storage and recovery
+
+- Priority: P1
+- Status: queued
+- Upload a machine-readable contract and verify that its immutable original is
+  stored in private R2 while its checksum, page text, cited field candidates,
+  and review history remain assignment-scoped in PostgreSQL.
+- Confirm that the unchanged embedded viewer loads the verified bytes and that a
+  checksum or size mismatch fails closed.
+- Simulate unavailable R2 during upload, verify the PostgreSQL fallback remains
+  usable, then run `maintenance:documents` and confirm migration clears the
+  fallback bytes only after the R2 object is verified.
+
 ## Promotion rule
 
 When a queued test fails, create a focused issue or repair branch and promote it

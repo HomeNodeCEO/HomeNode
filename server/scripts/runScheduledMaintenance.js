@@ -2,6 +2,7 @@ import "dotenv/config";
 import pg from "pg";
 
 import { runScheduledMaintenance } from "../src/services/scheduledMaintenance.js";
+import { createUadObjectStorage } from "../src/modules/uad/r2Storage.js";
 
 function option(name, fallback = null) {
   const prefix = `--${name}=`;
@@ -17,6 +18,7 @@ const pool = new pg.Pool({
   statement_timeout: Number(process.env.MAINTENANCE_STATEMENT_TIMEOUT_MS || 900_000),
   application_name: "homenode-scheduled-maintenance",
 });
+const objectStorage = createUadObjectStorage();
 
 try {
   const result = await runScheduledMaintenance(pool, {
@@ -73,6 +75,11 @@ try {
       "document-batch-size",
       process.env.MAINTENANCE_DOCUMENT_BATCH_SIZE || "5",
     ),
+    documentStorageBatchSize: option(
+      "document-storage-batch-size",
+      process.env.MAINTENANCE_DOCUMENT_STORAGE_BATCH_SIZE || "5",
+    ),
+    objectStorage,
     fetchConcurrency: process.env.PROPERTY_CONTEXT_FETCH_CONCURRENCY || "3",
   });
   console.log(JSON.stringify(result, null, 2));

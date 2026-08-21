@@ -5942,9 +5942,10 @@ app.post(
         contentType: req.get("content-type"),
         content: req.body,
         uploadedBy: decodedDocumentHeader(req, "x-document-uploaded-by"),
+        storage: uadObjectStorage,
       });
       if (document.processing_status === "uploaded") {
-        void processAssignmentDocument(pool, document.id).catch((error) => {
+        void processAssignmentDocument(pool, document.id, { storage: uadObjectStorage }).catch((error) => {
           if (error?.message !== "document_processing_in_progress") {
             console.warn("[documents] background extraction failed", error?.message || error);
           }
@@ -5983,7 +5984,10 @@ app.get("/api/documents/:id/content", async (req, res) => {
   if (!requireEditor(req, res)) return;
   try {
     await ensureAssignmentDocumentsAvailable();
-    const document = await getAssignmentDocument(pool, req.params.id, { includeContent: true });
+    const document = await getAssignmentDocument(pool, req.params.id, {
+      includeContent: true,
+      storage: uadObjectStorage,
+    });
     if (!document) return res.status(404).json({ error: "document_not_found" });
     const fileName = String(document.file_name || `document-${document.id}.pdf`)
       .replace(/[\r\n"]/g, "_");
@@ -6010,7 +6014,10 @@ app.post("/api/documents/:id/reprocess", async (req, res) => {
   }
   try {
     await ensureAssignmentDocumentsAvailable();
-    const document = await processAssignmentDocument(pool, req.params.id, { force: true });
+    const document = await processAssignmentDocument(pool, req.params.id, {
+      force: true,
+      storage: uadObjectStorage,
+    });
     return res.json({ ok: true, document });
   } catch (error) {
     const message = error?.message || "assignment_document_reprocess_failed";

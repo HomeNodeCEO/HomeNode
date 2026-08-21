@@ -18,6 +18,8 @@ const MIGRATIONS = Object.freeze([
   "20260911_mobile_inspection_completion.sql",
   "20260920_appraisal_history_replication.sql",
   "20260921_desktop_report_photos.sql",
+  "007_assignment_documents.sql",
+  "20260922_assignment_document_r2.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

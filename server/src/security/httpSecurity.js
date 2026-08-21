@@ -1,6 +1,5 @@
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 300;
-const MAX_TRACKED_CLIENTS = 10_000;
 
 function enabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -65,14 +64,47 @@ export function createHttpSecurityConfiguration(environment = process.env) {
   });
 }
 
-export function corsOriginPolicy(configuration) {
-  if (!configuration.corsRestricted) return true;
+function appendVary(res, value) {
+  const existing = String(res.getHeader("vary") || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (!existing.some((entry) => entry.toLowerCase() === value.toLowerCase())) {
+    existing.push(value);
+  }
+  res.setHeader("vary", existing.join(", "));
+}
+
+function requestOriginHost(origin) {
+  try {
+    const parsed = new URL(origin);
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      return null;
+    }
+    return parsed.host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+export function createCorsMiddleware(configuration) {
   const allowed = new Set(configuration.corsOrigins);
-  return function originPolicy(origin, callback) {
-    if (!origin || allowed.has(origin)) return callback(null, true);
-    const error = new Error("cors_origin_denied");
-    error.statusCode = 403;
-    return callback(error);
+  return function enforceCors(req, res, next) {
+    const origin = String(req.get?.("origin") || "").trim();
+    if (!origin) return next();
+    const requestHost = String(req.get?.("host") || "").trim().toLowerCase();
+    const sameOrigin = requestHost && requestOriginHost(origin) === requestHost;
+    if (!sameOrigin && !allowed.has(origin)) {
+      return res.status(403).json({ error: "cors_origin_denied" });
+    }
+    res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
+    res.setHeader("access-control-allow-headers", "Authorization, Content-Type, Idempotency-Key");
+    res.setHeader("access-control-max-age", "600");
+    appendVary(res, "Origin");
+    if (req.method === "OPTIONS") return res.status(204).end();
+    return next();
   };
 }
 
@@ -86,50 +118,3 @@ export function securityHeaders(_req, res, next) {
   res.setHeader("x-frame-options", "DENY");
   next();
 }
-
-function requestClientKey(req) {
-  return String(req.ip || req.socket?.remoteAddress || "unknown").slice(0, 200);
-}
-
-export function createFixedWindowRateLimiter({
-  enabled: limiterEnabled,
-  windowMs,
-  maximum,
-  now = () => Date.now(),
-} = {}) {
-  if (!limiterEnabled) return (_req, _res, next) => next();
-  const ttl = boundedInteger(windowMs, DEFAULT_RATE_LIMIT_WINDOW_MS, 1_000, 60 * 60 * 1_000);
-  const limit = boundedInteger(maximum, DEFAULT_RATE_LIMIT_MAX, 10, 10_000);
-  const clients = new Map();
-
-  return function fixedWindowRateLimiter(req, res, next) {
-    const currentTime = now();
-    const key = requestClientKey(req);
-    let state = clients.get(key);
-    if (!state || state.resetAt <= currentTime) {
-      state = { count: 0, resetAt: currentTime + ttl };
-      clients.set(key, state);
-    }
-    state.count += 1;
-    const remaining = Math.max(0, limit - state.count);
-    res.setHeader("ratelimit-limit", String(limit));
-    res.setHeader("ratelimit-remaining", String(remaining));
-    res.setHeader("ratelimit-reset", String(Math.ceil(state.resetAt / 1000)));
-
-    if (clients.size > MAX_TRACKED_CLIENTS) {
-      for (const [clientKey, clientState] of clients) {
-        if (clientState.resetAt <= currentTime || clients.size > MAX_TRACKED_CLIENTS) {
-          clients.delete(clientKey);
-        }
-      }
-    }
-
-    if (state.count > limit) {
-      const retryAfterSeconds = Math.max(1, Math.ceil((state.resetAt - currentTime) / 1000));
-      res.setHeader("retry-after", String(retryAfterSeconds));
-      return res.status(429).json({ error: "rate_limit_exceeded" });
-    }
-    return next();
-  };
-}
-

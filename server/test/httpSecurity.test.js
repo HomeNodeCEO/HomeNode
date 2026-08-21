@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  corsOriginPolicy,
-  createFixedWindowRateLimiter,
+  createCorsMiddleware,
   createHttpSecurityConfiguration,
   securityHeaders,
 } from "../src/security/httpSecurity.js";
@@ -48,19 +47,37 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
   );
 });
 
-test("CORS policy permits same-origin requests and rejects unlisted browser origins", async () => {
+test("CORS policy permits same-origin and allowlisted origins while rejecting others", () => {
   const configuration = createHttpSecurityConfiguration({
     CORS_ORIGIN: "https://redteam.homenode.com",
   });
-  const policy = corsOriginPolicy(configuration);
-  const evaluate = (origin) => new Promise((resolve) => {
-    policy(origin, (error, allowed) => resolve({ error, allowed }));
-  });
-  assert.deepEqual(await evaluate(undefined), { error: null, allowed: true });
-  assert.deepEqual(await evaluate("https://redteam.homenode.com"), { error: null, allowed: true });
-  const rejected = await evaluate("https://attacker.example");
-  assert.equal(rejected.allowed, undefined);
-  assert.equal(rejected.error.message, "cors_origin_denied");
+  const middleware = createCorsMiddleware(configuration);
+  const run = ({ origin, host = "api.homenode.com", method = "GET" }) => {
+    const headers = new Map();
+    const response = {
+      statusCode: 200,
+      body: null,
+      setHeader(name, value) { headers.set(name, value); },
+      getHeader(name) { return headers.get(name); },
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; },
+      end() { return this; },
+    };
+    let continued = false;
+    middleware({ method, get: (name) => ({ origin, host })[name] }, response, () => {
+      continued = true;
+    });
+    return { continued, headers, response };
+  };
+  assert.equal(run({ origin: "https://api.homenode.com" }).continued, true);
+  assert.equal(run({ origin: "https://redteam.homenode.com" }).continued, true);
+  const rejected = run({ origin: "https://attacker.example" });
+  assert.equal(rejected.continued, false);
+  assert.equal(rejected.response.statusCode, 403);
+  assert.deepEqual(rejected.response.body, { error: "cors_origin_denied" });
+  const preflight = run({ origin: "https://redteam.homenode.com", method: "OPTIONS" });
+  assert.equal(preflight.response.statusCode, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "https://redteam.homenode.com");
 });
 
 test("security headers remove browser interpretation and embedding ambiguity", () => {
@@ -75,39 +92,3 @@ test("security headers remove browser interpretation and embedding ambiguity", (
   assert.match(headers.get("content-security-policy"), /frame-ancestors 'none'/);
   assert.match(headers.get("strict-transport-security"), /max-age=31536000/);
 });
-
-test("fixed-window limiter returns a bounded generic 429 response", () => {
-  let currentTime = 1_000;
-  const limiter = createFixedWindowRateLimiter({
-    enabled: true,
-    windowMs: 1_000,
-    maximum: 10,
-    now: () => currentTime,
-  });
-  const request = { ip: "192.0.2.10", method: "GET" };
-  let nextCalls = 0;
-  function response() {
-    const headers = new Map();
-    return {
-      headers,
-      statusCode: 200,
-      body: null,
-      setHeader(name, value) { headers.set(name, value); },
-      status(code) { this.statusCode = code; return this; },
-      json(body) { this.body = body; return this; },
-    };
-  }
-  for (let index = 0; index < 10; index += 1) {
-    limiter(request, response(), () => { nextCalls += 1; });
-  }
-  assert.equal(nextCalls, 10);
-  const blocked = response();
-  limiter(request, blocked, () => { nextCalls += 1; });
-  assert.equal(blocked.statusCode, 429);
-  assert.deepEqual(blocked.body, { error: "rate_limit_exceeded" });
-  assert.equal(blocked.headers.get("retry-after"), "1");
-  currentTime += 1_001;
-  limiter(request, response(), () => { nextCalls += 1; });
-  assert.equal(nextCalls, 11);
-});
-

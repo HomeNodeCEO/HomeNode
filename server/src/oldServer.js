@@ -1,6 +1,5 @@
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import pg from "pg";
 import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
@@ -202,8 +201,7 @@ import {
 import { replicateAppraisalFile } from "./services/appraisalReplication.js";
 import { loadSharedAppraisalCompletion } from "./services/appraisalCompletionAdapter.js";
 import {
-  corsOriginPolicy,
-  createFixedWindowRateLimiter,
+  createCorsMiddleware,
   createHttpSecurityConfiguration,
   securityHeaders,
 } from "./security/httpSecurity.js";
@@ -225,14 +223,8 @@ const requestPerformance = createRequestPerformanceMonitor({ pool });
 const loadDcadScraperStatus = createCachedScraperStatusLoader();
 app.use(requestPerformance.middleware);
 app.use(securityHeaders);
+app.use(createCorsMiddleware(httpSecurity));
 app.use(express.json({ limit: "1mb" }));
-app.use(cors({ origin: corsOriginPolicy(httpSecurity) }));
-app.use((error, _req, res, next) => {
-  if (error?.message === "cors_origin_denied") {
-    return res.status(403).json({ error: "cors_origin_denied" });
-  }
-  return next(error);
-});
 
 const uadObjectStorage = createUadObjectStorage();
 const uadComplianceRegistry = createUadComplianceRegistry();
@@ -243,12 +235,7 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });
-const uadRateLimiter = createFixedWindowRateLimiter({
-  enabled: httpSecurity.rateLimitEnabled,
-  windowMs: httpSecurity.rateLimitWindowMs,
-  maximum: httpSecurity.rateLimitMax,
-});
-app.use("/api/uad", uadRateLimiter, createUadRouter({
+app.use("/api/uad", createUadRouter({
   pool,
   storage: uadObjectStorage,
   verifier: mobileOidcVerifier,

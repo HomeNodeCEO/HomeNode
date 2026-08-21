@@ -1,4 +1,5 @@
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 
 import {
   createUadAssetUpload,
@@ -103,6 +104,14 @@ export function createUadRouter({
   security = {},
 }) {
   const router = express.Router();
+  router.use(rateLimit({
+    windowMs: security.rateLimitWindowMs,
+    limit: security.rateLimitMax,
+    skip: () => !security.rateLimitEnabled,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    handler: (_req, res) => res.status(429).json({ error: "rate_limit_exceeded" }),
+  }));
   const authenticateSigner = verifier?.verify
     ? createMobileAuthenticator({ pool, verifier })
     : (_req, res) => res.status(503).json({ error: "mobile_oidc_not_configured" });

@@ -10,7 +10,7 @@ const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
 const ORGANIZATION_ID = "f62aa408-18eb-4ee1-bdae-167b8ff92a0c";
 const OTHER_ORGANIZATION_ID = "b5250368-e8f1-4d47-9f62-a8a7cb2ea383";
 
-async function withServer(pool, callback) {
+async function withServer(pool, callback, securityOverrides = {}) {
   const app = express();
   app.use(express.json());
   app.use("/api/uad", createUadRouter({
@@ -24,7 +24,14 @@ async function withServer(pool, callback) {
     },
     enabled: true,
     authenticationRequired: true,
-    security: { strict: true, corsRestricted: true, rateLimitEnabled: true },
+    security: {
+      strict: true,
+      corsRestricted: true,
+      rateLimitEnabled: true,
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 300,
+      ...securityOverrides,
+    },
   }));
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
@@ -122,3 +129,14 @@ test("strict UAD routes allow the assigned appraiser and keep capabilities publi
   });
 });
 
+test("strict UAD routes return a bounded generic response after the configured request limit", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    assert.equal((await fetch(`${baseUrl}/api/uad/capabilities`)).status, 200);
+    assert.equal((await fetch(`${baseUrl}/api/uad/capabilities`)).status, 200);
+    const blocked = await fetch(`${baseUrl}/api/uad/capabilities`);
+    assert.equal(blocked.status, 429);
+    assert.deepEqual(await blocked.json(), { error: "rate_limit_exceeded" });
+    assert.ok(blocked.headers.get("retry-after"));
+  }, { rateLimitMax: 2 });
+});

@@ -40,6 +40,29 @@ checks do not prove cloud credential scope, so independently inspect the R2
 token policy, Render resource links, and OIDC application before opening a test
 window.
 
+### WorkOS AuthKit boundary
+
+WorkOS applications in one WorkOS environment share the environment issuer,
+but each application receives a unique generated client ID. WorkOS access
+tokens use that client ID as their audience, so the literal audience cannot be
+named `redteam`. For a WorkOS-backed red-team deployment, set all of:
+
+- `REDTEAM_OIDC_PROVIDER=workos_authkit`;
+- `REDTEAM_OIDC_APPLICATION_ID` to the dedicated application's generated
+  `app_...` identifier;
+- `REDTEAM_OIDC_APPLICATION_NAME` to a dashboard-verified name containing
+  `red team` (separators are allowed);
+- `REDTEAM_OIDC_CLIENT_ID` and `OIDC_AUDIENCE` to the same dedicated generated
+  `client_...` identifier; and
+- `OIDC_JWKS_URI` to `/oauth2/jwks` on the exact `OIDC_ISSUER` origin.
+
+The startup guard rejects a partial WorkOS configuration, a client/audience
+mismatch, or a cross-origin/nonstandard JWKS endpoint. These static markers do
+not verify WorkOS dashboard state: before each test window, inspect that the
+application ID and client ID belong to the named red-team application. Do not
+modify a shared WorkOS environment JWT template to satisfy this guard because
+that would change tokens issued to staging applications.
+
 ## Synthetic identities
 
 Provision at least:

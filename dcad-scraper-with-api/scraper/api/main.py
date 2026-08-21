@@ -13,12 +13,12 @@ import httpx
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 import os, base64, io
 from pathlib import Path
 try:
-    from PyPDF2 import PdfReader, PdfWriter  # type: ignore
+    from pypdf import PdfReader, PdfWriter  # type: ignore
     from reportlab.pdfgen import canvas  # type: ignore
     from reportlab.lib.pagesizes import letter  # type: ignore
     from reportlab.lib.utils import ImageReader  # type: ignore
@@ -55,12 +55,48 @@ except Exception:
 
 app = FastAPI(title="DCAD Scraper API")
 
+def _cors_origins() -> list[str]:
+    configured = os.getenv("SCRAPER_CORS_ORIGINS", "")
+    candidates = [
+        "https://homenode.onrender.com",
+        "https://homenode-uad-staging.onrender.com",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        *configured.split(","),
+    ]
+    origins: list[str] = []
+    for candidate in candidates:
+        value = candidate.strip()
+        if not value:
+            continue
+        if "\\" in value or any(character.isspace() for character in value):
+            raise RuntimeError("invalid_scraper_cors_origin")
+        parsed = urlparse(value)
+        try:
+            hostname = parsed.hostname
+            port = parsed.port
+        except ValueError as error:
+            raise RuntimeError("invalid_scraper_cors_origin") from error
+        scheme = parsed.scheme.lower()
+        local_http = scheme == "http" and hostname in {"localhost", "127.0.0.1", "::1"}
+        if not hostname or (scheme != "https" and not local_http):
+            raise RuntimeError("invalid_scraper_cors_origin")
+        if parsed.username or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+            raise RuntimeError("invalid_scraper_cors_origin")
+        normalized_host = f"[{hostname.lower()}]" if ":" in hostname else hostname.lower()
+        origin = f"{scheme}://{normalized_host}{f':{port}' if port is not None else ''}"
+        if origin not in origins:
+            origins.append(origin)
+    return origins
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type"],
+    max_age=600,
 )
 
 BASE_URL = "https://www.dallascad.org"
@@ -885,24 +921,34 @@ def scrape_status():
         raise HTTPException(status_code=503, detail=f"campaign_status_unavailable: {error}")
 
 class SignupRequest(BaseModel):
-    accountId: str | None = None
-    signature: str | None = None
-    pdfData: str | None = None  # kept for backward-compat (filled PDF)
-    basePdfData: str | None = None  # original PDF data URL (preferred)
+    accountId: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    signature: str | None = Field(default=None, max_length=1_500_000)
+    pdfData: str | None = Field(default=None, max_length=7_500_000)  # legacy filled PDF
+    basePdfData: str | None = Field(default=None, max_length=7_500_000)  # preferred base PDF
     fields: dict | None = None  # optional key->value for overlay text/checkboxes
+
+
+def _legacy_signup_enabled() -> bool:
+    return os.getenv("ENABLE_LEGACY_SIGNUP_PDF", "").strip().lower() in {"1", "true", "yes", "on"}
 
 def _ensure_storage_dir() -> Path:
     root = Path(os.environ.get('STORAGE_DIR', './storage/signed_forms')).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
-def _decode_data_url(data_url: str) -> bytes:
+def _decode_data_url(data_url: str, *, maximum_bytes: int) -> bytes:
     if not data_url:
         return b''
+    if len(data_url) > ((maximum_bytes * 4) // 3) + 256:
+        raise ValueError("encoded_file_too_large")
     if ',' in data_url:
-        header, b64 = data_url.split(',', 1)
-        return base64.b64decode(b64)
-    return base64.b64decode(data_url)
+        _header, encoded = data_url.split(',', 1)
+    else:
+        encoded = data_url
+    decoded = base64.b64decode(encoded, validate=True)
+    if len(decoded) > maximum_bytes:
+        raise ValueError("decoded_file_too_large")
+    return decoded
 
 def _overlay_signature(pdf_bytes: bytes, sig_bytes: bytes) -> bytes:
     if not _PDF_LIBS_AVAILABLE:
@@ -933,13 +979,17 @@ def _overlay_signature(pdf_bytes: bytes, sig_bytes: bytes) -> bytes:
     writer.write(out)
     return out.getvalue()
 
-@app.post('/signup/submit')
 async def signup_submit(req: SignupRequest):
+    if not _legacy_signup_enabled():
+        raise HTTPException(status_code=404, detail='not_found')
     try:
+        if len(req.fields or {}) > 64 or len(json.dumps(req.fields or {})) > 50_000:
+            raise HTTPException(status_code=400, detail='invalid_signup_fields')
         # Choose base pdf bytes: prefer basePdfData, else pdfData
-        base_pdf = _decode_data_url(req.basePdfData or '') if req.basePdfData else _decode_data_url(req.pdfData or '')
-        if not base_pdf:
-            raise HTTPException(status_code=400, detail='Missing PDF data')
+        source_pdf = req.basePdfData if req.basePdfData else req.pdfData
+        base_pdf = _decode_data_url(source_pdf or '', maximum_bytes=5_000_000)
+        if not base_pdf.startswith(b'%PDF-'):
+            raise HTTPException(status_code=400, detail='invalid_pdf')
 
         # If fields are provided, overlay text/checkboxes
         overlay = io.BytesIO()
@@ -977,6 +1027,8 @@ async def signup_submit(req: SignupRequest):
             overlay = None
 
         base_reader = PdfReader(io.BytesIO(base_pdf))
+        if not 1 <= len(base_reader.pages) <= 20:
+            raise HTTPException(status_code=400, detail='invalid_pdf_page_count')
         writer = PdfWriter()
         if overlay:
             overlay_reader = PdfReader(overlay)
@@ -993,7 +1045,12 @@ async def signup_submit(req: SignupRequest):
         merged_bytes = merged.getvalue()
 
         # Overlay signature if provided
-        sig_bytes = _decode_data_url(req.signature or '') if req.signature else b''
+        sig_bytes = _decode_data_url(req.signature or '', maximum_bytes=1_000_000) if req.signature else b''
+        if sig_bytes and not (
+            sig_bytes.startswith(b'\x89PNG\r\n\x1a\n')
+            or sig_bytes.startswith(b'\xff\xd8\xff')
+        ):
+            raise HTTPException(status_code=400, detail='invalid_signature_image')
         final_pdf = _overlay_signature(merged_bytes, sig_bytes) if sig_bytes else merged_bytes
 
         root = _ensure_storage_dir()
@@ -1018,8 +1075,14 @@ async def signup_submit(req: SignupRequest):
         return { 'ok': True, 'file': name }
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail='invalid_encoded_file')
+    except Exception:
+        raise HTTPException(status_code=500, detail='signup_pdf_failed')
+
+
+if _legacy_signup_enabled():
+    app.add_api_route('/signup/submit', signup_submit, methods=['POST'], include_in_schema=False)
 
 @app.get("/detail/{account_id}", response_model=DetailResponse)
 async def get_detail(account_id: str):

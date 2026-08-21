@@ -63,3 +63,35 @@ jobs:
         # 2026-08-21. Keep this list narrow; all other High/Critical findings
         # remain blocking. See docs/UAD_SECURITY_TESTING.md.
         run: pnpm audit --audit-level=high
+
+  pip-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - requirements: dcad-scraper-with-api/requirements.txt
+            run_tests: true
+          - requirements: dcad-scraper-with-api/dcad-scraper/scraper/requirements.txt
+            run_tests: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: ${{ matrix.requirements }}
+      - run: python -m pip install --disable-pip-version-check pip-audit
+      - name: Install active scraper dependencies
+        if: matrix.run_tests
+        run: python -m pip install --disable-pip-version-check -r "${{ matrix.requirements }}"
+      - name: Compile active scraper and maintenance modules
+        if: matrix.run_tests
+        run: python -m compileall -q dcad-scraper-with-api/scraper dcad-scraper-with-api/tools
+      - name: Run scraper regression tests
+        if: matrix.run_tests
+        env:
+          PYTHONPATH: dcad-scraper-with-api
+        run: python -m unittest discover -s dcad-scraper-with-api/tests -v
+      - name: Reject known Python vulnerabilities
+        run: python -m pip_audit -r "${{ matrix.requirements }}"

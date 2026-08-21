@@ -30,6 +30,7 @@ export function buildUadOperationalReadiness({
   verifier,
   compliance,
   database,
+  security = {},
   checkedAt = new Date().toISOString(),
 }) {
   const blockers = [];
@@ -41,6 +42,11 @@ export function buildUadOperationalReadiness({
   if (database.missing_relation_count > 0) blockers.push("uad_relations_missing");
   if (!storage?.configured) blockers.push("uad_object_storage_not_configured");
   if (!verifier?.configured) blockers.push("uad_oidc_not_configured");
+  if (security.strict && !security.authenticationRequired) {
+    blockers.push("uad_authentication_not_enforced");
+  }
+  if (security.strict && !security.corsRestricted) blockers.push("uad_cors_not_restricted");
+  if (security.strict && !security.rateLimitEnabled) blockers.push("uad_rate_limit_not_enforced");
 
   const localDeliveryReady = blockers.length === 0;
   const providers = providerReadiness(compliance, localDeliveryReady);
@@ -62,6 +68,17 @@ export function buildUadOperationalReadiness({
       oidc: Object.freeze({
         configured: Boolean(verifier?.configured),
         ready: Boolean(verifier?.configured),
+      }),
+      security: Object.freeze({
+        strict: Boolean(security.strict),
+        authentication_required: Boolean(security.authenticationRequired),
+        cors_restricted: Boolean(security.corsRestricted),
+        rate_limit_enabled: Boolean(security.rateLimitEnabled),
+        ready: !security.strict || Boolean(
+          security.authenticationRequired
+          && security.corsRestricted
+          && security.rateLimitEnabled
+        ),
       }),
       compliance: Object.freeze({
         enabled: Boolean(compliance?.enabled),

@@ -1,0 +1,15 @@
+name: HomeNode security-extended configuration
+
+queries:
+  - uses: security-extended
+
+paths:
+  - server/src
+  - server/scripts
+  - dcad-frontend/src
+  - dcad-frontend/scripts
+  - homenode-mobile/src
+
+paths-ignore:
+  - server/src/modules/uad/spec
+

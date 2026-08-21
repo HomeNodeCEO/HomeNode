@@ -58,14 +58,32 @@ function workfileResponse(row) {
   };
 }
 
-export async function listUadWorkfiles(pool, accountIdValue) {
+export async function listUadWorkfiles(pool, accountIdValue, accessScope = null) {
   const accountId = normalizeUadAccountId(accountIdValue);
+  const restricted = Boolean(accessScope && !accessScope.platformAdministrator);
+  const readableOrganizationIds = restricted ? accessScope.readableOrganizationIds : [];
+  const organizationWideReadIds = restricted ? accessScope.organizationWideReadIds : [];
+  if (restricted && !readableOrganizationIds.length) return [];
   const { rows } = await pool.query(
     `SELECT *
        FROM appraisal.uad_workfiles
       WHERE account_id = $1
+        AND (
+          NOT $2::boolean
+          OR organization_id = ANY($4::uuid[])
+          OR (
+            organization_id = ANY($3::uuid[])
+            AND (assigned_appraiser_user_id = $5::uuid OR supervisory_appraiser_user_id = $5::uuid)
+          )
+        )
       ORDER BY updated_at DESC, id`,
-    [accountId],
+    [
+      accountId,
+      restricted,
+      readableOrganizationIds,
+      organizationWideReadIds,
+      restricted ? accessScope.userId : null,
+    ],
   );
   return rows.map(workfileResponse);
 }
@@ -149,6 +167,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
   const fileNumber = normalizeUadFileNumber(input.file_number, { accountId, workfileId });
   const organizationId = input.organization_id || null;
   const appraiserUserId = input.assigned_appraiser_user_id || null;
+  const actorUserId = input.actor_user_id || appraiserUserId;
   const specificationReleaseKey = input.specification_release_key || CURRENT_UAD_RELEASE_KEY;
 
   const subjectData = await loadSubjectSnapshot(client, accountId);
@@ -164,7 +183,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
          id, organization_id, account_id, file_number, specification_release_key,
          property_type, inspection_method, assignment_purpose,
          assigned_appraiser_user_id, created_by_user_id, updated_by_user_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $9)
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
        RETURNING *`,
       [
         workfileId,
@@ -176,6 +195,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
         INITIAL_UAD_INSPECTION_METHOD,
         input.assignment_purpose || null,
         appraiserUserId,
+        actorUserId,
       ],
     );
 
@@ -202,7 +222,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
             "core.secondary_improvements",
           ],
         }),
-        appraiserUserId,
+        actorUserId,
       ],
     );
 
@@ -304,7 +324,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
             vehicle_storage: vehicleStorageEntityId,
           },
         }),
-        appraiserUserId,
+        actorUserId,
       ],
     );
 
@@ -315,7 +335,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
          $1::uuid, $2::uuid, 'uad_workfile.created', 'uad_workfile',
          ($1::uuid)::text, $3::jsonb
        )`,
-      [workfileId, appraiserUserId, JSON.stringify({ account_id: accountId, file_number: fileNumber })],
+      [workfileId, actorUserId, JSON.stringify({ account_id: accountId, file_number: fileNumber })],
     );
 
   return workfileResponse(inserted.rows[0]);
@@ -345,7 +365,7 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
           workfile.account_id,
           workfile.file_number,
           workfile.id,
-          workfile.assigned_appraiser_user_id || null,
+          input.actor_user_id || workfile.assigned_appraiser_user_id || null,
         ],
       );
       await client.query(
@@ -360,7 +380,7 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
       );
       if (historyRegistry.rows[0]?.table_name) {
         await registerOriginalAppraisalReport(client, registered.rows[0].id, {
-          actorUserId: workfile.assigned_appraiser_user_id || null,
+          actorUserId: input.actor_user_id || workfile.assigned_appraiser_user_id || null,
           captureReason: "desktop_uad_workfile_created",
         });
       }

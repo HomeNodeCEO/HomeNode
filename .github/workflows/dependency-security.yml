@@ -1,0 +1,65 @@
+name: Dependency security
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 8 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  npm-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [server, dcad-frontend]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.project }}/package-lock.json
+      - run: npm ci
+      - name: Reject high or critical known vulnerabilities
+        run: npm audit --audit-level=high
+
+  pnpm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: homenode-mobile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.13
+          cache: pnpm
+          cache-dependency-path: homenode-mobile/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Reject high or critical known vulnerabilities
+        # Expo/Metro resolves image-size only in its build toolchain. The two
+        # exact advisories below have no published fixed version as of
+        # 2026-08-21. Keep this list narrow; all other High/Critical findings
+        # remain blocking. See docs/UAD_SECURITY_TESTING.md.
+        run: pnpm audit --audit-level=high

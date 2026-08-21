@@ -97,6 +97,45 @@ test("reports bounded blocker codes without leaking database errors", () => {
   ]);
 });
 
+test("strict red-team readiness refuses incomplete security enforcement", () => {
+  const readiness = buildUadOperationalReadiness({
+    enabled: true,
+    storage: { provider: "r2", configured: true },
+    verifier: { configured: true },
+    compliance: { enabled: false, providers: {} },
+    database: readyDatabase(),
+    security: {
+      strict: true,
+      authenticationRequired: false,
+      corsRestricted: false,
+      rateLimitEnabled: false,
+    },
+  });
+  assert.equal(readiness.ok, false);
+  assert.deepEqual(readiness.blockers, [
+    "uad_authentication_not_enforced",
+    "uad_cors_not_restricted",
+    "uad_rate_limit_not_enforced",
+  ]);
+  assert.equal(readiness.checks.security.ready, false);
+
+  const secured = buildUadOperationalReadiness({
+    enabled: true,
+    storage: { provider: "r2", configured: true },
+    verifier: { configured: true },
+    compliance: { enabled: false, providers: {} },
+    database: readyDatabase(),
+    security: {
+      strict: true,
+      authenticationRequired: true,
+      corsRestricted: true,
+      rateLimitEnabled: true,
+    },
+  });
+  assert.equal(secured.ok, true);
+  assert.equal(secured.checks.security.ready, true);
+});
+
 test("checks applied migration checksums, current release, and required relations", async () => {
   const manifest = await getUadMigrationManifest();
   const queries = [];

@@ -1,6 +1,5 @@
 import "dotenv/config";
 import express from "express";
-import cors from "cors";
 import pg from "pg";
 import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
@@ -201,8 +200,16 @@ import {
 } from "./services/appraisalHistory.js";
 import { replicateAppraisalFile } from "./services/appraisalReplication.js";
 import { loadSharedAppraisalCompletion } from "./services/appraisalCompletionAdapter.js";
+import {
+  createCorsMiddleware,
+  createHttpSecurityConfiguration,
+  securityHeaders,
+} from "./security/httpSecurity.js";
 
 const app = express();
+const httpSecurity = createHttpSecurityConfiguration();
+app.disable("x-powered-by");
+if (httpSecurity.trustProxyHops > 0) app.set("trust proxy", httpSecurity.trustProxyHops);
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
   max: Number(process.env.DATABASE_POOL_SIZE || 10),
@@ -215,16 +222,9 @@ pool.on("error", (error) => {
 const requestPerformance = createRequestPerformanceMonitor({ pool });
 const loadDcadScraperStatus = createCachedScraperStatusLoader();
 app.use(requestPerformance.middleware);
+app.use(securityHeaders);
+app.use(createCorsMiddleware(httpSecurity));
 app.use(express.json({ limit: "1mb" }));
-// Support comma-separated list in CORS_ORIGIN env (e.g. "http://localhost:5173,http://127.0.0.1:5173")
-const corsEnv = process.env.CORS_ORIGIN;
-const corsOrigins = !corsEnv
-  ? true
-  : corsEnv
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
-app.use(cors({ origin: corsOrigins }));
 
 const uadObjectStorage = createUadObjectStorage();
 const uadComplianceRegistry = createUadComplianceRegistry();
@@ -241,6 +241,8 @@ app.use("/api/uad", createUadRouter({
   verifier: mobileOidcVerifier,
   compliance: uadComplianceRegistry,
   enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
+  authenticationRequired: httpSecurity.authenticationRequired,
+  security: httpSecurity,
 }));
 
 app.use("/api/mobile", createMobileRouter({

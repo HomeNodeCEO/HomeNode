@@ -3,6 +3,10 @@
 This runbook covers HomeNode's isolated UAD domain. It does not migrate,
 rewrite, or roll back Custom Appraisal or Property Tax records.
 
+Security verification and destructive-test isolation are defined in
+`docs/UAD_SECURITY_TESTING.md` and `docs/UAD_RED_TEAM_ENVIRONMENT.md`. Active
+adversarial testing is not authorized against this production runbook's target.
+
 ## Readiness definition
 
 `GET /api/uad/readiness` is a read-only operational probe. It returns HTTP 200

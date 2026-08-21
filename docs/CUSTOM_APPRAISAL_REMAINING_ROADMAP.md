@@ -10,6 +10,12 @@ Appraisal-to-UAD 3.6 completion adapter.
 
 ## Next — production document intelligence
 
+Shared photo evidence is now on the production path: mobile capture keeps
+original and display files offline until verified private upload succeeds, and
+the desktop Property Report can add files to the same report-scoped gallery.
+The remaining document-intelligence work below uses the same private-storage
+and evidence-retention boundary.
+
 1. Move immutable source-document bytes from PostgreSQL to the existing private
    Cloudflare R2 pattern while retaining metadata, checksums, extracted pages,
    candidates, review decisions, and audit history in PostgreSQL.

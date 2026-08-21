@@ -2322,6 +2322,114 @@ export async function getZoningDocumentDescriptionSuggestion(
   ));
 }
 
+export interface AssignmentPhotoObject {
+  id: string;
+  variant: 'original' | 'display';
+  file_name: string;
+  content_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  status: 'pending_upload' | 'verified' | 'rejected';
+}
+
+export interface AssignmentPhoto {
+  id: string;
+  client_photo_id: string;
+  origin_channel: 'mobile' | 'desktop';
+  category: string;
+  caption: string | null;
+  position: number;
+  captured_at: string | null;
+  status: 'pending_upload' | 'verifying' | 'verified' | 'failed';
+  revision: number;
+  verified_at: string | null;
+  retention_until: string | null;
+  view_url: string | null;
+  view_url_expires_in_seconds: number | null;
+  objects: AssignmentPhotoObject[];
+}
+
+export interface AssignmentPhotoUploadRequest {
+  client_photo_id: string;
+  category: string;
+  caption?: string;
+  captured_at?: string;
+  objects: Array<{
+    client_object_id: string;
+    variant: 'original' | 'display';
+    file_name: string;
+    content_type: string;
+    byte_size: number;
+    width?: number | null;
+    height?: number | null;
+  }>;
+}
+
+export interface AssignmentPhotoUploadResponse {
+  photo: AssignmentPhoto;
+  uploads: Array<{
+    object_id: string;
+    variant: 'original' | 'display';
+    method: 'PUT';
+    url: string;
+    headers: Record<string, string>;
+    expires_in_seconds: number;
+  }>;
+}
+
+export async function getAssignmentPhotos(
+  accountId: string,
+  assignmentFileId: number,
+  editorKey: string,
+): Promise<{ workfile_status: string; photos: AssignmentPhoto[] }> {
+  return fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos`,
+  ), { headers: { 'x-homenode-editor-key': editorKey } });
+}
+
+export async function createAssignmentPhotoUpload(
+  accountId: string,
+  assignmentFileId: number,
+  input: AssignmentPhotoUploadRequest,
+  editorKey: string,
+): Promise<AssignmentPhotoUploadResponse> {
+  return fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos/upload-requests`,
+  ), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function verifyAssignmentPhotoUpload(
+  accountId: string,
+  assignmentFileId: number,
+  photoId: string,
+  editorKey: string,
+): Promise<AssignmentPhoto> {
+  const response = await fetchJSON<{ ok: true; photo: AssignmentPhoto }>(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos/${encodeURIComponent(photoId)}/verify`,
+  ), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
+    body: '{}',
+  });
+  return response.photo;
+}
+
+export async function removeAssignmentPhoto(
+  accountId: string,
+  assignmentFileId: number,
+  photoId: string,
+  editorKey: string,
+): Promise<void> {
+  await fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos/${encodeURIComponent(photoId)}`,
+  ), { method: 'DELETE', headers: { 'x-homenode-editor-key': editorKey } });
+}
+
 export type AssignmentDocumentType =
   | 'zoning_map'
   | 'zoning_ordinance'

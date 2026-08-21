@@ -79,6 +79,7 @@ import type { MarketAreaOrigin } from "@/lib/marketAreaGeometry";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 import DeferredReportSection from "@/components/DeferredReportSection";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
+import AssignmentPhotoCenter from "@/components/AssignmentPhotoCenter";
 import MobileSketchReview from "@/components/MobileSketchReview";
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 
@@ -5800,6 +5801,14 @@ function AddressHero({
             assignmentFileId={activeAssignmentFile?.id || null}
             getEditorKey={editorKeyForSave}
             onApplyConfirmedCandidate={applyConfirmedDocumentCandidate}
+            className="order-6"
+          />
+
+          <AssignmentPhotoCenter
+            accountId={accountId || ""}
+            assignmentFileId={activeAssignmentFile?.id || null}
+            getEditorKey={editorKeyForSave}
+            readOnly={activeAssignmentFile?.workfile?.status === "signed"}
             className="order-6"
           />
 

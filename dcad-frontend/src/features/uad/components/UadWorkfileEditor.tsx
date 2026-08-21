@@ -18,6 +18,7 @@ import UadCompletionSuggestionPanel from "./UadCompletionSuggestionPanel";
 import UadPdfPanel from "./UadPdfPanel";
 import UadValidationPanel from "./UadValidationPanel";
 import UadXmlPanel from "./UadXmlPanel";
+import UadSubmissionPackagePanel from "./UadSubmissionPackagePanel";
 
 interface Props {
   workfileId: string;
@@ -565,6 +566,12 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           currentRevision={editor.workfile.current_revision}
           dirty={dirty}
           workfileId={workfileId}
+        />
+        <UadSubmissionPackagePanel
+          currentRevision={editor.workfile.current_revision}
+          dirty={dirty}
+          workfileId={workfileId}
+          workfileStatus={editor.workfile.status}
         />
         {activeSection === "site" && (
           <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">

@@ -3,6 +3,37 @@ const COLLIN_ACCOUNT_ID_PATTERN = /^(?=.{4,100}$)(?=.*\d)R[0-9A-Za-z._/#-]+$/i;
 const HOUSE_NUMBER_PATTERN = /^([0-9]+[A-Za-z]?(?:-[0-9]+[A-Za-z]?)?(?:\s+1\/2)?)\s+(.+)$/;
 const ADDRESS_PREFIX_PATTERN = /^[0-9]/;
 
+const ADDRESS_TOKEN_ALIASES = Object.freeze({
+  ALLEY: "ALY",
+  APARTMENT: "UNIT",
+  APT: "UNIT",
+  AVENUE: "AVE",
+  BOULEVARD: "BLVD",
+  CIRCLE: "CIR",
+  COURT: "CT",
+  DRIVE: "DR",
+  EXPRESSWAY: "EXPY",
+  FREEWAY: "FWY",
+  HIGHWAY: "HWY",
+  LANE: "LN",
+  NORTH: "N",
+  NORTHEAST: "NE",
+  NORTHWEST: "NW",
+  PARKWAY: "PKWY",
+  PLACE: "PL",
+  ROAD: "RD",
+  SOUTH: "S",
+  SOUTHEAST: "SE",
+  SOUTHWEST: "SW",
+  SQUARE: "SQ",
+  STREET: "ST",
+  SUITE: "UNIT",
+  STE: "UNIT",
+  TERRACE: "TER",
+  TRAIL: "TRL",
+  WEST: "W",
+});
+
 export function normalizeSearchText(value) {
   return String(value || "")
     .normalize("NFKD")
@@ -19,12 +50,20 @@ export function normalizePropertyCity(value) {
     .trim();
 }
 
+export function normalizePropertyAddress(value) {
+  return normalizeSearchText(value)
+    .split(" ")
+    .filter(Boolean)
+    .map((token) => ADDRESS_TOKEN_ALIASES[token] || token)
+    .join(" ");
+}
+
 export function parsePropertySearch(value) {
   const raw = String(value || "").trim();
   const commaParts = raw.split(",");
   const addressPart = commaParts.shift()?.trim() || "";
   const cityPart = commaParts.join(" ").trim();
-  const normalizedAddress = normalizeSearchText(addressPart);
+  const normalizedAddress = normalizePropertyAddress(addressPart);
   const houseMatch = normalizedAddress.match(HOUSE_NUMBER_PATTERN);
 
   return {

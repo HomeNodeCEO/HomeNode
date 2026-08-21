@@ -61,6 +61,55 @@ test("accepts a fully isolated synthetic red-team configuration", () => {
   assert.equal(assertRedTeamDatabaseName("homenode_redteam"), "homenode_redteam");
 });
 
+test("accepts a dedicated WorkOS application with a generated client audience", () => {
+  assert.deepEqual(createRedTeamIsolationConfiguration(safeEnvironment({
+    REDTEAM_OIDC_PROVIDER: "workos_authkit",
+    REDTEAM_OIDC_APPLICATION_ID: "app_01REDTEAMBOUNDARY",
+    REDTEAM_OIDC_APPLICATION_NAME: "HomeNode UAD Red Team",
+    REDTEAM_OIDC_CLIENT_ID: "client_01REDTEAMBOUNDARY",
+    OIDC_ISSUER: "https://redteam-staging.authkit.app/",
+    OIDC_AUDIENCE: "client_01REDTEAMBOUNDARY",
+    OIDC_JWKS_URI: "https://redteam-staging.authkit.app/oauth2/jwks",
+  })), {
+    enabled: true,
+    ready: true,
+    synthetic_only: true,
+    external_status_enabled: false,
+  });
+});
+
+test("rejects an incomplete or cross-origin WorkOS application boundary", () => {
+  const workosEnvironment = {
+    REDTEAM_OIDC_PROVIDER: "workos_authkit",
+    REDTEAM_OIDC_APPLICATION_ID: "app_01REDTEAMBOUNDARY",
+    REDTEAM_OIDC_APPLICATION_NAME: "HomeNode UAD Red Team",
+    REDTEAM_OIDC_CLIENT_ID: "client_01REDTEAMBOUNDARY",
+    OIDC_ISSUER: "https://redteam-staging.authkit.app/",
+    OIDC_AUDIENCE: "client_01REDTEAMBOUNDARY",
+    OIDC_JWKS_URI: "https://redteam-staging.authkit.app/oauth2/jwks",
+  };
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    ...workosEnvironment,
+    REDTEAM_OIDC_APPLICATION_NAME: "HomeNode Production",
+  })), /oidc_audience_marker/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    ...workosEnvironment,
+    REDTEAM_OIDC_CLIENT_ID: "client_01DIFFERENT",
+  })), /oidc_audience_marker/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    ...workosEnvironment,
+    OIDC_JWKS_URI: "https://shared.example.com/oauth2/jwks",
+  })), /oidc_audience_marker/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    ...workosEnvironment,
+    OIDC_JWKS_URI: "https://redteam-staging.authkit.app/other/jwks",
+  })), /oidc_audience_marker/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    ...workosEnvironment,
+    OIDC_ISSUER: "https://redteam-staging.authkit.app/shared",
+  })), /oidc_audience_marker/);
+});
+
 test("rejects production-shaped database, storage, origin, and OIDC boundaries", () => {
   assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
     DATABASE_URL: "postgresql://user:secret@prod.invalid/homenodedb",

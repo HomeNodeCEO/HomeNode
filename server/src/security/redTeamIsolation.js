@@ -37,6 +37,13 @@ function markedRedTeam(valueToCheck) {
   return String(valueToCheck || "").toLowerCase().includes("redteam");
 }
 
+function namedRedTeam(valueToCheck) {
+  return /red[\s_-]*team/i.test(String(valueToCheck || ""));
+}
+
+const WORKOS_APPLICATION_ID_PATTERN = /^app_[A-Za-z0-9]+$/;
+const WORKOS_CLIENT_ID_PATTERN = /^client_[A-Za-z0-9]+$/;
+
 function databaseName(databaseUrl) {
   try {
     const parsed = new URL(databaseUrl);
@@ -63,13 +70,37 @@ function redTeamCorsOrigins(rawOrigins) {
   }
 }
 
-function secureUrl(rawValue) {
+function parsedSecureUrl(rawValue) {
   try {
     const parsed = new URL(String(rawValue || "").trim());
-    return parsed.protocol === "https:" && !parsed.username && !parsed.password && !parsed.hash;
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.hash) return null;
+    return parsed;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function secureUrl(rawValue) {
+  return Boolean(parsedSecureUrl(rawValue));
+}
+
+function workosRedTeamApplicationBoundary(environment) {
+  if (value(environment, "REDTEAM_OIDC_PROVIDER").toLowerCase() !== "workos_authkit") return false;
+
+  const issuer = parsedSecureUrl(environment.OIDC_ISSUER);
+  const jwks = parsedSecureUrl(environment.OIDC_JWKS_URI);
+  const audience = value(environment, "OIDC_AUDIENCE");
+  if (!issuer || !jwks) return false;
+
+  return WORKOS_CLIENT_ID_PATTERN.test(audience)
+    && value(environment, "REDTEAM_OIDC_CLIENT_ID") === audience
+    && WORKOS_APPLICATION_ID_PATTERN.test(value(environment, "REDTEAM_OIDC_APPLICATION_ID"))
+    && namedRedTeam(value(environment, "REDTEAM_OIDC_APPLICATION_NAME"))
+    && issuer.origin === jwks.origin
+    && issuer.pathname === "/"
+    && !issuer.search
+    && jwks.pathname === "/oauth2/jwks"
+    && !jwks.search;
 }
 
 export function assertRedTeamDatabaseName(name) {
@@ -156,7 +187,11 @@ export function createRedTeamIsolationConfiguration(environment = process.env) {
   }
   if (!redTeamCorsOrigins(environment.CORS_ORIGIN)) failures.push("cors_redteam_origin");
   if (!secureUrl(environment.OIDC_ISSUER)) failures.push("oidc_issuer_https");
-  if (!markedRedTeam(value(environment, "OIDC_AUDIENCE"))) failures.push("oidc_audience_marker");
+  const oidcProvider = value(environment, "REDTEAM_OIDC_PROVIDER").toLowerCase();
+  const oidcAudienceIsolated = oidcProvider === "workos_authkit"
+    ? workosRedTeamApplicationBoundary(environment)
+    : markedRedTeam(value(environment, "OIDC_AUDIENCE"));
+  if (!oidcAudienceIsolated) failures.push("oidc_audience_marker");
   if (!secureUrl(environment.OIDC_JWKS_URI)) failures.push("oidc_jwks_https");
 
   if (value(environment, "DOCUMENT_OCR_PROVIDER").toLowerCase() !== "disabled") {

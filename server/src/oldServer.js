@@ -205,9 +205,11 @@ import {
   createHttpSecurityConfiguration,
   securityHeaders,
 } from "./security/httpSecurity.js";
+import { createRedTeamIsolationConfiguration } from "./security/redTeamIsolation.js";
 
 const app = express();
 const httpSecurity = createHttpSecurityConfiguration();
+const redTeamIsolation = createRedTeamIsolationConfiguration();
 app.disable("x-powered-by");
 if (httpSecurity.trustProxyHops > 0) app.set("trust proxy", httpSecurity.trustProxyHops);
 const pool = new pg.Pool({
@@ -220,7 +222,13 @@ pool.on("error", (error) => {
   console.error("[database] idle pool client error", error?.message || error);
 });
 const requestPerformance = createRequestPerformanceMonitor({ pool });
-const loadDcadScraperStatus = createCachedScraperStatusLoader();
+const loadDcadScraperStatus = redTeamIsolation.external_status_enabled
+  ? createCachedScraperStatusLoader()
+  : async () => ({
+      payload: null,
+      stale: false,
+      error: "redteam_external_status_disabled",
+    });
 app.use(requestPerformance.middleware);
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));

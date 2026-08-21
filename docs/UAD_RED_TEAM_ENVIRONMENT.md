@@ -25,6 +25,21 @@ Strict mode automatically enables the application rate limiter. Configure
 Cloudflare rate limiting as the distributed outer control because the
 application limiter is intentionally a per-process defense-in-depth control.
 
+Use `npm run start:redteam:uad` for the API service. Its first command runs a
+pre-migration isolation check and connects only far enough to verify that the
+actual PostgreSQL database name contains `redteam`. It also refuses a
+production-shaped bucket, origin, OIDC audience, live compliance/MLS/OCR/mail
+credential, background data worker, or missing `synthetic_only` marker. The
+subsequent fixture step refuses any non-synthetic organization, user, property,
+UAD workfile, or report registry row before creating its authorization matrix.
+
+The red-team database may begin as a separate clone of the reviewed synthetic
+staging template; it must never be cloned from production. The configured
+fixture account must use the `UAD-STAGING-` or `UAD-REDTEAM-` namespace. Static
+checks do not prove cloud credential scope, so independently inspect the R2
+token policy, Render resource links, and OIDC application before opening a test
+window.
+
 ## Synthetic identities
 
 Provision at least:
@@ -39,6 +54,20 @@ Provision at least:
 - active OIDC identity without a HomeNode mapping;
 - inactive HomeNode user; and
 - active user with suspended/inactive membership.
+
+`REDTEAM_OIDC_SUBJECTS_JSON` maps the following exact persona keys to the
+subject claim from eleven dedicated synthetic OIDC accounts:
+
+- `assigned_appraiser_a`, `unassigned_appraiser_a`, `supervisor_a`,
+  `reviewer_a`, and `organization_admin_a`;
+- `appraiser_b` and `organization_admin_b`;
+- `homenode_admin`, `inactive_user`, `suspended_member`, and
+  `member_without_role`.
+
+Keep one additional active OIDC identity intentionally absent from this JSON
+and from `app_auth.oidc_identities`; it is the unprovisioned-user negative case.
+Subject claims identify test mappings but are not access tokens; still store
+the JSON in the deployment secret manager rather than the repository.
 
 Never copy a real signature image, license number, email, phone number, client,
 borrower, owner, address, appraisal, comparable photo, or document into this
@@ -70,4 +99,3 @@ the red-team R2/OIDC credentials if any stop condition in the security program
 occurs. Do not delete the database or bucket until evidence has been preserved
 and the incident owner confirms that no real data or external system was
 reached.
-

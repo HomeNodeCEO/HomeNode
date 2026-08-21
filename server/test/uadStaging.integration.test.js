@@ -82,21 +82,28 @@ test("UAD staging bootstrap supports site-built and manufactured-home search til
     const mobilePrincipal = await pool.query(
       `SELECT users.email, users.display_name, memberships.status, roles.role_code,
               profiles.profile_status, profiles.signature_policy,
+              licenses.license_number, licenses.license_type,
+              to_char(licenses.expires_on, 'YYYY-MM-DD') AS expires_on,
               users.metadata ->> 'synthetic' AS synthetic
          FROM app_auth.users users
          JOIN app_auth.organization_memberships memberships ON memberships.user_id = users.id
          JOIN app_auth.membership_roles roles
            ON roles.organization_id = memberships.organization_id AND roles.user_id = memberships.user_id
          JOIN app_auth.appraiser_profiles profiles ON profiles.user_id = users.id
+         JOIN app_auth.appraiser_licenses licenses
+           ON licenses.user_id = users.id AND licenses.status = 'active'
         WHERE users.id = '00000000-0000-4000-8000-000000000902'`,
     );
     assert.equal(mobilePrincipal.rows.length, 1);
     assert.equal(mobilePrincipal.rows[0].email, "mobile-appraiser@staging.homenode.invalid");
-    assert.equal(mobilePrincipal.rows[0].display_name, "Mobile Staging Appraiser");
+    assert.equal(mobilePrincipal.rows[0].display_name, "Taylor Appraiser");
     assert.equal(mobilePrincipal.rows[0].status, "active");
     assert.equal(mobilePrincipal.rows[0].role_code, "appraiser");
     assert.equal(mobilePrincipal.rows[0].profile_status, "active");
-    assert.equal(mobilePrincipal.rows[0].signature_policy, "reauthentication");
+    assert.equal(mobilePrincipal.rows[0].signature_policy, "session");
+    assert.equal(mobilePrincipal.rows[0].license_number, "STAGING-CR-0001");
+    assert.equal(mobilePrincipal.rows[0].license_type, "Certified Residential");
+    assert.equal(String(mobilePrincipal.rows[0].expires_on).slice(0, 10), "2028-12-31");
     assert.equal(mobilePrincipal.rows[0].synthetic, "true");
 
     const manufacturedWorkfile = await pool.query(

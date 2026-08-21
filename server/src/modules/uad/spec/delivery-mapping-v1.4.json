@@ -22590,6 +22590,184 @@
       "sales_comparable": false,
       "implementation_notes": null
     },
+    "1000.0028": {
+      "sort": 2563,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "SCOPE_OF_WORK", "SCOPE_OF_WORK_DETAIL"
+      ],
+      "element": "GovernmentAgencyAppraisalIndicator",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Boolean",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0003": {
+      "sort": 2574,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "SCOPE_OF_WORK", "SCOPE_OF_WORK_DETAIL"
+      ],
+      "element": "ValuationScopeOfWorkDescription",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0004": {
+      "sort": 2593,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "SCOPE_OF_WORK", "VALUATION_REPORT_ADDITIONAL_INTENDED_USERS",
+        "VALUATION_REPORT_ADDITIONAL_INTENDED_USER"
+      ],
+      "element": "ValuationAdditionalIntendedUserDescription",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0005": {
+      "sort": 2578,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "SCOPE_OF_WORK", "VALUATION_INTENDED_USES", "VALUATION_INTENDED_USE"
+      ],
+      "element": "ValuationIntendedUseDescription",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0016": {
+      "sort": 2765,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "VALUATION_REPORT_DETAIL"
+      ],
+      "element": "AppraiserPriorServicesPerformedDescription",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0017": {
+      "sort": 2766,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "VALUATION_REPORT_DETAIL"
+      ],
+      "element": "AppraiserPriorServicesPerformedIndicator",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Boolean",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": "Deliver as 'true' only if the appraiser has performed prior services for the subject property within three years preceding the agreement to perform this assignment."
+    },
+    "2200.0034": {
+      "sort": 2763,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "VALUATION_REPORT_DETAIL"
+      ],
+      "element": "AppraiserAdditionalCertificationIndicator",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Boolean",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0037": {
+      "sort": 2570,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "SCOPE_OF_WORK", "SCOPE_OF_WORK_DETAIL"
+      ],
+      "element": "ValuationAdditionalIntendedUserIndicator",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Boolean",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0038": {
+      "sort": 2775,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "VALUATION_REPORT_DETAIL"
+      ],
+      "element": "ValuationReportInspectionCertificationType",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Enumerated",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0062": {
+      "sort": 2571,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "SCOPE_OF_WORK", "SCOPE_OF_WORK_DETAIL"
+      ],
+      "element": "ValuationAdditionalScopeOfWorkIndicator",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Boolean",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
+    "2200.0087": {
+      "sort": 2584,
+      "path": [
+        "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT",
+        "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE",
+        "VALUATION", "VALUATION_RESPONSE", "VALUATION_ANALYSES", "VALUATION_ANALYSIS",
+        "VALUATION_REPORT", "SCOPE_OF_WORK", "VALUATION_REPORT_ADDITIONAL_CERTIFICATIONS",
+        "VALUATION_REPORT_ADDITIONAL_CERTIFICATION"
+      ],
+      "element": "ValuationAdditionalCertificationText",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": true,
+      "sales_comparable": false,
+      "implementation_notes": null
+    },
     "2400.0080": {
       "sort": 790,
       "path": [

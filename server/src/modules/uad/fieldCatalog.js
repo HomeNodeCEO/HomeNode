@@ -32,6 +32,7 @@ import {
   UAD_RECONCILIATION_ENTITY_GROUPS,
   UAD_RECONCILIATION_FIELDS,
 } from "./reconciliationCatalog.js";
+import { UAD_CERTIFICATION_FIELDS } from "./certificationsCatalog.js";
 import { UAD_SKETCH_FIELDS } from "./sketchCatalog.js";
 import {
   UAD_SALES_COMPARISON_ENTITY_GROUPS,
@@ -119,6 +120,10 @@ const UAD_EDITOR_SECTIONS = Object.freeze({
   reconciliation: {
     title: "Reconciliation",
     officialSectionNumber: 26,
+  },
+  certifications: {
+    title: "Certifications and Scope of Work",
+    officialSectionNumber: 29,
   },
 });
 
@@ -603,6 +608,7 @@ const fields = [
   ...UAD_PRIOR_SALE_TRANSFER_FIELDS,
   ...UAD_SALES_COMPARISON_FIELDS,
   ...UAD_RECONCILIATION_FIELDS,
+  ...UAD_CERTIFICATION_FIELDS,
 ];
 
 function fieldKey(field) {

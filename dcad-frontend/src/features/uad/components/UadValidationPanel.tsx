@@ -38,6 +38,8 @@ const SECTION_LABELS: Partial<Record<UadSectionKey | "catalog", string>> = {
   sales_contract: "Sales Contract",
   prior_sale_transfer_history: "Prior Sale and Transfer History",
   sales_comparison: "Sales Comparison Approach",
+  reconciliation: "Reconciliation",
+  certifications: "Certifications and Scope of Work",
   catalog: "UAD field catalog",
 };
 

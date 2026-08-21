@@ -153,7 +153,7 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
     workfile = locked.rows[0];
-    if (workfile.status !== "ready") throw new Error("uad_xml_local_validation_required");
+    if (!["ready", "signed"].includes(workfile.status)) throw new Error("uad_xml_local_validation_required");
 
     const editor = await getUadEditor(client, workfileId);
     const assets = await listUadAssets(client, workfileId);
@@ -167,7 +167,17 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
       || localValidation.metadata?.input_digest_sha256 !== inputDigest
     ) throw new Error("uad_xml_local_validation_stale");
 
-    generated = buildUadMismoXml(editor);
+    const signaturesResult = await client.query(
+      `SELECT signer_role, credential_snapshot, execution_date
+         FROM appraisal.uad_signatures
+        WHERE workfile_id = $1 AND revision_number = $2
+        ORDER BY CASE signer_role WHEN 'appraiser' THEN 0 ELSE 1 END`,
+      [workfileId, Number(workfile.current_revision)],
+    );
+    if (workfile.status === "signed" && !signaturesResult.rows.length) {
+      throw new Error("uad_xml_signatures_missing");
+    }
+    generated = buildUadMismoXml(editor, { signers: signaturesResult.rows });
     const schema = await validateUadSubschema(generated.xml);
     const schemaRunId = randomUUID();
     const schemaStatus = schema.valid ? "passed" : "failed";
@@ -181,6 +191,7 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
       generator_version: generated.generator_version,
       delivery_specification_version: generated.delivery_specification_version,
       mapped_value_count: generated.mapped_value_count,
+      signer_count: generated.signer_count,
     };
     const insertedSchemaRun = await client.query(
       `INSERT INTO appraisal.uad_validation_runs (

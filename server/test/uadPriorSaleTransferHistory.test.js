@@ -35,7 +35,7 @@ test("adds the always-applicable official URAR Section 21 editor", () => {
   const section = sections.find((item) => item.key === "prior_sale_transfer_history");
   assert.deepEqual(
     sections.map((item) => item.officialSectionNumber),
-    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26],
+    [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 26, 29],
   );
   assert.equal(section?.title, "Prior Sale and Transfer History");
   assert.equal(section?.appliesWhen, undefined);

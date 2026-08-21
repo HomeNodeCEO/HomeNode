@@ -12,7 +12,7 @@ const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
 const repeatableElements = new Set(deliveryMapping.repeatable_elements);
 const MAX_SORT = Number.MAX_SAFE_INTEGER;
 
-export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v1";
+export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v2";
 export const UAD_XML_DELIVERY_SPECIFICATION_VERSION = deliveryMapping.delivery_specification_version;
 export const UAD_XML_SUBSCHEMA_VERSION = deliveryMapping.subschema_version;
 
@@ -223,7 +223,111 @@ function appendValue(root, editorValue, entitiesById, occurrenceValue, occurrenc
   child.text = serialized;
 }
 
-export function buildUadMismoXml(editor) {
+function ensureStructuralPath(root, path, { sort, key = "singleton", order = 0 } = {}) {
+  let parent = root;
+  for (const name of path) {
+    parent = ensureChild(parent, name, { sort, key, order });
+  }
+  return parent;
+}
+
+function appendText(parent, name, value, { sort, key = "data", order = 0, attributes = {} } = {}) {
+  if (!isPresent(value)) return null;
+  const child = ensureChild(parent, name, { sort, key, order, attributes });
+  child.text = String(value);
+  return child;
+}
+
+function appendSigner(root, signer, order) {
+  const snapshot = signer?.credential_snapshot;
+  const role = signer?.signer_role;
+  const appraiserRole = role === "appraiser" ? "Appraiser" : "AppraiserSupervisor";
+  const roleLabel = role === "appraiser" ? "ROLE_Appraiser" : "ROLE_AppraiserSupervisor";
+  const signatoryLabel = role === "appraiser" ? "SIGNATORY_Appraiser" : "SIGNATORY_AppraiserSupervisor";
+  if (!snapshot?.signer?.first_name || !snapshot?.signer?.last_name) {
+    throw new Error(`uad_xml_signer_name_missing:${role || "unknown"}`);
+  }
+  if (!snapshot?.license?.license_number || !snapshot?.license?.license_type) {
+    throw new Error(`uad_xml_signer_license_missing:${role || "unknown"}`);
+  }
+  if (!signer.execution_date) throw new Error(`uad_xml_signer_execution_date_missing:${role || "unknown"}`);
+
+  const service = ensureStructuralPath(root, [
+    "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET",
+    "DEALS", "DEAL", "SERVICES", "SERVICE",
+  ], { sort: 2860 });
+  const parties = ensureChild(service, "PARTIES", { sort: 2860 });
+  const party = ensureChild(parties, "PARTY", { sort: 2860 + order, key: `signer:${role}`, order });
+
+  const individual = ensureChild(party, "INDIVIDUAL", { sort: 2861 });
+  const name = ensureChild(individual, "NAME", { sort: 2862 });
+  appendText(name, "FirstName", snapshot.signer.first_name, { sort: 2863 });
+  appendText(name, "MiddleName", snapshot.signer.middle_name, { sort: 2864 });
+  appendText(name, "LastName", snapshot.signer.last_name, { sort: 2865 });
+  appendText(name, "SuffixName", snapshot.signer.suffix_name, { sort: 2866 });
+
+  const address = ensureStructuralPath(party, ["ADDRESSES", "ADDRESS"], { sort: 2870 });
+  appendText(address, "AddressLineText", snapshot.organization?.address_line_1, { sort: 2871 });
+  appendText(address, "CityName", snapshot.organization?.city, { sort: 2872 });
+  appendText(address, "PostalCode", snapshot.organization?.postal_code, { sort: 2873 });
+  appendText(address, "StateCode", snapshot.organization?.state_code, { sort: 2874 });
+
+  const roles = ensureChild(party, "ROLES", { sort: 2900 });
+  const roleNode = ensureChild(roles, "ROLE", {
+    sort: 2901,
+    key: `signer:${role}`,
+    order,
+    attributes: { "xlink:label": roleLabel },
+  });
+  const appraiser = ensureChild(roleNode, "APPRAISER", { sort: 2902 });
+  const appraiserDetail = ensureChild(appraiser, "APPRAISER_DETAIL", { sort: 2903 });
+  appendText(
+    appraiserDetail,
+    "AppraiserCompanyName",
+    snapshot.organization?.display_name || snapshot.organization?.legal_name,
+    { sort: 2904 },
+  );
+  const licenseNode = ensureStructuralPath(roleNode, ["LICENSES", "LICENSE"], { sort: 2910 });
+  const appraiserLicense = ensureChild(licenseNode, "APPRAISER_LICENSE", { sort: 2911 });
+  appendText(appraiserLicense, "AppraiserLicenseType", snapshot.license.license_type, { sort: 2912 });
+  appendText(
+    appraiserLicense,
+    "AppraiserLicenseTypeOtherDescription",
+    snapshot.license.license_type_other_description,
+    { sort: 2913 },
+  );
+  const licenseDetail = ensureChild(licenseNode, "LICENSE_DETAIL", { sort: 2920 });
+  appendText(licenseDetail, "LicenseExpirationDate", snapshot.license.expires_on, { sort: 2921 });
+  appendText(licenseDetail, "LicenseIdentifier", snapshot.license.license_number, { sort: 2922 });
+  appendText(licenseDetail, "LicenseIssuingAuthorityStateCode", snapshot.license.jurisdiction, { sort: 2923 });
+  const roleDetail = ensureChild(roleNode, "ROLE_DETAIL", { sort: 2930 });
+  appendText(roleDetail, "PartyRoleType", appraiserRole, { sort: 2931 });
+
+  const relationships = ensureChild(service, "RELATIONSHIPS", { sort: 3220 });
+  ensureChild(relationships, "RELATIONSHIP", {
+    sort: 3221 + order,
+    key: `signer:${role}`,
+    order,
+    attributes: {
+      "xlink:arcrole": "urn:fdc:mismo.org:2009:residential/SIGNATORY_IsAssociatedWith_ROLE",
+      "xlink:from": signatoryLabel,
+      "xlink:to": roleLabel,
+    },
+  });
+
+  const document = ensureStructuralPath(root, ["DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT"], { sort: 3300 });
+  const signatories = ensureChild(document, "SIGNATORIES", { sort: 3300 });
+  const signatory = ensureChild(signatories, "SIGNATORY", {
+    sort: 3301,
+    key: `signer:${role}`,
+    order,
+    attributes: { "xlink:label": signatoryLabel },
+  });
+  const execution = ensureStructuralPath(signatory, ["EXECUTION", "EXECUTION_DETAIL"], { sort: 3302 });
+  appendText(execution, "ExecutionDate", signer.execution_date, { sort: 3304 + order });
+}
+
+export function buildUadMismoXml(editor, { signers = [] } = {}) {
   if (editor?.workfile?.specification_release_key !== deliveryMapping.specification_release_key) {
     throw new Error("uad_xml_specification_release_mismatch");
   }
@@ -251,6 +355,11 @@ export function buildUadMismoXml(editor) {
     const occurrences = Array.isArray(value.value) ? value.value : [value.value];
     occurrences.forEach((occurrence, index) => appendValue(root, value, entitiesById, occurrence, index));
   }
+  [...signers]
+    .sort((left, right) => (
+      (left.signer_role === "appraiser" ? 0 : 1) - (right.signer_role === "appraiser" ? 0 : 1)
+    ))
+    .forEach((signer, index) => appendSigner(root, signer, index));
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n${serializeNode(root)}\n`;
   return {
     xml,
@@ -260,6 +369,7 @@ export function buildUadMismoXml(editor) {
     delivery_specification_version: UAD_XML_DELIVERY_SPECIFICATION_VERSION,
     subschema_version: UAD_XML_SUBSCHEMA_VERSION,
     mapped_value_count: values.length,
+    signer_count: signers.length,
   };
 }
 

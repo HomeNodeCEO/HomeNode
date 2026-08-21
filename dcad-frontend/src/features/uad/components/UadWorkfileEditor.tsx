@@ -371,7 +371,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       for (const entityId of instances) {
         for (const field of group.fields) {
           const visible = isVisible(field, entityId);
-          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract", "prior_sale_transfer_history", "sales_comparison", "reconciliation"].includes(activeSection)) continue;
+          if (!visible && !["vehicle_storage", "subject_property_amenities", "market", "project_information", "subject_listing_information", "sales_contract", "prior_sale_transfer_history", "sales_comparison", "reconciliation", "certifications"].includes(activeSection)) continue;
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           if (visible && isRequired(field, entityId) && !valueIsPresent(draft[key])) missing.push(field.label);
           submitted.push({
@@ -827,6 +827,13 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                 </div>
               )}
             </div>
+          </section>
+        )}
+        {activeSection === "certifications" && (
+          <section className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
+            <h3 className="text-base font-semibold">Section 29 certification controls</h3>
+            <p className="mt-1 text-sm leading-6">The standard URAR scope, assumptions, limiting conditions, and certification language is predefined. Enter only assignment-specific additions here. HomeNode derives the federal-agency indicator from Section 2 and reports inspection inconsistencies as compliance warnings.</p>
+            <p className="mt-2 text-xs leading-5 text-emerald-800">Appraiser and supervisory credentials are captured in an immutable snapshot at signing so later profile or license changes cannot alter a completed report. The signing action remains behind the authenticated OIDC session boundary.</p>
           </section>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}

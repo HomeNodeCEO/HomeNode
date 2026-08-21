@@ -27,6 +27,21 @@ The Compliance API is a delivery gate. It does not replace HomeNode's local
 validation engine, because the editor must give appraisers actionable feedback
 before an appraisal is submitted.
 
+## Section 29 signing boundary
+
+`GET /api/uad/workfiles/:workfileId/certification-readiness` and
+`POST /api/uad/workfiles/:workfileId/signatures` require the same bearer-token
+OIDC verifier and explicit identity mapping used by the HomeNode mobile app.
+The signing service also verifies that the authenticated user is the assigned
+appraiser or supervisory appraiser, the current revision has a non-stale passing
+local validation digest, and the signature date is not before the appraisal
+effective date. Company, appraiser, license, execution-date, workfile-digest,
+and credential-digest data is then stored as an immutable revision snapshot.
+
+The rest of the UAD editor remains behind its existing feature flag while the
+desktop session is being integrated. This narrower authenticated boundary
+prevents a feature-flag-only request from creating a legal signature.
+
 ## Configuration contract
 
 The planned adapter supports separate Fannie Mae and Freddie Mac credentials.

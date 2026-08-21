@@ -38,7 +38,7 @@ test("locked delivery mapping covers every HomeNode UAD unique ID", () => {
     subschema_version: "1.3",
     mismo_reference_model_identifier: "3.6.0366",
     source_sha256: "10f470ed53ee6f70404aad850f3f3c15aaee9489f654535ee0a3e5d1a8adee29",
-    mapped_unique_ids: 834,
+    mapped_unique_ids: 845,
     mapped_entity_types: 87,
   });
 });
@@ -100,6 +100,57 @@ test("MISMO XML generation places Section 26 conclusions and client conditions i
   assert.match(generated.xml, /<CostToRepairType>Itemized<\/CostToRepairType>/);
   assert.match(generated.xml, /<DefectItemEstimatedCostToRepairAmount>1250<\/DefectItemEstimatedCostToRepairAmount>/);
   assert.match(generated.xml, /<DefectCostToRepairTotalAmount>1250<\/DefectCostToRepairTotalAmount>/);
+});
+
+test("MISMO XML generation places Section 29 values and signed credentials in official structures", () => {
+  const editor = editorFixture();
+  editor.values.push(
+    { entity_id: null, context_key: "certification_scope", uid: "1000.0028", value: false },
+    { entity_id: null, context_key: "certification_scope", uid: "2200.0062", value: false },
+    { entity_id: null, context_key: "certification_intended_user", uid: "2200.0037", value: false },
+    { entity_id: null, context_key: "certification_report", uid: "2200.0034", value: false },
+    { entity_id: null, context_key: "certification_report", uid: "2200.0017", value: false },
+    { entity_id: null, context_key: "certification_report", uid: "2200.0038", value: "InteriorAndExterior" },
+  );
+  const generated = buildUadMismoXml(editor, {
+    signers: [{
+      signer_role: "appraiser",
+      execution_date: "2026-08-20",
+      credential_snapshot: {
+        signer: { first_name: "Taylor", middle_name: null, last_name: "Appraiser", suffix_name: null },
+        organization: {
+          legal_name: "HomeNode Real Estate LLC",
+          display_name: "HomeNode Real Estate",
+          address_line_1: "100 Test Office Dr",
+          city: "Garland",
+          state_code: "TX",
+          postal_code: "75044",
+        },
+        license: {
+          license_type: "CertifiedResidential",
+          license_type_other_description: null,
+          license_number: "STAGING-CR-0001",
+          jurisdiction: "TX",
+          expires_on: "2028-12-31",
+        },
+      },
+    }],
+  });
+
+  assert.match(generated.xml, /<GovernmentAgencyAppraisalIndicator>false<\/GovernmentAgencyAppraisalIndicator>/);
+  assert.match(generated.xml, /<ValuationReportInspectionCertificationType>InteriorAndExterior<\/ValuationReportInspectionCertificationType>/);
+  assert.match(generated.xml, /<PARTY>/);
+  assert.match(generated.xml, /<FirstName>Taylor<\/FirstName>/);
+  assert.match(generated.xml, /<AppraiserCompanyName>HomeNode Real Estate<\/AppraiserCompanyName>/);
+  assert.match(generated.xml, /<LicenseIdentifier>STAGING-CR-0001<\/LicenseIdentifier>/);
+  assert.match(generated.xml, /<PartyRoleType>Appraiser<\/PartyRoleType>/);
+  assert.match(
+    generated.xml,
+    /<RELATIONSHIP xlink:arcrole="urn:fdc:mismo\.org:2009:residential\/SIGNATORY_IsAssociatedWith_ROLE" xlink:from="SIGNATORY_Appraiser" xlink:to="ROLE_Appraiser"\/>/,
+  );
+  assert.match(generated.xml, /<SIGNATORY xlink:label="SIGNATORY_Appraiser">/);
+  assert.match(generated.xml, /<ExecutionDate>2026-08-20<\/ExecutionDate>/);
+  assert.equal(generated.signer_count, 1);
 });
 
 test("the official subschema validator returns blocking structural findings", async () => {

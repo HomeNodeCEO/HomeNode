@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { UAD_ASSET_KINDS } from "./constants.js";
+import {
+  UAD_CERTIFICATION_SIGNATURE_CAPTION_TYPES,
+  UAD_CERTIFICATION_SIGNATURE_CONTENT_TYPES,
+} from "./certificationsCatalog.js";
 import { buildUadObjectKey } from "./r2Storage.js";
 import {
   UAD_DWELLING_EXTERIOR_CAPTION_TYPES,
@@ -106,6 +110,7 @@ const SECTION_CAPTION_TYPES = new Map([
   [21, new Set(UAD_PRIOR_TRANSFER_CAPTION_TYPES)],
   [22, new Set(UAD_SALES_COMPARISON_CAPTION_TYPES)],
   [26, new Set(UAD_RECONCILIATION_CAPTION_TYPES)],
+  [29, new Set(UAD_CERTIFICATION_SIGNATURE_CAPTION_TYPES)],
 ]);
 
 function assetResponse(row) {
@@ -271,6 +276,13 @@ function normalizeAssetInput(input = {}) {
   }
   if (sectionNumber === 26 && !["photo", "image"].includes(kind)) {
     throw new Error("invalid_uad_reconciliation_asset_kind");
+  }
+  if (sectionNumber === 29) {
+    if (input.entity_id) throw new Error("invalid_uad_signature_asset_entity");
+    if (kind !== "signature") throw new Error("invalid_uad_signature_asset_kind");
+    if (!UAD_CERTIFICATION_SIGNATURE_CONTENT_TYPES.includes(contentType)) {
+      throw new Error("invalid_uad_signature_asset_content_type");
+    }
   }
   return {
     kind,

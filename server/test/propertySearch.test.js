@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  normalizePropertyAddress,
   normalizePropertyCity,
   normalizeSearchText,
   parsePropertySearch,
@@ -9,6 +10,24 @@ import {
 
 test("normalizes address punctuation and whitespace", () => {
   assert.equal(normalizeSearchText("  1909  Snowmass Ln. "), "1909 SNOWMASS LN");
+});
+
+test("normalizes full street suffixes to the CAD abbreviations", () => {
+  assert.equal(
+    normalizePropertyAddress("3901 Greensboro Circle"),
+    "3901 GREENSBORO CIR",
+  );
+  assert.equal(
+    normalizePropertyAddress("100 Main Street Apartment 4"),
+    "100 MAIN ST UNIT 4",
+  );
+});
+
+test("parses full and abbreviated suffixes to the same account-search key", () => {
+  assert.equal(
+    parsePropertySearch("3901 Greensboro Circle").normalizedAddress,
+    parsePropertySearch("3901 Greensboro Cir").normalizedAddress,
+  );
 });
 
 test("parses a full address into house number, street, and city", () => {

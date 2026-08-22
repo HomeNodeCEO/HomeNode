@@ -286,6 +286,18 @@ try {
     const pdf = await generateUadPdfArtifact(pool, storage, workfileId);
     const xml = await generateUadXmlArtifact(pool, storage, workfileId);
     if (xml.schema_validation?.status !== "passed") {
+      console.log(JSON.stringify({
+        ok: false,
+        gate: "official_schema",
+        fatal_count: xml.schema_validation?.fatal_count ?? null,
+        warning_count: xml.schema_validation?.warning_count ?? null,
+        findings: (xml.schema_validation?.findings || []).map((finding) => ({
+          rule_id: finding.rule_id,
+          report_field_id: finding.report_field_id,
+          message: finding.message,
+          path: finding.path,
+        })),
+      }, null, 2));
       throw Object.assign(new Error("synthetic_delivery_schema_failed"), { details: xml.schema_validation?.findings });
     }
     const deliveryPackage = await generateUadSubmissionPackage(pool, storage, workfileId);

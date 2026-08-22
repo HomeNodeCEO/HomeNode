@@ -397,6 +397,65 @@ test("normalizes ANSI review areas, classifications, and stable room references"
   }), /sketch_not_ready_for_confirmation/);
 });
 
+test("normalizes a garage cutout and deducts it from net GLA", () => {
+  const exteriorId = "10000000-0000-4000-8000-000000000023";
+  const garageId = "10000000-0000-4000-8000-000000000024";
+  const sketch = normalizeManualSketchDocument({
+    review_status: "appraiser_confirmed",
+    areas: [{
+      id: exteriorId,
+      label: "First floor",
+      classification: "above_grade_finished",
+      gla_treatment: "included",
+      vertices: [
+        { x: 0, y: 0 }, { x: 25, y: 0 }, { x: 25, y: -15 },
+        { x: 0, y: -15 }, { x: 0, y: 0 },
+      ],
+    }, {
+      id: garageId,
+      label: "Garage",
+      classification: "garage",
+      gla_treatment: "deduction",
+      parent_area_id: exteriorId,
+      position: 2,
+      vertices: [
+        { x: 5, y: 0 }, { x: 15, y: 0 }, { x: 15, y: -10 },
+        { x: 5, y: -10 }, { x: 5, y: 0 },
+      ],
+    }],
+    rooms: [],
+  });
+  assert.equal(sketch.schema_version, "2.1");
+  assert.equal(sketch.summary.gross_included_sqft, 375);
+  assert.equal(sketch.summary.deduction_sqft, 100);
+  assert.equal(sketch.summary.net_gla_sqft, 275);
+  assert.equal(sketch.summary.above_grade_finished_sqft, 275);
+  assert.equal(sketch.summary.garage_sqft, 100);
+  assert.equal(sketch.areas[1].parent_area_id, exteriorId);
+  assert.throws(() => normalizeManualSketchDocument({
+    areas: [{
+      id: exteriorId,
+      label: "First floor",
+      vertices: [
+        { x: 0, y: 0 }, { x: 25, y: 0 }, { x: 25, y: -15 },
+        { x: 0, y: -15 }, { x: 0, y: 0 },
+      ],
+    }, {
+      id: garageId,
+      label: "Garage",
+      classification: "garage",
+      gla_treatment: "deduction",
+      parent_area_id: exteriorId,
+      position: 2,
+      vertices: [
+        { x: 20, y: 0 }, { x: 30, y: 0 }, { x: 30, y: -10 },
+        { x: 20, y: -10 }, { x: 20, y: 0 },
+      ],
+    }],
+    rooms: [],
+  }), /invalid_sketch_deduction_bounds/);
+});
+
 test("normalizes room-labeled photo batches with original and display objects", () => {
   const photos = normalizePhotoBatch({
     photos: [{

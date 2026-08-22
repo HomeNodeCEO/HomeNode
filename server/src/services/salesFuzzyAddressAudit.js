@@ -57,7 +57,7 @@ async function loadFuzzyAuditRows(pool, sampleSize) {
   }).filter((item) => item.source_components.house_number).slice(0, sampleSize);
 }
 
-async function loadCandidates(pool, requests, candidatesPerSale) {
+async function loadAccountAliasCandidates(pool, requests, candidatesPerSale) {
   if (!requests.length) return [];
   const { rows } = await pool.query(
     `WITH requested AS (
@@ -75,7 +75,10 @@ async function loadCandidates(pool, requests, candidatesPerSale) {
        alias.raw_city,
        alias.city_key,
        alias.county_key,
-       alias.postal_code5
+       alias.postal_code5,
+       'account_alias'::text AS candidate_source,
+       true AS account_ready,
+       NULL::timestamptz AS target_completed_at
      FROM requested request
      JOIN LATERAL (
        SELECT candidate.*
@@ -94,6 +97,79 @@ async function loadCandidates(pool, requests, candidatesPerSale) {
   return rows;
 }
 
+async function loadPendingTargetCandidates(pool, requests, candidatesPerSale) {
+  const cityRequests = requests.filter((request) => request.city_key);
+  if (!cityRequests.length) return [];
+  const { rows } = await pool.query(
+    `WITH requested AS (
+       SELECT * FROM jsonb_to_recordset($1::jsonb) AS item(
+         request_id text,
+         house_number text,
+         city_key text,
+         postal_code5 text
+       )
+     ), ranked AS (
+       SELECT
+         request.request_id,
+         target.account_id,
+         target.source_address AS raw_address,
+         target.source_city AS raw_city,
+         upper(btrim(target.source_city)) AS city_key,
+         'DALLAS'::text AS county_key,
+         target.source_postal_code AS postal_code5,
+         'dcad_residential_target'::text AS candidate_source,
+         (account.account_id IS NOT NULL) AS account_ready,
+         target.initial_completed_at AS target_completed_at,
+         row_number() OVER (
+           PARTITION BY request.request_id
+           ORDER BY
+             (target.source_postal_code = request.postal_code5) DESC NULLS LAST,
+             target.initial_completed_at DESC NULLS LAST,
+             target.account_id
+         ) AS candidate_rank
+       FROM app.dcad_residential_targets target
+       JOIN requested request
+         ON upper(btrim(target.source_city)) = request.city_key
+        AND split_part(upper(btrim(target.source_address)), ' ', 1) = request.house_number
+       LEFT JOIN core.accounts account
+         ON account.account_id = target.account_id
+        AND account.canonical_account_id IS NULL
+       WHERE NULLIF(btrim(target.source_address), '') IS NOT NULL
+     )
+     SELECT request_id, account_id, raw_address, raw_city, city_key,
+            county_key, postal_code5, candidate_source, account_ready,
+            target_completed_at
+     FROM ranked
+     WHERE candidate_rank <= $2`,
+    [JSON.stringify(cityRequests), candidatesPerSale],
+  );
+  return rows;
+}
+
+function deduplicateCandidates(candidates) {
+  const unique = new Map();
+  for (const candidate of candidates) {
+    const key = `${candidate.request_id}\u0000${candidate.account_id}`;
+    const existing = unique.get(key);
+    if (!existing || (
+      existing.candidate_source !== "account_alias" &&
+      candidate.candidate_source === "account_alias"
+    )) {
+      unique.set(key, candidate);
+    }
+  }
+  return [...unique.values()];
+}
+
+async function loadCandidates(pool, requests, candidatesPerSale) {
+  if (!requests.length) return [];
+  const [accountAliases, pendingTargets] = await Promise.all([
+    loadAccountAliasCandidates(pool, requests, candidatesPerSale),
+    loadPendingTargetCandidates(pool, requests, candidatesPerSale),
+  ]);
+  return deduplicateCandidates([...accountAliases, ...pendingTargets]);
+}
+
 function localityScore(evidence, candidate) {
   const city = evidence.city_key
     ? (candidate.city_key === evidence.city_key ? 1 : 0)
@@ -109,7 +185,22 @@ function localityScore(evidence, candidate) {
 
 export function rankFuzzyAddressCandidates(item, candidates) {
   const ranked = candidates.map((candidate) => {
-    const candidateComponents = parseStructuredAddress(candidate.raw_address);
+    let candidateComponents = parseStructuredAddress(candidate.raw_address);
+    let secondaryEvidenceSource = null;
+    const sourceUnit = item.source_components?.unit_key;
+    const exactBase = item.source_components?.base_address_key &&
+      item.source_components.base_address_key === candidateComponents.base_address_key;
+    const canUseTargetSuffixHint = candidate.candidate_source === "dcad_residential_target" &&
+      sourceUnit && sourceUnit.length >= 2 && exactBase &&
+      !candidateComponents.unit_key &&
+      String(candidate.account_id || "").toUpperCase().endsWith(sourceUnit);
+    if (canUseTargetSuffixHint) {
+      candidateComponents = {
+        ...candidateComponents,
+        unit_key: sourceUnit,
+      };
+      secondaryEvidenceSource = "account_id_suffix_review_hint";
+    }
     const address = structuredAddressSimilarity(
       item.source_components,
       candidateComponents,
@@ -129,6 +220,10 @@ export function rankFuzzyAddressCandidates(item, candidates) {
       locality_score: locality,
       eligible: address.eligible,
       secondary_incomplete: Boolean(address.secondary_incomplete),
+      secondary_evidence_source: secondaryEvidenceSource,
+      candidate_source: candidate.candidate_source || "account_alias",
+      account_ready: candidate.account_ready !== false,
+      target_completed_at: candidate.target_completed_at || null,
       reasons: address.reasons,
       components: candidateComponents,
     };
@@ -145,6 +240,8 @@ export function rankFuzzyAddressCandidates(item, candidates) {
     best &&
     best.score >= 0.9 &&
     best.street_score >= 0.9 &&
+    best.account_ready &&
+    !best.secondary_evidence_source &&
     !best.secondary_incomplete &&
     (!runnerUp || margin >= 0.06),
   );
@@ -157,6 +254,11 @@ export function rankFuzzyAddressCandidates(item, candidates) {
         : "low",
     score: best?.score || 0,
     score_margin: margin,
+    resolution_state: best?.account_ready === false
+      ? "awaiting_cad_account_scrape"
+      : best
+        ? "candidate_ready"
+        : "no_eligible_candidate",
     candidate_count: candidates.length,
     eligible_candidate_count: eligible.length,
     top_candidates: ranked.slice(0, 5),

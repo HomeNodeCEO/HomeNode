@@ -231,19 +231,56 @@ export async function ensureSalesReconciliationSchema(pool) {
       resolution_method     text NOT NULL CHECK (
                                 resolution_method IN (
                                   'trusted_existing_link',
-                                  'unique_exact_address'
+                                  'unique_exact_address',
+                                  'unique_fuzzy_address'
                                 )
                               ),
       address_key           text,
       city_key              text,
       previous_match_status text,
       raw_parcel_number     text,
+      match_score           numeric,
+      score_margin          numeric,
+      evidence              jsonb NOT NULL DEFAULT '{}'::jsonb,
       resolved_at           timestamptz NOT NULL DEFAULT now(),
       UNIQUE (source_record_id, resolution_method)
     );
 
     CREATE INDEX IF NOT EXISTS sales_auto_reconciliation_history_resolved_idx
       ON app.sales_auto_reconciliation_history (resolved_at DESC);
+
+    ALTER TABLE app.sales_auto_reconciliation_history
+      ADD COLUMN IF NOT EXISTS match_score numeric,
+      ADD COLUMN IF NOT EXISTS score_margin numeric,
+      ADD COLUMN IF NOT EXISTS evidence jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+    DO $$
+    DECLARE
+      existing_definition text;
+    BEGIN
+      SELECT pg_get_constraintdef(constraint_row.oid)
+      INTO existing_definition
+      FROM pg_constraint constraint_row
+      WHERE constraint_row.conrelid = 'app.sales_auto_reconciliation_history'::regclass
+        AND constraint_row.conname =
+          'sales_auto_reconciliation_history_resolution_method_check';
+
+      IF existing_definition IS NULL OR
+         position('unique_fuzzy_address' IN existing_definition) = 0 THEN
+        ALTER TABLE app.sales_auto_reconciliation_history
+          DROP CONSTRAINT IF EXISTS
+            sales_auto_reconciliation_history_resolution_method_check;
+        ALTER TABLE app.sales_auto_reconciliation_history
+          ADD CONSTRAINT sales_auto_reconciliation_history_resolution_method_check
+          CHECK (
+            resolution_method IN (
+              'trusted_existing_link',
+              'unique_exact_address',
+              'unique_fuzzy_address'
+            )
+          );
+      END IF;
+    END $$;
   `);
 }
 

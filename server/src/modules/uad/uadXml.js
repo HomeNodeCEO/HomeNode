@@ -14,8 +14,19 @@ const deliveryMapping = require("./spec/delivery-mapping-v1.4.json");
 const XML_NAMESPACE = "http://www.mismo.org/residential/2009/schemas";
 const GSE_NAMESPACE = "http://www.datamodelextension.org";
 const XLINK_NAMESPACE = "http://www.w3.org/1999/xlink";
-const repeatableElements = new Set(deliveryMapping.repeatable_elements);
+const repeatableElements = new Set([
+  ...deliveryMapping.repeatable_elements,
+  // Appendix A models the three market inventory rows through separate
+  // context-specific UIDs even though the common XPath text does not mark
+  // MARKET_INVENTORY as repeatable. The pinned XSD requires exactly three.
+  "MARKET_INVENTORY",
+]);
 const MAX_SORT = Number.MAX_SAFE_INTEGER;
+const MARKET_INVENTORY_TYPES = Object.freeze({
+  market_active_listings: Object.freeze({ value: "ActiveListings", sort: 843 }),
+  market_pending_sales: Object.freeze({ value: "PendingSales", sort: 847 }),
+  market_total_sales: Object.freeze({ value: "TotalSales", sort: 854 }),
+});
 
 export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v4";
 export const UAD_XML_DELIVERY_SPECIFICATION_VERSION = deliveryMapping.delivery_specification_version;
@@ -163,9 +174,15 @@ function repeatOwnerKey({ pathIndex, path, assignments, lastAssignedEntity, curr
   if (assigned) return { key: `entity:${assigned.id}`, entity: assigned, order: Number(assigned.ordinal || 0) };
   if (path[pathIndex] === "PROPERTY") return { key: "subject-property", entity: null, order: 0 };
   const owner = lastAssignedEntity || currentEntity;
+  // A report can contain several root-owned repeats of the same MISMO
+  // container (for example, one VALUATION_COMMENTARY for the market and
+  // another for the sales contract). Keep fields from the same HomeNode
+  // context together while preventing unrelated contexts from collapsing
+  // into one singleton node and overwriting each other's data points.
+  const context = field.contextKey || field.key || "field";
   const occurrence = field.dataType === "multi_enum" ? `:occurrence:${occurrenceIndex}` : "";
   return {
-    key: `owned:${owner?.id || "root"}:${path[pathIndex]}${occurrence}`,
+    key: `owned:${owner?.id || "root"}:${path[pathIndex]}:${context}${occurrence}`,
     entity: owner || null,
     order: Number(owner?.ordinal || 0),
   };
@@ -211,6 +228,15 @@ function appendValue(root, editorValue, entitiesById, occurrenceValue, occurrenc
   }
 
   const attributes = dataPointAttributes(field, mapping, occurrenceValue, currentEntity);
+  if (parent.name === "MARKET_INVENTORY") {
+    const inventoryType = MARKET_INVENTORY_TYPES[field.contextKey];
+    if (inventoryType) {
+      appendText(parent, "MarketInventoryType", inventoryType.value, {
+        sort: inventoryType.sort,
+        key: "derived-context",
+      });
+    }
+  }
   const repeatDataPoint = field.dataType === "multi_enum" && !mapping.path.some((name, index) => (
     index > mapping.path.indexOf("VALUATION_ANALYSIS")
       && repeatableElements.has(name)

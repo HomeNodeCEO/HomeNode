@@ -3,6 +3,10 @@ import test from "node:test";
 
 import { validateUadSubschema } from "../src/modules/uad/uadSubschema.js";
 import { buildUadMismoXml, getUadXmlMappingSummary } from "../src/modules/uad/uadXml.js";
+import {
+  uadNativePdfEditorFixture,
+  uadNativePdfSignerFixture,
+} from "./fixtures/uadNativePdfFixture.js";
 
 const RELEASE_KEY = "uad-3.6-2026-08-13-h1.5";
 
@@ -230,6 +234,18 @@ test("the official subschema validator returns blocking structural findings", as
   assert.ok(validation.errors.some((error) => error.message.includes("VALUATION_REPORT")));
   assert.ok(validation.errors.some((error) => error.message.includes("PARTIES")));
   assert.ok(validation.errors.some((error) => error.message.includes("SIGNATORIES")));
+});
+
+test("the synthetic signed SFR fixture is valid against the pinned GSE subschema", async () => {
+  const generated = buildUadMismoXml(uadNativePdfEditorFixture(), {
+    signers: [uadNativePdfSignerFixture()],
+  });
+  const validation = await validateUadSubschema(generated.xml);
+
+  assert.equal(validation.valid, true, JSON.stringify(validation.errors, null, 2));
+  assert.equal(validation.errors.length, 0);
+  assert.match(generated.xml, /<MarketInventoryType>TotalSales<\/MarketInventoryType>/);
+  assert.equal((generated.xml.match(/<VALUATION_COMMENTARY>/g) || []).length, 2);
 });
 
 test("generation refuses workfiles tied to another specification release", () => {

@@ -48,6 +48,104 @@ function memoryStorage(objects) {
   };
 }
 
+async function seedValue(pool, workfileId, entityId, context, uid, reportFieldId, value) {
+  const id = deterministicUuid(`uad-successful-delivery:value:${entityId || "root"}:${context}:${uid}`);
+  await pool.query(
+    `INSERT INTO appraisal.uad_field_values (
+       id, workfile_id, entity_id, field_context, uad_uid, report_field_id,
+       value, source_type, source_reference, source_observed_at,
+       is_appraiser_confirmed, created_at, updated_at
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7::jsonb, 'appraiser',
+       'synthetic_successful_delivery', timestamptz '2026-08-21 12:00:00+00',
+       true, timestamptz '2026-08-21 12:00:00+00', timestamptz '2026-08-21 12:00:00+00'
+     ) ON CONFLICT DO NOTHING`,
+    [id, workfileId, entityId, context, uid, reportFieldId, JSON.stringify(value)],
+  );
+  await pool.query(
+    `UPDATE appraisal.uad_field_values
+        SET report_field_id = $5, value = $6::jsonb, source_type = 'appraiser',
+            source_reference = 'synthetic_successful_delivery',
+            source_observed_at = timestamptz '2026-08-21 12:00:00+00',
+            is_appraiser_confirmed = true, updated_at = now()
+      WHERE workfile_id = $1 AND entity_id IS NOT DISTINCT FROM $2::uuid
+        AND field_context = $3 AND uad_uid = $4`,
+    [workfileId, entityId, context, uid, reportFieldId, JSON.stringify(value)],
+  );
+}
+
+async function seedCompletionValues(pool, workfileId) {
+  const rootValues = [
+    ["assignment", "1000.0034", "2.000", "Purchase"],
+    ["appraiser_inspection", "2400.0080", "2.023", "2026-08-21"],
+    ["subject", "0100.0020", "3.004", "Detached"],
+    ["subject", "0100.0019", "3.006", 0],
+    ["subject", "0100.0033", "3.008", false],
+    ["subject", "0100.0054", "3.014", false],
+    ["subject", "0100.0047", "3.015", false],
+    ["subject", "0300.0010", "3.017", false],
+    ["subject_ownership", "0100.0024", "3.019", "FeeSimple"],
+    ["subject_ownership", "0100.0034", "3.027", true],
+    ["site_zoning", "1500.0125", "4.008", "Legal"],
+    ["site_zoning", "1500.0122", "4.009", "SF-7"],
+    ["site_zoning", "1500.0123", "4.010", "Single-family residential zoning"],
+    ["site_zoning", "1500.0124", "4.014", "The synthetic site is a legal conforming use."],
+    ["site_mixed_use", "1500.0034", "4.017", false],
+    ["site_access", "1500.0055", "4.020", "PublicStreet"],
+    ["site_access", "1500.0054", "4.023", true],
+    ["site", "1500.0166", "4.067", true],
+    ["site", "1500.0178", "4.099", false],
+    ["disaster_mitigation", "3700.0002", "5.000", ["None"]],
+    ["energy_green", "2600.0005", "6.000", false],
+    ["energy_green", "2600.0004", "6.004", false],
+    ["energy_green", "2600.0003", "6.010", false],
+    ["sketch", "3300.0002", "7.000", true],
+    ["scope_of_work", "1000.0027", "Does Not Display", false],
+    ["scope_of_work", "1000.0030", "Does Not Display", false],
+    ["reconciliation", "1300.0017", "26.007", 435000],
+    ["reconciliation", "1300.0010", "26.009", ["AsIs"]],
+    ["reconciliation", "1300.0013", "26.010", 45],
+    ["reconciliation", "1300.0012", "26.011", "2026-08-21"],
+    ["reconciliation", "1300.0021", "26.019", "The sales comparison approach is the most reliable indicator for this synthetic assignment."],
+  ];
+  for (const [context, uid, reportFieldId, value] of rootValues) {
+    await seedValue(pool, workfileId, null, context, uid, reportFieldId, value);
+  }
+
+  const entities = await pool.query(
+    `SELECT id, entity_type FROM appraisal.uad_entities
+      WHERE workfile_id = $1 ORDER BY ordinal, id`,
+    [workfileId],
+  );
+  for (const entity of entities.rows) {
+    if (entity.entity_type === "site_parcel") {
+      await seedValue(pool, workfileId, entity.id, "site_parcel", "1500.0023", "4.006", "LandWithDwelling");
+      await seedValue(pool, workfileId, entity.id, "site_parcel", "1500.0022", "4.007", { amount: 8400, unit: "SquareFeet" });
+    }
+    if (entity.entity_type === "dwelling") {
+      const values = [
+        ["0300.0117", "8.005", "GroundLevel"],
+        ["0300.0012", "8.010", false],
+        ["0300.0079", "8.012", false],
+        ["0300.0114", "8.046", false],
+        ["0300.0088", "8.049", ["ForcedWarmAir"]],
+        ["0300.0022", "8.051", true],
+        ["0300.0084", "8.051", ["Centralized"]],
+        ["3900.0097", "8.055", false],
+      ];
+      for (const [uid, reportFieldId, value] of values) {
+        await seedValue(pool, workfileId, entity.id, "dwelling", uid, reportFieldId, value);
+      }
+    }
+  }
+  await pool.query(
+    `DELETE FROM appraisal.uad_field_values
+      WHERE workfile_id = $1 AND field_context = 'sales_comparable_dwelling'
+        AND uad_uid = '1800.0373'`,
+    [workfileId],
+  );
+}
+
 async function seedAsset(pool, objects, workfileId, entityId, sectionNumber, captionType, ordinal, assetKind = "photo") {
   const identity = `${entityId || "root"}:${sectionNumber}:${captionType}:${ordinal}`;
   const id = deterministicUuid(`uad-successful-delivery:${identity}`);
@@ -151,6 +249,7 @@ try {
       WHERE workfile_id = $1`,
     [workfileId],
   );
+  await seedCompletionValues(pool, workfileId);
   await seedRequiredAssets(pool, objects, workfileId);
 
   const validation = await runLocalUadValidation(pool, workfileId);

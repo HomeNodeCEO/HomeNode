@@ -67,6 +67,24 @@ test("delivery assets are filtered, ordered, and assigned collision-safe package
   assert.equal(entries[1].image_category_type, "PropertyPhoto");
 });
 
+test("outbuilding room photos use the XSD-compatible inspection image branch", () => {
+  const entries = buildUadDeliveryAssetEntries([{
+    id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    entity_id: "outbuilding-room-1",
+    asset_kind: "photo",
+    section_number: 12,
+    caption_type: "OutbuildingRoom",
+    original_file_name: "Workshop.png",
+    content_type: "image/png",
+    byte_size: 3,
+    status: "verified",
+    created_at: "2026-08-21T00:00:00.000Z",
+    object_key: "private/workshop",
+  }], [{ id: "outbuilding-room-1", entity_type: "outbuilding_room" }]);
+
+  assert.equal(entries[0].xml_branch, "property_inspection");
+});
+
 test("images manifest contains verified package checksums without storage keys", () => {
   const entry = {
     asset_id: "asset-1",

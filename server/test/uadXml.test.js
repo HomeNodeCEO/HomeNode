@@ -129,6 +129,71 @@ test("MISMO XML generation references deterministic external delivery images", a
   assert.equal(schema.errors.some((error) => /IMAGE|ImageFileLocationIdentifier|ImageCategoryType/.test(error.message)), false);
 });
 
+test("MISMO XML groups project utilities under the mandatory association charge detail", () => {
+  const editor = editorFixture();
+  const utilityId = "00000000-0000-4000-8000-000000000008";
+  editor.entities.push({
+    id: utilityId,
+    parent_entity_id: null,
+    entity_type: "project_utility",
+    entity_identifier: "project-utility-water",
+    ordinal: 1,
+  });
+  editor.values.push(
+    { entity_id: null, context_key: "project_association_dues", uid: "2500.0007", value: 250 },
+    { entity_id: utilityId, context_key: "project_utility", uid: "2500.0009", value: "Water" },
+  );
+
+  const generated = buildUadMismoXml(editor);
+  assert.equal((generated.xml.match(/<ASSOCIATION_CHARGE>/g) || []).length, 1);
+  assert.match(
+    generated.xml,
+    /<ASSOCIATION_CHARGE>[\s\S]*?<ASSOCIATION_CHARGE_DETAIL>[\s\S]*?<AssociationChargeAmount>250<\/AssociationChargeAmount>[\s\S]*?<ASSOCIATION_CHARGE_INCLUDES_UTILITIES>[\s\S]*?<AssociationChargeIncludesUtilityType>Water<\/AssociationChargeIncludesUtilityType>/,
+  );
+});
+
+test("MISMO XML joins amenity images to the amenity detail before serialization", () => {
+  const editor = editorFixture();
+  const property = editor.entities.find((entity) => entity.entity_type === "property");
+  const amenityId = "00000000-0000-4000-8000-000000000009";
+  editor.entities.push({
+    id: amenityId,
+    parent_entity_id: property.id,
+    entity_type: "amenity",
+    entity_identifier: "amenity-deck",
+    ordinal: 1,
+  });
+  editor.values.push({
+    entity_id: amenityId,
+    context_key: "amenity_outdoor_accessories",
+    uid: "0200.0007",
+    value: "Deck",
+  });
+  const generated = buildUadMismoXml(editor, {
+    assets: [{
+      id: "10000000-0000-4000-8000-000000000003",
+      entity_id: amenityId,
+      asset_kind: "photo",
+      section_number: 14,
+      caption_type: "SubjectPropertyAmenitiesExhibit",
+      caption: "Synthetic deck",
+      object_key: "private/amenity.png",
+      original_file_name: "Amenity.png",
+      content_type: "image/png",
+      byte_size: 123,
+      checksum_sha256: "c".repeat(64),
+      status: "verified",
+      created_at: "2026-08-20T00:00:00.000Z",
+    }],
+  });
+
+  assert.equal((generated.xml.match(/<AMENITY>/g) || []).length, 1);
+  assert.match(
+    generated.xml,
+    /<AMENITY>[\s\S]*?<AMENITY_DETAIL>[\s\S]*?<AmenityType>Deck<\/AmenityType>[\s\S]*?<IMAGES>[\s\S]*?<ImageCategoryType>SubjectPropertyAmenitiesExhibit<\/ImageCategoryType>/,
+  );
+});
+
 test("MISMO XML generation places Section 26 conclusions and client conditions in their official structures", () => {
   const editor = editorFixture();
   const conditionId = "00000000-0000-4000-8000-000000000006";

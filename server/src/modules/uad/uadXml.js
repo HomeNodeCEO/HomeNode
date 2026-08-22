@@ -27,8 +27,37 @@ const MARKET_INVENTORY_TYPES = Object.freeze({
   market_pending_sales: Object.freeze({ value: "PendingSales", sort: 847 }),
   market_total_sales: Object.freeze({ value: "TotalSales", sort: 854 }),
 });
+const ENTITY_ANCHOR_OVERRIDES = Object.freeze({
+  // One subject-property amenity entity owns one AMENITY. Its category is a
+  // grouping container, not the entity itself. Anchoring at AMENITY also lets
+  // report images join the same required AMENITY_DETAIL branch.
+  amenity: Object.freeze(["AMENITY"]),
+  // Included utilities are children of the one mandatory association charge;
+  // they must not create separate ASSOCIATION_CHARGE records without detail.
+  project_utility: Object.freeze(["ASSOCIATION_CHARGE_INCLUDES_UTILITY"]),
+});
+const SCHEMA_CHILD_ORDER = Object.freeze({
+  AMENITY: Object.freeze(["AMENITY_DETAIL", "IMAGES", "SWIMMING_POOL_FEATURES", "EXTENSION"]),
+  ASSOCIATION_CHARGE: Object.freeze([
+    "ASSOCIATION_CHARGE_DETAIL",
+    "ASSOCIATION_CHARGE_INCLUDES_UTILITIES",
+    "EXTENSION",
+  ]),
+  PROPERTY_UNIT: Object.freeze([
+    "ACCESSIBILITY_FEATURES",
+    "INTERIOR_COMPONENTS",
+    "LEVELS",
+    "PROPERTY_UNIT_AREA",
+    "PROPERTY_UNIT_DETAIL",
+    "RENTAL_INFORMATIONS",
+    "ROOMS",
+    "UNIT_RENT_SCHEDULE",
+    "UNIT_VIEWS",
+    "EXTENSION",
+  ]),
+});
 
-export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v4";
+export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v5";
 export const UAD_XML_DELIVERY_SPECIFICATION_VERSION = deliveryMapping.delivery_specification_version;
 export const UAD_XML_SUBSCHEMA_VERSION = deliveryMapping.subschema_version;
 
@@ -87,7 +116,9 @@ function assignedEntityAnchors(path, chain) {
   const assignments = new Map();
   let afterIndex = path.indexOf("VALUATION_ANALYSIS");
   for (const entity of chain) {
-    const anchors = deliveryMapping.entity_anchor_elements[entity.entity_type] || [];
+    const anchors = ENTITY_ANCHOR_OVERRIDES[entity.entity_type]
+      || deliveryMapping.entity_anchor_elements[entity.entity_type]
+      || [];
     let selectedIndex = -1;
     for (let index = afterIndex + 1; index < path.length; index += 1) {
       if (anchors.includes(path[index])) {
@@ -158,8 +189,17 @@ function serializeNode(node, depth = 0) {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, value]) => ` ${name}="${escapeXml(value)}"`)
     .join("");
+  const schemaOrder = SCHEMA_CHILD_ORDER[node.name];
+  const schemaIndex = (child) => {
+    const index = schemaOrder?.indexOf(child.name) ?? -1;
+    return index < 0 ? MAX_SORT : index;
+  };
   const children = [...node.children].sort((left, right) => (
-    left.sort - right.sort || left.order - right.order || left.name.localeCompare(right.name) || left.key.localeCompare(right.key)
+    schemaIndex(left) - schemaIndex(right)
+    || left.sort - right.sort
+    || left.order - right.order
+    || left.name.localeCompare(right.name)
+    || left.key.localeCompare(right.key)
   ));
   if (!children.length) {
     if (node.text === null) return `${indent}<${node.name}${attributes}/>`;
@@ -180,6 +220,10 @@ function repeatOwnerKey({ pathIndex, path, assignments, lastAssignedEntity, curr
   // context together while preventing unrelated contexts from collapsing
   // into one singleton node and overwriting each other's data points.
   const context = field.contextKey || field.key || "field";
+  if (path[pathIndex] === "ASSOCIATION_CHARGE"
+    && ["project_association_dues", "project_utility"].includes(context)) {
+    return { key: "owned:root:ASSOCIATION_CHARGE:project_association_charge", entity: null, order: 0 };
+  }
   const occurrence = field.dataType === "multi_enum" ? `:occurrence:${occurrenceIndex}` : "";
   return {
     key: `owned:${owner?.id || "root"}:${path[pathIndex]}:${context}${occurrence}`,
@@ -450,7 +494,7 @@ const DELIVERY_IMAGE_PATHS = Object.freeze({
   defect: ["PROPERTIES", "PROPERTY", "PROPERTY_DEFECT", "DEFECTS", "DEFECT", "IMAGES", "IMAGE"],
 });
 
-function appendDeliveryImage(root, entry, entitiesById, order) {
+function appendDeliveryImage(root, entry, entitiesById, order, entityContextKey = null) {
   const suffix = DELIVERY_IMAGE_PATHS[entry.xml_branch] || DELIVERY_IMAGE_PATHS.property_inspection;
   const path = [
     "MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET",
@@ -480,7 +524,10 @@ function appendDeliveryImage(root, entry, entitiesById, order) {
         assignments,
         lastAssignedEntity,
         currentEntity,
-        field: { dataType: "string" },
+        // Reuse the entity's canonical editor context so unassigned grouping
+        // containers (notably AMENITY_CATEGORY) resolve to the same branch as
+        // the entity values instead of creating an image-only sibling.
+        field: { dataType: "string", contextKey: entityContextKey || entry.entity_type || "asset" },
         occurrenceIndex: 0,
       });
       key = owner.key;
@@ -516,6 +563,14 @@ export function buildUadMismoXml(editor, { signers = [], assets = [] } = {}) {
     },
   });
   const entitiesById = new Map((editor.entities || []).map((entity) => [entity.id, entity]));
+  const contextKeysByEntityId = new Map();
+  for (const value of editor.values || []) {
+    if (!value.entity_id) continue;
+    const current = contextKeysByEntityId.get(value.entity_id);
+    if (!current || String(value.context_key).localeCompare(current) < 0) {
+      contextKeysByEntityId.set(value.entity_id, value.context_key);
+    }
+  }
   const values = [...(editor.values || [])]
     .filter((value) => isPresent(value.value))
     .sort((left, right) => {
@@ -536,7 +591,13 @@ export function buildUadMismoXml(editor, { signers = [], assets = [] } = {}) {
     ))
     .forEach((signer, index) => appendSigner(root, signer, index));
   const deliveryAssets = buildUadDeliveryAssetEntries(assets, editor.entities || []);
-  deliveryAssets.forEach((asset, index) => appendDeliveryImage(root, asset, entitiesById, index));
+  deliveryAssets.forEach((asset, index) => appendDeliveryImage(
+    root,
+    asset,
+    entitiesById,
+    index,
+    contextKeysByEntityId.get(asset.entity_id),
+  ));
   const systemPackage = appendSystemPackage(root, editor.workfile);
   const xml = `<?xml version="1.0" encoding="UTF-8"?>\n${serializeNode(root)}\n`;
   return {

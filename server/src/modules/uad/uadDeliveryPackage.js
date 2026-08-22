@@ -43,7 +43,10 @@ function deliveryBranch(entityType, captionType) {
   if (String(entityType || "").includes("defect") || String(captionType || "").endsWith("Defect")) {
     return "defect";
   }
-  if (["unit_room", "outbuilding_room"].includes(entityType)) return "room";
+  // ROOM is a PROPERTY_UNIT branch. Outbuilding rooms are summarized under
+  // INTERIOR_ROOM_SUMMARY, which has no image child in the pinned XSD, so
+  // their photos remain report evidence on the subject inspection branch.
+  if (entityType === "unit_room") return "room";
   if (entityType === "unit_interior_feature") return "interior_component";
   if (entityType === "vehicle_storage") return "vehicle_storage";
   if (entityType === "amenity") return "amenity";

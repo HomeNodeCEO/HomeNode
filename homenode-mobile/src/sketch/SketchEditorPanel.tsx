@@ -646,7 +646,6 @@ export function SketchEditorPanel({
         </View>
         <Text style={styles.areaTotal}>{gla.netGlaSqft.toLocaleString()} sf GLA</Text>
       </View>
-      <Text style={styles.help}>Enter each measured wall to the nearest tenth of a foot. Every exterior, garage cutout, room marker, and label stays visible on one combined sketch.</Text>
       {gla.deductionAreaSqft ? <Text style={styles.glaBreakdown}>
         {gla.grossAreaSqft.toLocaleString()} sf gross − {gla.deductionAreaSqft.toLocaleString()} sf garage = {gla.netGlaSqft.toLocaleString()} sf GLA
       </Text> : null}
@@ -662,16 +661,6 @@ export function SketchEditorPanel({
         style={styles.input}
         value={draft.alternateStandardName}
       /> : null}
-      <Text style={styles.label}>Measurement method</Text>
-      <View style={styles.choices}>{([
-        ["exterior", "Exterior"],
-        ["interior_perimeter", "Interior perimeter"],
-        ["plans", "Plans"],
-        ["mixed", "Mixed"],
-      ] as const).map(([value, label]) => (
-        <Choice key={value} label={label} selected={draft.measurementMethod === value} onPress={() => changeDraft((current) => ({ ...current, measurementMethod: value, reviewStatus: "draft" }))} />
-      ))}</View>
-
       <View style={styles.rowBetween}>
         <Text style={styles.sectionTitle}>Sketch layers</Text>
         <Pressable onPress={addArea}><Text style={styles.link}>+ Exterior area</Text></Pressable>
@@ -722,7 +711,6 @@ export function SketchEditorPanel({
         <Choice label="↷ 1°" selected={false} onPress={() => adjustBearing(-1)} />
         <Choice label="↷ 5°" selected={false} onPress={() => adjustBearing(-5)} />
       </View>
-      <Text style={styles.help}>Use an arrow for the nearest direction, then rotate by 1° or 5° for angled walls. You can still enter an exact bearing above.</Text>
       <View style={styles.actionsRow}>
         <Action title="Add wall" onPress={addWall} />
         <Action title="Undo" secondary disabled={selectedArea.vertices.length < 2} onPress={undoWall} />
@@ -778,7 +766,7 @@ export function SketchEditorPanel({
         </View>
       ))}</View>
 
-      <Text style={styles.sectionTitle}>Appraiser review</Text>
+      <Text style={styles.sectionTitle}>Sketch review notes</Text>
       <TextInput
         multiline
         onChangeText={(value) => changeDraft((current) => ({ ...current, reviewNotes: value, reviewStatus: "draft" }))}

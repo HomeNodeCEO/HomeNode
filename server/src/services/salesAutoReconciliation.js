@@ -80,7 +80,15 @@ function normalizeCounty(value) {
 
 function cityFromAddress(address) {
   const parts = String(address || "").split(",").map((part) => part.trim());
-  return parts.length > 1 ? parts[1] : null;
+  for (const part of parts.slice(1)) {
+    if (!part) continue;
+    if (/^(?:#|APT\b|APARTMENT\b|BLD\b|BLDG\b|BUILDING\b|FL\b|FLOOR\b|LEVEL\b|NO\b|NUMBER\b|STE\b|SUITE\b|UNIT\b)/i.test(part)) {
+      continue;
+    }
+    if (/^(?:TX|TEXAS)(?:\s+\d{5}(?:-\d{4})?)?$/i.test(part)) return null;
+    return part;
+  }
+  return null;
 }
 
 function postalCode5(value) {
@@ -101,11 +109,13 @@ export function salesAddressMatchEvidence(rawPayload, { fallbackCity = null } = 
   const location = salesSourceLocationEvidence(rawPayload);
   const values = payloadValues(rawPayload);
   const addressHint = location.address_hint;
-  const cityHint = firstValue(values, [
+  const payloadCity = firstValue(values, [
     "propertycity",
     "city",
     "municipality",
-  ]) || cityFromAddress(addressHint) || fallbackCity;
+  ]);
+  const addressCity = cityFromAddress(addressHint);
+  const cityHint = payloadCity || addressCity || fallbackCity;
   const countyHint = firstValue(values, [
     "countyorparish",
     "propertycounty",
@@ -125,6 +135,13 @@ export function salesAddressMatchEvidence(rawPayload, { fallbackCity = null } = 
     address_hint: addressHint,
     address_key: addressKey || null,
     city_key: cityKey || null,
+    city_source: payloadCity
+      ? "payload"
+      : addressCity
+        ? "address"
+        : fallbackCity
+          ? "source_file"
+          : null,
     county_key: normalizeCounty(countyHint),
     postal_code5: postalCode5(postalHint),
   };

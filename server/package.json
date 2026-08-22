@@ -47,6 +47,7 @@
         "sync:collin-account-ids": "node scripts/syncCollinAccountIdentifiers.js",
         "backfill:collin-sales": "node scripts/backfillCollinSales.js",
         "audit:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js",
+        "audit:sales-fuzzy-addresses": "node scripts/runSalesAutoReconciliation.js --fuzzy-sample",
         "repair:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js --apply",
         "backfill:account-address-aliases": "node scripts/runSalesAutoReconciliation.js --seed-only",
         "start": "node src/oldServer.js",

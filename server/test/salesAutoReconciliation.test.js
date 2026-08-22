@@ -18,6 +18,7 @@ test("sales address evidence canonicalizes MLS suffixes and place names", () => 
       address_hint: "3901 Greensboro Circle, Garland, TX 75044",
       address_key: "3901 GREENSBORO CIR",
       city_key: "GARLAND",
+      city_source: "address",
       county_key: "DALLAS",
       postal_code5: "75044",
     },
@@ -30,6 +31,14 @@ test("sales source filenames supply a conservative city fallback", () => {
     "UNIVERSITY PARK",
   );
   assert.equal(cityHintFromSalesSource("MLS sales export", ["unknown.csv"]), null);
+});
+
+test("unit fragments are not mistaken for a city", () => {
+  const evidence = salesAddressMatchEvidence({
+    Address: "4831 Fuller Court, #1104, Irving, TX 75038",
+  });
+  assert.equal(evidence.city_key, "IRVING");
+  assert.equal(evidence.city_source, "address");
 });
 
 function auditPool() {

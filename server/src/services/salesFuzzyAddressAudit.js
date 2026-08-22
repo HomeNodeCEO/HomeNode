@@ -118,7 +118,11 @@ async function loadPendingTargetCandidates(pool, requests, candidatesPerSale) {
          'DALLAS'::text AS county_key,
          target.source_postal_code AS postal_code5,
          'dcad_residential_target'::text AS candidate_source,
-         (account.account_id IS NOT NULL) AS account_ready,
+         (
+           account.account_id IS NOT NULL
+           AND NULLIF(btrim(account.address), '') IS NOT NULL
+           AND target.initial_completed_at IS NOT NULL
+         ) AS account_ready,
          target.initial_completed_at AS target_completed_at,
          row_number() OVER (
            PARTITION BY request.request_id

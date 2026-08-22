@@ -249,37 +249,39 @@ export function sketchClosureTargets(vertices: SketchPoint[]): SketchClosureTarg
   if (vertices.length < 3 || calculateSketchOutline(vertices).closed) return [];
   const start = vertices[0]!;
   const current = vertices[vertices.length - 1]!;
-
-  if (vertices.length === 3) {
-    const firstDirection = {
-      x: vertices[1]!.x - start.x,
-      y: vertices[1]!.y - start.y,
-    };
-    const recentDirection = {
-      x: current.x - vertices[1]!.x,
-      y: current.y - vertices[1]!.y,
-    };
-    const projected = lineIntersection(current, firstDirection, start, recentDirection);
-    const duplicatesExistingPoint = projected
-      ? vertices.some((vertex) => distance(vertex, projected) <= 0.05)
-      : true;
-    if (projected
-      && !duplicatesExistingPoint
-      && distance(current, projected) >= 0.1
-      && distance(start, projected) >= 0.1) {
-      return [{
-        kind: "projected_corner",
-        point: projected,
-        label: "Add aligned closing corner",
-      }];
-    }
+  const previous = vertices[vertices.length - 2]!;
+  const recentDirection = {
+    x: current.x - previous.x,
+    y: current.y - previous.y,
+  };
+  const perpendicularDirection = {
+    x: -recentDirection.y,
+    y: recentDirection.x,
+  };
+  const projected = lineIntersection(current, perpendicularDirection, start, recentDirection);
+  const duplicatesExistingPoint = projected
+    ? vertices.some((vertex) => distance(vertex, projected) <= 0.05)
+    : true;
+  const projectedOutline = projected ? [...vertices, projected, { ...start }] : [];
+  const projectedIsValid = projected
+    && !duplicatesExistingPoint
+    && distance(current, projected) >= 0.1
+    && distance(start, projected) >= 0.1
+    && !calculateSketchOutline(projectedOutline).selfIntersecting;
+  const targets: SketchClosureTarget[] = [];
+  if (projectedIsValid) {
+    targets.push({
+      kind: "projected_corner",
+      point: projected,
+      label: `Add ${rounded(distance(current, projected), 1)} foot logical closing wall`,
+    });
   }
-
-  return [{
+  targets.push({
     kind: "starting_point",
     point: { ...start },
     label: "Connect to the starting point and calculate area",
-  }];
+  });
+  return targets;
 }
 
 export function connectSketchTarget(vertices: SketchPoint[], target: SketchClosureTarget): SketchPoint[] {

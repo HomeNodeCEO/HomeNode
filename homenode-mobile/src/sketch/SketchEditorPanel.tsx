@@ -191,13 +191,28 @@ function SketchCanvas({ area, rooms, closureTargets, selectedRoomId, onSelectRoo
         );
         const guideLength = Math.hypot(point.x - current.x, point.y - current.y);
         const guideAngle = Math.atan2(point.y - current.y, point.x - current.x);
+        const modelLength = Math.hypot(
+          target.point.x - area.vertices[area.vertices.length - 1]!.x,
+          target.point.y - area.vertices[area.vertices.length - 1]!.y,
+        );
         return <React.Fragment key={`${target.kind}-${target.point.x}-${target.point.y}`}>
-          <View style={[styles.closureGuide, {
-            left: ((current.x + point.x) / 2) - (guideLength / 2),
-            top: ((current.y + point.y) / 2) - 1,
-            width: guideLength,
-            transform: [{ rotate: `${guideAngle}rad` }],
-          }]} />
+          <View style={[
+            styles.closureGuide,
+            target.kind === "starting_point" ? styles.closureGuideStart : styles.closureGuideProjected,
+            {
+              left: ((current.x + point.x) / 2) - (guideLength / 2),
+              top: ((current.y + point.y) / 2) - 1,
+              width: guideLength,
+              transform: [{ rotate: `${guideAngle}rad` }],
+            },
+          ]} />
+          <Text style={[
+            styles.closureDimension,
+            target.kind === "starting_point" ? styles.closureDimensionStart : styles.closureDimensionProjected,
+            { left: ((current.x + point.x) / 2) - 20, top: ((current.y + point.y) / 2) - 20 },
+          ]}>
+            {modelLength.toFixed(1)}′
+          </Text>
           <Pressable
             accessibilityLabel={target.label}
             accessibilityRole="button"
@@ -574,9 +589,9 @@ export function SketchEditorPanel({
         onMoveRoom={moveRoom}
         onConnectTarget={connectTarget}
       />
-      {closureTargets[0]?.kind === "projected_corner" ? (
-        <Text style={styles.closureHelp}>Tap the orange dot to add the aligned corner. Then tap the green starting dot to close the outline and calculate square footage.</Text>
-      ) : closureTargets[0]?.kind === "starting_point" ? (
+      {closureTargets.some((target) => target.kind === "projected_corner") ? (
+        <Text style={styles.closureHelp}>Orange adds the calculated logical corner; green closes directly to the starting point. After choosing orange, tap green to add the final wall and calculate square footage.</Text>
+      ) : closureTargets.some((target) => target.kind === "starting_point") ? (
         <Text style={styles.closureHelp}>Tap the green starting dot to connect the final wall and calculate square footage.</Text>
       ) : null}
       <Text style={[styles.status, calculation.ready ? styles.statusReady : styles.statusPending]}>
@@ -675,7 +690,12 @@ const styles = StyleSheet.create({
   canvas: { alignSelf: "center", backgroundColor: "#fbfcfb", borderColor: "#cdd9d2", borderRadius: 12, borderWidth: 1, height: CANVAS_HEIGHT, overflow: "hidden", width: CANVAS_WIDTH },
   canvasEmpty: { color: "#7b8983", left: 30, position: "absolute", right: 30, textAlign: "center", top: 115 },
   wall: { backgroundColor: "#183f31", height: 3, position: "absolute" },
-  closureGuide: { backgroundColor: "#d67b2f", height: 2, opacity: 0.55, position: "absolute" },
+  closureGuide: { height: 2, opacity: 0.55, position: "absolute" },
+  closureGuideProjected: { backgroundColor: "#d67b2f" },
+  closureGuideStart: { backgroundColor: "#1d8a5b" },
+  closureDimension: { borderRadius: 4, fontSize: 10, fontWeight: "800", paddingHorizontal: 3, position: "absolute", textAlign: "center", width: 40 },
+  closureDimensionProjected: { backgroundColor: "#fff7e7", color: "#8a521f" },
+  closureDimensionStart: { backgroundColor: "#edf8f2", color: "#176a47" },
   closureTarget: { alignItems: "center", height: 36, justifyContent: "center", position: "absolute", width: 36 },
   closureDot: { borderColor: "white", borderRadius: 9, borderWidth: 3, height: 18, width: 18 },
   closureDotProjected: { backgroundColor: "#d67b2f" },

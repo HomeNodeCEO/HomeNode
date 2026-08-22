@@ -41,11 +41,11 @@ test("projects a closing corner and closes a 10 by 10 outline from tappable targ
   let vertices = appendMeasuredWall([], 10, 90);
   vertices = appendMeasuredWall(vertices, 10, 0);
 
-  const projected = sketchClosureTargets(vertices);
-  assert.equal(projected.length, 1);
-  assert.equal(projected[0]!.kind, "projected_corner");
-  assert.deepEqual(projected[0]!.point, { x: 10, y: 0 });
-  vertices = connectSketchTarget(vertices, projected[0]!);
+  const initialTargets = sketchClosureTargets(vertices);
+  const projected = initialTargets.find((target) => target.kind === "projected_corner")!;
+  assert.equal(initialTargets.some((target) => target.kind === "starting_point"), true);
+  assert.deepEqual(projected.point, { x: 10, y: 0 });
+  vertices = connectSketchTarget(vertices, projected);
 
   const startingPoint = sketchClosureTargets(vertices);
   assert.equal(startingPoint.length, 1);
@@ -62,12 +62,45 @@ test("projects a closing corner and closes a 10 by 10 outline from tappable targ
 test("projects the closing corner for rotated walls", () => {
   let vertices = appendMeasuredWall([], 10, 45);
   vertices = appendMeasuredWall(vertices, 8, 315);
-  vertices = connectSketchTarget(vertices, sketchClosureTargets(vertices)[0]!);
-  vertices = connectSketchTarget(vertices, sketchClosureTargets(vertices)[0]!);
+  vertices = connectSketchTarget(
+    vertices,
+    sketchClosureTargets(vertices).find((target) => target.kind === "projected_corner")!,
+  );
+  vertices = connectSketchTarget(
+    vertices,
+    sketchClosureTargets(vertices).find((target) => target.kind === "starting_point")!,
+  );
   const calculation = calculateSketchOutline(vertices);
   assert.equal(calculation.closed, true);
   assert.equal(calculation.selfIntersecting, false);
   assert.equal(calculation.reportedAreaSqft, 80);
+});
+
+test("offers direct and logical two-wall closure for an irregular outline", () => {
+  let vertices = appendMeasuredWall([], 25, 0);
+  vertices = appendMeasuredWall(vertices, 12, 270);
+  vertices = appendMeasuredWall(vertices, 5, 180);
+  vertices = appendMeasuredWall(vertices, 5, 90);
+
+  const targets = sketchClosureTargets(vertices);
+  const projected = targets.find((target) => target.kind === "projected_corner")!;
+  const direct = targets.find((target) => target.kind === "starting_point")!;
+  assert.deepEqual(projected.point, { x: 0, y: -7 });
+  assert.deepEqual(direct.point, { x: 0, y: 0 });
+  assert.match(projected.label, /20 foot/);
+
+  vertices = connectSketchTarget(vertices, projected);
+  const finalTarget = sketchClosureTargets(vertices);
+  assert.equal(finalTarget.length, 1);
+  assert.equal(finalTarget[0]!.kind, "starting_point");
+  assert.deepEqual(finalTarget[0]!.point, { x: 0, y: 0 });
+  vertices = connectSketchTarget(vertices, finalTarget[0]!);
+
+  const calculation = calculateSketchOutline(vertices);
+  assert.equal(calculation.closed, true);
+  assert.equal(calculation.selfIntersecting, false);
+  assert.equal(calculation.reportedAreaSqft, 200);
+  assert.equal(calculation.perimeterFeet, 74);
 });
 
 test("keeps model and canvas points reversible for room placement", () => {

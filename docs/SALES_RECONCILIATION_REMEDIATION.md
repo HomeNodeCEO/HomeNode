@@ -37,6 +37,23 @@ Run a read-only audit:
 npm run audit:sales-reconciliation
 ```
 
+Run a non-mutating 20-sale fuzzy candidate study:
+
+```powershell
+npm run audit:sales-fuzzy-addresses
+```
+
+The fuzzy study first requires the same house number, then compares normalized
+street text and structured secondary-address identifiers. `Suite`, `Ste`,
+`Unit`, `Apartment`, `Apt`, `Number`, `No.`, and `#` are presentation variants
+of the same unit label. Building, tower, and floor identifiers remain separate
+so a repeated apartment number in different buildings cannot be silently
+conflated. Small street-name typos can produce review candidates, but the
+study never writes a sale-to-account relationship. It reports the top five
+candidates, component scores, the score margin, and incomplete unit/building
+evidence for appraiser validation before any future automatic threshold is
+enabled.
+
 Apply bounded batches:
 
 ```powershell

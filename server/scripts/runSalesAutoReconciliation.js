@@ -9,6 +9,7 @@ import {
   getAccountAddressAliasStatus,
   seedAccountAddressAliasBatch,
 } from "../src/services/accountAddressAliases.js";
+import { auditFuzzySalesAddressCandidates } from "../src/services/salesFuzzyAddressAudit.js";
 
 function option(name, fallback) {
   const prefix = `--${name}=`;
@@ -26,6 +27,7 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 
 const apply = process.argv.includes("--apply");
 const seedOnly = process.argv.includes("--seed-only");
+const fuzzySample = process.argv.includes("--fuzzy-sample");
 const batchSize = boundedInteger(option("batch-size", "500"), 500, 1, 2_000);
 const maximumBatches = boundedInteger(option("maximum-batches", "10"), 10, 1, 100);
 const aliasBatchSize = boundedInteger(option("alias-batch-size", "10000"), 10_000, 1, 25_000);
@@ -55,7 +57,17 @@ try {
     }
   }
   const aliasStatus = await getAccountAddressAliasStatus(pool);
-  if (seedOnly) {
+  if (fuzzySample) {
+    console.log(JSON.stringify(await auditFuzzySalesAddressCandidates(pool, {
+      sampleSize: boundedInteger(option("sample-size", "20"), 20, 1, 100),
+      candidatesPerSale: boundedInteger(
+        option("candidates-per-sale", "250"),
+        250,
+        10,
+        1_000,
+      ),
+    }), null, 2));
+  } else if (seedOnly) {
     console.log(JSON.stringify({ alias_seed: aliasSeed, alias_status: aliasStatus }, null, 2));
   } else if (!apply) {
     console.log(JSON.stringify({

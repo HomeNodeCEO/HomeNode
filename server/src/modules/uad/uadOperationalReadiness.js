@@ -9,6 +9,8 @@ const REQUIRED_RELATIONS = Object.freeze([
   "appraisal.uad_generated_artifacts",
   "appraisal.uad_signatures",
   "appraisal.uad_compliance_exchanges",
+  "appraisal.delivery_destinations",
+  "appraisal.delivery_attempts",
   "uad_ref.fields",
 ]);
 

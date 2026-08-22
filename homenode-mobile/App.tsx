@@ -79,6 +79,42 @@ function Loading({ label }: { label: string }) {
   return <View style={styles.center}><ActivityIndicator color="#1d5a43" /><Text style={styles.muted}>{label}</Text></View>;
 }
 
+const INSPECTION_TABS = Object.freeze([
+  ["subject", "Subject"],
+  ["sketch", "Sketch"],
+  ["notes", "Field Notes"],
+  ["photos", "Photos"],
+  ["review", "Review"],
+] as const);
+
+type InspectionTab = typeof INSPECTION_TABS[number][0];
+
+function InspectionTabs({ selected, onSelect }: {
+  selected: InspectionTab;
+  onSelect: (tab: InspectionTab) => void;
+}) {
+  return (
+    <ScrollView
+      contentContainerStyle={styles.inspectionTabs}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.inspectionTabsScroll}
+    >
+      {INSPECTION_TABS.map(([key, label]) => (
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: key === selected }}
+          key={key}
+          onPress={() => onSelect(key)}
+          style={[styles.inspectionTab, key === selected && styles.inspectionTabSelected]}
+        >
+          <Text style={[styles.inspectionTabText, key === selected && styles.inspectionTabTextSelected]}>{label}</Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+}
+
 function fieldStateLabel(state: FieldState) {
   if (!state.exists) return "No saved value";
   if (typeof state.value === "string") return state.value || "Empty text";
@@ -367,6 +403,7 @@ function InspectionScreen({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedSketchRoom, setSelectedSketchRoom] = useState<SelectedSketchRoom | null>(null);
+  const [selectedTab, setSelectedTab] = useState<InspectionTab>("subject");
   const completed = session.status === "completed";
 
   const loadLocal = useCallback(async () => {
@@ -382,7 +419,10 @@ function InspectionScreen({
   }, [ownerUserId, session.id, store]);
 
   useEffect(() => { void loadLocal(); }, [globalSummary, loadLocal, syncing]);
-  useEffect(() => { setSelectedSketchRoom(null); }, [session.id]);
+  useEffect(() => {
+    setSelectedSketchRoom(null);
+    setSelectedTab("subject");
+  }, [session.id]);
 
   const save = async () => {
     setSaving(true);
@@ -430,86 +470,126 @@ function InspectionScreen({
         <Text style={styles.label}>Local draft</Text><Text style={styles.badge}>{draftState.replaceAll("_", " ")}</Text>
       </View>
       {!completed ? <>
-      <Text style={styles.sectionTitle}>Appraiser field comments</Text>
-      <Text style={styles.muted}>Saved locally first. Synchronization never silently overwrites a different HomeNode value.</Text>
-      <TextInput
-        multiline
-        onChangeText={setComments}
-        placeholder="Enter on-site observations…"
-        style={[styles.input, styles.textArea]}
-        textAlignVertical="top"
-        value={comments}
-      />
-      <Button title={saving ? "Saving…" : "Save offline draft"} disabled={saving} onPress={() => void save()} />
-      {online && summary.pending ? <Button title={syncing ? "Synchronizing…" : "Sync now"} disabled={syncing} secondary onPress={() => void onSync()} /> : null}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      {conflicts.length ? <View style={styles.list}>
-        <Text style={styles.sectionTitle}>Review conflicts</Text>
-        {conflicts.map((conflict) => (
-          <View style={styles.conflictCard} key={conflict.clientOperationId}>
-            <Text style={styles.cardTitle}>HomeNode changed this field</Text>
-            <Text style={styles.label}>HomeNode value</Text>
-            <Text style={styles.body}>{fieldStateLabel(conflict.conflict.server)}</Text>
-            <Text style={styles.label}>Mobile value</Text>
-            <Text style={styles.body}>{fieldStateLabel(conflict.conflict.mobile)}</Text>
-            <Button title="Use HomeNode value" secondary onPress={() => void resolve(conflict, "accept_server")} />
-            <Button title="Keep mobile value" onPress={() => void resolve(conflict, "apply_mobile")} />
+        <InspectionTabs selected={selectedTab} onSelect={setSelectedTab} />
+
+        <View style={[styles.tabPanel, selectedTab !== "subject" && styles.tabPanelHidden]}>
+          <View style={styles.subjectOverview}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.tabTitle}>Subject property</Text>
+              <Text style={styles.badge}>{workflowTitle(file.workflow_type)}</Text>
+            </View>
+            <Text style={styles.cardTitle}>{property.address || "Address unavailable"}</Text>
+            <Text style={styles.muted}>{[property.city, property.postal_code, property.county].filter(Boolean).join(" · ")}</Text>
+            <View style={styles.subjectFacts}>
+              <Text style={styles.subjectFact}>Account{"\n"}<Text style={styles.subjectFactValue}>{property.account_id}</Text></Text>
+              <Text style={styles.subjectFact}>Living area{"\n"}<Text style={styles.subjectFactValue}>{property.living_area_sqft ? `${property.living_area_sqft.toLocaleString()} sf` : "—"}</Text></Text>
+              <Text style={styles.subjectFact}>Built{"\n"}<Text style={styles.subjectFactValue}>{property.year_built || "—"}</Text></Text>
+              <Text style={styles.subjectFact}>Beds / baths{"\n"}<Text style={styles.subjectFactValue}>{property.bedroom_count ?? "—"} / {property.bath_count ?? "—"}</Text></Text>
+            </View>
           </View>
-        ))}
-      </View> : null}
-      <SketchEditorPanel
-        api={api}
-        store={store}
-        ownerUserId={ownerUserId}
-        sessionId={session.id}
-        online={online}
-        selectedRoomId={selectedSketchRoom?.id || null}
-        onSelectRoom={setSelectedSketchRoom}
-      />
-      {file.workflow_type === "custom_appraisal" ? <CustomAppraisalPanel
-        api={api}
-        store={store}
-        ownerUserId={ownerUserId}
-        sessionId={session.id}
-        online={online}
-        onSync={onSync}
-      /> : null}
-      {file.workflow_type === "uad_3_6" ? <UadEntityPanel
-        api={api}
-        store={store}
-        ownerUserId={ownerUserId}
-        sessionId={session.id}
-        online={online}
-        onSync={onSync}
-      /> : null}
-      {file.workflow_type !== "custom_appraisal" ? <TargetFieldPanel
-        api={api}
-        store={store}
-        ownerUserId={ownerUserId}
-        sessionId={session.id}
-        workflowType={file.workflow_type}
-        online={online}
-        onSync={onSync}
-      /> : null}
-      <PhotoCapturePanel
-        api={api}
-        store={store}
-        ownerUserId={ownerUserId}
-        sessionId={session.id}
-        workflowType={file.workflow_type}
-        online={online}
-        selectedSketchRoom={selectedSketchRoom}
-      />
-      </> : <Text style={styles.notice}>This completed inspection is read-only on mobile. Start or resume another appraisal file to capture new field data.</Text>}
-      <InspectionCompletionPanel
-        api={api}
-        store={store}
-        ownerUserId={ownerUserId}
-        session={session}
-        online={online}
-        onSync={onSync}
-        onCompleted={onCompleted}
-      />
+          {file.workflow_type === "custom_appraisal" ? <CustomAppraisalPanel
+            api={api}
+            store={store}
+            ownerUserId={ownerUserId}
+            sessionId={session.id}
+            online={online}
+            onSync={onSync}
+          /> : null}
+          {file.workflow_type === "uad_3_6" ? <UadEntityPanel
+            api={api}
+            store={store}
+            ownerUserId={ownerUserId}
+            sessionId={session.id}
+            online={online}
+            onSync={onSync}
+          /> : null}
+          {file.workflow_type !== "custom_appraisal" ? <TargetFieldPanel
+            api={api}
+            store={store}
+            ownerUserId={ownerUserId}
+            sessionId={session.id}
+            workflowType={file.workflow_type}
+            online={online}
+            onSync={onSync}
+          /> : null}
+        </View>
+
+        <View style={[styles.tabPanel, selectedTab !== "sketch" && styles.tabPanelHidden]}>
+          <SketchEditorPanel
+            api={api}
+            store={store}
+            ownerUserId={ownerUserId}
+            sessionId={session.id}
+            online={online}
+            selectedRoomId={selectedSketchRoom?.id || null}
+            onSelectRoom={setSelectedSketchRoom}
+          />
+        </View>
+
+        <View style={[styles.tabPanel, selectedTab !== "notes" && styles.tabPanelHidden]}>
+          <Text style={styles.tabTitle}>Appraiser field comments</Text>
+          <TextInput
+            multiline
+            onChangeText={setComments}
+            placeholder="Enter on-site observations…"
+            style={[styles.input, styles.textArea, styles.tabInput]}
+            textAlignVertical="top"
+            value={comments}
+          />
+          <Button title={saving ? "Saving…" : "Save offline draft"} disabled={saving} onPress={() => void save()} />
+          {online && summary.pending ? <Button title={syncing ? "Synchronizing…" : "Sync now"} disabled={syncing} secondary onPress={() => void onSync()} /> : null}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {conflicts.length ? <View style={styles.list}>
+            <Text style={styles.sectionTitle}>Review conflicts</Text>
+            {conflicts.map((conflict) => (
+              <View style={styles.conflictCard} key={conflict.clientOperationId}>
+                <Text style={styles.cardTitle}>HomeNode changed this field</Text>
+                <Text style={styles.label}>HomeNode value</Text>
+                <Text style={styles.body}>{fieldStateLabel(conflict.conflict.server)}</Text>
+                <Text style={styles.label}>Mobile value</Text>
+                <Text style={styles.body}>{fieldStateLabel(conflict.conflict.mobile)}</Text>
+                <Button title="Use HomeNode value" secondary onPress={() => void resolve(conflict, "accept_server")} />
+                <Button title="Keep mobile value" onPress={() => void resolve(conflict, "apply_mobile")} />
+              </View>
+            ))}
+          </View> : null}
+        </View>
+
+        <View style={[styles.tabPanel, selectedTab !== "photos" && styles.tabPanelHidden]}>
+          <PhotoCapturePanel
+            api={api}
+            store={store}
+            ownerUserId={ownerUserId}
+            sessionId={session.id}
+            workflowType={file.workflow_type}
+            online={online}
+            selectedSketchRoom={selectedSketchRoom}
+          />
+        </View>
+
+        <View style={[styles.tabPanel, selectedTab !== "review" && styles.tabPanelHidden]}>
+          <InspectionCompletionPanel
+            api={api}
+            store={store}
+            ownerUserId={ownerUserId}
+            session={session}
+            online={online}
+            onSync={onSync}
+            onCompleted={onCompleted}
+          />
+        </View>
+      </> : <>
+        <Text style={styles.notice}>This completed inspection is read-only on mobile. Start or resume another appraisal file to capture new field data.</Text>
+        <InspectionCompletionPanel
+          api={api}
+          store={store}
+          ownerUserId={ownerUserId}
+          session={session}
+          online={online}
+          onSync={onSync}
+          onCompleted={onCompleted}
+        />
+      </>}
       <Button title="Return to property" secondary onPress={onBack} />
     </ScrollView>
   );
@@ -675,4 +755,18 @@ const styles = StyleSheet.create({
   choiceSelected: { borderColor: "#1d5a43", backgroundColor: "#e0ece5" },
   conflictCard: { backgroundColor: "#fff4e1", padding: 16, borderRadius: 14, borderWidth: 1, borderColor: "#dfbd79", gap: 6 },
   label: { color: "#697a72", fontSize: 12, fontWeight: "700", marginTop: 6 },
+  inspectionTabsScroll: { marginTop: 18, marginHorizontal: -4 },
+  inspectionTabs: { gap: 8, paddingHorizontal: 4, paddingBottom: 6 },
+  inspectionTab: { backgroundColor: "white", borderColor: "#cbd7d0", borderRadius: 18, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 9 },
+  inspectionTabSelected: { backgroundColor: "#1d5a43", borderColor: "#1d5a43" },
+  inspectionTabText: { color: "#607269", fontSize: 13, fontWeight: "800" },
+  inspectionTabTextSelected: { color: "white" },
+  tabPanel: { marginTop: 8 },
+  tabPanelHidden: { display: "none" },
+  tabTitle: { color: "#17251f", fontSize: 20, fontWeight: "800" },
+  tabInput: { marginTop: 12 },
+  subjectOverview: { backgroundColor: "white", borderColor: "#dce4df", borderRadius: 14, borderWidth: 1, gap: 7, marginTop: 8, padding: 16 },
+  subjectFacts: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 6 },
+  subjectFact: { backgroundColor: "#f4f7f3", borderRadius: 9, color: "#697a72", fontSize: 11, lineHeight: 18, padding: 10, width: "48%" },
+  subjectFactValue: { color: "#17251f", fontSize: 14, fontWeight: "800" },
 });

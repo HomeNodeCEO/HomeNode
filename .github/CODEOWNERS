@@ -1,0 +1,10 @@
+# HomeNode is owner-reviewed. GitHub branch protection must require a
+# CODEOWNERS approval before changes can merge into main.
+* @HomeNodeCEO
+
+# These paths carry production, data-integrity, or compliance risk.
+/.github/ @HomeNodeCEO
+/server/migrations/ @HomeNodeCEO
+/dcad-scraper-with-api/migrations/ @HomeNodeCEO
+/docs/architecture/ @HomeNodeCEO
+/docs/uad/ @HomeNodeCEO

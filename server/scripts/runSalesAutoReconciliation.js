@@ -9,7 +9,10 @@ import {
   getAccountAddressAliasStatus,
   seedAccountAddressAliasBatch,
 } from "../src/services/accountAddressAliases.js";
-import { auditFuzzySalesAddressCandidates } from "../src/services/salesFuzzyAddressAudit.js";
+import {
+  auditFuzzySalesAddressCandidates,
+  runFuzzySalesAddressReconciliationBatch,
+} from "../src/services/salesFuzzyAddressAudit.js";
 
 function option(name, fallback) {
   const prefix = `--${name}=`;
@@ -28,6 +31,8 @@ if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
 const apply = process.argv.includes("--apply");
 const seedOnly = process.argv.includes("--seed-only");
 const fuzzySample = process.argv.includes("--fuzzy-sample");
+const fuzzyStratified = process.argv.includes("--fuzzy-stratified");
+const fuzzyApply = process.argv.includes("--fuzzy-apply");
 const batchSize = boundedInteger(option("batch-size", "500"), 500, 1, 2_000);
 const maximumBatches = boundedInteger(option("maximum-batches", "10"), 10, 1, 100);
 const aliasBatchSize = boundedInteger(option("alias-batch-size", "10000"), 10_000, 1, 25_000);
@@ -57,15 +62,29 @@ try {
     }
   }
   const aliasStatus = await getAccountAddressAliasStatus(pool);
-  if (fuzzySample) {
-    console.log(JSON.stringify(await auditFuzzySalesAddressCandidates(pool, {
-      sampleSize: boundedInteger(option("sample-size", "20"), 20, 1, 100),
+  if (fuzzyApply) {
+    console.log(JSON.stringify(await runFuzzySalesAddressReconciliationBatch(pool, {
+      batchSize: boundedInteger(option("batch-size", "100"), 100, 1, 500),
       candidatesPerSale: boundedInteger(
         option("candidates-per-sale", "250"),
         250,
         10,
         1_000,
       ),
+      // A fuzzy save requires two explicit flags. --fuzzy-apply alone is an
+      // evidence-only rehearsal and cannot open a write transaction.
+      dryRun: !apply,
+    }), null, 2));
+  } else if (fuzzySample) {
+    console.log(JSON.stringify(await auditFuzzySalesAddressCandidates(pool, {
+      sampleSize: boundedInteger(option("sample-size", "20"), 20, 1, 500),
+      candidatesPerSale: boundedInteger(
+        option("candidates-per-sale", "250"),
+        250,
+        10,
+        1_000,
+      ),
+      stratified: fuzzyStratified,
     }), null, 2));
   } else if (seedOnly) {
     console.log(JSON.stringify({ alias_seed: aliasSeed, alias_status: aliasStatus }, null, 2));

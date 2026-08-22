@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   auditFuzzySalesAddressCandidates,
   rankFuzzyAddressCandidates,
+  runFuzzySalesAddressReconciliationBatch,
+  selectFuzzyAutoResolutions,
 } from "../src/services/salesFuzzyAddressAudit.js";
 import { parseStructuredAddress } from "../src/util/structuredAddress.js";
 
@@ -177,4 +179,168 @@ test("explicit building evidence selects the correct repeated unit", () => {
   assert.equal(result.confidence, "high");
   assert.equal(result.proposed_account_id, "ACCOUNT-1");
   assert.equal(result.eligible_candidate_count, 1);
+});
+
+function safeFuzzySample(overrides = {}) {
+  return {
+    source_record_id: 44,
+    proposed_account_id: "00000000000000044",
+    confidence: "high",
+    resolution_state: "candidate_ready",
+    score: 0.98,
+    score_margin: 0.2,
+    eligible_candidate_count: 1,
+    previous_match_status: "unmatched",
+    raw_parcel_number: "BAD-ID",
+    source_components: { base_address_key: "100 MAIN ST" },
+    locality_evidence: { city_key: "GARLAND" },
+    top_candidates: [{
+      account_id: "00000000000000044",
+      cad_address: "100 MAIN ST",
+      cad_city: "GARLAND",
+      cad_postal_code: "75040",
+      street_score: 1,
+      locality_score: 1,
+      candidate_source: "account_alias",
+      account_ready: true,
+      secondary_incomplete: false,
+      secondary_evidence_source: null,
+      reasons: [],
+    }],
+    ...overrides,
+  };
+}
+
+test("guarded fuzzy selection accepts only a unique complete canonical account", () => {
+  const safe = safeFuzzySample();
+  const pending = safeFuzzySample({
+    source_record_id: 45,
+    resolution_state: "awaiting_cad_account_scrape",
+    top_candidates: [{
+      ...safe.top_candidates[0],
+      account_id: "00000000000000045",
+      candidate_source: "dcad_residential_target",
+      account_ready: false,
+    }],
+    proposed_account_id: "00000000000000045",
+  });
+  const inferredUnit = safeFuzzySample({
+    source_record_id: 46,
+    top_candidates: [{
+      ...safe.top_candidates[0],
+      account_id: "00000000000000046",
+      secondary_evidence_source: "account_id_suffix_review_hint",
+    }],
+    proposed_account_id: "00000000000000046",
+  });
+  const ambiguous = safeFuzzySample({
+    source_record_id: 47,
+    eligible_candidate_count: 2,
+  });
+  const truncated = safeFuzzySample({
+    source_record_id: 48,
+    candidate_search_truncated: true,
+  });
+
+  const result = selectFuzzyAutoResolutions([
+    safe,
+    pending,
+    inferredUnit,
+    ambiguous,
+    truncated,
+  ]);
+  assert.equal(result.eligible.length, 1);
+  assert.equal(result.eligible[0].resolution_method, "unique_fuzzy_address");
+  assert.equal(result.eligible[0].account_id, "00000000000000044");
+  assert.equal(result.eligible[0].evidence.thresholds.minimum_street_score, 0.9);
+  assert.equal(result.rejected.length, 4);
+  assert.ok(result.rejected[0].reasons.includes("account_not_ready"));
+  assert.ok(result.rejected[1].reasons.includes("inferred_secondary_evidence"));
+  assert.ok(result.rejected[2].reasons.includes("not_unique"));
+  assert.ok(result.rejected[3].reasons.includes("candidate_search_truncated"));
+});
+
+test("one-character street typos can auto-resolve only with unique locality evidence", () => {
+  const candidate = {
+    account_id: "26572500130160000",
+    raw_address: "3901 GREENSBORO CIR",
+    raw_city: "GARLAND",
+    city_key: "GARLAND",
+    county_key: "DALLAS",
+    postal_code5: "75044",
+    candidate_source: "account_alias",
+    account_ready: true,
+    candidate_pool_count: 1,
+    candidate_pool_truncated: false,
+  };
+  const ranked = rankFuzzyAddressCandidates({
+    source_components: parseStructuredAddress("3901 Greensbro Circle"),
+    evidence: { city_key: "GARLAND", county_key: "DALLAS", postal_code5: "75044" },
+  }, [candidate]);
+  const result = selectFuzzyAutoResolutions([safeFuzzySample({
+    ...ranked,
+    proposed_account_id: candidate.account_id,
+    top_candidates: ranked.top_candidates,
+  })]);
+  assert.equal(ranked.confidence, "high");
+  assert.ok(ranked.top_candidates[0].street_score >= 0.9);
+  assert.equal(result.eligible.length, 1);
+});
+
+test("guarded fuzzy batch remains read-only without the explicit write opt-in", async () => {
+  const pool = {
+    async query(sql) {
+      const statement = String(sql);
+      if (
+        statement.includes("CREATE TABLE IF NOT EXISTS app.sales_auto_reconciliation_history") ||
+        statement.includes("CREATE TABLE IF NOT EXISTS app.account_address_aliases")
+      ) return { rows: [], rowCount: 0 };
+      if (statement.includes("ORDER BY source.close_date DESC NULLS LAST")) {
+        return {
+          rows: [{
+            source_record_id: 44,
+            source_name: "Garland sales",
+            source_files: ["Garland.csv"],
+            source_filename: "Garland.csv",
+            raw_payload: { Address: "100 Main Street", City: "Garland", PostalCode: "75040" },
+            parcel_number_raw: "BAD-ID",
+            match_status: "unmatched",
+          }],
+          rowCount: 1,
+        };
+      }
+      if (statement.includes("JOIN LATERAL")) {
+        return {
+          rows: [{
+            request_id: "44",
+            account_id: "00000000000000044",
+            raw_address: "100 MAIN ST",
+            raw_city: "GARLAND",
+            city_key: "GARLAND",
+            county_key: "DALLAS",
+            postal_code5: "75040",
+            candidate_source: "account_alias",
+            account_ready: true,
+          }],
+          rowCount: 1,
+        };
+      }
+      if (statement.includes("FROM app.dcad_residential_targets target")) {
+        return { rows: [], rowCount: 0 };
+      }
+      throw new Error(`unexpected query: ${statement.slice(0, 100)}`);
+    },
+    async connect() {
+      throw new Error("fuzzy dry run must not open a write transaction");
+    },
+  };
+
+  const result = await runFuzzySalesAddressReconciliationBatch(pool, {
+    batchSize: 20,
+    dryRun: true,
+  });
+  assert.equal(result.dry_run, true);
+  assert.equal(result.writes_performed, 0);
+  assert.equal(result.auto_eligible, 1);
+  assert.equal(result.resolved, 0);
 });

@@ -243,7 +243,7 @@ async function resolveUniqueExactAddresses(queryable, candidates) {
     ));
 }
 
-async function applyResolutions(client, resolutions) {
+export async function applySalesAutoResolutions(client, resolutions) {
   if (!resolutions.length) return 0;
   const lockResult = await client.query(
     `
@@ -251,16 +251,27 @@ async function applyResolutions(client, resolutions) {
         SELECT *
         FROM jsonb_to_recordset($1::jsonb) AS item(
           source_record_id bigint,
-          account_id text
+          account_id text,
+          resolution_method text
         )
       )
       SELECT source.id
       FROM core.sales_source_records source
       JOIN requested ON requested.source_record_id = source.id
+      JOIN core.accounts account ON account.account_id = requested.account_id
       WHERE source.match_status <> 'manual_verified'
         AND (
           source.primary_account_id IS NULL
           OR source.primary_account_id = requested.account_id
+        )
+        AND (
+          requested.resolution_method <> 'unique_fuzzy_address'
+          OR (
+            source.match_status = 'unmatched'
+            AND source.primary_account_id IS NULL
+            AND account.canonical_account_id IS NULL
+            AND NULLIF(btrim(account.address), '') IS NOT NULL
+          )
         )
       FOR UPDATE OF source
     `,
@@ -357,7 +368,9 @@ async function applyResolutions(client, resolutions) {
       UPDATE core.sales_source_records source
       SET primary_account_id = resolved.account_id,
           match_status = CASE
-            WHEN resolved.resolution_method = 'unique_exact_address' THEN 'address'
+            WHEN resolved.resolution_method IN (
+              'unique_exact_address', 'unique_fuzzy_address'
+            ) THEN 'address'
             ELSE source.match_status
           END,
           has_unresolved_parcel = false,
@@ -446,16 +459,21 @@ async function applyResolutions(client, resolutions) {
           previous_match_status text,
           raw_parcel_number text,
           address_key text,
-          city_key text
+          city_key text,
+          match_score numeric,
+          score_margin numeric,
+          evidence jsonb
         )
       )
       INSERT INTO app.sales_auto_reconciliation_history (
         source_record_id, account_id, resolution_method, address_key,
-        city_key, previous_match_status, raw_parcel_number
+        city_key, previous_match_status, raw_parcel_number,
+        match_score, score_margin, evidence
       )
       SELECT
         source_record_id, account_id, resolution_method, address_key,
-        city_key, previous_match_status, raw_parcel_number
+        city_key, previous_match_status, raw_parcel_number,
+        match_score, score_margin, COALESCE(evidence, '{}'::jsonb)
       FROM resolved
       ON CONFLICT (source_record_id, resolution_method) DO NOTHING
     `,
@@ -509,7 +527,7 @@ export async function runSalesAutoReconciliationBatch(pool, {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const resolved = await applyResolutions(client, resolutions);
+    const resolved = await applySalesAutoResolutions(client, resolutions);
     await client.query("COMMIT");
     return {
       dry_run: false,

@@ -184,7 +184,7 @@ async function cloneSalesComparable(pool, workfileId, sourceComparableId, ordina
       : entityIds.get(entity.parent_entity_id);
     const entityIdentifier = entity.id === sourceComparableId
       ? `sales-comparable-${ordinal}`
-      : `delivery-comparable-${ordinal}-${entity.entity_type}-${entity.ordinal}`;
+      : `delivery-comparable-${ordinal}-${entity.entity_identifier}`;
     const label = entity.id === sourceComparableId
       ? `Sales Comparable ${ordinal}`
       : `${entity.label || entity.entity_type} (Comparable ${ordinal})`;

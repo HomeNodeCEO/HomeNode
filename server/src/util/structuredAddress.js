@@ -3,9 +3,17 @@ import { normalizeSearchText } from "./propertySearch.js";
 const UNIT_LABELS = new Set([
   "APARTMENT",
   "APT",
+  "FLAT",
+  "LOT",
   "NO",
   "NUMBER",
   "NUM",
+  "PENTHOUSE",
+  "PH",
+  "RM",
+  "ROOM",
+  "SPACE",
+  "SPC",
   "STE",
   "SUITE",
   "UNIT",
@@ -89,9 +97,9 @@ function addressBearingParts(value) {
 function normalizedAddressTokens(value) {
   const prepared = addressBearingParts(value)
     .replace(/\b(BUILDING|BLDG|BLD|TOWER)\s*#\s*/gi, "$1 ")
-    .replace(/\b(APARTMENT|APT|UNIT|SUITE|STE|NUMBER|NUM|NO)\s*#\s*/gi, "$1 ")
+    .replace(/\b(APARTMENT|APT|FLAT|LOT|PENTHOUSE|PH|ROOM|RM|SPACE|SPC|UNIT|SUITE|STE|NUMBER|NUM|NO)\s*#\s*/gi, "$1 ")
     .replace(/#\s*/g, " UNIT ")
-    .replace(/\b(APARTMENT|APT|UNIT|SUITE|STE|NUMBER|NUM|NO)[\s:#.-]*([0-9A-Z][0-9A-Z/-]*)\b/gi, "$1 $2")
+    .replace(/\b(APARTMENT|APT|FLAT|LOT|PENTHOUSE|PH|ROOM|RM|SPACE|SPC|UNIT|SUITE|STE|NUMBER|NUM|NO)[\s:#.-]*([0-9A-Z][0-9A-Z/-]*)\b/gi, "$1 $2")
     .replace(/\b(BUILDING|BLDG|BLD|TOWER)[\s:#.-]*([0-9A-Z][0-9A-Z/-]*)\b/gi, "$1 $2")
     .replace(/\b(FLOOR|FL|LEVEL|LVL)[\s:#.-]*([0-9A-Z][0-9A-Z/-]*)\b/gi, "$1 $2");
   return normalizeSearchText(prepared)
@@ -227,4 +235,3 @@ export function structuredAddressSimilarity(source, candidate) {
     reasons,
   };
 }
-

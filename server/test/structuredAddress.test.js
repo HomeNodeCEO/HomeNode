@@ -13,6 +13,9 @@ test("unit presentation words normalize to the same structured identity", () => 
     "4831 Fuller Ct Apt. 1104",
     "4831 Fuller Ct Apartment 1104",
     "4831 Fuller Ct Unit No. 1104",
+    "4831 Fuller Ct Room #1104",
+    "4831 Fuller Ct Space-1104",
+    "4831 Fuller Ct PH 1104",
     "4831 Fuller Ct, Number 1104, Irving, TX 75038",
   ].map(parseStructuredAddress);
 
@@ -69,5 +72,4 @@ test("small street-name typos remain candidates while house numbers stay strict"
   assert.equal(wrongHouse.eligible, false);
   assert.deepEqual(wrongHouse.reasons, ["house_number_mismatch"]);
 });
-
 

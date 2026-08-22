@@ -86,6 +86,7 @@ async function seedCompletionValues(pool, workfileId) {
     ["subject", "0300.0010", "3.017", false],
     ["subject_ownership", "0100.0024", "3.019", "FeeSimple"],
     ["subject_ownership", "0100.0034", "3.027", true],
+    ["site", "1500.0093", "4.000", { amount: 8400, unit: "SquareFeet" }],
     ["site_zoning", "1500.0125", "4.008", "Legal"],
     ["site_zoning", "1500.0122", "4.009", "SF-7"],
     ["site_zoning", "1500.0123", "4.010", "Single-family residential zoning"],
@@ -100,8 +101,11 @@ async function seedCompletionValues(pool, workfileId) {
     ["energy_green", "2600.0004", "6.004", false],
     ["energy_green", "2600.0003", "6.010", false],
     ["sketch", "3300.0002", "7.000", true],
+    ["sketch", "3300.0007", "7.001", "AmericanNationalStandardsInstitute"],
     ["scope_of_work", "1000.0027", "Does Not Display", false],
     ["scope_of_work", "1000.0030", "Does Not Display", false],
+    ["income_approach_exclusion", "1300.0004", "26.003", ["NotNecessaryForCredibleResults"]],
+    ["cost_approach_exclusion", "1300.0002", "26.005", ["NotNecessaryForCredibleResults"]],
     ["reconciliation", "1300.0017", "26.007", 435000],
     ["reconciliation", "1300.0010", "26.009", ["AsIs"]],
     ["reconciliation", "1300.0013", "26.010", 45],
@@ -124,13 +128,17 @@ async function seedCompletionValues(pool, workfileId) {
     }
     if (entity.entity_type === "dwelling") {
       const values = [
+        ["0300.0030", "8.004", "Ranch"],
         ["0300.0117", "8.005", "GroundLevel"],
         ["0300.0012", "8.010", false],
+        ["0300.0034", "8.011", "SiteBuilt"],
         ["0300.0079", "8.012", false],
         ["0300.0114", "8.046", false],
         ["0300.0088", "8.049", ["ForcedWarmAir"]],
+        ["0300.0086", "8.050", ["NaturalGas"]],
         ["0300.0022", "8.051", true],
         ["0300.0084", "8.051", ["Centralized"]],
+        ["0300.0116", "8.052", false],
         ["3900.0097", "8.055", false],
       ];
       for (const [uid, reportFieldId, value] of values) {

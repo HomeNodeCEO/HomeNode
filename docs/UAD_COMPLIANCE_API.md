@@ -27,6 +27,47 @@ The Compliance API is a delivery gate. It does not replace HomeNode's local
 validation engine, because the editor must give appraisers actionable feedback
 before an appraisal is submitted.
 
+## What a green HomeNode gate means
+
+HomeNode reports each verification layer separately. A passed local rule run or
+XSD run must never be described as Fannie Mae, Freddie Mac, UCDP, or Collateral
+Underwriter acceptance.
+
+| Layer | HomeNode can run without GSE credentials | What it proves |
+| --- | --- | --- |
+| Sales-rich fixture gate | Yes | The synthetic SFR has at least three settled sales, a verified comparable photo for each sale, nonzero adjustments, recomputed net and adjusted prices, comparable weights, an indicated value, and sales/final reconciliation. |
+| HomeNode local rules | Yes | The checked-in local rule catalog passed. Evidence reports the number of distinct official `UAD####` rule IDs represented locally against the 709 published URAR rules. Partial local coverage is never labeled a full Appendix H replica. |
+| Official GSE subschema | Yes | The XML is well formed and valid against the pinned official XSD/subschema. This does not execute every Appendix H rule. |
+| Fannie/Freddie Compliance API | No | The applicable GSE evaluated the exact XML for Appendix H completeness, validity, format, and reasonableness in the assigned nonproduction or production environment. |
+| UCDP and CU/LCA | No | The lender delivery channel accepted the package and returned its separate submission, eligibility, risk, or appraisal-quality feedback. The Compliance API does not provide those results. |
+
+The CI workflow named `UAD sales-rich pre-submission delivery gate` therefore
+sets `gse_acceptance_claimed` to `false`. Its deterministic smoke fixture and
+its disposable-database fixture both fail when sales, adjustments,
+calculated totals, or reconciliation are missing or inconsistent.
+
+## GSE verification test set
+
+Once Fannie Mae supplies ACPT credentials, verification must use the current
+official UCA cases from Fannie's Technology Integration Resources page:
+
+1. URAR: No UAD Findings - the exact expected clean response is a required
+   release gate.
+2. URAR: UAD Findings - every expected fatal/warning is asserted and safely
+   mapped to HomeNode fields without retaining tokens or unbounded payloads.
+3. Malformed XML, subschema failure, expired/invalid OAuth, timeout, retry,
+   duplicate submission, and provider-unavailable cases - all must fail closed.
+4. A HomeNode sales-rich SFR - three or more settled sales, supported positive
+   and negative adjustments, server-recomputed totals, comparable weighting,
+   sales reconciliation, final reconciliation, photos, XML, PDF, and ZIP.
+5. Official Appendix D scenarios - generated output is compared with the
+   current published sample XML/PDF behavior for every property type HomeNode
+   enables.
+
+The same matrix is repeated for Freddie Mac with separate credentials and
+correlation records. Provider success is stored per workfile revision; one GSE
+result is not treated as the other GSE's result.
+
 ## Section 29 signing boundary
 
 `GET /api/uad/workfiles/:workfileId/certification-readiness` and

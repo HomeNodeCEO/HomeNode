@@ -2,10 +2,13 @@ import { createHash } from "node:crypto";
 import pg from "pg";
 
 import { signUadWorkfile } from "../src/modules/uad/certifications.js";
+import { getUadEditor } from "../src/modules/uad/editor.js";
 import { generateUadXmlArtifact } from "../src/modules/uad/uadArtifacts.js";
 import { generateUadSubmissionPackage } from "../src/modules/uad/uadPackageArtifacts.js";
 import { generateUadPdfArtifact } from "../src/modules/uad/uadPdfArtifacts.js";
+import { createUadPdfViewModel } from "../src/modules/uad/uadPdf.js";
 import { runLocalUadValidation } from "../src/modules/uad/validation.js";
+import { requireSalesRichUadDelivery } from "./lib/uadSalesDeliveryEvidence.js";
 
 const ACCOUNT_ID = "UAD-STAGING-SFR-0001";
 const APPRAISER_ID = "00000000-0000-4000-8000-000000000902";
@@ -106,11 +109,11 @@ async function seedCompletionValues(pool, workfileId) {
     ["scope_of_work", "1000.0030", "Does Not Display", false],
     ["income_approach_exclusion", "1300.0004", "26.003", ["NotNecessaryForCredibleResults"]],
     ["cost_approach_exclusion", "1300.0002", "26.005", ["NotNecessaryForCredibleResults"]],
-    ["reconciliation", "1300.0017", "26.007", 435000],
+    ["reconciliation", "1300.0017", "26.007", 445000],
     ["reconciliation", "1300.0010", "26.009", ["AsIs"]],
     ["reconciliation", "1300.0013", "26.010", 45],
     ["reconciliation", "1300.0012", "26.011", "2026-08-21"],
-    ["reconciliation", "1300.0021", "26.019", "The sales comparison approach is the most reliable indicator for this synthetic assignment."],
+    ["reconciliation", "1300.0021", "26.019", "The sales comparison approach is the most reliable indicator for this synthetic assignment. Three settled sales bracket the conclusion after market-supported condition, sale-date, site, and finished-area adjustments."],
   ];
   for (const [context, uid, reportFieldId, value] of rootValues) {
     await seedValue(pool, workfileId, null, context, uid, reportFieldId, value);
@@ -152,6 +155,187 @@ async function seedCompletionValues(pool, workfileId) {
         AND uad_uid = '1800.0373'`,
     [workfileId],
   );
+}
+
+async function cloneSalesComparable(pool, workfileId, sourceComparableId, ordinal) {
+  const tree = await pool.query(
+    `WITH RECURSIVE comparable_tree AS (
+       SELECT entity.*, 0 AS depth
+         FROM appraisal.uad_entities AS entity
+        WHERE entity.workfile_id = $1 AND entity.id = $2
+       UNION ALL
+       SELECT child.*, parent.depth + 1
+         FROM appraisal.uad_entities AS child
+         JOIN comparable_tree AS parent ON child.parent_entity_id = parent.id
+        WHERE child.workfile_id = $1
+     )
+     SELECT * FROM comparable_tree ORDER BY depth, entity_type, ordinal, id`,
+    [workfileId, sourceComparableId],
+  );
+  if (!tree.rows.length) throw new Error("synthetic_sales_comparable_source_missing");
+  const entityIds = new Map(tree.rows.map((entity) => [
+    entity.id,
+    deterministicUuid(`uad-successful-delivery:comparable:${ordinal}:${entity.id}`),
+  ]));
+  for (const entity of tree.rows) {
+    const id = entityIds.get(entity.id);
+    const parentEntityId = entity.id === sourceComparableId
+      ? null
+      : entityIds.get(entity.parent_entity_id);
+    const entityIdentifier = entity.id === sourceComparableId
+      ? `sales-comparable-${ordinal}`
+      : `delivery-comparable-${ordinal}-${entity.entity_identifier}`;
+    const label = entity.id === sourceComparableId
+      ? `Sales Comparable ${ordinal}`
+      : `${entity.label || entity.entity_type} (Comparable ${ordinal})`;
+    await pool.query(
+      `INSERT INTO appraisal.uad_entities (
+         id, workfile_id, parent_entity_id, entity_type, entity_identifier,
+         ordinal, label, data, created_at, updated_at
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8::jsonb,
+         timestamptz '2026-08-21 12:00:00+00', timestamptz '2026-08-21 12:00:00+00'
+       ) ON CONFLICT (id) DO UPDATE SET
+         parent_entity_id = EXCLUDED.parent_entity_id,
+         entity_type = EXCLUDED.entity_type,
+         entity_identifier = EXCLUDED.entity_identifier,
+         ordinal = EXCLUDED.ordinal,
+         label = EXCLUDED.label,
+         data = EXCLUDED.data,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        id,
+        workfileId,
+        parentEntityId,
+        entity.entity_type,
+        entityIdentifier,
+        entity.id === sourceComparableId ? ordinal : entity.ordinal,
+        label,
+        JSON.stringify(entity.data || {}),
+      ],
+    );
+  }
+  const sourceValues = await pool.query(
+    `SELECT * FROM appraisal.uad_field_values
+      WHERE workfile_id = $1 AND entity_id = ANY($2::uuid[])
+      ORDER BY created_at, id`,
+    [workfileId, [...entityIds.keys()]],
+  );
+  for (const value of sourceValues.rows) {
+    await seedValue(
+      pool,
+      workfileId,
+      entityIds.get(value.entity_id),
+      value.field_context,
+      value.uad_uid,
+      value.report_field_id,
+      value.value,
+    );
+  }
+  return { rootId: entityIds.get(sourceComparableId), entityIds };
+}
+
+async function configureComparableScenario(pool, workfileId, comparableId, scenario) {
+  const rootValues = [
+    ["sales_comparable", "1800.0192", "21.007", scenario.ordinal],
+    ["sales_comparable_address", "1800.0001", "22.01.17", scenario.address],
+    ["sales_comparable_address", "1800.0003", "22.01.17", "Garland"],
+    ["sales_comparable_address", "1800.0005", "22.01.17", "TX"],
+    ["sales_comparable_address", "1800.0004", "22.01.17", "75044"],
+    ["sales_comparable_listing", "1800.0074", "22.01.20", scenario.listPrice],
+    ["sales_comparable_listing", "1800.0075", "22.01.21", "SettledSale"],
+    ["sales_comparable_sale", "1800.0272", "22.01.23", scenario.salePrice],
+    ["sales_comparable_sale", "1800.0342", "22.01.32", scenario.saleDate],
+    ["sales_comparable_property", "1800.0196", "22.11.05", scenario.condition],
+    ["sales_comparable_summary", "1800.0312", "22.15.14", scenario.weight],
+  ];
+  for (const [context, uid, reportFieldId, value] of rootValues) {
+    await seedValue(pool, workfileId, comparableId, context, uid, reportFieldId, value);
+  }
+  for (const [context, reportFieldId, amount] of scenario.adjustments) {
+    await seedValue(pool, workfileId, comparableId, context, "1800.0317", reportFieldId, amount);
+  }
+  const related = await pool.query(
+    `WITH RECURSIVE comparable_tree AS (
+       SELECT id, parent_entity_id, entity_type, ordinal
+         FROM appraisal.uad_entities WHERE id = $1 AND workfile_id = $2
+       UNION ALL
+       SELECT child.id, child.parent_entity_id, child.entity_type, child.ordinal
+         FROM appraisal.uad_entities AS child
+         JOIN comparable_tree AS parent ON child.parent_entity_id = parent.id
+        WHERE child.workfile_id = $2
+     )
+     SELECT entity.id, entity.entity_type, entity.ordinal,
+            adu.value #>> '{}' AS adu_indicator
+       FROM comparable_tree AS entity
+       LEFT JOIN appraisal.uad_field_values AS adu
+         ON adu.workfile_id = $2 AND adu.entity_id = entity.id
+        AND adu.field_context = 'sales_comparable_unit' AND adu.uad_uid = '1800.0287'
+      WHERE entity.entity_type IN ('sales_comparable_dwelling', 'sales_comparable_unit')
+      ORDER BY entity.entity_type, entity.ordinal`,
+    [comparableId, workfileId],
+  );
+  for (const entity of related.rows) {
+    if (entity.entity_type === "sales_comparable_dwelling") {
+      await seedValue(pool, workfileId, entity.id, "sales_comparable_dwelling", "1800.0185", "22.08.23", scenario.condition);
+    }
+    if (entity.entity_type === "sales_comparable_unit") {
+      await seedValue(pool, workfileId, entity.id, "sales_comparable_unit", "1800.0157", "22.09.25", scenario.condition);
+      if (entity.adu_indicator === "false") {
+        await seedValue(pool, workfileId, entity.id, "sales_comparable_unit", "1800.0390", "22.07.30", {
+          amount: scenario.finishedArea,
+          unit: "SquareFeet",
+        });
+      }
+    }
+  }
+}
+
+async function seedSalesRichFixture(pool, workfileId) {
+  const source = await pool.query(
+    `SELECT id FROM appraisal.uad_entities
+      WHERE workfile_id = $1 AND entity_type = 'sales_comparable'
+      ORDER BY ordinal, id LIMIT 1`,
+    [workfileId],
+  );
+  if (!source.rows.length) throw new Error("synthetic_sales_comparable_missing");
+  const sourceId = source.rows[0].id;
+  const second = await cloneSalesComparable(pool, workfileId, sourceId, 2);
+  const third = await cloneSalesComparable(pool, workfileId, sourceId, 3);
+  const scenarios = [
+    {
+      id: sourceId, ordinal: 1, address: "1250 Forest Lane", listPrice: 449000,
+      salePrice: 442500, saleDate: "2026-06-25", condition: "C4", finishedArea: 2050,
+      weight: "Most",
+      adjustments: [
+        ["sales_comparable_adjustment_overall_condition", "22.11.06", 7500],
+        ["sales_comparable_adjustment_sale_date", "22.01.33", -2500],
+      ],
+    },
+    {
+      id: second.rootId, ordinal: 2, address: "1275 Forest Lane", listPrice: 435000,
+      salePrice: 430000, saleDate: "2026-05-28", condition: "C4", finishedArea: 1950,
+      weight: "Less",
+      adjustments: [
+        ["sales_comparable_adjustment_overall_condition", "22.11.06", 15000],
+        ["sales_comparable_adjustment_standard_above", "22.07.31", 5000],
+        ["sales_comparable_adjustment_sale_date", "22.01.33", -2500],
+      ],
+    },
+    {
+      id: third.rootId, ordinal: 3, address: "1310 Forest Lane", listPrice: 461000,
+      salePrice: 455000, saleDate: "2026-04-16", condition: "C2", finishedArea: 2200,
+      weight: "Less",
+      adjustments: [
+        ["sales_comparable_adjustment_overall_condition", "22.11.06", -10000],
+        ["sales_comparable_adjustment_standard_above", "22.07.31", -5000],
+        ["sales_comparable_adjustment_sale_date", "22.01.33", -5000],
+      ],
+    },
+  ];
+  for (const scenario of scenarios) {
+    await configureComparableScenario(pool, workfileId, scenario.id, scenario);
+  }
 }
 
 async function seedAsset(pool, objects, workfileId, entityId, sectionNumber, captionType, ordinal, assetKind = "photo") {
@@ -258,7 +442,23 @@ try {
     [workfileId],
   );
   await seedCompletionValues(pool, workfileId);
+  await seedSalesRichFixture(pool, workfileId);
   await seedRequiredAssets(pool, objects, workfileId);
+
+  const unsignedEditor = await getUadEditor(pool, workfileId);
+  const salesComparison = requireSalesRichUadDelivery(unsignedEditor);
+  const unsignedPdfView = createUadPdfViewModel(unsignedEditor, {
+    assets: await pool.query(
+      "SELECT * FROM appraisal.uad_assets WHERE workfile_id = $1 ORDER BY section_number, id",
+      [workfileId],
+    ).then((result) => result.rows),
+  });
+  const pdfComparableGroupCount = unsignedPdfView.sections
+    .find((section) => section.number === 22)
+    ?.groups.filter((group) => group.entity?.entity_type === "sales_comparable").length || 0;
+  if (pdfComparableGroupCount < salesComparison.comparable_count) {
+    throw new Error("synthetic_delivery_pdf_sales_grid_missing");
+  }
 
   const validation = await runLocalUadValidation(pool, workfileId);
   if (validation.status !== "passed") {
@@ -276,6 +476,16 @@ try {
     }, null, 2));
     process.exitCode = 1;
   } else {
+    const officialRuleCoverage = await pool.query(
+      `SELECT count(DISTINCT rule_id)::integer AS count
+         FROM uad_ref.compliance_rules
+        WHERE release_key = (
+          SELECT specification_release_key FROM appraisal.uad_workfiles WHERE id = $1
+        )
+          AND rule_id ~ '^UAD[0-9]+$'`,
+      [workfileId],
+    );
+    const localOfficialRuleCount = Number(officialRuleCoverage.rows[0]?.count || 0);
     const executionDate = new Date().toISOString().slice(0, 10);
     const signature = await signUadWorkfile(pool, workfileId, {
       userId: APPRAISER_ID,
@@ -300,29 +510,48 @@ try {
       }, null, 2));
       throw Object.assign(new Error("synthetic_delivery_schema_failed"), { details: xml.schema_validation?.findings });
     }
+    const xmlObject = objects.get(xml.artifact.object_key);
+    if (!xmlObject) throw new Error("synthetic_delivery_xml_object_missing");
+    const xmlText = xmlObject.body.toString("utf8");
     const deliveryPackage = await generateUadSubmissionPackage(pool, storage, workfileId);
     const evidence = {
       ok: true,
       synthetic_only: true,
       database: databaseName,
       workfile_id: workfileId,
+      validation_scope: {
+        home_node_local_engine: "passed",
+        official_gse_subschema: "passed",
+        published_urar_appendix_h_rule_count: 709,
+        local_official_rule_id_count: localOfficialRuleCount,
+        full_appendix_h_replica: localOfficialRuleCount === 709,
+        fannie_uad_compliance_api: "not_executed_credentials_required",
+        freddie_uad_compliance_api: "not_executed_credentials_required",
+        ucdp_and_collateral_underwriter: "not_executed_lender_submission_required",
+        gse_acceptance_claimed: false,
+      },
       local_compliance: {
         status: validation.status,
         fatal_count: validation.fatal_count,
         warning_count: validation.warning_count,
       },
+      sales_comparison: salesComparison,
       signature: { workfile_status: signature.workfile_status, signer_role: signature.signature.signer_role },
       pdf: {
         status: pdf.artifact.generation_status,
         checksum_sha256: pdf.artifact.checksum_sha256,
         page_count: pdf.artifact.metadata.page_count,
         signer_count: pdf.artifact.metadata.signer_count,
+        sales_comparable_group_count: pdfComparableGroupCount,
       },
       xml: {
         status: xml.artifact.generation_status,
         checksum_sha256: xml.artifact.checksum_sha256,
         schema_status: xml.schema_validation.status,
         schema_fatal_count: xml.schema_validation.fatal_count,
+        sales_comparable_count: (xmlText.match(/ValuationUseType="SalesComparable"/g) || []).length,
+        adjustment_count: (xmlText.match(/<ComparableAdjustmentAmount>/g) || []).length,
+        reconciliation_count: (xmlText.match(/<SalesComparisonCommentDescription>/g) || []).length,
       },
       package: {
         status: deliveryPackage.package.generation_status,
@@ -331,6 +560,15 @@ try {
         manifest_status: deliveryPackage.manifest.generation_status,
       },
     };
+    if (evidence.xml.sales_comparable_count < salesComparison.comparable_count) {
+      throw new Error("synthetic_delivery_xml_sales_comparables_missing");
+    }
+    if (evidence.xml.adjustment_count < salesComparison.nonzero_adjustment_count) {
+      throw new Error("synthetic_delivery_xml_adjustments_missing");
+    }
+    if (evidence.xml.reconciliation_count < 1) {
+      throw new Error("synthetic_delivery_xml_sales_reconciliation_missing");
+    }
     console.log(JSON.stringify(evidence, null, 2));
   }
 } finally {

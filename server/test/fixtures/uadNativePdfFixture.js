@@ -46,6 +46,104 @@ export function uadNativePdfEditorFixture() {
   };
 }
 
+export function uadSalesRichEditorFixture() {
+  const editor = uadNativePdfEditorFixture();
+  const comparables = [
+    {
+      id: "20000000-0000-4000-8000-000000000001",
+      ordinal: 1,
+      address: ["1810 Oak Bend Dr", "Garland", "TX", "75044"],
+      listPrice: 489000,
+      salePrice: 485000,
+      saleDate: "2026-06-18",
+      weight: "Most",
+      adjustments: [
+        ["sales_comparable_adjustment_overall_condition", 10000],
+        ["sales_comparable_adjustment_sale_date", -5000],
+      ],
+    },
+    {
+      id: "20000000-0000-4000-8000-000000000002",
+      ordinal: 2,
+      address: ["1725 Creekview Ln", "Garland", "TX", "75044"],
+      listPrice: 485000,
+      salePrice: 480000,
+      saleDate: "2026-05-29",
+      weight: "Less",
+      adjustments: [
+        ["sales_comparable_adjustment_site_size", 5000],
+        ["sales_comparable_adjustment_standard_above", 2500],
+      ],
+    },
+    {
+      id: "20000000-0000-4000-8000-000000000003",
+      ordinal: 3,
+      address: ["2204 Meadow Park Dr", "Garland", "TX", "75044"],
+      listPrice: 497500,
+      salePrice: 492000,
+      saleDate: "2026-04-22",
+      weight: "Less",
+      adjustments: [
+        ["sales_comparable_adjustment_overall_condition", 15000],
+        ["sales_comparable_adjustment_sale_date", -7500],
+      ],
+    },
+  ];
+  editor.entities = comparables.map((comparable) => ({
+    id: comparable.id,
+    workfile_id: editor.workfile.id,
+    parent_entity_id: null,
+    entity_type: "sales_comparable",
+    entity_identifier: `sales-comparable-${comparable.ordinal}`,
+    ordinal: comparable.ordinal,
+    label: `Sales Comparable ${comparable.ordinal}`,
+    data: {},
+  }));
+  editor.values.push(
+    { entity_id: null, context_key: "cost_approach_exclusion", uid: "1300.0002", value: ["NotNecessaryForCredibleResults"], is_appraiser_confirmed: true },
+    { entity_id: null, context_key: "income_approach_exclusion", uid: "1300.0004", value: ["NotNecessaryForCredibleResults"], is_appraiser_confirmed: true },
+    { entity_id: null, context_key: "sales_comparison_scope", uid: "1000.0032", value: true, is_appraiser_confirmed: true },
+    { entity_id: null, context_key: "sales_comparison_summary", uid: "1300.0006", value: 491000, is_appraiser_confirmed: true },
+    {
+      entity_id: null,
+      context_key: "sales_comparison_reconciliation",
+      uid: "1800.0278",
+      value: "Comparable 1 received the most weight due to its recent sale date, similar location, condition, site utility, and finished area. Comparables 2 and 3 bracket the conclusion after supported market-derived adjustments.",
+      is_appraiser_confirmed: true,
+    },
+  );
+  for (const comparable of comparables) {
+    const netAdjustment = comparable.adjustments.reduce((total, [, amount]) => total + amount, 0);
+    const values = [
+      ["sales_comparable", "1800.0192", comparable.ordinal],
+      ["sales_comparable_address", "1800.0001", comparable.address[0]],
+      ["sales_comparable_address", "1800.0003", comparable.address[1]],
+      ["sales_comparable_address", "1800.0005", comparable.address[2]],
+      ["sales_comparable_address", "1800.0004", comparable.address[3]],
+      ["sales_comparable_listing", "1800.0074", comparable.listPrice],
+      ["sales_comparable_listing", "1800.0075", "SettledSale"],
+      ["sales_comparable_sale", "1800.0272", comparable.salePrice],
+      ["sales_comparable_sale", "1800.0342", comparable.saleDate],
+      ["sales_comparable_summary", "1800.0313", netAdjustment],
+      ["sales_comparable_summary", "1800.0309", comparable.salePrice + netAdjustment],
+      ["sales_comparable_summary", "1800.0312", comparable.weight],
+    ];
+    for (const [context_key, uid, value] of values) {
+      editor.values.push({ entity_id: comparable.id, context_key, uid, value, is_appraiser_confirmed: true });
+    }
+    for (const [context_key, value] of comparable.adjustments) {
+      editor.values.push({
+        entity_id: comparable.id,
+        context_key,
+        uid: "1800.0317",
+        value,
+        is_appraiser_confirmed: true,
+      });
+    }
+  }
+  return editor;
+}
+
 export function uadNativePdfSignerFixture() {
   return {
     signer_role: "appraiser",

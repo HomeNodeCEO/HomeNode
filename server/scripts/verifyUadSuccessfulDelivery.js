@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { renderUadNativePdf } from "../src/modules/uad/uadPdf.js";
+import { createUadPdfViewModel, renderUadNativePdf } from "../src/modules/uad/uadPdf.js";
 import {
   buildDeterministicZip,
   buildUadDeliveryAssetEntries,
@@ -13,9 +13,10 @@ import { validateUadSubschema } from "../src/modules/uad/uadSubschema.js";
 import { buildUadValidationInputDigest } from "../src/modules/uad/validation.js";
 import { buildUadMismoXml } from "../src/modules/uad/uadXml.js";
 import {
-  uadNativePdfEditorFixture,
+  uadSalesRichEditorFixture,
   uadNativePdfSignerFixture,
 } from "../test/fixtures/uadNativePdfFixture.js";
+import { requireSalesRichUadDelivery } from "./lib/uadSalesDeliveryEvidence.js";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -26,16 +27,16 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function syntheticDeliveryAsset() {
+function syntheticDeliveryAsset({ id, entityId = null, sectionNumber, captionType, fileName }) {
   return {
-    id: "10000000-0000-4000-8000-000000000001",
-    entity_id: null,
+    id,
+    entity_id: entityId,
     asset_kind: "photo",
-    section_number: 8,
-    caption_type: "DwellingFront",
-    caption: "Synthetic subject front",
-    object_key: "synthetic-only/subject-front.png",
-    original_file_name: "subject-front.png",
+    section_number: sectionNumber,
+    caption_type: captionType,
+    caption: entityId ? "Synthetic comparable front" : "Synthetic subject front",
+    object_key: `synthetic-only/${fileName}`,
+    original_file_name: fileName,
     content_type: "image/png",
     byte_size: PNG.length,
     checksum_sha256: sha256(PNG),
@@ -63,11 +64,28 @@ function readStoredZipEntries(buffer) {
 }
 
 export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {}) {
-  const editor = uadNativePdfEditorFixture();
+  const editor = uadSalesRichEditorFixture();
   const signer = uadNativePdfSignerFixture();
-  const asset = syntheticDeliveryAsset();
-  const inputDigest = buildUadValidationInputDigest(editor, [asset], []);
-  const xml = buildUadMismoXml(editor, { signers: [signer], assets: [asset] });
+  const assets = [
+    syntheticDeliveryAsset({
+      id: "10000000-0000-4000-8000-000000000001",
+      sectionNumber: 8,
+      captionType: "DwellingFront",
+      fileName: "subject-front.png",
+    }),
+    ...editor.entities
+      .filter((entity) => entity.entity_type === "sales_comparable")
+      .map((entity, index) => syntheticDeliveryAsset({
+        id: `10000000-0000-4000-8000-${String(index + 2).padStart(12, "0")}`,
+        entityId: entity.id,
+        sectionNumber: 22,
+        captionType: "PropertyPhoto",
+        fileName: `comparable-${index + 1}-front.png`,
+      })),
+  ];
+  const salesComparison = requireSalesRichUadDelivery(editor);
+  const inputDigest = buildUadValidationInputDigest(editor, assets, []);
+  const xml = buildUadMismoXml(editor, { signers: [signer], assets });
   const schema = await validateUadSubschema(xml.xml);
   if (!schema.valid) {
     const error = new Error("uad_successful_delivery_schema_invalid");
@@ -75,15 +93,23 @@ export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {
     throw error;
   }
 
+  const pdfView = createUadPdfViewModel(editor, { signers: [signer], assets });
+  const pdfSalesSection = pdfView.sections.find((section) => section.number === 22);
+  const pdfComparableGroupCount = pdfSalesSection?.groups.filter((group) => (
+    group.entity?.entity_type === "sales_comparable"
+  )).length || 0;
+  if (pdfComparableGroupCount < salesComparison.comparable_count) {
+    throw new Error("uad_successful_delivery_pdf_sales_grid_missing");
+  }
   const pdf = await renderUadNativePdf(editor, {
     signers: [signer],
-    assets: [{ ...asset, body: PNG }],
+    assets: assets.map((asset) => ({ ...asset, body: PNG })),
   });
-  const deliveryEntries = buildUadDeliveryAssetEntries([asset], editor.entities).map((entry) => ({
+  const deliveryEntries = buildUadDeliveryAssetEntries(assets, editor.entities).map((entry) => ({
     ...entry,
     body: PNG,
     byte_size: PNG.length,
-    checksum_sha256: asset.checksum_sha256,
+    checksum_sha256: sha256(PNG),
   }));
   const manifest = buildUadImagesManifest({
     workfile: editor.workfile,
@@ -111,6 +137,15 @@ export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {
 
   const evidence = {
     ok: true,
+    validation_scope: {
+      home_node_sales_delivery_gate: "passed",
+      official_gse_subschema: "passed",
+      appendix_h_local_rule_engine: "not_executed_by_this_deterministic_smoke_fixture",
+      fannie_uad_compliance_api: "not_executed_credentials_required",
+      freddie_uad_compliance_api: "not_executed_credentials_required",
+      ucdp_and_collateral_underwriter: "not_executed_lender_submission_required",
+      gse_acceptance_claimed: false,
+    },
     fixture: {
       synthetic_only: true,
       property_type: "single_family",
@@ -121,6 +156,7 @@ export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {
       image_count: deliveryEntries.length,
       input_digest_sha256: inputDigest,
     },
+    sales_comparison: salesComparison,
     xml: {
       file_name: xmlFileName,
       byte_size: xml.byte_size,
@@ -131,6 +167,9 @@ export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {
       schema_error_count: schema.errors.length,
       validator_version: schema.validator_version,
       schema_sha256: schema.schema_sha256,
+      sales_comparable_count: (xml.xml.match(/ValuationUseType="SalesComparable"/g) || []).length,
+      adjustment_count: (xml.xml.match(/<ComparableAdjustmentAmount>/g) || []).length,
+      reconciliation_count: (xml.xml.match(/<SalesComparisonCommentDescription>/g) || []).length,
     },
     pdf: {
       file_name: pdf.file_name,
@@ -139,6 +178,7 @@ export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {
       page_count: pdf.page_count,
       signer_count: pdf.signer_count,
       rendered_asset_count: pdf.rendered_asset_count,
+      sales_comparable_group_count: pdfComparableGroupCount,
       renderer_version: pdf.renderer_version,
     },
     manifest: {
@@ -146,7 +186,7 @@ export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {
       byte_size: manifest.byte_size,
       checksum_sha256: manifest.checksum_sha256,
       image_count: manifest.manifest.image_count,
-      private_object_keys_excluded: !manifest.content.includes(Buffer.from(asset.object_key)),
+      private_object_keys_excluded: assets.every((asset) => !manifest.content.includes(Buffer.from(asset.object_key))),
     },
     package: {
       file_name: `${editor.workfile.file_number}-revision-${editor.workfile.current_revision}.zip`,
@@ -159,6 +199,15 @@ export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {
   };
   if (!evidence.manifest.private_object_keys_excluded) {
     throw new Error("uad_successful_delivery_manifest_storage_key_leak");
+  }
+  if (evidence.xml.sales_comparable_count < salesComparison.comparable_count) {
+    throw new Error("uad_successful_delivery_xml_sales_comparables_missing");
+  }
+  if (evidence.xml.adjustment_count < salesComparison.nonzero_adjustment_count) {
+    throw new Error("uad_successful_delivery_xml_adjustments_missing");
+  }
+  if (evidence.xml.reconciliation_count < 1) {
+    throw new Error("uad_successful_delivery_xml_sales_reconciliation_missing");
   }
 
   if (outputDirectory) {

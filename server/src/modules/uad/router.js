@@ -30,6 +30,12 @@ import {
   getUadWorkfile,
   listUadWorkfiles,
 } from "./workfiles.js";
+import {
+  createGuidedDeliveryAttempt,
+  listDeliveryAttempts,
+  recordGuidedDeliveryResult,
+} from "../delivery/deliveryAttempts.js";
+import { listDeliveryPlatforms, resolveDeliveryDestination } from "../delivery/platformCatalog.js";
 import { createMobileAuthenticator } from "../mobile/auth.js";
 import {
   authorizeUadCreation,
@@ -72,6 +78,19 @@ function errorStatus(error) {
     message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_changed")
   )) return 409;
   if (message.startsWith("uad_compliance_")) return 422;
+  if (message === "delivery_attempt_not_found_or_completed") return 409;
+  if (message.startsWith("delivery_") && message.includes("not_found")) return 404;
+  if ([
+    "delivery_organization_required",
+    "delivery_signed_revision_required",
+    "delivery_submission_package_required",
+    "delivery_submission_package_not_ready",
+    "delivery_submission_package_stale",
+  ].includes(message)) return 409;
+  if (message.startsWith("delivery_") && (
+    message.endsWith("_required") || message.endsWith("_invalid") || message.endsWith("_mismatch")
+  )) return 400;
+  if (message.startsWith("delivery_")) return 422;
   if (message.startsWith("uad_completion_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
@@ -179,6 +198,13 @@ export function createUadRouter({
     return res.status(readiness.ok ? 200 : 503).json(readiness);
   });
 
+  router.get("/delivery/platforms", (_req, res) => {
+    res.json({
+      delivery_mode: "guided_manual",
+      platforms: listDeliveryPlatforms(),
+    });
+  });
+
   router.use((req, res, next) => {
     if (enabled) return next();
     return res.status(503).json({ error: "uad_workspace_disabled" });
@@ -225,6 +251,14 @@ export function createUadRouter({
     "/workfiles/:workfileId",
     createUadWorkfileAuthorizer({ pool, authenticationRequired }),
   );
+
+  router.post("/delivery/resolve", (req, res) => {
+    try {
+      res.json({ destination: resolveDeliveryDestination(req.body || {}) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
 
   router.get("/workfiles/:workfileId", async (req, res) => {
     try {
@@ -332,6 +366,43 @@ export function createUadRouter({
   router.post("/workfiles/:workfileId/artifacts/submission-package", async (req, res) => {
     try {
       res.status(201).json(await generateUadSubmissionPackage(pool, storage, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/delivery-attempts", async (req, res) => {
+    try {
+      res.json({ attempts: await listDeliveryAttempts(pool, req.params.workfileId) });
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/delivery-attempts", async (req, res) => {
+    try {
+      const result = await createGuidedDeliveryAttempt(
+        pool,
+        req.params.workfileId,
+        req.body || {},
+        req.mobileAuth?.userId || null,
+      );
+      res.status(201).json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.patch("/workfiles/:workfileId/delivery-attempts/:attemptId", async (req, res) => {
+    try {
+      const attempt = await recordGuidedDeliveryResult(
+        pool,
+        req.params.workfileId,
+        req.params.attemptId,
+        req.body || {},
+        req.mobileAuth?.userId || null,
+      );
+      res.json({ attempt });
     } catch (error) {
       sendError(res, error);
     }

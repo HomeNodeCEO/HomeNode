@@ -68,6 +68,13 @@ export async function ensureAccountAddressAliasSchema(pool) {
     CREATE INDEX IF NOT EXISTS account_address_aliases_account_idx
       ON app.account_address_aliases (account_id, is_current, source_priority DESC);
 
+    CREATE INDEX IF NOT EXISTS account_address_aliases_house_lookup_idx
+      ON app.account_address_aliases (
+        split_part(address_key, ' ', 1), city_key, postal_code5,
+        source_priority DESC, account_id
+      )
+      WHERE is_current = true;
+
     CREATE TABLE IF NOT EXISTS app.account_address_alias_seed_state (
       source_type       text PRIMARY KEY,
       last_account_id   text,

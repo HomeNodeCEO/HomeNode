@@ -458,6 +458,7 @@ def _migration_sql() -> str:
         root / "migrations" / "019_sales_auto_reconciliation.sql",
         root / "migrations" / "020_account_address_aliases.sql",
         root / "migrations" / "021_dcad_target_address_lookup.sql",
+        root / "migrations" / "022_account_address_alias_house_lookup.sql",
     )
     return "\n\n".join(path.read_text(encoding="utf-8") for path in migrations)
 

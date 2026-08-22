@@ -41,6 +41,7 @@ const ROOM_TYPES = new Set([
 const MEASUREMENT_STANDARDS = new Set(["ansi_z765_2021", "jurisdiction_required_other"]);
 const MEASUREMENT_METHODS = new Set(["exterior", "interior_perimeter", "plans", "mixed"]);
 const REVIEW_STATUSES = new Set(["draft", "appraiser_confirmed"]);
+const GLA_TREATMENTS = new Set(["included", "excluded", "deduction"]);
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -98,6 +99,11 @@ function roomRef(clientRoomId) {
 function normalizeArea(input, index) {
   if (!plainObject(input)) throw new Error("invalid_sketch_area");
   const id = normalizeUuid(input.id || input.client_area_id, "invalid_sketch_area_id");
+  const classification = enumValue(
+    input.classification || "above_grade_finished",
+    AREA_CLASSIFICATIONS,
+    "invalid_sketch_area_classification",
+  );
   const calculation = calculateManualSketch({
     vertices: input.vertices,
     closure_tolerance_feet: input.closure_tolerance_feet,
@@ -106,11 +112,15 @@ function normalizeArea(input, index) {
     id,
     label: boundedText(input.label || `Area ${index + 1}`, "invalid_sketch_area_label", 80),
     level_label: boundedText(input.level_label || "Level 1", "invalid_sketch_level_label", 80),
-    classification: enumValue(
-      input.classification || "above_grade_finished",
-      AREA_CLASSIFICATIONS,
-      "invalid_sketch_area_classification",
+    classification,
+    gla_treatment: enumValue(
+      input.gla_treatment || (classification === "above_grade_finished" ? "included" : "excluded"),
+      GLA_TREATMENTS,
+      "invalid_sketch_gla_treatment",
     ),
+    parent_area_id: input.parent_area_id == null
+      ? null
+      : normalizeUuid(input.parent_area_id, "invalid_sketch_parent_area_id"),
     notes: input.notes == null ? null : boundedText(input.notes, "invalid_sketch_area_notes", 1000, { nullable: true }),
     vertices: calculation.vertices,
     calculation,
@@ -143,16 +153,24 @@ function normalizeRoom(input, index, areaMap) {
 
 function sketchSummary(areas, rooms) {
   const byClassification = {};
+  let grossIncludedSqft = 0;
+  let deductionSqft = 0;
   for (const area of areas) {
     const squareFeet = area.calculation.reported_area_sqft || 0;
     byClassification[area.classification] = (byClassification[area.classification] || 0) + squareFeet;
+    if (area.gla_treatment === "included") grossIncludedSqft += squareFeet;
+    if (area.gla_treatment === "deduction") deductionSqft += squareFeet;
   }
+  const netGlaSqft = Math.max(0, grossIncludedSqft - deductionSqft);
   return Object.freeze({
     area_count: areas.length,
     room_count: rooms.length,
     all_areas_closed: areas.every((area) => area.calculation.closed),
     any_self_intersections: areas.some((area) => area.calculation.self_intersecting),
-    above_grade_finished_sqft: byClassification.above_grade_finished || 0,
+    above_grade_finished_sqft: netGlaSqft,
+    gross_included_sqft: grossIncludedSqft,
+    deduction_sqft: deductionSqft,
+    net_gla_sqft: netGlaSqft,
     below_grade_finished_sqft: byClassification.below_grade_finished || 0,
     above_grade_nonstandard_finished_sqft: byClassification.above_grade_nonstandard_finished || 0,
     below_grade_nonstandard_finished_sqft: byClassification.below_grade_nonstandard_finished || 0,
@@ -176,6 +194,24 @@ export function normalizeManualSketchDocument(input = {}) {
   const areas = input.areas.map(normalizeArea).sort((left, right) => left.position - right.position);
   if (new Set(areas.map((area) => area.id)).size !== areas.length) throw new Error("duplicate_sketch_area_id");
   const areaMap = new Map(areas.map((area) => [area.id, area]));
+  for (const area of areas) {
+    if (area.gla_treatment === "included" && area.classification !== "above_grade_finished") {
+      throw new Error("invalid_sketch_gla_classification");
+    }
+    if (area.gla_treatment !== "deduction") {
+      if (area.parent_area_id) throw new Error("invalid_sketch_parent_area");
+      continue;
+    }
+    const parent = areaMap.get(area.parent_area_id);
+    if (!parent || parent.id === area.id || parent.gla_treatment !== "included") {
+      throw new Error("invalid_sketch_parent_area");
+    }
+    if (area.classification !== "garage") throw new Error("invalid_sketch_deduction_classification");
+    if (area.calculation.ready_for_area_classification && (
+      !parent.calculation.ready_for_area_classification
+      || area.vertices.some((point) => !pointInsidePolygon(point, parent.vertices))
+    )) throw new Error("invalid_sketch_deduction_bounds");
+  }
   const rooms = input.rooms.map((room, index) => normalizeRoom(room, index, areaMap))
     .sort((left, right) => left.position - right.position);
   if (new Set(rooms.map((room) => room.id)).size !== rooms.length) throw new Error("duplicate_sketch_room_id");
@@ -195,7 +231,7 @@ export function normalizeManualSketchDocument(input = {}) {
   if (reviewStatus === "appraiser_confirmed" && !readyForReview) throw new Error("sketch_not_ready_for_confirmation");
   const summary = sketchSummary(areas, rooms);
   const document = {
-    schema_version: "2.0",
+    schema_version: "2.1",
     source: "manual",
     units: "feet",
     dimension_precision_feet: 0.1,

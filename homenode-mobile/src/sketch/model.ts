@@ -34,6 +34,7 @@ export const SKETCH_ROOM_TYPES = Object.freeze([
 export type SketchClassification = typeof SKETCH_CLASSIFICATIONS[number][0];
 export type SketchRoomType = typeof SKETCH_ROOM_TYPES[number][0];
 export type SketchPoint = Readonly<{ x: number; y: number }>;
+export type SketchGlaTreatment = "included" | "excluded" | "deduction";
 
 export type SketchClosureTarget = Readonly<{
   kind: "projected_corner" | "starting_point";
@@ -57,6 +58,8 @@ export type SketchAreaDraft = Readonly<{
   label: string;
   levelLabel: string;
   classification: SketchClassification;
+  glaTreatment: SketchGlaTreatment;
+  parentAreaId: string | null;
   notes: string;
   vertices: SketchPoint[];
   position: number;
@@ -96,6 +99,8 @@ export type ManualSketchApiDocument = Readonly<{
     label: string;
     level_label: string;
     classification: SketchClassification;
+    gla_treatment?: SketchGlaTreatment;
+    parent_area_id?: string | null;
     notes: string | null;
     vertices: SketchPoint[];
     position: number;
@@ -309,11 +314,80 @@ export function pointInArea(point: SketchPoint, vertices: SketchPoint[]) {
   for (let left = 0, right = vertices.length - 1; left < vertices.length; right = left, left += 1) {
     const a = vertices[left]!;
     const b = vertices[right]!;
+    const cross = ((point.y - a.y) * (b.x - a.x)) - ((point.x - a.x) * (b.y - a.y));
+    const onEdge = Math.abs(cross) < 1e-7
+      && point.x >= Math.min(a.x, b.x) - 1e-7
+      && point.x <= Math.max(a.x, b.x) + 1e-7
+      && point.y >= Math.min(a.y, b.y) - 1e-7
+      && point.y <= Math.max(a.y, b.y) + 1e-7;
+    if (onEdge) return true;
     const crosses = ((a.y > point.y) !== (b.y > point.y))
       && point.x < (((b.x - a.x) * (point.y - a.y)) / (b.y - a.y)) + a.x;
     if (crosses) inside = !inside;
   }
   return inside;
+}
+
+export type SketchWallSnap = Readonly<{
+  areaId: string;
+  point: SketchPoint;
+  distanceFeet: number;
+}>;
+
+export function nearestPointOnSketchWall(point: SketchPoint, areas: SketchAreaDraft[]): SketchWallSnap | null {
+  let nearest: SketchWallSnap | null = null;
+  for (const area of areas) {
+    if (area.glaTreatment !== "included" || !calculateSketchOutline(area.vertices).ready) continue;
+    for (let index = 0; index < area.vertices.length - 1; index += 1) {
+      const start = area.vertices[index]!;
+      const end = area.vertices[index + 1]!;
+      const delta = { x: end.x - start.x, y: end.y - start.y };
+      const squaredLength = (delta.x * delta.x) + (delta.y * delta.y);
+      if (squaredLength < 1e-9) continue;
+      const scalar = Math.max(0, Math.min(1, (
+        ((point.x - start.x) * delta.x) + ((point.y - start.y) * delta.y)
+      ) / squaredLength));
+      const snapped = {
+        x: rounded(start.x + (scalar * delta.x)),
+        y: rounded(start.y + (scalar * delta.y)),
+      };
+      const distanceFeet = rounded(distance(point, snapped));
+      if (!nearest || distanceFeet < nearest.distanceFeet) {
+        nearest = { areaId: area.id, point: snapped, distanceFeet };
+      }
+    }
+  }
+  return nearest;
+}
+
+export function garageCutoutFitsParent(area: SketchAreaDraft, areas: SketchAreaDraft[]) {
+  if (area.glaTreatment !== "deduction" || !area.parentAreaId) return false;
+  const parent = areas.find((candidate) => candidate.id === area.parentAreaId);
+  return Boolean(
+    parent
+    && parent.glaTreatment === "included"
+    && calculateSketchOutline(parent.vertices).ready
+    && calculateSketchOutline(area.vertices).ready
+    && area.vertices.every((point) => pointInArea(point, parent.vertices)),
+  );
+}
+
+export function calculateSketchGla(areas: SketchAreaDraft[]) {
+  const grossAreaSqft = areas.reduce((total, area) => (
+    area.glaTreatment === "included"
+      ? total + (calculateSketchOutline(area.vertices).reportedAreaSqft || 0)
+      : total
+  ), 0);
+  const deductionAreaSqft = areas.reduce((total, area) => (
+    area.glaTreatment === "deduction"
+      ? total + (calculateSketchOutline(area.vertices).reportedAreaSqft || 0)
+      : total
+  ), 0);
+  return {
+    grossAreaSqft,
+    deductionAreaSqft,
+    netGlaSqft: Math.max(0, grossAreaSqft - deductionAreaSqft),
+  };
 }
 
 export function sketchBounds(vertices: SketchPoint[]) {
@@ -357,6 +431,8 @@ export function emptySketchDraft(areaId: string): ManualSketchDraft {
       label: "First floor",
       levelLabel: "Level 1",
       classification: "above_grade_finished",
+      glaTreatment: "included",
+      parentAreaId: null,
       notes: "",
       vertices: [],
       position: 1,
@@ -377,6 +453,8 @@ export function toSketchApiDocument(draft: ManualSketchDraft): ManualSketchApiDo
       label: area.label,
       level_label: area.levelLabel,
       classification: area.classification,
+      gla_treatment: area.glaTreatment,
+      parent_area_id: area.parentAreaId,
       notes: area.notes.trim() || null,
       vertices: area.vertices,
       position: area.position,
@@ -404,6 +482,8 @@ export function draftFromApiDocument(document: ManualSketchApiDocument): ManualS
       label: area.label,
       levelLabel: area.level_label,
       classification: area.classification,
+      glaTreatment: area.gla_treatment || (area.classification === "above_grade_finished" ? "included" : "excluded"),
+      parentAreaId: area.parent_area_id || null,
       notes: area.notes || "",
       vertices: area.vertices,
       position: area.position,
@@ -420,5 +500,8 @@ export function draftFromApiDocument(document: ManualSketchApiDocument): ManualS
 }
 
 export function sketchReadyForConfirmation(draft: ManualSketchDraft) {
-  return draft.areas.length > 0 && draft.areas.every((area) => calculateSketchOutline(area.vertices).ready);
+  return draft.areas.length > 0 && draft.areas.every((area) => (
+    calculateSketchOutline(area.vertices).ready
+    && (area.glaTreatment !== "deduction" || garageCutoutFitsParent(area, draft.areas))
+  ));
 }

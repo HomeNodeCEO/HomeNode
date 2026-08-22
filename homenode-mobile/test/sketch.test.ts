@@ -3,13 +3,16 @@ import test from "node:test";
 
 import {
   appendMeasuredWall,
+  calculateSketchGla,
   calculateSketchOutline,
   canvasToModel,
   closeSketchOutline,
   connectSketchTarget,
   draftFromApiDocument,
   emptySketchDraft,
+  garageCutoutFitsParent,
   modelToCanvas,
+  nearestPointOnSketchWall,
   normalizeSketchBearing,
   sketchClosureTargets,
   sketchReadyForConfirmation,
@@ -114,6 +117,66 @@ test("keeps model and canvas points reversible for room placement", () => {
   const canvas = modelToCanvas({ x: 20, y: 15 }, vertices, 320, 260);
   const model = canvasToModel(canvas, vertices, 320, 260);
   assert.deepEqual(model, { x: 20, y: 15 });
+});
+
+test("snaps a garage start point to any position along a closed exterior wall", () => {
+  const base = emptySketchDraft("10000000-0000-4000-8000-000000000041");
+  const exterior = {
+    ...base.areas[0]!,
+    vertices: [
+      { x: 0, y: 0 },
+      { x: 25, y: 0 },
+      { x: 25, y: -15 },
+      { x: 0, y: -15 },
+      { x: 0, y: 0 },
+    ],
+  };
+  const snap = nearestPointOnSketchWall({ x: 7.4, y: -0.8 }, [exterior]);
+  assert.deepEqual(snap, {
+    areaId: exterior.id,
+    point: { x: 7.4, y: 0 },
+    distanceFeet: 0.8,
+  });
+});
+
+test("deducts a closed garage cutout from the main GLA", () => {
+  const base = emptySketchDraft("10000000-0000-4000-8000-000000000051");
+  const exterior = {
+    ...base.areas[0]!,
+    vertices: [
+      { x: 0, y: 0 },
+      { x: 25, y: 0 },
+      { x: 25, y: -15 },
+      { x: 0, y: -15 },
+      { x: 0, y: 0 },
+    ],
+  };
+  const garage = {
+    id: "10000000-0000-4000-8000-000000000052",
+    label: "Garage",
+    levelLabel: "Level 1",
+    classification: "garage" as const,
+    glaTreatment: "deduction" as const,
+    parentAreaId: exterior.id,
+    notes: "",
+    vertices: [
+      { x: 5, y: 0 },
+      { x: 15, y: 0 },
+      { x: 15, y: -10 },
+      { x: 5, y: -10 },
+      { x: 5, y: 0 },
+    ],
+    position: 2,
+  };
+  assert.equal(garageCutoutFitsParent(garage, [exterior, garage]), true);
+  assert.deepEqual(calculateSketchGla([exterior, garage]), {
+    grossAreaSqft: 375,
+    deductionAreaSqft: 100,
+    netGlaSqft: 275,
+  });
+  const restored = draftFromApiDocument(toSketchApiDocument({ ...base, areas: [exterior, garage] }));
+  assert.equal(restored.areas[1]!.glaTreatment, "deduction");
+  assert.equal(restored.areas[1]!.parentAreaId, exterior.id);
 });
 
 test("serializes offline sketch drafts without losing stable room identity", () => {

@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -14,15 +15,19 @@ import { ApiError, type MobileApi } from "../api/client";
 import { OfflineStore } from "../offline/store";
 import {
   appendMeasuredWall,
+  calculateSketchGla,
   calculateSketchOutline,
   canvasToModel,
   closeSketchOutline,
   connectSketchTarget,
   emptySketchDraft,
+  garageCutoutFitsParent,
   modelToCanvas,
+  nearestPointOnSketchWall,
   normalizeSketchBearing,
   pointInArea,
   sketchClosureTargets,
+  sketchBounds,
   SKETCH_CLASSIFICATIONS,
   SKETCH_ROOM_TYPES,
   sketchReadyForConfirmation,
@@ -34,9 +39,6 @@ import {
   type SketchRoomType,
 } from "./model";
 import { useSketchSync } from "./sync";
-
-const CANVAS_WIDTH = 320;
-const CANVAS_HEIGHT = 260;
 
 const DIRECTION_PAD = Object.freeze([
   [
@@ -126,74 +128,132 @@ function updateArea(draft: ManualSketchDraft, areaId: string, update: (area: Ske
   };
 }
 
-function SketchCanvas({ area, rooms, closureTargets, selectedRoomId, onSelectRoom, onMoveRoom, onConnectTarget }: {
-  area: SketchAreaDraft;
+function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGarage, selectedRoomId, onSelectRoom, onMoveRoom, onConnectTarget, onStartGarage }: {
+  areas: SketchAreaDraft[];
+  selectedAreaId: string;
   rooms: SketchRoomDraft[];
   closureTargets: SketchClosureTarget[];
+  placingGarage: boolean;
   selectedRoomId: string | null;
   onSelectRoom: (room: SketchRoomDraft) => void;
   onMoveRoom: (roomId: string, point: { x: number; y: number }) => void;
   onConnectTarget: (target: SketchClosureTarget) => void;
+  onStartGarage: (point: { x: number; y: number }) => void;
 }) {
-  const displayVertices = [...area.vertices, ...closureTargets.map((target) => target.point)];
-  const canvasVertices = area.vertices.map((point) => modelToCanvas(
-    point,
-    displayVertices,
-    CANVAS_WIDTH,
-    CANVAS_HEIGHT,
+  const selectedArea = (areas.find((area) => area.id === selectedAreaId) || areas[0])!;
+  const { width: windowWidth } = useWindowDimensions();
+  const displayVertices = [
+    ...areas.flatMap((area) => area.vertices),
+    ...closureTargets.map((target) => target.point),
+  ];
+  const bounds = sketchBounds(displayVertices);
+  const canvasWidth = Math.max(300, Math.min(560, windowWidth - 44));
+  const canvasHeight = Math.max(280, Math.min(
+    520,
+    72 + ((canvasWidth - 40) * (bounds.height / bounds.width)),
   ));
-  const lines = canvasVertices.slice(0, -1).map((point, index) => {
-    const next = canvasVertices[index + 1]!;
-    const length = Math.hypot(next.x - point.x, next.y - point.y);
-    const angle = Math.atan2(next.y - point.y, next.x - point.x);
-    return {
-      key: `${index}-${point.x}-${point.y}`,
-      style: {
-        left: ((point.x + next.x) / 2) - (length / 2),
-        top: ((point.y + next.y) / 2) - 1.5,
-        width: length,
-        transform: [{ rotate: `${angle}rad` }],
-      },
-      length: Math.hypot(
-        area.vertices[index + 1]!.x - area.vertices[index]!.x,
-        area.vertices[index + 1]!.y - area.vertices[index]!.y,
-      ),
-      midpoint: { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 },
-    };
+  const lines = areas.flatMap((area) => {
+    const canvasVertices = area.vertices.map((point) => modelToCanvas(
+      point,
+      displayVertices,
+      canvasWidth,
+      canvasHeight,
+    ));
+    return canvasVertices.slice(0, -1).map((point, index) => {
+      const next = canvasVertices[index + 1]!;
+      const length = Math.hypot(next.x - point.x, next.y - point.y);
+      const angle = Math.atan2(next.y - point.y, next.x - point.x);
+      return {
+        area,
+        key: `${area.id}-${index}-${point.x}-${point.y}`,
+        style: {
+          left: ((point.x + next.x) / 2) - (length / 2),
+          top: ((point.y + next.y) / 2) - 1.5,
+          width: length,
+          transform: [{ rotate: `${angle}rad` }],
+        },
+        length: Math.hypot(
+          area.vertices[index + 1]!.x - area.vertices[index]!.x,
+          area.vertices[index + 1]!.y - area.vertices[index]!.y,
+        ),
+        midpoint: { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 },
+      };
+    });
   });
 
-  const moveSelected = (event: GestureResponderEvent) => {
-    if (!selectedRoomId || area.vertices.length < 2) return;
+  const handleCanvasPress = (event: GestureResponderEvent) => {
     const point = canvasToModel(
       { x: event.nativeEvent.locationX, y: event.nativeEvent.locationY },
       displayVertices,
-      CANVAS_WIDTH,
-      CANVAS_HEIGHT,
+      canvasWidth,
+      canvasHeight,
     );
-    if (pointInArea(point, area.vertices)) onMoveRoom(selectedRoomId, point);
+    if (placingGarage) {
+      onStartGarage(point);
+      return;
+    }
+    if (!selectedRoomId) return;
+    const room = rooms.find((candidate) => candidate.id === selectedRoomId);
+    const roomArea = room && areas.find((candidate) => candidate.id === room.areaId);
+    if (roomArea && pointInArea(point, roomArea.vertices)) onMoveRoom(selectedRoomId, point);
   };
 
   return (
-    <Pressable accessibilityLabel={`Measured sketch for ${area.label}`} onPress={moveSelected} style={styles.canvas}>
+    <Pressable
+      accessibilityLabel={placingGarage ? "Tap a solid exterior wall to anchor the garage cutout" : "Combined measured property sketch"}
+      onPress={handleCanvasPress}
+      style={[styles.canvas, { height: canvasHeight, width: canvasWidth }, placingGarage && styles.canvasPlacing]}
+    >
       {lines.map((line) => <React.Fragment key={line.key}>
-        <View style={[styles.wall, line.style]} />
-        <Text style={[styles.dimension, { left: line.midpoint.x - 18, top: line.midpoint.y - 18 }]}>
+        <View style={[
+          styles.wall,
+          line.area.glaTreatment === "deduction" && styles.deductionWall,
+          line.area.id !== selectedAreaId && styles.wallMuted,
+          line.style,
+        ]} />
+        <Text style={[
+          styles.dimension,
+          line.area.glaTreatment === "deduction" && styles.deductionDimension,
+          { left: line.midpoint.x - 18, top: line.midpoint.y - 18 },
+        ]}>
           {line.length.toFixed(1)}′
         </Text>
       </React.Fragment>)}
+      {areas.map((area) => {
+        const calculation = calculateSketchOutline(area.vertices);
+        if (!calculation.ready || !calculation.centroid) return null;
+        const point = modelToCanvas(calculation.centroid, displayVertices, canvasWidth, canvasHeight);
+        return <Text
+          key={`label-${area.id}`}
+          numberOfLines={2}
+          style={[
+            styles.areaLabel,
+            area.glaTreatment === "deduction" && styles.deductionAreaLabel,
+            { left: point.x - 55, top: point.y - 17 },
+          ]}
+        >
+          {area.label}{"\n"}{area.glaTreatment === "deduction" ? "−" : ""}{calculation.reportedAreaSqft?.toLocaleString()} sf
+        </Text>;
+      })}
+      {placingGarage ? areas.filter((area) => area.glaTreatment === "included").flatMap((area) => (
+        area.vertices.slice(0, -1).map((vertex, index) => {
+          const point = modelToCanvas(vertex, displayVertices, canvasWidth, canvasHeight);
+          return <View key={`anchor-${area.id}-${index}`} style={[styles.wallAnchor, { left: point.x - 5, top: point.y - 5 }]} />;
+        })
+      )) : null}
       {closureTargets.map((target) => {
-        const point = modelToCanvas(target.point, displayVertices, CANVAS_WIDTH, CANVAS_HEIGHT);
+        const point = modelToCanvas(target.point, displayVertices, canvasWidth, canvasHeight);
         const current = modelToCanvas(
-          area.vertices[area.vertices.length - 1]!,
+          selectedArea.vertices[selectedArea.vertices.length - 1]!,
           displayVertices,
-          CANVAS_WIDTH,
-          CANVAS_HEIGHT,
+          canvasWidth,
+          canvasHeight,
         );
         const guideLength = Math.hypot(point.x - current.x, point.y - current.y);
         const guideAngle = Math.atan2(point.y - current.y, point.x - current.x);
         const modelLength = Math.hypot(
-          target.point.x - area.vertices[area.vertices.length - 1]!.x,
-          target.point.y - area.vertices[area.vertices.length - 1]!.y,
+          target.point.x - selectedArea.vertices[selectedArea.vertices.length - 1]!.x,
+          target.point.y - selectedArea.vertices[selectedArea.vertices.length - 1]!.y,
         );
         return <React.Fragment key={`${target.kind}-${target.point.x}-${target.point.y}`}>
           <View style={[
@@ -231,7 +291,7 @@ function SketchCanvas({ area, rooms, closureTargets, selectedRoomId, onSelectRoo
         </React.Fragment>;
       })}
       {rooms.map((room) => {
-        const point = modelToCanvas(room.anchor, displayVertices, CANVAS_WIDTH, CANVAS_HEIGHT);
+        const point = modelToCanvas(room.anchor, displayVertices, canvasWidth, canvasHeight);
         const selected = room.id === selectedRoomId;
         return (
           <Pressable
@@ -244,7 +304,8 @@ function SketchCanvas({ area, rooms, closureTargets, selectedRoomId, onSelectRoo
           </Pressable>
         );
       })}
-      {!area.vertices.length ? <Text style={styles.canvasEmpty}>Add measured walls to draw this area.</Text> : null}
+      {!displayVertices.length ? <Text style={styles.canvasEmpty}>Add measured walls to draw the first exterior area.</Text> : null}
+      {placingGarage ? <Text style={styles.placementBanner}>Tap a corner or anywhere along a solid exterior wall</Text> : null}
     </Pressable>
   );
 }
@@ -256,6 +317,8 @@ function sketchError(reason: unknown) {
     sketch_needs_three_walls: "Add at least three walls before closing the outline.",
     sketch_not_ready_for_confirmation: "Every measured area must close without crossing itself before confirmation.",
     invalid_sketch_room_anchor: "The room marker must be inside its measured area.",
+    invalid_garage_cutout_bounds: "Keep the closed garage cutout inside or on the walls of its main exterior area.",
+    invalid_sketch_deduction_bounds: "The garage cutout must remain inside its main exterior area.",
     network_request_failed: "The sketch is saved on this device and will synchronize when service returns.",
   };
   return messages[code] || code.replaceAll("_", " ");
@@ -285,6 +348,7 @@ export function SketchEditorPanel({
   const [bearing, setBearing] = useState("0");
   const [roomLabel, setRoomLabel] = useState("");
   const [roomType, setRoomType] = useState<SketchRoomType>("other");
+  const [placingGarage, setPlacingGarage] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -339,10 +403,21 @@ export function SketchEditorPanel({
     changeDraft((current) => updateArea(current, selectedArea.id, change));
   };
 
+  const changeAreaVertices = (vertices: SketchAreaDraft["vertices"]) => {
+    const nextArea = { ...selectedArea, vertices };
+    const nextAreas = draft.areas.map((area) => area.id === selectedArea.id ? nextArea : area);
+    if (
+      nextArea.glaTreatment === "deduction"
+      && calculateSketchOutline(vertices).ready
+      && !garageCutoutFitsParent(nextArea, nextAreas)
+    ) throw new Error("invalid_garage_cutout_bounds");
+    changeArea((area) => ({ ...area, vertices }));
+  };
+
   const addWall = () => {
     try {
       const vertices = appendMeasuredWall(selectedArea.vertices, Number(wallLength), Number(bearing));
-      changeArea((area) => ({ ...area, vertices }));
+      changeAreaVertices(vertices);
       setWallLength("");
     } catch (reason) {
       setError(sketchError(reason));
@@ -351,7 +426,7 @@ export function SketchEditorPanel({
 
   const closeOutline = () => {
     try {
-      changeArea((area) => ({ ...area, vertices: closeSketchOutline(area.vertices) }));
+      changeAreaVertices(closeSketchOutline(selectedArea.vertices));
     } catch (reason) {
       setError(sketchError(reason));
     }
@@ -359,7 +434,7 @@ export function SketchEditorPanel({
 
   const connectTarget = (target: SketchClosureTarget) => {
     try {
-      changeArea((area) => ({ ...area, vertices: connectSketchTarget(area.vertices, target) }));
+      changeAreaVertices(connectSketchTarget(selectedArea.vertices, target));
     } catch (reason) {
       setError(sketchError(reason));
     }
@@ -380,24 +455,88 @@ export function SketchEditorPanel({
         label: `Area ${nextPosition}`,
         levelLabel: `Level ${nextPosition}`,
         classification: "above_grade_finished",
+        glaTreatment: "included",
+        parentAreaId: null,
         notes: "",
         vertices: [],
         position: nextPosition,
       }],
     }));
     setSelectedAreaId(id);
+    setPlacingGarage(false);
+  };
+
+  const beginGarageCutout = () => {
+    if (!draft.areas.some((area) => area.glaTreatment === "included" && calculateSketchOutline(area.vertices).ready)) {
+      setError("Close the main exterior area before adding a garage cutout.");
+      return;
+    }
+    setPlacingGarage(true);
+    setError(null);
+    onSelectRoom(null);
+  };
+
+  const startGarageCutout = (point: { x: number; y: number }) => {
+    const snap = nearestPointOnSketchWall(point, draft.areas);
+    if (!snap) {
+      setError("Tap a solid wall or corner of a closed exterior area.");
+      return;
+    }
+    const parent = draft.areas.find((area) => area.id === snap.areaId)!;
+    const id = Crypto.randomUUID();
+    changeDraft((current) => ({
+      ...current,
+      areas: [...current.areas, {
+        id,
+        label: "Garage",
+        levelLabel: parent.levelLabel,
+        classification: "garage",
+        glaTreatment: "deduction",
+        parentAreaId: parent.id,
+        notes: "",
+        vertices: [snap.point],
+        position: current.areas.length + 1,
+      }],
+    }));
+    setSelectedAreaId(id);
+    setPlacingGarage(false);
+    setError(null);
+  };
+
+  const setAreaClassification = (classification: SketchAreaDraft["classification"]) => {
+    if (
+      classification !== "above_grade_finished"
+      && draft.areas.some((area) => area.parentAreaId === selectedArea.id)
+    ) {
+      setError("Remove this area's garage cutout before changing it from above-grade finished GLA.");
+      return;
+    }
+    changeArea((area) => ({
+      ...area,
+      classification,
+      glaTreatment: classification === "above_grade_finished" ? "included" : "excluded",
+    }));
   };
 
   const removeArea = () => {
-    if (draft.areas.length === 1) return;
-    const remaining = draft.areas.filter((area) => area.id !== selectedArea.id)
+    const exteriorCount = draft.areas.filter((area) => area.glaTreatment !== "deduction").length;
+    if (selectedArea.glaTreatment !== "deduction" && exteriorCount === 1) {
+      setError("Keep at least one exterior area in the sketch.");
+      return;
+    }
+    const removedIds = new Set([
+      selectedArea.id,
+      ...draft.areas.filter((area) => area.parentAreaId === selectedArea.id).map((area) => area.id),
+    ]);
+    const remaining = draft.areas.filter((area) => !removedIds.has(area.id))
       .map((area, index) => ({ ...area, position: index + 1 }));
     changeDraft((current) => ({
       ...current,
       areas: remaining,
-      rooms: current.rooms.filter((room) => room.areaId !== selectedArea.id),
+      rooms: current.rooms.filter((room) => !removedIds.has(room.areaId)),
     }));
     setSelectedAreaId(remaining[0]!.id);
+    setPlacingGarage(false);
     if (draft.rooms.some((room) => room.id === selectedRoomId && room.areaId === selectedArea.id)) onSelectRoom(null);
   };
 
@@ -496,11 +635,7 @@ export function SketchEditorPanel({
   };
 
   const conflict = sketchSync.draft?.state === "conflict";
-  const totalAbove = useMemo(() => draft.areas.reduce((total, area) => (
-    area.classification === "above_grade_finished"
-      ? total + (calculateSketchOutline(area.vertices).reportedAreaSqft || 0)
-      : total
-  ), 0), [draft.areas]);
+  const gla = useMemo(() => calculateSketchGla(draft.areas), [draft.areas]);
 
   return (
     <View style={styles.container}>
@@ -509,9 +644,12 @@ export function SketchEditorPanel({
           <Text style={styles.eyebrow}>ANSI MEASUREMENT WORKSPACE</Text>
           <Text style={styles.title}>Manual sketch</Text>
         </View>
-        <Text style={styles.areaTotal}>{totalAbove.toLocaleString()} sf</Text>
+        <Text style={styles.areaTotal}>{gla.netGlaSqft.toLocaleString()} sf GLA</Text>
       </View>
-      <Text style={styles.help}>Enter each measured wall to the nearest tenth of a foot. HomeNode calculates closed areas and preserves above-grade, below-grade, nonstandard, unfinished, and amenity areas separately.</Text>
+      <Text style={styles.help}>Enter each measured wall to the nearest tenth of a foot. Every exterior, garage cutout, room marker, and label stays visible on one combined sketch.</Text>
+      {gla.deductionAreaSqft ? <Text style={styles.glaBreakdown}>
+        {gla.grossAreaSqft.toLocaleString()} sf gross − {gla.deductionAreaSqft.toLocaleString()} sf garage = {gla.netGlaSqft.toLocaleString()} sf GLA
+      </Text> : null}
 
       <Text style={styles.label}>Measurement standard</Text>
       <View style={styles.choices}>
@@ -535,18 +673,28 @@ export function SketchEditorPanel({
       ))}</View>
 
       <View style={styles.rowBetween}>
-        <Text style={styles.sectionTitle}>Measured areas</Text>
-        <Pressable onPress={addArea}><Text style={styles.link}>+ Add area</Text></Pressable>
+        <Text style={styles.sectionTitle}>Sketch layers</Text>
+        <Pressable onPress={addArea}><Text style={styles.link}>+ Exterior area</Text></Pressable>
       </View>
+      <Action title={placingGarage ? "Tap the solid wall below…" : "+ Garage cutout"} secondary disabled={placingGarage} onPress={beginGarageCutout} />
       <View style={styles.choices}>{draft.areas.map((area) => (
-        <Choice key={area.id} label={area.label} selected={area.id === selectedArea.id} onPress={() => setSelectedAreaId(area.id)} />
+        <Choice
+          key={area.id}
+          label={`${area.glaTreatment === "deduction" ? "⋯ " : ""}${area.label}`}
+          selected={area.id === selectedArea.id}
+          onPress={() => { setSelectedAreaId(area.id); setPlacingGarage(false); }}
+        />
       ))}</View>
       <TextInput onChangeText={(value) => changeArea((area) => ({ ...area, label: value }))} placeholder="Area label" style={styles.input} value={selectedArea.label} />
       <TextInput onChangeText={(value) => changeArea((area) => ({ ...area, levelLabel: value }))} placeholder="Level label" style={styles.input} value={selectedArea.levelLabel} />
-      <Text style={styles.label}>Area classification</Text>
-      <View style={styles.choices}>{SKETCH_CLASSIFICATIONS.map(([value, label]) => (
-        <Choice key={value} label={label} selected={selectedArea.classification === value} onPress={() => changeArea((area) => ({ ...area, classification: value }))} />
-      ))}</View>
+      {selectedArea.glaTreatment === "deduction" ? (
+        <Text style={styles.deductionNotice}>Dotted garage cutout · its closed area is deducted from the main GLA.</Text>
+      ) : <>
+        <Text style={styles.label}>Area classification</Text>
+        <View style={styles.choices}>{SKETCH_CLASSIFICATIONS.map(([value, label]) => (
+          <Choice key={value} label={label} selected={selectedArea.classification === value} onPress={() => setAreaClassification(value)} />
+        ))}</View>
+      </>}
 
       <View style={styles.measureRow}>
         <TextInput keyboardType="decimal-pad" onChangeText={setWallLength} placeholder="Length ft" style={[styles.input, styles.measureInput]} value={wallLength} />
@@ -581,13 +729,16 @@ export function SketchEditorPanel({
         <Action title="Close to start" secondary disabled={selectedArea.vertices.length < 3} onPress={closeOutline} />
       </View>
       <SketchCanvas
-        area={selectedArea}
-        rooms={areaRooms}
+        areas={draft.areas}
+        selectedAreaId={selectedArea.id}
+        rooms={draft.rooms}
         closureTargets={closureTargets}
+        placingGarage={placingGarage}
         selectedRoomId={selectedRoomId}
         onSelectRoom={selectRoom}
         onMoveRoom={moveRoom}
         onConnectTarget={connectTarget}
+        onStartGarage={startGarageCutout}
       />
       {closureTargets.some((target) => target.kind === "projected_corner") ? (
         <Text style={styles.closureHelp}>Orange adds the calculated logical corner; green closes directly to the starting point. After choosing orange, tap green to add the final wall and calculate square footage.</Text>
@@ -596,12 +747,12 @@ export function SketchEditorPanel({
       ) : null}
       <Text style={[styles.status, calculation.ready ? styles.statusReady : styles.statusPending]}>
         {calculation.ready
-          ? `${calculation.reportedAreaSqft?.toLocaleString()} sf · ${calculation.perimeterFeet.toFixed(1)} ft perimeter · closed`
+          ? `${selectedArea.glaTreatment === "deduction" ? "Deducts " : ""}${calculation.reportedAreaSqft?.toLocaleString()} sf · ${calculation.perimeterFeet.toFixed(1)} ft perimeter · closed`
           : calculation.selfIntersecting
             ? "Outline crosses itself — revise the walls"
             : `${calculation.closureGapFeet.toFixed(1)} ft closure gap · area pending`}
       </Text>
-      {draft.areas.length > 1 ? <Action title="Remove selected area" danger secondary onPress={removeArea} /> : null}
+      {draft.areas.length > 1 ? <Action title={`Remove selected ${selectedArea.glaTreatment === "deduction" ? "cutout" : "area"}`} danger secondary onPress={removeArea} /> : null}
 
       <Text style={styles.sectionTitle}>Room markers and photo labels</Text>
       <Text style={styles.help}>Tap a room marker to make it the active photo label. With a room selected, tap inside the sketch to reposition it.</Text>
@@ -658,6 +809,7 @@ const styles = StyleSheet.create({
   title: { color: "#183f31", fontSize: 25, fontWeight: "800" },
   sectionTitle: { color: "#183f31", fontSize: 18, fontWeight: "800", marginTop: 8 },
   areaTotal: { backgroundColor: "#e8f1ed", borderRadius: 18, color: "#1d5a43", fontWeight: "800", paddingHorizontal: 11, paddingVertical: 7 },
+  glaBreakdown: { backgroundColor: "#f2f6f4", borderRadius: 8, color: "#365b4c", fontSize: 12, fontWeight: "700", padding: 8, textAlign: "center" },
   help: { color: "#617069", fontSize: 13, lineHeight: 19 },
   label: { color: "#33443d", fontSize: 13, fontWeight: "700", marginTop: 3 },
   input: { backgroundColor: "white", borderColor: "#d8dfda", borderRadius: 9, borderWidth: 1, minHeight: 44, paddingHorizontal: 11, paddingVertical: 9 },
@@ -687,9 +839,16 @@ const styles = StyleSheet.create({
   actionSecondaryText: { color: "#1d5a43" },
   disabled: { opacity: 0.42 },
   pressed: { opacity: 0.8 },
-  canvas: { alignSelf: "center", backgroundColor: "#fbfcfb", borderColor: "#cdd9d2", borderRadius: 12, borderWidth: 1, height: CANVAS_HEIGHT, overflow: "hidden", width: CANVAS_WIDTH },
+  canvas: { alignSelf: "center", backgroundColor: "#fbfcfb", borderColor: "#cdd9d2", borderRadius: 12, borderWidth: 1, overflow: "hidden" },
+  canvasPlacing: { backgroundColor: "#fffaf2", borderColor: "#d67b2f", borderWidth: 2 },
   canvasEmpty: { color: "#7b8983", left: 30, position: "absolute", right: 30, textAlign: "center", top: 115 },
   wall: { backgroundColor: "#183f31", height: 3, position: "absolute" },
+  wallMuted: { opacity: 0.58 },
+  deductionWall: { backgroundColor: "transparent", borderColor: "#9a5426", borderStyle: "dashed", borderTopWidth: 3, height: 0 },
+  wallAnchor: { backgroundColor: "#d67b2f", borderColor: "white", borderRadius: 5, borderWidth: 2, height: 10, position: "absolute", width: 10 },
+  placementBanner: { alignSelf: "center", backgroundColor: "#fff0d7", borderRadius: 7, color: "#7a4617", fontSize: 11, fontWeight: "800", paddingHorizontal: 8, paddingVertical: 5, position: "absolute", top: 8 },
+  areaLabel: { backgroundColor: "rgba(255,255,255,0.9)", borderRadius: 4, color: "#183f31", fontSize: 10, fontWeight: "800", paddingHorizontal: 3, position: "absolute", textAlign: "center", width: 110 },
+  deductionAreaLabel: { backgroundColor: "rgba(255,247,237,0.92)", color: "#8b4b22" },
   closureGuide: { height: 2, opacity: 0.55, position: "absolute" },
   closureGuideProjected: { backgroundColor: "#d67b2f" },
   closureGuideStart: { backgroundColor: "#1d8a5b" },
@@ -702,6 +861,8 @@ const styles = StyleSheet.create({
   closureDotStart: { backgroundColor: "#1d8a5b" },
   closureHelp: { backgroundColor: "#fff7e7", borderRadius: 8, color: "#714a14", fontSize: 12, fontWeight: "700", lineHeight: 18, padding: 9 },
   dimension: { backgroundColor: "#fbfcfb", color: "#456457", fontSize: 10, fontWeight: "700", paddingHorizontal: 2, position: "absolute", width: 42 },
+  deductionDimension: { backgroundColor: "#fff7ed", color: "#8b4b22" },
+  deductionNotice: { backgroundColor: "#fff7ed", borderRadius: 8, color: "#8b4b22", fontSize: 12, fontWeight: "700", lineHeight: 18, padding: 9 },
   roomPin: { alignItems: "center", backgroundColor: "#e8f1ed", borderColor: "#1d5a43", borderRadius: 13, borderWidth: 1, height: 28, justifyContent: "center", paddingHorizontal: 5, position: "absolute", width: 60 },
   roomPinSelected: { backgroundColor: "#1d5a43" },
   roomPinText: { color: "#1d5a43", fontSize: 9, fontWeight: "800" },

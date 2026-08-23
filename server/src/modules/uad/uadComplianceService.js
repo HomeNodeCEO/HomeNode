@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
+import { validateAppendixH1FindingRuleIds } from "./appendixH.js";
 import { parseUadComplianceResponse } from "./uadComplianceClient.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
@@ -221,6 +222,8 @@ export async function runUadCompliance(
     if (xmlArtifact.checksum_sha256 !== requestChecksum) throw new Error("uad_compliance_xml_checksum_mismatch");
     const response = await providerClient.submitXml(downloaded.body, { correlationId: requestCorrelationId });
     const findings = parseUadComplianceResponse(response);
+    const catalogDrift = validateAppendixH1FindingRuleIds(findings);
+    if (!catalogDrift.current) throw new Error("uad_compliance_rule_catalog_drift");
     const fatalCount = findings.filter((finding) => finding.severity === "fatal").length;
     const warningCount = findings.length - fatalCount;
     const status = response.ok ? (fatalCount ? "failed" : "passed") : "error";

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 import { getUadMigrationManifest } from "../src/database/uadMigrations.js";
+import { APPENDIX_H1_RULE_IDS } from "../src/modules/uad/appendixH.js";
 import {
   buildUadOperationalReadiness,
   createCachedUadReadinessLoader,
@@ -21,8 +22,19 @@ function readyDatabase(overrides = {}) {
     checksum_mismatch_count: 0,
     latest_expected_migration: "20260925_appraisal_delivery_hub.sql",
     release_current: true,
-    required_relation_count: 10,
+    required_relation_count: 11,
     missing_relation_count: 0,
+    appendix_h_version: "1.5",
+    appendix_h_expected_rule_count: 728,
+    appendix_h_cataloged_rule_count: 728,
+    appendix_h_missing_rule_count: 0,
+    appendix_h_unknown_rule_count: 0,
+    appendix_h_reference_only_rule_count: 345,
+    appendix_h_mapped_unverified_rule_count: 383,
+    appendix_h_locally_verified_rule_count: 0,
+    appendix_h_catalog_complete: true,
+    appendix_h_local_gse_equivalence_complete: false,
+    gse_equivalence_claimed: false,
     error_code: null,
     ...overrides,
   };
@@ -146,6 +158,9 @@ test("checks applied migration checksums, current release, and required relation
       if (sql.includes("app.schema_migrations")) return { rows: manifest };
       if (sql.includes("uad_ref.specification_releases")) return { rows: [{ release_current: true }] };
       if (sql.includes("to_regclass")) return { rows: [{ missing_count: 0 }] };
+      if (sql.includes("uad_ref.compliance_rules")) return {
+        rows: APPENDIX_H1_RULE_IDS.map((rule_id) => ({ rule_id, local_evaluation_status: "reference_only" })),
+      };
       throw new Error("unexpected query");
     },
   };
@@ -160,7 +175,8 @@ test("checks applied migration checksums, current release, and required relation
   assert.equal(readiness.ok, true);
   assert.equal(readiness.checks.database.expected_migration_count, manifest.length);
   assert.equal(readiness.checks.database.applied_migration_count, manifest.length);
-  assert.equal(queries.length, 4);
+  assert.equal(queries.length, 5);
+  assert.equal(readiness.checks.database.appendix_h_catalog_complete, true);
 });
 
 test("maps schema-query failures to a stable public error code", async () => {
@@ -194,7 +210,11 @@ test("coalesces concurrent public readiness probes and caches the result briefly
       if (sql === "SELECT 1 AS ok") return { rows: [{ ok: 1 }] };
       if (sql.includes("app.schema_migrations")) return { rows: manifest };
       if (sql.includes("uad_ref.specification_releases")) return { rows: [{ release_current: true }] };
-      return { rows: [{ missing_count: 0 }] };
+      if (sql.includes("to_regclass")) return { rows: [{ missing_count: 0 }] };
+      return { rows: APPENDIX_H1_RULE_IDS.map((rule_id) => ({
+        rule_id,
+        local_evaluation_status: "reference_only",
+      })) };
     },
   };
   const load = createCachedUadReadinessLoader(pool, {
@@ -206,10 +226,27 @@ test("coalesces concurrent public readiness probes and caches the result briefly
 
   const [first, concurrent] = await Promise.all([load(), load()]);
   assert.equal(first, concurrent);
-  assert.equal(queries, 4);
+  assert.equal(queries, 5);
   assert.equal(await load(), first);
-  assert.equal(queries, 4);
+  assert.equal(queries, 5);
   currentTime += 1_001;
   await load();
-  assert.equal(queries, 8);
+  assert.equal(queries, 10);
+});
+
+test("fails closed when the current Appendix H catalog is incomplete", () => {
+  const readiness = buildUadOperationalReadiness({
+    enabled: true,
+    storage: { provider: "r2", configured: true },
+    verifier: { configured: true },
+    compliance: { enabled: false, providers: {} },
+    database: readyDatabase({
+      ready: false,
+      appendix_h_cataloged_rule_count: 727,
+      appendix_h_missing_rule_count: 1,
+      appendix_h_catalog_complete: false,
+    }),
+  });
+  assert.equal(readiness.ok, false);
+  assert.ok(readiness.blockers.includes("uad_appendix_h_catalog_incomplete"));
 });

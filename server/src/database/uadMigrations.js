@@ -46,6 +46,7 @@ const MIGRATIONS = Object.freeze([
   "20260923_uad_system_package.sql",
   "20260924_uad_compliance_api.sql",
   "20260925_appraisal_delivery_hub.sql",
+  "20260926_uad_appendix_h1_v1_5.sql",
 ]);
 export const UAD_MIGRATION_NAMES = MIGRATIONS;
 const ADVISORY_LOCK_KEY = 3_603_600_816;

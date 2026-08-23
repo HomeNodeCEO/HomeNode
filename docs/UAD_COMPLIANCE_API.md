@@ -36,7 +36,7 @@ Underwriter acceptance.
 | Layer | HomeNode can run without GSE credentials | What it proves |
 | --- | --- | --- |
 | Sales-rich fixture gate | Yes | The synthetic SFR has at least three settled sales, a verified comparable photo for each sale, nonzero adjustments, recomputed net and adjusted prices, comparable weights, an indicated value, and sales/final reconciliation. |
-| HomeNode local rules | Yes | The checked-in local rule catalog passed. Evidence reports the number of distinct official `UAD####` rule IDs represented locally against the 709 published URAR rules. Partial local coverage is never labeled a full Appendix H replica. |
+| HomeNode local rules | Yes | The checked-in source catalog contains all 728 active Appendix H-1 v1.5 URAR rule IDs. Local execution is reported separately as `reference_only`, `mapped_unverified`, or `locally_verified`; catalog completeness is never labeled GSE-equivalent execution. |
 | Official GSE subschema | Yes | The XML is well formed and valid against the pinned official XSD/subschema. This does not execute every Appendix H rule. |
 | Fannie/Freddie Compliance API | No | The applicable GSE evaluated the exact XML for Appendix H completeness, validity, format, and reasonableness in the assigned nonproduction or production environment. |
 | UCDP and CU/LCA | No | The lender delivery channel accepted the package and returned its separate submission, eligibility, risk, or appraisal-quality feedback. The Compliance API does not provide those results. |

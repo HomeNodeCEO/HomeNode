@@ -1,0 +1,59 @@
+name: UAD GSE pre-onboarding readiness
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "server/src/modules/uad/**"
+      - "server/migrations/**"
+      - "server/scripts/verifyUadPreOnboarding.js"
+      - "server/scripts/verifyUadComplianceConfiguration.js"
+      - "server/test/uadAppendixH.test.js"
+      - "server/test/uadComplianceCertification.test.js"
+      - "docs/UAD_GSE_ONBOARDING_PACKET.md"
+      - ".github/workflows/uad-pre-onboarding.yml"
+  push:
+    branches: [main]
+    paths:
+      - "server/src/modules/uad/**"
+      - "server/migrations/**"
+      - "server/scripts/verifyUadPreOnboarding.js"
+      - "server/scripts/verifyUadComplianceConfiguration.js"
+      - "server/test/uadAppendixH.test.js"
+      - "server/test/uadComplianceCertification.test.js"
+      - "docs/UAD_GSE_ONBOARDING_PACKET.md"
+      - ".github/workflows/uad-pre-onboarding.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    name: Appendix H, credential guards, and UCA harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Verify disabled credential-safe configuration
+        run: npm run --silent verify:uad:compliance-config
+      - name: Verify pre-onboarding evidence
+        run: npm run --silent verify:uad:pre-onboarding | tee uad-pre-onboarding.json
+      - name: Run focused conformance tests
+        run: node --test test/uadAppendixH.test.js test/uadComplianceClient.test.js test/uadComplianceCertification.test.js
+      - name: Preserve credential-free evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: uad-pre-onboarding-${{ github.run_id }}
+          path: server/uad-pre-onboarding.json
+          if-no-files-found: warn
+          retention-days: 30

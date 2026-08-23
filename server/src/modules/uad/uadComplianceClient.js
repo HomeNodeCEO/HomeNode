@@ -17,11 +17,35 @@ function requiredHttpsUrl(value) {
   return url.toString();
 }
 
+function allowedHosts(value) {
+  const hosts = new Set();
+  for (const raw of String(value || "").split(",")) {
+    const host = raw.trim().toLowerCase().replace(/\.$/, "");
+    if (!host) continue;
+    if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(host)) {
+      throw new Error("uad_compliance_allowed_host_invalid");
+    }
+    hosts.add(host);
+  }
+  return hosts;
+}
+
+function isProductionEnvironment(value) {
+  return /^(prod|production)$/i.test(String(value || "").trim());
+}
+
 function providerConfig(env, provider) {
   const prefix = provider === "fannie" ? "FANNIE_UAD_COMPLIANCE" : "FREDDIE_UAD_COMPLIANCE";
   const tokenAuthStyle = String(env[`${prefix}_TOKEN_AUTH_STYLE`] || "").trim().toLowerCase();
   if (tokenAuthStyle && !["basic", "body"].includes(tokenAuthStyle)) {
     throw new Error("uad_compliance_token_auth_style_invalid");
+  }
+  const hosts = allowedHosts(env[`${prefix}_ALLOWED_HOSTS`]);
+  const verificationEvidenceSha256 = String(
+    env[`${prefix}_VERIFICATION_EVIDENCE_SHA256`] || "",
+  ).trim().toLowerCase();
+  if (verificationEvidenceSha256 && !/^[0-9a-f]{64}$/.test(verificationEvidenceSha256)) {
+    throw new Error("uad_compliance_verification_evidence_invalid");
   }
   const config = {
     provider,
@@ -33,11 +57,30 @@ function providerConfig(env, provider) {
     clientSecret: String(env[`${prefix}_CLIENT_SECRET`] || "").trim(),
     scope: String(env[`${prefix}_SCOPE`] || "").trim(),
     tokenAuthStyle,
+    allowedHosts: hosts,
+    verificationEvidenceSha256,
   };
-  config.configured = Boolean(
-    config.enabled && config.environment && config.submitUrl && config.tokenUrl
-    && config.clientId && config.clientSecret && config.tokenAuthStyle,
-  );
+  const blockers = [];
+  if (config.enabled) {
+    if (!config.environment) blockers.push("environment_missing");
+    if (!config.submitUrl) blockers.push("submission_url_missing");
+    if (!config.tokenUrl) blockers.push("token_url_missing");
+    if (!config.clientId) blockers.push("client_id_missing");
+    if (!config.clientSecret) blockers.push("client_secret_missing");
+    if (!config.tokenAuthStyle) blockers.push("token_auth_style_missing");
+    if (!config.allowedHosts.size) blockers.push("allowed_hosts_missing");
+    if (config.submitUrl && !config.allowedHosts.has(new URL(config.submitUrl).hostname.toLowerCase())) {
+      blockers.push("submission_host_not_allowed");
+    }
+    if (config.tokenUrl && !config.allowedHosts.has(new URL(config.tokenUrl).hostname.toLowerCase())) {
+      blockers.push("token_host_not_allowed");
+    }
+    if (isProductionEnvironment(config.environment) && !config.verificationEvidenceSha256) {
+      blockers.push("production_verification_evidence_missing");
+    }
+  }
+  config.blockers = Object.freeze(blockers);
+  config.configured = Boolean(config.enabled && blockers.length === 0);
   return Object.freeze(config);
 }
 
@@ -170,6 +213,7 @@ export function createUadComplianceRegistry(env = process.env, options = {}) {
       enabled: configs[provider].enabled,
       configured: enabled && configs[provider].configured,
       environment: configs[provider].environment || null,
+      blockers: configs[provider].enabled ? configs[provider].blockers : Object.freeze([]),
     })]))),
     getClient(providerValue) {
       const provider = String(providerValue || "").trim().toLowerCase();

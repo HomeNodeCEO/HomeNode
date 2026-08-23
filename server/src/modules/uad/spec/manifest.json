@@ -1,7 +1,7 @@
 {
   "releaseKey": "uad-3.6-2026-08-13-h1.5",
   "uadVersion": "3.6",
-  "capturedOn": "2026-08-16",
+  "capturedOn": "2026-08-22",
   "officialLandingPage": "https://singlefamily.fanniemae.com/delivering/uniform-mortgage-data-program/uniform-appraisal-dataset",
   "runtimeAssets": {
     "deliveryMapping": {
@@ -13,6 +13,17 @@
     "combinedSubschema": {
       "path": "subschema/v1.3/GSE_UAD_3.6.0_v1.3.xsd",
       "sha256": "0bb6650ab465753fe2023be14d414ad6db45820201b7fdee1d90023e49cbf129"
+    },
+    "appendixH1": {
+      "path": "appendix-h1-v1.5.json",
+      "sourceComponent": "Appendix H-1 UAD Compliance Rules",
+      "version": "1.5",
+      "publishedOn": "2026-08-13",
+      "officialRuleCount": 728,
+      "fatalRuleCount": 592,
+      "warningRuleCount": 136,
+      "sourceSha256": "df94cfb44b7460a619786a2e4f8c68ef472b167926ed0a3377ff6fb43ac283e8",
+      "ruleCatalogSha256": "97cf6f4578db06c549e6cd308d090a99ebbca4ed2626d50304d0c1aaf1ed2147"
     }
   },
   "components": [
@@ -70,7 +81,12 @@
       "version": "1.5",
       "url": "https://singlefamily.fanniemae.com/media/document/xlsm/appendix-h1-uad-compliance-rules-urar",
       "fileName": "appendix-h-1-uad-compliance-rules.xlsm",
-      "sha256": "d34fb67a38d074979019ea46d4791256cad225e3ac48086b94d58cf3a0f95a5a"
+      "sha256": "d34fb67a38d074979019ea46d4791256cad225e3ac48086b94d58cf3a0f95a5a",
+      "alternateExecutableSource": {
+        "url": "https://sf.freddiemac.com/docs/xlsx/appendix-h-1-uad-compliance-rules-urar.xlsx",
+        "fileName": "appendix-h-1-uad-compliance-rules-urar.xlsx",
+        "sha256": "df94cfb44b7460a619786a2e4f8c68ef472b167926ed0a3377ff6fb43ac283e8"
+      }
     },
     {
       "name": "UAD 3.6 Subschema",

@@ -49,6 +49,7 @@ test("client-credentials token and XML submission never expose credentials in re
     FANNIE_UAD_COMPLIANCE_CLIENT_SECRET: "client-secret",
     FANNIE_UAD_COMPLIANCE_SCOPE: "uad.validate",
     FANNIE_UAD_COMPLIANCE_TOKEN_AUTH_STYLE: "basic",
+    FANNIE_UAD_COMPLIANCE_ALLOWED_HOSTS: "api.example.test,identity.example.test",
   }, {
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
@@ -70,6 +71,52 @@ test("client-credentials token and XML submission never expose credentials in re
   assert.doesNotMatch(JSON.stringify(result), /client-secret|temporary-token/);
 });
 
+test("requires assigned-host pinning and production verification evidence", () => {
+  const unpinned = createUadComplianceRegistry({
+    UAD_COMPLIANCE_API_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENVIRONMENT: "acpt",
+    FANNIE_UAD_COMPLIANCE_BASE_URL: "https://api.example.test/uad",
+    FANNIE_UAD_COMPLIANCE_TOKEN_URL: "https://identity.example.test/token",
+    FANNIE_UAD_COMPLIANCE_CLIENT_ID: "id",
+    FANNIE_UAD_COMPLIANCE_CLIENT_SECRET: "secret",
+    FANNIE_UAD_COMPLIANCE_TOKEN_AUTH_STYLE: "basic",
+  });
+  assert.equal(unpinned.providers.fannie.configured, false);
+  assert.ok(unpinned.providers.fannie.blockers.includes("allowed_hosts_missing"));
+  assert.ok(unpinned.providers.fannie.blockers.includes("submission_host_not_allowed"));
+
+  const production = createUadComplianceRegistry({
+    UAD_COMPLIANCE_API_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENVIRONMENT: "production",
+    FANNIE_UAD_COMPLIANCE_BASE_URL: "https://api.example.test/uad",
+    FANNIE_UAD_COMPLIANCE_TOKEN_URL: "https://identity.example.test/token",
+    FANNIE_UAD_COMPLIANCE_CLIENT_ID: "id",
+    FANNIE_UAD_COMPLIANCE_CLIENT_SECRET: "secret",
+    FANNIE_UAD_COMPLIANCE_TOKEN_AUTH_STYLE: "basic",
+    FANNIE_UAD_COMPLIANCE_ALLOWED_HOSTS: "api.example.test,identity.example.test",
+  });
+  assert.equal(production.providers.fannie.configured, false);
+  assert.deepEqual(production.providers.fannie.blockers, ["production_verification_evidence_missing"]);
+
+  const verified = createUadComplianceRegistry({
+    UAD_COMPLIANCE_API_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENVIRONMENT: "production",
+    FANNIE_UAD_COMPLIANCE_BASE_URL: "https://api.example.test/uad",
+    FANNIE_UAD_COMPLIANCE_TOKEN_URL: "https://identity.example.test/token",
+    FANNIE_UAD_COMPLIANCE_CLIENT_ID: "id",
+    FANNIE_UAD_COMPLIANCE_CLIENT_SECRET: "secret",
+    FANNIE_UAD_COMPLIANCE_TOKEN_AUTH_STYLE: "basic",
+    FANNIE_UAD_COMPLIANCE_ALLOWED_HOSTS: "api.example.test,identity.example.test",
+    FANNIE_UAD_COMPLIANCE_VERIFICATION_EVIDENCE_SHA256: "a".repeat(64),
+  });
+  assert.equal(verified.providers.fannie.configured, true);
+  assert.deepEqual(verified.providers.fannie.blockers, []);
+  assert.doesNotMatch(JSON.stringify(verified.providers), /secret|api\.example|identity\.example/i);
+});
+
 test("normalizes bounded JSON and XML compliance findings", () => {
   const json = parseUadComplianceResponse({
     content_type: "application/json",
@@ -85,10 +132,10 @@ test("normalizes bounded JSON and XML compliance findings", () => {
 
   const xml = parseUadComplianceResponse({
     content_type: "application/xml",
-    body: "<RESPONSE><FINDING><RuleIdentifier>UAD0002</RuleIdentifier><SeverityType>Warning</SeverityType><MessageText>Review value</MessageText><ReportFieldIdentifier>3.001</ReportFieldIdentifier></FINDING></RESPONSE>",
+    body: "<RESPONSE><FINDING><RuleIdentifier>UAD1008</RuleIdentifier><SeverityType>Warning</SeverityType><MessageText>Review value</MessageText><ReportFieldIdentifier>3.001</ReportFieldIdentifier></FINDING></RESPONSE>",
   });
   assert.deepEqual(xml, [{
-    rule_id: "UAD0002",
+    rule_id: "UAD1008",
     severity: "warning",
     message: "Review value",
     uad_uid: null,

@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import pg from "pg";
 
+import {
+  APPENDIX_H1_MANIFEST,
+  buildAppendixH1Coverage,
+} from "../src/modules/uad/appendixH.js";
 import { signUadWorkfile } from "../src/modules/uad/certifications.js";
 import { getUadEditor } from "../src/modules/uad/editor.js";
 import { generateUadXmlArtifact } from "../src/modules/uad/uadArtifacts.js";
@@ -477,7 +481,7 @@ try {
     process.exitCode = 1;
   } else {
     const officialRuleCoverage = await pool.query(
-      `SELECT count(DISTINCT rule_id)::integer AS count
+      `SELECT rule_id, local_evaluation_status
          FROM uad_ref.compliance_rules
         WHERE release_key = (
           SELECT specification_release_key FROM appraisal.uad_workfiles WHERE id = $1
@@ -485,7 +489,7 @@ try {
           AND rule_id ~ '^UAD[0-9]+$'`,
       [workfileId],
     );
-    const localOfficialRuleCount = Number(officialRuleCoverage.rows[0]?.count || 0);
+    const appendixHCoverage = buildAppendixH1Coverage(officialRuleCoverage.rows);
     const executionDate = new Date().toISOString().slice(0, 10);
     const signature = await signUadWorkfile(pool, workfileId, {
       userId: APPRAISER_ID,
@@ -522,9 +526,13 @@ try {
       validation_scope: {
         home_node_local_engine: "passed",
         official_gse_subschema: "passed",
-        published_urar_appendix_h_rule_count: 709,
-        local_official_rule_id_count: localOfficialRuleCount,
-        full_appendix_h_replica: localOfficialRuleCount === 709,
+        published_urar_appendix_h_rule_count: APPENDIX_H1_MANIFEST.active_rule_count,
+        official_appendix_h_catalog_rule_count: appendixHCoverage.cataloged_rule_count,
+        official_appendix_h_catalog_complete: appendixHCoverage.catalog_complete,
+        reference_only_rule_count: appendixHCoverage.reference_only_rule_count,
+        mapped_unverified_rule_count: appendixHCoverage.mapped_unverified_rule_count,
+        locally_verified_official_rule_count: appendixHCoverage.locally_verified_rule_count,
+        local_gse_equivalence_complete: appendixHCoverage.local_gse_equivalence_complete,
         fannie_uad_compliance_api: "not_executed_credentials_required",
         freddie_uad_compliance_api: "not_executed_credentials_required",
         ucdp_and_collateral_underwriter: "not_executed_lender_submission_required",

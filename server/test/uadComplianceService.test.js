@@ -101,7 +101,7 @@ test("persists a normalized provider run without retaining OAuth credentials", a
     if (sql.includes("SELECT * FROM appraisal.uad_validation_findings")) {
       return { rows: [{
         id: "finding-1",
-        rule_id: "UAD0002",
+        rule_id: "UAD1008",
         severity: "warning",
         uad_uid: null,
         report_field_id: "3.001",
@@ -127,7 +127,7 @@ test("persists a normalized provider run without retaining OAuth credentials", a
           ok: true,
           http_status: 200,
           content_type: "application/json",
-          body: JSON.stringify({ findings: [{ ruleId: "UAD0002", severity: "Warning", message: "Review value", reportFieldId: "3.001" }] }),
+          body: JSON.stringify({ findings: [{ ruleId: "UAD1008", severity: "Warning", message: "Review value", reportFieldId: "3.001" }] }),
           response_checksum_sha256: "a".repeat(64),
           provider_correlation_id: "provider-correlation",
         };
@@ -146,7 +146,7 @@ test("persists a normalized provider run without retaining OAuth credentials", a
   assert.equal(result.status, "passed");
   assert.equal(result.fatal_count, 0);
   assert.equal(result.warning_count, 1);
-  assert.equal(result.findings[0].rule_id, "UAD0002");
+  assert.equal(result.findings[0].rule_id, "UAD1008");
   const exchangeUpdate = calls.find((call) => (
     call.sql.includes("UPDATE appraisal.uad_compliance_exchanges") && call.sql.includes("RETURNING")
   ));

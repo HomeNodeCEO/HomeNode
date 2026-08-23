@@ -1,4 +1,9 @@
 import { getUadMigrationManifest } from "../../database/uadMigrations.js";
+import {
+  APPENDIX_H1_MANIFEST,
+  APPENDIX_H1_RULE_IDS,
+  buildAppendixH1Coverage,
+} from "./appendixH.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 
 const REQUIRED_RELATIONS = Object.freeze([
@@ -12,6 +17,7 @@ const REQUIRED_RELATIONS = Object.freeze([
   "appraisal.delivery_destinations",
   "appraisal.delivery_attempts",
   "uad_ref.fields",
+  "uad_ref.compliance_rule_source_manifests",
 ]);
 
 function providerReadiness(compliance, localDeliveryReady) {
@@ -42,6 +48,7 @@ export function buildUadOperationalReadiness({
   if (database.checksum_mismatch_count > 0) blockers.push("uad_migration_checksum_mismatch");
   if (!database.release_current) blockers.push("uad_release_not_current");
   if (database.missing_relation_count > 0) blockers.push("uad_relations_missing");
+  if (!database.appendix_h_catalog_complete) blockers.push("uad_appendix_h_catalog_incomplete");
   if (!storage?.configured) blockers.push("uad_object_storage_not_configured");
   if (!verifier?.configured) blockers.push("uad_oidc_not_configured");
   if (security.strict && !security.authenticationRequired) {
@@ -104,6 +111,17 @@ export async function getUadOperationalReadiness(pool, options = {}) {
     release_current: false,
     required_relation_count: REQUIRED_RELATIONS.length,
     missing_relation_count: REQUIRED_RELATIONS.length,
+    appendix_h_version: APPENDIX_H1_MANIFEST.version,
+    appendix_h_expected_rule_count: APPENDIX_H1_MANIFEST.active_rule_count,
+    appendix_h_cataloged_rule_count: 0,
+    appendix_h_missing_rule_count: APPENDIX_H1_MANIFEST.active_rule_count,
+    appendix_h_unknown_rule_count: 0,
+    appendix_h_reference_only_rule_count: 0,
+    appendix_h_mapped_unverified_rule_count: 0,
+    appendix_h_locally_verified_rule_count: 0,
+    appendix_h_catalog_complete: false,
+    appendix_h_local_gse_equivalence_complete: false,
+    gse_equivalence_claimed: false,
     error_code: null,
   };
 
@@ -137,10 +155,28 @@ export async function getUadOperationalReadiness(pool, options = {}) {
       [REQUIRED_RELATIONS],
     );
     database.missing_relation_count = Number(relations.rows[0]?.missing_count ?? REQUIRED_RELATIONS.length);
+
+    const appendixHRows = await pool.query(
+      `SELECT rule_id, local_evaluation_status
+         FROM uad_ref.compliance_rules
+        WHERE release_key = $1
+          AND rule_id = ANY($2::text[])`,
+      [CURRENT_UAD_RELEASE_KEY, APPENDIX_H1_RULE_IDS],
+    );
+    const appendixHCoverage = buildAppendixH1Coverage(appendixHRows.rows);
+    database.appendix_h_cataloged_rule_count = appendixHCoverage.cataloged_rule_count;
+    database.appendix_h_missing_rule_count = appendixHCoverage.missing_rule_count;
+    database.appendix_h_unknown_rule_count = appendixHCoverage.unknown_rule_count;
+    database.appendix_h_reference_only_rule_count = appendixHCoverage.reference_only_rule_count;
+    database.appendix_h_mapped_unverified_rule_count = appendixHCoverage.mapped_unverified_rule_count;
+    database.appendix_h_locally_verified_rule_count = appendixHCoverage.locally_verified_rule_count;
+    database.appendix_h_catalog_complete = appendixHCoverage.catalog_complete;
+    database.appendix_h_local_gse_equivalence_complete = appendixHCoverage.local_gse_equivalence_complete;
     database.ready = database.missing_migration_count === 0
       && database.checksum_mismatch_count === 0
       && database.release_current
-      && database.missing_relation_count === 0;
+      && database.missing_relation_count === 0
+      && database.appendix_h_catalog_complete;
   } catch {
     database.error_code = database.connected
       ? "uad_database_schema_unavailable"

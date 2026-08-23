@@ -41,6 +41,7 @@ test("fuzzy address audit recognizes suite and number variants without writes", 
       }
       if (statement.includes("JOIN LATERAL")) {
         candidateQuerySeen = true;
+        assert.match(statement, /candidate\.city_key = request\.city_key/);
         const requested = JSON.parse(params[0]);
         assert.deepEqual(requested[0], {
           request_id: "51992",
@@ -288,6 +289,7 @@ test("one-character street typos can auto-resolve only with unique locality evid
 });
 
 test("guarded fuzzy batch remains read-only without the explicit write opt-in", async () => {
+  let stratifiedQuerySeen = false;
   const pool = {
     async query(sql) {
       const statement = String(sql);
@@ -296,6 +298,7 @@ test("guarded fuzzy batch remains read-only without the explicit write opt-in", 
         statement.includes("CREATE TABLE IF NOT EXISTS app.account_address_aliases")
       ) return { rows: [], rowCount: 0 };
       if (statement.includes("ORDER BY source.close_date DESC NULLS LAST")) {
+        stratifiedQuerySeen = statement.includes("WITH ranked_sources");
         return {
           rows: [{
             source_record_id: 44,
@@ -337,10 +340,12 @@ test("guarded fuzzy batch remains read-only without the explicit write opt-in", 
 
   const result = await runFuzzySalesAddressReconciliationBatch(pool, {
     batchSize: 20,
+    stratified: true,
     dryRun: true,
   });
   assert.equal(result.dry_run, true);
   assert.equal(result.writes_performed, 0);
   assert.equal(result.auto_eligible, 1);
   assert.equal(result.resolved, 0);
+  assert.equal(stratifiedQuerySeen, true);
 });

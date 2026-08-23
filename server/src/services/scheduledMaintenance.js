@@ -31,6 +31,7 @@ import {
   processPendingAssignmentDocuments,
 } from "./assignmentDocuments.js";
 import { runSalesAutoReconciliationBatch } from "./salesAutoReconciliation.js";
+import { runFuzzySalesAddressReconciliationBatch } from "./salesFuzzyAddressAudit.js";
 import {
   getAccountAddressAliasStatus,
   seedAccountAddressAliasBatch,
@@ -299,9 +300,57 @@ async function runSalesReconciliationTask(pool, options) {
     totals.resolved += Number(result.resolved || 0);
     if (!result.resolved) break;
   }
+  const fuzzyMaximumBatches = boundedInteger(
+    options.salesFuzzyReconciliationMaximumBatches,
+    3,
+    1,
+    20,
+  );
+  const fuzzyBatchSize = boundedInteger(
+    options.salesFuzzyReconciliationBatchSize,
+    100,
+    1,
+    500,
+  );
+  const fuzzyCandidatesPerSale = boundedInteger(
+    options.salesFuzzyCandidatesPerSale,
+    250,
+    10,
+    1_000,
+  );
+  const fuzzyTotals = {
+    batches: 0,
+    inspected: 0,
+    highConfidence: 0,
+    review: 0,
+    lowConfidence: 0,
+    autoEligible: 0,
+    resolved: 0,
+  };
+  for (
+    let batch = 0;
+    batch < fuzzyMaximumBatches && Date.now() < options.deadline;
+    batch += 1
+  ) {
+    const result = await runFuzzySalesAddressReconciliationBatch(pool, {
+      batchSize: fuzzyBatchSize,
+      candidatesPerSale: fuzzyCandidatesPerSale,
+      stratified: true,
+      dryRun: false,
+    });
+    fuzzyTotals.batches += 1;
+    fuzzyTotals.inspected += Number(result.sample_size || 0);
+    fuzzyTotals.highConfidence += Number(result.high_confidence || 0);
+    fuzzyTotals.review += Number(result.review || 0);
+    fuzzyTotals.lowConfidence += Number(result.low_confidence || 0);
+    fuzzyTotals.autoEligible += Number(result.auto_eligible || 0);
+    fuzzyTotals.resolved += Number(result.resolved || 0);
+    if (!result.resolved) break;
+  }
   return {
     address_alias_seed: aliasTotals,
     address_alias_status: await getAccountAddressAliasStatus(pool),
+    fuzzy_address_reconciliation: fuzzyTotals,
     ...totals,
   };
 }
@@ -391,6 +440,9 @@ export async function runScheduledMaintenance(pool, {
   salesReconciliationBatchSize = 500,
   salesAddressAliasMaximumBatches = 100,
   salesAddressAliasBatchSize = 10_000,
+  salesFuzzyReconciliationMaximumBatches = 3,
+  salesFuzzyReconciliationBatchSize = 100,
+  salesFuzzyCandidatesPerSale = 250,
   fetchConcurrency = 3,
   logger = console,
   objectStorage = null,
@@ -453,6 +505,9 @@ export async function runScheduledMaintenance(pool, {
       salesReconciliationBatchSize,
       salesAddressAliasMaximumBatches,
       salesAddressAliasBatchSize,
+      salesFuzzyReconciliationMaximumBatches,
+      salesFuzzyReconciliationBatchSize,
+      salesFuzzyCandidatesPerSale,
       fetchConcurrency: boundedInteger(fetchConcurrency, 3, 1, 8),
       logger,
       objectStorage,

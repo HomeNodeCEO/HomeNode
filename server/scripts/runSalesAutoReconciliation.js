@@ -71,6 +71,7 @@ try {
         10,
         1_000,
       ),
+      stratified: fuzzyStratified,
       // A fuzzy save requires two explicit flags. --fuzzy-apply alone is an
       // evidence-only rehearsal and cannot open a write transaction.
       dryRun: !apply,

@@ -81,6 +81,18 @@ try {
       "sales-address-alias-batch-size",
       process.env.MAINTENANCE_SALES_ADDRESS_ALIAS_BATCH_SIZE || "10000",
     ),
+    salesFuzzyReconciliationMaximumBatches: option(
+      "sales-fuzzy-reconciliation-maximum-batches",
+      process.env.MAINTENANCE_SALES_FUZZY_RECONCILIATION_MAX_BATCHES || "3",
+    ),
+    salesFuzzyReconciliationBatchSize: option(
+      "sales-fuzzy-reconciliation-batch-size",
+      process.env.MAINTENANCE_SALES_FUZZY_RECONCILIATION_BATCH_SIZE || "100",
+    ),
+    salesFuzzyCandidatesPerSale: option(
+      "sales-fuzzy-candidates-per-sale",
+      process.env.MAINTENANCE_SALES_FUZZY_CANDIDATES_PER_SALE || "250",
+    ),
     hazardBatchSize: option(
       "hazard-batch-size",
       process.env.MAINTENANCE_HAZARD_BATCH_SIZE || "200",

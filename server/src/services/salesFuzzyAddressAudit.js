@@ -132,6 +132,10 @@ async function loadAccountAliasCandidates(pool, requests, candidatesPerSale) {
        FROM app.account_address_aliases candidate
        WHERE candidate.is_current = true
          AND split_part(candidate.address_key, ' ', 1) = request.house_number
+         AND (
+           request.city_key IS NULL
+           OR candidate.city_key = request.city_key
+         )
        ORDER BY
          (candidate.postal_code5 = request.postal_code5) DESC NULLS LAST,
          (candidate.city_key = request.city_key) DESC NULLS LAST,
@@ -468,18 +472,19 @@ export function selectFuzzyAutoResolutions(sample, {
 export async function runFuzzySalesAddressReconciliationBatch(pool, {
   batchSize = 100,
   candidatesPerSale = 250,
+  stratified = false,
   dryRun = true,
 } = {}) {
   const audit = await auditFuzzySalesAddressCandidates(pool, {
     sampleSize: boundedInteger(batchSize, 100, 1, 500),
     candidatesPerSale,
-    stratified: false,
+    stratified: Boolean(stratified),
   });
   const decisions = selectFuzzyAutoResolutions(audit.sample);
   if (dryRun || !decisions.eligible.length) {
     return {
       ...audit,
-      dry_run: true,
+      dry_run: Boolean(dryRun),
       auto_eligible: decisions.eligible.length,
       rejected: decisions.rejected.length,
       resolved: 0,

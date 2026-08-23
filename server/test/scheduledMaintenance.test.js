@@ -105,6 +105,9 @@ test("sales maintenance defaults can drain an import-sized backlog while staying
   assert.equal(result.ok, true);
   assert.equal(optionsByTask.get("sales-reconciliation").salesReconciliationMaximumBatches, 10);
   assert.equal(optionsByTask.get("sales-reconciliation").salesReconciliationBatchSize, 500);
+  assert.equal(optionsByTask.get("sales-reconciliation").salesFuzzyReconciliationMaximumBatches, 3);
+  assert.equal(optionsByTask.get("sales-reconciliation").salesFuzzyReconciliationBatchSize, 100);
+  assert.equal(optionsByTask.get("sales-reconciliation").salesFuzzyCandidatesPerSale, 250);
   assert.equal(optionsByTask.get("locations").locationMaximumBatches, 100);
   assert.equal(optionsByTask.get("locations").locationBatchSize, 100);
   assert.equal(optionsByTask.get("locations").locationSeedLimit, 10_000);

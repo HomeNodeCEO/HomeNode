@@ -217,6 +217,7 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.sales_source_media/);
   assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_sales_media_summary/);
   assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_account_housing_profiles/);
+  assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_sales_enriched/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.owner_summary/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.legal_description_current/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.exemptions_summary/);

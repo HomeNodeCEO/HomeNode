@@ -365,9 +365,13 @@ try {
       concessions text,
       source text,
       source_record_id bigint REFERENCES core.sales_source_records(id),
+      loaded_at timestamptz NOT NULL DEFAULT now(),
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+
+    ALTER TABLE core.sales
+      ADD COLUMN IF NOT EXISTS loaded_at timestamptz NOT NULL DEFAULT now();
 
     CREATE UNIQUE INDEX IF NOT EXISTS sales_source_record_unique_idx
       ON core.sales (source_record_id)
@@ -396,6 +400,166 @@ try {
              source_record_reference, observed_at, confidence,
              'verified_override'::text AS profile_source
       FROM core.account_housing_profiles;
+
+    CREATE OR REPLACE VIEW core.v_sales_enriched AS
+      WITH parcel_rollup AS (
+        SELECT
+          source_record_id,
+          count(DISTINCT source_position) AS provided_parcel_fields,
+          count(DISTINCT account_id) FILTER (WHERE account_id IS NOT NULL)
+            AS resolved_account_count,
+          jsonb_agg(
+            jsonb_build_object(
+              'source_position', source_position,
+              'parcel_sequence', parcel_sequence,
+              'parcel_role', parcel_role,
+              'parcel_number_raw', parcel_number_raw,
+              'parcel_number_normalized', parcel_number_normalized,
+              'account_id', account_id,
+              'match_method', match_method,
+              'is_resolved', is_resolved
+            )
+            ORDER BY source_position, parcel_sequence
+          ) AS linked_parcels
+        FROM core.sale_parcels
+        GROUP BY source_record_id
+      )
+      SELECT
+        sale.id AS sale_id,
+        source_record.id AS source_record_id,
+        COALESCE(NULLIF(btrim(sale.account_id), ''), source_record.primary_account_id)
+          AS primary_account_id,
+        account.county,
+        COALESCE(
+          NULLIF(btrim(sale.address), ''),
+          NULLIF(btrim(account.address), ''),
+          NULLIF(btrim(source_record.raw_payload ->> 'Address'), ''),
+          NULLIF(btrim(source_record.raw_payload ->> 'UnparsedAddress'), ''),
+          NULLIF(btrim(source_record.raw_payload ->> 'PropertyAddress'), ''),
+          NULLIF(btrim(source_record.raw_payload ->> 'StreetAddress'), '')
+        ) AS address,
+        COALESCE(
+          NULLIF(btrim(sale.city), ''),
+          NULLIF(btrim(account.city), ''),
+          NULLIF(btrim(source_record.raw_payload ->> 'City'), '')
+        ) AS city,
+        sale.state,
+        COALESCE(
+          NULLIF(btrim(sale.zip), ''),
+          NULLIF(btrim(account.postal_code), ''),
+          NULLIF(btrim(source_record.raw_payload ->> 'PostalCode'), ''),
+          NULLIF(btrim(source_record.raw_payload ->> 'Zip'), '')
+        ) AS zip,
+        COALESCE(sale.closing_date, source_record.close_date) AS closing_date,
+        COALESCE(sale.sale_price, source_record.current_price) AS sale_price,
+        COALESCE(sale.days_on_market, source_record.days_on_market) AS days_on_market,
+        COALESCE(sale.concessions, source_record.seller_contributions::text) AS concessions,
+        source_record.seller_contributions,
+        source_record.listing_contract_date,
+        source_record.buyer_financing,
+        source_record.mls_status,
+        COALESCE(source_record.source_name, sale.source) AS source,
+        source_record.source_filename,
+        source_record.source_files,
+        source_record.source_row_number,
+        source_record.source_record_hash,
+        source_record.transaction_fingerprint,
+        COALESCE(
+          source_record.match_status,
+          CASE
+            WHEN NULLIF(btrim(sale.account_id), '') IS NULL THEN 'unmatched'
+            ELSE 'exact'
+          END
+        ) AS match_status,
+        COALESCE(source_record.has_multiple_parcel_numbers, false)
+          AS has_multiple_parcel_numbers,
+        COALESCE(source_record.multi_parcel_status, 'single') AS multi_parcel_status,
+        COALESCE(
+          source_record.has_unresolved_parcel,
+          NULLIF(btrim(sale.account_id), '') IS NULL
+        ) AS has_unresolved_parcel,
+        COALESCE(
+          source_record.requires_additional_review,
+          NULLIF(btrim(sale.account_id), '') IS NULL
+        ) AS requires_additional_review,
+        COALESCE(source_record.data_quality_flags, '[]'::jsonb) AS data_quality_flags,
+        COALESCE(parcel_rollup.provided_parcel_fields, 0) AS provided_parcel_fields,
+        COALESCE(parcel_rollup.resolved_account_count, 0) AS resolved_account_count,
+        COALESCE(parcel_rollup.linked_parcels, '[]'::jsonb) AS linked_parcels,
+        source_record.bedrooms_total AS mls_bedrooms_total,
+        source_record.bathrooms_total_integer AS mls_bathrooms_total_integer,
+        source_record.bathrooms_full AS mls_bathrooms_full,
+        source_record.bathrooms_half AS mls_bathrooms_half,
+        source_record.living_area AS mls_living_area,
+        source_record.lot_size_area AS mls_lot_size_area,
+        source_record.year_built AS mls_year_built,
+        source_record.garage_spaces AS mls_garage_spaces,
+        source_record.garage_yn AS mls_garage_yn,
+        source_record.pool_yn AS mls_pool_yn,
+        source_record.ratio_current_price_by_living_area,
+        source_record.ratio_close_price_by_list_price,
+        source_record.ratio_close_price_by_original_list_price,
+        source_record.ratio_close_price_by_living_area,
+        improvement.bedroom_count AS cad_bedroom_count,
+        improvement.bath_count AS cad_bath_count,
+        improvement.baths_full AS cad_baths_full,
+        improvement.baths_half AS cad_baths_half,
+        improvement.living_area_sqft AS cad_living_area_sqft,
+        improvement.total_area_sqft AS cad_total_area_sqft,
+        improvement.year_built AS cad_year_built,
+        improvement.effective_year_built AS cad_effective_year_built,
+        improvement.stories AS cad_stories,
+        improvement.pool AS cad_pool,
+        improvement.building_class AS cad_building_class,
+        value_current.land_value AS cad_land_value,
+        value_current.improvement_value AS cad_improvement_value,
+        value_current.market_value AS cad_market_value,
+        source_record.raw_payload,
+        COALESCE(source_record.loaded_at, sale.loaded_at) AS loaded_at,
+        COALESCE(source_record.record_type, 'closed_sale') AS record_type,
+        COALESCE(
+          NULLIF(btrim(source_record.structural_style), ''),
+          housing_profile.structural_style
+        ) AS structural_style,
+        CASE
+          WHEN NULLIF(btrim(source_record.structural_style), '') IS NOT NULL
+            THEN source_record.housing_type
+          ELSE housing_profile.housing_type
+        END AS housing_type,
+        CASE
+          WHEN NULLIF(btrim(source_record.structural_style), '') IS NOT NULL
+            THEN COALESCE(source_record.attachment_type, 'unknown')
+          ELSE COALESCE(housing_profile.attachment_type, 'unknown')
+        END AS attachment_type,
+        COALESCE(
+          NULLIF(btrim(source_record.architectural_style), ''),
+          housing_profile.architectural_style
+        ) AS architectural_style
+      FROM core.sales sale
+      FULL OUTER JOIN core.sales_source_records source_record
+        ON source_record.id = sale.source_record_id
+      LEFT JOIN parcel_rollup
+        ON parcel_rollup.source_record_id = source_record.id
+      LEFT JOIN core.accounts account
+        ON account.account_id = COALESCE(
+          NULLIF(btrim(sale.account_id), ''),
+          source_record.primary_account_id
+        )
+      LEFT JOIN core.v_account_housing_profiles housing_profile
+        ON housing_profile.account_id = COALESCE(
+          NULLIF(btrim(sale.account_id), ''),
+          source_record.primary_account_id
+        )
+      LEFT JOIN core.primary_improvements improvement
+        ON improvement.account_id = COALESCE(
+          NULLIF(btrim(sale.account_id), ''),
+          source_record.primary_account_id
+        )
+      LEFT JOIN core.value_summary_current value_current
+        ON value_current.account_id = COALESCE(
+          NULLIF(btrim(sale.account_id), ''),
+          source_record.primary_account_id
+        );
 
     CREATE TABLE IF NOT EXISTS core.owner_summary (
       account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,

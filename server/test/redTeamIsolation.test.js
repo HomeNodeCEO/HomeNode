@@ -12,6 +12,8 @@ import {
 const serverSource = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
 const redTeamBaseSource = fs.readFileSync(new URL("../scripts/prepareRedteamBaseDatabase.js", import.meta.url), "utf8");
 const redTeamSalesFixtureSource = fs.readFileSync(new URL("../src/security/redTeamSalesFixtures.js", import.meta.url), "utf8");
+const pairedSalesSource = fs.readFileSync(new URL("../src/services/pairedSalesAnalysis.js", import.meta.url), "utf8");
+const regressionSource = fs.readFileSync(new URL("../src/services/regressionAnalysis.js", import.meta.url), "utf8");
 const redTeamFixturesSource = fs.readFileSync(new URL("../scripts/prepareRedteamDatabase.js", import.meta.url), "utf8");
 const redTeamIntegrityWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/uad-redteam-integrity.yml", import.meta.url),
@@ -220,6 +222,12 @@ test("red-team bootstrap and account reads preserve optional sales availability"
     serverSource,
     /sale\.mls_pool_yn,[\s\S]*?lower\(btrim\(sale\.cad_pool::text\)\)[\s\S]*?AS pool_yn/,
   );
+  for (const analysisSource of [pairedSalesSource, regressionSource]) {
+    assert.match(
+      analysisSource,
+      /sale\.mls_pool_yn,[\s\S]*?lower\(btrim\(sale\.cad_pool::text\)\)[\s\S]*?AS pool_yn/,
+    );
+  }
   assert.match(
     serverSource,
     /getMarketContext\(pool, subjectAccountId, \{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,

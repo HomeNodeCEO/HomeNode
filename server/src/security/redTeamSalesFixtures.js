@@ -35,6 +35,8 @@ function comparableFixture(index) {
     + (pool ? 22_000 : 0)
     + (index % 7) * 3_000;
   const salePrice = basePrice + (ordinal === REDTEAM_COMPARABLE_COUNT ? 180_000 : 0);
+  const landValue = Math.round(siteSize * (7 + (index % 6) * 0.4));
+  const improvementValue = Math.round(basePrice * (0.76 + (index % 4) * 0.02));
   const gridRow = Math.floor(index / 6) - 2.5;
   const gridColumn = (index % 6) - 2.5;
   const listingId = `RT-COMP-${String(ordinal).padStart(4, "0")}`;
@@ -61,6 +63,9 @@ function comparableFixture(index) {
     pool,
     close_date: closeDate(index),
     sale_price: salePrice,
+    land_value: landValue,
+    improvement_value: improvementValue,
+    market_value: landValue + improvementValue,
     days_on_market: 8 + (index * 7) % 73,
     listing_id: listingId,
     listing_key: `RT-LISTING-KEY-${String(ordinal).padStart(4, "0")}`,
@@ -260,6 +265,25 @@ async function seedAccounts(pool, fixtures) {
      )
      ON CONFLICT (account_id, tax_year, line_number) DO UPDATE SET
        zoning = EXCLUDED.zoning, area_sqft = EXCLUDED.area_sqft`,
+    [payload],
+  );
+  await pool.query(
+    `INSERT INTO core.value_summary_current (
+       account_id, certified_year, market_value, improvement_value,
+       land_value, capped_value
+     )
+     SELECT account_id, 2026, market_value, improvement_value,
+            land_value, market_value
+     FROM jsonb_to_recordset($1::jsonb) AS fixture(
+       account_id text, market_value numeric, improvement_value numeric,
+       land_value numeric
+     )
+     ON CONFLICT (account_id) DO UPDATE SET
+       certified_year = EXCLUDED.certified_year,
+       market_value = EXCLUDED.market_value,
+       improvement_value = EXCLUDED.improvement_value,
+       land_value = EXCLUDED.land_value,
+       capped_value = EXCLUDED.capped_value`,
     [payload],
   );
   await pool.query(

@@ -855,6 +855,8 @@ type NeighborhoodRangeRowDefinition = {
   format: string;
 };
 
+const ROADWAY_BOUNDARY_METHODOLOGY_VERSION = 3;
+
 function NeighborhoodRangeGrid({
   rows,
   assignment,
@@ -1397,6 +1399,16 @@ function NeighborhoodCharacteristicsContent({
           accountId,
           assignmentFileId || null,
         );
+        const needsRoadwayBoundaryUpgrade = Boolean(result) && (
+          Number(result?.methodology_version || 0) < ROADWAY_BOUNDARY_METHODOLOGY_VERSION ||
+          result?.evidence.discovery?.boundary_generation_mode !==
+            "traffic_backed_cardinal_road_enclosure"
+        );
+        if (needsRoadwayBoundaryUpgrade && !appraiserCleared && !appraiserAreaPresent) {
+          result = await runNeighborhoodBoundaryGeneration(accountId, {
+            assignmentFileId: assignmentFileId || null,
+          });
+        }
         if (!result && !appraiserCleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,
@@ -1413,7 +1425,7 @@ function NeighborhoodCharacteristicsContent({
         }
         const discovery = result.evidence.discovery;
         applyGeneratedBoundaryRef.current(result, {
-          overwriteGeometry: !currentGeometry && !appraiserCleared,
+          overwriteGeometry: !appraiserAreaPresent && !appraiserCleared,
           message: appraiserAreaPresent
             ? "The saved automatic suggestion is available for comparison. The appraiser-defined area remains unchanged."
             : appraiserCleared

@@ -10,7 +10,7 @@ import {
   reviewNeighborhoodBoundary,
 } from "../src/services/neighborhoodBoundaryEngine.js";
 
-test("builds the displayed neighborhood polygon from four enclosing roadway positions", () => {
+test("does not fabricate a rectangular boundary from four representative roadway points", () => {
   const result = buildRoadwayBoundary({
     cardinal_boundaries: {
       north: { candidates: [{ selected: true, representative_point: [-96.65, 32.99] }] },
@@ -20,16 +20,7 @@ test("builds the displayed neighborhood polygon from four enclosing roadway posi
     },
   }, { type: "Point", coordinates: [-96.65, 32.97] });
 
-  assert.deepEqual(result, {
-    type: "Polygon",
-    coordinates: [[
-      [-96.68, 32.94],
-      [-96.62, 32.94],
-      [-96.62, 32.99],
-      [-96.68, 32.99],
-      [-96.68, 32.94],
-    ]],
-  });
+  assert.equal(result, null);
 });
 
 test("does not label an incomplete or non-enclosing road set as roadway-bounded", () => {
@@ -180,13 +171,10 @@ test("generates a local, persisted broad boundary without a remote road dependen
   const savedBoundary = JSON.parse(calls.find((call) =>
     /INSERT INTO app\.neighborhood_boundary_assessments/.test(call.sql),
   ).params[7]);
-  assert.deepEqual(savedBoundary.coordinates[0], [
-    [-96.675, 32.946],
-    [-96.625, 32.946],
-    [-96.625, 32.994],
-    [-96.675, 32.994],
-    [-96.675, 32.946],
-  ]);
+  assert.ok(savedBoundary.coordinates[0].length > 5);
+  assert.deepEqual(savedBoundary.coordinates[0][0], savedBoundary.coordinates[0].at(-1));
+  assert.ok(savedBoundary.coordinates[0].some((point) => point[0] === -96.62));
+  assert.ok(savedBoundary.coordinates[0].some((point) => point[1] === 33));
 });
 
 test("rejects an invalid explicit profile before spatial analysis", async () => {

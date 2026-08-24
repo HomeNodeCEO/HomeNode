@@ -936,6 +936,10 @@ export default function MarketConditionsAnalysis({
   const [customGeometryOrigin, setCustomGeometryOrigin] = useState<MarketAreaOrigin>(
     resolvedInitialOrigin,
   );
+  const [availableSuggestedGeometry, setAvailableSuggestedGeometry] =
+    useState<GeoJsonPolygon | null>(
+      suggestedCustomGeometry || resolvedInitialGeometry,
+    );
   const [draftBoundaryPointCount, setDraftBoundaryPointCount] = useState(0);
   const [analysisResult, setAnalysisResult] =
     useState<MarketConditionsResponse | null>(savedDraft?.response || null);
@@ -979,6 +983,8 @@ export default function MarketConditionsAnalysis({
   const draftBoundaryRef = useRef<BoundaryCoordinate[]>([]);
   const boundaryDrawingRef = useRef(false);
   const initialCustomGeometryRef = useRef(customGeometry);
+  const onCustomGeometryChangeRef = useRef(onCustomGeometryChange);
+  onCustomGeometryChangeRef.current = onCustomGeometryChange;
   const appraiserModifiedRef = useRef(
     resolvedInitialOrigin === 'appraiser' || resolvedInitialOrigin === 'cleared',
   );
@@ -1116,7 +1122,7 @@ export default function MarketConditionsAnalysis({
       resetDraftBoundary();
       setBoundaryDrawingMode(false);
       setSelectedAreaKeys((current) => includeCustomMarketArea(current, polygon));
-      onCustomGeometryChange?.(polygon, 'appraiser');
+      onCustomGeometryChangeRef.current?.(polygon, 'appraiser');
       setError(null);
       setNotice(
         method === 'starting_point'
@@ -1124,7 +1130,7 @@ export default function MarketConditionsAnalysis({
           : 'Custom market area closed and ready for analysis.',
       );
     },
-    [onCustomGeometryChange, resetDraftBoundary, setBoundaryDrawingMode],
+    [resetDraftBoundary, setBoundaryDrawingMode],
   );
 
   const cancelCustomBoundary = useCallback(() => {
@@ -1153,31 +1159,33 @@ export default function MarketConditionsAnalysis({
     setCustomGeometryOrigin('cleared');
     appraiserModifiedRef.current = true;
     geometryBeforeDrawingRef.current = null;
-    onCustomGeometryChange?.(null, 'cleared');
+    if (customGeometry) {
+      setAvailableSuggestedGeometry((current) => current || customGeometry);
+    }
+    onCustomGeometryChangeRef.current?.(null, 'cleared');
     setError(null);
     setNotice('Appraiser-defined market area cleared. It will not be regenerated automatically.');
-  }, [onCustomGeometryChange, resetDraftBoundary, setBoundaryDrawingMode]);
+  }, [customGeometry, resetDraftBoundary, setBoundaryDrawingMode]);
 
   const resetToSuggestedBoundary = useCallback(() => {
-    if (!suggestedCustomGeometry) return;
+    if (!availableSuggestedGeometry) return;
     setBoundaryDrawingMode(false);
     resetDraftBoundary();
-    initialCustomGeometryRef.current = suggestedCustomGeometry;
-    setCustomGeometry(suggestedCustomGeometry);
+    initialCustomGeometryRef.current = availableSuggestedGeometry;
+    setCustomGeometry(availableSuggestedGeometry);
     setCustomGeometryOrigin('automatic');
     appraiserModifiedRef.current = false;
     geometryBeforeDrawingRef.current = null;
-    setSelectedAreaKeys((current) => includeCustomMarketArea(current, suggestedCustomGeometry));
-    updateBoundaryMap(mapRef.current, suggestedCustomGeometry);
-    fitMapToBoundary(mapRef.current, suggestedCustomGeometry);
-    onCustomGeometryChange?.(suggestedCustomGeometry, 'automatic');
+    setSelectedAreaKeys((current) => includeCustomMarketArea(current, availableSuggestedGeometry));
+    updateBoundaryMap(mapRef.current, availableSuggestedGeometry);
+    fitMapToBoundary(mapRef.current, availableSuggestedGeometry);
+    onCustomGeometryChangeRef.current?.(availableSuggestedGeometry, 'automatic');
     setError(null);
     setNotice('The automatically suggested neighborhood area was restored.');
   }, [
-    onCustomGeometryChange,
+    availableSuggestedGeometry,
     resetDraftBoundary,
     setBoundaryDrawingMode,
-    suggestedCustomGeometry,
   ]);
   useEffect(() => {
     initialCustomGeometryRef.current = customGeometry;
@@ -1196,6 +1204,7 @@ export default function MarketConditionsAnalysis({
     })) return;
     initialCustomGeometryRef.current = initialCustomGeometry;
     setCustomGeometry(initialCustomGeometry);
+    setAvailableSuggestedGeometry((current) => current || initialCustomGeometry);
     setCustomGeometryOrigin(incomingOrigin);
     appraiserModifiedRef.current = incomingOrigin === 'appraiser';
     setSelectedAreaKeys((current) => includeCustomMarketArea(current, initialCustomGeometry));
@@ -1217,6 +1226,15 @@ export default function MarketConditionsAnalysis({
     setCustomGeometryOrigin('automatic');
     setSelectedAreaKeys((current) => includeCustomMarketArea(current, suggestedCustomGeometry));
   }, [customGeometry, customGeometryOrigin, suggestedCustomGeometry]);
+
+  useEffect(() => {
+    if (suggestedCustomGeometry) {
+      setAvailableSuggestedGeometry(suggestedCustomGeometry);
+    }
+  }, [suggestedCustomGeometry]);
+
+  const completeCustomBoundaryRef = useRef(completeCustomBoundary);
+  completeCustomBoundaryRef.current = completeCustomBoundary;
 
   useEffect(() => {
     let cancelled = false;
@@ -1369,7 +1387,7 @@ export default function MarketConditionsAnalysis({
                   event.point.y - startPoint.y,
                 );
                 if (pixelDistance <= CLOSE_BOUNDARY_PIXEL_TOLERANCE) {
-                  completeCustomBoundary('starting_point');
+                  completeCustomBoundaryRef.current('starting_point');
                   return;
                 }
               }
@@ -1410,7 +1428,6 @@ export default function MarketConditionsAnalysis({
       map?.remove();
     };
   }, [
-    completeCustomBoundary,
     customSelected,
     resetDraftBoundary,
     studyLatitude,
@@ -2165,9 +2182,9 @@ export default function MarketConditionsAnalysis({
                       Cancel edit
                     </button>
                   ) : null}
-                  {suggestedCustomGeometry && (
+                  {availableSuggestedGeometry && (
                     customGeometryOrigin !== 'automatic' ||
-                    !polygonsMatch(customGeometry, suggestedCustomGeometry)
+                    !polygonsMatch(customGeometry, availableSuggestedGeometry)
                   ) ? (
                     <button
                       type="button"

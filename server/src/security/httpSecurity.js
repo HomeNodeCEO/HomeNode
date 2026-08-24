@@ -93,6 +93,15 @@ export function createHttpSecurityConfiguration(environment = process.env) {
   });
 }
 
+export function shouldSkipGlobalApiRateLimit(req, configuration) {
+  if (!configuration.apiRateLimitEnabled) return true;
+  const path = String(req?.path || req?.originalUrl || req?.url || "").split("?", 1)[0];
+  return path === "/api/uad"
+    || path.startsWith("/api/uad/")
+    || path === "/api/mobile"
+    || path.startsWith("/api/mobile/");
+}
+
 function appendVary(res, value) {
   const existing = String(res.getHeader("vary") || "")
     .split(",")
@@ -146,4 +155,23 @@ export function securityHeaders(_req, res, next) {
   res.setHeader("x-content-type-options", "nosniff");
   res.setHeader("x-frame-options", "DENY");
   next();
+}
+
+export function jsonErrorHandler(error, _req, res, next) {
+  if (res.headersSent) return next(error);
+  res.set("cache-control", "no-store");
+  if (error?.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "invalid_json_body" });
+  }
+  if (error?.type === "entity.too.large") {
+    return res.status(413).json({ error: "request_body_too_large" });
+  }
+  if (error?.type === "encoding.unsupported" || error?.type === "charset.unsupported") {
+    return res.status(415).json({ error: "unsupported_request_encoding" });
+  }
+  if (["request.aborted", "request.size.invalid"].includes(error?.type)) {
+    return res.status(400).json({ error: "invalid_request_body" });
+  }
+  console.error("[api] unhandled request error");
+  return res.status(500).json({ error: "internal_server_error" });
 }

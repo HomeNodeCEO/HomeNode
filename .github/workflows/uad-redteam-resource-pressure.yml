@@ -1,0 +1,48 @@
+name: UAD red-team resource pressure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uad-redteam-security
+  cancel-in-progress: false
+
+jobs:
+  bounded-resource-pressure:
+    name: Bounded parser, connection, and recovery pressure
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: uad-redteam
+    defaults:
+      run:
+        working-directory: server
+    env:
+      UAD_REDTEAM_BASE_URL: https://homenode-api-redteam.onrender.com
+      UAD_REDTEAM_FIXTURE_ACCOUNT_ID: UAD-REDTEAM-SFR-0001
+      UAD_REDTEAM_TIMEOUT_MS: "15000"
+      UAD_REDTEAM_PRESSURE_CONCURRENCY: "6"
+      UAD_REDTEAM_PRESSURE_REQUESTS: "24"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Exercise bounded resource pressure and prove recovery
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run --silent verify:redteam:resource-pressure | tee uad-redteam-resource-pressure.json
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: uad-redteam-resource-pressure-${{ github.run_id }}
+          path: server/uad-redteam-resource-pressure.json
+          if-no-files-found: error
+          retention-days: 14

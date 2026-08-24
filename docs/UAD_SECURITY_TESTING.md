@@ -151,6 +151,16 @@ window and proves that diagnostics remain available while protected reads and
 writes fail closed. Both workflows have fixed targets, sanitized aggregate
 evidence, five-minute job limits, and the shared red-team concurrency lock.
 
+The resource-pressure workflow adds two small compressed payloads that expand
+beyond the one-megabyte JSON ceiling, a bounded oversized-header request, and
+24 mixed requests across public capabilities, cached database readiness, and
+an authentication rejection. It uses six workers, rejects any 5xx, transport
+failure, secret-bearing or oversized response, waits for an advertised 429
+window when necessary, and finishes with independent health, capabilities, and
+database-readiness recovery probes. The deployed API also caps header/body
+receipt time, headers per request, keep-alive reuse, PostgreSQL statement/query
+duration, idle transactions, and deploy shutdown drain time.
+
 ### Temporary dependency exception
 
 `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` affect `image-size` through

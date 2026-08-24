@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import express from "express";
+
 import {
   createCorsMiddleware,
   createHttpSecurityConfiguration,
+  jsonErrorHandler,
   securityHeaders,
+  shouldSkipGlobalApiRateLimit,
 } from "../src/security/httpSecurity.js";
 
 test("strict UAD security fails closed without authentication and explicit CORS", () => {
@@ -76,6 +80,23 @@ test("Render rate limiting uses Cloudflare's single-address client header", () =
   );
 });
 
+test("global rate limiting leaves UAD and mobile policy headers to their routers", () => {
+  const enabled = createHttpSecurityConfiguration({ NODE_ENV: "production" });
+  for (const path of [
+    "/api/uad",
+    "/api/uad/capabilities",
+    "/api/mobile",
+    "/api/mobile/assignments",
+  ]) {
+    assert.equal(shouldSkipGlobalApiRateLimit({ path }, enabled), true, path);
+  }
+  assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/properties/search" }, enabled), false);
+  assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/uad-legacy" }, enabled), false);
+
+  const disabled = createHttpSecurityConfiguration({ NODE_ENV: "test" });
+  assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/properties/search" }, disabled), true);
+});
+
 test("CORS policy permits same-origin and allowlisted origins while rejecting others", () => {
   const configuration = createHttpSecurityConfiguration({
     CORS_ORIGIN: "https://redteam.homenode.com",
@@ -120,4 +141,40 @@ test("security headers remove browser interpretation and embedding ambiguity", (
   assert.equal(headers.get("x-frame-options"), "DENY");
   assert.match(headers.get("content-security-policy"), /frame-ancestors 'none'/);
   assert.match(headers.get("strict-transport-security"), /max-age=31536000/);
+});
+
+test("global JSON errors remain bounded and do not reach route handlers", async () => {
+  const app = express();
+  let routeCalls = 0;
+  app.use(express.json({ limit: "32b" }));
+  app.post("/probe", (_req, res) => {
+    routeCalls += 1;
+    res.json({ ok: true });
+  });
+  app.use(jsonErrorHandler);
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+  });
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    const malformed = await fetch(`${baseUrl}/probe`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{",
+    });
+    assert.equal(malformed.status, 400);
+    assert.equal(malformed.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await malformed.json(), { error: "invalid_json_body" });
+
+    const oversized = await fetch(`${baseUrl}/probe`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: "x".repeat(64) }),
+    });
+    assert.equal(oversized.status, 413);
+    assert.deepEqual(await oversized.json(), { error: "request_body_too_large" });
+    assert.equal(routeCalls, 0);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });

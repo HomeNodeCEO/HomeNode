@@ -205,19 +205,26 @@ import { loadSharedAppraisalCompletion } from "./services/appraisalCompletionAda
 import {
   createCorsMiddleware,
   createHttpSecurityConfiguration,
+  jsonErrorHandler,
   securityHeaders,
+  shouldSkipGlobalApiRateLimit,
 } from "./security/httpSecurity.js";
 import { createRedTeamIsolationConfiguration } from "./security/redTeamIsolation.js";
+import {
+  createResilientHttpServer,
+  createRuntimeResilienceConfiguration,
+  installGracefulShutdown,
+} from "./security/runtimeResilience.js";
 
 const app = express();
 const httpSecurity = createHttpSecurityConfiguration();
 const redTeamIsolation = createRedTeamIsolationConfiguration();
+const runtimeResilience = createRuntimeResilienceConfiguration();
 app.disable("x-powered-by");
 if (httpSecurity.trustProxyHops > 0) app.set("trust proxy", httpSecurity.trustProxyHops);
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  max: Number(process.env.DATABASE_POOL_SIZE || 10),
-  connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 10_000),
+  ...runtimeResilience.database,
   application_name: "homenode-web",
 });
 pool.on("error", (error) => {
@@ -237,7 +244,10 @@ app.use(createCorsMiddleware(httpSecurity));
 app.use(rateLimit({
   windowMs: httpSecurity.apiRateLimitWindowMs,
   limit: httpSecurity.apiRateLimitMax,
-  skip: () => !httpSecurity.apiRateLimitEnabled,
+  // UAD and mobile own stricter limiters and response contracts inside their
+  // routers. Applying the global limiter as well would create two counters and
+  // overwrite the advertised route policy headers.
+  skip: (req) => shouldSkipGlobalApiRateLimit(req, httpSecurity),
   standardHeaders: "draft-8",
   legacyHeaders: false,
   keyGenerator: (req) => {
@@ -6238,4 +6248,11 @@ app.get("/api/stats/class-distribution", async (req, res) => {
 });
 
 const port = parseInt(process.env.PORT || "4000", 10);
-app.listen(port, () => console.log(`API listening on http://localhost:${port}`));
+app.use(jsonErrorHandler);
+const server = createResilientHttpServer(app, runtimeResilience);
+server.listen(port, () => console.log(`API listening on http://localhost:${port}`));
+installGracefulShutdown({
+  server,
+  pool,
+  graceMs: runtimeResilience.shutdownGraceMs,
+});

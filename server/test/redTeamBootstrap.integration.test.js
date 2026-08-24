@@ -87,9 +87,9 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
       organizations: 2,
       isolated_account: true,
       file_numbers: [
-        "HN-REDTEAM-A-0001",
-        "HN-REDTEAM-B-0001",
         "HN-REDTEAM-DELIVERY-A-0001",
+        "HN-REDTEAM-ORG-A-0001",
+        "HN-REDTEAM-ORG-B-0001",
       ],
     });
 

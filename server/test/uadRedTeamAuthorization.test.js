@@ -139,6 +139,25 @@ test("short-lived synthetic JWT factory signs RS256 tokens and rejects non-red-t
     Buffer.from(parts[2], "base64url"),
   ), true);
 
+  const adversarialToken = await factory("homenode_admin", {
+    headerOverrides: { alg: "none", kid: "unknown-redteam-key" },
+    claimOverrides: { aud: "wrong-redteam-audience", sub: undefined, exp: 1 },
+  });
+  const adversarialParts = adversarialToken.split(".");
+  const adversarialHeader = JSON.parse(Buffer.from(adversarialParts[0], "base64url").toString("utf8"));
+  const adversarialPayload = JSON.parse(Buffer.from(adversarialParts[1], "base64url").toString("utf8"));
+  assert.equal(adversarialHeader.alg, "none");
+  assert.equal(adversarialHeader.kid, "unknown-redteam-key");
+  assert.equal(adversarialPayload.aud, "wrong-redteam-audience");
+  assert.equal(adversarialPayload.exp, 1);
+  assert.equal(Object.hasOwn(adversarialPayload, "sub"), false);
+  assert.equal(verify(
+    "RSA-SHA256",
+    Buffer.from(`${adversarialParts[0]}.${adversarialParts[1]}`, "ascii"),
+    createPublicKey(privateKey),
+    Buffer.from(adversarialParts[2], "base64url"),
+  ), true);
+
   assert.throws(() => createRedTeamAccessTokenFactory({
     privateKeyPem,
     keyId: "uad-redteam-test-key",

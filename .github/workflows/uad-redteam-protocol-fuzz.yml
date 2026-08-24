@@ -1,0 +1,52 @@
+name: UAD red-team protocol fuzz
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uad-redteam-security
+  cancel-in-progress: false
+
+jobs:
+  bounded-protocol-fuzz:
+    name: Bounded authentication and request-parser fuzz
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: uad-redteam
+    defaults:
+      run:
+        working-directory: server
+    env:
+      UAD_REDTEAM_BASE_URL: https://homenode-api-redteam.onrender.com
+      UAD_REDTEAM_FIXTURE_ACCOUNT_ID: UAD-REDTEAM-SFR-0001
+      UAD_REDTEAM_TIMEOUT_MS: "20000"
+      UAD_REDTEAM_OIDC_ISSUER: https://uad-redteam-identity.homenode.invalid
+      UAD_REDTEAM_OIDC_AUDIENCE: homenode-uad-redteam-api
+      UAD_REDTEAM_JWT_KEY_ID: uad-redteam-a44e618bc440bbbf
+      UAD_REDTEAM_UNPROVISIONED_SUBJECT: uad-redteam-unprovisioned-user
+      UAD_REDTEAM_JWT_PRIVATE_KEY: ${{ secrets.UAD_REDTEAM_JWT_PRIVATE_KEY }}
+      UAD_REDTEAM_OIDC_SUBJECTS_JSON: ${{ secrets.UAD_REDTEAM_OIDC_SUBJECTS_JSON }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Run bounded protocol fuzz and recovery proof
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run --silent verify:redteam:protocol-fuzz | tee uad-redteam-protocol-fuzz.json
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: uad-redteam-protocol-fuzz-${{ github.run_id }}
+          path: server/uad-redteam-protocol-fuzz.json
+          if-no-files-found: error
+          retention-days: 14

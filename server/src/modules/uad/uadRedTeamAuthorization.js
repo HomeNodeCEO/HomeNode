@@ -330,12 +330,19 @@ export function createRedTeamAccessTokenFactory({
     || Number(privateKey.asymmetricKeyDetails?.modulusLength || 0) < 2_048
   ) throw new Error("invalid_uad_redteam_private_key");
 
-  return async function accessTokenFor(persona) {
+  return async function accessTokenFor(persona, { headerOverrides = {}, claimOverrides = {} } = {}) {
     if (!REDTEAM_AUTHORIZATION_PERSONAS.includes(persona)) {
       throw new Error("invalid_uad_redteam_persona");
     }
     const issuedAt = Math.floor(now() / 1_000);
-    const header = encodedJson({ alg: "RS256", typ: "JWT", kid: normalizedKeyId });
+    const header = encodedJson({
+      alg: "RS256",
+      typ: "JWT",
+      kid: normalizedKeyId,
+      ...(headerOverrides && typeof headerOverrides === "object" && !Array.isArray(headerOverrides)
+        ? headerOverrides
+        : {}),
+    });
     const payload = encodedJson({
       iss: normalizedIssuer,
       aud: normalizedAudience,
@@ -344,6 +351,9 @@ export function createRedTeamAccessTokenFactory({
       nbf: issuedAt - 5,
       exp: issuedAt + 10 * 60,
       jti: randomUUID(),
+      ...(claimOverrides && typeof claimOverrides === "object" && !Array.isArray(claimOverrides)
+        ? claimOverrides
+        : {}),
     });
     const unsigned = `${header}.${payload}`;
     const signature = sign("RSA-SHA256", Buffer.from(unsigned, "ascii"), privateKey).toString("base64url");

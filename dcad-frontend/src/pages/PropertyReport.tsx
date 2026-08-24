@@ -855,7 +855,7 @@ type NeighborhoodRangeRowDefinition = {
   format: string;
 };
 
-const ROADWAY_BOUNDARY_METHODOLOGY_VERSION = 3;
+const ROADWAY_BOUNDARY_METHODOLOGY_VERSION = 4;
 
 function NeighborhoodRangeGrid({
   rows,
@@ -1402,7 +1402,7 @@ function NeighborhoodCharacteristicsContent({
         const needsRoadwayBoundaryUpgrade = Boolean(result) && (
           Number(result?.methodology_version || 0) < ROADWAY_BOUNDARY_METHODOLOGY_VERSION ||
           result?.evidence.discovery?.boundary_generation_mode !==
-            "traffic_backed_cardinal_road_enclosure"
+            "traffic_backed_traced_road_polygon"
         );
         if (needsRoadwayBoundaryUpgrade && !appraiserCleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {

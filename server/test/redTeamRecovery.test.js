@@ -83,6 +83,8 @@ test("fails closed on altered recovery fixtures", async () => {
       throw new Error(`unexpected_query:${sql}`);
     },
   };
-  await assert.rejects(verifyRedTeamRecoveryDatabase(pool), /fixture_count_mismatch/);
+  await assert.rejects(
+    verifyRedTeamRecoveryDatabase(pool),
+    /fixture_count_mismatch:users:12:11/,
+  );
 });
-

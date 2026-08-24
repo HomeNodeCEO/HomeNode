@@ -142,6 +142,97 @@ test("strict UAD routes return a bounded generic response after the configured r
   }, { rateLimitMax: 2 });
 });
 
+test("UAD rate limiting runs before JSON parsing and bounds repeated malformed bodies", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const request = () => fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: "{",
+    });
+
+    const first = await request();
+    assert.equal(first.status, 400);
+    assert.deepEqual(await first.json(), { error: "invalid_json_body" });
+
+    const blocked = await request();
+    assert.equal(blocked.status, 429);
+    assert.deepEqual(await blocked.json(), { error: "rate_limit_exceeded" });
+    assert.equal(blocked.headers.get("cache-control"), "no-store");
+    assert.ok(blocked.headers.get("retry-after"));
+    assert.equal(pool.accessQueries.length, 0);
+  }, { rateLimitMax: 1 });
+});
+
+test("UAD router bounds hostile identifiers, path variants, and JSON root shapes", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    for (const path of [
+      "/api/uad/workfiles/not-a-uuid",
+      `/api/uad/workfiles/${encodeURIComponent("' OR 1=1--")}`,
+      `/api/uad/workfiles/${encodeURIComponent("\uFF10\uFF11\uFF12\uFF13-\uD83D\uDD12")}`,
+      `/api/uad/workfiles/${WORKFILE_ID}%2Feditor`,
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: { authorization: "Bearer synthetic-token" },
+      });
+      assert.equal(response.status, 400, path);
+      assert.deepEqual(await response.json(), { error: "invalid_uad_workfile_id" }, path);
+    }
+
+    for (const accountId of ["A".repeat(65), "UAD-REDTEAM\nINJECTED"]) {
+      const response = await fetch(
+        `${baseUrl}/api/uad/accounts/${encodeURIComponent(accountId)}/workfiles`,
+        { headers: { authorization: "Bearer synthetic-token" } },
+      );
+      assert.equal(response.status, 400, accountId);
+      assert.deepEqual(await response.json(), { error: "invalid_account_id" }, accountId);
+    }
+
+    for (const path of [
+      `/api/uad/workfiles/${WORKFILE_ID}/editor/extra`,
+      `/api/uad//workfiles/${WORKFILE_ID}`,
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`, {
+        headers: { authorization: "Bearer synthetic-token" },
+      });
+      assert.equal(response.status, 404, path);
+      assert.deepEqual(await response.json(), { error: "uad_route_not_found" }, path);
+    }
+
+    const unsupportedMethod = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}`, {
+      method: "POST",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(unsupportedMethod.status, 404);
+    assert.deepEqual(await unsupportedMethod.json(), { error: "uad_route_not_found" });
+
+    const bodies = [
+      { body: "{\"__proto__\":{\"polluted\":true}}", error: "invalid_uad_expected_revision" },
+      { body: "[]", error: "invalid_uad_expected_revision" },
+      { body: "true", error: "invalid_json_body" },
+      {
+        body: `${"{\"nested\":".repeat(32)}null${"}".repeat(32)}`,
+        error: "invalid_uad_expected_revision",
+      },
+    ];
+    for (const { body, error } of bodies) {
+      const response = await fetch(
+        `${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/__redteam_input_probe__`,
+        {
+          method: "PATCH",
+          headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+          body,
+        },
+      );
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error });
+    }
+    assert.equal(pool.accessQueries.length, 5);
+  });
+});
+
 test("UAD JSON parser failures return bounded JSON without reaching authentication or data access", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

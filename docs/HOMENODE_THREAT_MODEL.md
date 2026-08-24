@@ -110,11 +110,14 @@ not become a path into private assignment data.
   and adversarial OIDC cases are implemented.
 - Python CodeQL, pip audit, Dependabot coverage, source compilation, explicit
   scraper CORS, and disabled-by-default legacy PDF processing are implemented.
-- The isolated red-team deployment must still be provisioned before hostile
-  browser/API/file traffic. Shared staging remains limited to functional smoke
-  tests and non-invasive scanners.
-- Role coverage outside UAD, parser fuzzing, request races, load/cost limits,
-  restore exercises, and an independent external penetration test remain open.
+- The isolated Render API, web, PostgreSQL, R2, and synthetic identity boundary
+  are provisioned. Baseline, UAD role/tenant matrix, protocol fuzz, private-
+  storage integrity, artifact parsing, sales-rich delivery, and point-in-time
+  recovery gates have credential-safe evidence. Shared staging remains limited
+  to functional smoke tests and non-invasive scanners.
+- Role coverage outside UAD, broader browser scanning, bounded load/cost and
+  kill-switch/monitoring exercises, official GSE nonproduction cases, and an
+  independent external penetration test remain open.
 
 No Critical or High finding, tenant/authorization defect, secret/PII exposure,
 unverified remediation, or failed official GSE case may be accepted for a

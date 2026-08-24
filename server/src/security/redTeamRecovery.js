@@ -90,8 +90,11 @@ export async function verifyRedTeamRecoveryDatabase(pool) {
       (SELECT count(*)::integer FROM appraisal.uad_workfiles) AS uad_workfiles
   `);
   const fixtureCounts = normalizedCounts(fixtures.rows[0]);
-  if (Object.entries(EXPECTED_FIXTURE_COUNTS).some(([key, expected]) => fixtureCounts[key] !== expected)) {
-    throw new Error("redteam_recovery_fixture_count_mismatch");
+  const fixtureMismatches = Object.entries(EXPECTED_FIXTURE_COUNTS)
+    .filter(([key, expected]) => fixtureCounts[key] !== expected)
+    .map(([key, expected]) => `${key}:${fixtureCounts[key]}:${expected}`);
+  if (fixtureMismatches.length) {
+    throw new Error(`redteam_recovery_fixture_count_mismatch:${fixtureMismatches.join(",")}`);
   }
 
   return Object.freeze({

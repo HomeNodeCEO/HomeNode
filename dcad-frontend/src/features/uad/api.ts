@@ -659,6 +659,7 @@ export interface UadXmlArtifact {
     delivery_specification_version?: string;
     subschema_version?: string;
     schema_valid?: boolean;
+    signer_count?: number;
     image_reference_count?: number;
     storage_etag?: string | null;
     upload_error?: string;

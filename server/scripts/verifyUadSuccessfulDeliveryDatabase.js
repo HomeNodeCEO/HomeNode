@@ -566,6 +566,7 @@ try {
         checksum_sha256: xml.artifact.checksum_sha256,
         schema_status: xml.schema_validation.status,
         schema_fatal_count: xml.schema_validation.fatal_count,
+        signer_count: xml.artifact.metadata.signer_count,
         sales_comparable_count: (xmlText.match(/ValuationUseType="SalesComparable"/g) || []).length,
         adjustment_count: (xmlText.match(/<ComparableAdjustmentAmount>/g) || []).length,
         reconciliation_count: (xmlText.match(/<SalesComparisonCommentDescription>/g) || []).length,
@@ -585,6 +586,9 @@ try {
     }
     if (evidence.xml.reconciliation_count < 1) {
       throw new Error("synthetic_delivery_xml_sales_reconciliation_missing");
+    }
+    if (evidence.xml.signer_count < 1) {
+      throw new Error("synthetic_delivery_xml_signer_missing");
     }
     console.log(JSON.stringify(evidence, null, 2));
   }

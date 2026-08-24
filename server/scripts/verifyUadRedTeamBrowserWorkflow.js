@@ -363,7 +363,9 @@ try {
     && postAssetValidation?.warning_count === 0
     && postAssetFindings.length === 0;
   evidence.checks.workfile_ready_for_export = postAssetValidation?.status === "passed"
-    && postAssetValidation?.ready_for_export === true;
+    && (immutableAtStart
+      ? postAssetValidation?.fatal_count === 0 && postAssetFindings.length === 0
+      : postAssetValidation?.ready_for_export === true);
 
   const artifactPanel = (heading) => page.getByRole("heading", { name: heading, exact: true })
     .locator("xpath=ancestor::section[1]");
@@ -480,7 +482,8 @@ try {
     schema_status: finalXmlResult.schema_validation?.status,
     schema_fatal_count: finalXmlResult.schema_validation?.fatal_count,
     schema_warning_count: finalXmlResult.schema_validation?.warning_count,
-    signer_count: finalXml?.metadata?.signer_count,
+    signer_count: finalXml?.metadata?.signer_count
+      ?? finalXmlResult.schema_validation?.metadata?.signer_count,
     image_reference_count: finalXml?.metadata?.image_reference_count,
     schema_findings: (finalXmlResult.schema_validation?.findings || []).slice(0, 20).map((finding) => ({
       message: sanitizeBrowserDiagnostic(finding.message),
@@ -503,7 +506,7 @@ try {
     && finalXml?.generation_status === "ready"
     && finalXmlResult.schema_validation?.status === "passed"
     && finalXmlResult.schema_validation?.fatal_count === 0
-    && Number(finalXml?.metadata?.signer_count || 0) >= 1
+    && Number(evidence.delivery.xml.signer_count || 0) >= 1
     && Number(finalXml?.metadata?.image_reference_count || 0) === requiredAssets.length
     && evidence.delivery.xml.sales_comparable_count >= 3
     && evidence.delivery.xml.adjustment_count >= 1

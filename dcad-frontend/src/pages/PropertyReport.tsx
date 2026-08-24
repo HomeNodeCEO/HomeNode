@@ -3267,6 +3267,14 @@ function AddressHero({
   }, [photoIndex, photos.length]);
 
   useEffect(() => {
+    const context = detail?.property_context || null;
+    setPropertyContext(context);
+    setPropertyComplexityDraft(context?.effective_complexity || "simple");
+    setPropertyComplexityNotes(context?.appraiser_notes || "");
+    setPropertyContextMessage("");
+  }, [accountId, detail?.property_context]);
+
+  useEffect(() => {
     let cancelled = false;
     const fallback = assignmentDraftFromDetail();
     if (unemploymentHydrationAccount.current !== (accountId || "")) {
@@ -3315,10 +3323,6 @@ function AddressHero({
     setWorkfileStatusMessage("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
-    setPropertyContext(detail?.property_context || null);
-    setPropertyComplexityDraft(detail?.property_context?.effective_complexity || "simple");
-    setPropertyComplexityNotes(detail?.property_context?.appraiser_notes || "");
-    setPropertyContextMessage("");
     if (!accountId?.trim() || !detailLoaded) {
       setAssignmentFilesLoading(false);
       setAssignmentFilesLoaded(true);
@@ -3400,8 +3404,6 @@ function AddressHero({
     };
   }, [
     accountId,
-    detail?.assignment_details,
-    detail?.property_context,
     detailLoaded,
     requestedAssignmentFileId,
   ]);
@@ -4875,7 +4877,7 @@ function AddressHero({
       style={{ backgroundColor: "#ffffff" }}
     >
       <section className="border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-end">
+        <div className="flex min-h-[52px] flex-col gap-2 sm:flex-row sm:items-end sm:justify-end">
           {activeAssignmentFile ? (
             <span className={`mb-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
               activeAssignmentFile.workfile?.status === "signed"
@@ -4935,12 +4937,13 @@ function AddressHero({
               </button>
             )}
           </div>
-          {workfileStatusMessage ? (
-            <p className="mt-2 break-all text-right text-[11px] font-medium text-slate-600">
-              {workfileStatusMessage}
-            </p>
-          ) : null}
         </div>
+        <p
+          className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-slate-600"
+          aria-live="polite"
+        >
+          {workfileStatusMessage || "\u00a0"}
+        </p>
 
         <details className={`mt-3 rounded-xl border px-3 py-2 ${
           hasPriorAssignmentFiles
@@ -6821,4 +6824,5 @@ export default function PropertyReport() {
     </div>
   );
 }
+
 

@@ -11,6 +11,14 @@ function boundedInteger(value, fallback, minimum, maximum) {
   return Math.max(minimum, Math.min(parsed, maximum));
 }
 
+function rateLimitClientIpHeader(environment) {
+  const configured = String(environment.UAD_RATE_LIMIT_CLIENT_IP_HEADER || "").trim().toLowerCase();
+  if (!configured) return enabled(environment.RENDER) ? "cf-connecting-ip" : null;
+  if (["none", "socket"].includes(configured)) return null;
+  if (configured !== "cf-connecting-ip") throw new Error("invalid_rate_limit_client_ip_header");
+  return configured;
+}
+
 function normalizedOrigin(value, { allowHttp = false } = {}) {
   let parsed;
   try {
@@ -33,6 +41,7 @@ export function createHttpSecurityConfiguration(environment = process.env) {
   const strict = enabled(environment.UAD_SECURITY_STRICT);
   const authenticationRequired = enabled(environment.UAD_AUTHENTICATION_REQUIRED);
   const rateLimitEnabled = strict || enabled(environment.UAD_RATE_LIMIT_ENABLED);
+  const clientIpHeader = rateLimitClientIpHeader(environment);
   const allowHttpOrigins = !strict && environment.NODE_ENV !== "production";
   const origins = String(environment.CORS_ORIGIN || "")
     .split(",")
@@ -45,6 +54,9 @@ export function createHttpSecurityConfiguration(environment = process.env) {
   }
   if (strict && origins.length === 0) {
     throw new Error("uad_strict_security_requires_cors_origins");
+  }
+  if (strict && enabled(environment.RENDER) && !clientIpHeader) {
+    throw new Error("uad_strict_security_requires_render_client_ip_header");
   }
 
   return Object.freeze({
@@ -60,6 +72,7 @@ export function createHttpSecurityConfiguration(environment = process.env) {
       60 * 60 * 1_000,
     ),
     rateLimitMax: boundedInteger(environment.UAD_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX, 10, 10_000),
+    rateLimitClientIpHeader: clientIpHeader,
     trustProxyHops: boundedInteger(environment.TRUST_PROXY_HOPS, 0, 0, 10),
   });
 }

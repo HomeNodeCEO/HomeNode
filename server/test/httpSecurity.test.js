@@ -34,6 +34,7 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
   assert.equal(configuration.corsRestricted, true);
   assert.equal(configuration.rateLimitEnabled, true);
   assert.equal(configuration.trustProxyHops, 1);
+  assert.equal(configuration.rateLimitClientIpHeader, null);
   assert.deepEqual(configuration.corsOrigins, [
     "https://redteam.homenode.com",
     "https://review.homenode.com",
@@ -44,6 +45,32 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
       CORS_ORIGIN: "http://redteam.homenode.com",
     }),
     /invalid_cors_origin/,
+  );
+});
+
+test("Render rate limiting uses Cloudflare's single-address client header", () => {
+  const configuration = createHttpSecurityConfiguration({
+    RENDER: "true",
+    UAD_RATE_LIMIT_ENABLED: "true",
+  });
+  assert.equal(configuration.rateLimitClientIpHeader, "cf-connecting-ip");
+
+  assert.throws(
+    () => createHttpSecurityConfiguration({
+      UAD_RATE_LIMIT_CLIENT_IP_HEADER: "x-forwarded-for",
+    }),
+    /invalid_rate_limit_client_ip_header/,
+  );
+
+  assert.throws(
+    () => createHttpSecurityConfiguration({
+      RENDER: "true",
+      UAD_SECURITY_STRICT: "true",
+      UAD_AUTHENTICATION_REQUIRED: "true",
+      CORS_ORIGIN: "https://redteam.homenode.com",
+      UAD_RATE_LIMIT_CLIENT_IP_HEADER: "none",
+    }),
+    /uad_strict_security_requires_render_client_ip_header/,
   );
 });
 

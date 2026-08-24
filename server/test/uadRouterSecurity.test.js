@@ -142,6 +142,23 @@ test("strict UAD routes return a bounded generic response after the configured r
   }, { rateLimitMax: 2 });
 });
 
+test("rate limiting keeps one client bucket across rotating proxy addresses", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const request = (forwardedFor, clientIp = "203.0.113.20") => fetch(`${baseUrl}/api/uad/capabilities`, {
+      headers: {
+        "cf-connecting-ip": clientIp,
+        "x-forwarded-for": forwardedFor,
+      },
+    });
+
+    assert.equal((await request("192.0.2.10")).status, 200);
+    assert.equal((await request("192.0.2.11")).status, 200);
+    assert.equal((await request("192.0.2.12")).status, 429);
+    assert.equal((await request("192.0.2.12", "203.0.113.21")).status, 200);
+  }, { rateLimitMax: 2, rateLimitClientIpHeader: "cf-connecting-ip" });
+});
+
 test("UAD rate limiting runs before JSON parsing and bounds repeated malformed bodies", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

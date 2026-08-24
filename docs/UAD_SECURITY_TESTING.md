@@ -154,14 +154,17 @@ evidence, five-minute job limits, and the shared red-team concurrency lock.
 ### Temporary dependency exception
 
 `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` affect `image-size` through
-Expo/Metro's local build toolchain. Every published package version is affected;
-the advisory's proposed `2.0.3` fix was not available from npm on 2026-08-21.
-CI ignores only these two identifiers, while every other High/Critical finding
-still blocks the change. HomeNode does not run Metro or `image-size` in the
-deployed API, and untrusted appraisal images must never be processed through the
-mobile build toolchain. Recheck the registry and Expo dependency graph by
-2026-09-21 and remove the exception immediately when a maintained fix is
-available.
+Expo/Metro's local build toolchain. Every published package version remains
+affected and no patched npm release was available on 2026-08-24. HomeNode
+applies a lockfile-bound pnpm patch that rejects undersized ISO BMFF boxes and
+non-advancing ICNS entries. The mobile regression suite runs the published
+malformed HEIF, ICNS, and JXL patterns in child processes with hard timeouts.
+CI ignores only these two identifiers after that compensating control; every
+other High/Critical finding still blocks the change. HomeNode does not run Metro
+or `image-size` in the deployed API, and untrusted appraisal images must never
+be processed through the mobile build toolchain. Recheck the registry and Expo
+dependency graph by 2026-09-24 and remove both the patch and exception
+immediately when a maintained fix is available.
 
 ## Finding lifecycle
 

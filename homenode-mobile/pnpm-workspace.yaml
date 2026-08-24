@@ -19,7 +19,11 @@ minimumReleaseAgeExclude:
   - 'expo@57.0.15'
 allowBuilds:
   esbuild: true
+overrides:
+  uuid@7.0.3: 11.1.1
 auditConfig:
   ignoreGhsas:
     - GHSA-w3rx-r6r6-pgpr
     - GHSA-5p2g-fcmc-qvqq
+patchedDependencies:
+  image-size@1.2.1: patches/image-size@1.2.1.patch

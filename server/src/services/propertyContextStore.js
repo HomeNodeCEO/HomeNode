@@ -176,6 +176,54 @@ export async function ensurePropertyContextSchema(pool) {
     CREATE INDEX IF NOT EXISTS road_segments_geom_gix
       ON gis.road_segments USING gist (geom);
 
+    -- Durable road identity and topology.  Aliases let an appraiser or a sync
+    -- source declare that differently named portions are one continuous
+    -- corridor; graph nodes/edges make closed roadway enclosures queryable.
+    CREATE TABLE IF NOT EXISTS gis.road_corridor_aliases (
+      normalized_alias text PRIMARY KEY,
+      corridor_key text NOT NULL,
+      canonical_name text NOT NULL,
+      source text NOT NULL DEFAULT 'reviewed',
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS gis.road_corridors (
+      corridor_key text PRIMARY KEY,
+      canonical_name text NOT NULL,
+      aliases jsonb NOT NULL DEFAULT '[]'::jsonb,
+      road_class text,
+      segment_count integer NOT NULL DEFAULT 0,
+      rebuilt_at timestamptz NOT NULL DEFAULT now(),
+      geom geometry(MultiLineString, 4326) NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS road_corridors_geom_gix
+      ON gis.road_corridors USING gist (geom);
+    CREATE TABLE IF NOT EXISTS gis.road_graph_nodes (
+      node_key text PRIMARY KEY,
+      geom geometry(Point, 4326) NOT NULL,
+      rebuilt_at timestamptz NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS road_graph_nodes_geom_gix
+      ON gis.road_graph_nodes USING gist (geom);
+    CREATE TABLE IF NOT EXISTS gis.road_graph_edges (
+      source_layer text NOT NULL,
+      source_object_id bigint NOT NULL,
+      part_index integer NOT NULL,
+      corridor_key text NOT NULL,
+      from_node_key text NOT NULL,
+      to_node_key text NOT NULL,
+      road_name text,
+      road_class text,
+      geom geometry(LineString, 4326) NOT NULL,
+      rebuilt_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (source_layer, source_object_id, part_index)
+    );
+    CREATE INDEX IF NOT EXISTS road_graph_edges_corridor_idx
+      ON gis.road_graph_edges (corridor_key);
+    CREATE INDEX IF NOT EXISTS road_graph_edges_nodes_idx
+      ON gis.road_graph_edges (from_node_key, to_node_key);
+    CREATE INDEX IF NOT EXISTS road_graph_edges_geom_gix
+      ON gis.road_graph_edges USING gist (geom);
+
     CREATE TABLE IF NOT EXISTS gis.traffic_volume_segments (
       source_key text NOT NULL DEFAULT 'txdot_aadt',
       source_object_id bigint NOT NULL,

@@ -82,6 +82,29 @@ test("does not exclude low-information records solely because their normalized s
   assert.equal(result.statistical_classification, "insufficient_data");
 });
 
+test("protects a recorded subject-neighborhood match from statistical exclusion", () => {
+  const available = candidates();
+  const distributions = buildNeighborhoodRelevanceDistributions(subject(), available);
+  const result = scoreNeighborhoodCandidate({
+    subject: subject(),
+    distributions,
+    maximumDistanceMiles: 2,
+    candidate: {
+      account_id: "same-subdivision-outlier",
+      year_built: 2025,
+      site_area_sqft: 50_000,
+      sale_price: 1_500_000,
+      distance_miles: 2,
+      subdivision_name: "Subject Estates",
+      same_subject_neighborhood: true,
+    },
+  });
+  assert.ok(result.score < 20);
+  assert.equal(result.excluded, false);
+  assert.equal(result.statistical_classification, "protected_subject_neighborhood");
+  assert.equal(result.protected_inclusion_reason, "same_subject_legal_neighborhood");
+});
+
 test("does not time-adjust sale prices and keeps GLA diagnostic-only", () => {
   const available = candidates();
   const distributions = buildNeighborhoodRelevanceDistributions(subject(), available);

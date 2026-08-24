@@ -9,7 +9,7 @@ import {
 } from "./propertyContextStore.js";
 import { NEIGHBORHOOD_BOUNDARY_DISCLOSURE } from "./neighborhoodRelevance.js";
 
-export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 2;
+export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 3;
 
 // TODO(neighborhood-boundary-validation): Test automated boundary suggestions on
 // representative properties in multiple Dallas County cities and urban,
@@ -63,6 +63,52 @@ function confidenceFromEvidence({ candidateCount, physicalCoverage, roadEvidence
 
 function inputSignature(input) {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+}
+
+export function buildRoadwayBoundary(roadEvidence, subjectPoint) {
+  const subject = subjectPoint?.type === "Point" ? subjectPoint.coordinates : null;
+  const longitude = Number(subject?.[0]);
+  const latitude = Number(subject?.[1]);
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+
+  const cardinal = roadEvidence?.cardinal_boundaries || {};
+  const coordinate = (side, axis) => {
+    const point = cardinal[side]?.candidates?.find((candidate) => candidate.selected)
+      ?.representative_point || cardinal[side]?.candidates?.[0]?.representative_point;
+    const value = Number(point?.[axis]);
+    return Number.isFinite(value) ? value : null;
+  };
+  const north = coordinate("north", 1);
+  const east = coordinate("east", 0);
+  const south = coordinate("south", 1);
+  const west = coordinate("west", 0);
+  if ([north, east, south, west].some((value) => value === null)) return null;
+  if (!(west < longitude && longitude < east && south < latitude && latitude < north)) return null;
+  if (east - west < 0.002 || north - south < 0.002) return null;
+
+  return {
+    type: "Polygon",
+    coordinates: [[
+      [west, south],
+      [east, south],
+      [east, north],
+      [west, north],
+      [west, south],
+    ]],
+  };
+}
+
+function approximateBoundaryAreaSquareMiles(boundary) {
+  const ring = boundary?.coordinates?.[0] || [];
+  if (!ring.length) return null;
+  const longitudes = ring.map((point) => Number(point?.[0])).filter(Number.isFinite);
+  const latitudes = ring.map((point) => Number(point?.[1])).filter(Number.isFinite);
+  if (!longitudes.length || !latitudes.length) return null;
+  const middleLatitude = (Math.min(...latitudes) + Math.max(...latitudes)) / 2;
+  const widthMiles = (Math.max(...longitudes) - Math.min(...longitudes)) *
+    69.172 * Math.cos(middleLatitude * Math.PI / 180);
+  const heightMiles = (Math.max(...latitudes) - Math.min(...latitudes)) * 69.0;
+  return Number((widthMiles * heightMiles).toFixed(4));
 }
 
 function boundaryResponse(row) {
@@ -350,13 +396,16 @@ function evidenceCoverage(boundary) {
   return Math.min(yearCoverage, siteCoverage);
 }
 
-function generationWarnings({ boundary, roadEvidence, zoningEvidence, sourceHealth }) {
+function generationWarnings({ boundary, roadEvidence, zoningEvidence, sourceHealth, roadwayBoundary }) {
   const warnings = [];
   if (Number(boundary.candidate_count || 0) < 30) {
     warnings.push("Fewer than 30 similarly classified parcels were available inside the discovery radius.");
   }
   if (!roadEvidence?.street_names?.length) {
     warnings.push("No local road segments could be confidently assigned to the generated boundary.");
+  }
+  if (!roadwayBoundary) {
+    warnings.push("Four enclosing traffic-backed roadway positions were not available; the parcel discovery shape requires appraiser review.");
   }
   if (!zoningEvidence?.subject?.zoning_code) {
     warnings.push("Subject zoning was not available from the local official zoning mirror.");
@@ -437,10 +486,10 @@ export async function generateNeighborhoodBoundary(pool, {
     accountId: normalizedId,
     radiusMiles: profile.radiusMiles,
   });
-  const boundary = boundaryRow.boundary;
+  const preliminaryBoundary = boundaryRow.boundary;
   let roadEvidence = null;
   try {
-    roadEvidence = await loadBoundaryStreetNames(pool, boundary, {
+    roadEvidence = await loadBoundaryStreetNames(pool, preliminaryBoundary, {
       allowRemoteFallback: false,
       centerPoint: boundaryRow.subject_point,
     });
@@ -454,6 +503,8 @@ export async function generateNeighborhoodBoundary(pool, {
       warning: error?.message || "local_txdot_boundary_roads_unavailable",
     };
   }
+  const roadwayBoundary = buildRoadwayBoundary(roadEvidence, boundaryRow.subject_point);
+  const boundary = roadwayBoundary || preliminaryBoundary;
   const [zoningEvidence, sourceHealth] = await Promise.all([
     loadZoningEvidence(pool, {
       subjectParcelObjectId: boundaryRow.subject_parcel_object_id,
@@ -494,7 +545,12 @@ export async function generateNeighborhoodBoundary(pool, {
       maximum_sampled_parcels: MAX_BOUNDARY_POINTS,
       candidate_count: Number(boundaryRow.candidate_count || 0),
       sampled_max_distance_miles: finiteNumber(boundaryRow.sampled_max_distance_miles),
-      boundary_area_square_miles: finiteNumber(boundaryRow.boundary_area_square_miles),
+      boundary_area_square_miles: roadwayBoundary
+        ? approximateBoundaryAreaSquareMiles(roadwayBoundary)
+        : finiteNumber(boundaryRow.boundary_area_square_miles),
+      boundary_generation_mode: roadwayBoundary
+        ? "traffic_backed_cardinal_road_enclosure"
+        : "parcel_discovery_shape_fallback",
       physical_characteristic_coverage_percent: Math.round(physicalCoverage * 1000) / 10,
       year_built_count: Number(boundaryRow.year_built_count || 0),
       site_size_count: Number(boundaryRow.site_size_count || 0),
@@ -508,6 +564,7 @@ export async function generateNeighborhoodBoundary(pool, {
     roadEvidence,
     zoningEvidence,
     sourceHealth,
+    roadwayBoundary,
   });
   const signature = inputSignature({
     methodology_version: NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION,

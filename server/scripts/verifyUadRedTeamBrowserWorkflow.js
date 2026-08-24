@@ -146,6 +146,11 @@ try {
   await page.getByRole("heading", { name: "Revision-bound UAD delivery package" }).waitFor({ timeout: 30_000 });
   evidence.checks.editor_loaded = true;
   evidence.checks.signature_ui_present = true;
+  const workfiles = await apiJson(`/api/uad/accounts/${encodeURIComponent(fixtureAccountId)}/workfiles`);
+  const workfile = workfiles.workfiles?.find((candidate) => candidate.file_number === FIXTURE_FILE_NUMBER);
+  if (!workfile?.id) throw new Error("redteam_browser_delivery_workfile_missing");
+  const editor = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/editor`);
+  const immutableAtStart = ["signed", "exported", "submitted"].includes(editor.workfile?.status);
 
   await page.getByRole("button", { name: /^Section 22: Sales Comparison Approach/ }).click();
   await page.getByText("Section 22O subject Summary redisplays", { exact: true }).waitFor({ timeout: 15_000 }).catch(() => {});
@@ -165,15 +170,22 @@ try {
     name: "Whole-workfile UAD readiness",
     exact: true,
   }).locator("..").locator("..").locator("..");
-  const validationResponsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return url.origin === apiOrigin
-      && url.pathname.endsWith("/validation")
-      && response.request().method() === "POST";
-  }, { timeout: 60_000 });
-  await validationPanel.getByRole("button", { name: /Run (?:full UAD validation|validation again)/ }).click();
-  const validationResponse = await validationResponsePromise;
-  const validationPayload = await validationResponse.json();
+  let validationPayload;
+  let validationRequestOk = true;
+  if (immutableAtStart) {
+    validationPayload = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/validation`);
+  } else {
+    const validationResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === apiOrigin
+        && url.pathname.endsWith("/validation")
+        && response.request().method() === "POST";
+    }, { timeout: 60_000 });
+    await validationPanel.getByRole("button", { name: /Run (?:full UAD validation|validation again)/ }).click();
+    const validationResponse = await validationResponsePromise;
+    validationRequestOk = validationResponse.ok();
+    validationPayload = await validationResponse.json();
+  }
   const validation = validationPayload?.validation;
   const findings = Array.isArray(validation?.findings) ? validation.findings : [];
   const countBy = (selectedFindings, selector) => Object.fromEntries(
@@ -207,22 +219,22 @@ try {
     section_counts: countBy(findings, (finding) => finding.metadata?.section),
     code_counts: countBy(findings, (finding) => finding.metadata?.code),
   } : null;
-  await validationPanel.getByText(/Revision \d+ (?:has \d+ blocking finding|passed every current local UAD rule)/).waitFor({ timeout: 60_000 });
+  if (!immutableAtStart) {
+    await validationPanel.getByText(/Revision \d+ (?:has \d+ blocking finding|passed every current local UAD rule)/).waitFor({ timeout: 60_000 });
+  }
   const validationText = await validationPanel.innerText();
   const fatalFindingCount = findings.filter((finding) => finding.severity === "fatal").length;
   const warningFindingCount = findings.filter((finding) => finding.severity === "warning").length;
-  evidence.checks.local_validation_completed = validationResponse.ok() && Boolean(validation);
-  evidence.checks.local_validation_result_rendered = validation?.status === "passed"
-    ? validationText.includes(`Revision ${validation.revision_number} passed every current local UAD rule`)
-    : validationText.includes(`Revision ${validation?.revision_number} has ${validation?.fatal_count} blocking finding`);
+  evidence.checks.local_validation_completed = validationRequestOk && Boolean(validation);
+  evidence.checks.local_validation_result_rendered = immutableAtStart
+    ? Boolean(validationText) && validation?.status === "passed"
+    : validation?.status === "passed"
+      ? validationText.includes(`Revision ${validation.revision_number} passed every current local UAD rule`)
+      : validationText.includes(`Revision ${validation?.revision_number} has ${validation?.fatal_count} blocking finding`);
   evidence.checks.local_validation_counts_consistent = validation?.fatal_count === fatalFindingCount
     && validation?.warning_count === warningFindingCount
     && findings.length === fatalFindingCount + warningFindingCount;
 
-  const workfiles = await apiJson(`/api/uad/accounts/${encodeURIComponent(fixtureAccountId)}/workfiles`);
-  const workfile = workfiles.workfiles?.find((candidate) => candidate.file_number === FIXTURE_FILE_NUMBER);
-  if (!workfile?.id) throw new Error("redteam_browser_delivery_workfile_missing");
-  const editor = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/editor`);
   const valueByEntityAndUid = new Map(editor.values.map((value) => [
     `${value.entity_id || "root"}:${value.uid}`,
     value.value,
@@ -278,6 +290,7 @@ try {
   );
   for (const [index, asset] of requiredAssets.entries()) {
     if (verifiedAssetKeys.has(assetKey(asset))) continue;
+    if (immutableAtStart) throw new Error("redteam_signed_required_asset_missing");
     const fileStem = `${asset.section_number}-${asset.caption_type}`.replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
     const created = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/assets/upload-url`, {
       method: "POST",
@@ -320,23 +333,32 @@ try {
   evidence.storage.verified_after = requiredAssets.filter((asset) => finalVerifiedKeys.has(assetKey(asset))).length;
   evidence.checks.required_assets_verified = evidence.storage.verified_after === requiredAssets.length;
 
-  const postAssetValidationResponsePromise = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return url.origin === apiOrigin
-      && url.pathname.endsWith("/validation")
-      && response.request().method() === "POST";
-  }, { timeout: 60_000 });
-  await validationPanel.getByRole("button", { name: "Run validation again", exact: true }).click();
-  const postAssetValidationResponse = await postAssetValidationResponsePromise;
-  const postAssetValidationPayload = await postAssetValidationResponse.json();
+  let postAssetValidationPayload;
+  let postAssetValidationRequestOk = true;
+  if (immutableAtStart) {
+    postAssetValidationPayload = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/validation`);
+  } else {
+    const postAssetValidationResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === apiOrigin
+        && url.pathname.endsWith("/validation")
+        && response.request().method() === "POST";
+    }, { timeout: 60_000 });
+    await validationPanel.getByRole("button", { name: "Run validation again", exact: true }).click();
+    const postAssetValidationResponse = await postAssetValidationResponsePromise;
+    postAssetValidationRequestOk = postAssetValidationResponse.ok();
+    postAssetValidationPayload = await postAssetValidationResponse.json();
+  }
   const postAssetValidation = postAssetValidationPayload?.validation;
   const postAssetFindings = Array.isArray(postAssetValidation?.findings) ? postAssetValidation.findings : [];
   evidence.validation = summarizeValidation(postAssetValidation);
-  await validationPanel.getByText(
-    `Revision ${postAssetValidation?.revision_number} passed every current local UAD rule and is ready for the next generation step.`,
-    { exact: true },
-  ).waitFor({ timeout: 60_000 });
-  evidence.checks.post_asset_validation_completed = postAssetValidationResponse.ok() && Boolean(postAssetValidation);
+  if (!immutableAtStart) {
+    await validationPanel.getByText(
+      `Revision ${postAssetValidation?.revision_number} passed every current local UAD rule and is ready for the next generation step.`,
+      { exact: true },
+    ).waitFor({ timeout: 60_000 });
+  }
+  evidence.checks.post_asset_validation_completed = postAssetValidationRequestOk && Boolean(postAssetValidation);
   evidence.checks.post_asset_validation_counts_consistent = postAssetValidation?.fatal_count === 0
     && postAssetValidation?.warning_count === 0
     && postAssetFindings.length === 0;
@@ -441,9 +463,6 @@ try {
   const finalXmlResult = await generateXmlThroughUi();
   const finalPdf = finalPdfResult.artifact;
   const finalXml = finalXmlResult.artifact;
-  const pdfBody = await artifactObject(finalPdf, "pdf");
-  const xmlBody = await artifactObject(finalXml, "xml");
-  const xmlText = xmlBody.toString("utf8");
   evidence.delivery.pdf = {
     status: finalPdf?.generation_status,
     revision_number: finalPdf?.revision_number,
@@ -463,10 +482,18 @@ try {
     schema_warning_count: finalXmlResult.schema_validation?.warning_count,
     signer_count: finalXml?.metadata?.signer_count,
     image_reference_count: finalXml?.metadata?.image_reference_count,
-    sales_comparable_count: (xmlText.match(/ValuationUseType="SalesComparable"/g) || []).length,
-    adjustment_count: (xmlText.match(/<ComparableAdjustmentAmount>/g) || []).length,
-    reconciliation_count: (xmlText.match(/<SalesComparisonCommentDescription>/g) || []).length,
+    schema_findings: (finalXmlResult.schema_validation?.findings || []).slice(0, 20).map((finding) => ({
+      message: sanitizeBrowserDiagnostic(finding.message),
+      line: finding.metadata?.line || null,
+      code: finding.metadata?.code || null,
+    })),
   };
+  const pdfBody = await artifactObject(finalPdf, "pdf");
+  const xmlBody = await artifactObject(finalXml, "xml");
+  const xmlText = xmlBody.toString("utf8");
+  evidence.delivery.xml.sales_comparable_count = (xmlText.match(/ValuationUseType="SalesComparable"/g) || []).length;
+  evidence.delivery.xml.adjustment_count = (xmlText.match(/<ComparableAdjustmentAmount>/g) || []).length;
+  evidence.delivery.xml.reconciliation_count = (xmlText.match(/<SalesComparisonCommentDescription>/g) || []).length;
   evidence.checks.signed_pdf_verified = pdfBody.subarray(0, 5).toString("ascii") === "%PDF-"
     && finalPdf?.generation_status === "ready"
     && Number(finalPdf?.metadata?.page_count || 0) > 0

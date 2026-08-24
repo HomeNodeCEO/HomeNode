@@ -252,7 +252,7 @@ test("MISMO XML generation places Section 29 values and signed credentials in of
       signer_role: "appraiser",
       execution_date: "2026-08-20",
       credential_snapshot: {
-        signer: { first_name: "Taylor", middle_name: null, last_name: "Appraiser", suffix_name: null },
+        signer: { first_name: "Taylor", middle_name: "Quinn", last_name: "Appraiser", suffix_name: null },
         organization: {
           legal_name: "HomeNode Real Estate LLC",
           display_name: "HomeNode Real Estate",
@@ -275,7 +275,10 @@ test("MISMO XML generation places Section 29 values and signed credentials in of
   assert.match(generated.xml, /<GovernmentAgencyAppraisalIndicator>false<\/GovernmentAgencyAppraisalIndicator>/);
   assert.match(generated.xml, /<ValuationReportInspectionCertificationType>InteriorAndExterior<\/ValuationReportInspectionCertificationType>/);
   assert.match(generated.xml, /<PARTY>/);
-  assert.match(generated.xml, /<FirstName>Taylor<\/FirstName>/);
+  assert.match(
+    generated.xml,
+    /<FirstName>Taylor<\/FirstName>\s*<LastName>Appraiser<\/LastName>\s*<MiddleName>Quinn<\/MiddleName>/,
+  );
   assert.match(generated.xml, /<AppraiserCompanyName>HomeNode Real Estate<\/AppraiserCompanyName>/);
   assert.match(generated.xml, /<LicenseIdentifier>STAGING-CR-0001<\/LicenseIdentifier>/);
   assert.match(generated.xml, /<PartyRoleType>Appraiser<\/PartyRoleType>/);
@@ -302,8 +305,10 @@ test("the official subschema validator returns blocking structural findings", as
 });
 
 test("the synthetic signed SFR fixture is valid against the pinned GSE subschema", async () => {
+  const signer = structuredClone(uadNativePdfSignerFixture());
+  signer.credential_snapshot.signer.middle_name = "Quinn";
   const generated = buildUadMismoXml(uadNativePdfEditorFixture(), {
-    signers: [uadNativePdfSignerFixture()],
+    signers: [signer],
   });
   const validation = await validateUadSubschema(generated.xml);
 

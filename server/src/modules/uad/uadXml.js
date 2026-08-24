@@ -337,8 +337,8 @@ function appendSigner(root, signer, order) {
   const individual = ensureChild(party, "INDIVIDUAL", { sort: 2861 });
   const name = ensureChild(individual, "NAME", { sort: 2862 });
   appendText(name, "FirstName", snapshot.signer.first_name, { sort: 2863 });
-  appendText(name, "MiddleName", snapshot.signer.middle_name, { sort: 2864 });
-  appendText(name, "LastName", snapshot.signer.last_name, { sort: 2865 });
+  appendText(name, "LastName", snapshot.signer.last_name, { sort: 2864 });
+  appendText(name, "MiddleName", snapshot.signer.middle_name, { sort: 2865 });
   appendText(name, "SuffixName", snapshot.signer.suffix_name, { sort: 2866 });
 
   const address = ensureStructuralPath(party, ["ADDRESSES", "ADDRESS"], { sort: 2870 });

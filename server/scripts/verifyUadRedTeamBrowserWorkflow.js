@@ -385,6 +385,16 @@ try {
       && reviewPdf.artifact?.ready_for_download === true;
 
     const signaturePanel = artifactPanel("Appraiser signature and credential snapshot");
+    const readinessRefreshPromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === apiOrigin
+        && url.pathname.endsWith("/certification-readiness")
+        && response.request().method() === "GET";
+    }, { timeout: 60_000 });
+    await page.evaluate((workfileId) => {
+      window.dispatchEvent(new CustomEvent("homenode:uad-workfile-mutated", { detail: { workfileId } }));
+    }, workfile.id);
+    await readinessRefreshPromise;
     const attestation = signaturePanel.getByLabel(/I reviewed the current PDF/);
     await attestation.waitFor({ timeout: 60_000 });
     await attestation.check();

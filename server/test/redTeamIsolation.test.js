@@ -209,6 +209,19 @@ test("red-team startup bootstraps the guarded synthetic base before migrations",
   assert.ok(syntheticBoundary > databasePool && syntheticBoundary < schemaMutation);
 });
 
+test("red-team bootstrap and account reads preserve optional sales availability", () => {
+  assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.sales \(/);
+  assert.match(redTeamBaseSource, /sales_account_closing_date_idx/);
+  assert.match(
+    serverSource,
+    /getAccountPropertyActivityHistory\(pool, canonicalId\)[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \[\];[\s\S]*?\}\);/,
+  );
+  assert.match(
+    serverSource,
+    /reportManualValuesPromise[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \{\};[\s\S]*?\}\);/,
+  );
+});
+
 test("red-team workfiles receive an idempotent complete assignment baseline", () => {
   assert.match(redTeamFixturesSource, /REDTEAM_ASSIGNMENT_DEFAULTS/);
   assert.match(redTeamFixturesSource, /saveUadSection\(pool, workfileId, "assignment"/);

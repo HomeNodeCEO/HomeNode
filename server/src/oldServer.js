@@ -925,7 +925,11 @@ app.get("/api/accounts/:id", async (req, res) => {
     // Sales history is core account data. Start its indexed lookup immediately
     // and include it in this response instead of making the frontend wait on
     // the general-purpose /api/sales view.
-    const propertyActivityHistoryPromise = getAccountPropertyActivityHistory(pool, canonicalId);
+    const propertyActivityHistoryPromise = getAccountPropertyActivityHistory(pool, canonicalId)
+      .catch((error) => {
+        console.warn("property activity lookup failed", error?.code || "unknown_error");
+        return [];
+      });
     const censusGeographyPromise = (async () => {
       await censusGeographyReady;
       await ensureCensusGeographySchema(pool);
@@ -961,7 +965,10 @@ app.get("/api/accounts/:id", async (req, res) => {
           updated_at: row.updated_at,
         }]),
       );
-    })();
+    })().catch((error) => {
+      console.warn("report manual values lookup failed", error?.code || "unknown_error");
+      return {};
+    });
     const propertyContextPromise = (async () => {
       await ensurePropertyContextAvailable();
       return getStoredPropertyContext(pool, { accountId: canonicalId });

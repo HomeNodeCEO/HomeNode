@@ -260,6 +260,29 @@ try {
       ON core.sale_parcels (source_record_id)
       WHERE NOT is_resolved;
 
+    CREATE TABLE IF NOT EXISTS core.sales (
+      id bigserial PRIMARY KEY,
+      account_id text REFERENCES core.accounts(account_id),
+      address text,
+      city text,
+      state text,
+      zip text,
+      closing_date date,
+      sale_price numeric,
+      days_on_market integer,
+      concessions text,
+      source text,
+      source_record_id bigint REFERENCES core.sales_source_records(id),
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS sales_source_record_unique_idx
+      ON core.sales (source_record_id)
+      WHERE source_record_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS sales_account_closing_date_idx
+      ON core.sales (account_id, closing_date DESC);
+
     CREATE TABLE IF NOT EXISTS app.county_account_identifiers (
       county text NOT NULL,
       normalized_account_id text NOT NULL,

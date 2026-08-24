@@ -169,7 +169,7 @@ test("UAD router bounds hostile identifiers, path variants, and JSON root shapes
   await withServer(pool, async (baseUrl) => {
     for (const path of [
       "/api/uad/workfiles/not-a-uuid",
-      `/api/uad/workfiles/${encodeURIComponent("' OR 1=1--")}`,
+      `/api/uad/workfiles/${encodeURIComponent("uad'quoted;identifier")}`,
       `/api/uad/workfiles/${encodeURIComponent("\uFF10\uFF11\uFF12\uFF13-\uD83D\uDD12")}`,
       `/api/uad/workfiles/${WORKFILE_ID}%2Feditor`,
     ]) {

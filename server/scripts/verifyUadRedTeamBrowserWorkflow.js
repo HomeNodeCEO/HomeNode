@@ -111,9 +111,10 @@ try {
   evidence.checks.reconciliation_section_loaded = reconciliationText.includes("Canonical values redisplayed in Section 26");
   evidence.checks.sales_conclusion_present = /Sales Comparison[\s\S]*\$[0-9]/.test(reconciliationText);
 
-  const validationPanel = page.locator("section").filter({
-    has: page.getByRole("heading", { name: "Whole-workfile UAD readiness", exact: true }),
-  });
+  const validationPanel = page.getByRole("heading", {
+    name: "Whole-workfile UAD readiness",
+    exact: true,
+  }).locator("..").locator("..").locator("..");
   const validationResponsePromise = page.waitForResponse((response) => {
     const url = new URL(response.url());
     return url.origin === apiOrigin

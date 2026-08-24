@@ -4838,7 +4838,16 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
                 THEN 0
               ELSE NULL
             END AS garage_spaces,
-            COALESCE(sale.mls_pool_yn, sale.cad_pool) AS pool_yn,
+            COALESCE(
+              sale.mls_pool_yn,
+              CASE
+                WHEN lower(btrim(sale.cad_pool::text))
+                  IN ('true', 't', 'yes', 'y', '1') THEN true
+                WHEN lower(btrim(sale.cad_pool::text))
+                  IN ('false', 'f', 'no', 'n', '0', '') THEN false
+                ELSE NULL
+              END
+            ) AS pool_yn,
             COALESCE(
               NULLIF(sale.mls_living_area, 0),
               NULLIF(sale.cad_living_area_sqft, 0)

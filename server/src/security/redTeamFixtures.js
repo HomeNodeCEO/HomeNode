@@ -3,11 +3,19 @@ export const REDTEAM_ORGANIZATIONS = Object.freeze({
     id: "10000000-0000-4000-8000-000000000001",
     legalName: "HomeNode Synthetic Red Team Organization A",
     displayName: "Red Team Organization A",
+    addressLine1: "300 Synthetic Review Ave",
+    city: "Dallas",
+    stateCode: "TX",
+    postalCode: "75201",
   }),
   organizationB: Object.freeze({
     id: "20000000-0000-4000-8000-000000000001",
     legalName: "HomeNode Synthetic Red Team Organization B",
     displayName: "Red Team Organization B",
+    addressLine1: "400 Synthetic Review Ave",
+    city: "Dallas",
+    stateCode: "TX",
+    postalCode: "75202",
   }),
 });
 

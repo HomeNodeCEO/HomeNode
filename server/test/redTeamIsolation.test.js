@@ -282,6 +282,7 @@ test("red-team workfiles receive an idempotent complete assignment baseline", ()
   assert.match(redTeamFixturesSource, /seedSalesRichUadDatabaseFixture/);
   assert.match(redTeamFixturesSource, /pruneStaleRedTeamOidcIssuers/);
   assert.match(redTeamFixturesSource, /stale_oidc_identities_removed/);
+  assert.match(redTeamFixturesSource, /redteam_assigned_appraiser_credentials_incomplete/);
   assert.ok(
     redTeamFixturesSource.indexOf("verifyRedTeamSyntheticBoundary(pool)")
       < redTeamFixturesSource.indexOf("ensureRedTeamAssignmentBaseline(organizationAWorkfile)"),

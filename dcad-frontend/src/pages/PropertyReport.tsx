@@ -864,13 +864,9 @@ const ROADWAY_BOUNDARY_METHODOLOGY_VERSION = 4;
 function NeighborhoodRangeGrid({
   rows,
   assignment,
-  readOnly = false,
-  onChange,
 }: {
   rows: readonly NeighborhoodRangeRowDefinition[];
   assignment: AssignmentDetails;
-  readOnly?: boolean;
-  onChange: <K extends keyof AssignmentDetails>(key: K, value: AssignmentDetails[K]) => void;
 }) {
   return (
     <div className="mt-2 min-w-[510px]">
@@ -883,32 +879,35 @@ function NeighborhoodRangeGrid({
           {[row.low, row.high, row.predominant].map((field) => {
             const isMoney = row.format === "money";
             const isPricePerSquareFoot = /Sq\. Ft\./.test(row.label);
+            const value = parseNumber(assignment[field]);
+            const formattedValue = value === null
+              ? "Not reported"
+              : new Intl.NumberFormat("en-US", {
+                  minimumFractionDigits: isPricePerSquareFoot ? 2 : 0,
+                  maximumFractionDigits: isPricePerSquareFoot
+                    ? 2
+                    : row.label === "Age"
+                      ? 0
+                      : 2,
+                }).format(value);
             return (
               <div
                 key={field}
-                className={`grid min-h-7 min-w-0 items-center rounded-md border border-slate-200 px-2 focus-within:border-slate-400 ${
-                  isMoney
+                className={`grid min-h-7 min-w-0 items-center rounded-md border border-slate-200 bg-slate-50 px-2 ${{
+                  true: ""
+                }.true}${isMoney
                     ? `grid-cols-[auto_minmax(0,1fr)${isPricePerSquareFoot ? "_auto" : ""}] gap-1`
                     : "grid-cols-1"
-                } ${readOnly ? "bg-slate-50" : "bg-white"}`}
+                }`}
               >
-                {isMoney ? <span className="text-xs font-medium text-slate-600">$</span> : null}
-                <input
-                  type="number"
-                  min="0"
-                  step={row.label === "Age" ? "1" : "0.01"}
-                  readOnly={readOnly}
-                  aria-readonly={readOnly}
-                  className={`min-w-0 w-full appearance-none border-0 bg-transparent p-0 text-right text-xs font-medium tabular-nums text-slate-800 outline-none ${
-                    readOnly ? "cursor-default" : ""
-                  }`}
-                  value={(assignment[field] as string | number | undefined) ?? ""}
-                  onChange={(event) => {
-                    if (!readOnly) onChange(field, event.target.value);
-                  }}
-                />
+                {isMoney ? (
+                  <span className={`text-xs font-medium text-slate-600 ${value === null ? "invisible" : ""}`} aria-hidden="true">$</span>
+                ) : null}
+                <span className="min-w-0 text-right text-xs font-medium tabular-nums text-slate-800">
+                  {formattedValue}
+                </span>
                 {isPricePerSquareFoot ? (
-                  <span className="text-[10px] font-medium text-slate-500">/SF</span>
+                  <span className={`text-[10px] font-medium text-slate-500 ${value === null ? "invisible" : ""}`}>/SF</span>
                 ) : null}
               </div>
             );
@@ -1842,7 +1841,6 @@ function NeighborhoodCharacteristicsContent({
               <NeighborhoodRangeGrid
                 rows={NEIGHBORHOOD_RANGE_ROWS}
                 assignment={assignmentDraft}
-                onChange={onAssignmentChange}
               />
             </div>
 
@@ -1861,8 +1859,6 @@ function NeighborhoodCharacteristicsContent({
               <NeighborhoodRangeGrid
                 rows={NEIGHBORHOOD_ALL_PROPERTY_ROWS}
                 assignment={assignmentDraft}
-                readOnly
-                onChange={onAssignmentChange}
               />
               <p className="mt-2 text-[10px] leading-4 text-slate-500">
                 Data coverage — value: {formatNumber(assignmentDraft.neighborhood_all_value_count)}; $/SF: {formatNumber(assignmentDraft.neighborhood_all_ppsf_count)}; age: {formatNumber(assignmentDraft.neighborhood_all_age_count)}; GLA: {formatNumber(assignmentDraft.neighborhood_all_gla_count)}. Loads automatically from the saved boundary; use Analyze Present Land Use to refresh.

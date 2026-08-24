@@ -920,10 +920,7 @@ export default function MarketConditionsAnalysis({
       : 'automatic';
   const [selectedAreaKeys, setSelectedAreaKeys] = useState<
     MarketConditionsAreaKey[]
-  >(includeCustomMarketArea(
-    savedDraft?.selectedAreaKeys || ['city', 'zip', 'radius_1'],
-    resolvedInitialGeometry,
-  ));
+  >(() => AREA_OPTIONS.map((option) => option.key));
   const [asOfDate, setAsOfDate] = useState(
     savedDraft?.asOfDate || todayInputValue(),
   );

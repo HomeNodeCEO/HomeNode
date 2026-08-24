@@ -15,6 +15,13 @@ function requiredRedTeamOrigin(value, expected, code) {
   return parsed.origin;
 }
 
+function sanitizeBrowserDiagnostic(value) {
+  return String(value || "")
+    .replace(/https:\/\/[^\s'\"]*\.r2\.cloudflarestorage\.com\/[^\s'\"]+/gi, "[redacted-r2-signed-url]")
+    .replace(/X-Amz-[A-Za-z-]+=[^\s&'\"]+/gi, "X-Amz-[redacted]")
+    .slice(0, 500);
+}
+
 const apiOrigin = requiredRedTeamOrigin(process.env.UAD_REDTEAM_BASE_URL, API_ORIGIN, "invalid_uad_redteam_api_url");
 const appOrigin = requiredRedTeamOrigin(process.env.UAD_REDTEAM_APP_URL, APP_ORIGIN, "invalid_uad_redteam_app_url");
 const fixtureAccountId = String(process.env.UAD_REDTEAM_FIXTURE_ACCOUNT_ID || FIXTURE_ACCOUNT_ID).trim();
@@ -82,10 +89,10 @@ try {
   }, accessToken);
   page = await context.newPage();
   page.on("pageerror", (error) => {
-    evidence.browser.page_errors.push(String(error?.message || error).slice(0, 500));
+    evidence.browser.page_errors.push(sanitizeBrowserDiagnostic(error?.message || error));
   });
   page.on("console", (message) => {
-    if (message.type() === "error") evidence.browser.console_errors.push(message.text().slice(0, 500));
+    if (message.type() === "error") evidence.browser.console_errors.push(sanitizeBrowserDiagnostic(message.text()));
   });
   page.on("response", (response) => {
     const url = new URL(response.url());
@@ -322,7 +329,7 @@ try {
     key === "sales_comparable_count" ? Number(value) >= 3 : value === true
   ));
 } catch (error) {
-  evidence.error = String(error?.message || error).slice(0, 1_000);
+  evidence.error = sanitizeBrowserDiagnostic(error?.message || error);
   if (page) {
     await page.screenshot({ fullPage: true, path: path.join(outputDirectory, "browser-failure.png") }).catch(() => {});
   }

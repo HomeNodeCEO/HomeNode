@@ -215,6 +215,11 @@ import {
   createRuntimeResilienceConfiguration,
   installGracefulShutdown,
 } from "./security/runtimeResilience.js";
+import {
+  normalizeSignupPayload,
+  signupDeliveryStatus,
+  signupRequestMetadata,
+} from "./security/signupSecurity.js";
 
 const app = express();
 const httpSecurity = createHttpSecurityConfiguration();
@@ -258,6 +263,23 @@ app.use(rateLimit({
   },
   handler: (_req, res) => res.status(429).json({ error: "api_rate_limit_exceeded" }),
 }));
+
+const signupRateLimiter = rateLimit({
+  windowMs: httpSecurity.signupRateLimitWindowMs,
+  limit: httpSecurity.signupRateLimitMax,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const forwarded = httpSecurity.rateLimitClientIpHeader
+      ? String(req.get(httpSecurity.rateLimitClientIpHeader) || "").trim()
+      : "";
+    return ipKeyGenerator(isIP(forwarded) ? forwarded : req.ip);
+  },
+  handler: (_req, res) => res
+    .set("cache-control", "no-store")
+    .status(429)
+    .json({ error: "signup_rate_limit_exceeded" }),
+});
 
 const uadObjectStorage = createUadObjectStorage();
 const uadComplianceRegistry = createUadComplianceRegistry();
@@ -746,12 +768,18 @@ app.get("/api/signup/smtp-status", (_req, res) => {
 
 // Lightweight email submission endpoint for Sign Up form
 // Expects JSON: { ownerName: string, ownerTelephone: string, accountId?: string }
-app.post("/api/signup/email", async (req, res) => {
+app.post("/api/signup/email", signupRateLimiter, async (req, res) => {
   try {
-    const { ownerName, ownerTelephone, accountId } = req.body || {};
-    if (!ownerName || !ownerTelephone) {
-      return res.status(400).json({ error: "missing_owner_fields" });
+    let payload;
+    try {
+      payload = normalizeSignupPayload(req.body);
+    } catch (error) {
+      return res
+        .status(400)
+        .set("cache-control", "no-store")
+        .json({ error: error?.message || "invalid_signup_payload" });
     }
+    const { accountId, ownerEmail, ownerName, ownerTelephone } = payload;
 
     // Configure transporter from env. Prefer SMTP_URL if provided; otherwise fall back to host/port/user/pass.
     const smtpUrl = process.env.SMTP_URL || process.env.SMTP_CONNECTION_URL;
@@ -774,9 +802,8 @@ app.post("/api/signup/email", async (req, res) => {
     // Persist signup in DB regardless of email status
     let id = null;
     try {
-      const ua = req.headers["user-agent"] || null;
-      const ip = (req.headers["x-forwarded-for"] || "").toString().split(",")[0].trim() || req.ip || null;
-      const meta = { referer: req.headers.referer || null };
+      const metadata = signupRequestMetadata(req);
+      const meta = { referer: metadata.referer };
       const { rows } = await pool.query(
         `INSERT INTO app.signups (source, account_id, owner_name, owner_telephone, owner_email, user_agent, ip, meta)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
@@ -785,21 +812,21 @@ app.post("/api/signup/email", async (req, res) => {
           accountId || null,
           ownerName,
           ownerTelephone,
-          (req.body && req.body.ownerEmail) || null,
-          ua,
-          ip,
+          ownerEmail,
+          metadata.userAgent,
+          metadata.ip,
           meta,
         ]
       );
       id = rows?.[0]?.id ?? null;
     } catch (e) {
-      console.error("[signup] DB insert failed", e);
+      const code = /^[A-Z0-9_]{1,32}$/i.test(String(e?.code || "")) ? String(e.code) : "unknown";
+      console.error("[signup] DB insert failed", { code });
       // Continue to try email even if DB failed
     }
 
     // Try to send email if SMTP is configured; do not fail the request if mail fails
     let emailSent = false;
-    let emailError = null;
     if (transporter) {
       try {
         await transporter.sendMail({
@@ -809,20 +836,25 @@ app.post("/api/signup/email", async (req, res) => {
           text,
         });
         emailSent = true;
-      } catch (e) {
-        emailError = e?.message || String(e);
+      } catch {
+        console.warn("[signup] SMTP delivery failed");
       }
     }
 
-    // Always return success for the signup capture; include email status for transparency
-    res.json({ ok: true, id, email_sent: emailSent, email_error: emailError });
+    // Never return raw provider diagnostics to an unauthenticated client.
+    res.set("cache-control", "no-store").json({
+      ok: true,
+      id,
+      email_sent: emailSent,
+      email_status: signupDeliveryStatus({ configured: Boolean(transporter), sent: emailSent }),
+    });
   } catch (err) {
-    const msg = err?.message || "unknown_error";
-    const code = err?.code || null;
-    const responseCode = err?.responseCode || null;
-    const command = err?.command || null;
-    console.error("/api/signup/email failed", { message: msg, code, responseCode, command });
-    res.status(500).json({ error: "email_failed", message: msg, code, responseCode, command });
+    const code = /^[A-Z0-9_]{1,32}$/i.test(String(err?.code || "")) ? String(err.code) : "unknown";
+    console.error("/api/signup/email failed", { code });
+    res
+      .status(500)
+      .set("cache-control", "no-store")
+      .json({ error: "email_failed" });
   }
 });
 

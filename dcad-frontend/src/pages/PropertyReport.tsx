@@ -1400,11 +1400,11 @@ function NeighborhoodCharacteristicsContent({
           accountId,
           assignmentFileId || null,
         );
-        const needsRoadwayBoundaryUpgrade = Boolean(result) && (
-          Number(result?.methodology_version || 0) < ROADWAY_BOUNDARY_METHODOLOGY_VERSION ||
-          result?.evidence.discovery?.boundary_generation_mode !==
-            "traffic_backed_traced_road_polygon"
-        );
+        // Methodology v5 deliberately keeps the irregular parcel-discovery
+        // polygon when the road graph cannot form a credible traced enclosure.
+        // That is a valid result, not a reason to regenerate on every mount.
+        const needsRoadwayBoundaryUpgrade = Boolean(result) &&
+          Number(result?.methodology_version || 0) < ROADWAY_BOUNDARY_METHODOLOGY_VERSION;
         if (needsRoadwayBoundaryUpgrade && !appraiserCleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,

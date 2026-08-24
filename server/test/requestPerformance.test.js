@@ -25,6 +25,20 @@ test("performance paths remove account and file identifiers", () => {
     normalizePerformancePath("/api/accounts/26272500060150000/assignment-files/12345"),
     "/api/accounts/:accountId/assignment-files/:fileId",
   );
+  assert.equal(
+    normalizePerformancePath(
+      "/api/uad/workfiles/5cf2dacc-5c55-4ed5-bdc1-b445e70f570b/assets/c0a8133d-06b4-48fa-bdb3-a25d996ab3e0/verify",
+    ),
+    "/api/uad/workfiles/:workfileId/assets/:assetId/verify",
+  );
+  assert.equal(
+    normalizePerformancePath("/api/uad/accounts/UAD-REDTEAM-SFR-0001/workfiles?limit=5"),
+    "/api/uad/accounts/:accountId/workfiles",
+  );
+  assert.equal(
+    normalizePerformancePath("/api/unknown/5cf2dacc-5c55-4ed5-bdc1-b445e70f570b"),
+    "/api/unknown/:id",
+  );
 });
 
 test("percentile uses nearest-rank semantics", () => {

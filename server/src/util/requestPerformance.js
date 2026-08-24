@@ -17,10 +17,33 @@ export function environmentFlag(value, { defaultEnabled = false } = {}) {
 
 export function normalizePerformancePath(value) {
   const path = String(value || "/").split("?")[0] || "/";
-  return path
-    .replace(/\b[0-9A-Za-z]{17}\b/g, ":accountId")
-    .replace(/\/assignment-files\/\d+(?=\/|$)/g, "/assignment-files/:fileId")
-    .replace(/\/\d{4,}(?=\/|$)/g, "/:id");
+  const dynamicSegments = new Map([
+    ["accounts", ":accountId"],
+    ["assignment-files", ":fileId"],
+    ["assets", ":assetId"],
+    ["delivery-attempts", ":attemptId"],
+    ["documents", ":documentId"],
+    ["entities", ":entityId"],
+    ["organizations", ":organizationId"],
+    ["photos", ":photoId"],
+    ["report-files", ":reportFileId"],
+    ["signatures", ":signatureId"],
+    ["users", ":userId"],
+    ["workfiles", ":workfileId"],
+  ]);
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const segments = path.split("/");
+  for (let index = 1; index < segments.length; index += 1) {
+    const placeholder = dynamicSegments.get(String(segments[index - 1] || "").toLowerCase());
+    if (placeholder && segments[index] && !segments[index].startsWith(":")) {
+      segments[index] = placeholder;
+    } else if (uuidPattern.test(segments[index])) {
+      segments[index] = ":id";
+    } else if (/^\d{4,}$/.test(segments[index])) {
+      segments[index] = ":id";
+    }
+  }
+  return segments.join("/");
 }
 
 export function percentile(values, requestedPercentile) {

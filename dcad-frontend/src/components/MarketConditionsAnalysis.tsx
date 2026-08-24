@@ -76,6 +76,7 @@ type MapInstance = {
     bounds: [BoundaryCoordinate, BoundaryCoordinate],
     options?: Record<string, unknown>,
   ) => void;
+  resize: () => void;
   remove: () => void;
 };
 
@@ -1418,9 +1419,42 @@ export default function MarketConditionsAnalysis({
 
   useEffect(() => {
     if (!mapReady) return;
-    updateBoundaryMap(mapRef.current, customGeometry);
-    fitMapToBoundary(mapRef.current, customGeometry);
+    const map = mapRef.current;
+    if (!map) return;
+    map.resize();
+    updateBoundaryMap(map, customGeometry);
+    fitMapToBoundary(map, customGeometry);
   }, [customGeometry, mapReady]);
+
+  useEffect(() => {
+    const container = mapContainerRef.current;
+    const map = mapRef.current;
+    if (!container || !map || !mapReady) return () => undefined;
+
+    let animationFrame = 0;
+    const synchronizeVisibleMap = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        if (!mapRef.current || container.offsetWidth === 0 || container.offsetHeight === 0) {
+          return;
+        }
+        mapRef.current.resize();
+        updateBoundaryMap(mapRef.current, initialCustomGeometryRef.current);
+        fitMapToBoundary(mapRef.current, initialCustomGeometryRef.current);
+      });
+    };
+
+    synchronizeVisibleMap();
+    const observer = new ResizeObserver(synchronizeVisibleMap);
+    observer.observe(container);
+    window.addEventListener('resize', synchronizeVisibleMap);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+      window.removeEventListener('resize', synchronizeVisibleMap);
+    };
+  }, [mapReady]);
 
   const customMapSales = useMemo(
     () =>

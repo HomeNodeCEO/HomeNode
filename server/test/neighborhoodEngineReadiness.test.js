@@ -104,6 +104,8 @@ test("queries the local county mirrors without contacting external services", as
   assert.equal(statements.length, 6);
   assert.match(statements[0], /gis\.dcad_parcels/);
   assert.match(statements[1], /core\.v_sales_enriched/);
+  assert.doesNotMatch(statements[0], /location_geom/);
+  assert.doesNotMatch(statements[1], /location_geom/);
   assert.match(statements[2], /gis\.road_segments/);
   assert.match(statements[3], /gis\.traffic_volume_segments/);
   assert.match(statements[4], /gis\.zoning_districts/);

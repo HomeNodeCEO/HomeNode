@@ -7,6 +7,7 @@ import {
   ensureNeighborhoodRelevanceSchema,
   generateNeighborhoodRelevance,
   normalizeLegalNeighborhoodName,
+  summarizeRelevantPopulation,
 } from "../src/services/neighborhoodRelevanceEngine.js";
 
 test("derives stable neighborhood identity from subdivision or legal description", () => {
@@ -74,6 +75,23 @@ test("does not remove a same-neighborhood parcel during prerequisite or pocket s
   const clustered = applyContiguousPocketClassification(screened, []);
   assert.equal(clustered[0].excluded, false);
   assert.equal(clustered[0].statistical_classification, "protected_subject_neighborhood");
+});
+
+test("calculates neighborhood ranges from the exact included relevance population", () => {
+  const result = summarizeRelevantPopulation([
+    { excluded: false, score: 90, year_built: 1980, site_area_sqft: 8000, sale_price: 300000,
+      gla_diagnostic: { candidate_gla_sqft: 1500 } },
+    { excluded: false, score: 80, year_built: 1990, site_area_sqft: 10000, sale_price: 400000,
+      gla_diagnostic: { candidate_gla_sqft: 2000 } },
+    { excluded: true, score: 10, year_built: 2025, site_area_sqft: 50000, sale_price: 1500000,
+      gla_diagnostic: { candidate_gla_sqft: 5000 } },
+  ]);
+  assert.equal(result.population_rule, "relevance_included_only");
+  assert.equal(result.included_property_count, 2);
+  assert.equal(result.included_sale_count, 2);
+  assert.equal(result.sales_profile.sale_price.median, 350000);
+  assert.equal(result.sales_profile.price_per_square_foot.median, 200);
+  assert.equal(result.property_profile.age.median, 1985);
 });
 
 test("creates normalized assessment and candidate persistence", async () => {

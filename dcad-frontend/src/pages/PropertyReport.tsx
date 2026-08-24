@@ -992,6 +992,7 @@ function NeighborhoodCharacteristicsContent({
   const [relevanceMessage, setRelevanceMessage] = useState("");
   const automaticLandUseFingerprintRef = useRef("");
   const automaticBoundaryAttemptRef = useRef("");
+  const automaticRelevanceAttemptRef = useRef("");
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
   const zipUnemployment = parseNumber(assignmentDraft.neighborhood_unemployment_pct);
@@ -1552,6 +1553,31 @@ function NeighborhoodCharacteristicsContent({
         result.summary.insufficient_data_count,
       );
       onAssignmentChange("neighborhood_relevance_generated_at", result.generated_at);
+      const relevant = result.summary.relevant_statistics;
+      const sales = relevant?.sales_profile;
+      const properties = relevant?.property_profile;
+      if (relevant && sales && properties) {
+        onAssignmentChange("neighborhood_sale_count", relevant.included_sale_count);
+        onAssignmentChange("neighborhood_all_property_count", relevant.included_property_count);
+        onAssignmentChange("neighborhood_house_price_low", sales.sale_price?.low ?? "");
+        onAssignmentChange("neighborhood_house_price_high", sales.sale_price?.high ?? "");
+        onAssignmentChange("neighborhood_house_price_predominant", sales.sale_price?.median ?? "");
+        onAssignmentChange("neighborhood_ppsf_low", sales.price_per_square_foot?.low ?? "");
+        onAssignmentChange("neighborhood_ppsf_high", sales.price_per_square_foot?.high ?? "");
+        onAssignmentChange("neighborhood_ppsf_predominant", sales.price_per_square_foot?.median ?? "");
+        onAssignmentChange("neighborhood_age_low", sales.age?.low ?? "");
+        onAssignmentChange("neighborhood_age_high", sales.age?.high ?? "");
+        onAssignmentChange("neighborhood_age_predominant", sales.age?.median ?? "");
+        onAssignmentChange("neighborhood_gla_low", sales.gla?.low ?? "");
+        onAssignmentChange("neighborhood_gla_high", sales.gla?.high ?? "");
+        onAssignmentChange("neighborhood_gla_predominant", sales.gla?.median ?? "");
+        onAssignmentChange("neighborhood_all_age_low", properties.age?.low ?? "");
+        onAssignmentChange("neighborhood_all_age_high", properties.age?.high ?? "");
+        onAssignmentChange("neighborhood_all_age_predominant", properties.age?.median ?? "");
+        onAssignmentChange("neighborhood_all_gla_low", properties.gla?.low ?? "");
+        onAssignmentChange("neighborhood_all_gla_high", properties.gla?.high ?? "");
+        onAssignmentChange("neighborhood_all_gla_predominant", properties.gla?.median ?? "");
+      }
       setRelevanceAssessment(result);
       setRelevanceMessage(
         `${result.summary.included_count.toLocaleString()} of ${result.summary.candidate_count.toLocaleString()} parcels remain in the relevant dataset; ${result.summary.excluded_count.toLocaleString()} were excluded and ${result.summary.insufficient_data_count.toLocaleString()} remain visible for insufficient-data review.`,
@@ -1567,6 +1593,24 @@ function NeighborhoodCharacteristicsContent({
       setRelevanceLoading(false);
     }
   };
+
+  useEffect(() => {
+    const boundaryAssessmentId = Number(
+      assignmentDraft.neighborhood_boundary_engine_assessment_id,
+    );
+    if (!accountId || !Number.isSafeInteger(boundaryAssessmentId) || boundaryAssessmentId <= 0) {
+      return;
+    }
+    const signature = `${accountId}:${assignmentFileId || "property"}:${boundaryAssessmentId}`;
+    if (automaticRelevanceAttemptRef.current === signature || relevanceLoading) return;
+    automaticRelevanceAttemptRef.current = signature;
+    void analyzeRelevantPropertyDataset();
+  }, [
+    accountId,
+    assignmentFileId,
+    assignmentDraft.neighborhood_boundary_engine_assessment_id,
+    relevanceLoading,
+  ]);
 
   useEffect(() => {
     if (!valuePosition.ready || !effectiveConcludedValue) return;
@@ -2097,6 +2141,13 @@ function NeighborhoodCharacteristicsContent({
                 <span>Confidence: <strong className="capitalize">{relevanceAssessment.confidence.confidence || "limited"}</strong></span>
                 <span>Low-score exclusions: <strong>{relevanceAssessment.summary.low_relevance_excluded_count}</strong></span>
                 <span>Dissimilar-pocket exclusions: <strong>{relevanceAssessment.summary.dissimilar_pocket_excluded_count}</strong></span>
+                {relevanceAssessment.summary.relevant_statistics ? (
+                  <>
+                    <span>Relevant sales: <strong>{relevanceAssessment.summary.relevant_statistics.included_sale_count}</strong></span>
+                    <span>Composite COD: <strong>{relevanceAssessment.summary.relevant_statistics.composite_cod ?? "Pending"}</strong></span>
+                    <span>Reliability: <strong>{relevanceAssessment.summary.relevant_statistics.reliability_score}/100</strong></span>
+                  </>
+                ) : null}
                 <span>Sale prices time-adjusted: <strong>No</strong></span>
               </div>
             ) : null}
@@ -2188,6 +2239,7 @@ function NeighborhoodCharacteristicsContent({
             initialCustomGeometry={assignmentDraft.neighborhood_boundary_geometry}
             initialCustomGeometrySource={assignmentDraft.neighborhood_boundary_source}
             suggestedCustomGeometry={generatedBoundary?.boundary || null}
+            relevanceVisualization={relevanceAssessment?.visualization || []}
             onCustomGeometryChange={handleCustomGeometryChange}
             embedded
           />

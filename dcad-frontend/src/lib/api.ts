@@ -2228,6 +2228,22 @@ export interface NeighborhoodRelevanceAssessment {
     sale_history_months: number;
     sale_prices_time_adjusted: false;
     minimum_dissimilar_pocket_size: number;
+    relevant_statistics?: {
+      population_rule: 'relevance_included_only';
+      included_property_count: number;
+      included_sale_count: number;
+      sale_coverage_percent: number;
+      composite_cod: number | null;
+      reliability_score: number;
+      property_profile: Record<string, {
+        count: number; low: number | null; high: number | null; median: number | null;
+        average: number | null; cod: number | null; cv: number | null;
+      }>;
+      sales_profile: Record<string, {
+        count: number; low: number | null; high: number | null; median: number | null;
+        average: number | null; cod: number | null; cv: number | null;
+      }>;
+    };
   };
   distributions: Record<string, unknown>;
   confidence: {
@@ -2241,6 +2257,16 @@ export interface NeighborhoodRelevanceAssessment {
   disclosure: string;
   generated_at: string;
   updated_at: string;
+  visualization?: Array<{
+    parcel_object_id: number;
+    account_id: string | null;
+    address: string | null;
+    score: number | null;
+    excluded: boolean;
+    classification: string;
+    cluster_id: string | null;
+    point: { type: 'Point'; coordinates: [number, number] };
+  }>;
 }
 
 export interface ZoningEvidenceDocument {

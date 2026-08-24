@@ -37,6 +37,7 @@ const evidence = {
   fixture_account_id: fixtureAccountId,
   fixture_file_number: FIXTURE_FILE_NUMBER,
   checks: {},
+  validation: null,
   api: { request_count: 0, failure_count: 0, failures: [] },
   browser: { page_errors: [], console_errors: [] },
 };
@@ -109,6 +110,49 @@ try {
   const reconciliationText = await page.locator("main").innerText();
   evidence.checks.reconciliation_section_loaded = reconciliationText.includes("Canonical values redisplayed in Section 26");
   evidence.checks.sales_conclusion_present = /Sales Comparison[\s\S]*\$[0-9]/.test(reconciliationText);
+
+  const validationPanel = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Whole-workfile UAD readiness", exact: true }),
+  });
+  const validationResponsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.origin === apiOrigin
+      && url.pathname.endsWith("/validation")
+      && response.request().method() === "POST";
+  }, { timeout: 60_000 });
+  await validationPanel.getByRole("button", { name: /Run (?:full UAD validation|validation again)/ }).click();
+  const validationResponse = await validationResponsePromise;
+  const validationPayload = await validationResponse.json();
+  const validation = validationPayload?.validation;
+  const findings = Array.isArray(validation?.findings) ? validation.findings : [];
+  const countBy = (selector) => Object.fromEntries(
+    [...findings.reduce((counts, finding) => {
+      const key = String(selector(finding) || "unspecified").slice(0, 120);
+      counts.set(key, (counts.get(key) || 0) + 1);
+      return counts;
+    }, new Map()).entries()].sort(([left], [right]) => left.localeCompare(right)),
+  );
+  evidence.validation = validation ? {
+    status: validation.status,
+    revision_number: validation.revision_number,
+    fatal_count: validation.fatal_count,
+    warning_count: validation.warning_count,
+    ready_for_export: validation.ready_for_export,
+    finding_count: findings.length,
+    section_counts: countBy((finding) => finding.metadata?.section),
+    code_counts: countBy((finding) => finding.metadata?.code),
+  } : null;
+  await validationPanel.getByText(/Revision \d+ (?:has \d+ blocking finding|passed every current local UAD rule)/).waitFor({ timeout: 60_000 });
+  const validationText = await validationPanel.innerText();
+  const fatalFindingCount = findings.filter((finding) => finding.severity === "fatal").length;
+  const warningFindingCount = findings.filter((finding) => finding.severity === "warning").length;
+  evidence.checks.local_validation_completed = validationResponse.ok() && Boolean(validation);
+  evidence.checks.local_validation_result_rendered = validation?.status === "passed"
+    ? validationText.includes(`Revision ${validation.revision_number} passed every current local UAD rule`)
+    : validationText.includes(`Revision ${validation?.revision_number} has ${validation?.fatal_count} blocking finding`);
+  evidence.checks.local_validation_counts_consistent = validation?.fatal_count === fatalFindingCount
+    && validation?.warning_count === warningFindingCount
+    && findings.length === fatalFindingCount + warningFindingCount;
 
   await page.screenshot({ fullPage: true, path: path.join(outputDirectory, "authenticated-workfile.png") });
   evidence.browser.page_errors = evidence.browser.page_errors.slice(0, 20);

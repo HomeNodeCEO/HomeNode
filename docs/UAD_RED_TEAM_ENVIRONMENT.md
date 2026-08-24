@@ -232,9 +232,11 @@ Dispatch `.github/workflows/uad-redteam-bounded-load.yml` only after the
 endpoint gate passes and monitoring is visible. The runner reads the advertised
 application limit, refuses to run if it is absent, below 10, or above 200, and
 uses at most six workers against the public capabilities endpoint. It stops
-scheduling when the first bounded `429 rate_limit_exceeded` response arrives,
-allows at most one worker-width of in-flight overshoot, records aggregate
-latency/status counts only, and never retains response bodies.
+scheduling when the first bounded `429 rate_limit_exceeded` response arrives.
+Because hosted CI can legitimately rotate across public egress addresses, the
+runner recognizes at most four advertised policy buckets and retains a hard
+500-request ceiling. It records aggregate bucket/latency/status counts only and
+never retains policy keys or response bodies.
 
 The runner waits for the server-advertised `Retry-After` interval (capped at 70
 seconds), then requires capabilities and readiness to return 200 again. Any

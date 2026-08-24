@@ -257,8 +257,16 @@ function collectJsonFindings(value, findings, depth = 0) {
 function xmlText(block, names) {
   for (const name of names) {
     const match = block.match(new RegExp(`<(?:[A-Za-z0-9_-]+:)?${name}[^>]*>([\\s\\S]*?)<\\/(?:[A-Za-z0-9_-]+:)?${name}>`, "i"));
-    if (match) return match[1].replace(/<[^>]+>/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-      .replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim();
+    if (match) return match[1].replace(/<[^>]+>/g, " ").replace(
+      /&(lt|gt|amp|quot|apos);/g,
+      (_entity, name) => {
+        if (name === "lt") return "<";
+        if (name === "gt") return ">";
+        if (name === "amp") return "&";
+        if (name === "quot") return '"';
+        return "'";
+      },
+    ).trim();
   }
   return null;
 }

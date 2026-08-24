@@ -1,5 +1,6 @@
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 300;
+const DEFAULT_API_RATE_LIMIT_MAX = 600;
 
 function enabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -41,6 +42,8 @@ export function createHttpSecurityConfiguration(environment = process.env) {
   const strict = enabled(environment.UAD_SECURITY_STRICT);
   const authenticationRequired = enabled(environment.UAD_AUTHENTICATION_REQUIRED);
   const rateLimitEnabled = strict || enabled(environment.UAD_RATE_LIMIT_ENABLED);
+  const apiRateLimitEnabled = environment.NODE_ENV === "production"
+    || enabled(environment.API_RATE_LIMIT_ENABLED);
   const clientIpHeader = rateLimitClientIpHeader(environment);
   const allowHttpOrigins = !strict && environment.NODE_ENV !== "production";
   const origins = String(environment.CORS_ORIGIN || "")
@@ -72,6 +75,19 @@ export function createHttpSecurityConfiguration(environment = process.env) {
       60 * 60 * 1_000,
     ),
     rateLimitMax: boundedInteger(environment.UAD_RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX, 10, 10_000),
+    apiRateLimitEnabled,
+    apiRateLimitWindowMs: boundedInteger(
+      environment.API_RATE_LIMIT_WINDOW_MS,
+      DEFAULT_RATE_LIMIT_WINDOW_MS,
+      1_000,
+      60 * 60 * 1_000,
+    ),
+    apiRateLimitMax: boundedInteger(
+      environment.API_RATE_LIMIT_MAX,
+      DEFAULT_API_RATE_LIMIT_MAX,
+      10,
+      20_000,
+    ),
     rateLimitClientIpHeader: clientIpHeader,
     trustProxyHops: boundedInteger(environment.TRUST_PROXY_HOPS, 0, 0, 10),
   });

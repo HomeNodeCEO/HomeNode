@@ -3,6 +3,10 @@ import type { ReactNode } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { fetchDetail } from "@/lib/dcad";
 import {
+  forgetEditorCredential,
+  requestEditorCredential,
+} from "@/lib/editorCredential";
+import {
   readAppraisalReportDraft,
   type AppraisalReportSalesDraft,
 } from "@/lib/appraisalReportDraft";
@@ -3657,13 +3661,7 @@ function AddressHero({
   };
 
   const editorKeyForSave = (): string => {
-    let editorKey = sessionStorage.getItem("homenode-editor-key") || "";
-    if (!editorKey) {
-      editorKey = window.prompt("Enter the HomeNode editor key to save verified changes:") || "";
-      if (!editorKey) return "";
-      sessionStorage.setItem("homenode-editor-key", editorKey);
-    }
-    return editorKey;
+    return requestEditorCredential("Enter the HomeNode editor key to save verified changes:");
   };
 
   const saveZoningEvidence = async () => {
@@ -3712,7 +3710,7 @@ function AddressHero({
     } catch (error) {
       const message = error instanceof Error ? error.message : "The zoning verification could not be saved.";
       if (/401|invalid_editor_key/i.test(message)) {
-        sessionStorage.removeItem("homenode-editor-key");
+        forgetEditorCredential();
       }
       setZoningEvidenceMessage(message);
     } finally {
@@ -3779,7 +3777,7 @@ function AddressHero({
     } catch (error) {
       const message = error instanceof Error ? error.message : "The report changes could not be saved.";
       if (/401|invalid_editor_key/i.test(message)) {
-        sessionStorage.removeItem("homenode-editor-key");
+        forgetEditorCredential();
       }
       window.alert(message);
       return false;
@@ -3808,7 +3806,7 @@ function AddressHero({
         ? error.message
         : "The Census tract could not be looked up.";
       if (/401|invalid_editor_key/i.test(message)) {
-        sessionStorage.removeItem("homenode-editor-key");
+        forgetEditorCredential();
       }
       setCensusLookupMessage(
         message === "census_lookup_input_missing"
@@ -4404,7 +4402,7 @@ function AddressHero({
     } catch (error) {
       const message = error instanceof Error ? error.message : "The assignment file could not be saved.";
       if (/401|invalid_editor_key/i.test(message)) {
-        sessionStorage.removeItem("homenode-editor-key");
+        forgetEditorCredential();
       }
       setAssignmentSaveMessage(
         message === "assignment_file_revision_conflict"
@@ -4457,7 +4455,7 @@ function AddressHero({
     } catch (error) {
       const message = error instanceof Error ? error.message : "The appraisal file could not be created.";
       if (/401|invalid_editor_key/i.test(message)) {
-        sessionStorage.removeItem("homenode-editor-key");
+        forgetEditorCredential();
       }
       setAssignmentSaveMessage(
         message === "assignment_file_number_exists"
@@ -4609,7 +4607,7 @@ function AddressHero({
         ? error.message
         : "The lender/client revision request could not be recorded.";
       if (/401|invalid_editor_key/i.test(message)) {
-        sessionStorage.removeItem("homenode-editor-key");
+        forgetEditorCredential();
       }
       setAssignmentSaveMessage(
         message === "assignment_file_revision_conflict"

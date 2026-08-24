@@ -210,7 +210,7 @@ function usableTrafficRoadName(name) {
   const value = String(name || "").trim();
   if (!value || /^\d+$/.test(value)) return false;
   if (/^(?:CS|ON SYSTEM|OFF SYSTEM)$/i.test(value)) return false;
-  if (/^(?:State|US) Hwy|Interstate|Turnpike|Tollway|President George Bush/i.test(value)) {
+  if (/^(?:(?:State|US) Hwy|Interstate|Turnpike|Tollway|President George Bush)/i.test(value)) {
     return false;
   }
   return !/^(?:IH|US|SH|SL|FM|RM|BS|BI|BU|LP|SP|PR)\d/i.test(value.replace(/[\s-]/g, ""));

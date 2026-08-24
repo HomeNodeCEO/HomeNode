@@ -33,6 +33,8 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
   assert.equal(configuration.authenticationRequired, true);
   assert.equal(configuration.corsRestricted, true);
   assert.equal(configuration.rateLimitEnabled, true);
+  assert.equal(configuration.apiRateLimitEnabled, true);
+  assert.equal(configuration.apiRateLimitMax, 600);
   assert.equal(configuration.trustProxyHops, 1);
   assert.equal(configuration.rateLimitClientIpHeader, null);
   assert.deepEqual(configuration.corsOrigins, [

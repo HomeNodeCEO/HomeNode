@@ -1,4 +1,6 @@
 import express from "express";
+import { isIP } from "node:net";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
 import { createMobileAuthenticator } from "./auth.js";
 import {
@@ -78,8 +80,30 @@ function requireWriteRole(req, res, next) {
   return next();
 }
 
-export function createMobileRouter({ pool, verifier, storage, enabled = false, recentFileDays = 30 }) {
+export function createMobileRouter({
+  pool,
+  verifier,
+  storage,
+  enabled = false,
+  recentFileDays = 30,
+  security = {},
+}) {
   const router = express.Router();
+
+  router.use(rateLimit({
+    windowMs: security.apiRateLimitWindowMs || 60_000,
+    limit: security.apiRateLimitMax || 600,
+    skip: () => security.apiRateLimitEnabled === false,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      const forwarded = security.rateLimitClientIpHeader
+        ? String(req.get(security.rateLimitClientIpHeader) || "").trim()
+        : "";
+      return ipKeyGenerator(isIP(forwarded) ? forwarded : req.ip);
+    },
+    handler: (_req, res) => res.status(429).json({ error: "mobile_rate_limit_exceeded" }),
+  }));
 
   router.get("/capabilities", (_req, res) => {
     res.json({

@@ -38,16 +38,26 @@ export function normalizeSearchText(value) {
   return String(value || "")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^0-9A-Za-z#/-]+/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(/[^0-9A-Za-z#/-]/g, " ")
+    .split(" ")
+    .filter(Boolean)
+    .join(" ")
     .trim()
     .toUpperCase();
 }
 
 export function normalizePropertyCity(value) {
-  return normalizeSearchText(String(value || "").replace(/\s*\([^)]*\)\s*$/, ""))
-    .replace(/\s+(?:TX|TEXAS)(?:\s+[0-9]{5}(?:-[0-9]{4})?)?$/, "")
-    .trim();
+  let city = String(value || "").trim();
+  if (city.endsWith(")")) {
+    const openingParenthesis = city.lastIndexOf("(");
+    if (openingParenthesis >= 0) city = city.slice(0, openingParenthesis).trim();
+  }
+  const tokens = normalizeSearchText(city).split(" ").filter(Boolean);
+  const trailingZip = /^[0-9]{5}(?:-[0-9]{4})?$/.test(tokens.at(-1) || "");
+  const stateIndex = trailingZip ? -2 : -1;
+  if (trailingZip && ["TX", "TEXAS"].includes(tokens.at(stateIndex) || "")) tokens.pop();
+  if (["TX", "TEXAS"].includes(tokens.at(-1) || "")) tokens.pop();
+  return tokens.join(" ");
 }
 
 export function normalizePropertyAddress(value) {

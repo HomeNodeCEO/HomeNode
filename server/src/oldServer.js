@@ -1,5 +1,7 @@
 import "dotenv/config";
+import { isIP } from "node:net";
 import express from "express";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import pg from "pg";
 import nodemailer from "nodemailer";
 import { parseClassFilter } from "./util/parseClasses.js";
@@ -232,6 +234,20 @@ const loadDcadScraperStatus = redTeamIsolation.external_status_enabled
 app.use(requestPerformance.middleware);
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));
+app.use(rateLimit({
+  windowMs: httpSecurity.apiRateLimitWindowMs,
+  limit: httpSecurity.apiRateLimitMax,
+  skip: () => !httpSecurity.apiRateLimitEnabled,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const forwarded = httpSecurity.rateLimitClientIpHeader
+      ? String(req.get(httpSecurity.rateLimitClientIpHeader) || "").trim()
+      : "";
+    return ipKeyGenerator(isIP(forwarded) ? forwarded : req.ip);
+  },
+  handler: (_req, res) => res.status(429).json({ error: "api_rate_limit_exceeded" }),
+}));
 
 const uadObjectStorage = createUadObjectStorage();
 const uadComplianceRegistry = createUadComplianceRegistry();
@@ -260,6 +276,7 @@ app.use("/api/mobile", createMobileRouter({
   storage: uadObjectStorage,
   enabled: environmentFlag(process.env.MOBILE_INSPECTION_ENABLED),
   recentFileDays: Number(process.env.MOBILE_RECENT_FILE_DAYS || 30),
+  security: httpSecurity,
 }));
 
 const trestleClient = new TrestleClient();
@@ -1423,7 +1440,7 @@ app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
       );
     }
 
-    const saved = {};
+    const savedEntries = [];
     for (const [attributeKey, attributeValue] of entries) {
       const { rows: currentRows } = await client.query(
         `SELECT revision FROM app.property_attribute_manual_values
@@ -1451,16 +1468,20 @@ app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
          ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
         [canonicalId, attributeKey, valueJson, notes, reviewer, revision],
       );
-      saved[attributeKey] = {
+      savedEntries.push([attributeKey, {
         value: rows[0].attribute_value,
         revision: Number(rows[0].revision),
         reviewer: rows[0].reviewer,
         notes: rows[0].notes,
         updated_at: rows[0].updated_at,
-      };
+      }]);
     }
     await client.query("COMMIT");
-    return res.json({ ok: true, account_id: canonicalId, manual_values: saved });
+    return res.json({
+      ok: true,
+      account_id: canonicalId,
+      manual_values: Object.fromEntries(savedEntries),
+    });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("/api/accounts/:id/report-manual-values failed", error);

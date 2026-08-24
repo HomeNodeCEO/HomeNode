@@ -13,6 +13,7 @@ from scraper.api.main import (
     _decode_data_url,
     signup_submit,
 )
+from scraper.api.routes.history import _validated_account_id, history
 
 
 class ScraperSecurityContractTests(unittest.TestCase):
@@ -56,6 +57,29 @@ class ScraperSecurityContractTests(unittest.TestCase):
     def test_account_identifier_cannot_create_a_path(self):
         with self.assertRaises(ValidationError):
             SignupRequest(accountId="../../outside", basePdfData="JVBERi0xLjc=")
+
+    def test_history_account_identifier_is_numeric_and_bounded(self):
+        self.assertEqual(_validated_account_id(" 123456789 "), "123456789")
+        for candidate in (
+            "../../outside",
+            "https://attacker.example",
+            "123?redirect=https://attacker.example",
+            "1" * 26,
+        ):
+            with self.subTest(candidate=candidate):
+                with self.assertRaises(HTTPException) as raised:
+                    _validated_account_id(candidate)
+                self.assertEqual(raised.exception.status_code, 400)
+
+    def test_history_failure_does_not_expose_exception_details(self):
+        with patch(
+            "scraper.api.routes.history.get_history_for_account",
+            side_effect=RuntimeError("database password was exposed"),
+        ):
+            result = asyncio.run(history("123456789"))
+        self.assertEqual(result["error"], "history_unavailable")
+        self.assertEqual(result["history_url"], "https://www.dallascad.org/AcctHistory.aspx")
+        self.assertNotIn("password", str(result).lower())
 
 
 if __name__ == "__main__":

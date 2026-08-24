@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import * as api from "@/lib/api";
+import { forgetEditorCredential, requestEditorCredential } from "@/lib/editorCredential";
 import type {
   AppraisalAssignmentFile,
   AssignmentDetailsPayload,
@@ -559,9 +560,8 @@ export default function AppraisalReport() {
       return;
     }
     setPrintBlocker("");
-    const editorKey = sessionStorage.getItem("homenode-editor-key") || window.prompt("Enter the HomeNode editor key to generate this appraisal PDF:", "")?.trim();
+    const editorKey = requestEditorCredential("Enter the HomeNode editor key to generate this appraisal PDF:");
     if (!editorKey) return;
-    sessionStorage.setItem("homenode-editor-key", editorKey);
     setPdfGenerating(true);
     try {
       const download = await api.downloadCustomAppraisalReportPdf(propertyId, assignmentFile.id, editorKey);
@@ -575,7 +575,7 @@ export default function AppraisalReport() {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     } catch (error) {
       const message = error instanceof Error ? error.message : "The appraisal PDF could not be generated.";
-      if (/401|invalid_editor_key/i.test(message)) sessionStorage.removeItem("homenode-editor-key");
+      if (/401|invalid_editor_key/i.test(message)) forgetEditorCredential();
       setPrintBlocker(message);
     } finally {
       setPdfGenerating(false);

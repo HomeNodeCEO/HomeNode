@@ -83,7 +83,7 @@ const SUBJECT_AMENITY_REDISPLAY = [
 function displayOption(value: string) {
   if (value === "AmericanNationalStandardsInstitute") return "ANSI";
   if (value === "AmericanMeasurementStandard") return "AMS";
-  return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("REO", "REO");
+  return value.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
 
 function displayCurrency(value: UadFieldValue | undefined) {

@@ -9,6 +9,7 @@ import {
   type SalesReconciliationQueueItem,
   type SalesReconciliationQueueResponse,
 } from "@/lib/api";
+import { readEditorCredential, rememberEditorCredential } from "@/lib/editorCredential";
 
 const PAGE_SIZE = 10;
 const NATIVE_CAD_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z ._/#-]{3,99}$/;
@@ -77,7 +78,7 @@ export default function SalesReconciliationQueue() {
   const [locationStatus, setLocationStatus] = useState<LocationBackfillStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [editorKey, setEditorKey] = useState(() =>
-    window.sessionStorage.getItem("homenode-editor-key") || "",
+    readEditorCredential(),
   );
 
   const loadQueue = useCallback(async (nextOffset = offset) => {
@@ -179,7 +180,7 @@ export default function SalesReconciliationQueue() {
         },
         editorKey.trim(),
       );
-      window.sessionStorage.setItem("homenode-editor-key", editorKey.trim());
+      rememberEditorCredential(editorKey);
       setDrafts((current) => {
         const next = { ...current };
         delete next[key];

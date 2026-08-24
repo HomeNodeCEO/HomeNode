@@ -276,6 +276,18 @@ tokens, private keys, request bodies, and response bodies. Treat a failed
 cleanup control as a stop condition and inspect the isolated bucket before
 another run.
 
+## Bounded resource pressure
+
+After protocol and endpoint fuzzing pass, dispatch
+`.github/workflows/uad-redteam-resource-pressure.yml`. It sends no valid
+mutation and needs no access token. Two highly compressible JSON bodies must
+expand past the parser ceiling and receive bounded 413 responses; one bounded
+header-pressure request must not produce a 5xx; and 24 requests use six workers
+across capabilities, readiness, and a protected authentication rejection. Any
+transport error, unsafe response, 5xx, or failed health/readiness recovery is a
+stop condition. If the application rate limit is reached, the runner waits only
+for the advertised bounded retry interval before its recovery proof.
+
 ## Recovery rehearsal
 
 Create a logical export from the isolated Render database, then perform a

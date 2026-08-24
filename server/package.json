@@ -15,6 +15,7 @@
         "verify:redteam:protocol-fuzz": "node scripts/verifyUadRedTeamProtocolFuzz.js",
         "verify:redteam:endpoint-fuzz": "node scripts/verifyUadRedTeamEndpointFuzz.js",
         "verify:redteam:bounded-load": "node scripts/verifyUadRedTeamBoundedLoad.js",
+        "verify:redteam:resource-pressure": "node scripts/verifyUadRedTeamResourcePressure.js",
         "verify:redteam:kill-switch": "node scripts/verifyUadRedTeamKillSwitch.js",
         "verify:redteam:integrity": "node scripts/verifyUadRedTeamIntegrity.js",
         "verify:redteam:artifacts": "node scripts/verifyUadArtifactSecurity.js",

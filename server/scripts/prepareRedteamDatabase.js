@@ -4,6 +4,7 @@ import pg from "pg";
 import { normalizeOidcIssuer } from "../src/modules/mobile/auth.js";
 import { saveUadSection } from "../src/modules/uad/editor.js";
 import { createUadWorkfile } from "../src/modules/uad/workfiles.js";
+import { seedSalesRichUadDatabaseFixture } from "./lib/uadSalesRichDatabaseFixture.js";
 import {
   assertRedTeamDatabaseName,
   assertRedTeamFixtureAccountId,
@@ -244,10 +245,29 @@ try {
     REDTEAM_ORGANIZATIONS.organizationB.id,
     appraiserB.id,
   );
+  const organizationADeliveryWorkfile = await ensureWorkfile(
+    fixtureAccountId,
+    "HN-REDTEAM-DELIVERY-A-0001",
+    REDTEAM_ORGANIZATIONS.organizationA.id,
+    assignedA.id,
+  );
   const assignmentBaselinesCreated = [
     await ensureRedTeamAssignmentBaseline(organizationAWorkfile),
     await ensureRedTeamAssignmentBaseline(organizationBWorkfile),
   ].filter(Boolean).length;
+  const deliveryStatus = await pool.query(
+    "SELECT status FROM appraisal.uad_workfiles WHERE id = $1",
+    [organizationADeliveryWorkfile],
+  );
+  const salesRichDeliveryFixture = ["signed", "exported", "submitted"].includes(deliveryStatus.rows[0]?.status)
+    ? { preserved: true, comparable_count: 3 }
+    : {
+        preserved: false,
+        ...await seedSalesRichUadDatabaseFixture(pool, organizationADeliveryWorkfile, {
+          namespace: "uad-redteam-delivery-a",
+          sourceReference: "synthetic_redteam_delivery",
+        }),
+      };
   console.log(JSON.stringify({
     prepared: true,
     environment: "redteam",
@@ -255,8 +275,9 @@ try {
     organizations: Object.keys(REDTEAM_ORGANIZATIONS).length,
     personas: REDTEAM_PERSONAS.length,
     stale_oidc_identities_removed: staleOidcIdentitiesRemoved,
-    workfiles: [organizationAWorkfile, organizationBWorkfile].length,
+    workfiles: [organizationAWorkfile, organizationBWorkfile, organizationADeliveryWorkfile].length,
     assignment_baselines_created: assignmentBaselinesCreated,
+    sales_rich_delivery_fixture: salesRichDeliveryFixture,
   }));
 } finally {
   await pool.end();

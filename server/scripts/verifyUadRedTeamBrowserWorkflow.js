@@ -6,7 +6,7 @@ import { createRedTeamAccessTokenFactory } from "../src/modules/uad/uadRedTeamAu
 const API_ORIGIN = "https://homenode-api-redteam.onrender.com";
 const APP_ORIGIN = "https://homenode-uad-redteam.onrender.com";
 const FIXTURE_ACCOUNT_ID = "UAD-REDTEAM-SFR-0001";
-const FIXTURE_FILE_NUMBER = "HN-REDTEAM-ORG-A-0001";
+const FIXTURE_FILE_NUMBER = "HN-REDTEAM-DELIVERY-A-0001";
 const outputDirectory = path.resolve(process.env.UAD_REDTEAM_BROWSER_OUTPUT_DIRECTORY || "uad-redteam-browser");
 
 function requiredRedTeamOrigin(value, expected, code) {

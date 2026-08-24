@@ -13,6 +13,7 @@ import { generateUadPdfArtifact } from "../src/modules/uad/uadPdfArtifacts.js";
 import { createUadPdfViewModel } from "../src/modules/uad/uadPdf.js";
 import { runLocalUadValidation } from "../src/modules/uad/validation.js";
 import { requireSalesRichUadDelivery } from "./lib/uadSalesDeliveryEvidence.js";
+import { seedSalesRichUadDatabaseFixture } from "./lib/uadSalesRichDatabaseFixture.js";
 
 const ACCOUNT_ID = "UAD-STAGING-SFR-0001";
 const APPRAISER_ID = "00000000-0000-4000-8000-000000000902";
@@ -445,8 +446,11 @@ try {
       WHERE workfile_id = $1`,
     [workfileId],
   );
-  await seedCompletionValues(pool, workfileId);
-  await seedSalesRichFixture(pool, workfileId);
+  await seedSalesRichUadDatabaseFixture(pool, workfileId, {
+    namespace: "uad-successful-delivery",
+    observedAt: "2026-08-21T12:00:00.000Z",
+    sourceReference: "synthetic_successful_delivery",
+  });
   await seedRequiredAssets(pool, objects, workfileId);
 
   const unsignedEditor = await getUadEditor(pool, workfileId);

@@ -77,14 +77,20 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
     const workfiles = await pool.query(
       `SELECT count(*)::integer AS count,
               count(DISTINCT organization_id)::integer AS organizations,
-              bool_and(account_id = 'UAD-REDTEAM-SFR-0001') AS isolated_account
+              bool_and(account_id = 'UAD-REDTEAM-SFR-0001') AS isolated_account,
+              array_agg(file_number ORDER BY file_number) AS file_numbers
          FROM appraisal.uad_workfiles
         WHERE file_number LIKE 'HN-REDTEAM-%'`,
     );
     assert.deepEqual(workfiles.rows[0], {
-      count: 2,
+      count: 3,
       organizations: 2,
       isolated_account: true,
+      file_numbers: [
+        "HN-REDTEAM-DELIVERY-A-0001",
+        "HN-REDTEAM-ORG-A-0001",
+        "HN-REDTEAM-ORG-B-0001",
+      ],
     });
 
     const sales = await pool.query(`

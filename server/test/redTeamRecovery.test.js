@@ -53,7 +53,7 @@ test("verifies synthetic fixture counts and every UAD migration checksum", async
       if (sql.includes("account_id !~")) return { rows: [{ count: 0 }] };
       if (sql.includes("FROM app.schema_migrations")) return { rows: manifest };
       if (sql.includes("AS oidc_identities")) {
-        return { rows: [{ accounts: 1, organizations: 2, users: 11, oidc_identities: 11, uad_workfiles: 2 }] };
+        return { rows: [{ accounts: 1, organizations: 2, users: 11, oidc_identities: 11, uad_workfiles: 3 }] };
       }
       throw new Error(`unexpected_query:${sql}`);
     },
@@ -66,7 +66,7 @@ test("verifies synthetic fixture counts and every UAD migration checksum", async
     organizations: 2,
     users: 11,
     oidc_identities: 11,
-    uad_workfiles: 2,
+    uad_workfiles: 3,
   });
 });
 
@@ -78,7 +78,7 @@ test("fails closed on altered recovery fixtures", async () => {
       if (sql.includes("to_regclass")) return { rows: [] };
       if (sql.includes("FROM app.schema_migrations")) return { rows: manifest };
       if (sql.includes("AS oidc_identities")) {
-        return { rows: [{ accounts: 1, organizations: 2, users: 12, oidc_identities: 11, uad_workfiles: 2 }] };
+        return { rows: [{ accounts: 1, organizations: 2, users: 12, oidc_identities: 11, uad_workfiles: 3 }] };
       }
       throw new Error(`unexpected_query:${sql}`);
     },

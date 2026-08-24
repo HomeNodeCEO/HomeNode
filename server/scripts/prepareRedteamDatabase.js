@@ -12,6 +12,7 @@ import {
 } from "../src/security/redTeamIsolation.js";
 import {
   parseRedTeamOidcSubjects,
+  pruneStaleRedTeamOidcIssuers,
   REDTEAM_ORGANIZATIONS,
   REDTEAM_PERSONAS,
 } from "../src/security/redTeamFixtures.js";
@@ -144,6 +145,7 @@ async function upsertPersonas(client) {
       [oidcIssuer, oidcSubjects[persona.key], persona.id],
     );
   }
+  return pruneStaleRedTeamOidcIssuers(client, oidcIssuer);
 }
 
 async function ensureWorkfile(accountId, fileNumber, organizationId, appraiserId) {
@@ -215,10 +217,11 @@ try {
   if (fixture.rows.length !== 1) throw new Error("redteam_fixture_account_missing");
 
   const client = await pool.connect();
+  let staleOidcIdentitiesRemoved = 0;
   try {
     await client.query("BEGIN");
     await upsertOrganizations(client);
-    await upsertPersonas(client);
+    staleOidcIdentitiesRemoved = await upsertPersonas(client);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -251,6 +254,7 @@ try {
     synthetic_only: true,
     organizations: Object.keys(REDTEAM_ORGANIZATIONS).length,
     personas: REDTEAM_PERSONAS.length,
+    stale_oidc_identities_removed: staleOidcIdentitiesRemoved,
     workfiles: [organizationAWorkfile, organizationBWorkfile].length,
     assignment_baselines_created: assignmentBaselinesCreated,
   }));

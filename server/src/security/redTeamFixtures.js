@@ -25,6 +25,56 @@ export const REDTEAM_PERSONAS = Object.freeze([
   Object.freeze({ key: "member_without_role", id: "10000000-0000-4000-8000-000000000109", organization: "organizationA", status: "active", active: true, roles: [] }),
 ]);
 
+function normalizedRedTeamIssuer(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || "").trim());
+  } catch {
+    throw new Error("redteam_oidc_issuer_invalid");
+  }
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+    || !/red[\s_-]*team/i.test(parsed.hostname)
+  ) {
+    throw new Error("redteam_oidc_issuer_invalid");
+  }
+  const normalized = parsed.toString();
+  return parsed.pathname === "/" && !String(value).trim().endsWith("/")
+    ? normalized.slice(0, -1)
+    : normalized;
+}
+
+export async function pruneStaleRedTeamOidcIssuers(client, issuerValue) {
+  const issuer = normalizedRedTeamIssuer(issuerValue);
+  const personaIds = REDTEAM_PERSONAS.map((persona) => persona.id);
+  const current = await client.query(
+    `SELECT count(*)::integer AS count,
+            count(DISTINCT user_id)::integer AS distinct_users
+       FROM app_auth.oidc_identities
+      WHERE user_id = ANY($1::uuid[])
+        AND issuer = $2`,
+    [personaIds, issuer],
+  );
+  if (
+    Number(current.rows[0]?.count || 0) !== REDTEAM_PERSONAS.length
+    || Number(current.rows[0]?.distinct_users || 0) !== REDTEAM_PERSONAS.length
+  ) {
+    throw new Error("redteam_current_oidc_identity_set_incomplete");
+  }
+  const deleted = await client.query(
+    `DELETE FROM app_auth.oidc_identities
+      WHERE user_id = ANY($1::uuid[])
+        AND issuer <> $2
+      RETURNING user_id`,
+    [personaIds, issuer],
+  );
+  return Number(deleted.rowCount || deleted.rows?.length || 0);
+}
+
 export function parseRedTeamOidcSubjects(rawValue) {
   let parsed;
   try {

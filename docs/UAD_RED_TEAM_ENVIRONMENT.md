@@ -202,6 +202,30 @@ npm run --silent verify:redteam:protocol-fuzz
 Treat any failed cell, changed fixture revision, unsafe response, or failed
 recovery check as a stop condition before storage or concurrency testing.
 
+## Bounded endpoint and input fuzz
+
+After the recovery rehearsal passes, dispatch
+`.github/workflows/uad-redteam-endpoint-fuzz.yml`. The workflow is pinned to the
+isolated API and sends 22 bounded requests. It covers invalid, SQL-shaped,
+Unicode, oversized, and control-character identifiers; encoded separators,
+extra/doubled paths, unsupported resource methods, prototype-shaped and deeply
+nested JSON, array and primitive roots, non-JSON bodies, forwarded-route header
+confusion, hostile origins, and a bounded unknown header.
+
+Every response is capped at 64 KiB and screened for tokens, private keys,
+database URLs, SQL diagnostics, and unsafe error strings. The runner never
+includes the attack values or response bodies in its evidence. It performs no
+valid mutation and finishes by requiring health, readiness, and the protected
+workfile revision to remain unchanged:
+
+```powershell
+npm run --silent verify:redteam:endpoint-fuzz
+```
+
+The local router regression suite separately proves that the application rate
+limiter runs before JSON parsing, so repeated malformed bodies receive the same
+bounded `429 rate_limit_exceeded` response as ordinary request bursts.
+
 ## Integrity and private-storage checks
 
 After the authenticated matrix passes, dispatch
@@ -244,6 +268,23 @@ protected row remains synthetic, validates all UAD migration checksums, and
 requires the exact synthetic fixture counts without printing the connection
 URL. Preserve its credential-free JSON result, then delete the disposable
 recovery database.
+
+Red-team startup reconciles each deterministic persona to the currently active
+isolated issuer and removes identities left by a retired red-team issuer. If an
+older recovery point contains those stale synthetic identities, run the guarded
+startup-equivalent reconciliation only against the disposable recovery copy:
+
+```powershell
+$env:REDTEAM_RECOVERY_ALLOW_IDENTITY_PRUNE = "true"
+$env:REDTEAM_RECOVERY_OIDC_ISSUER = "https://the-active-red-team-issuer.example"
+npm run --silent reconcile:redteam:recovery-identities
+```
+
+The command requires the same recovery URL and Render service-ID boundary,
+checks the synthetic-only database first, refuses an incomplete active persona
+set, prunes only retired-issuer mappings for the eleven deterministic persona
+IDs, and reruns the complete recovery verifier in the same process. Clear all
+temporary variables and remove the copied recovery URL immediately afterward.
 
 ## Kill conditions
 

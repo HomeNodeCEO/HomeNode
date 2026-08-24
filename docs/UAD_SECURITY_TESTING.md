@@ -133,6 +133,14 @@ is not a load test. The sales-rich pre-submission workflow remains the separate
 functional gate for settled comparable sales, adjustments, reconciliation,
 signed XML/PDF/package output, and negative missing-sales coverage.
 
+The bounded endpoint-fuzz workflow extends that lane across hostile identifier
+shapes, encoded and doubled paths, unsupported methods, JSON root/prototype/
+depth cases, forwarding-header confusion, hostile CORS origins, and bounded
+header pressure. It is likewise fixed to the synthetic red-team service,
+non-mutating, response-capped, and followed by health/readiness/revision checks.
+Local integration tests assert the same response contracts and prove rate
+limiting occurs before request-body parsing.
+
 ### Temporary dependency exception
 
 `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` affect `image-size` through

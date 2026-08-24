@@ -1404,7 +1404,7 @@ function NeighborhoodCharacteristicsContent({
           result?.evidence.discovery?.boundary_generation_mode !==
             "traffic_backed_cardinal_road_enclosure"
         );
-        if (needsRoadwayBoundaryUpgrade && !appraiserCleared && !appraiserAreaPresent) {
+        if (needsRoadwayBoundaryUpgrade && !appraiserCleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,
           });

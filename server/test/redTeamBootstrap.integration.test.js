@@ -107,6 +107,22 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
       linked_comparable_sales: 36,
     });
 
+    const valuationEvidence = await pool.query(`
+      SELECT
+        count(*)::integer AS valued_comparables,
+        count(*) FILTER (
+          WHERE values.land_value > 0
+            AND values.improvement_value > 0
+            AND values.market_value = values.land_value + values.improvement_value
+        )::integer AS complete_allocations
+      FROM core.value_summary_current values
+      WHERE values.account_id LIKE 'UAD-REDTEAM-COMP-%'
+    `);
+    assert.deepEqual(valuationEvidence.rows[0], {
+      valued_comparables: 36,
+      complete_allocations: 36,
+    });
+
     const ratings = await pool.query(`
       SELECT
         (SELECT count(*)::integer FROM app.sale_characteristic_reviews)

@@ -22,6 +22,11 @@ test("builds a bounded sales-rich synthetic comparable population", () => {
   assert.ok(fixtures.comparables.every(
     (fixture) => fixture.sale_price > 0 && fixture.living_area > 0 && fixture.site_size > 0,
   ));
+  assert.ok(fixtures.comparables.every(
+    (fixture) => fixture.land_value > 0
+      && fixture.improvement_value > 0
+      && fixture.market_value === fixture.land_value + fixture.improvement_value,
+  ));
   assert.ok(new Set(fixtures.comparables.map((fixture) => fixture.close_date.slice(0, 7))).size >= 12);
   assert.ok(new Set(fixtures.comparables.map((fixture) => fixture.condition_rating)).size >= 4);
   assert.ok(new Set(fixtures.comparables.map((fixture) => fixture.quality_rating)).size >= 3);

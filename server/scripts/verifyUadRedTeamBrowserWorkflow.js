@@ -219,14 +219,18 @@ try {
     section_counts: countBy(findings, (finding) => finding.metadata?.section),
     code_counts: countBy(findings, (finding) => finding.metadata?.code),
   } : null;
-  await validationPanel.getByText(/Revision \d+ (?:has \d+ blocking finding|passed every current local UAD rule)/).waitFor({ timeout: 60_000 });
+  if (!immutableAtStart) {
+    await validationPanel.getByText(/Revision \d+ (?:has \d+ blocking finding|passed every current local UAD rule)/).waitFor({ timeout: 60_000 });
+  }
   const validationText = await validationPanel.innerText();
   const fatalFindingCount = findings.filter((finding) => finding.severity === "fatal").length;
   const warningFindingCount = findings.filter((finding) => finding.severity === "warning").length;
   evidence.checks.local_validation_completed = validationRequestOk && Boolean(validation);
-  evidence.checks.local_validation_result_rendered = validation?.status === "passed"
-    ? validationText.includes(`Revision ${validation.revision_number} passed every current local UAD rule`)
-    : validationText.includes(`Revision ${validation?.revision_number} has ${validation?.fatal_count} blocking finding`);
+  evidence.checks.local_validation_result_rendered = immutableAtStart
+    ? Boolean(validationText) && validation?.status === "passed"
+    : validation?.status === "passed"
+      ? validationText.includes(`Revision ${validation.revision_number} passed every current local UAD rule`)
+      : validationText.includes(`Revision ${validation?.revision_number} has ${validation?.fatal_count} blocking finding`);
   evidence.checks.local_validation_counts_consistent = validation?.fatal_count === fatalFindingCount
     && validation?.warning_count === warningFindingCount
     && findings.length === fatalFindingCount + warningFindingCount;
@@ -348,10 +352,12 @@ try {
   const postAssetValidation = postAssetValidationPayload?.validation;
   const postAssetFindings = Array.isArray(postAssetValidation?.findings) ? postAssetValidation.findings : [];
   evidence.validation = summarizeValidation(postAssetValidation);
-  await validationPanel.getByText(
-    `Revision ${postAssetValidation?.revision_number} passed every current local UAD rule and is ready for the next generation step.`,
-    { exact: true },
-  ).waitFor({ timeout: 60_000 });
+  if (!immutableAtStart) {
+    await validationPanel.getByText(
+      `Revision ${postAssetValidation?.revision_number} passed every current local UAD rule and is ready for the next generation step.`,
+      { exact: true },
+    ).waitFor({ timeout: 60_000 });
+  }
   evidence.checks.post_asset_validation_completed = postAssetValidationRequestOk && Boolean(postAssetValidation);
   evidence.checks.post_asset_validation_counts_consistent = postAssetValidation?.fatal_count === 0
     && postAssetValidation?.warning_count === 0

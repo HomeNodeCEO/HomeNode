@@ -302,7 +302,7 @@ async function buildBroadBoundary(pool, { accountId, radiusMiles }) {
                 parcel.parcel_area_sqft ASC NULLS LAST,
                 parcel.object_id
        LIMIT 1
-     ), nearby_ranked AS MATERIALIZED (
+     ), nearby_candidates AS MATERIALIZED (
        SELECT
          parcel.object_id,
          parcel.account_id,
@@ -310,16 +310,11 @@ async function buildBroadBoundary(pool, { accountId, radiusMiles }) {
          parcel.residential_year_built,
          parcel.parcel_area_sqft,
          parcel.current_market_value,
-         ST_PointOnSurface(parcel.geom) AS center,
-         ST_Distance(subject.center::geography, parcel.geom::geography) AS distance_meters,
-         row_number() OVER (
-           ORDER BY ST_Distance(subject.center::geography, parcel.geom::geography),
-                    parcel.object_id
-         ) AS distance_rank
+         ST_PointOnSurface(parcel.geom) AS center
        FROM gis.dcad_parcels parcel
        CROSS JOIN subject
-       WHERE parcel.geom && ST_Expand(subject.geom, $2::double precision / 111320.0)
-         AND ST_DWithin(subject.center::geography, parcel.geom::geography, $2)
+       WHERE parcel.geom && ST_Expand(subject.center, $2::double precision / 90000.0)
+         AND ST_DWithin(parcel.geom, subject.center, $2::double precision / 90000.0)
          AND (
            parcel.land_use_category = subject.land_use_category
            OR (
@@ -327,8 +322,20 @@ async function buildBroadBoundary(pool, { accountId, radiusMiles }) {
              AND parcel.land_use_category IN ('one_unit', 'two_to_four_unit', 'multifamily')
            )
          )
+       ORDER BY parcel.geom <-> subject.center, parcel.object_id
+       LIMIT $3
+     ), nearby_ranked AS MATERIALIZED (
+       SELECT
+         candidate.*,
+         ST_Distance(subject.center::geography, candidate.center::geography) AS distance_meters,
+         row_number() OVER (
+           ORDER BY ST_Distance(subject.center::geography, candidate.center::geography),
+                    candidate.object_id
+         ) AS distance_rank
+       FROM nearby_candidates candidate
+       CROSS JOIN subject
      ), sampled AS MATERIALIZED (
-       SELECT * FROM nearby_ranked WHERE distance_rank <= $3
+       SELECT * FROM nearby_ranked
      ), raw_boundary AS (
        SELECT
          CASE
@@ -527,6 +534,7 @@ export async function generateNeighborhoodBoundary(pool, {
   assignmentFileId = null,
   searchProfileKey = null,
 } = {}) {
+  const generationStartedAt = Date.now();
   const normalizedId = normalizedAccountId(accountId);
   const parsedAssignmentId = assignmentFileId == null || assignmentFileId === ""
     ? null
@@ -615,6 +623,7 @@ export async function generateNeighborhoodBoundary(pool, {
       year_built_count: Number(boundaryRow.year_built_count || 0),
       site_size_count: Number(boundaryRow.site_size_count || 0),
       market_value_count: Number(boundaryRow.market_value_count || 0),
+      processing_duration_ms: Date.now() - generationStartedAt,
     },
     roads: roadEvidence,
     zoning: zoningEvidence,

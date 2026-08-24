@@ -61,7 +61,6 @@ import {
   neighborhoodLandUseTotal,
   NEIGHBORHOOD_ALL_PROPERTY_ROWS,
   NEIGHBORHOOD_CITY_AVERAGE_ROWS,
-  NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
 } from "@/lib/neighborhoodCharacteristics";
 import {
@@ -879,24 +878,31 @@ function NeighborhoodRangeGrid({
             const isMoney = row.format === "money";
             const isPricePerSquareFoot = /Sq\. Ft\./.test(row.label);
             return (
-              <div key={field} className="relative">
-                {isMoney ? (
-                  <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-600">$</span>
-                ) : null}
+              <div
+                key={field}
+                className={`grid min-h-7 min-w-0 items-center rounded-md border border-slate-200 px-2 focus-within:border-slate-400 ${
+                  isMoney
+                    ? `grid-cols-[auto_minmax(0,1fr)${isPricePerSquareFoot ? "_auto" : ""}] gap-1`
+                    : "grid-cols-1"
+                } ${readOnly ? "bg-slate-50" : "bg-white"}`}
+              >
+                {isMoney ? <span className="text-xs font-medium text-slate-600">$</span> : null}
                 <input
                   type="number"
                   min="0"
                   step={row.label === "Age" ? "1" : "0.01"}
                   readOnly={readOnly}
                   aria-readonly={readOnly}
-                  className={`input input-bordered input-xs w-full ${readOnly ? "bg-slate-50 text-slate-700" : "bg-white"} ${isMoney ? "pl-5" : ""} ${isPricePerSquareFoot ? "pr-8" : ""}`}
+                  className={`min-w-0 w-full appearance-none border-0 bg-transparent p-0 text-right text-xs font-medium tabular-nums text-slate-800 outline-none ${
+                    readOnly ? "cursor-default" : ""
+                  }`}
                   value={(assignment[field] as string | number | undefined) ?? ""}
                   onChange={(event) => {
                     if (!readOnly) onChange(field, event.target.value);
                   }}
                 />
                 {isPricePerSquareFoot ? (
-                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-500">/SF</span>
+                  <span className="text-[10px] font-medium text-slate-500">/SF</span>
                 ) : null}
               </div>
             );
@@ -983,7 +989,6 @@ function NeighborhoodCharacteristicsContent({
   const [relevanceMessage, setRelevanceMessage] = useState("");
   const automaticLandUseFingerprintRef = useRef("");
   const automaticBoundaryAttemptRef = useRef("");
-  const landUseTotal = neighborhoodLandUseTotal(assignmentDraft);
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
   const zipUnemployment = parseNumber(assignmentDraft.neighborhood_unemployment_pct);
@@ -1612,7 +1617,7 @@ function NeighborhoodCharacteristicsContent({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Present Land Use</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Loads automatically from the appraiser-defined area; use the button to refresh or enter the allocation manually.</p>
+            <p className="mt-0.5 text-xs text-slate-500">Loads automatically from the appraiser-defined area; use the button to refresh the parcel analysis.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -1623,33 +1628,7 @@ function NeighborhoodCharacteristicsContent({
             >
               {landUseAnalysisLoading ? "Analyzing..." : "Analyze Present Land Use"}
             </button>
-            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-              landUseTotal !== null && Math.abs(landUseTotal - 100) <= 0.1
-                ? "bg-emerald-100 text-emerald-800"
-                : "bg-amber-100 text-amber-900"
-            }`}>
-              Total {landUseTotal === null ? "0" : landUseTotal.toFixed(1)}%
-            </span>
           </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
-          {NEIGHBORHOOD_LAND_USE_FIELDS.map(([field, label]) => (
-            <label key={field} className="block">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">{label}</span>
-              <div className="relative mt-0.5">
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.1"
-                  className="input input-bordered input-xs w-full bg-white pr-7"
-                  value={assignmentDraft[field] ?? ""}
-                  onChange={(event) => onAssignmentChange(field, event.target.value)}
-                />
-                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-500">%</span>
-              </div>
-            </label>
-          ))}
         </div>
         {landUseAnalysisMessage ? (
           <p className={`mt-2 text-xs font-medium ${

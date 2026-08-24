@@ -1,0 +1,3913 @@
+{
+  "format": "homenode_uad_synthetic_fixture_v1",
+  "specification_release_key": "uad-3.6-2026-08-13-h1.5",
+  "source": {
+    "account_id": "UAD-STAGING-SFR-0001",
+    "file_number": "HN-UAD-STAGING-SFR-0001",
+    "classification": "synthetic_only"
+  },
+  "counts": {
+    "entities": 75,
+    "field_values": 439,
+    "sales_comparables": 1
+  },
+  "entities": [
+    {
+      "key": "amenity:amenity-outdoor-living-deck-1",
+      "parent_key": null,
+      "entity_type": "amenity",
+      "entity_identifier": "amenity-outdoor-living-deck-1",
+      "ordinal": 1,
+      "label": "Outdoor Living 1",
+      "data": {
+        "amenity_category": "OutdoorLiving"
+      }
+    },
+    {
+      "key": "market_price_trend_source:market-price-trend-source-1",
+      "parent_key": null,
+      "entity_type": "market_price_trend_source",
+      "entity_identifier": "market-price-trend-source-1",
+      "ordinal": 1,
+      "label": "Price Trend Source 1",
+      "data": {}
+    },
+    {
+      "key": "outbuilding:outbuilding-shed-1",
+      "parent_key": null,
+      "entity_type": "outbuilding",
+      "entity_identifier": "outbuilding-shed-1",
+      "ordinal": 1,
+      "label": "Shed 1",
+      "data": {}
+    },
+    {
+      "key": "project_amenity:project-amenity-1",
+      "parent_key": null,
+      "entity_type": "project_amenity",
+      "entity_identifier": "project-amenity-1",
+      "ordinal": 1,
+      "label": "Common Amenity 1",
+      "data": {}
+    },
+    {
+      "key": "project_data_source:project-data-source-1",
+      "parent_key": null,
+      "entity_type": "project_data_source",
+      "entity_identifier": "project-data-source-1",
+      "ordinal": 1,
+      "label": "Project Data Source 1",
+      "data": {}
+    },
+    {
+      "key": "project_utility:project-utility-1",
+      "parent_key": null,
+      "entity_type": "project_utility",
+      "entity_identifier": "project-utility-1",
+      "ordinal": 1,
+      "label": "Included Utility 1",
+      "data": {}
+    },
+    {
+      "key": "property:subject",
+      "parent_key": null,
+      "entity_type": "property",
+      "entity_identifier": "subject",
+      "ordinal": 1,
+      "label": "Subject Property",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable:sales-comparable-1",
+      "parent_key": null,
+      "entity_type": "sales_comparable",
+      "entity_identifier": "sales-comparable-1",
+      "ordinal": 1,
+      "label": "Sales Comparable 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "parent_key": null,
+      "entity_type": "sales_comparison_additional_property",
+      "entity_identifier": "sales-comparison-additional-property-1",
+      "ordinal": 1,
+      "label": "Additional Property 1",
+      "data": {}
+    },
+    {
+      "key": "subject_listing:subject-listing-1",
+      "parent_key": null,
+      "entity_type": "subject_listing",
+      "entity_identifier": "subject-listing-1",
+      "ordinal": 1,
+      "label": "Subject Listing 1",
+      "data": {}
+    },
+    {
+      "key": "subject_prior_transfer:subject-prior-transfer-1",
+      "parent_key": null,
+      "entity_type": "subject_prior_transfer",
+      "entity_identifier": "subject-prior-transfer-1",
+      "ordinal": 1,
+      "label": "Subject Prior Transfer 1",
+      "data": {}
+    },
+    {
+      "key": "vehicle_storage:vehicle-storage-1",
+      "parent_key": null,
+      "entity_type": "vehicle_storage",
+      "entity_identifier": "vehicle-storage-1",
+      "ordinal": 1,
+      "label": "Vehicle Storage 1",
+      "data": {}
+    },
+    {
+      "key": "comparable_no_prior_transfer_data_source:sales-comparable-no-transfer-source-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "comparable_no_prior_transfer_data_source",
+      "entity_identifier": "sales-comparable-no-transfer-source-1",
+      "ordinal": 1,
+      "label": "Comparable No-Transfer Data Source 1",
+      "data": {}
+    },
+    {
+      "key": "dwelling:dwelling-1",
+      "parent_key": "property:subject",
+      "entity_type": "dwelling",
+      "entity_identifier": "dwelling-1",
+      "ordinal": 1,
+      "label": "Dwelling 1",
+      "data": {}
+    },
+    {
+      "key": "outbuilding_room:outbuilding-shed-kitchen-1",
+      "parent_key": "outbuilding:outbuilding-shed-1",
+      "entity_type": "outbuilding_room",
+      "entity_identifier": "outbuilding-shed-kitchen-1",
+      "ordinal": 1,
+      "label": "Shed Kitchen Summary",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_amenity:sales-comparable-amenity-deck-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_amenity",
+      "entity_identifier": "sales-comparable-amenity-deck-1",
+      "ordinal": 1,
+      "label": "Comparable Outdoor Living Amenity 1",
+      "data": {
+        "amenity_category": "OutdoorLiving"
+      }
+    },
+    {
+      "key": "sales_comparable_data_source:sales-comparable-source-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_data_source",
+      "entity_identifier": "sales-comparable-source-1",
+      "ordinal": 1,
+      "label": "Comparable Data Source 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_disaster_mitigation:sales-comparable-disaster-mitigation-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_disaster_mitigation",
+      "entity_identifier": "sales-comparable-disaster-mitigation-1",
+      "ordinal": 1,
+      "label": "Comparable Disaster Mitigation 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_dwelling",
+      "entity_identifier": "sales-comparable-dwelling-1",
+      "ordinal": 1,
+      "label": "Comparable Dwelling 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_efficiency_rating:sales-comparable-efficiency-rating-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_efficiency_rating",
+      "entity_identifier": "sales-comparable-efficiency-rating-1",
+      "ordinal": 1,
+      "label": "Comparable Efficiency Rating 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_functional_issue:sales-comparable-functional-issue-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_functional_issue",
+      "entity_identifier": "sales-comparable-functional-issue-1",
+      "ordinal": 1,
+      "label": "Comparable Functional Issue 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_green_certification:sales-comparable-green-certification-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_green_certification",
+      "entity_identifier": "sales-comparable-green-certification-1",
+      "ordinal": 1,
+      "label": "Comparable Green Certification 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_outbuilding",
+      "entity_identifier": "sales-comparable-outbuilding-shed-1",
+      "ordinal": 1,
+      "label": "Comparable Shed 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_project_amenity:sales-comparable-project-amenity-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_project_amenity",
+      "entity_identifier": "sales-comparable-project-amenity-1",
+      "ordinal": 1,
+      "label": "Comparable Project Amenity 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_renewable_energy_component:sales-comparable-renewable-energy-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_renewable_energy_component",
+      "entity_identifier": "sales-comparable-renewable-energy-1",
+      "ordinal": 1,
+      "label": "Comparable Renewable Energy Component 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_site_environmental:sales-comparable-site-environmental-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_site_environmental",
+      "entity_identifier": "sales-comparable-site-environmental-1",
+      "ordinal": 1,
+      "label": "Comparable Environmental Condition 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_site_feature:sales-comparable-site-feature-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_site_feature",
+      "entity_identifier": "sales-comparable-site-feature-1",
+      "ordinal": 1,
+      "label": "Comparable Site Characteristic 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_site_hazard:sales-comparable-site-hazard-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_site_hazard",
+      "entity_identifier": "sales-comparable-site-hazard-1",
+      "ordinal": 1,
+      "label": "Comparable Hazard Zone 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_site_influence:sales-comparable-site-influence-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_site_influence",
+      "entity_identifier": "sales-comparable-site-influence-1",
+      "ordinal": 1,
+      "label": "Comparable Site Influence 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_site_influence:sales-comparable-site-influence-2",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_site_influence",
+      "entity_identifier": "sales-comparable-site-influence-2",
+      "ordinal": 2,
+      "label": "Comparable Site Influence 2",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_site_street:sales-comparable-site-street-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_site_street",
+      "entity_identifier": "sales-comparable-site-street-1",
+      "ordinal": 1,
+      "label": "Comparable Access Street 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_site_view:sales-comparable-site-view-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_site_view",
+      "entity_identifier": "sales-comparable-site-view-1",
+      "ordinal": 1,
+      "label": "Comparable View 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_vehicle_storage:sales-comparable-vehicle-storage-garage-1",
+      "parent_key": "sales_comparable:sales-comparable-1",
+      "entity_type": "sales_comparable_vehicle_storage",
+      "entity_identifier": "sales-comparable-vehicle-storage-garage-1",
+      "ordinal": 1,
+      "label": "Comparable Garage 1",
+      "data": {}
+    },
+    {
+      "key": "site_parcel:site-parcel-1",
+      "parent_key": "property:subject",
+      "entity_type": "site_parcel",
+      "entity_identifier": "site-parcel-1",
+      "ordinal": 1,
+      "label": "Parcel 1",
+      "data": {}
+    },
+    {
+      "key": "subject_prior_transfer_data_source:subject-prior-transfer-source-1",
+      "parent_key": "subject_prior_transfer:subject-prior-transfer-1",
+      "entity_type": "subject_prior_transfer_data_source",
+      "entity_identifier": "subject-prior-transfer-source-1",
+      "ordinal": 1,
+      "label": "Subject Transfer Data Source 1",
+      "data": {}
+    },
+    {
+      "key": "dwelling_exterior_feature:dwelling-exterior-wall-1",
+      "parent_key": "dwelling:dwelling-1",
+      "entity_type": "dwelling_exterior_feature",
+      "entity_identifier": "dwelling-exterior-wall-1",
+      "ordinal": 1,
+      "label": "Exterior Walls and Trim",
+      "data": {}
+    },
+    {
+      "key": "dwelling_exterior_feature:dwelling-foundation-1",
+      "parent_key": "dwelling:dwelling-1",
+      "entity_type": "dwelling_exterior_feature",
+      "entity_identifier": "dwelling-foundation-1",
+      "ordinal": 2,
+      "label": "Foundation",
+      "data": {}
+    },
+    {
+      "key": "dwelling_exterior_feature:dwelling-roof-1",
+      "parent_key": "dwelling:dwelling-1",
+      "entity_type": "dwelling_exterior_feature",
+      "entity_identifier": "dwelling-roof-1",
+      "ordinal": 3,
+      "label": "Roof",
+      "data": {}
+    },
+    {
+      "key": "dwelling_exterior_feature:dwelling-windows-1",
+      "parent_key": "dwelling:dwelling-1",
+      "entity_type": "dwelling_exterior_feature",
+      "entity_identifier": "dwelling-windows-1",
+      "ordinal": 4,
+      "label": "Windows",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_body_of_water:sales-comparable-body-of-water-1",
+      "parent_key": "sales_comparable_site_influence:sales-comparable-site-influence-2",
+      "entity_type": "sales_comparable_body_of_water",
+      "entity_identifier": "sales-comparable-body-of-water-1",
+      "ordinal": 1,
+      "label": "Comparable Body of Water 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_construction_method:sales-comparable-construction-method-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_construction_method",
+      "entity_identifier": "sales-comparable-construction-method-1",
+      "ordinal": 1,
+      "label": "Comparable Construction Method 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_cooling_system:sales-comparable-cooling-system-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_cooling_system",
+      "entity_identifier": "sales-comparable-cooling-system-1",
+      "ordinal": 1,
+      "label": "Comparable Cooling System 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_exterior_component:sales-comparable-exterior-wall-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_exterior_component",
+      "entity_identifier": "sales-comparable-exterior-wall-1",
+      "ordinal": 1,
+      "label": "Comparable Exterior Walls and Trim",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_exterior_component:sales-comparable-foundation-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_exterior_component",
+      "entity_identifier": "sales-comparable-foundation-1",
+      "ordinal": 2,
+      "label": "Comparable Foundation",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_exterior_component:sales-comparable-roof-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_exterior_component",
+      "entity_identifier": "sales-comparable-roof-1",
+      "ordinal": 3,
+      "label": "Comparable Roof",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_exterior_component:sales-comparable-windows-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_exterior_component",
+      "entity_identifier": "sales-comparable-windows-1",
+      "ordinal": 4,
+      "label": "Comparable Windows",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_heating_system:sales-comparable-heating-system-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_heating_system",
+      "entity_identifier": "sales-comparable-heating-system-1",
+      "ordinal": 1,
+      "label": "Comparable Heating System 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_outbuilding_room:sales-comparable-outbuilding-kitchen-1",
+      "parent_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "entity_type": "sales_comparable_outbuilding_room",
+      "entity_identifier": "sales-comparable-outbuilding-kitchen-1",
+      "ordinal": 1,
+      "label": "Comparable Shed Kitchen Summary",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_unit:sales-comparable-unit-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_unit",
+      "entity_identifier": "sales-comparable-unit-1",
+      "ordinal": 1,
+      "label": "Comparable Unit 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_unit:sales-comparable-adu-1",
+      "parent_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "entity_type": "sales_comparable_unit",
+      "entity_identifier": "sales-comparable-adu-1",
+      "ordinal": 2,
+      "label": "Comparable ADU 1",
+      "data": {}
+    },
+    {
+      "key": "unit:unit-1",
+      "parent_key": "dwelling:dwelling-1",
+      "entity_type": "unit",
+      "entity_identifier": "unit-1",
+      "ordinal": 1,
+      "label": "Unit 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_interior_component:sales-comparable-adu-flooring-1",
+      "parent_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "entity_type": "sales_comparable_interior_component",
+      "entity_identifier": "sales-comparable-adu-flooring-1",
+      "ordinal": 1,
+      "label": "Comparable ADU Flooring",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_interior_component:sales-comparable-interior-flooring-1",
+      "parent_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "entity_type": "sales_comparable_interior_component",
+      "entity_identifier": "sales-comparable-interior-flooring-1",
+      "ordinal": 1,
+      "label": "Comparable Flooring",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_interior_component:sales-comparable-adu-walls-1",
+      "parent_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "entity_type": "sales_comparable_interior_component",
+      "entity_identifier": "sales-comparable-adu-walls-1",
+      "ordinal": 2,
+      "label": "Comparable ADU Walls and Ceiling",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_interior_component:sales-comparable-interior-walls-1",
+      "parent_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "entity_type": "sales_comparable_interior_component",
+      "entity_identifier": "sales-comparable-interior-walls-1",
+      "ordinal": 2,
+      "label": "Comparable Walls and Ceiling",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_kitchen:sales-comparable-adu-kitchen-1",
+      "parent_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "entity_type": "sales_comparable_kitchen",
+      "entity_identifier": "sales-comparable-adu-kitchen-1",
+      "ordinal": 1,
+      "label": "Comparable ADU Kitchen 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_kitchen:sales-comparable-kitchen-1",
+      "parent_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "entity_type": "sales_comparable_kitchen",
+      "entity_identifier": "sales-comparable-kitchen-1",
+      "ordinal": 1,
+      "label": "Comparable Kitchen 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_unit_accessibility_feature:sales-comparable-unit-accessibility-1",
+      "parent_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "entity_type": "sales_comparable_unit_accessibility_feature",
+      "entity_identifier": "sales-comparable-unit-accessibility-1",
+      "ordinal": 1,
+      "label": "Comparable Unit Accessibility 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparable_waterfront_feature:sales-comparable-waterfront-feature-1",
+      "parent_key": "sales_comparable_body_of_water:sales-comparable-body-of-water-1",
+      "entity_type": "sales_comparable_waterfront_feature",
+      "entity_identifier": "sales-comparable-waterfront-feature-1",
+      "ordinal": 1,
+      "label": "Comparable Waterfront Feature 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparison_subject_exterior_quality_summary:subject-windows-quality-summary-1",
+      "parent_key": "dwelling_exterior_feature:dwelling-windows-1",
+      "entity_type": "sales_comparison_subject_exterior_quality_summary",
+      "entity_identifier": "subject-windows-quality-summary-1",
+      "ordinal": 1,
+      "label": "Subject Windows Quality Summary",
+      "data": {}
+    },
+    {
+      "key": "sales_comparison_subject_unit_interior_summary:subject-unit-interior-summary-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "sales_comparison_subject_unit_interior_summary",
+      "entity_identifier": "subject-unit-interior-summary-1",
+      "ordinal": 1,
+      "label": "Subject Unit Interior Summary",
+      "data": {}
+    },
+    {
+      "key": "unit_area_data_source:unit-area-source-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_area_data_source",
+      "entity_identifier": "unit-area-source-1",
+      "ordinal": 1,
+      "label": "Area Source 1",
+      "data": {}
+    },
+    {
+      "key": "unit_interior_feature:unit-feature-flooring-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_interior_feature",
+      "entity_identifier": "unit-feature-flooring-1",
+      "ordinal": 1,
+      "label": "Flooring 1",
+      "data": {}
+    },
+    {
+      "key": "unit_interior_feature:unit-feature-walls-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_interior_feature",
+      "entity_identifier": "unit-feature-walls-1",
+      "ordinal": 2,
+      "label": "Walls and Ceiling 1",
+      "data": {}
+    },
+    {
+      "key": "unit_level:unit-level-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_level",
+      "entity_identifier": "unit-level-1",
+      "ordinal": 1,
+      "label": "Level 1",
+      "data": {}
+    },
+    {
+      "key": "unit_room:unit-room-bedroom-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_room",
+      "entity_identifier": "unit-room-bedroom-1",
+      "ordinal": 1,
+      "label": "Bedroom 1",
+      "data": {}
+    },
+    {
+      "key": "unit_room:unit-room-bedroom-2",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_room",
+      "entity_identifier": "unit-room-bedroom-2",
+      "ordinal": 2,
+      "label": "Bedroom 2",
+      "data": {}
+    },
+    {
+      "key": "unit_room:unit-room-bedroom-3",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_room",
+      "entity_identifier": "unit-room-bedroom-3",
+      "ordinal": 3,
+      "label": "Bedroom 3",
+      "data": {}
+    },
+    {
+      "key": "unit_room:unit-room-full-bath-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_room",
+      "entity_identifier": "unit-room-full-bath-1",
+      "ordinal": 4,
+      "label": "Full Bathroom 1",
+      "data": {}
+    },
+    {
+      "key": "unit_room:unit-room-full-bath-2",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_room",
+      "entity_identifier": "unit-room-full-bath-2",
+      "ordinal": 5,
+      "label": "Full Bathroom 2",
+      "data": {}
+    },
+    {
+      "key": "unit_room:unit-room-kitchen-1",
+      "parent_key": "unit:unit-1",
+      "entity_type": "unit_room",
+      "entity_identifier": "unit-room-kitchen-1",
+      "ordinal": 6,
+      "label": "Kitchen 1",
+      "data": {}
+    },
+    {
+      "key": "sales_comparison_subject_interior_condition_summary:subject-walls-condition-summary-1",
+      "parent_key": "unit_interior_feature:unit-feature-walls-1",
+      "entity_type": "sales_comparison_subject_interior_condition_summary",
+      "entity_identifier": "subject-walls-condition-summary-1",
+      "ordinal": 1,
+      "label": "Subject Walls and Ceiling Condition Summary",
+      "data": {}
+    },
+    {
+      "key": "sales_comparison_subject_interior_quality_summary:subject-flooring-quality-summary-1",
+      "parent_key": "unit_interior_feature:unit-feature-flooring-1",
+      "entity_type": "sales_comparison_subject_interior_quality_summary",
+      "entity_identifier": "subject-flooring-quality-summary-1",
+      "ordinal": 1,
+      "label": "Subject Flooring Quality Summary",
+      "data": {}
+    },
+    {
+      "key": "sales_comparison_subject_interior_quality_summary:subject-walls-quality-summary-1",
+      "parent_key": "unit_interior_feature:unit-feature-walls-1",
+      "entity_type": "sales_comparison_subject_interior_quality_summary",
+      "entity_identifier": "subject-walls-quality-summary-1",
+      "ordinal": 1,
+      "label": "Subject Walls and Ceiling Quality Summary",
+      "data": {}
+    },
+    {
+      "key": "sales_comparison_subject_kitchen_summary:subject-kitchen-summary-1",
+      "parent_key": "unit_room:unit-room-kitchen-1",
+      "entity_type": "sales_comparison_subject_kitchen_summary",
+      "entity_identifier": "subject-kitchen-summary-1",
+      "ordinal": 1,
+      "label": "Subject Kitchen Quality Summary",
+      "data": {}
+    }
+  ],
+  "field_values": [
+    {
+      "entity_key": null,
+      "field_context": "appraiser_inspection",
+      "uad_uid": "2400.0080",
+      "report_field_id": "2.023",
+      "value": "2026-08-21"
+    },
+    {
+      "entity_key": null,
+      "field_context": "appraiser_inspection",
+      "uad_uid": "2400.0081",
+      "report_field_id": "2.021",
+      "value": "Physical"
+    },
+    {
+      "entity_key": null,
+      "field_context": "appraiser_inspection",
+      "uad_uid": "2400.0082",
+      "report_field_id": "2.022",
+      "value": "Physical"
+    },
+    {
+      "entity_key": null,
+      "field_context": "assignment",
+      "uad_uid": "1000.0034",
+      "report_field_id": "2.000",
+      "value": "Purchase"
+    },
+    {
+      "entity_key": null,
+      "field_context": "assignment",
+      "uad_uid": "1000.0043",
+      "report_field_id": "2.005",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "assignment",
+      "uad_uid": "1000.0158",
+      "report_field_id": "2.004",
+      "value": "TraditionalAppraisal"
+    },
+    {
+      "entity_key": null,
+      "field_context": "certification_intended_user",
+      "uad_uid": "2200.0037",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "certification_report",
+      "uad_uid": "2200.0017",
+      "report_field_id": "29.050",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "certification_report",
+      "uad_uid": "2200.0034",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "certification_report",
+      "uad_uid": "2200.0038",
+      "report_field_id": "29.030",
+      "value": "InteriorAndExterior"
+    },
+    {
+      "entity_key": null,
+      "field_context": "certification_scope",
+      "uad_uid": "1000.0028",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "certification_scope",
+      "uad_uid": "2200.0062",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "comparable_prior_transfer_commentary",
+      "uad_uid": "1600.0008",
+      "report_field_id": "21.012",
+      "value": "No sales comparables have been selected in the staging fixture. Comparable transfer histories will be analyzed when Section 22 comparable records are added."
+    },
+    {
+      "entity_key": null,
+      "field_context": "cost_approach_exclusion",
+      "uad_uid": "1300.0002",
+      "report_field_id": "26.005",
+      "value": [
+        "NotNecessaryForCredibleResults"
+      ]
+    },
+    {
+      "entity_key": null,
+      "field_context": "disaster_mitigation",
+      "uad_uid": "3700.0002",
+      "report_field_id": "5.000",
+      "value": [
+        "None"
+      ]
+    },
+    {
+      "entity_key": null,
+      "field_context": "energy_green",
+      "uad_uid": "2600.0003",
+      "report_field_id": "6.010",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "energy_green",
+      "uad_uid": "2600.0004",
+      "report_field_id": "6.004",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "energy_green",
+      "uad_uid": "2600.0005",
+      "report_field_id": "6.000",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "functional_obsolescence",
+      "uad_uid": "3600.0002",
+      "report_field_id": "11.000",
+      "value": [
+        "None"
+      ]
+    },
+    {
+      "entity_key": null,
+      "field_context": "highest_best_use",
+      "uad_uid": "3100.0003",
+      "report_field_id": "16.002",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "highest_best_use",
+      "uad_uid": "3100.0004",
+      "report_field_id": "16.000",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "highest_best_use",
+      "uad_uid": "3100.0005",
+      "report_field_id": "16.003",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "highest_best_use",
+      "uad_uid": "3100.0006",
+      "report_field_id": "16.001",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "highest_best_use",
+      "uad_uid": "3100.0007",
+      "report_field_id": "16.004",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "highest_best_use_commentary",
+      "uad_uid": "3100.0010",
+      "report_field_id": "16.005",
+      "value": "The present single-family residential use is legally permissible, physically possible, financially feasible, and maximally productive."
+    },
+    {
+      "entity_key": null,
+      "field_context": "income_approach_exclusion",
+      "uad_uid": "1300.0004",
+      "report_field_id": "26.003",
+      "value": [
+        "NotNecessaryForCredibleResults"
+      ]
+    },
+    {
+      "entity_key": null,
+      "field_context": "market",
+      "uad_uid": "3000.0008",
+      "report_field_id": "17.003",
+      "value": "North: North Test Rd; East: East Test Ave; South: South Test Blvd; West: West Test Dr."
+    },
+    {
+      "entity_key": null,
+      "field_context": "market",
+      "uad_uid": "3000.0009",
+      "report_field_id": "17.011",
+      "value": 12
+    },
+    {
+      "entity_key": null,
+      "field_context": "market",
+      "uad_uid": "3000.0010",
+      "report_field_id": "17.004",
+      "value": "Detached single-family properties within the defined test market, including active, pending, and closed sales over the prior 12 months."
+    },
+    {
+      "entity_key": null,
+      "field_context": "market",
+      "uad_uid": "3000.0031",
+      "report_field_id": "17.022",
+      "value": "UnderThreeMonths"
+    },
+    {
+      "entity_key": null,
+      "field_context": "market",
+      "uad_uid": "3000.0033",
+      "report_field_id": "17.021",
+      "value": "InBalance"
+    },
+    {
+      "entity_key": null,
+      "field_context": "market",
+      "uad_uid": "3000.0034",
+      "report_field_id": "17.016",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_active_listings",
+      "uad_uid": "3000.0018",
+      "report_field_id": "17.005",
+      "value": 3
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_active_listings",
+      "uad_uid": "3000.0019",
+      "report_field_id": "17.009",
+      "value": 465000
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_active_listings",
+      "uad_uid": "3000.0020",
+      "report_field_id": "17.007",
+      "value": 399000
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_active_listings",
+      "uad_uid": "3000.0021",
+      "report_field_id": "17.006",
+      "value": 24
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_active_listings",
+      "uad_uid": "3000.0022",
+      "report_field_id": "17.008",
+      "value": 425000
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_commentary",
+      "uad_uid": "0100.0044",
+      "report_field_id": "17.023",
+      "value": "The synthetic subject competes in an established single-family market with balanced supply and typical marketing under three months."
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_pending_sales",
+      "uad_uid": "3000.0024",
+      "report_field_id": "17.010",
+      "value": 2
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_price_trend_commentary",
+      "uad_uid": "3000.0040",
+      "report_field_id": "17.019",
+      "value": "Monthly median sale prices from the synthetic MLS market dataset were reviewed over the 12-month period. The series indicates stable pricing with ordinary month-to-month variation and no conflicting source trend."
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_total_sales",
+      "uad_uid": "3000.0026",
+      "report_field_id": "17.012",
+      "value": 8
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_total_sales",
+      "uad_uid": "3000.0027",
+      "report_field_id": "17.015",
+      "value": 472000
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_total_sales",
+      "uad_uid": "3000.0028",
+      "report_field_id": "17.013",
+      "value": 365000
+    },
+    {
+      "entity_key": null,
+      "field_context": "market_total_sales",
+      "uad_uid": "3000.0029",
+      "report_field_id": "17.014",
+      "value": 418000
+    },
+    {
+      "entity_key": null,
+      "field_context": "overall_quality_condition_commentary",
+      "uad_uid": "1600.0008",
+      "report_field_id": "15.010",
+      "value": "The Q3 and C3 overall ratings reconcile the dwelling exterior and non-ADU unit interior ratings."
+    },
+    {
+      "entity_key": null,
+      "field_context": "project_association_dues",
+      "uad_uid": "2500.0007",
+      "report_field_id": "18.011",
+      "value": 125
+    },
+    {
+      "entity_key": null,
+      "field_context": "project_developer",
+      "uad_uid": "2500.0067",
+      "report_field_id": "18.064",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "project_information",
+      "uad_uid": "2500.0051",
+      "report_field_id": "18.070",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "project_information_commentary",
+      "uad_uid": "2500.0170",
+      "report_field_id": "18.095",
+      "value": "The synthetic subject is in a PUD with mandatory monthly association dues and common clubhouse access."
+    },
+    {
+      "entity_key": null,
+      "field_context": "project_special_assessment",
+      "uad_uid": "2500.0163",
+      "report_field_id": "18.072",
+      "value": "None"
+    },
+    {
+      "entity_key": null,
+      "field_context": "project_tax",
+      "uad_uid": "2500.0081",
+      "report_field_id": "18.073",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "reconciliation",
+      "uad_uid": "1300.0010",
+      "report_field_id": "26.009",
+      "value": [
+        "AsIs"
+      ]
+    },
+    {
+      "entity_key": null,
+      "field_context": "reconciliation",
+      "uad_uid": "1300.0012",
+      "report_field_id": "26.011",
+      "value": "2026-08-21"
+    },
+    {
+      "entity_key": null,
+      "field_context": "reconciliation",
+      "uad_uid": "1300.0013",
+      "report_field_id": "26.010",
+      "value": 45
+    },
+    {
+      "entity_key": null,
+      "field_context": "reconciliation",
+      "uad_uid": "1300.0017",
+      "report_field_id": "26.007",
+      "value": 445000
+    },
+    {
+      "entity_key": null,
+      "field_context": "reconciliation",
+      "uad_uid": "1300.0019",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "reconciliation",
+      "uad_uid": "1300.0021",
+      "report_field_id": "26.019",
+      "value": "The sales comparison approach is the most reliable indicator for this synthetic assignment. Three settled sales bracket the conclusion after market-supported condition, sale-date, site, and finished-area adjustments."
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_comparison_reconciliation",
+      "uad_uid": "1800.0278",
+      "report_field_id": "22.16.01",
+      "value": "The selected comparable received Most weight because its location, site utility, design, condition, and finished area most closely bracket the subject. The indicated value reflects the supported adjusted-price range and gives less or no weight to less similar evidence."
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_comparison_scope",
+      "uad_uid": "1000.0032",
+      "report_field_id": "Does Not Display",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_comparison_summary",
+      "uad_uid": "1300.0006",
+      "report_field_id": "22.15.15",
+      "value": 445000
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0002",
+      "report_field_id": "20.002",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0004",
+      "report_field_id": "20.007",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0005",
+      "report_field_id": "20.009",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0006",
+      "report_field_id": "20.008",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0007",
+      "report_field_id": "20.010",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0008",
+      "report_field_id": "20.004",
+      "value": 435000
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0009",
+      "report_field_id": "20.005",
+      "value": "2026-07-15"
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0010",
+      "report_field_id": "20.001",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0011",
+      "report_field_id": "20.009",
+      "value": 7500
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0016",
+      "report_field_id": "20.000",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract",
+      "uad_uid": "0600.0017",
+      "report_field_id": "20.006",
+      "value": "TypicallyMotivated"
+    },
+    {
+      "entity_key": null,
+      "field_context": "sales_contract_commentary",
+      "uad_uid": "0600.0014",
+      "report_field_id": "20.011",
+      "value": "The synthetic arm's-length contract was analyzed. The $7,500 seller-paid financial concession is typical for the market and no personal property is included in the appraiser's final opinion of value."
+    },
+    {
+      "entity_key": null,
+      "field_context": "scope_of_work",
+      "uad_uid": "1000.0027",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "scope_of_work",
+      "uad_uid": "1000.0030",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "site",
+      "uad_uid": "1500.0093",
+      "report_field_id": "4.000",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 8400
+      }
+    },
+    {
+      "entity_key": null,
+      "field_context": "site",
+      "uad_uid": "1500.0094",
+      "report_field_id": "4.002",
+      "value": 1
+    },
+    {
+      "entity_key": null,
+      "field_context": "site",
+      "uad_uid": "1500.0166",
+      "report_field_id": "4.067",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "site",
+      "uad_uid": "1500.0178",
+      "report_field_id": "4.099",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "site_access",
+      "uad_uid": "1500.0054",
+      "report_field_id": "4.023",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "site_access",
+      "uad_uid": "1500.0055",
+      "report_field_id": "4.020",
+      "value": "PublicStreet"
+    },
+    {
+      "entity_key": null,
+      "field_context": "site_mixed_use",
+      "uad_uid": "1500.0034",
+      "report_field_id": "4.017",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "site_zoning",
+      "uad_uid": "1500.0122",
+      "report_field_id": "4.009",
+      "value": "SF-7"
+    },
+    {
+      "entity_key": null,
+      "field_context": "site_zoning",
+      "uad_uid": "1500.0123",
+      "report_field_id": "4.010",
+      "value": "Single-family residential zoning"
+    },
+    {
+      "entity_key": null,
+      "field_context": "site_zoning",
+      "uad_uid": "1500.0124",
+      "report_field_id": "4.014",
+      "value": "The synthetic site is a legal conforming use."
+    },
+    {
+      "entity_key": null,
+      "field_context": "site_zoning",
+      "uad_uid": "1500.0125",
+      "report_field_id": "4.008",
+      "value": "Legal"
+    },
+    {
+      "entity_key": null,
+      "field_context": "sketch",
+      "uad_uid": "3300.0002",
+      "report_field_id": "7.000",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "sketch",
+      "uad_uid": "3300.0007",
+      "report_field_id": "7.001",
+      "value": "AmericanNationalStandardsInstitute"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0010",
+      "report_field_id": "3.002",
+      "value": "Dallas"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0017",
+      "report_field_id": "3.003",
+      "value": "Test Estates"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0019",
+      "report_field_id": "3.006",
+      "value": 0
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0020",
+      "report_field_id": "3.004",
+      "value": "Detached"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0021",
+      "report_field_id": "3.007",
+      "value": 1
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0022",
+      "report_field_id": "3.005",
+      "value": 1
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0026",
+      "report_field_id": "3.010",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0033",
+      "report_field_id": "3.008",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0046",
+      "report_field_id": "3.016",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0047",
+      "report_field_id": "3.015",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0100.0054",
+      "report_field_id": "3.014",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "0300.0010",
+      "report_field_id": "3.017",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "1600.0006",
+      "report_field_id": "15.005",
+      "value": "C3"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject",
+      "uad_uid": "1600.0007",
+      "report_field_id": "15.000",
+      "value": "Q3"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_address",
+      "uad_uid": "0100.0007",
+      "report_field_id": "3.000",
+      "value": "100 Test Subject Dr"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_address",
+      "uad_uid": "0100.0009",
+      "report_field_id": "3.000",
+      "value": "Garland"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_address",
+      "uad_uid": "0100.0011",
+      "report_field_id": "3.000",
+      "value": "75044"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_address",
+      "uad_uid": "0100.0012",
+      "report_field_id": "3.000",
+      "value": "TX"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_legal",
+      "uad_uid": "0100.0067",
+      "report_field_id": "3.031",
+      "value": "LOT 1 BLOCK A TEST ESTATES"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_listing_commentary",
+      "uad_uid": "0900.0020",
+      "report_field_id": "19.011",
+      "value": "The synthetic subject was exposed through one MLS listing for 30 days. The final list price was reduced from $449,000 to $435,000 before the listing was withdrawn without a settled sale."
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_listing_summary",
+      "uad_uid": "0900.0003",
+      "report_field_id": "19.010",
+      "value": 30
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_listing_summary",
+      "uad_uid": "0900.0004",
+      "report_field_id": "19.000",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_ownership",
+      "uad_uid": "0100.0024",
+      "report_field_id": "3.019",
+      "value": "FeeSimple"
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_ownership",
+      "uad_uid": "0100.0034",
+      "report_field_id": "3.027",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_prior_transfer_commentary",
+      "uad_uid": "1600.0008",
+      "report_field_id": "21.006",
+      "value": "The synthetic subject's prior arm's-length sale was researched through the recorded deed and analyzed against the current contract and market conditions."
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_prior_transfer_summary",
+      "uad_uid": "0800.0005",
+      "report_field_id": "21.000",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_property_amenities",
+      "uad_uid": "0200.0015",
+      "report_field_id": "14.000",
+      "value": true
+    },
+    {
+      "entity_key": null,
+      "field_context": "subject_property_amenities",
+      "uad_uid": "0200.0053",
+      "report_field_id": "14.005",
+      "value": false
+    },
+    {
+      "entity_key": null,
+      "field_context": "vehicle_storage",
+      "uad_uid": "3200.0021",
+      "report_field_id": "13.004",
+      "value": false
+    },
+    {
+      "entity_key": "amenity:amenity-outdoor-living-deck-1",
+      "field_context": "amenity_outdoor_living",
+      "uad_uid": "0200.0017",
+      "report_field_id": "14.001",
+      "value": "OutdoorLiving"
+    },
+    {
+      "entity_key": "amenity:amenity-outdoor-living-deck-1",
+      "field_context": "amenity_outdoor_living",
+      "uad_uid": "0200.0021",
+      "report_field_id": "14.003",
+      "value": "Wood"
+    },
+    {
+      "entity_key": "amenity:amenity-outdoor-living-deck-1",
+      "field_context": "amenity_outdoor_living",
+      "uad_uid": "0200.0023",
+      "report_field_id": "14.002 / 14.006",
+      "value": "Deck"
+    },
+    {
+      "entity_key": "amenity:amenity-outdoor-living-deck-1",
+      "field_context": "amenity_outdoor_living",
+      "uad_uid": "0200.0025",
+      "report_field_id": "14.004",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 240
+      }
+    },
+    {
+      "entity_key": "comparable_no_prior_transfer_data_source:sales-comparable-no-transfer-source-1",
+      "field_context": "comparable_no_prior_transfer_data_source",
+      "uad_uid": "0700.0125",
+      "report_field_id": "21.011",
+      "value": "MLS"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-exterior-wall-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0054",
+      "report_field_id": "8.027",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-exterior-wall-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0055",
+      "report_field_id": "8.041",
+      "value": "ExteriorWallsAndTrim"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-exterior-wall-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0098",
+      "report_field_id": "8.025",
+      "value": [
+        "Brick"
+      ]
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-foundation-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0044",
+      "report_field_id": "8.029",
+      "value": [
+        "PouredConcrete"
+      ]
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-foundation-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0046",
+      "report_field_id": "8.029",
+      "value": [
+        "Slab"
+      ]
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-foundation-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0054",
+      "report_field_id": "8.027",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-foundation-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0055",
+      "report_field_id": "8.041",
+      "value": "Foundation"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-roof-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0048",
+      "report_field_id": "8.033",
+      "value": "OneToTenYears"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-roof-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0049",
+      "report_field_id": "8.033",
+      "value": true
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-roof-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0050",
+      "report_field_id": "8.033",
+      "value": [
+        "Composition"
+      ]
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-roof-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0054",
+      "report_field_id": "8.027",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-roof-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0055",
+      "report_field_id": "8.041",
+      "value": "Roof"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-windows-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0052",
+      "report_field_id": "8.037",
+      "value": "Vinyl-framed double-pane windows"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-windows-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0054",
+      "report_field_id": "8.027",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "dwelling_exterior_feature:dwelling-windows-1",
+      "field_context": "dwelling_exterior_feature",
+      "uad_uid": "0300.0055",
+      "report_field_id": "8.041",
+      "value": "Windows"
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0011",
+      "report_field_id": "8.010",
+      "value": "2005"
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0012",
+      "report_field_id": "8.010",
+      "value": false
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0022",
+      "report_field_id": "8.051",
+      "value": true
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0030",
+      "report_field_id": "8.004",
+      "value": "Ranch"
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0034",
+      "report_field_id": "8.011",
+      "value": "SiteBuilt"
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0063",
+      "report_field_id": "8.001",
+      "value": 1
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0079",
+      "report_field_id": "8.012",
+      "value": false
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0084",
+      "report_field_id": "8.051",
+      "value": [
+        "Centralized"
+      ]
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0086",
+      "report_field_id": "8.050",
+      "value": [
+        "NaturalGas"
+      ]
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0088",
+      "report_field_id": "8.049",
+      "value": [
+        "ForcedWarmAir"
+      ]
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0114",
+      "report_field_id": "8.046",
+      "value": false
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0116",
+      "report_field_id": "8.052",
+      "value": false
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "0300.0117",
+      "report_field_id": "8.005",
+      "value": "GroundLevel"
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "1600.0004",
+      "report_field_id": "8.023",
+      "value": "C3"
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "1600.0005",
+      "report_field_id": "8.022",
+      "value": "Q3"
+    },
+    {
+      "entity_key": "dwelling:dwelling-1",
+      "field_context": "dwelling",
+      "uad_uid": "3900.0097",
+      "report_field_id": "8.055",
+      "value": false
+    },
+    {
+      "entity_key": "market_price_trend_source:market-price-trend-source-1",
+      "field_context": "market_price_trend_source",
+      "uad_uid": "3000.0051",
+      "report_field_id": "17.018",
+      "value": "Synthetic MLS Market Dataset"
+    },
+    {
+      "entity_key": "outbuilding_room:outbuilding-shed-kitchen-1",
+      "field_context": "outbuilding_room",
+      "uad_uid": "0300.0018",
+      "report_field_id": "12.012",
+      "value": "Kitchen"
+    },
+    {
+      "entity_key": "outbuilding_room:outbuilding-shed-kitchen-1",
+      "field_context": "outbuilding_room",
+      "uad_uid": "0300.0020",
+      "report_field_id": "12.012",
+      "value": 1
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0022",
+      "report_field_id": "12.009 / 12.016",
+      "value": false
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0023",
+      "report_field_id": "12.008",
+      "value": false
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0024",
+      "report_field_id": "12.002",
+      "value": true
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0025",
+      "report_field_id": "12.001",
+      "value": "Shed"
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0028",
+      "report_field_id": "12.010",
+      "value": [
+        "Electricity"
+      ]
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0060",
+      "report_field_id": "12.006",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 240
+      }
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0063",
+      "report_field_id": "12.003",
+      "value": 0
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0096",
+      "report_field_id": "12.025",
+      "value": "Detached storage shed included as real property."
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0111",
+      "report_field_id": "12.019",
+      "value": false
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0112",
+      "report_field_id": "12.011",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 120
+      }
+    },
+    {
+      "entity_key": "outbuilding:outbuilding-shed-1",
+      "field_context": "outbuilding",
+      "uad_uid": "0300.0113",
+      "report_field_id": "12.013",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 120
+      }
+    },
+    {
+      "entity_key": "project_amenity:project-amenity-1",
+      "field_context": "project_amenity",
+      "uad_uid": "2500.0004",
+      "report_field_id": "18.012",
+      "value": "Clubhouse"
+    },
+    {
+      "entity_key": "project_data_source:project-data-source-1",
+      "field_context": "project_data_source",
+      "uad_uid": "0700.0125",
+      "report_field_id": "18.005",
+      "value": "HomeownersAssociation"
+    },
+    {
+      "entity_key": "project_utility:project-utility-1",
+      "field_context": "project_utility",
+      "uad_uid": "2500.0009",
+      "report_field_id": "18.013",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable_amenity:sales-comparable-amenity-deck-1",
+      "field_context": "sales_comparable_amenity_outdoor_living",
+      "uad_uid": "1800.0256",
+      "report_field_id": "Does Not Display",
+      "value": "OutdoorLiving"
+    },
+    {
+      "entity_key": "sales_comparable_amenity:sales-comparable-amenity-deck-1",
+      "field_context": "sales_comparable_amenity_outdoor_living",
+      "uad_uid": "1800.0257",
+      "report_field_id": "22.12.08",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable_amenity:sales-comparable-amenity-deck-1",
+      "field_context": "sales_comparable_amenity_outdoor_living",
+      "uad_uid": "1800.0258",
+      "report_field_id": "22.12.08",
+      "value": "Deck"
+    },
+    {
+      "entity_key": "sales_comparable_body_of_water:sales-comparable-body-of-water-1",
+      "field_context": "sales_comparable_site_influence",
+      "uad_uid": "1800.0227",
+      "report_field_id": "22.04.06",
+      "value": "Lake Ray Hubbard"
+    },
+    {
+      "entity_key": "sales_comparable_body_of_water:sales-comparable-body-of-water-1",
+      "field_context": "sales_comparable_site_influence",
+      "uad_uid": "1800.0228",
+      "report_field_id": "22.04.06",
+      "value": "Lake"
+    },
+    {
+      "entity_key": "sales_comparable_body_of_water:sales-comparable-body-of-water-1",
+      "field_context": "sales_comparable_site_influence",
+      "uad_uid": "1800.0279",
+      "report_field_id": "Does Not Display",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable_body_of_water:sales-comparable-body-of-water-1",
+      "field_context": "sales_comparable_site_influence",
+      "uad_uid": "1800.0321",
+      "report_field_id": "22.04.06",
+      "value": "ShallowWater"
+    },
+    {
+      "entity_key": "sales_comparable_construction_method:sales-comparable-construction-method-1",
+      "field_context": "sales_comparable_construction_method",
+      "uad_uid": "1800.0171",
+      "report_field_id": "22.05.35",
+      "value": "SiteBuilt"
+    },
+    {
+      "entity_key": "sales_comparable_cooling_system:sales-comparable-cooling-system-1",
+      "field_context": "sales_comparable_cooling_system",
+      "uad_uid": "1800.0161",
+      "report_field_id": "22.05.51",
+      "value": "Centralized"
+    },
+    {
+      "entity_key": "sales_comparable_data_source:sales-comparable-source-1",
+      "field_context": "sales_comparable_data_source",
+      "uad_uid": "0700.0125",
+      "report_field_id": "22.01.18",
+      "value": "MLS"
+    },
+    {
+      "entity_key": "sales_comparable_data_source:sales-comparable-source-1",
+      "field_context": "sales_comparable_data_source",
+      "uad_uid": "1800.0347",
+      "report_field_id": "22.01.18",
+      "value": "NTREIS-SYNTHETIC-22001"
+    },
+    {
+      "entity_key": "sales_comparable_disaster_mitigation:sales-comparable-disaster-mitigation-1",
+      "field_context": "sales_comparable_disaster_mitigation",
+      "uad_uid": "1800.0104",
+      "report_field_id": "22.05.47",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0123",
+      "report_field_id": "22.05.51",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0125",
+      "report_field_id": "22.07.18",
+      "value": "Dwelling"
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0128",
+      "report_field_id": "22.05.21",
+      "value": "2004"
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0129",
+      "report_field_id": "22.05.21",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0167",
+      "report_field_id": "22.05.39",
+      "value": "Traditional"
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0185",
+      "report_field_id": "22.08.23",
+      "value": "C4"
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0186",
+      "report_field_id": "22.08.17",
+      "value": "Q3"
+    },
+    {
+      "entity_key": "sales_comparable_dwelling:sales-comparable-dwelling-1",
+      "field_context": "sales_comparable_dwelling",
+      "uad_uid": "1800.0368",
+      "report_field_id": "Does Not Display",
+      "value": 2
+    },
+    {
+      "entity_key": "sales_comparable_efficiency_rating:sales-comparable-efficiency-rating-1",
+      "field_context": "sales_comparable_efficiency_rating",
+      "uad_uid": "1800.0111",
+      "report_field_id": "22.06.07",
+      "value": "HERS Index"
+    },
+    {
+      "entity_key": "sales_comparable_efficiency_rating:sales-comparable-efficiency-rating-1",
+      "field_context": "sales_comparable_efficiency_rating",
+      "uad_uid": "1800.0112",
+      "report_field_id": "22.06.07",
+      "value": "62"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-exterior-wall-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "0300.0042",
+      "report_field_id": "22.08.18",
+      "value": [
+        "Brick"
+      ]
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-exterior-wall-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0179",
+      "report_field_id": "22.08.24",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-exterior-wall-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0180",
+      "report_field_id": "Does Not Display",
+      "value": "ExteriorWallsAndTrim"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-foundation-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0173",
+      "report_field_id": "22.08.19",
+      "value": [
+        "Slab"
+      ]
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-foundation-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0179",
+      "report_field_id": "22.08.25",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-foundation-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0180",
+      "report_field_id": "Does Not Display",
+      "value": "Foundation"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-roof-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0175",
+      "report_field_id": "22.08.20",
+      "value": [
+        "Composition"
+      ]
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-roof-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0179",
+      "report_field_id": "22.08.26",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-roof-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0180",
+      "report_field_id": "Does Not Display",
+      "value": "Roof"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-roof-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0386",
+      "report_field_id": "22.08.26",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-windows-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0179",
+      "report_field_id": "22.08.27",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-windows-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0180",
+      "report_field_id": "Does Not Display",
+      "value": "Windows"
+    },
+    {
+      "entity_key": "sales_comparable_exterior_component:sales-comparable-windows-1",
+      "field_context": "sales_comparable_exterior_component",
+      "uad_uid": "1800.0297",
+      "report_field_id": "22.08.21",
+      "value": "Typical builder-grade vinyl double-pane windows"
+    },
+    {
+      "entity_key": "sales_comparable_functional_issue:sales-comparable-functional-issue-1",
+      "field_context": "sales_comparable_functional_issue",
+      "uad_uid": "1800.0121",
+      "report_field_id": "22.05.45",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable_green_certification:sales-comparable-green-certification-1",
+      "field_context": "sales_comparable_green_certification",
+      "uad_uid": "1800.0109",
+      "report_field_id": "22.06.06",
+      "value": "Silver"
+    },
+    {
+      "entity_key": "sales_comparable_green_certification:sales-comparable-green-certification-1",
+      "field_context": "sales_comparable_green_certification",
+      "uad_uid": "1800.0110",
+      "report_field_id": "22.06.06",
+      "value": "NGBS Green"
+    },
+    {
+      "entity_key": "sales_comparable_heating_system:sales-comparable-heating-system-1",
+      "field_context": "sales_comparable_heating_system",
+      "uad_uid": "1800.0163",
+      "report_field_id": "22.05.49",
+      "value": "NaturalGas"
+    },
+    {
+      "entity_key": "sales_comparable_heating_system:sales-comparable-heating-system-1",
+      "field_context": "sales_comparable_heating_system",
+      "uad_uid": "1800.0165",
+      "report_field_id": "22.05.49",
+      "value": "ForcedWarmAir"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-adu-flooring-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0146",
+      "report_field_id": "22.10.20",
+      "value": "Luxury vinyl plank of typical quality"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-adu-flooring-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0147",
+      "report_field_id": "Does Not Display",
+      "value": "Flooring"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-adu-flooring-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0336",
+      "report_field_id": "22.10.26",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-adu-walls-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0146",
+      "report_field_id": "22.10.21",
+      "value": "Painted drywall of typical quality"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-adu-walls-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0147",
+      "report_field_id": "Does Not Display",
+      "value": "WallsAndCeiling"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-adu-walls-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0296",
+      "report_field_id": "22.10.27",
+      "value": "Typical wear with no material damage"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-interior-flooring-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0146",
+      "report_field_id": "22.09.22",
+      "value": "Carpet and ceramic tile of typical quality"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-interior-flooring-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0147",
+      "report_field_id": "Does Not Display",
+      "value": "Flooring"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-interior-flooring-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0336",
+      "report_field_id": "22.09.28",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-interior-walls-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0146",
+      "report_field_id": "22.09.23",
+      "value": "Painted drywall with flat ceilings"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-interior-walls-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0147",
+      "report_field_id": "Does Not Display",
+      "value": "WallsAndCeiling"
+    },
+    {
+      "entity_key": "sales_comparable_interior_component:sales-comparable-interior-walls-1",
+      "field_context": "sales_comparable_interior_component",
+      "uad_uid": "1800.0296",
+      "report_field_id": "22.09.29",
+      "value": "Typical wear with no material damage"
+    },
+    {
+      "entity_key": "sales_comparable_kitchen:sales-comparable-adu-kitchen-1",
+      "field_context": "sales_comparable_kitchen",
+      "uad_uid": "1800.0325",
+      "report_field_id": "Does Not Display",
+      "value": "Kitchen"
+    },
+    {
+      "entity_key": "sales_comparable_kitchen:sales-comparable-adu-kitchen-1",
+      "field_context": "sales_comparable_kitchen",
+      "uad_uid": "1800.0326",
+      "report_field_id": "22.10.24",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "sales_comparable_kitchen:sales-comparable-adu-kitchen-1",
+      "field_context": "sales_comparable_kitchen",
+      "uad_uid": "1800.0327",
+      "report_field_id": "22.10.18",
+      "value": "Typical compact kitchen finishes"
+    },
+    {
+      "entity_key": "sales_comparable_kitchen:sales-comparable-kitchen-1",
+      "field_context": "sales_comparable_kitchen",
+      "uad_uid": "1800.0325",
+      "report_field_id": "Does Not Display",
+      "value": "Kitchen"
+    },
+    {
+      "entity_key": "sales_comparable_kitchen:sales-comparable-kitchen-1",
+      "field_context": "sales_comparable_kitchen",
+      "uad_uid": "1800.0326",
+      "report_field_id": "22.09.26",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "sales_comparable_kitchen:sales-comparable-kitchen-1",
+      "field_context": "sales_comparable_kitchen",
+      "uad_uid": "1800.0327",
+      "report_field_id": "22.09.20",
+      "value": "Typical builder-grade cabinets and counters"
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding_room:sales-comparable-outbuilding-kitchen-1",
+      "field_context": "sales_comparable_outbuilding_room",
+      "uad_uid": "1800.0388",
+      "report_field_id": "22.14.22",
+      "value": "Kitchen"
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding_room:sales-comparable-outbuilding-kitchen-1",
+      "field_context": "sales_comparable_outbuilding_room",
+      "uad_uid": "1800.0389",
+      "report_field_id": "22.14.22",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0123",
+      "report_field_id": "22.14.24",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0124",
+      "report_field_id": "22.14.23",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0125",
+      "report_field_id": "22.07.18",
+      "value": "Outbuilding"
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0126",
+      "report_field_id": "22.14.14",
+      "value": "Shed"
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0132",
+      "report_field_id": "22.14.25",
+      "value": [
+        "Electricity"
+      ]
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0344",
+      "report_field_id": "22.14.17",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 120
+      }
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0351",
+      "report_field_id": "22.14.19",
+      "value": {
+        "unit": "CubicFeet",
+        "amount": 2080
+      }
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0366",
+      "report_field_id": "Does Not Display",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0368",
+      "report_field_id": "Does Not Display",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0380",
+      "report_field_id": "22.14.18",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 140
+      }
+    },
+    {
+      "entity_key": "sales_comparable_outbuilding:sales-comparable-outbuilding-shed-1",
+      "field_context": "sales_comparable_outbuilding",
+      "uad_uid": "1800.0387",
+      "report_field_id": "22.14.16",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 260
+      }
+    },
+    {
+      "entity_key": "sales_comparable_project_amenity:sales-comparable-project-amenity-1",
+      "field_context": "sales_comparable_project_amenity",
+      "uad_uid": "1800.0056",
+      "report_field_id": "22.02.08",
+      "value": "Clubhouse"
+    },
+    {
+      "entity_key": "sales_comparable_renewable_energy_component:sales-comparable-renewable-energy-1",
+      "field_context": "sales_comparable_renewable_energy_component",
+      "uad_uid": "1800.0113",
+      "report_field_id": "22.06.05",
+      "value": "Solar"
+    },
+    {
+      "entity_key": "sales_comparable_site_environmental:sales-comparable-site-environmental-1",
+      "field_context": "sales_comparable_site_environmental",
+      "uad_uid": "1800.0116",
+      "report_field_id": "22.03.44",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable_site_feature:sales-comparable-site-feature-1",
+      "field_context": "sales_comparable_site_feature",
+      "uad_uid": "1800.0222",
+      "report_field_id": "22.03.40",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable_site_hazard:sales-comparable-site-hazard-1",
+      "field_context": "sales_comparable_site_hazard",
+      "uad_uid": "1800.0212",
+      "report_field_id": "22.03.26",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable_site_influence:sales-comparable-site-influence-1",
+      "field_context": "sales_comparable_site_influence",
+      "uad_uid": "1800.0233",
+      "report_field_id": "22.03.42",
+      "value": "Residential"
+    },
+    {
+      "entity_key": "sales_comparable_site_influence:sales-comparable-site-influence-2",
+      "field_context": "sales_comparable_site_influence",
+      "uad_uid": "1800.0233",
+      "report_field_id": "22.03.42",
+      "value": "BodyOfWater"
+    },
+    {
+      "entity_key": "sales_comparable_site_influence:sales-comparable-site-influence-2",
+      "field_context": "sales_comparable_site_influence",
+      "uad_uid": "1800.0237",
+      "report_field_id": "22.04.09",
+      "value": {
+        "unit": "Feet",
+        "amount": 75
+      }
+    },
+    {
+      "entity_key": "sales_comparable_site_street:sales-comparable-site-street-1",
+      "field_context": "sales_comparable_site_street",
+      "uad_uid": "1800.0214",
+      "report_field_id": "22.03.30",
+      "value": "Asphalt"
+    },
+    {
+      "entity_key": "sales_comparable_site_street:sales-comparable-site-street-1",
+      "field_context": "sales_comparable_site_street",
+      "uad_uid": "1800.0216",
+      "report_field_id": "22.03.30",
+      "value": "Local"
+    },
+    {
+      "entity_key": "sales_comparable_site_view:sales-comparable-site-view-1",
+      "field_context": "sales_comparable_site_view",
+      "uad_uid": "1800.0242",
+      "report_field_id": "22.03.46",
+      "value": "Full"
+    },
+    {
+      "entity_key": "sales_comparable_site_view:sales-comparable-site-view-1",
+      "field_context": "sales_comparable_site_view",
+      "uad_uid": "1800.0243",
+      "report_field_id": "22.03.46",
+      "value": "Residential"
+    },
+    {
+      "entity_key": "sales_comparable_unit_accessibility_feature:sales-comparable-unit-accessibility-1",
+      "field_context": "sales_comparable_unit_accessibility_feature",
+      "uad_uid": "1800.0134",
+      "report_field_id": "22.07.42",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0157",
+      "report_field_id": "22.09.25",
+      "value": "C4"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0158",
+      "report_field_id": "22.10.17",
+      "value": "Q3"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0159",
+      "report_field_id": "22.07.17",
+      "value": "ADU 1"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0287",
+      "report_field_id": "Does Not Display",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0328",
+      "report_field_id": "22.10.25",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0329",
+      "report_field_id": "22.10.19",
+      "value": "Typical compact bathroom finishes"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0330",
+      "report_field_id": "22.07.26",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0331",
+      "report_field_id": "22.07.28",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0332",
+      "report_field_id": "22.07.28",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0390",
+      "report_field_id": "22.07.30",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 575
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0393",
+      "report_field_id": "22.07.36",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-adu-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0394",
+      "report_field_id": "22.07.40",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0157",
+      "report_field_id": "22.09.25",
+      "value": "C4"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0158",
+      "report_field_id": "22.09.19",
+      "value": "Q3"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0159",
+      "report_field_id": "22.07.17",
+      "value": "Primary Unit"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0287",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0328",
+      "report_field_id": "22.09.27",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0329",
+      "report_field_id": "22.09.21",
+      "value": "Typical builder-grade bath finishes"
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0330",
+      "report_field_id": "22.07.26",
+      "value": 3
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0331",
+      "report_field_id": "22.07.28",
+      "value": 2
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0332",
+      "report_field_id": "22.07.28",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0390",
+      "report_field_id": "22.07.30",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 2050
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0391",
+      "report_field_id": "22.07.32",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0392",
+      "report_field_id": "22.07.34",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0393",
+      "report_field_id": "22.07.36",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0394",
+      "report_field_id": "22.07.40",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "sales_comparable_unit:sales-comparable-unit-1",
+      "field_context": "sales_comparable_unit",
+      "uad_uid": "1800.0399",
+      "report_field_id": "22.07.38",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "sales_comparable_vehicle_storage:sales-comparable-vehicle-storage-garage-1",
+      "field_context": "sales_comparable_vehicle_storage",
+      "uad_uid": "1800.0094",
+      "report_field_id": "22.13.05",
+      "value": "Attached"
+    },
+    {
+      "entity_key": "sales_comparable_vehicle_storage:sales-comparable-vehicle-storage-garage-1",
+      "field_context": "sales_comparable_vehicle_storage",
+      "uad_uid": "1800.0095",
+      "report_field_id": "22.13.05",
+      "value": "Garage"
+    },
+    {
+      "entity_key": "sales_comparable_vehicle_storage:sales-comparable-vehicle-storage-garage-1",
+      "field_context": "sales_comparable_vehicle_storage",
+      "uad_uid": "1800.0099",
+      "report_field_id": "22.13.05",
+      "value": 2
+    },
+    {
+      "entity_key": "sales_comparable_vehicle_storage:sales-comparable-vehicle-storage-garage-1",
+      "field_context": "sales_comparable_vehicle_storage",
+      "uad_uid": "1800.0397",
+      "report_field_id": "22.13.05",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 480
+      }
+    },
+    {
+      "entity_key": "sales_comparable_waterfront_feature:sales-comparable-waterfront-feature-1",
+      "field_context": "sales_comparable_waterfront_feature",
+      "uad_uid": "1800.0230",
+      "report_field_id": "22.04.07",
+      "value": "Dock"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "comparable_prior_transfer_summary",
+      "uad_uid": "1800.0198",
+      "report_field_id": "21.008",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable",
+      "uad_uid": "1800.0192",
+      "report_field_id": "21.007",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_address",
+      "uad_uid": "1800.0001",
+      "report_field_id": "22.01.17",
+      "value": "1250 Forest Lane"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_address",
+      "uad_uid": "1800.0003",
+      "report_field_id": "22.01.17",
+      "value": "Garland"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_address",
+      "uad_uid": "1800.0004",
+      "report_field_id": "22.01.17",
+      "value": "75044"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_address",
+      "uad_uid": "1800.0005",
+      "report_field_id": "22.01.17",
+      "value": "TX"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_construction_method",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.36",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_cooling",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.52",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_disaster_mitigation",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.48",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_dwelling_style",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.40",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_dwelling_volume",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.42",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_energy_green",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.06.04",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_functional_issues",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.46",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_heating",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.50",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_noncontinuous_area",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.28",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_outbuilding",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.14.15",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_outdoor_living_amenity",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.12.09",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_overall_condition",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.11.06",
+      "value": 7500
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_overall_quality",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.11.04",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_project",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.02.05",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_sale_date",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.01.33",
+      "value": -2500
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_standard_above",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.07.31",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_vehicle_storage",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.13.04",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_water_frontage",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.04.05",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_window_area",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.44",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_adjustment_year_built",
+      "uad_uid": "1800.0317",
+      "report_field_id": "22.05.22",
+      "value": 0
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_concessions",
+      "uad_uid": "1800.0370",
+      "report_field_id": "22.01.28",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_contract",
+      "uad_uid": "1800.0202",
+      "report_field_id": "22.01.30",
+      "value": "2026-05-20"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_contract",
+      "uad_uid": "1800.0385",
+      "report_field_id": "22.01.30",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_dwelling_summary",
+      "uad_uid": "1800.0280",
+      "report_field_id": "22.05.41",
+      "value": {
+        "unit": "CubicFeet",
+        "amount": 18900
+      }
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_dwelling_summary",
+      "uad_uid": "1800.0281",
+      "report_field_id": "22.05.43",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 300
+      }
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_energy_green",
+      "uad_uid": "1800.0106",
+      "report_field_id": "22.06.07",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_energy_green",
+      "uad_uid": "1800.0107",
+      "report_field_id": "22.06.06",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_energy_green",
+      "uad_uid": "1800.0108",
+      "report_field_id": "22.06.05",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_financing",
+      "uad_uid": "1800.0063",
+      "report_field_id": "22.01.26",
+      "value": "Conventional"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_financing",
+      "uad_uid": "1800.0381",
+      "report_field_id": "22.01.26",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_listing",
+      "uad_uid": "1800.0074",
+      "report_field_id": "22.01.20",
+      "value": 449000
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_listing",
+      "uad_uid": "1800.0075",
+      "report_field_id": "22.01.21",
+      "value": "SettledSale"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_listing",
+      "uad_uid": "1800.0189",
+      "report_field_id": "22.01.34",
+      "value": 21
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_project",
+      "uad_uid": "1800.0353",
+      "report_field_id": "22.02.07",
+      "value": 125
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_project",
+      "uad_uid": "1800.0371",
+      "report_field_id": "22.02.09",
+      "value": "None"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_project",
+      "uad_uid": "1800.0378",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_project",
+      "uad_uid": "1800.0383",
+      "report_field_id": "Does Not Display",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "0100.0059",
+      "report_field_id": "Does Not Display",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0195",
+      "report_field_id": "22.01.37",
+      "value": "Detached"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0196",
+      "report_field_id": "22.11.05",
+      "value": "C4"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0197",
+      "report_field_id": "22.11.03",
+      "value": "Q3"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0199",
+      "report_field_id": "Does Not Display",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0201",
+      "report_field_id": "22.01.44",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0337",
+      "report_field_id": "22.01.39",
+      "value": "FeeSimple"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0357",
+      "report_field_id": "22.01.42",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0363",
+      "report_field_id": "Does Not Display",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0364",
+      "report_field_id": "Does Not Display",
+      "value": true
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_property",
+      "uad_uid": "1800.0365",
+      "report_field_id": "Does Not Display",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_proximity",
+      "uad_uid": "1800.0065",
+      "report_field_id": "22.01.19",
+      "value": {
+        "unit": "Miles",
+        "amount": 2.1
+      }
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_proximity",
+      "uad_uid": "1800.0066",
+      "report_field_id": "22.01.19",
+      "value": "NorthEast"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_sale",
+      "uad_uid": "1800.0272",
+      "report_field_id": "22.01.23",
+      "value": 442500
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_sale",
+      "uad_uid": "1800.0274",
+      "report_field_id": "22.01.24",
+      "value": "TypicallyMotivated"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_sale",
+      "uad_uid": "1800.0342",
+      "report_field_id": "22.01.32",
+      "value": "2026-06-25"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_site",
+      "uad_uid": "1800.0193",
+      "report_field_id": "22.03.22",
+      "value": "Test Subject Market Area"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_site",
+      "uad_uid": "1800.0218",
+      "report_field_id": "22.03.28",
+      "value": "PublicStreet"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_site",
+      "uad_uid": "1800.0239",
+      "report_field_id": "22.03.20",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 8400
+      }
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_site",
+      "uad_uid": "1800.0245",
+      "report_field_id": "22.03.24",
+      "value": "Legal"
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_site",
+      "uad_uid": "1800.0277",
+      "report_field_id": "22.03.18",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparable:sales-comparable-1",
+      "field_context": "sales_comparable_summary",
+      "uad_uid": "1800.0312",
+      "report_field_id": "22.15.14",
+      "value": "Most"
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0001",
+      "report_field_id": "22.17.02",
+      "value": "1400 Forest Lane"
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0003",
+      "report_field_id": "22.17.02",
+      "value": "Garland"
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0004",
+      "report_field_id": "22.17.02",
+      "value": "75044"
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0005",
+      "report_field_id": "22.17.02",
+      "value": "TX"
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0007",
+      "report_field_id": "22.17.04",
+      "value": "SettledSale"
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0009",
+      "report_field_id": "22.17.06",
+      "value": "Analyzed as market evidence but not selected because it is farther from the subject and its older sale date provides less current support than the chosen comparable."
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0010",
+      "report_field_id": "Does Not Display",
+      "value": false
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0011",
+      "report_field_id": "22.17.05",
+      "value": [
+        "Proximity",
+        "DatedSale"
+      ]
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0013",
+      "report_field_id": "22.17.03",
+      "value": "2026-06-10"
+    },
+    {
+      "entity_key": "sales_comparison_additional_property:sales-comparison-additional-property-1",
+      "field_context": "sales_comparison_additional_property",
+      "uad_uid": "1900.0017",
+      "report_field_id": "22.17.01",
+      "value": 1
+    },
+    {
+      "entity_key": "sales_comparison_subject_exterior_quality_summary:subject-windows-quality-summary-1",
+      "field_context": "sales_comparison_subject_exterior_quality_summary",
+      "uad_uid": "1800.0295",
+      "report_field_id": "22.08.06",
+      "value": "Typical builder-grade vinyl double-pane windows"
+    },
+    {
+      "entity_key": "sales_comparison_subject_interior_condition_summary:subject-walls-condition-summary-1",
+      "field_context": "sales_comparison_subject_interior_condition_summary",
+      "uad_uid": "1800.0292",
+      "report_field_id": "22.09.14",
+      "value": "Typical wear with no material damage"
+    },
+    {
+      "entity_key": "sales_comparison_subject_interior_quality_summary:subject-flooring-quality-summary-1",
+      "field_context": "sales_comparison_subject_interior_quality_summary",
+      "uad_uid": "1800.0293",
+      "report_field_id": "22.09.06",
+      "value": "Carpet and ceramic tile of typical quality"
+    },
+    {
+      "entity_key": "sales_comparison_subject_interior_quality_summary:subject-walls-quality-summary-1",
+      "field_context": "sales_comparison_subject_interior_quality_summary",
+      "uad_uid": "1800.0293",
+      "report_field_id": "22.09.07",
+      "value": "Painted drywall with flat ceilings"
+    },
+    {
+      "entity_key": "sales_comparison_subject_kitchen_summary:subject-kitchen-summary-1",
+      "field_context": "sales_comparison_subject_kitchen_summary",
+      "uad_uid": "1800.0323",
+      "report_field_id": "22.09.04",
+      "value": "Typical builder-grade cabinets and counters"
+    },
+    {
+      "entity_key": "sales_comparison_subject_unit_interior_summary:subject-unit-interior-summary-1",
+      "field_context": "sales_comparison_subject_unit_interior_summary",
+      "uad_uid": "1800.0294",
+      "report_field_id": "22.09.05",
+      "value": "Typical builder-grade bath finishes"
+    },
+    {
+      "entity_key": "site_parcel:site-parcel-1",
+      "field_context": "site_parcel",
+      "uad_uid": "1500.0022",
+      "report_field_id": "4.007",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 8400
+      }
+    },
+    {
+      "entity_key": "site_parcel:site-parcel-1",
+      "field_context": "site_parcel",
+      "uad_uid": "1500.0023",
+      "report_field_id": "4.006",
+      "value": "LandWithDwelling"
+    },
+    {
+      "entity_key": "site_parcel:site-parcel-1",
+      "field_context": "site_parcel",
+      "uad_uid": "1500.0027",
+      "report_field_id": "4.005",
+      "value": "UAD-STAGING-SFR-0001"
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0007",
+      "report_field_id": "19.007",
+      "value": 30
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0008",
+      "report_field_id": "19.009",
+      "value": 435000
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0009",
+      "report_field_id": "19.008",
+      "value": 449000
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0010",
+      "report_field_id": "19.006",
+      "value": "2026-06-30"
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0011",
+      "report_field_id": "19.004",
+      "value": "NTREIS-SYNTHETIC-19001"
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0012",
+      "report_field_id": "19.005",
+      "value": "2026-06-01"
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0013",
+      "report_field_id": "19.002",
+      "value": "OffMarket"
+    },
+    {
+      "entity_key": "subject_listing:subject-listing-1",
+      "field_context": "subject_listing",
+      "uad_uid": "0900.0015",
+      "report_field_id": "19.003",
+      "value": "MLS"
+    },
+    {
+      "entity_key": "subject_prior_transfer_data_source:subject-prior-transfer-source-1",
+      "field_context": "subject_prior_transfer_data_source",
+      "uad_uid": "0700.0125",
+      "report_field_id": "21.005",
+      "value": "Deed"
+    },
+    {
+      "entity_key": "subject_prior_transfer:subject-prior-transfer-1",
+      "field_context": "subject_prior_transfer",
+      "uad_uid": "0800.0011",
+      "report_field_id": "21.003",
+      "value": "2025-08-01"
+    },
+    {
+      "entity_key": "subject_prior_transfer:subject-prior-transfer-1",
+      "field_context": "subject_prior_transfer",
+      "uad_uid": "0800.0012",
+      "report_field_id": "21.004",
+      "value": 375000
+    },
+    {
+      "entity_key": "subject_prior_transfer:subject-prior-transfer-1",
+      "field_context": "subject_prior_transfer",
+      "uad_uid": "0800.0013",
+      "report_field_id": "21.002",
+      "value": "TypicallyMotivated"
+    },
+    {
+      "entity_key": "subject_prior_transfer:subject-prior-transfer-1",
+      "field_context": "subject_prior_transfer",
+      "uad_uid": "0800.0018",
+      "report_field_id": "21.002",
+      "value": "Sale"
+    },
+    {
+      "entity_key": "unit_area_data_source:unit-area-source-1",
+      "field_context": "unit_area_data_source",
+      "uad_uid": "0700.0125",
+      "report_field_id": "10.009",
+      "value": "PhysicalMeasurement"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-flooring-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0041",
+      "report_field_id": "10.045",
+      "value": "Carpet"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-flooring-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0046",
+      "report_field_id": "10.044",
+      "value": "Flooring"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-flooring-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0104",
+      "report_field_id": "10.047",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-flooring-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0106",
+      "report_field_id": "10.046",
+      "value": "Typical quality for the market"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-walls-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0045",
+      "report_field_id": "10.044",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-walls-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0046",
+      "report_field_id": "10.044",
+      "value": "WallsAndCeiling"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-walls-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0050",
+      "report_field_id": "10.044",
+      "value": "EightFeet"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-walls-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0107",
+      "report_field_id": "10.044",
+      "value": "Typical quality for the market"
+    },
+    {
+      "entity_key": "unit_interior_feature:unit-feature-walls-1",
+      "field_context": "unit_interior_feature",
+      "uad_uid": "0700.0108",
+      "report_field_id": "10.044",
+      "value": "Flat"
+    },
+    {
+      "entity_key": "unit_level:unit-level-1",
+      "field_context": "unit_level",
+      "uad_uid": "0700.0029",
+      "report_field_id": "10.030",
+      "value": "AboveGrade"
+    },
+    {
+      "entity_key": "unit_level:unit-level-1",
+      "field_context": "unit_level",
+      "uad_uid": "0700.0030",
+      "report_field_id": "10.029",
+      "value": "LevelOne"
+    },
+    {
+      "entity_key": "unit_level:unit-level-1",
+      "field_context": "unit_level",
+      "uad_uid": "0700.0137",
+      "report_field_id": "10.032",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 2100
+      }
+    },
+    {
+      "entity_key": "unit_level:unit-level-1",
+      "field_context": "unit_level",
+      "uad_uid": "0700.0138",
+      "report_field_id": "10.032",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "unit_room:unit-room-bedroom-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0035",
+      "report_field_id": "10.033",
+      "value": "Bedroom"
+    },
+    {
+      "entity_key": "unit_room:unit-room-bedroom-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0121",
+      "report_field_id": "10.037",
+      "value": "LevelOne"
+    },
+    {
+      "entity_key": "unit_room:unit-room-bedroom-2",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0035",
+      "report_field_id": "10.033",
+      "value": "Bedroom"
+    },
+    {
+      "entity_key": "unit_room:unit-room-bedroom-2",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0121",
+      "report_field_id": "10.037",
+      "value": "LevelOne"
+    },
+    {
+      "entity_key": "unit_room:unit-room-bedroom-3",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0035",
+      "report_field_id": "10.033",
+      "value": "Bedroom"
+    },
+    {
+      "entity_key": "unit_room:unit-room-bedroom-3",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0121",
+      "report_field_id": "10.037",
+      "value": "LevelOne"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0033",
+      "report_field_id": "10.041",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0035",
+      "report_field_id": "10.033",
+      "value": "FullBathroom"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0036",
+      "report_field_id": "10.038",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0044",
+      "report_field_id": "10.040",
+      "value": "Typical quality for the market"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0121",
+      "report_field_id": "10.037",
+      "value": "LevelOne"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-2",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0033",
+      "report_field_id": "10.041",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-2",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0035",
+      "report_field_id": "10.033",
+      "value": "FullBathroom"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-2",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0036",
+      "report_field_id": "10.038",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-2",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0044",
+      "report_field_id": "10.040",
+      "value": "Typical quality for the market"
+    },
+    {
+      "entity_key": "unit_room:unit-room-full-bath-2",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0121",
+      "report_field_id": "10.037",
+      "value": "LevelOne"
+    },
+    {
+      "entity_key": "unit_room:unit-room-kitchen-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0033",
+      "report_field_id": "10.041",
+      "value": "TypicalWearAndTear"
+    },
+    {
+      "entity_key": "unit_room:unit-room-kitchen-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0035",
+      "report_field_id": "10.033",
+      "value": "Kitchen"
+    },
+    {
+      "entity_key": "unit_room:unit-room-kitchen-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0036",
+      "report_field_id": "10.038",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "unit_room:unit-room-kitchen-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0044",
+      "report_field_id": "10.040",
+      "value": "Typical quality for the market"
+    },
+    {
+      "entity_key": "unit_room:unit-room-kitchen-1",
+      "field_context": "unit_room",
+      "uad_uid": "0700.0121",
+      "report_field_id": "10.037",
+      "value": "LevelOne"
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0063",
+      "report_field_id": "10.017",
+      "value": 1
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0066",
+      "report_field_id": "10.035",
+      "value": "C3"
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0067",
+      "report_field_id": "10.034",
+      "value": "Q3"
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0070",
+      "report_field_id": "10.020",
+      "value": "OwnerOccupied"
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0089",
+      "report_field_id": "10.011",
+      "value": false
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0117",
+      "report_field_id": "10.043",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0118",
+      "report_field_id": "10.023",
+      "value": 3
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0119",
+      "report_field_id": "10.024",
+      "value": 2
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0120",
+      "report_field_id": "10.025",
+      "value": 0
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0122",
+      "report_field_id": "10.049",
+      "value": "NotUpdated"
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0140",
+      "report_field_id": "10.003",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 2100
+      }
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0141",
+      "report_field_id": "10.004",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0142",
+      "report_field_id": "10.005",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0143",
+      "report_field_id": "10.006",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "0700.0144",
+      "report_field_id": "10.008",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "1800.0398",
+      "report_field_id": "10.007",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 0
+      }
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit",
+      "uad_uid": "3900.0107",
+      "report_field_id": "10.055",
+      "value": false
+    },
+    {
+      "entity_key": "unit:unit-1",
+      "field_context": "unit_accessibility",
+      "uad_uid": "0700.0005",
+      "report_field_id": "10.050",
+      "value": [
+        "None"
+      ]
+    },
+    {
+      "entity_key": "vehicle_storage:vehicle-storage-1",
+      "field_context": "vehicle_storage",
+      "uad_uid": "3200.0004",
+      "report_field_id": "13.003",
+      "value": {
+        "unit": "SquareFeet",
+        "amount": 440
+      }
+    },
+    {
+      "entity_key": "vehicle_storage:vehicle-storage-1",
+      "field_context": "vehicle_storage",
+      "uad_uid": "3200.0005",
+      "report_field_id": "13.003",
+      "value": "Attached"
+    },
+    {
+      "entity_key": "vehicle_storage:vehicle-storage-1",
+      "field_context": "vehicle_storage",
+      "uad_uid": "3200.0006",
+      "report_field_id": "13.001",
+      "value": "Garage"
+    },
+    {
+      "entity_key": "vehicle_storage:vehicle-storage-1",
+      "field_context": "vehicle_storage",
+      "uad_uid": "3200.0010",
+      "report_field_id": "13.002",
+      "value": 2
+    }
+  ],
+  "sha256": "a80fa6b8438f110b45cd70cd0df7792c081637cddf9ae19f225b2e75df4b59e7"
+}
+

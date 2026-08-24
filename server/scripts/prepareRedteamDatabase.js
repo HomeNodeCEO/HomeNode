@@ -5,6 +5,7 @@ import { normalizeOidcIssuer } from "../src/modules/mobile/auth.js";
 import { saveUadSection } from "../src/modules/uad/editor.js";
 import { createUadWorkfile } from "../src/modules/uad/workfiles.js";
 import { seedSalesRichUadDatabaseFixture } from "./lib/uadSalesRichDatabaseFixture.js";
+import { seedSyntheticUadWorkfileFixture } from "./lib/uadSyntheticWorkfileFixture.js";
 import {
   assertRedTeamDatabaseName,
   assertRedTeamFixtureAccountId,
@@ -263,6 +264,10 @@ try {
     ? { preserved: true, comparable_count: 3 }
     : {
         preserved: false,
+        canonical_fixture: await seedSyntheticUadWorkfileFixture(pool, organizationADeliveryWorkfile, {
+          namespace: "uad-redteam-delivery-a",
+          sourceReference: "synthetic_redteam_canonical_fixture",
+        }),
         ...await seedSalesRichUadDatabaseFixture(pool, organizationADeliveryWorkfile, {
           namespace: "uad-redteam-delivery-a",
           sourceReference: "synthetic_redteam_delivery",

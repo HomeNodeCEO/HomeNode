@@ -30,8 +30,13 @@ export async function buildSiteValuationStudy(pool, {
   await ensureSpatialSupport(pool);
   const subjectSiteResult = await pool.query(
     `SELECT SUM(area_sqft)::numeric AS site_size_sqft
-       FROM core.account_land
-      WHERE account_id = $1`,
+       FROM core.land_detail
+      WHERE account_id = $1
+        AND tax_year = (
+          SELECT MAX(latest_land.tax_year)
+            FROM core.land_detail latest_land
+           WHERE latest_land.account_id = $1
+        )`,
     [subjectAccountId],
   );
   const { rows } = await pool.query(
@@ -63,8 +68,13 @@ export async function buildSiteValuationStudy(pool, {
      LEFT JOIN core.account_locations sale_location ON sale_location.account_id = sale.primary_account_id
      LEFT JOIN LATERAL (
        SELECT SUM(land.area_sqft)::numeric AS site_size_sqft
-         FROM core.account_land land
+         FROM core.land_detail land
         WHERE land.account_id = sale.primary_account_id
+          AND land.tax_year = (
+            SELECT MAX(latest_land.tax_year)
+              FROM core.land_detail latest_land
+             WHERE latest_land.account_id = sale.primary_account_id
+          )
      ) cad_site ON true
      CROSS JOIN parameters
      WHERE sale.record_type = 'closed_sale'

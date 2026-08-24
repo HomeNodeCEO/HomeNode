@@ -209,6 +209,7 @@ import {
   securityHeaders,
   shouldSkipGlobalApiRateLimit,
 } from "./security/httpSecurity.js";
+import { isLegacyAccountIdAllowed } from "./security/accountIdPolicy.js";
 import { createRedTeamIsolationConfiguration } from "./security/redTeamIsolation.js";
 import {
   createResilientHttpServer,
@@ -224,6 +225,9 @@ import {
 const app = express();
 const httpSecurity = createHttpSecurityConfiguration();
 const redTeamIsolation = createRedTeamIsolationConfiguration();
+const legacyAccountIdAllowed = (value) => isLegacyAccountIdAllowed(value, {
+  redTeamEnabled: redTeamIsolation.enabled,
+});
 const runtimeResilience = createRuntimeResilienceConfiguration();
 app.disable("x-powered-by");
 if (httpSecurity.trustProxyHops > 0) app.set("trust proxy", httpSecurity.trustProxyHops);
@@ -1200,7 +1204,7 @@ app.get("/api/accounts/:id", async (req, res) => {
  */
 app.get("/api/accounts/:id/photos", async (req, res) => {
   const id = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+  if (!legacyAccountIdAllowed(id)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
   try {
@@ -1278,7 +1282,7 @@ app.get("/api/accounts/:id/photos", async (req, res) => {
  */
 app.patch("/api/accounts/:id/housing-profile", async (req, res) => {
   const id = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+  if (!legacyAccountIdAllowed(id)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
 
@@ -2817,7 +2821,7 @@ app.get("/api/sales/:sourceRecordId/review-history", async (req, res) => {
 /** Load the subject's saved rating for the appraisal effective date. */
 app.get("/api/accounts/:id/appraisal-rating", async (req, res) => {
   const id = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+  if (!legacyAccountIdAllowed(id)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
   let effectiveDate;
@@ -2843,7 +2847,7 @@ app.get("/api/accounts/:id/appraisal-rating", async (req, res) => {
 /** Explicitly save the subject's condition/quality for one appraisal date. */
 app.put("/api/accounts/:id/appraisal-rating", async (req, res) => {
   const id = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+  if (!legacyAccountIdAllowed(id)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
   if (!requireEditor(req, res)) return;
@@ -2938,7 +2942,7 @@ app.put("/api/accounts/:id/appraisal-rating", async (req, res) => {
 
 app.get("/api/accounts/:id/appraisal-rating-history", async (req, res) => {
   const id = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z]{17}$/.test(id)) {
+  if (!legacyAccountIdAllowed(id)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
   try {
@@ -3584,7 +3588,7 @@ app.get("/api/sales/recommendations", async (req, res) => {
       ),
       100,
     );
-    if (!/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
+    if (!legacyAccountIdAllowed(subjectAccountId)) {
       return res.status(400).json({ error: "invalid_subject_account_id" });
     }
     if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
@@ -4449,7 +4453,7 @@ app.get("/api/sales", async (req, res) => {
     if (!["closed_sale", "listing", "all"].includes(recordType)) {
       return res.status(400).json({ error: "invalid_record_type" });
     }
-    if (subjectAccountId && !/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
+    if (subjectAccountId && !legacyAccountIdAllowed(subjectAccountId)) {
       return res.status(400).json({ error: "invalid_subject_account_id" });
     }
     if (comparableSearchProfile && !subjectAccountId) {
@@ -4502,7 +4506,7 @@ app.get("/api/sales", async (req, res) => {
     }
     if (neighborhoodCode) where.push(`sale_account.neighborhood_code = ${bind(neighborhoodCode)}`);
     if (q) {
-      if (/^[0-9A-Za-z]{17}$/.test(q)) {
+      if (legacyAccountIdAllowed(q)) {
         addAccountFilter(q);
       } else {
         const pattern = bind(`%${q.replace(/%/g, "").replace(/_/g, "")}%`);
@@ -4690,7 +4694,7 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
     ).trim();
     const asOfDate = String(req.query.as_of || "").trim();
     const multipleBreakdownsRequested = req.query.breakdowns !== undefined;
-    if (!/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
+    if (!legacyAccountIdAllowed(subjectAccountId)) {
       return res.status(400).json({ error: "invalid_subject_account_id" });
     }
     if (asOfDate && !/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
@@ -5245,7 +5249,7 @@ app.get("/api/sales/market-context", async (req, res) => {
  */
 app.get("/api/accounts/:id/related-parcels", async (req, res) => {
   const accountId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z]{17}$/.test(accountId)) {
+  if (!legacyAccountIdAllowed(accountId)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
   try {

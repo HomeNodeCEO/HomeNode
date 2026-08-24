@@ -9,7 +9,7 @@ import {
 } from "./propertyContextStore.js";
 import { NEIGHBORHOOD_BOUNDARY_DISCLOSURE } from "./neighborhoodRelevance.js";
 
-export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 3;
+export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 4;
 
 // TODO(neighborhood-boundary-validation): Test automated boundary suggestions on
 // representative properties in multiple Dallas County cities and urban,
@@ -65,6 +65,49 @@ function inputSignature(input) {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
+function samePoint(left, right) {
+  return Math.abs(Number(left?.[0]) - Number(right?.[0])) < 1e-8 &&
+    Math.abs(Number(left?.[1]) - Number(right?.[1])) < 1e-8;
+}
+
+function orderedRoadPoints(candidate, side, limits) {
+  const paths = Array.isArray(candidate?.geometry_paths) ? candidate.geometry_paths : [];
+  const points = paths.flatMap((path) => Array.isArray(path) ? path : [])
+    .map((point) => [Number(point?.[0]), Number(point?.[1])])
+    .filter((point) => point.every(Number.isFinite))
+    .filter(([longitude, latitude]) => {
+      if (side === "north" || side === "south") {
+        return longitude >= limits.west - 0.002 && longitude <= limits.east + 0.002;
+      }
+      return latitude >= limits.south - 0.002 && latitude <= limits.north + 0.002;
+    });
+  const ascending = side === "south"
+    ? (left, right) => left[0] - right[0] || left[1] - right[1]
+    : side === "east"
+      ? (left, right) => left[1] - right[1] || left[0] - right[0]
+      : side === "north"
+        ? (left, right) => right[0] - left[0] || right[1] - left[1]
+        : (left, right) => right[1] - left[1] || right[0] - left[0];
+  const unique = points.sort(ascending).filter((point, index, ordered) =>
+    index === 0 || !samePoint(point, ordered[index - 1]),
+  );
+  if (unique.length <= 40) return unique;
+  const stride = (unique.length - 1) / 39;
+  return Array.from({ length: 40 }, (_, index) => unique[Math.round(index * stride)]);
+}
+
+function pointInsideRing(point, ring) {
+  let inside = false;
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+    const [x, y] = ring[index];
+    const [priorX, priorY] = ring[previous];
+    const crosses = (y > point[1]) !== (priorY > point[1]) &&
+      point[0] < ((priorX - x) * (point[1] - y)) / ((priorY - y) || Number.EPSILON) + x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
 export function buildRoadwayBoundary(roadEvidence, subjectPoint) {
   const subject = subjectPoint?.type === "Point" ? subjectPoint.coordinates : null;
   const longitude = Number(subject?.[0]);
@@ -72,9 +115,11 @@ export function buildRoadwayBoundary(roadEvidence, subjectPoint) {
   if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
 
   const cardinal = roadEvidence?.cardinal_boundaries || {};
+  const selectedCandidate = (side) => cardinal[side]?.candidates?.find(
+    (candidate) => candidate.selected,
+  ) || cardinal[side]?.candidates?.[0] || null;
   const coordinate = (side, axis) => {
-    const point = cardinal[side]?.candidates?.find((candidate) => candidate.selected)
-      ?.representative_point || cardinal[side]?.candidates?.[0]?.representative_point;
+    const point = selectedCandidate(side)?.representative_point;
     const value = Number(point?.[axis]);
     return Number.isFinite(value) ? value : null;
   };
@@ -86,15 +131,32 @@ export function buildRoadwayBoundary(roadEvidence, subjectPoint) {
   if (!(west < longitude && longitude < east && south < latitude && latitude < north)) return null;
   if (east - west < 0.002 || north - south < 0.002) return null;
 
+  const limits = { north, east, south, west };
+  const tracedSides = ["south", "east", "north", "west"].map((side) =>
+    orderedRoadPoints(selectedCandidate(side), side, limits),
+  );
+  const canTrace = tracedSides.every((points) => points.length >= 2);
+  const tracedRing = canTrace
+    ? tracedSides.flat().filter((point, index, points) =>
+      index === 0 || !samePoint(point, points[index - 1]),
+    )
+    : [];
+  if (tracedRing.length && !samePoint(tracedRing[0], tracedRing.at(-1))) {
+    tracedRing.push(tracedRing[0]);
+  }
+  const rectangularRing = [
+    [west, south],
+    [east, south],
+    [east, north],
+    [west, north],
+    [west, south],
+  ];
+  const ring = tracedRing.length >= 9 && pointInsideRing([longitude, latitude], tracedRing)
+    ? tracedRing
+    : rectangularRing;
   return {
     type: "Polygon",
-    coordinates: [[
-      [west, south],
-      [east, south],
-      [east, north],
-      [west, north],
-      [west, south],
-    ]],
+    coordinates: [ring],
   };
 }
 
@@ -549,7 +611,11 @@ export async function generateNeighborhoodBoundary(pool, {
         ? approximateBoundaryAreaSquareMiles(roadwayBoundary)
         : finiteNumber(boundaryRow.boundary_area_square_miles),
       boundary_generation_mode: roadwayBoundary
-        ? "traffic_backed_cardinal_road_enclosure"
+        ? Object.values(roadEvidence?.cardinal_boundaries || {}).every((side) =>
+          side?.candidates?.some((candidate) => candidate.selected && candidate.geometry_paths?.length),
+        )
+          ? "traffic_backed_traced_road_polygon"
+          : "traffic_backed_cardinal_road_enclosure"
         : "parcel_discovery_shape_fallback",
       physical_characteristic_coverage_percent: Math.round(physicalCoverage * 1000) / 10,
       year_built_count: Number(boundaryRow.year_built_count || 0),

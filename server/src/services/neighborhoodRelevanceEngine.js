@@ -92,6 +92,9 @@ export async function ensureNeighborhoodRelevanceSchema(pool) {
         account_id text,
         address text,
         land_use_category text,
+        subdivision_name text,
+        neighborhood_code text,
+        same_subject_neighborhood boolean NOT NULL DEFAULT false,
         score numeric,
         available_weight_percent numeric NOT NULL,
         statistical_classification text NOT NULL,
@@ -111,6 +114,10 @@ export async function ensureNeighborhoodRelevanceSchema(pool) {
       );
       ALTER TABLE app.neighborhood_relevance_candidates
         ADD COLUMN IF NOT EXISTS land_use_category text;
+      ALTER TABLE app.neighborhood_relevance_candidates
+        ADD COLUMN IF NOT EXISTS subdivision_name text,
+        ADD COLUMN IF NOT EXISTS neighborhood_code text,
+        ADD COLUMN IF NOT EXISTS same_subject_neighborhood boolean NOT NULL DEFAULT false;
       CREATE INDEX IF NOT EXISTS neighborhood_relevance_candidate_score_idx
         ON app.neighborhood_relevance_candidates
           (assessment_id, excluded, score DESC NULLS LAST);
@@ -134,8 +141,11 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
        SELECT ST_SetSRID(ST_GeomFromGeoJSON($2), 4326) AS geom
      ), subject AS MATERIALIZED (
        SELECT parcel.object_id, parcel.land_use_category, parcel.residential_year_built, parcel.parcel_area_sqft,
-              parcel.residential_area_sqft, ST_PointOnSurface(parcel.geom) AS center
+              parcel.residential_area_sqft, parcel.subdivision_name,
+              account.subdivision, account.neighborhood_code,
+              ST_PointOnSurface(parcel.geom) AS center
        FROM gis.dcad_parcels parcel
+       LEFT JOIN core.accounts account ON account.account_id = parcel.account_id
        WHERE parcel.account_id = $1 OR parcel.low_parcel_id = $1
        ORDER BY (parcel.account_id = $1) DESC,
                 parcel.parcel_area_sqft ASC NULLS LAST,
@@ -147,6 +157,8 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
          parcel.account_id,
          parcel.site_address AS address,
          parcel.land_use_category,
+         COALESCE(NULLIF(parcel.subdivision_name, ''), NULLIF(account.subdivision, '')) AS subdivision_name,
+         account.neighborhood_code,
          parcel.residential_year_built AS year_built,
          parcel.parcel_area_sqft AS site_area_sqft,
          parcel.residential_area_sqft AS gla_sqft,
@@ -154,6 +166,7 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
            / 1609.344 AS distance_miles,
          ST_AsGeoJSON(candidate_location.center)::jsonb AS point
        FROM gis.dcad_parcels parcel
+       LEFT JOIN core.accounts account ON account.account_id = parcel.account_id
        CROSS JOIN boundary
        CROSS JOIN subject
        CROSS JOIN LATERAL (
@@ -172,6 +185,8 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
        subject.land_use_category AS subject_land_use_category,
        subject.parcel_area_sqft AS subject_site_area_sqft,
        subject.residential_area_sqft AS subject_gla_sqft
+       , COALESCE(NULLIF(subject.subdivision_name, ''), NULLIF(subject.subdivision, '')) AS subject_subdivision_name
+       , subject.neighborhood_code AS subject_neighborhood_code
      FROM candidates candidate
      CROSS JOIN subject`,
     [
@@ -200,6 +215,8 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
       year_built: first.subject_year_built,
       site_area_sqft: first.subject_site_area_sqft,
       gla_sqft: first.subject_gla_sqft,
+      subdivision_name: first.subject_subdivision_name,
+      neighborhood_code: first.subject_neighborhood_code,
     },
     candidates: rows.map((row) => {
       const sale = latestSales.get(String(row.account_id || "").trim());
@@ -212,6 +229,16 @@ async function loadCandidateParcels(pool, { accountId, boundary }) {
         year_built: row.year_built,
         site_area_sqft: row.site_area_sqft,
         gla_sqft: row.gla_sqft,
+        subdivision_name: row.subdivision_name,
+        neighborhood_code: row.neighborhood_code,
+        same_subject_neighborhood: Boolean(
+          (row.subdivision_name && first.subject_subdivision_name &&
+            String(row.subdivision_name).trim().toUpperCase() ===
+              String(first.subject_subdivision_name).trim().toUpperCase()) ||
+          (row.neighborhood_code && first.subject_neighborhood_code &&
+            String(row.neighborhood_code).trim().toUpperCase() ===
+              String(first.subject_neighborhood_code).trim().toUpperCase())
+        ),
         distance_miles: row.distance_miles,
         sale_price: sale?.sale_price ?? null,
         sale_date: sale?.sale_date ?? null,
@@ -308,6 +335,14 @@ export function applyContiguousPocketClassification(
     for (const id of sorted) clusterById.set(id, { clusterId, size: sorted.length });
   }
   return candidates.map((candidate) => {
+    if (candidate.same_subject_neighborhood === true) {
+      return {
+        ...candidate,
+        excluded: false,
+        exclusion_reason: null,
+        statistical_classification: "protected_subject_neighborhood",
+      };
+    }
     if (candidate.statistical_classification !== "potential_dissimilar_cluster_member") {
       return candidate;
     }
@@ -340,6 +375,7 @@ export function applyLandUsePrerequisite(candidates, subjectLandUseCategory) {
   const subjectCategory = String(subjectLandUseCategory || "").trim();
   if (!subjectCategory) return candidates;
   return candidates.map((candidate) => {
+    if (candidate.same_subject_neighborhood === true) return candidate;
     const candidateCategory = String(candidate.land_use_category || "").trim();
     if (!candidateCategory || candidateCategory === subjectCategory) return candidate;
     return {
@@ -390,6 +426,9 @@ function candidatePersistencePayload(candidates) {
     account_id: candidate.account_id,
     address: candidate.address,
     land_use_category: candidate.land_use_category,
+    subdivision_name: candidate.subdivision_name,
+    neighborhood_code: candidate.neighborhood_code,
+    same_subject_neighborhood: candidate.same_subject_neighborhood === true,
     score: candidate.score,
     available_weight_percent: candidate.available_weight_percent,
     statistical_classification: candidate.statistical_classification,
@@ -462,13 +501,15 @@ async function persistAssessment(pool, assessment) {
     const payload = candidatePersistencePayload(assessment.candidates);
     await queryable.query(
       `INSERT INTO app.neighborhood_relevance_candidates (
-         assessment_id, parcel_object_id, account_id, address, land_use_category, score,
+         assessment_id, parcel_object_id, account_id, address, land_use_category,
+         subdivision_name, neighborhood_code, same_subject_neighborhood, score,
          available_weight_percent, statistical_classification, excluded,
          exclusion_reason, cluster_id, cluster_size, year_built, site_area_sqft,
          sale_price, sale_date, distance_miles, factors, diagnostics, point
        )
        SELECT $1, item.parcel_object_id, item.account_id, item.address,
-              item.land_use_category, item.score,
+              item.land_use_category, item.subdivision_name, item.neighborhood_code,
+              item.same_subject_neighborhood, item.score,
               item.available_weight_percent, item.statistical_classification,
               item.excluded, item.exclusion_reason, item.cluster_id,
               item.cluster_size, item.year_built, item.site_area_sqft,
@@ -479,7 +520,8 @@ async function persistAssessment(pool, assessment) {
               END
        FROM jsonb_to_recordset($2::jsonb) AS item(
          parcel_object_id bigint, account_id text, address text,
-         land_use_category text, score numeric,
+         land_use_category text, subdivision_name text, neighborhood_code text,
+         same_subject_neighborhood boolean, score numeric,
          available_weight_percent numeric, statistical_classification text,
          excluded boolean, exclusion_reason text, cluster_id text,
          cluster_size integer, year_built integer, site_area_sqft numeric,

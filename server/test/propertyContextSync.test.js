@@ -9,9 +9,30 @@ import {
   normalizeOfficialZoningFeature,
   normalizeRoadFeature,
   normalizeTrafficVolumeFeature,
+  rebuildRoadGraph,
   syncDcadPropertyContext,
   tigerRoadOutFields,
 } from "../src/services/propertyContextSync.js";
+
+test("rebuilds durable road corridors and intersection graph from the local mirror", async () => {
+  const statements = [];
+  const pool = {
+    async query(sql) {
+      statements.push(String(sql));
+      if (/SELECT[\s\S]+corridor_count/.test(String(sql))) {
+        return { rows: [{ corridor_count: 200, node_count: 500, edge_count: 700 }] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await rebuildRoadGraph(pool);
+  assert.equal(result.corridor_count, 200);
+  assert.ok(statements.some((sql) => /gis\.road_corridor_aliases/.test(sql)));
+  assert.ok(statements.some((sql) => /TRUNCATE gis\.road_graph_edges/.test(sql)));
+  assert.ok(statements.some((sql) => /INSERT INTO gis\.road_graph_edges/.test(sql)));
+  assert.ok(statements.some((sql) => /INSERT INTO gis\.road_graph_nodes/.test(sql)));
+  assert.ok(statements.some((sql) => /INSERT INTO gis\.road_corridors/.test(sql)));
+});
 
 test("ArcGIS object IDs are numeric, unique, and sorted", async () => {
   let requestBody = null;

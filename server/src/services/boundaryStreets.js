@@ -433,11 +433,16 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           closest_signed_edge_distance_meters: null,
           min_center_distance_meters: Number.POSITIVE_INFINITY,
           representative_point: null,
+          geometry_paths: [],
           source_date: feature?.attributes?.SOURCE_DATE || null,
           source_names: new Set(),
           source_route_names: new Set(),
           display_name_weights: new Map(),
         };
+        current.geometry_paths.push([
+          [Number(path[index - 1][0]), Number(path[index - 1][1])],
+          [Number(path[index][0]), Number(path[index][1])],
+        ]);
         current.max_aadt = Math.max(current.max_aadt, aadt);
         current.traffic_weighted_length += aadt * length;
         current.length += length;
@@ -516,6 +521,10 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         analysis_edge_relation: analysisEdgeRelation,
         source_date: group.source_date,
         representative_point: group.representative_point,
+        // Retain the source linework so the boundary engine can trace curved
+        // and name-changing corridors instead of reducing each road to one
+        // latitude or longitude.
+        geometry_paths: group.geometry_paths,
       };
     }).sort((left, right) =>
       right.score - left.score ||

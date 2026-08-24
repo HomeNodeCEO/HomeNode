@@ -15,7 +15,7 @@ Neither result automatically replaces the appraiser's final judgment. The
 application should minimize review by presenting a default recommendation,
 confidence result, concise exceptions, and the evidence needed to confirm it.
 
-## Relevance methodology version 1
+## Relevance methodology version 2
 
 The initial scoring weights are:
 
@@ -47,6 +47,12 @@ subject reference, or when one factor exceeds 2.5 standard deviations and is
 supported by a strong road or zoning transition. A later spatial pass must find
 a contiguous cluster before excluding a pocket.
 
+A parcel sharing the subject's recorded subdivision name or CAD neighborhood
+code is a protected neighborhood match. It remains represented in the dataset
+even when its physical relevance score would otherwise exclude it. The stored
+candidate record identifies the protection reason so this exception remains
+visible and reviewable.
+
 Missing sale data does not make a parcel dissimilar. Scores normalize across
 available factors, while the separate confidence assessment records missing
 coverage and determines whether automatic expansion or appraiser review is
@@ -57,7 +63,9 @@ needed.
 > Neighborhood boundaries describe the subject's broader geographic setting
 > and are not treated as an automatic inclusion rule. Properties within the
 > stated boundaries are independently screened for relevance using age, site
-> size, proximity, and unadjusted sale-price similarity. Dissimilar pockets may
+> size, proximity, and unadjusted sale-price similarity. Parcels sharing the
+> subject's subdivision or CAD neighborhood identity remain represented and
+> are labeled as protected neighborhood matches. Other dissimilar pockets may
 > be excluded from the analyzed dataset, while gross living area is retained as
 > a secondary diagnostic with a wider tolerance. Roadway and zoning patterns
 > support, but do not independently determine, the relevant market area.
@@ -88,6 +96,13 @@ needed.
   confirms that the subject remains inside it, and attaches local cardinal-road
   and official-zoning evidence. Request-time generation never requires a remote
   road or zoning service.
+- The road mirror now rebuilds durable corridor, alias, graph-node, and
+  graph-edge tables after every TIGER road synchronization. Route identity and
+  reviewed aliases can preserve one corridor when its street name changes.
+  Selected roads retain their actual linework, and methodology version 4 traces
+  those curves into the suggested polygon rather than flattening all four sides
+  to a rectangle. The intersection graph is the foundation for scoring several
+  competing closed roadway enclosures in the next calibration pass.
 - Each generated result is stored in
   `app.neighborhood_boundary_assessments` with the assignment-file scope,
   methodology version, input signature, source state, confidence, warnings,

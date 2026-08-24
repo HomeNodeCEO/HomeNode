@@ -1,4 +1,4 @@
-export const NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION = 1;
+export const NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION = 2;
 
 export const NEIGHBORHOOD_RELEVANCE_WEIGHTS = Object.freeze({
   age: 0.40,
@@ -13,7 +13,7 @@ export const NEIGHBORHOOD_RELEVANCE_WEIGHTS = Object.freeze({
 export const NEIGHBORHOOD_RELEVANCE_EXCLUSION_THRESHOLD = 20;
 
 export const NEIGHBORHOOD_BOUNDARY_DISCLOSURE =
-  "Neighborhood boundaries describe the subject's broader geographic setting and are not treated as an automatic inclusion rule. Properties within the stated boundaries are independently screened for relevance using age, site size, proximity, and unadjusted sale-price similarity. Dissimilar pockets may be excluded from the analyzed dataset, while gross living area is retained as a secondary diagnostic with a wider tolerance. Roadway and zoning patterns support, but do not independently determine, the relevant market area.";
+  "Neighborhood boundaries describe the subject's broader geographic setting and are not treated as an automatic inclusion rule. Properties within the stated boundaries are independently screened for relevance using age, site size, proximity, and unadjusted sale-price similarity. Parcels sharing the subject's recorded subdivision or CAD neighborhood identity remain represented in the dataset and are labeled as protected neighborhood matches even when their physical characteristics differ. Dissimilar pockets outside that protected neighborhood may be excluded, while gross living area is retained as a secondary diagnostic with a wider tolerance. Roadway and zoning patterns support, but do not independently determine, the relevant market area.";
 
 const PRIMARY_DEVIATION_THRESHOLD = 1.5;
 const EXTREME_DEVIATION_THRESHOLD = 2.5;
@@ -224,6 +224,7 @@ export function scoreNeighborhoodCandidate({
       : potentialDissimilar
         ? "potential_dissimilar_cluster_member"
         : "relevant_candidate";
+  const protectedNeighborhoodMatch = candidate.same_subject_neighborhood === true;
   return {
     candidate_id: candidate.account_id ?? candidate.id ?? null,
     parcel_object_id: candidate.parcel_object_id == null
@@ -251,9 +252,18 @@ export function scoreNeighborhoodCandidate({
     extreme_deviation_count: extremeDeviationCount,
     supporting_boundary_evidence: supportingBoundaryEvidence,
     exclusion_threshold_percent: NEIGHBORHOOD_RELEVANCE_EXCLUSION_THRESHOLD,
-    excluded: excludedByScore,
-    statistical_classification: statisticalClassification,
-    exclusion_requires_contiguous_cluster: !excludedByScore && potentialDissimilar,
+    subdivision_name: candidate.subdivision_name ?? null,
+    neighborhood_code: candidate.neighborhood_code ?? null,
+    same_subject_neighborhood: protectedNeighborhoodMatch,
+    protected_inclusion_reason: protectedNeighborhoodMatch
+      ? "same_subject_legal_neighborhood"
+      : null,
+    excluded: protectedNeighborhoodMatch ? false : excludedByScore,
+    statistical_classification: protectedNeighborhoodMatch
+      ? "protected_subject_neighborhood"
+      : statisticalClassification,
+    exclusion_requires_contiguous_cluster: !protectedNeighborhoodMatch &&
+      !excludedByScore && potentialDissimilar,
     gla_diagnostic: {
       subject_gla_sqft: subjectGla,
       candidate_gla_sqft: normalized.gla_sqft,

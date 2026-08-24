@@ -971,7 +971,88 @@ export async function syncTigerRoadContext(pool, {
       logger,
     }));
   }
+  const graph = await rebuildRoadGraph(pool);
+  results.push({ source_key: "road_graph", mode: "rebuild", ...graph });
   return results;
+}
+
+export async function rebuildRoadGraph(pool) {
+  await ensurePropertyContextSchema(pool);
+  const client = typeof pool.connect === "function" ? await pool.connect() : null;
+  const queryable = client || pool;
+  try {
+    if (client) await client.query("BEGIN");
+    await queryable.query("TRUNCATE gis.road_graph_edges, gis.road_graph_nodes, gis.road_corridors");
+    await queryable.query(`
+      WITH parts AS MATERIALIZED (
+        SELECT road.source_layer, road.source_object_id,
+               dumped.path[1]::integer AS part_index,
+               road.name, road.base_name, road.road_class,
+               dumped.geom::geometry(LineString,4326) AS geom,
+               upper(trim(regexp_replace(
+                 regexp_replace(COALESCE(NULLIF(road.base_name, ''), road.name, ''),
+                   '^(NORTH|SOUTH|EAST|WEST|N|S|E|W)[[:space:]]+', '', 'i'),
+                 '[^A-Za-z0-9]+', ' ', 'g'
+               ))) AS normalized_name
+        FROM gis.road_segments road
+        CROSS JOIN LATERAL ST_Dump(road.geom) dumped
+        WHERE road.road_class <> 'railroad' AND NOT ST_IsEmpty(dumped.geom)
+      ), identified AS MATERIALIZED (
+        SELECT parts.*,
+               COALESCE(alias.corridor_key, 'name:' || parts.normalized_name) AS corridor_key,
+               COALESCE(alias.canonical_name, NULLIF(parts.name, ''), parts.base_name) AS canonical_name,
+               md5(ST_AsText(ST_SnapToGrid(ST_StartPoint(parts.geom), 0.00001))) AS from_node_key,
+               md5(ST_AsText(ST_SnapToGrid(ST_EndPoint(parts.geom), 0.00001))) AS to_node_key
+        FROM parts
+        LEFT JOIN gis.road_corridor_aliases alias
+          ON alias.normalized_alias = parts.normalized_name
+        WHERE parts.normalized_name <> ''
+      ), inserted_edges AS (
+        INSERT INTO gis.road_graph_edges (
+          source_layer, source_object_id, part_index, corridor_key,
+          from_node_key, to_node_key, road_name, road_class, geom
+        )
+        SELECT source_layer, source_object_id, part_index, corridor_key,
+               from_node_key, to_node_key, name, road_class, geom
+        FROM identified
+        RETURNING 1
+      ), endpoints AS (
+        SELECT from_node_key AS node_key, ST_StartPoint(geom) AS geom FROM identified
+        UNION
+        SELECT to_node_key, ST_EndPoint(geom) FROM identified
+      ), inserted_nodes AS (
+        INSERT INTO gis.road_graph_nodes (node_key, geom)
+        SELECT node_key, ST_Centroid(ST_Collect(geom))::geometry(Point,4326)
+        FROM endpoints GROUP BY node_key
+        RETURNING 1
+      )
+      INSERT INTO gis.road_corridors (
+        corridor_key, canonical_name, aliases, road_class, segment_count, geom
+      )
+      SELECT corridor_key,
+             (array_agg(canonical_name ORDER BY length(canonical_name), canonical_name))[1],
+             to_jsonb(array_agg(DISTINCT name ORDER BY name)),
+             (array_agg(road_class ORDER BY CASE road_class
+               WHEN 'primary' THEN 1 WHEN 'secondary' THEN 2 ELSE 3 END))[1],
+             count(*)::integer,
+             ST_Multi(ST_LineMerge(ST_Collect(geom)))::geometry(MultiLineString,4326)
+      FROM identified
+      GROUP BY corridor_key
+    `);
+    const { rows } = await queryable.query(`
+      SELECT
+        (SELECT COUNT(*)::integer FROM gis.road_corridors) AS corridor_count,
+        (SELECT COUNT(*)::integer FROM gis.road_graph_nodes) AS node_count,
+        (SELECT COUNT(*)::integer FROM gis.road_graph_edges) AS edge_count
+    `);
+    if (client) await client.query("COMMIT");
+    return rows[0] || { corridor_count: 0, node_count: 0, edge_count: 0 };
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client?.release();
+  }
 }
 
 export async function syncTxdotTrafficContext(pool, {

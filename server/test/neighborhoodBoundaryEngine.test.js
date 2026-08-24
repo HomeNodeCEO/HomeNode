@@ -42,6 +42,24 @@ test("does not label an incomplete or non-enclosing road set as roadway-bounded"
   }, { type: "Point", coordinates: [-96.65, 32.97] }), null);
 });
 
+test("traces curved selected corridors instead of flattening them to a rectangle", () => {
+  const selected = (representativePoint, geometryPaths) => ({
+    candidates: [{ selected: true, representative_point: representativePoint, geometry_paths: geometryPaths }],
+  });
+  const result = buildRoadwayBoundary({
+    cardinal_boundaries: {
+      north: selected([-96.65, 32.99], [[[-96.68, 32.988], [-96.65, 32.992], [-96.62, 32.989]]]),
+      east: selected([-96.62, 32.97], [[[-96.621, 32.99], [-96.618, 32.97], [-96.622, 32.94]]]),
+      south: selected([-96.65, 32.94], [[[-96.68, 32.941], [-96.65, 32.937], [-96.62, 32.942]]]),
+      west: selected([-96.68, 32.97], [[[-96.679, 32.94], [-96.682, 32.97], [-96.678, 32.99]]]),
+    },
+  }, { type: "Point", coordinates: [-96.65, 32.97] });
+
+  assert.ok(result.coordinates[0].length > 5);
+  assert.ok(result.coordinates[0].some((point) => point[0] === -96.618));
+  assert.ok(result.coordinates[0].some((point) => point[1] === 32.992));
+});
+
 const boundary = {
   type: "Polygon",
   coordinates: [[

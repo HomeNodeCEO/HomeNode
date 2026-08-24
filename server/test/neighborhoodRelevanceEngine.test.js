@@ -53,6 +53,19 @@ test("treats different land use as a prerequisite instead of diluting the weight
   assert.equal(result[2].excluded, false);
 });
 
+test("does not remove a same-neighborhood parcel during prerequisite or pocket screening", () => {
+  const protectedCandidate = {
+    ...potential(10),
+    land_use_category: "commercial",
+    same_subject_neighborhood: true,
+  };
+  const screened = applyLandUsePrerequisite([protectedCandidate], "one_unit");
+  assert.equal(screened[0].excluded, false);
+  const clustered = applyContiguousPocketClassification(screened, []);
+  assert.equal(clustered[0].excluded, false);
+  assert.equal(clustered[0].statistical_classification, "protected_subject_neighborhood");
+});
+
 test("creates normalized assessment and candidate persistence", async () => {
   const statements = [];
   const pool = {

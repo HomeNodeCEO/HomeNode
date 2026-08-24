@@ -1,0 +1,65 @@
+diff --git a/dist/types/icns.js b/dist/types/icns.js
+index f2bfafef3723cb423b110304815e56e3f97f81e0..e992547468642f537ea9f26c80428cb7cc7f0463 100644
+--- a/dist/types/icns.js
++++ b/dist/types/icns.js
+@@ -74,6 +74,15 @@ function getImageSize(type) {
+     const size = ICON_TYPE_SIZE[type];
+     return { width: size, height: size, type };
+ }
++function nextImageOffset(imageOffset, imageLength) {
++    // Every ICNS entry includes an 8-byte type/length header. A shorter entry
++    // cannot advance safely and previously caused an infinite loop
++    // (GHSA-w3rx-r6r6-pgpr).
++    if (!Number.isSafeInteger(imageLength) || imageLength < SIZE_HEADER) {
++        throw new TypeError('Invalid ICNS entry length');
++    }
++    return imageOffset + imageLength;
++}
+ exports.ICNS = {
+     validate: (input) => (0, utils_1.toUTF8String)(input, 0, 4) === 'icns',
+     calculate(input) {
+@@ -82,7 +91,7 @@ exports.ICNS = {
+         let imageOffset = SIZE_HEADER;
+         let imageHeader = readImageHeader(input, imageOffset);
+         let imageSize = getImageSize(imageHeader[0]);
+-        imageOffset += imageHeader[1];
++        imageOffset = nextImageOffset(imageOffset, imageHeader[1]);
+         if (imageOffset === fileLength)
+             return imageSize;
+         const result = {
+@@ -93,7 +102,7 @@ exports.ICNS = {
+         while (imageOffset < fileLength && imageOffset < inputLength) {
+             imageHeader = readImageHeader(input, imageOffset);
+             imageSize = getImageSize(imageHeader[0]);
+-            imageOffset += imageHeader[1];
++            imageOffset = nextImageOffset(imageOffset, imageHeader[1]);
+             result.images.push(imageSize);
+         }
+         return result;
+diff --git a/dist/types/utils.js b/dist/types/utils.js
+index 5224bbafe87551ac415cb3de234820ccc0ff6e2c..cd8ad3863e6732fc3980d825f547d029976ae823 100644
+--- a/dist/types/utils.js
++++ b/dist/types/utils.js
+@@ -52,6 +52,11 @@ function readBox(input, offset) {
+     if (input.length - offset < 4)
+         return;
+     const boxSize = (0, exports.readUInt32BE)(input, offset);
++    // ISO BMFF boxes need at least the 8-byte size/type header. Rejecting
++    // zero and undersized boxes prevents callers from reusing an unchanged
++    // offset forever (GHSA-5p2g-fcmc-qvqq).
++    if (boxSize < 8)
++        return;
+     if (input.length - offset < boxSize)
+         return;
+     return {
+@@ -67,9 +72,7 @@ function findBox(input, boxName, offset) {
+             break;
+         if (box.name === boxName)
+             return box;
+-        // Fix the infinite loop by ensuring offset always increases
+-        // If box.size is 0, advance by at least 8 bytes (the size of the box header)
+-        offset += box.size > 0 ? box.size : 8;
++        offset += box.size;
+     }
+ }
+ exports.findBox = findBox;

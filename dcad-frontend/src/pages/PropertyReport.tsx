@@ -893,9 +893,7 @@ function NeighborhoodRangeGrid({
             return (
               <div
                 key={field}
-                className={`grid min-h-7 min-w-0 items-center rounded-md border border-slate-200 bg-slate-50 px-2 ${{
-                  true: ""
-                }.true}${isMoney
+                className={`grid min-h-7 min-w-0 items-center rounded-md border border-slate-200 bg-slate-50 px-2 ${isMoney
                     ? `grid-cols-[auto_minmax(0,1fr)${isPricePerSquareFoot ? "_auto" : ""}] gap-1`
                     : "grid-cols-1"
                 }`}

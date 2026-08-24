@@ -54,16 +54,64 @@ async function upsertOrganizations(client) {
   for (const organization of Object.values(REDTEAM_ORGANIZATIONS)) {
     await client.query(
       `INSERT INTO app_auth.organizations (
-         id, legal_name, display_name, active, metadata
-       ) VALUES ($1, $2, $3, true, $4::jsonb)
+         id, legal_name, display_name, address_line_1, city, state_code,
+         postal_code, country_code, active, metadata
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'US', true, $8::jsonb)
        ON CONFLICT (id) DO UPDATE SET
          legal_name = EXCLUDED.legal_name,
          display_name = EXCLUDED.display_name,
+         address_line_1 = EXCLUDED.address_line_1,
+         city = EXCLUDED.city,
+         state_code = EXCLUDED.state_code,
+         postal_code = EXCLUDED.postal_code,
+         country_code = EXCLUDED.country_code,
          active = true,
          metadata = EXCLUDED.metadata,
          updated_at = now()`,
-      [organization.id, organization.legalName, organization.displayName, JSON.stringify({ synthetic: true, environment: "redteam" })],
+      [
+        organization.id,
+        organization.legalName,
+        organization.displayName,
+        organization.addressLine1,
+        organization.city,
+        organization.stateCode,
+        organization.postalCode,
+        JSON.stringify({ synthetic: true, environment: "redteam" }),
+      ],
     );
+  }
+}
+
+async function assertAssignedAppraiserCredentialFixture(client) {
+  const assigned = REDTEAM_PERSONAS.find((persona) => persona.key === "assigned_appraiser_a");
+  const result = await client.query(
+    `SELECT users.active AS user_active,
+            profile.profile_status,
+            organization.address_line_1, organization.city,
+            organization.state_code, organization.postal_code,
+            license.status AS license_status, license.expires_on
+       FROM app_auth.users users
+       JOIN app_auth.appraiser_profiles profile ON profile.user_id = users.id
+       JOIN app_auth.organizations organization ON organization.id = profile.default_organization_id
+       JOIN app_auth.appraiser_licenses license ON license.user_id = users.id
+      WHERE users.id = $1 AND license.status = 'active'
+      ORDER BY license.expires_on DESC
+      LIMIT 1`,
+    [assigned.id],
+  );
+  const row = result.rows[0];
+  const licenseExpiration = row?.expires_on ? new Date(row.expires_on).getTime() : Number.NaN;
+  if (!row
+    || row.user_active !== true
+    || row.profile_status !== "active"
+    || !row.address_line_1
+    || !row.city
+    || !row.state_code
+    || !row.postal_code
+    || row.license_status !== "active"
+    || !Number.isFinite(licenseExpiration)
+    || licenseExpiration < Date.now()) {
+    throw new Error("redteam_assigned_appraiser_credentials_incomplete");
   }
 }
 
@@ -224,6 +272,7 @@ try {
     await client.query("BEGIN");
     await upsertOrganizations(client);
     staleOidcIdentitiesRemoved = await upsertPersonas(client);
+    await assertAssignedAppraiserCredentialFixture(client);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

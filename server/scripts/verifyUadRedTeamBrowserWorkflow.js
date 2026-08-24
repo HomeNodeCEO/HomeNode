@@ -394,7 +394,17 @@ try {
     await page.evaluate((workfileId) => {
       window.dispatchEvent(new CustomEvent("homenode:uad-workfile-mutated", { detail: { workfileId } }));
     }, workfile.id);
-    await readinessRefreshPromise;
+    const readinessRefreshResponse = await readinessRefreshPromise;
+    const readinessRefresh = await readinessRefreshResponse.json();
+    evidence.delivery.certification_readiness = {
+      ready: readinessRefresh.readiness?.ready,
+      workfile_status: readinessRefresh.readiness?.workfile_status,
+      artifact_missing: readinessRefresh.readiness?.artifact_readiness?.missing || [],
+      signer_missing: (readinessRefresh.readiness?.signers || []).map((signer) => ({
+        role: signer.role,
+        missing: signer.missing || [],
+      })),
+    };
     const attestation = signaturePanel.getByLabel(/I reviewed the current PDF/);
     await attestation.waitFor({ timeout: 60_000 });
     await attestation.check();

@@ -10,6 +10,12 @@ import {
 
 test("red-team personas cover both tenants and every negative authorization state", () => {
   assert.equal(Object.keys(REDTEAM_ORGANIZATIONS).length, 2);
+  for (const organization of Object.values(REDTEAM_ORGANIZATIONS)) {
+    assert.match(organization.addressLine1, /Synthetic/);
+    assert.equal(organization.city, "Dallas");
+    assert.equal(organization.stateCode, "TX");
+    assert.match(organization.postalCode, /^752\d{2}$/);
+  }
   const keys = new Set(REDTEAM_PERSONAS.map((persona) => persona.key));
   for (const required of [
     "assigned_appraiser_a",

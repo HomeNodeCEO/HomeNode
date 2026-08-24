@@ -1,0 +1,46 @@
+name: UAD red-team bounded load
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uad-redteam-security
+  cancel-in-progress: false
+
+jobs:
+  bounded-load:
+    name: Bounded rate-limit and recovery exercise
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: uad-redteam
+    defaults:
+      run:
+        working-directory: server
+    env:
+      UAD_REDTEAM_BASE_URL: https://homenode-api-redteam.onrender.com
+      UAD_REDTEAM_TIMEOUT_MS: "10000"
+      UAD_REDTEAM_LOAD_CONCURRENCY: "6"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - name: Exercise bounded rate limiting and recovery
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run --silent verify:redteam:bounded-load | tee uad-redteam-bounded-load.json
+      - name: Preserve sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: uad-redteam-bounded-load-${{ github.run_id }}
+          path: server/uad-redteam-bounded-load.json
+          if-no-files-found: error
+          retention-days: 14

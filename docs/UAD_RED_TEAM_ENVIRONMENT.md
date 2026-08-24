@@ -226,6 +226,25 @@ The local router regression suite separately proves that the application rate
 limiter runs before JSON parsing, so repeated malformed bodies receive the same
 bounded `429 rate_limit_exceeded` response as ordinary request bursts.
 
+## Bounded load and rate-limit recovery
+
+Dispatch `.github/workflows/uad-redteam-bounded-load.yml` only after the
+endpoint gate passes and monitoring is visible. The runner reads the advertised
+application limit, refuses to run if it is absent, below 10, or above 200, and
+uses at most six workers against the public capabilities endpoint. It stops
+scheduling when the first bounded `429 rate_limit_exceeded` response arrives,
+allows at most one worker-width of in-flight overshoot, records aggregate
+latency/status counts only, and never retains response bodies.
+
+The runner waits for the server-advertised `Retry-After` interval (capped at 70
+seconds), then requires capabilities and readiness to return 200 again. Any
+5xx, redirect, unsafe/unbounded response, missing rate-limit header, missing
+429, excessive advertised limit, or failed recovery is a stop condition:
+
+```powershell
+npm run --silent verify:redteam:bounded-load
+```
+
 ## Integrity and private-storage checks
 
 After the authenticated matrix passes, dispatch
@@ -300,6 +319,15 @@ healthy enough to expose `/api/uad/capabilities` and `/api/uad/readiness` while
 all UAD workfile routes return `503 uad_workspace_disabled`. Re-enable the
 workspace only after the stop condition is resolved and the low-volume baseline
 passes again.
+
+During a scheduled rehearsal, set only the isolated API's
+`UAD_WORKSPACE_ENABLED=false`, wait for its deployment to become live, and
+dispatch `.github/workflows/uad-redteam-kill-switch.yml`. Its five requests
+require health to remain green, capabilities to report `enabled=false`,
+readiness to degrade specifically on `uad_workspace_disabled`, and both a
+protected read and write to return the same bounded 503 without reaching
+authentication or persistence. Restore the flag to `true`, wait for deployment,
+then rerun baseline and endpoint fuzz before closing the exercise.
 
 ## Sales-rich delivery gate
 

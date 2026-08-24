@@ -141,6 +141,14 @@ non-mutating, response-capped, and followed by health/readiness/revision checks.
 Local integration tests assert the same response contracts and prove rate
 limiting occurs before request-body parsing.
 
+The bounded-load workflow dynamically reads the isolated service's application
+limit, caps accepted limits at 200, uses six workers, stops scheduling on the
+first valid 429, and proves recovery after the advertised retry window. The
+kill-switch workflow is intended only for a scheduled disabled-workspace
+window and proves that diagnostics remain available while protected reads and
+writes fail closed. Both workflows have fixed targets, sanitized aggregate
+evidence, five-minute job limits, and the shared red-team concurrency lock.
+
 ### Temporary dependency exception
 
 `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` affect `image-size` through

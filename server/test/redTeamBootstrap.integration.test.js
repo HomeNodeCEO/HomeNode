@@ -15,6 +15,9 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
         EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'postgis') AS postgis,
         to_regclass('core.sales_source_records') IS NOT NULL AS sales_source_records,
         to_regclass('core.sale_parcels') IS NOT NULL AS sale_parcels,
+        to_regclass('core.sales_source_media') IS NOT NULL AS sales_source_media,
+        to_regclass('core.v_sales_media_summary') IS NOT NULL AS sales_media_summary,
+        to_regclass('core.v_sales_enriched') IS NOT NULL AS sales_enriched,
         (
           SELECT count(*)::integer
           FROM information_schema.columns
@@ -30,6 +33,9 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
       postgis: true,
       sales_source_records: true,
       sale_parcels: true,
+      sales_source_media: true,
+      sales_media_summary: true,
+      sales_enriched: true,
       location_columns: 7,
     });
 

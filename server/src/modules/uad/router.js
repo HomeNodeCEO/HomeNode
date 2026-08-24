@@ -1,5 +1,6 @@
 import express from "express";
-import { rateLimit } from "express-rate-limit";
+import { isIP } from "node:net";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
 import {
   createUadAssetUpload,
@@ -130,6 +131,11 @@ function workfileCreationInput(value) {
   return input;
 }
 
+function rateLimitClientAddress(req, trustedHeader) {
+  const forwarded = trustedHeader ? String(req.get(trustedHeader) || "").trim() : "";
+  return isIP(forwarded) ? forwarded : req.ip;
+}
+
 export function createUadRouter({
   pool,
   storage,
@@ -150,6 +156,9 @@ export function createUadRouter({
     skip: () => !security.rateLimitEnabled,
     standardHeaders: "draft-8",
     legacyHeaders: false,
+    keyGenerator: (req) => ipKeyGenerator(
+      rateLimitClientAddress(req, security.rateLimitClientIpHeader),
+    ),
     handler: (_req, res) => res.status(429).json({ error: "rate_limit_exceeded" }),
   }));
   router.use(express.json({ limit: "1mb" }));

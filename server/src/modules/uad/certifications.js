@@ -174,6 +174,32 @@ async function loadSignerRows(queryable, workfileId) {
   return rows;
 }
 
+async function loadSignatureArtifactReadiness(queryable, workfileId, revisionNumber, inputDigest) {
+  const { rows } = await queryable.query(
+    `SELECT artifact_type, generation_status, metadata
+       FROM appraisal.uad_generated_artifacts
+      WHERE workfile_id = $1 AND revision_number = $2
+        AND artifact_type IN ('pdf', 'xml')`,
+    [workfileId, Number(revisionNumber)],
+  );
+  const artifacts = new Map(rows.map((row) => [row.artifact_type, row]));
+  const pdf = artifacts.get("pdf");
+  const xml = artifacts.get("xml");
+  const pdfReady = pdf?.generation_status === "ready"
+    && pdf.metadata?.input_digest_sha256 === inputDigest;
+  const xmlReady = xml?.generation_status === "ready"
+    && xml.metadata?.input_digest_sha256 === inputDigest
+    && xml.metadata?.schema_valid === true;
+  return {
+    pdf_ready: pdfReady,
+    xml_ready: xmlReady,
+    missing: [
+      ...(!pdfReady ? ["current_pdf"] : []),
+      ...(!xmlReady ? ["schema_valid_xml"] : []),
+    ],
+  };
+}
+
 export async function getUadCertificationReadiness(queryable, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const workfileResult = await queryable.query(
@@ -217,11 +243,26 @@ export async function getUadCertificationReadiness(queryable, workfileIdValue) {
       missing: ["assigned_appraiser"],
     });
   }
+  const editor = await getUadEditor(queryable, workfileId);
+  const [assets, sketches] = await Promise.all([
+    listUadAssets(queryable, workfileId),
+    listUadSketches(queryable, workfileId),
+  ]);
+  const inputDigest = buildUadValidationInputDigest(editor, assets, sketches);
+  const artifactReadiness = await loadSignatureArtifactReadiness(
+    queryable,
+    workfileId,
+    workfileResult.rows[0].current_revision,
+    inputDigest,
+  );
   return {
     workfile_id: workfileId,
     revision_number: Number(workfileResult.rows[0].current_revision),
     workfile_status: workfileResult.rows[0].status,
-    ready: signers.length > 0 && signers.every((signer) => signer.ready),
+    ready: signers.length > 0
+      && signers.every((signer) => signer.ready)
+      && artifactReadiness.missing.length === 0,
+    artifact_readiness: artifactReadiness,
     signers,
   };
 }
@@ -305,6 +346,15 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
       || Number(validation.revision_number) !== Number(workfile.current_revision)
       || validation.metadata?.input_digest_sha256 !== inputDigest
     ) throw new Error("uad_signature_local_validation_stale");
+
+    const artifactReadiness = await loadSignatureArtifactReadiness(
+      client,
+      workfileId,
+      workfile.current_revision,
+      inputDigest,
+    );
+    if (!artifactReadiness.pdf_ready) throw new Error("uad_signature_pdf_required");
+    if (!artifactReadiness.xml_ready) throw new Error("uad_signature_schema_valid_xml_required");
 
     const credential = buildUadCredentialSnapshot(signerRow);
     const signatureId = randomUUID();

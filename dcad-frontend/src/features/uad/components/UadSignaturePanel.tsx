@@ -17,6 +17,8 @@ interface Props {
 }
 
 function displayMissing(value: string) {
+  if (value === "current_pdf") return "generate and review the current native PDF";
+  if (value === "schema_valid_xml") return "generate and review current official-subschema-valid MISMO XML";
   return value.replaceAll("_", " ");
 }
 
@@ -58,6 +60,8 @@ export default function UadSignaturePanel({
   const signed = ["signed", "exported", "submitted"].includes(workfileStatus);
   const currentRevisionReady = Boolean(
     readiness?.ready
+      && readiness.artifact_readiness?.pdf_ready
+      && readiness.artifact_readiness?.xml_ready
       && readiness.revision_number === currentRevision
       && readiness.workfile_status === "ready",
   );
@@ -137,6 +141,9 @@ export default function UadSignaturePanel({
       {dirty && <p className="mt-3 text-xs font-medium">Save the displayed section before signing.</p>}
       {readiness && !readiness.ready && (
         <ul className="mt-3 space-y-1 text-xs">
+          {(readiness.artifact_readiness?.missing || ["current_pdf", "schema_valid_xml"]).map((missing) => (
+            <li key={missing}>artifact: {displayMissing(missing)}</li>
+          ))}
           {readiness.signers.flatMap((item) => item.missing.map((missing) => (
             <li key={`${item.role}-${missing}`}>{item.role.replaceAll("_", " ")}: {displayMissing(missing)}</li>
           )))}

@@ -151,6 +151,8 @@ test("registers the additive Section 29 catalog, rules, and tamper-evident signa
 });
 
 test("keeps certification readiness and signing behind the existing OIDC identity boundary", () => {
+  const certifications = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/certifications.js"), "utf8");
+  const client = fs.readFileSync(path.join(TEST_DIRECTORY, "../../dcad-frontend/src/features/uad/api.ts"), "utf8");
   const router = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/router.js"), "utf8");
   const server = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/oldServer.js"), "utf8");
   assert.match(router, /certification-readiness", authenticateIfNeeded/);
@@ -159,4 +161,9 @@ test("keeps certification readiness and signing behind the existing OIDC identit
   assert.match(router, /current_signer: currentSigner/);
   assert.match(router, /signUadWorkfile/);
   assert.match(server, /verifier: mobileOidcVerifier/);
+  assert.match(certifications, /uad_signature_pdf_required/);
+  assert.match(certifications, /uad_signature_schema_valid_xml_required/);
+  assert.match(certifications, /metadata\?\.input_digest_sha256 === inputDigest/);
+  assert.match(client, /generateUadPdfArtifact[\s\S]*announceUadWorkfileMutation\(workfileId\)/);
+  assert.match(client, /generateUadXmlArtifact[\s\S]*announceUadWorkfileMutation\(workfileId\)/);
 });

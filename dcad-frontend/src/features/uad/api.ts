@@ -590,6 +590,11 @@ export interface UadCertificationReadiness {
   revision_number: number;
   workfile_status: string;
   ready: boolean;
+  artifact_readiness?: {
+    pdf_ready: boolean;
+    xml_ready: boolean;
+    missing: Array<"current_pdf" | "schema_valid_xml">;
+  };
   signers: UadCertificationSigner[];
   current_signer: UadCertificationSigner;
 }
@@ -721,10 +726,12 @@ export async function getLatestUadXmlArtifact(workfileId: string): Promise<UadXm
 }
 
 export async function generateUadXmlArtifact(workfileId: string): Promise<UadXmlArtifactResult> {
-  return uadFetchJSON<UadXmlArtifactResult>(
+  const result = await uadFetchJSON<UadXmlArtifactResult>(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/artifacts/xml`),
     { method: "POST", timeoutMs: 60_000 },
   );
+  announceUadWorkfileMutation(workfileId);
+  return result;
 }
 
 export interface UadPdfArtifact {
@@ -773,10 +780,12 @@ export async function getLatestUadPdfArtifact(workfileId: string): Promise<UadPd
 }
 
 export async function generateUadPdfArtifact(workfileId: string): Promise<UadPdfArtifactResult> {
-  return uadFetchJSON<UadPdfArtifactResult>(
+  const result = await uadFetchJSON<UadPdfArtifactResult>(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/artifacts/pdf`),
     { method: "POST", timeoutMs: 120_000 },
   );
+  announceUadWorkfileMutation(workfileId);
+  return result;
 }
 
 export interface UadPackageArtifact {

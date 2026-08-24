@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -47,6 +48,14 @@ const evidence = {
   initial_validation: null,
   validation: null,
   storage: { required_count: 0, verified_before: 0, uploaded: 0, verified_after: 0 },
+  delivery: {
+    pre_signature_review: null,
+    signature: null,
+    pdf: null,
+    xml: null,
+    manifest: null,
+    package: null,
+  },
   api: { request_count: 0, failure_count: 0, failures: [] },
   browser: { page_errors: [], console_errors: [] },
 };
@@ -78,6 +87,18 @@ try {
     } catch {
       throw new Error(`redteam_browser_api_invalid_json:${pathname.split("?")[0]}`);
     }
+  };
+  const artifactObject = async (artifact, label) => {
+    if (!artifact?.ready_for_download || !artifact.download?.url) {
+      throw new Error(`redteam_${label}_download_not_ready`);
+    }
+    const response = await fetch(artifact.download.url);
+    if (!response.ok) throw new Error(`redteam_${label}_download_${response.status}`);
+    const body = Buffer.from(await response.arrayBuffer());
+    const checksum = createHash("sha256").update(body).digest("hex");
+    if (checksum !== artifact.checksum_sha256) throw new Error(`redteam_${label}_checksum_mismatch`);
+    if (body.length !== Number(artifact.byte_size)) throw new Error(`redteam_${label}_size_mismatch`);
+    return body;
   };
   await context.addInitScript((token) => {
     Object.defineProperty(window, "homenodeAuth", {
@@ -120,6 +141,9 @@ try {
   await workfileCard.getByRole("button", { name: "Open Assignment & Subject" }).click();
   await page.getByRole("heading", { name: FIXTURE_FILE_NUMBER, exact: true }).waitFor({ timeout: 30_000 });
   await page.getByRole("heading", { name: "Appraiser signature and credential snapshot" }).waitFor({ timeout: 30_000 });
+  await page.getByRole("heading", { name: "Native Uniform Residential Appraisal Report" }).waitFor({ timeout: 30_000 });
+  await page.getByRole("heading", { name: "MISMO 3.6 XML and official subschema gate" }).waitFor({ timeout: 30_000 });
+  await page.getByRole("heading", { name: "Revision-bound UAD delivery package" }).waitFor({ timeout: 30_000 });
   evidence.checks.editor_loaded = true;
   evidence.checks.signature_ui_present = true;
 
@@ -319,7 +343,179 @@ try {
   evidence.checks.workfile_ready_for_export = postAssetValidation?.status === "passed"
     && postAssetValidation?.ready_for_export === true;
 
-  await page.screenshot({ fullPage: true, path: path.join(outputDirectory, "authenticated-workfile.png") });
+  const artifactPanel = (heading) => page.getByRole("heading", { name: heading, exact: true })
+    .locator("xpath=ancestor::section[1]");
+  const triggerArtifactGeneration = async ({ heading, button, route, timeout }) => {
+    const responsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === apiOrigin
+        && url.pathname.endsWith(route)
+        && response.request().method() === "POST";
+    }, { timeout });
+    await artifactPanel(heading).getByRole("button", { name: button }).click({ timeout: 60_000 });
+    const response = await responsePromise;
+    const payload = await response.json();
+    if (!response.ok()) throw new Error(`redteam_artifact_generation_${response.status()}:${route}`);
+    return payload;
+  };
+  const generatePdfThroughUi = () => triggerArtifactGeneration({
+    heading: "Native Uniform Residential Appraisal Report",
+    button: /^(?:Generate PDF|Regenerate PDF)$/,
+    route: "/artifacts/pdf",
+    timeout: 180_000,
+  });
+  const generateXmlThroughUi = () => triggerArtifactGeneration({
+    heading: "MISMO 3.6 XML and official subschema gate",
+    button: /^(?:Generate and validate XML|Regenerate XML)$/,
+    route: "/artifacts/xml",
+    timeout: 120_000,
+  });
+
+  const validatedEditor = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/editor`);
+  const signedStatuses = new Set(["signed", "exported", "submitted"]);
+  if (!signedStatuses.has(validatedEditor.workfile?.status)) {
+    if (validatedEditor.workfile?.status !== "ready") throw new Error("redteam_delivery_workfile_not_ready");
+    const reviewPdf = await generatePdfThroughUi();
+    const reviewXml = await generateXmlThroughUi();
+    evidence.delivery.pre_signature_review = {
+      revision_number: reviewPdf.artifact?.revision_number,
+      pdf_status: reviewPdf.artifact?.generation_status,
+      pdf_signer_count: Number(reviewPdf.artifact?.metadata?.signer_count || 0),
+      xml_status: reviewXml.artifact?.generation_status,
+      xml_schema_status: reviewXml.schema_validation?.status,
+      xml_schema_fatal_count: reviewXml.schema_validation?.fatal_count,
+      xml_signer_count: Number(reviewXml.artifact?.metadata?.signer_count || 0),
+    };
+    evidence.checks.pre_signature_review_artifacts_ready = reviewPdf.artifact?.generation_status === "ready"
+      && reviewPdf.artifact?.ready_for_download === true
+      && reviewXml.artifact?.generation_status === "ready"
+      && reviewXml.artifact?.ready_for_download === true
+      && reviewXml.schema_validation?.status === "passed"
+      && reviewXml.schema_validation?.fatal_count === 0;
+
+    const signaturePanel = artifactPanel("Appraiser signature and credential snapshot");
+    const attestation = signaturePanel.getByLabel(/I reviewed the current PDF, schema-valid XML/);
+    await attestation.waitFor({ timeout: 60_000 });
+    await attestation.check();
+    const signatureResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.origin === apiOrigin
+        && url.pathname.endsWith("/signatures")
+        && response.request().method() === "POST";
+    }, { timeout: 60_000 });
+    await signaturePanel.getByRole("button", { name: "Sign current revision", exact: true }).click({ timeout: 60_000 });
+    const signatureResponse = await signatureResponsePromise;
+    const signature = await signatureResponse.json();
+    if (!signatureResponse.ok()) throw new Error(`redteam_signature_${signatureResponse.status()}`);
+    evidence.delivery.signature = {
+      reused: false,
+      revision_number: signature.signature?.revision_number,
+      signer_role: signature.signature?.signer_role,
+      workfile_status: signature.workfile_status,
+      input_digest_sha256: signature.signature?.workfile_input_digest_sha256,
+      credential_snapshot_sha256: signature.signature?.credential_snapshot_sha256,
+    };
+  } else {
+    evidence.checks.pre_signature_review_artifacts_ready = true;
+    evidence.delivery.signature = {
+      reused: true,
+      revision_number: validatedEditor.workfile.current_revision,
+      workfile_status: validatedEditor.workfile.status,
+    };
+  }
+  evidence.checks.signature_sealed = signedStatuses.has(evidence.delivery.signature?.workfile_status)
+    && Number(evidence.delivery.signature?.revision_number) === Number(validatedEditor.workfile?.current_revision);
+
+  const finalPdfResult = await generatePdfThroughUi();
+  const finalXmlResult = await generateXmlThroughUi();
+  const finalPdf = finalPdfResult.artifact;
+  const finalXml = finalXmlResult.artifact;
+  const pdfBody = await artifactObject(finalPdf, "pdf");
+  const xmlBody = await artifactObject(finalXml, "xml");
+  const xmlText = xmlBody.toString("utf8");
+  evidence.delivery.pdf = {
+    status: finalPdf?.generation_status,
+    revision_number: finalPdf?.revision_number,
+    byte_size: finalPdf?.byte_size,
+    checksum_sha256: finalPdf?.checksum_sha256,
+    page_count: finalPdf?.metadata?.page_count,
+    rendered_asset_count: finalPdf?.metadata?.rendered_asset_count,
+    signer_count: finalPdf?.metadata?.signer_count,
+  };
+  evidence.delivery.xml = {
+    status: finalXml?.generation_status,
+    revision_number: finalXml?.revision_number,
+    byte_size: finalXml?.byte_size,
+    checksum_sha256: finalXml?.checksum_sha256,
+    schema_status: finalXmlResult.schema_validation?.status,
+    schema_fatal_count: finalXmlResult.schema_validation?.fatal_count,
+    schema_warning_count: finalXmlResult.schema_validation?.warning_count,
+    signer_count: finalXml?.metadata?.signer_count,
+    image_reference_count: finalXml?.metadata?.image_reference_count,
+    sales_comparable_count: (xmlText.match(/ValuationUseType="SalesComparable"/g) || []).length,
+    adjustment_count: (xmlText.match(/<ComparableAdjustmentAmount>/g) || []).length,
+    reconciliation_count: (xmlText.match(/<SalesComparisonCommentDescription>/g) || []).length,
+  };
+  evidence.checks.signed_pdf_verified = pdfBody.subarray(0, 5).toString("ascii") === "%PDF-"
+    && finalPdf?.generation_status === "ready"
+    && Number(finalPdf?.metadata?.page_count || 0) > 0
+    && Number(finalPdf?.metadata?.rendered_asset_count || 0) === requiredAssets.length
+    && Number(finalPdf?.metadata?.signer_count || 0) >= 1;
+  evidence.checks.signed_xml_verified = xmlText.startsWith("<?xml")
+    && finalXml?.generation_status === "ready"
+    && finalXmlResult.schema_validation?.status === "passed"
+    && finalXmlResult.schema_validation?.fatal_count === 0
+    && Number(finalXml?.metadata?.signer_count || 0) >= 1
+    && Number(finalXml?.metadata?.image_reference_count || 0) === requiredAssets.length
+    && evidence.delivery.xml.sales_comparable_count >= 3
+    && evidence.delivery.xml.adjustment_count >= 1
+    && evidence.delivery.xml.reconciliation_count >= 1;
+
+  const packageResult = await triggerArtifactGeneration({
+    heading: "Revision-bound UAD delivery package",
+    button: /^(?:Generate package|Regenerate package)$/,
+    route: "/artifacts/submission-package",
+    timeout: 180_000,
+  });
+  const manifestBody = await artifactObject(packageResult.manifest, "manifest");
+  const packageBody = await artifactObject(packageResult.package, "package");
+  const manifest = JSON.parse(manifestBody.toString("utf8"));
+  const endOfCentralDirectory = packageBody.subarray(-22);
+  const zipEntryCount = endOfCentralDirectory.length === 22
+    && endOfCentralDirectory.readUInt32LE(0) === 0x06054b50
+    ? endOfCentralDirectory.readUInt16LE(10)
+    : 0;
+  evidence.delivery.manifest = {
+    status: packageResult.manifest?.generation_status,
+    byte_size: packageResult.manifest?.byte_size,
+    checksum_sha256: packageResult.manifest?.checksum_sha256,
+    image_count: manifest.image_count,
+  };
+  evidence.delivery.package = {
+    status: packageResult.package?.generation_status,
+    byte_size: packageResult.package?.byte_size,
+    checksum_sha256: packageResult.package?.checksum_sha256,
+    entry_count: packageResult.package?.metadata?.entry_count,
+    parsed_zip_entry_count: zipEntryCount,
+    image_count: packageResult.package?.metadata?.image_count,
+    source_pdf_checksum_sha256: packageResult.package?.metadata?.source_pdf_checksum_sha256,
+    source_xml_checksum_sha256: packageResult.package?.metadata?.source_xml_checksum_sha256,
+  };
+  evidence.checks.delivery_manifest_verified = manifest.manifest_version === "1.0"
+    && manifest.revision_number === Number(finalPdf.revision_number)
+    && manifest.input_digest_sha256 === finalPdf.metadata?.input_digest_sha256
+    && manifest.image_count === requiredAssets.length
+    && Array.isArray(manifest.images)
+    && manifest.images.length === requiredAssets.length;
+  evidence.checks.delivery_zip_verified = packageBody.readUInt32LE(0) === 0x04034b50
+    && packageResult.package?.generation_status === "ready"
+    && Number(packageResult.package?.metadata?.image_count || 0) === requiredAssets.length
+    && Number(packageResult.package?.metadata?.entry_count || 0) === requiredAssets.length + 2
+    && zipEntryCount === requiredAssets.length + 2
+    && packageResult.package?.metadata?.source_pdf_checksum_sha256 === finalPdf.checksum_sha256
+    && packageResult.package?.metadata?.source_xml_checksum_sha256 === finalXml.checksum_sha256;
+
+  await page.screenshot({ fullPage: true, path: path.join(outputDirectory, "signed-delivery-workfile.png") });
   evidence.browser.page_errors = evidence.browser.page_errors.slice(0, 20);
   evidence.browser.console_errors = evidence.browser.console_errors.slice(0, 20);
   evidence.api.failures = evidence.api.failures.slice(0, 30);

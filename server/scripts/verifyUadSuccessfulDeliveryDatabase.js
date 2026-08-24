@@ -495,12 +495,19 @@ try {
     );
     const appendixHCoverage = buildAppendixH1Coverage(officialRuleCoverage.rows);
     const executionDate = new Date().toISOString().slice(0, 10);
+    const storage = memoryStorage(objects);
+    const unsignedPdf = await generateUadPdfArtifact(pool, storage, workfileId);
+    const unsignedXml = await generateUadXmlArtifact(pool, storage, workfileId);
+    if (unsignedXml.schema_validation?.status !== "passed") {
+      throw Object.assign(new Error("synthetic_delivery_unsigned_schema_failed"), {
+        details: unsignedXml.schema_validation?.findings,
+      });
+    }
     const signature = await signUadWorkfile(pool, workfileId, {
       userId: APPRAISER_ID,
       issuer: "synthetic-test",
       subject: "synthetic-test-appraiser",
     }, { authentication_method: "session", execution_date: executionDate });
-    const storage = memoryStorage(objects);
     const pdf = await generateUadPdfArtifact(pool, storage, workfileId);
     const xml = await generateUadXmlArtifact(pool, storage, workfileId);
     if (xml.schema_validation?.status !== "passed") {
@@ -549,6 +556,13 @@ try {
       },
       sales_comparison: salesComparison,
       signature: { workfile_status: signature.workfile_status, signer_role: signature.signature.signer_role },
+      pre_signature_review: {
+        pdf_status: unsignedPdf.artifact.generation_status,
+        pdf_signer_count: unsignedPdf.artifact.metadata.signer_count,
+        xml_status: unsignedXml.artifact.generation_status,
+        xml_schema_status: unsignedXml.schema_validation.status,
+        xml_signer_count: unsignedXml.artifact.metadata.signer_count,
+      },
       pdf: {
         status: pdf.artifact.generation_status,
         checksum_sha256: pdf.artifact.checksum_sha256,

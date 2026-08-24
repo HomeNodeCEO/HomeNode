@@ -48,7 +48,7 @@ export function normalizeLegalNeighborhoodName(subdivision, legalDescription) {
   return /[A-Za-z]{3}/.test(value) ? value.toUpperCase() : null;
 }
 
-function relevanceResponse(row) {
+function relevanceResponse(row, visualization = []) {
   if (!row) return null;
   return {
     id: Number(row.id),
@@ -65,7 +65,23 @@ function relevanceResponse(row) {
     disclosure: row.disclosure || "",
     generated_at: row.generated_at,
     updated_at: row.updated_at,
+    visualization,
   };
+}
+
+function relevanceVisualization(candidates = []) {
+  return candidates
+    .filter((candidate) => candidate.point?.type === "Point")
+    .map((candidate) => ({
+      parcel_object_id: candidate.parcel_object_id,
+      account_id: candidate.account_id || null,
+      address: candidate.address || null,
+      score: candidate.score,
+      excluded: candidate.excluded === true,
+      classification: candidate.statistical_classification,
+      cluster_id: candidate.contiguous_cluster?.id || candidate.cluster_id || null,
+      point: candidate.point,
+    }));
 }
 
 export async function ensureNeighborhoodRelevanceSchema(pool) {
@@ -476,6 +492,110 @@ function summarizeCandidates(candidates) {
     sale_history_months: RELEVANCE_SALE_HISTORY_MONTHS,
     sale_prices_time_adjusted: false,
     minimum_dissimilar_pocket_size: MINIMUM_DISSIMILAR_POCKET_SIZE,
+    relevant_statistics: summarizeRelevantPopulation(candidates),
+  };
+}
+
+function finiteValues(values) {
+  return values.map(Number).filter(Number.isFinite);
+}
+
+function percentileValue(values, ratio) {
+  const sorted = finiteValues(values).sort((left, right) => left - right);
+  if (!sorted.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const position = Math.max(0, Math.min(1, ratio)) * (sorted.length - 1);
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  const fraction = position - lower;
+  return sorted[lower] + ((sorted[upper] - sorted[lower]) * fraction);
+}
+
+function roundedMetric(value, digits = 2) {
+  if (!Number.isFinite(value)) return null;
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
+
+function distributionSummary(values) {
+  const numeric = finiteValues(values);
+  if (!numeric.length) {
+    return { count: 0, low: null, high: null, median: null, average: null, cod: null, cv: null };
+  }
+  const average = numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
+  const median = percentileValue(numeric, 0.5);
+  const divisor = numeric.length > 1 ? numeric.length - 1 : 1;
+  const standardDeviation = Math.sqrt(
+    numeric.reduce((sum, value) => sum + ((value - average) ** 2), 0) / divisor,
+  );
+  const cod = median
+    ? numeric.reduce((sum, value) => sum + Math.abs(value - median), 0) /
+      numeric.length / Math.abs(median) * 100
+    : null;
+  const cv = average ? standardDeviation / Math.abs(average) * 100 : null;
+  return {
+    count: numeric.length,
+    low: roundedMetric(Math.min(...numeric)),
+    high: roundedMetric(Math.max(...numeric)),
+    median: roundedMetric(median),
+    average: roundedMetric(average),
+    cod: roundedMetric(cod),
+    cv: roundedMetric(cv),
+  };
+}
+
+/**
+ * Produces every neighborhood range from the exact parcel population retained
+ * by the relevance engine. Keeping this calculation beside the exclusion logic
+ * prevents the UI from accidentally mixing broad-boundary statistics with the
+ * narrower population represented to the appraiser.
+ */
+export function summarizeRelevantPopulation(candidates = []) {
+  const included = candidates.filter((candidate) => !candidate.excluded);
+  const sales = included.filter((candidate) => Number(candidate.sale_price) > 0);
+  const gla = (candidate) => Number(candidate.gla_diagnostic?.candidate_gla_sqft) || null;
+  const salePpsf = sales.map((candidate) => {
+    const area = gla(candidate);
+    return area ? Number(candidate.sale_price) / area : null;
+  });
+  const propertyProfile = {
+    age: distributionSummary(included.map((candidate) => candidate.year_built)),
+    site_size: distributionSummary(included.map((candidate) => candidate.site_area_sqft)),
+    gla: distributionSummary(included.map(gla)),
+    similarity_score: distributionSummary(included.map((candidate) => candidate.score)),
+  };
+  const salesProfile = {
+    sale_price: distributionSummary(sales.map((candidate) => candidate.sale_price)),
+    price_per_square_foot: distributionSummary(salePpsf),
+    age: distributionSummary(sales.map((candidate) => candidate.year_built)),
+    site_size: distributionSummary(sales.map((candidate) => candidate.site_area_sqft)),
+    gla: distributionSummary(sales.map(gla)),
+    similarity_score: distributionSummary(sales.map((candidate) => candidate.score)),
+  };
+  const dispersionMetrics = [
+    salesProfile.sale_price.cod,
+    salesProfile.price_per_square_foot.cod,
+    salesProfile.age.cod,
+    salesProfile.gla.cod,
+  ].filter(Number.isFinite);
+  const averageCod = dispersionMetrics.length
+    ? dispersionMetrics.reduce((sum, value) => sum + value, 0) / dispersionMetrics.length
+    : null;
+  const saleCoverage = included.length ? sales.length / included.length * 100 : 0;
+  const reliabilityScore = averageCod === null
+    ? 0
+    : Math.max(0, Math.min(100,
+      100 - Math.min(70, averageCod * 1.5) + Math.min(20, saleCoverage / 5),
+    ));
+  return {
+    population_rule: "relevance_included_only",
+    included_property_count: included.length,
+    included_sale_count: sales.length,
+    sale_coverage_percent: roundedMetric(saleCoverage, 1),
+    composite_cod: roundedMetric(averageCod),
+    reliability_score: roundedMetric(reliabilityScore, 1),
+    property_profile: propertyProfile,
+    sales_profile: salesProfile,
   };
 }
 
@@ -662,7 +782,7 @@ export async function generateNeighborhoodRelevance(pool, {
       distance_miles: candidate.distance_miles,
     })),
   });
-  return persistAssessment(pool, {
+  const persisted = await persistAssessment(pool, {
     account_id: normalizedId,
     scope_key: scopeKey(parsedAssignmentId),
     assignment_file_id: parsedAssignmentId,
@@ -679,6 +799,7 @@ export async function generateNeighborhoodRelevance(pool, {
     disclosure: initial.disclosure,
     candidates,
   });
+  return { ...persisted, visualization: relevanceVisualization(candidates) };
 }
 
 export async function getLatestNeighborhoodRelevance(pool, {
@@ -709,5 +830,15 @@ export async function getLatestNeighborhoodRelevance(pool, {
      LIMIT 1`,
     [normalizedId, requestedScope],
   );
-  return relevanceResponse(rows[0]);
+  if (!rows[0]) return null;
+  const { rows: candidateRows } = await pool.query(
+    `SELECT parcel_object_id, account_id, address, score, excluded,
+            statistical_classification AS classification, cluster_id,
+            ST_AsGeoJSON(point)::jsonb AS point
+     FROM app.neighborhood_relevance_candidates
+     WHERE assessment_id = $1
+     ORDER BY score DESC NULLS LAST, parcel_object_id`,
+    [rows[0].id],
+  );
+  return relevanceResponse(rows[0], candidateRows);
 }

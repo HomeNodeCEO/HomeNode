@@ -106,6 +106,13 @@ type Props = {
   initialCustomGeometry?: GeoJsonPolygon | null;
   initialCustomGeometrySource?: string | null;
   suggestedCustomGeometry?: GeoJsonPolygon | null;
+  relevanceVisualization?: Array<{
+    parcel_object_id: number;
+    score: number | null;
+    excluded: boolean;
+    classification: string;
+    point: { type: 'Point'; coordinates: [number, number] };
+  }>;
   onCustomGeometryChange?: (
     geometry: GeoJsonPolygon | null,
     origin: MarketAreaOrigin,
@@ -114,6 +121,25 @@ type Props = {
 };
 
 const CLOSE_BOUNDARY_PIXEL_TOLERANCE = 18;
+const RELEVANCE_SOURCE_ID = 'neighborhood-relevance-pockets';
+
+function makeRelevanceFeatureCollection(
+  candidates: Props['relevanceVisualization'] = [],
+): GeoJsonFeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: candidates.map((candidate) => ({
+      type: 'Feature',
+      id: candidate.parcel_object_id,
+      geometry: candidate.point,
+      properties: {
+        score: Number(candidate.score) || 0,
+        excluded: candidate.excluded,
+        classification: candidate.classification,
+      },
+    })),
+  };
+}
 
 function coordinatesMatch(
   left: BoundaryCoordinate,
@@ -900,6 +926,7 @@ export default function MarketConditionsAnalysis({
   initialCustomGeometry = null,
   initialCustomGeometrySource = null,
   suggestedCustomGeometry = null,
+  relevanceVisualization = [],
   onCustomGeometryChange,
   embedded = false,
 }: Props) {
@@ -1398,6 +1425,47 @@ export default function MarketConditionsAnalysis({
               'circle-stroke-width': 2,
             },
           });
+          map.addSource(RELEVANCE_SOURCE_ID, {
+            type: 'geojson',
+            data: makeRelevanceFeatureCollection(relevanceVisualization),
+          });
+          map.addLayer({
+            id: 'neighborhood-relevance-pockets-halo',
+            type: 'circle',
+            source: RELEVANCE_SOURCE_ID,
+            paint: {
+              'circle-radius': 10,
+              'circle-blur': 0.65,
+              'circle-opacity': 0.34,
+              'circle-color': [
+                'case',
+                ['get', 'excluded'], '#94a3b8',
+                ['interpolate', ['linear'], ['get', 'score'],
+                  20, '#facc15',
+                  60, '#86efac',
+                  85, '#15803d',
+                ],
+              ],
+            },
+          });
+          map.addLayer({
+            id: 'neighborhood-relevance-pockets-core',
+            type: 'circle',
+            source: RELEVANCE_SOURCE_ID,
+            paint: {
+              'circle-radius': 3,
+              'circle-opacity': 0.78,
+              'circle-color': [
+                'case',
+                ['get', 'excluded'], '#64748b',
+                ['interpolate', ['linear'], ['get', 'score'],
+                  20, '#eab308',
+                  60, '#22c55e',
+                  85, '#166534',
+                ],
+              ],
+            },
+          });
           map.on('click', (event) => {
             if (!boundaryDrawingRef.current) return;
             const coordinate: BoundaryCoordinate = [
@@ -1468,6 +1536,13 @@ export default function MarketConditionsAnalysis({
     updateBoundaryMap(map, customGeometry);
     fitMapToBoundary(map, customGeometry);
   }, [customGeometry, mapReady]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    mapRef.current?.getSource(RELEVANCE_SOURCE_ID)?.setData(
+      makeRelevanceFeatureCollection(relevanceVisualization),
+    );
+  }, [mapReady, relevanceVisualization]);
 
   useEffect(() => {
     const container = mapContainerRef.current;

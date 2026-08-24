@@ -48,12 +48,16 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
     });
 
     const accounts = await pool.query(
-      "SELECT account_id, data_quality_status FROM core.accounts ORDER BY account_id",
+      `SELECT count(*)::integer AS count,
+              bool_and(account_id LIKE 'UAD-REDTEAM-%') AS isolated,
+              bool_and(data_quality_status = 'synthetic') AS synthetic
+         FROM core.accounts`,
     );
-    assert.deepEqual(accounts.rows, [{
-      account_id: "UAD-REDTEAM-SFR-0001",
-      data_quality_status: "synthetic",
-    }]);
+    assert.deepEqual(accounts.rows[0], {
+      count: 37,
+      isolated: true,
+      synthetic: true,
+    });
 
     const users = await pool.query(
       `SELECT count(*)::integer AS count,
@@ -83,8 +87,37 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
       isolated_account: true,
     });
 
-    const sales = await pool.query("SELECT count(*)::integer AS count FROM core.sales_source_records");
-    assert.equal(sales.rows[0].count, 0);
+    const sales = await pool.query(`
+      SELECT
+        count(*) FILTER (
+          WHERE source_name = 'HomeNode synthetic red-team comparable fixture'
+        )::integer AS comparable_sales,
+        count(*) FILTER (
+          WHERE source_name = 'HomeNode synthetic red-team reconciliation fixture'
+        )::integer AS reconciliation_sales,
+        count(*) FILTER (
+          WHERE source_name = 'HomeNode synthetic red-team comparable fixture'
+            AND primary_account_id LIKE 'UAD-REDTEAM-COMP-%'
+        )::integer AS linked_comparable_sales
+      FROM core.sales_source_records
+    `);
+    assert.deepEqual(sales.rows[0], {
+      comparable_sales: 36,
+      reconciliation_sales: 2,
+      linked_comparable_sales: 36,
+    });
+
+    const ratings = await pool.query(`
+      SELECT
+        (SELECT count(*)::integer FROM app.sale_characteristic_reviews)
+          AS comparable_ratings,
+        (SELECT count(*)::integer FROM app.subject_appraisal_ratings
+          WHERE account_id = 'UAD-REDTEAM-SFR-0001') AS subject_ratings
+    `);
+    assert.deepEqual(ratings.rows[0], {
+      comparable_ratings: 36,
+      subject_ratings: 1,
+    });
   } finally {
     await pool.end();
   }

@@ -86,10 +86,10 @@ try {
     timeout: 60_000,
   });
   await page.getByRole("heading", { name: "UAD 3.6 Workspace" }).waitFor({ timeout: 30_000 });
-  await page.getByText(FIXTURE_FILE_NUMBER, { exact: true }).waitFor({ timeout: 30_000 });
+  const workfileCard = page.locator("article").filter({ hasText: FIXTURE_FILE_NUMBER }).first();
+  await workfileCard.getByText(FIXTURE_FILE_NUMBER, { exact: true }).waitFor({ timeout: 30_000 });
   evidence.checks.authenticated_workspace_loaded = !(await page.getByText("invalid_access_token", { exact: true }).count());
 
-  const workfileCard = page.locator("article").filter({ hasText: FIXTURE_FILE_NUMBER }).first();
   await workfileCard.getByRole("button", { name: "Open Assignment & Subject" }).click();
   await page.getByRole("heading", { name: FIXTURE_FILE_NUMBER, exact: true }).waitFor({ timeout: 30_000 });
   await page.getByRole("heading", { name: "Appraiser signature and credential snapshot" }).waitFor({ timeout: 30_000 });

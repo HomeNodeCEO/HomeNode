@@ -2168,6 +2168,7 @@ export interface NeighborhoodBoundaryAssessment {
       radius_miles?: number;
       candidate_count?: number;
       boundary_area_square_miles?: number | null;
+      boundary_generation_mode?: 'traffic_backed_cardinal_road_enclosure' | 'parcel_discovery_shape_fallback';
       physical_characteristic_coverage_percent?: number;
     };
     roads?: {
@@ -2187,6 +2188,7 @@ export interface NeighborhoodBoundaryAssessment {
           analysis_edge_relation?: 'outside' | 'inside';
           corridor_key?: string;
           selected?: boolean;
+          representative_point?: [number, number] | null;
         }>;
       }>;
     };

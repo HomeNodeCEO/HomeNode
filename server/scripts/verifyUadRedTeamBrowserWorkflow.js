@@ -376,25 +376,16 @@ try {
   if (!signedStatuses.has(validatedEditor.workfile?.status)) {
     if (validatedEditor.workfile?.status !== "ready") throw new Error("redteam_delivery_workfile_not_ready");
     const reviewPdf = await generatePdfThroughUi();
-    const reviewXml = await generateXmlThroughUi();
     evidence.delivery.pre_signature_review = {
       revision_number: reviewPdf.artifact?.revision_number,
       pdf_status: reviewPdf.artifact?.generation_status,
       pdf_signer_count: Number(reviewPdf.artifact?.metadata?.signer_count || 0),
-      xml_status: reviewXml.artifact?.generation_status,
-      xml_schema_status: reviewXml.schema_validation?.status,
-      xml_schema_fatal_count: reviewXml.schema_validation?.fatal_count,
-      xml_signer_count: Number(reviewXml.artifact?.metadata?.signer_count || 0),
     };
     evidence.checks.pre_signature_review_artifacts_ready = reviewPdf.artifact?.generation_status === "ready"
-      && reviewPdf.artifact?.ready_for_download === true
-      && reviewXml.artifact?.generation_status === "ready"
-      && reviewXml.artifact?.ready_for_download === true
-      && reviewXml.schema_validation?.status === "passed"
-      && reviewXml.schema_validation?.fatal_count === 0;
+      && reviewPdf.artifact?.ready_for_download === true;
 
     const signaturePanel = artifactPanel("Appraiser signature and credential snapshot");
-    const attestation = signaturePanel.getByLabel(/I reviewed the current PDF, schema-valid XML/);
+    const attestation = signaturePanel.getByLabel(/I reviewed the current PDF/);
     await attestation.waitFor({ timeout: 60_000 });
     await attestation.check();
     const signatureResponsePromise = page.waitForResponse((response) => {

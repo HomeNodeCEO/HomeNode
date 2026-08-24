@@ -179,24 +179,16 @@ async function loadSignatureArtifactReadiness(queryable, workfileId, revisionNum
     `SELECT artifact_type, generation_status, metadata
        FROM appraisal.uad_generated_artifacts
       WHERE workfile_id = $1 AND revision_number = $2
-        AND artifact_type IN ('pdf', 'xml')`,
+        AND artifact_type = 'pdf'`,
     [workfileId, Number(revisionNumber)],
   );
   const artifacts = new Map(rows.map((row) => [row.artifact_type, row]));
   const pdf = artifacts.get("pdf");
-  const xml = artifacts.get("xml");
   const pdfReady = pdf?.generation_status === "ready"
     && pdf.metadata?.input_digest_sha256 === inputDigest;
-  const xmlReady = xml?.generation_status === "ready"
-    && xml.metadata?.input_digest_sha256 === inputDigest
-    && xml.metadata?.schema_valid === true;
   return {
     pdf_ready: pdfReady,
-    xml_ready: xmlReady,
-    missing: [
-      ...(!pdfReady ? ["current_pdf"] : []),
-      ...(!xmlReady ? ["schema_valid_xml"] : []),
-    ],
+    missing: !pdfReady ? ["current_pdf"] : [],
   };
 }
 
@@ -354,7 +346,6 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
       inputDigest,
     );
     if (!artifactReadiness.pdf_ready) throw new Error("uad_signature_pdf_required");
-    if (!artifactReadiness.xml_ready) throw new Error("uad_signature_schema_valid_xml_required");
 
     const credential = buildUadCredentialSnapshot(signerRow);
     const signatureId = randomUUID();

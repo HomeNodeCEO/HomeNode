@@ -592,8 +592,7 @@ export interface UadCertificationReadiness {
   ready: boolean;
   artifact_readiness?: {
     pdf_ready: boolean;
-    xml_ready: boolean;
-    missing: Array<"current_pdf" | "schema_valid_xml">;
+    missing: Array<"current_pdf">;
   };
   signers: UadCertificationSigner[];
   current_signer: UadCertificationSigner;

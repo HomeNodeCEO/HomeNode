@@ -108,6 +108,29 @@ function pointInsideRing(point, ring) {
   return inside;
 }
 
+function ringSelfIntersects(ring) {
+  const orientation = (a, b, c) =>
+    Math.sign((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+  const intersects = (a, b, c, d) => {
+    const first = orientation(a, b, c);
+    const second = orientation(a, b, d);
+    const third = orientation(c, d, a);
+    const fourth = orientation(c, d, b);
+    return first * second < 0 && third * fourth < 0;
+  };
+  const segmentCount = Math.max(0, ring.length - 1);
+  for (let left = 0; left < segmentCount; left += 1) {
+    for (let right = left + 1; right < segmentCount; right += 1) {
+      const adjacent = right === left + 1 || (left === 0 && right === segmentCount - 1);
+      if (adjacent) continue;
+      if (intersects(ring[left], ring[left + 1], ring[right], ring[right + 1])) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function buildRoadwayBoundary(roadEvidence, subjectPoint) {
   const subject = subjectPoint?.type === "Point" ? subjectPoint.coordinates : null;
   const longitude = Number(subject?.[0]);
@@ -149,7 +172,11 @@ export function buildRoadwayBoundary(roadEvidence, subjectPoint) {
   // selected corridors provide enough actual linework to trace a closed ring
   // that contains the subject. Otherwise the caller retains the irregular
   // parcel-derived boundary and reports the road evidence as incomplete.
-  if (tracedRing.length < 9 || !pointInsideRing([longitude, latitude], tracedRing)) {
+  if (
+    tracedRing.length < 5 ||
+    ringSelfIntersects(tracedRing) ||
+    !pointInsideRing([longitude, latitude], tracedRing)
+  ) {
     return null;
   }
   return {
@@ -416,7 +443,9 @@ async function loadZoningEvidence(pool, { subjectParcelObjectId, boundary }) {
        SELECT ST_PointOnSurface(geom) AS center
        FROM gis.dcad_parcels WHERE object_id = $1
      ), boundary AS (
-       SELECT ST_SetSRID(ST_GeomFromGeoJSON($2), 4326) AS geom
+       SELECT ST_CollectionExtract(ST_MakeValid(
+         ST_SetSRID(ST_GeomFromGeoJSON($2), 4326)
+       ), 3) AS geom
      ), subject_zoning AS (
        SELECT zoning.provider_key, zoning.jurisdiction, zoning.zoning_code,
               zoning.zoning_description, zoning.generalized_use,
@@ -433,9 +462,21 @@ async function loadZoningEvidence(pool, { subjectParcelObjectId, boundary }) {
        LIMIT 1
      ), districts AS (
        SELECT zoning.provider_key, zoning.zoning_code, zoning.generalized_use,
-              ST_Area(ST_Intersection(zoning.geom, boundary.geom)::geography) AS overlap_area
+              ST_Area(ST_Intersection(
+                CASE
+                  WHEN ST_IsValid(zoning.geom) THEN zoning.geom
+                  ELSE ST_CollectionExtract(ST_MakeValid(zoning.geom), 3)
+                END,
+                boundary.geom
+              )::geography) AS overlap_area
        FROM gis.zoning_districts zoning CROSS JOIN boundary
-       WHERE zoning.geom && boundary.geom AND ST_Intersects(zoning.geom, boundary.geom)
+       WHERE zoning.geom && boundary.geom AND ST_Intersects(
+         CASE
+           WHEN ST_IsValid(zoning.geom) THEN zoning.geom
+           ELSE ST_CollectionExtract(ST_MakeValid(zoning.geom), 3)
+         END,
+         boundary.geom
+       )
      )
      SELECT
        COALESCE((SELECT to_jsonb(subject_zoning) FROM subject_zoning), '{}'::jsonb) AS subject,

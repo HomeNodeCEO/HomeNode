@@ -486,17 +486,29 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
       // distant freeway from winning solely because its volume is several
       // multiples higher than the major road that actually borders the area.
       const trafficScore = Math.min(group.max_aadt / FULL_MAJOR_ROAD_AADT_SCORE, 1);
-      const proximityScore = 1 - Math.min(
+      const centerProximityScore = 1 - Math.min(
         group.min_center_distance_meters / MAJOR_ROAD_SEARCH_METERS,
+        1,
+      );
+      const perimeterFitScore = 1 - Math.min(
+        group.min_edge_distance_meters / MAJOR_ROAD_SEARCH_METERS,
         1,
       );
       const continuityScore = Math.min(group.length / maxLength, 1);
       const analysisEdgeRelation = (group.closest_signed_edge_distance_meters || 0) >= 0
         ? "outside"
         : "inside";
-      const score = Number(
-        (trafficScore * 0.56 + proximityScore * 0.34 + continuityScore * 0.10).toFixed(4),
-      );
+      // Pick the closest qualifying major corridor around the similar-parcel
+      // discovery shape, rather than allowing a more distant freeway to win
+      // merely because it has the highest AADT. Traffic remains a hard gate
+      // and a material score component; perimeter fit and subject proximity
+      // determine which busy road actually describes this neighborhood.
+      const score = Number((
+        trafficScore * 0.50 +
+        perimeterFitScore * 0.20 +
+        centerProximityScore * 0.20 +
+        continuityScore * 0.10
+      ).toFixed(4));
       const perimeterBonus = analysisEdgeRelation === "outside" &&
         group.min_edge_distance_meters >= MIN_BROAD_PERIMETER_GAP_METERS
         ? MAJOR_ROAD_ENCLOSURE_BONUS
@@ -509,6 +521,8 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           (score + perimeterBonus).toFixed(4),
         ),
         perimeter_bonus: perimeterBonus,
+        perimeter_fit_score: Number(perimeterFitScore.toFixed(4)),
+        center_proximity_score: Number(centerProximityScore.toFixed(4)),
         annual_average_daily_traffic: Math.round(averageAadt),
         peak_segment_aadt: Math.round(group.max_aadt),
         source_road_names: [...group.source_names].sort(),
@@ -777,3 +791,4 @@ export async function loadBoundaryStreetNames(
     fallback_reason: "local_boundary_roads_unavailable",
   };
 }
+

@@ -16,6 +16,7 @@ import {
 import UadAssetPanel from "./UadAssetPanel";
 import UadCompletionSuggestionPanel from "./UadCompletionSuggestionPanel";
 import UadPdfPanel from "./UadPdfPanel";
+import UadSignaturePanel from "./UadSignaturePanel";
 import UadValidationPanel from "./UadValidationPanel";
 import UadXmlPanel from "./UadXmlPanel";
 import UadSubmissionPackagePanel from "./UadSubmissionPackagePanel";
@@ -572,6 +573,16 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           currentRevision={editor.workfile.current_revision}
           dirty={dirty}
           workfileId={workfileId}
+        />
+        <UadSignaturePanel
+          currentRevision={editor.workfile.current_revision}
+          dirty={dirty}
+          onSigned={async (result) => {
+            await loadEditor();
+            setSavedMessage(`Revision ${result.signature.revision_number} was signed and its credential snapshot was sealed.`);
+          }}
+          workfileId={workfileId}
+          workfileStatus={editor.workfile.status}
         />
         <UadSubmissionPackagePanel
           currentRevision={editor.workfile.current_revision}

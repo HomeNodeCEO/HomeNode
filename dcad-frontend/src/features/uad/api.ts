@@ -1,5 +1,7 @@
 import { makeUrl } from "@/lib/api";
 
+import { withUadAuthorization } from "./auth";
+
 export const UAD_WORKFILE_MUTATED_EVENT = "homenode:uad-workfile-mutated";
 
 function announceUadWorkfileMutation(workfileId: string) {
@@ -10,7 +12,8 @@ async function uadFetchJSON<T = unknown>(input: string, init?: RequestInit & { t
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), init?.timeoutMs ?? 25_000);
   try {
-    const response = await fetch(input, { ...init, signal: controller.signal });
+    const authorizedInit = await withUadAuthorization(init);
+    const response = await fetch(input, { ...authorizedInit, signal: controller.signal });
     const isJson = (response.headers.get("content-type") || "").includes("application/json");
     if (!response.ok) {
       const body = isJson ? await response.json().catch(() => null) as {
@@ -563,6 +566,72 @@ export async function runLocalUadValidation(workfileId: string): Promise<UadVali
     { method: "POST" },
   );
   return response.validation;
+}
+
+export interface UadCertificationSigner {
+  role: "appraiser" | "supervisory_appraiser";
+  user_id: string | null;
+  display_name: string | null;
+  signature_policy: string | null;
+  profile_status: string | null;
+  organization_name: string | null;
+  license: {
+    jurisdiction: string | null;
+    license_number: string | null;
+    license_type: string;
+    expires_on: string | null;
+  } | null;
+  ready: boolean;
+  missing: string[];
+}
+
+export interface UadCertificationReadiness {
+  workfile_id: string;
+  revision_number: number;
+  workfile_status: string;
+  ready: boolean;
+  signers: UadCertificationSigner[];
+  current_signer: UadCertificationSigner;
+}
+
+export interface UadSignatureResult {
+  signature: {
+    id: string;
+    workfile_id: string;
+    revision_number: number;
+    signer_user_id: string;
+    signer_role: "appraiser" | "supervisory_appraiser";
+    signature_asset_id: string | null;
+    authentication_method: string;
+    signed_at: string;
+    execution_date: string;
+    workfile_input_digest_sha256: string;
+    credential_snapshot_sha256: string;
+  };
+  workfile_status: string;
+}
+
+export async function getUadCertificationReadiness(workfileId: string): Promise<UadCertificationReadiness> {
+  const response = await uadFetchJSON<{ readiness: UadCertificationReadiness }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/certification-readiness`),
+  );
+  return response.readiness;
+}
+
+export async function signUadWorkfile(
+  workfileId: string,
+  input: { execution_date: string; authentication_method: string; signature_asset_id?: string },
+): Promise<UadSignatureResult> {
+  const result = await uadFetchJSON<UadSignatureResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/signatures`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  announceUadWorkfileMutation(workfileId);
+  return result;
 }
 
 export interface UadXmlArtifact {

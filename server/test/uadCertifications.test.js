@@ -156,6 +156,7 @@ test("keeps certification readiness and signing behind the existing OIDC identit
   assert.match(router, /certification-readiness", authenticateIfNeeded/);
   assert.match(router, /signatures", authenticateIfNeeded/);
   assert.match(router, /req\.mobileAuth \? next\(\) : authenticateSigner/);
+  assert.match(router, /current_signer: currentSigner/);
   assert.match(router, /signUadWorkfile/);
   assert.match(server, /verifier: mobileOidcVerifier/);
 });

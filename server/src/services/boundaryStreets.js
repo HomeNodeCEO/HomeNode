@@ -391,6 +391,10 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
     if (!usableTrafficRoadName(rawName) || aadt < MIN_MAJOR_ROAD_AADT) continue;
     for (const path of feature?.geometry?.paths || []) {
       for (let index = 1; index < path.length; index += 1) {
+        const geographicMidpoint = [
+          (Number(path[index - 1][0]) + Number(path[index][0])) / 2,
+          (Number(path[index - 1][1]) + Number(path[index][1])) / 2,
+        ];
         const start = projectedPoint(path[index - 1], originLatitude);
         const end = projectedPoint(path[index], originLatitude);
         const deltaX = end[0] - start[0];
@@ -428,6 +432,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
           min_edge_distance_meters: Number.POSITIVE_INFINITY,
           closest_signed_edge_distance_meters: null,
           min_center_distance_meters: Number.POSITIVE_INFINITY,
+          representative_point: null,
           source_date: feature?.attributes?.SOURCE_DATE || null,
           source_names: new Set(),
           source_route_names: new Set(),
@@ -447,10 +452,10 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         ) {
           current.closest_signed_edge_distance_meters = signedEdgeDistance;
         }
-        current.min_center_distance_meters = Math.min(
-          current.min_center_distance_meters,
-          centerDistance,
-        );
+        if (centerDistance < current.min_center_distance_meters) {
+          current.min_center_distance_meters = centerDistance;
+          current.representative_point = geographicMidpoint;
+        }
         current.source_date ||= feature?.attributes?.SOURCE_DATE || null;
         current.source_names.add(rawName);
         if (feature?.attributes?.TXDOT_ROUTE_NAME) {
@@ -510,6 +515,7 @@ export function summarizeBusyCardinalBoundaries(features = [], ring = [], { cent
         ),
         analysis_edge_relation: analysisEdgeRelation,
         source_date: group.source_date,
+        representative_point: group.representative_point,
       };
     }).sort((left, right) =>
       right.score - left.score ||

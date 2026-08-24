@@ -2,12 +2,45 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildRoadwayBoundary,
   ensureNeighborhoodBoundarySchema,
   generateNeighborhoodBoundary,
   getLatestNeighborhoodBoundary,
   NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION,
   reviewNeighborhoodBoundary,
 } from "../src/services/neighborhoodBoundaryEngine.js";
+
+test("builds the displayed neighborhood polygon from four enclosing roadway positions", () => {
+  const result = buildRoadwayBoundary({
+    cardinal_boundaries: {
+      north: { candidates: [{ selected: true, representative_point: [-96.65, 32.99] }] },
+      east: { candidates: [{ selected: true, representative_point: [-96.62, 32.97] }] },
+      south: { candidates: [{ selected: true, representative_point: [-96.65, 32.94] }] },
+      west: { candidates: [{ selected: true, representative_point: [-96.68, 32.97] }] },
+    },
+  }, { type: "Point", coordinates: [-96.65, 32.97] });
+
+  assert.deepEqual(result, {
+    type: "Polygon",
+    coordinates: [[
+      [-96.68, 32.94],
+      [-96.62, 32.94],
+      [-96.62, 32.99],
+      [-96.68, 32.99],
+      [-96.68, 32.94],
+    ]],
+  });
+});
+
+test("does not label an incomplete or non-enclosing road set as roadway-bounded", () => {
+  assert.equal(buildRoadwayBoundary({
+    cardinal_boundaries: {
+      north: { candidates: [{ representative_point: [-96.65, 32.99] }] },
+      east: { candidates: [{ representative_point: [-96.62, 32.97] }] },
+      south: { candidates: [{ representative_point: [-96.65, 32.94] }] },
+    },
+  }, { type: "Point", coordinates: [-96.65, 32.97] }), null);
+});
 
 const boundary = {
   type: "Polygon",
@@ -59,6 +92,7 @@ test("creates versioned assignment-aware boundary persistence", async () => {
 
 test("generates a local, persisted broad boundary without a remote road dependency", async () => {
   const statements = [];
+  const calls = [];
   const responses = [
     // ensureAssignmentFilesSchema
     [],
@@ -109,8 +143,9 @@ test("generates a local, persisted broad boundary without a remote road dependen
     [generatedRow()],
   ];
   const pool = {
-    async query(sql) {
+    async query(sql, params = []) {
       statements.push(String(sql));
+      calls.push({ sql: String(sql), params });
       return { rows: responses.shift() || [], rowCount: 1 };
     },
   };
@@ -124,6 +159,16 @@ test("generates a local, persisted broad boundary without a remote road dependen
   assert.ok(statements.some((sql) => /gis\.traffic_volume_segments/.test(sql)));
   assert.ok(statements.some((sql) => /gis\.zoning_districts/.test(sql)));
   assert.ok(statements.some((sql) => /INSERT INTO app\.neighborhood_boundary_assessments/.test(sql)));
+  const savedBoundary = JSON.parse(calls.find((call) =>
+    /INSERT INTO app\.neighborhood_boundary_assessments/.test(call.sql),
+  ).params[7]);
+  assert.deepEqual(savedBoundary.coordinates[0], [
+    [-96.675, 32.946],
+    [-96.625, 32.946],
+    [-96.625, 32.994],
+    [-96.675, 32.994],
+    [-96.675, 32.946],
+  ]);
 });
 
 test("rejects an invalid explicit profile before spatial analysis", async () => {

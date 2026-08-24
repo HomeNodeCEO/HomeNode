@@ -34,6 +34,7 @@ const MAPLIBRE_STYLE =
   'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css';
 const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/bright';
 const CUSTOM_BOUNDARY_SOURCE_ID = 'custom-market-boundary';
+let mapLibrariesPromise: Promise<void> | null = null;
 
 type GeoJsonFeature = {
   type: 'Feature';
@@ -357,11 +358,26 @@ function loadScript(
     `script[data-homenode-map-script="${key}"]`,
   );
   if (existing) {
+    if (existing.dataset.homenodeMapFailed === 'true') {
+      existing.remove();
+      return loadScript(src, key, ready);
+    }
     return new Promise((resolve, reject) => {
-      existing.addEventListener('load', () => resolve(), { once: true });
+      const timeout = window.setTimeout(
+        () => reject(new Error(`${key}_load_timeout`)),
+        15_000,
+      );
+      existing.addEventListener('load', () => {
+        window.clearTimeout(timeout);
+        resolve();
+      }, { once: true });
       existing.addEventListener(
         'error',
-        () => reject(new Error(`${key}_load_failed`)),
+        () => {
+          window.clearTimeout(timeout);
+          existing.dataset.homenodeMapFailed = 'true';
+          reject(new Error(`${key}_load_failed`));
+        },
         { once: true },
       );
     });
@@ -371,10 +387,16 @@ function loadScript(
     script.src = src;
     script.async = true;
     script.dataset.homenodeMapScript = key;
-    script.addEventListener('load', () => resolve(), { once: true });
+    script.addEventListener('load', () => {
+      script.dataset.homenodeMapLoaded = 'true';
+      resolve();
+    }, { once: true });
     script.addEventListener(
       'error',
-      () => reject(new Error(`${key}_load_failed`)),
+      () => {
+        script.dataset.homenodeMapFailed = 'true';
+        reject(new Error(`${key}_load_failed`));
+      },
       { once: true },
     );
     document.head.appendChild(script);
@@ -382,10 +404,17 @@ function loadScript(
 }
 
 async function ensureMapLibraries(): Promise<void> {
-  addStyle(MAPLIBRE_STYLE, 'maplibre');
-  await loadScript(MAPLIBRE_SCRIPT, 'maplibre', () =>
-    Boolean(window.maplibregl),
-  );
+  if (window.maplibregl) return;
+  if (!mapLibrariesPromise) {
+    addStyle(MAPLIBRE_STYLE, 'maplibre');
+    mapLibrariesPromise = loadScript(MAPLIBRE_SCRIPT, 'maplibre', () =>
+      Boolean(window.maplibregl),
+    ).catch((error) => {
+      mapLibrariesPromise = null;
+      throw error;
+    });
+  }
+  await mapLibrariesPromise;
 }
 
 function resultFingerprint(

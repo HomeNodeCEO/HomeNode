@@ -435,6 +435,67 @@ async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) 
   return rows[0];
 }
 
+// The synchronized Dallas parcel mirror already stores normalized land-use
+// classifications and valid PostGIS geometry. Keep that geometry inside the
+// database: serializing thousands of polygons to JSON and immediately parsing
+// them back into PostGIS was the dominant land-use analysis cost.
+async function calculateLocalClippedParcelMetrics(pool, boundary) {
+  const { rows } = await pool.query(
+    `WITH boundary AS MATERIALIZED (
+       SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
+     ), clipped AS MATERIALIZED (
+       SELECT
+         row_number() OVER (ORDER BY parcel.object_id) - 1 AS source_index,
+         parcel.account_id,
+         parcel.land_use_category AS category,
+         parcel.built_up,
+         COALESCE(
+           parcel.parcel_area_sqft,
+           ST_Area(parcel.geom::geography) * 10.76391041671
+         ) AS full_area_sqft,
+         CASE
+           WHEN ST_Covers(boundary.geom, parcel.geom)
+             THEN COALESCE(
+               parcel.parcel_area_sqft,
+               ST_Area(parcel.geom::geography) * 10.76391041671
+             )
+           ELSE ST_Area(ST_Intersection(parcel.geom, boundary.geom)::geography) *
+             10.76391041671
+         END AS area_sqft
+       FROM gis.dcad_parcels parcel
+       CROSS JOIN boundary
+       WHERE parcel.geom && boundary.geom
+         AND ST_Intersects(parcel.geom, boundary.geom)
+         AND parcel.use_code IS DISTINCT FROM '3'
+     ), category_areas AS (
+       SELECT category, SUM(area_sqft) AS area_sqft
+       FROM clipped
+       GROUP BY category
+     )
+     SELECT
+       ST_Area(boundary.geom::geography) * 10.76391041671 AS boundary_area_sqft,
+       COALESCE((SELECT SUM(area_sqft) FROM clipped), 0) AS covered_area_sqft,
+       COALESCE((SELECT SUM(area_sqft) FROM clipped WHERE built_up), 0) AS built_up_area_sqft,
+       (SELECT COUNT(*) FROM clipped WHERE built_up) AS built_up_parcel_count,
+       COALESCE((SELECT SUM(area_sqft) FROM clipped), 0) AS raw_category_area_sqft,
+       COALESCE((
+         SELECT jsonb_object_agg(category, area_sqft)
+         FROM category_areas
+       ), '{}'::jsonb) AS category_areas,
+       COALESCE((
+         SELECT jsonb_agg(jsonb_build_object(
+           'source_index', source_index,
+           'area_sqft', area_sqft,
+           'full_area_sqft', full_area_sqft
+         ) ORDER BY source_index)
+         FROM clipped
+       ), '[]'::jsonb) AS parcel_areas
+     FROM boundary`,
+    [JSON.stringify(boundary)],
+  );
+  return rows[0];
+}
+
 function rounded(value, digits = 1) {
   const factor = 10 ** digits;
   return Math.round((Number(value) || 0) * factor) / factor;
@@ -544,14 +605,16 @@ export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
        parcel.property_description,
        parcel.subdivision_name,
        parcel.structure_type,
+       parcel.land_use_category,
+       parcel.classification_confidence,
+       parcel.classification_review_reason,
+       parcel.built_up,
        parcel.building_area_sqft,
        parcel.residential_area_sqft,
        parcel.residential_year_built,
        parcel.current_market_value,
        parcel.improvement_value,
-       parcel.source_updated_at,
-       parcel.source_attributes,
-       ST_AsGeoJSON(parcel.geom)::jsonb AS geometry
+       parcel.source_updated_at
      FROM gis.dcad_parcels parcel
      CROSS JOIN boundary
      WHERE parcel.geom && boundary.geom
@@ -563,7 +626,6 @@ export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
   if (rows.length > MAX_PARCELS) throw new Error("land_use_area_too_many_parcels");
   return rows.map((row, index) => {
     const attributes = {
-      ...(row.source_attributes || {}),
       OBJECTID: row.object_id,
       PARCELID: row.account_id,
       LOWPARCELID: row.low_parcel_id,
@@ -591,9 +653,14 @@ export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
       class_code: String(row.class_code || "").trim() || null,
       class_description: String(row.class_description || "").trim() || null,
       property_description: String(row.property_description || "").trim() || null,
+      land_use_category: String(row.land_use_category || "").trim() || null,
+      classification_confidence:
+        String(row.classification_confidence || "").trim() || null,
+      classification_review_reason:
+        String(row.classification_review_reason || "").trim() || null,
+      built_up: Boolean(row.built_up),
       source_updated_at: row.source_updated_at,
       attributes,
-      geometry: row.geometry,
       building_area_sqft: row.building_area_sqft,
       residential_area_sqft: row.residential_area_sqft,
       residential_year_built: row.residential_year_built,
@@ -768,10 +835,27 @@ export async function buildNeighborhoodLandUseAnalysis(
   const excludedNonLandRecordCount = parcels.length - landParcels.length;
   const classifiedParcels = landParcels.map((parcel) => ({
     ...parcel,
-    classification: classifyDcadLandUse(parcel.attributes),
-    built_up: isDcadParcelBuiltUp(parcel.attributes),
-  }));
-  const metrics = await calculateClippedParcelMetrics(pool, boundary, classifiedParcels);
+      classification: classifyDcadLandUse(parcel.attributes),
+      built_up: sourceMode === "local_mirror"
+        ? Boolean(parcel.built_up)
+        : isDcadParcelBuiltUp(parcel.attributes),
+    }));
+  if (sourceMode === "local_mirror") {
+    classifiedParcels.forEach((parcel) => {
+      parcel.classification = {
+        category: parcel.land_use_category || "other_vacant",
+        category_label: LAND_USE_CATEGORIES.find(
+          ({ key }) => key === parcel.land_use_category,
+        )?.label || "Other / Vacant Land",
+        confidence: parcel.classification_confidence || "low",
+        requires_review: Boolean(parcel.classification_review_reason),
+        review_reason: parcel.classification_review_reason || null,
+      };
+    });
+  }
+  const metrics = sourceMode === "local_mirror"
+    ? await calculateLocalClippedParcelMetrics(pool, boundary)
+    : await calculateClippedParcelMetrics(pool, boundary, classifiedParcels);
   const parcelAreaByIndex = new Map(
     (metrics.parcel_areas || []).map((item) => [Number(item.source_index), Number(item.area_sqft) || 0]),
   );

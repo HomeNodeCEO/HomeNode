@@ -56,11 +56,15 @@ jobs:
         run: |
           set -o pipefail
           NODE_ENV=test npm run --silent verify:uad:successful-delivery:database | tee uad-successful-delivery-database.json
+      - name: Export the canonical synthetic workfile fixture
+        run: NODE_ENV=test node scripts/exportUadSyntheticWorkfileFixture.js uad-synthetic-workfile-fixture.json
       - name: Preserve sanitized evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: uad-successful-delivery-${{ github.run_id }}
-          path: server/uad-successful-delivery-database.json
+          path: |
+            server/uad-successful-delivery-database.json
+            server/uad-synthetic-workfile-fixture.json
           if-no-files-found: warn
           retention-days: 30

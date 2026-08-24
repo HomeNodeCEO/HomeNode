@@ -93,6 +93,44 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
       ],
     });
 
+    const deliveryFixture = await pool.query(`
+      SELECT
+        (SELECT count(*)::integer
+           FROM appraisal.uad_entities AS entity
+          WHERE entity.workfile_id = workfile.id) AS entity_count,
+        (SELECT count(*)::integer
+           FROM appraisal.uad_entities AS entity
+          WHERE entity.workfile_id = workfile.id
+            AND entity.entity_type = 'sales_comparable') AS sales_comparables,
+        (SELECT count(*)::integer
+           FROM appraisal.uad_entities AS entity
+          WHERE entity.workfile_id = workfile.id
+            AND entity.entity_type = 'market_price_trend_source') AS market_sources,
+        (SELECT count(*)::integer
+           FROM appraisal.uad_entities AS entity
+          WHERE entity.workfile_id = workfile.id
+            AND entity.entity_type = 'unit') AS subject_units,
+        (SELECT count(*)::integer
+           FROM appraisal.uad_field_values AS value
+          WHERE value.workfile_id = workfile.id) AS field_value_count,
+        (SELECT count(*)::integer
+           FROM appraisal.uad_field_values AS value
+          WHERE value.workfile_id = workfile.id
+            AND value.entity_id IS NULL
+            AND value.field_context = 'sales_comparison_summary'
+            AND value.uad_uid = '1300.0006'
+            AND value.value = '445000'::jsonb) AS sales_conclusions
+      FROM appraisal.uad_workfiles AS workfile
+      WHERE workfile.file_number = 'HN-REDTEAM-DELIVERY-A-0001'
+    `);
+    assert.equal(deliveryFixture.rows.length, 1);
+    assert.equal(deliveryFixture.rows[0].sales_comparables, 3);
+    assert.equal(deliveryFixture.rows[0].market_sources, 1);
+    assert.equal(deliveryFixture.rows[0].subject_units >= 1, true);
+    assert.equal(deliveryFixture.rows[0].entity_count >= 75, true);
+    assert.equal(deliveryFixture.rows[0].field_value_count >= 439, true);
+    assert.equal(deliveryFixture.rows[0].sales_conclusions, 1);
+
     const sales = await pool.query(`
       SELECT
         count(*) FILTER (

@@ -78,6 +78,7 @@ type MapInstance = {
     options?: Record<string, unknown>,
   ) => void;
   resize: () => void;
+  setPaintProperty: (layerId: string, property: string, value: unknown) => void;
   remove: () => void;
 };
 
@@ -441,6 +442,36 @@ async function ensureMapLibraries(): Promise<void> {
     });
   }
   await mapLibrariesPromise;
+}
+
+function updateBoundaryAppearance(map: MapInstance | null, origin: MarketAreaOrigin): void {
+  if (!map) return;
+  const isAutomaticEnvelope = origin === 'automatic';
+  map.setPaintProperty(
+    'custom-market-boundary-fill',
+    'fill-opacity',
+    isAutomaticEnvelope ? 0.025 : 0.2,
+  );
+  map.setPaintProperty(
+    'custom-market-boundary-fill',
+    'fill-color',
+    isAutomaticEnvelope ? '#64748b' : '#2563eb',
+  );
+  map.setPaintProperty(
+    'custom-market-boundary-line',
+    'line-color',
+    isAutomaticEnvelope ? '#64748b' : '#0284c7',
+  );
+  map.setPaintProperty(
+    'custom-market-boundary-line',
+    'line-width',
+    isAutomaticEnvelope ? 1.5 : 4,
+  );
+  map.setPaintProperty(
+    'custom-market-boundary-line',
+    'line-dasharray',
+    isAutomaticEnvelope ? [3, 3] : [1, 0],
+  );
 }
 
 function resultFingerprint(
@@ -1425,6 +1456,7 @@ export default function MarketConditionsAnalysis({
               'circle-stroke-width': 2,
             },
           });
+          updateBoundaryAppearance(map, resolvedInitialOrigin);
           map.addSource(RELEVANCE_SOURCE_ID, {
             type: 'geojson',
             data: makeRelevanceFeatureCollection(relevanceVisualization),
@@ -1536,6 +1568,11 @@ export default function MarketConditionsAnalysis({
     updateBoundaryMap(map, customGeometry);
     fitMapToBoundary(map, customGeometry);
   }, [customGeometry, mapReady]);
+
+  useEffect(() => {
+    if (!mapReady) return;
+    updateBoundaryAppearance(mapRef.current, customGeometryOrigin);
+  }, [customGeometryOrigin, mapReady]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -2240,6 +2277,20 @@ export default function MarketConditionsAnalysis({
                 parcel or enter verified coordinates to draw a custom area.
               </div>
             )}
+            {relevanceVisualization.length > 0 ? (
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
+                <span className="font-semibold text-slate-700">Property similarity:</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-800" />Highest relevance</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-400" />Relevant</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" />Marginal</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Excluded</span>
+                {customGeometryOrigin === 'automatic' ? (
+                  <span className="basis-full text-slate-500">
+                    The dashed outline is a discovery envelope, not an appraiser-confirmed neighborhood boundary. Draw or edit the final narrative boundary as needed.
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             {mapError && (
               <div className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
                 {mapError}

@@ -23,13 +23,13 @@ export async function buildPairedSalesStudy(pool, {
   marketKey = "city",
   asOfDate = "",
   customGeometry = null,
+  accountIdAllowed,
 }) {
-  if (!/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
-    throw new Error("invalid_subject_account_id");
-  }
   const [area] = parseMarketAreaKeys([marketKey]);
   const period = completeCalendarMonthWindow(asOfDate, 12);
-  const subject = await getMarketContext(pool, subjectAccountId);
+  const subject = await getMarketContext(pool, subjectAccountId, {
+    accountIdAllowed,
+  });
   const normalizedCustomGeometry =
     area.scope === "custom"
       ? validateCustomMarketGeometry(customGeometry)

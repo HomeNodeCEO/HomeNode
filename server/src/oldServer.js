@@ -5215,6 +5215,7 @@ app.post("/api/sales/paired-analysis", async (req, res) => {
       marketKey: String(req.body?.market_key || "city").trim(),
       asOfDate: String(req.body?.as_of || "").trim(),
       customGeometry: req.body?.custom_geometry || null,
+      accountIdAllowed: legacyAccountIdAllowed,
     });
     res.json(result);
   } catch (error) {
@@ -5421,6 +5422,7 @@ app.post("/api/sales/market-analysis", async (req, res) => {
       periodMonths: req.body?.period_months ?? 24,
       customGeometry: req.body?.custom_geometry || null,
       marketContextOverride: req.body?.context_override || null,
+      accountIdAllowed: legacyAccountIdAllowed,
     });
     res.json(result);
   } catch (error) {
@@ -5447,6 +5449,7 @@ app.post("/api/sales/regression-analysis", async (req, res) => {
       marketKey: String(req.body?.market_key || "city").trim(),
       asOfDate: String(req.body?.as_of || "").trim(),
       customGeometry: req.body?.custom_geometry || null,
+      accountIdAllowed: legacyAccountIdAllowed,
     });
     res.json(result);
   } catch (error) {
@@ -5480,6 +5483,7 @@ app.post("/api/sales/site-valuation", async (req, res) => {
       marketKey: String(req.body?.market_key || "city").trim(),
       asOfDate: String(req.body?.as_of || "").trim(),
       customGeometry: req.body?.custom_geometry || null,
+      accountIdAllowed: legacyAccountIdAllowed,
     });
     res.json(result);
   } catch (error) {
@@ -5515,6 +5519,7 @@ app.post("/api/sales/neighborhood-profile", async (req, res) => {
       periodMonths: req.body?.period_months ?? 24,
       customGeometry,
       marketContextOverride: req.body?.context_override || null,
+      accountIdAllowed: legacyAccountIdAllowed,
     });
     let boundaryStreets = null;
     let boundaryStreetWarning = null;

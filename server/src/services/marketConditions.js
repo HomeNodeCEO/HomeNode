@@ -1295,6 +1295,7 @@ export async function buildMarketConditionsAnalyses(
     periodMonths = 24,
     customGeometry = null,
     marketContextOverride = null,
+    accountIdAllowed,
   },
 ) {
   const areas = parseMarketAreaKeys(areaKeys);
@@ -1304,7 +1305,9 @@ export async function buildMarketConditionsAnalyses(
     parsedPeriodMonths,
   );
 
-  const storedSubject = await getMarketContext(pool, subjectAccountId);
+  const storedSubject = await getMarketContext(pool, subjectAccountId, {
+    accountIdAllowed,
+  });
   const subject = applyMarketContextOverride(
     storedSubject,
     marketContextOverride,

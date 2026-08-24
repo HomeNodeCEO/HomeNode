@@ -65,6 +65,7 @@ async function seedCompletionValues(fixture) {
     ["scope_of_work", "1000.0030", "Does Not Display", false],
     ["income_approach_exclusion", "1300.0004", "26.003", ["NotNecessaryForCredibleResults"]],
     ["cost_approach_exclusion", "1300.0002", "26.005", ["NotNecessaryForCredibleResults"]],
+    ["sales_comparison_summary", "1300.0006", "22.15.15", 445000],
     ["reconciliation", "1300.0017", "26.007", 445000],
     ["reconciliation", "1300.0010", "26.009", ["AsIs"]],
     ["reconciliation", "1300.0013", "26.010", 45],

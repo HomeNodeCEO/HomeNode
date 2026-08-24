@@ -172,7 +172,7 @@ export async function runUadRedTeamEndpointFuzz({
 
   const identifierCases = {
     invalid_workfile_id: `/api/uad/workfiles/${encodeURIComponent("not-a-uuid")}`,
-    sql_like_workfile_id: `/api/uad/workfiles/${encodeURIComponent("' OR 1=1--")}`,
+    sql_metacharacter_workfile_id: `/api/uad/workfiles/${encodeURIComponent("uad'quoted;identifier")}`,
     unicode_workfile_id: `/api/uad/workfiles/${encodeURIComponent("\uFF10\uFF11\uFF12\uFF13-\uD83D\uDD12")}`,
   };
   const identifierAttacks = {};

@@ -86,7 +86,14 @@ export async function buildRegressionStudy(pool, {
        )::numeric AS bathrooms,
        CASE WHEN sale.mls_garage_spaces IS NOT NULL THEN ROUND(sale.mls_garage_spaces)::integer
             WHEN sale.mls_garage_yn = false THEN 0 ELSE NULL END AS garage_spaces,
-       COALESCE(sale.mls_pool_yn, sale.cad_pool) AS pool_yn,
+       COALESCE(
+         sale.mls_pool_yn,
+         CASE
+           WHEN lower(btrim(sale.cad_pool::text)) IN ('true', 't', 'yes', 'y', '1') THEN true
+           WHEN lower(btrim(sale.cad_pool::text)) IN ('false', 'f', 'no', 'n', '0', '') THEN false
+           ELSE NULL
+         END
+       ) AS pool_yn,
        COALESCE(NULLIF(sale.mls_living_area, 0), NULLIF(sale.cad_living_area_sqft, 0))::numeric AS living_area,
        COALESCE(NULLIF(sale.mls_lot_size_area, 0), NULLIF(cad_site.site_size_sqft, 0))::numeric AS site_size,
        CASE WHEN COALESCE(NULLIF(sale.mls_year_built, 0), NULLIF(sale.cad_effective_year_built, 0), NULLIF(sale.cad_year_built, 0)) IS NULL THEN NULL

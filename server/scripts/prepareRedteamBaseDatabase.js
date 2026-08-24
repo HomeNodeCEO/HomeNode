@@ -92,6 +92,34 @@ try {
       construction_type text
     );
 
+    ALTER TABLE core.primary_improvements
+      ADD COLUMN IF NOT EXISTS percent_complete numeric,
+      ADD COLUMN IF NOT EXISTS effective_year_built integer,
+      ADD COLUMN IF NOT EXISTS actual_age integer,
+      ADD COLUMN IF NOT EXISTS depreciation numeric,
+      ADD COLUMN IF NOT EXISTS desirability text,
+      ADD COLUMN IF NOT EXISTS stories numeric,
+      ADD COLUMN IF NOT EXISTS total_living_area integer,
+      ADD COLUMN IF NOT EXISTS basement text,
+      ADD COLUMN IF NOT EXISTS kitchens integer,
+      ADD COLUMN IF NOT EXISTS wetbars integer,
+      ADD COLUMN IF NOT EXISTS fireplaces integer,
+      ADD COLUMN IF NOT EXISTS sprinkler text,
+      ADD COLUMN IF NOT EXISTS spa text,
+      ADD COLUMN IF NOT EXISTS pool text,
+      ADD COLUMN IF NOT EXISTS sauna text,
+      ADD COLUMN IF NOT EXISTS air_conditioning text,
+      ADD COLUMN IF NOT EXISTS heating text,
+      ADD COLUMN IF NOT EXISTS foundation text,
+      ADD COLUMN IF NOT EXISTS roof_material text,
+      ADD COLUMN IF NOT EXISTS roof_type text,
+      ADD COLUMN IF NOT EXISTS exterior_material text,
+      ADD COLUMN IF NOT EXISTS fence_type text,
+      ADD COLUMN IF NOT EXISTS building_class text,
+      ADD COLUMN IF NOT EXISTS total_area_sqft integer,
+      ADD COLUMN IF NOT EXISTS baths_full integer,
+      ADD COLUMN IF NOT EXISTS baths_half integer;
+
     CREATE TABLE IF NOT EXISTS core.land_detail (
       id bigserial PRIMARY KEY,
       account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
@@ -104,6 +132,14 @@ try {
       UNIQUE (account_id, tax_year, line_number)
     );
 
+    ALTER TABLE core.land_detail
+      ADD COLUMN IF NOT EXISTS state_code text,
+      ADD COLUMN IF NOT EXISTS pricing_method text,
+      ADD COLUMN IF NOT EXISTS unit_price numeric,
+      ADD COLUMN IF NOT EXISTS market_adjustment_pct numeric,
+      ADD COLUMN IF NOT EXISTS adjusted_price numeric,
+      ADD COLUMN IF NOT EXISTS ag_land boolean;
+
     CREATE TABLE IF NOT EXISTS core.secondary_improvements (
       id bigserial PRIMARY KEY,
       account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
@@ -112,6 +148,12 @@ try {
       sec_imp_sqft integer,
       sec_imp_year_built integer
     );
+
+    ALTER TABLE core.secondary_improvements
+      ADD COLUMN IF NOT EXISTS sec_imp_cons_type text,
+      ADD COLUMN IF NOT EXISTS sec_imp_floor text,
+      ADD COLUMN IF NOT EXISTS sec_imp_ext_wall text,
+      ADD COLUMN IF NOT EXISTS sec_imp_value numeric;
 
     CREATE TABLE IF NOT EXISTS core.value_summary_current (
       account_id text PRIMARY KEY REFERENCES core.accounts(account_id) ON DELETE CASCADE,
@@ -214,6 +256,10 @@ try {
       )
     );
 
+    ALTER TABLE core.sales_source_records
+      ADD COLUMN IF NOT EXISTS listing_key text,
+      ADD COLUMN IF NOT EXISTS listing_id text;
+
     CREATE INDEX IF NOT EXISTS sales_source_records_primary_account_idx
       ON core.sales_source_records (primary_account_id);
     CREATE INDEX IF NOT EXISTS sales_source_records_close_date_idx
@@ -283,6 +329,81 @@ try {
     CREATE INDEX IF NOT EXISTS sales_account_closing_date_idx
       ON core.sales (account_id, closing_date DESC);
 
+    CREATE TABLE IF NOT EXISTS core.account_housing_profiles (
+      account_id text PRIMARY KEY REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      structural_style text,
+      housing_type text,
+      attachment_type text,
+      architectural_style text,
+      source_name text,
+      source_url text,
+      source_record_reference text,
+      observed_at timestamptz,
+      confidence numeric,
+      notes text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE OR REPLACE VIEW core.v_account_housing_profiles AS
+      SELECT account_id, structural_style, housing_type, attachment_type,
+             architectural_style, source_name, source_url,
+             source_record_reference, observed_at, confidence,
+             'verified_override'::text AS profile_source
+      FROM core.account_housing_profiles;
+
+    CREATE TABLE IF NOT EXISTS core.owner_summary (
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer NOT NULL,
+      owner_name text,
+      mailing_address text,
+      PRIMARY KEY (account_id, tax_year)
+    );
+
+    CREATE TABLE IF NOT EXISTS core.owner_parties (
+      id bigserial PRIMARY KEY,
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer NOT NULL,
+      owner_name text,
+      ownership_pct numeric
+    );
+
+    CREATE INDEX IF NOT EXISTS owner_parties_account_year_idx
+      ON core.owner_parties (account_id, tax_year DESC);
+
+    CREATE TABLE IF NOT EXISTS core.legal_description_current (
+      account_id text PRIMARY KEY REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer,
+      legal_lines jsonb,
+      legal_text text,
+      deed_transfer_date date
+    );
+
+    CREATE TABLE IF NOT EXISTS core.legal_description_history (
+      id bigserial PRIMARY KEY,
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer,
+      legal_lines jsonb,
+      legal_text text,
+      deed_transfer_date date
+    );
+
+    CREATE INDEX IF NOT EXISTS legal_description_history_account_year_idx
+      ON core.legal_description_history (account_id, tax_year DESC);
+
+    CREATE TABLE IF NOT EXISTS core.exemptions_summary (
+      id bigserial PRIMARY KEY,
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer NOT NULL,
+      jurisdiction_key text,
+      taxing_jurisdiction text,
+      homestead_exemption numeric,
+      disabled_vet numeric,
+      taxable_value numeric
+    );
+
+    CREATE INDEX IF NOT EXISTS exemptions_summary_account_year_idx
+      ON core.exemptions_summary (account_id, tax_year DESC);
+
     CREATE TABLE IF NOT EXISTS app.county_account_identifiers (
       county text NOT NULL,
       normalized_account_id text NOT NULL,
@@ -348,6 +469,69 @@ try {
        bath_count = EXCLUDED.bath_count,
        number_units = EXCLUDED.number_units,
        construction_type = EXCLUDED.construction_type`,
+    [fixtureAccountId],
+  );
+  await pool.query(
+    `INSERT INTO core.account_housing_profiles (
+       account_id, structural_style, housing_type, attachment_type,
+       architectural_style, source_name, source_record_reference,
+       observed_at, confidence, notes
+     ) VALUES ($1, 'Single Family', 'Single Family Residence', 'detached',
+               'Traditional', 'HomeNode synthetic red-team fixture',
+               'REDTEAM-HOUSING-0001', now(), 1.000, 'Synthetic test evidence')
+     ON CONFLICT (account_id) DO UPDATE SET
+       structural_style = EXCLUDED.structural_style,
+       housing_type = EXCLUDED.housing_type,
+       attachment_type = EXCLUDED.attachment_type,
+       architectural_style = EXCLUDED.architectural_style,
+       source_name = EXCLUDED.source_name,
+       source_record_reference = EXCLUDED.source_record_reference,
+       observed_at = EXCLUDED.observed_at,
+       confidence = EXCLUDED.confidence,
+       notes = EXCLUDED.notes,
+       updated_at = now()`,
+    [fixtureAccountId],
+  );
+  await pool.query(
+    `INSERT INTO core.owner_summary (account_id, tax_year, owner_name, mailing_address)
+     VALUES ($1, 2026, 'Synthetic Red Team Owner', '300 Red Team Test Dr, Garland, TX 75044')
+     ON CONFLICT (account_id, tax_year) DO UPDATE SET
+       owner_name = EXCLUDED.owner_name,
+       mailing_address = EXCLUDED.mailing_address`,
+    [fixtureAccountId],
+  );
+  await pool.query(
+    `DELETE FROM core.owner_parties
+     WHERE account_id = $1 AND tax_year = 2026`,
+    [fixtureAccountId],
+  );
+  await pool.query(
+    `INSERT INTO core.owner_parties (account_id, tax_year, owner_name, ownership_pct)
+     VALUES ($1, 2026, 'Synthetic Red Team Owner', 100)`,
+    [fixtureAccountId],
+  );
+  await pool.query(
+    `INSERT INTO core.legal_description_current (
+       account_id, tax_year, legal_lines, legal_text, deed_transfer_date
+     ) VALUES ($1, 2026, '["LOT 1 BLOCK R RED TEAM TEST ESTATES"]'::jsonb,
+               'LOT 1 BLOCK R RED TEAM TEST ESTATES', DATE '2024-06-15')
+     ON CONFLICT (account_id) DO UPDATE SET
+       tax_year = EXCLUDED.tax_year,
+       legal_lines = EXCLUDED.legal_lines,
+       legal_text = EXCLUDED.legal_text,
+       deed_transfer_date = EXCLUDED.deed_transfer_date`,
+    [fixtureAccountId],
+  );
+  await pool.query(
+    `DELETE FROM core.exemptions_summary
+     WHERE account_id = $1 AND tax_year = 2026 AND jurisdiction_key = 'CITY'`,
+    [fixtureAccountId],
+  );
+  await pool.query(
+    `INSERT INTO core.exemptions_summary (
+       account_id, tax_year, jurisdiction_key, taxing_jurisdiction,
+       homestead_exemption, disabled_vet, taxable_value
+     ) VALUES ($1, 2026, 'CITY', 'Synthetic City of Garland', 0, 0, 425000)`,
     [fixtureAccountId],
   );
   await pool.query(

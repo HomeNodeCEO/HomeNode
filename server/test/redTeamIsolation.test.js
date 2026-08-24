@@ -212,6 +212,13 @@ test("red-team startup bootstraps the guarded synthetic base before migrations",
 test("red-team bootstrap and account reads preserve optional sales availability", () => {
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.sales \(/);
   assert.match(redTeamBaseSource, /sales_account_closing_date_idx/);
+  assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS percent_complete numeric/);
+  assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS listing_key text/);
+  assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_account_housing_profiles/);
+  assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.owner_summary/);
+  assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.legal_description_current/);
+  assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.exemptions_summary/);
+  assert.match(redTeamBaseSource, /Synthetic Red Team Owner/);
   assert.match(
     serverSource,
     /getAccountPropertyActivityHistory\(pool, canonicalId\)[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \[\];[\s\S]*?\}\);/,

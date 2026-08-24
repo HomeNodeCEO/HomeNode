@@ -3,6 +3,8 @@ import { REDTEAM_API_ORIGIN, normalizeUadRedTeamApiUrl } from "./uadRedTeamBasel
 const MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_RATE_LIMIT = 200;
 const MAX_CONCURRENCY = 10;
+const MAX_POLICY_BUCKETS = 4;
+const MAX_TOTAL_LOAD_REQUESTS = 500;
 const MAX_RECOVERY_WAIT_SECONDS = 70;
 const SENSITIVE_RESPONSE_PATTERN = /(?:postgres(?:ql)?:\/\/|-----BEGIN [A-Z ]+PRIVATE KEY-----|\bBearer\s+|\b(?:select|insert|update|delete)\s+.+\s+(?:from|into|set)\b)/i;
 
@@ -17,6 +19,11 @@ function headerInteger(value, pattern) {
   return match ? Number(match[1]) : null;
 }
 
+function headerToken(value, pattern) {
+  const match = pattern.exec(String(value || ""));
+  return match ? match[1] : null;
+}
+
 function rateLimitMetadata(headers) {
   const rateLimit = headers?.get?.("ratelimit") || "";
   const policy = headers?.get?.("ratelimit-policy") || "";
@@ -29,6 +36,7 @@ function rateLimitMetadata(headers) {
     resetSeconds: headerInteger(rateLimit, /(?:^|;)\s*t=(\d+)\b/i)
       ?? headerInteger(headers?.get?.("ratelimit-reset"), /^(\d+)$/),
     retryAfterSeconds: headerInteger(headers?.get?.("retry-after"), /^(\d+)$/),
+    policyKey: headerToken(policy, /(?:^|;)\s*pk=:([^:]{1,128}):/i),
   });
 }
 
@@ -178,7 +186,13 @@ export async function runUadRedTeamBoundedLoad({
     });
   }
 
-  const requestBudget = Math.min(MAX_RATE_LIMIT + MAX_CONCURRENCY, initialRemaining + workerCount + 1);
+  // Hosted CI can legitimately egress through multiple client addresses. Exercise
+  // a tightly bounded number of advertised policy buckets instead of assuming
+  // every connection from one runner shares one public IP.
+  const requestBudget = Math.min(
+    MAX_TOTAL_LOAD_REQUESTS,
+    initialRemaining + (configuredLimit * (MAX_POLICY_BUCKETS - 1)) + workerCount + 1,
+  );
   const results = [];
   let nextRequest = 0;
   let stopScheduling = false;
@@ -201,12 +215,17 @@ export async function runUadRedTeamBoundedLoad({
   ));
   const firstLimited = limitedResponses[0] || null;
   const retryAfterSeconds = firstLimited?.rateLimit?.retryAfterSeconds ?? null;
+  const observedPolicyKeys = new Set(
+    [initial, ...results].map((result) => result.rateLimit.policyKey).filter(Boolean),
+  );
+  const observedPolicyBuckets = Math.max(1, observedPolicyKeys.size);
   const timings = results.map((result) => result.elapsedMs).filter(Number.isFinite);
   const loadReady = limitedResponses.length >= 1
     && successResponses.length >= 1
     && unexpectedResponses.length === 0
+    && observedPolicyBuckets <= MAX_POLICY_BUCKETS
     && results.length <= requestBudget
-    && requestCount <= MAX_RATE_LIMIT + MAX_CONCURRENCY + 3;
+    && requestCount <= MAX_TOTAL_LOAD_REQUESTS + 3;
 
   if (loadReady) {
     await sleep((retryAfterSeconds * 1_000) + 1_500);
@@ -237,6 +256,7 @@ export async function runUadRedTeamBoundedLoad({
       successful_responses: successResponses.length,
       rate_limited_responses: limitedResponses.length,
       unexpected_responses: unexpectedResponses.length,
+      observed_policy_buckets: observedPolicyBuckets,
       retry_after_seconds: retryAfterSeconds,
       latency_ms: Object.freeze({
         p50: percentile(timings, 0.50),

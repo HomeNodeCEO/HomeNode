@@ -59,8 +59,50 @@ test("bounded load proves 429 enforcement and post-window recovery", async () =>
   assert.equal(result.load.successful_responses, 9);
   assert.ok(result.load.rate_limited_responses >= 1);
   assert.equal(result.load.unexpected_responses, 0);
+  assert.equal(result.load.observed_policy_buckets, 1);
   assert.equal(result.recovery.ready, true);
   assert.doesNotMatch(JSON.stringify(result), /rate_limit_exceeded|specification_release_key/i);
+});
+
+test("bounded load tolerates a small number of rotating CI egress buckets", async () => {
+  let phase = "load";
+  let requestNumber = 0;
+  const counts = new Map();
+  const fetchImpl = async (input) => {
+    const url = new URL(input);
+    if (url.pathname === "/api/uad/readiness") return json({ ok: true });
+    if (phase === "recovered") {
+      return json(
+        { specification_release_key: "uad-3.6-test" },
+        200,
+        { ratelimit: '"10-in-1sec"; r=9; t=1', "ratelimit-policy": '"10-in-1sec"; q=10; w=1; pk=:bucket-a:' },
+      );
+    }
+    const bucket = requestNumber++ % 2 === 0 ? "bucket-a" : "bucket-b";
+    const count = (counts.get(bucket) || 0) + 1;
+    counts.set(bucket, count);
+    if (count > 10) {
+      return json(
+        { error: "rate_limit_exceeded" },
+        429,
+        { ratelimit: '"10-in-1sec"; r=0; t=1', "ratelimit-policy": `"10-in-1sec"; q=10; w=1; pk=:${bucket}:`, "retry-after": "1" },
+      );
+    }
+    return json(
+      { specification_release_key: "uad-3.6-test" },
+      200,
+      { ratelimit: `"10-in-1sec"; r=${10 - count}; t=1`, "ratelimit-policy": `"10-in-1sec"; q=10; w=1; pk=:${bucket}:` },
+    );
+  };
+
+  const result = await runUadRedTeamBoundedLoad({
+    fetchImpl,
+    concurrency: 2,
+    sleep: async () => { phase = "recovered"; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.load.observed_policy_buckets, 2);
+  assert.ok(result.load.attempted_requests > 10);
 });
 
 test("bounded load fails closed on an unexpected response", async () => {

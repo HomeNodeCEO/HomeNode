@@ -142,8 +142,10 @@ Local integration tests assert the same response contracts and prove rate
 limiting occurs before request-body parsing.
 
 The bounded-load workflow dynamically reads the isolated service's application
-limit, caps accepted limits at 200, uses six workers, stops scheduling on the
-first valid 429, and proves recovery after the advertised retry window. The
+limit, caps accepted limits at 200, uses six workers, tolerates no more than
+four hosted-CI egress policy buckets under a hard 500-request ceiling, stops
+scheduling on the first valid 429, and proves recovery after the advertised
+retry window. The
 kill-switch workflow is intended only for a scheduled disabled-workspace
 window and proves that diagnostics remain available while protected reads and
 writes fail closed. Both workflows have fixed targets, sanitized aggregate

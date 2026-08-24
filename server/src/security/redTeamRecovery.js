@@ -11,7 +11,7 @@ const EXPECTED_FIXTURE_COUNTS = Object.freeze({
   organizations: Object.keys(REDTEAM_ORGANIZATIONS).length,
   users: REDTEAM_PERSONAS.length,
   oidc_identities: REDTEAM_PERSONAS.length,
-  uad_workfiles: 2,
+  uad_workfiles: 3,
 });
 
 function required(environment, key) {

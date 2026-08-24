@@ -278,6 +278,8 @@ test("red-team workfiles receive an idempotent complete assignment baseline", ()
   assert.match(redTeamFixturesSource, /REDTEAM_ASSIGNMENT_DEFAULTS/);
   assert.match(redTeamFixturesSource, /saveUadSection\(pool, workfileId, "assignment"/);
   assert.match(redTeamFixturesSource, /assignment_baselines_created/);
+  assert.match(redTeamFixturesSource, /HN-REDTEAM-DELIVERY-A-0001/);
+  assert.match(redTeamFixturesSource, /seedSalesRichUadDatabaseFixture/);
   assert.match(redTeamFixturesSource, /pruneStaleRedTeamOidcIssuers/);
   assert.match(redTeamFixturesSource, /stale_oidc_identities_removed/);
   assert.ok(

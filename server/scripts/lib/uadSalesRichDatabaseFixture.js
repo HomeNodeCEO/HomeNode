@@ -243,15 +243,35 @@ async function configureComparableScenario(fixture, comparableId, scenario) {
   }
 }
 
-async function seedSalesComparables(fixture) {
-  const source = await fixture.pool.query(
+async function ensureInitialSalesComparable(fixture) {
+  const existing = await fixture.pool.query(
     `SELECT id FROM appraisal.uad_entities
       WHERE workfile_id = $1 AND entity_type = 'sales_comparable'
       ORDER BY ordinal, id LIMIT 1`,
     [fixture.workfileId],
   );
-  if (!source.rows.length) throw new Error("synthetic_sales_comparable_missing");
-  const sourceId = source.rows[0].id;
+  if (existing.rows.length) return existing.rows[0].id;
+
+  const id = deterministicUuid(`${fixture.namespace}:entity:sales-comparable-1`);
+  const inserted = await fixture.pool.query(
+    `INSERT INTO appraisal.uad_entities (
+       id, workfile_id, parent_entity_id, entity_type, entity_identifier,
+       ordinal, label, data, created_at, updated_at
+     ) VALUES (
+       $1, $2, NULL, 'sales_comparable', 'sales-comparable-1',
+       1, 'Sales Comparable 1', '{}'::jsonb, $3::timestamptz, $3::timestamptz
+     ) ON CONFLICT (workfile_id, entity_type, entity_identifier) DO UPDATE SET
+       ordinal = EXCLUDED.ordinal,
+       label = EXCLUDED.label,
+       updated_at = EXCLUDED.updated_at
+     RETURNING id`,
+    [id, fixture.workfileId, fixture.observedAt],
+  );
+  return inserted.rows[0].id;
+}
+
+async function seedSalesComparables(fixture) {
+  const sourceId = await ensureInitialSalesComparable(fixture);
   const secondId = await cloneSalesComparable(fixture, sourceId, 2);
   const thirdId = await cloneSalesComparable(fixture, sourceId, 3);
   const scenarios = [

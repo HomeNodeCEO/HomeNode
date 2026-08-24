@@ -11,6 +11,7 @@ import {
 
 const serverSource = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
 const redTeamBaseSource = fs.readFileSync(new URL("../scripts/prepareRedteamBaseDatabase.js", import.meta.url), "utf8");
+const redTeamSalesFixtureSource = fs.readFileSync(new URL("../src/security/redTeamSalesFixtures.js", import.meta.url), "utf8");
 const redTeamFixturesSource = fs.readFileSync(new URL("../scripts/prepareRedteamDatabase.js", import.meta.url), "utf8");
 const redTeamIntegrityWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/uad-redteam-integrity.yml", import.meta.url),
@@ -232,6 +233,10 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.legal_description_current/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.exemptions_summary/);
   assert.match(redTeamBaseSource, /Synthetic Red Team Owner/);
+  assert.match(redTeamBaseSource, /seedRedTeamSalesFixtures\(pool, fixtureAccountId\)/);
+  assert.match(redTeamSalesFixtureSource, /REDTEAM_COMPARABLE_COUNT = 36/);
+  assert.match(redTeamSalesFixtureSource, /REDTEAM_RECONCILIATION_COUNT = 2/);
+  assert.match(redTeamSalesFixtureSource, /ensureAppraisalRatingsSchema\(pool\)/);
   assert.match(
     serverSource,
     /getAccountPropertyActivityHistory\(pool, canonicalId\)[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \[\];[\s\S]*?\}\);/,

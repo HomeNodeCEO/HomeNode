@@ -7,6 +7,7 @@ import {
   createRedTeamIsolationConfiguration,
   verifyRedTeamSyntheticBoundary,
 } from "../src/security/redTeamIsolation.js";
+import { seedRedTeamSalesFixtures } from "../src/security/redTeamSalesFixtures.js";
 
 const isolation = createRedTeamIsolationConfiguration();
 if (!isolation.enabled || !isolation.ready) throw new Error("redteam_isolation_not_enabled");
@@ -790,11 +791,14 @@ try {
     [fixtureAccountId],
   );
 
+  const salesFixtures = await seedRedTeamSalesFixtures(pool, fixtureAccountId);
+
   console.log(JSON.stringify({
     prepared: true,
     environment: "redteam",
     synthetic_only: true,
     fixture_account_id: fixtureAccountId,
+    sales_fixtures: salesFixtures,
   }));
 } finally {
   await pool.end();

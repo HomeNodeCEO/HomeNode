@@ -108,11 +108,18 @@ function sendError(res, error) {
 }
 
 export function uadBodyParserErrorHandler(error, _req, res, next) {
+  res.set("cache-control", "no-store");
   if (error?.type === "entity.parse.failed") {
     return res.status(400).json({ error: "invalid_json_body" });
   }
   if (error?.type === "entity.too.large") {
     return res.status(413).json({ error: "request_body_too_large" });
+  }
+  if (error?.type === "encoding.unsupported" || error?.type === "charset.unsupported") {
+    return res.status(415).json({ error: "unsupported_request_encoding" });
+  }
+  if (error?.status === 400 && error?.expose === true) {
+    return res.status(400).json({ error: "invalid_request_body" });
   }
   return next(error);
 }
@@ -133,6 +140,10 @@ export function createUadRouter({
   security = {},
 }) {
   const router = express.Router();
+  router.use((_req, res, next) => {
+    res.set("cache-control", "no-store");
+    next();
+  });
   router.use(rateLimit({
     windowMs: security.rateLimitWindowMs,
     limit: security.rateLimitMax,
@@ -141,6 +152,19 @@ export function createUadRouter({
     legacyHeaders: false,
     handler: (_req, res) => res.status(429).json({ error: "rate_limit_exceeded" }),
   }));
+  router.use(express.json({ limit: "1mb" }));
+  router.use(uadBodyParserErrorHandler);
+  router.use((req, res, next) => {
+    if (!["POST", "PUT", "PATCH"].includes(req.method)) return next();
+    const contentType = String(req.get("content-type") || "").trim();
+    const hasBody = contentType
+      || Number(req.get("content-length") || 0) > 0
+      || Boolean(req.get("transfer-encoding"));
+    if (hasBody && !req.is("application/json")) {
+      return res.status(415).json({ error: "unsupported_media_type" });
+    }
+    return next();
+  });
   const authenticateSigner = verifier?.verify
     ? createMobileAuthenticator({ pool, verifier })
     : (_req, res) => res.status(503).json({ error: "mobile_oidc_not_configured" });
@@ -545,6 +569,8 @@ export function createUadRouter({
       sendError(res, error);
     }
   });
+
+  router.use((_req, res) => res.status(404).json({ error: "uad_route_not_found" }));
 
   return router;
 }

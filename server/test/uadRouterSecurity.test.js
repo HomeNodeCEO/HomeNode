@@ -12,7 +12,6 @@ const OTHER_ORGANIZATION_ID = "b5250368-e8f1-4d47-9f62-a8a7cb2ea383";
 
 async function withServer(pool, callback, securityOverrides = {}) {
   const app = express();
-  app.use(express.json());
   app.use("/api/uad", createUadRouter({
     pool,
     storage: { provider: "r2", configured: true },
@@ -120,6 +119,7 @@ test("strict UAD routes allow the assigned appraiser and keep capabilities publi
   await withServer(pool, async (baseUrl) => {
     const capabilities = await fetch(`${baseUrl}/api/uad/capabilities`);
     assert.equal(capabilities.status, 200);
+    assert.equal(capabilities.headers.get("cache-control"), "no-store");
     assert.equal((await capabilities.json()).authentication.required, true);
 
     const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}`, {
@@ -151,15 +151,69 @@ test("UAD JSON parser failures return bounded JSON without reaching authenticati
       body: "{",
     });
     assert.equal(malformed.status, 400);
+    assert.equal(malformed.headers.get("cache-control"), "no-store");
     assert.deepEqual(await malformed.json(), { error: "invalid_json_body" });
 
     const oversized = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
       method: "PATCH",
       headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
-      body: JSON.stringify({ padding: "x".repeat(110_000) }),
+      body: JSON.stringify({ padding: "x".repeat(1_050_000) }),
     });
     assert.equal(oversized.status, 413);
+    assert.equal(oversized.headers.get("cache-control"), "no-store");
     assert.deepEqual(await oversized.json(), { error: "request_body_too_large" });
+    assert.equal(pool.accessQueries.length, 0);
+  });
+});
+
+test("UAD mutation routes reject non-JSON bodies and unknown routes stay bounded", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const unsupported = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
+      method: "PATCH",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "text/plain" },
+      body: "{}",
+    });
+    assert.equal(unsupported.status, 415);
+    assert.equal(unsupported.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await unsupported.json(), { error: "unsupported_media_type" });
+
+    const missing = await fetch(`${baseUrl}/api/uad/__unknown_route__`, {
+      headers: { authorization: "Bearer synthetic-token" },
+    });
+    assert.equal(missing.status, 404);
+    assert.equal(missing.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await missing.json(), { error: "uad_route_not_found" });
+  });
+});
+
+test("UAD body parser hides compression and charset parser diagnostics", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const invalidGzip = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
+      method: "PATCH",
+      headers: {
+        authorization: "Bearer synthetic-token",
+        "content-type": "application/json",
+        "content-encoding": "gzip",
+      },
+      body: "not-a-gzip-stream",
+    });
+    assert.equal(invalidGzip.status, 400);
+    assert.equal(invalidGzip.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await invalidGzip.json(), { error: "invalid_request_body" });
+
+    const unsupportedCharset = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
+      method: "PATCH",
+      headers: {
+        authorization: "Bearer synthetic-token",
+        "content-type": "application/json; charset=iso-8859-1",
+      },
+      body: "{}",
+    });
+    assert.equal(unsupportedCharset.status, 415);
+    assert.equal(unsupportedCharset.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await unsupportedCharset.json(), { error: "unsupported_request_encoding" });
     assert.equal(pool.accessQueries.length, 0);
   });
 });

@@ -232,7 +232,6 @@ const loadDcadScraperStatus = redTeamIsolation.external_status_enabled
 app.use(requestPerformance.middleware);
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));
-app.use(express.json({ limit: "1mb" }));
 
 const uadObjectStorage = createUadObjectStorage();
 const uadComplianceRegistry = createUadComplianceRegistry();
@@ -253,6 +252,7 @@ app.use("/api/uad", createUadRouter({
   security: httpSecurity,
 }));
 app.use("/api/uad", uadBodyParserErrorHandler);
+app.use(express.json({ limit: "1mb" }));
 
 app.use("/api/mobile", createMobileRouter({
   pool,

@@ -125,6 +125,14 @@ red-team base URL, use environment-protected secrets, cap concurrency, upload
 sanitized evidence, and refuse any hostname containing the production or shared
 staging service name.
 
+The bounded protocol-fuzz workflow adds signed JWT negative cases, parser and
+content-encoding failures, media-type enforcement, route/method confusion, a
+64 KiB response cap, secret/stack/SQL response screening, and a post-run health,
+readiness, and unchanged-revision proof. It is sequential and non-mutating; it
+is not a load test. The sales-rich pre-submission workflow remains the separate
+functional gate for settled comparable sales, adjustments, reconciliation,
+signed XML/PDF/package output, and negative missing-sales coverage.
+
 ### Temporary dependency exception
 
 `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` affect `image-size` through

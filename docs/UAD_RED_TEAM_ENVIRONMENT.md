@@ -175,6 +175,33 @@ Treat any failed matrix cell as a stop condition. Do not proceed to parser,
 upload, concurrency, or active scanning tests until it is understood and the
 matrix passes again.
 
+## Bounded protocol fuzz
+
+After the authenticated matrix passes, dispatch
+`.github/workflows/uad-redteam-protocol-fuzz.yml`. The workflow is pinned to
+the isolated API and sends 24 sequential requests. It rejects malformed,
+corrupted, expired, not-yet-valid, wrong-issuer, wrong-audience, algorithm-
+confusion, unknown-key, embedded-JWKS, missing-subject, and large malformed
+tokens. It also exercises malformed, oversized, incorrectly compressed,
+unsupported-charset, and non-JSON request bodies plus unknown routes and HTTP
+method-override attempts.
+
+Every tested rejection must return bounded JSON, and every tested UAD response
+must carry `Cache-Control: no-store`. The runner reads at most 64 KiB, never
+records tokens or response bodies, and fails if a response contains credential,
+stack, SQL, or connection-string material.
+It performs no valid mutation: the final recovery checks require health and
+readiness to remain green and the protected synthetic workfile revision to be
+unchanged. Run it locally only with the protected `uad-redteam` environment
+variables:
+
+```powershell
+npm run --silent verify:redteam:protocol-fuzz
+```
+
+Treat any failed cell, changed fixture revision, unsafe response, or failed
+recovery check as a stop condition before storage or concurrency testing.
+
 ## Integrity and private-storage checks
 
 After the authenticated matrix passes, dispatch
@@ -232,3 +259,16 @@ healthy enough to expose `/api/uad/capabilities` and `/api/uad/readiness` while
 all UAD workfile routes return `503 uad_workspace_disabled`. Re-enable the
 workspace only after the stop condition is resolved and the low-volume baseline
 passes again.
+
+## Sales-rich delivery gate
+
+Protocol security results do not establish appraisal completeness. The
+separate `.github/workflows/uad-successful-delivery.yml` gate prepares a fresh
+synthetic PostgreSQL database and requires three settled comparable sales,
+verified comparable photos, nonzero adjustments, recalculated adjusted prices,
+comparable weighting, sales reconciliation, a final opinion, schema-valid
+MISMO XML, a rendered native PDF, and a deterministic ZIP. Its negative cases
+must also prove that a fixture without sales, adjustments, or reconciliation is
+rejected. This gate runs on relevant pull requests and every relevant push to
+`main`; it does not call a Fannie Mae or Freddie Mac system without their
+nonproduction credentials.

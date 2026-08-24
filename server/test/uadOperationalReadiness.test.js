@@ -74,7 +74,7 @@ test("builds a credential-safe local-delivery readiness result", () => {
 
 test("mounts readiness before the disabled-workspace guard", () => {
   const route = routerSource.indexOf('router.get("/readiness"');
-  const guard = routerSource.indexOf("router.use((req, res, next)");
+  const guard = routerSource.indexOf("if (enabled) return next();");
   assert.ok(route > 0);
   assert.ok(guard > route);
   assert.match(routerSource, /cache-control", "no-store"/);

@@ -214,7 +214,11 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   assert.match(redTeamBaseSource, /sales_account_closing_date_idx/);
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS percent_complete numeric/);
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS pool boolean/);
-  assert.match(redTeamBaseSource, /ALTER COLUMN pool TYPE boolean/);
+  assert.doesNotMatch(redTeamBaseSource, /ALTER COLUMN pool TYPE boolean/);
+  assert.match(
+    serverSource,
+    /sale\.mls_pool_yn,[\s\S]*?lower\(btrim\(sale\.cad_pool::text\)\)[\s\S]*?AS pool_yn/,
+  );
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS listing_key text/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.sales_source_media/);
   assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_sales_media_summary/);

@@ -214,6 +214,8 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   assert.match(redTeamBaseSource, /sales_account_closing_date_idx/);
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS percent_complete numeric/);
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS listing_key text/);
+  assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.sales_source_media/);
+  assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_sales_media_summary/);
   assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_account_housing_profiles/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.owner_summary/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.legal_description_current/);

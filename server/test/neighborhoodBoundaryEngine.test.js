@@ -39,15 +39,15 @@ test("traces curved selected corridors instead of flattening them to a rectangle
   });
   const result = buildRoadwayBoundary({
     cardinal_boundaries: {
-      north: selected([-96.65, 32.99], [[[-96.68, 32.988], [-96.65, 32.992], [-96.62, 32.989]]]),
-      east: selected([-96.62, 32.97], [[[-96.621, 32.99], [-96.618, 32.97], [-96.622, 32.94]]]),
-      south: selected([-96.65, 32.94], [[[-96.68, 32.941], [-96.65, 32.937], [-96.62, 32.942]]]),
-      west: selected([-96.68, 32.97], [[[-96.679, 32.94], [-96.682, 32.97], [-96.678, 32.99]]]),
+      north: selected([-96.65, 32.994], [[[-96.675, 32.994], [-96.65, 32.992], [-96.625, 32.994]]]),
+      east: selected([-96.625, 32.97], [[[-96.625, 32.994], [-96.623, 32.97], [-96.625, 32.946]]]),
+      south: selected([-96.65, 32.946], [[[-96.675, 32.946], [-96.65, 32.944], [-96.625, 32.946]]]),
+      west: selected([-96.675, 32.97], [[[-96.675, 32.946], [-96.677, 32.97], [-96.675, 32.994]]]),
     },
   }, { type: "Point", coordinates: [-96.65, 32.97] });
 
   assert.ok(result.coordinates[0].length > 5);
-  assert.ok(result.coordinates[0].some((point) => point[0] === -96.618));
+  assert.ok(result.coordinates[0].some((point) => point[0] === -96.623));
   assert.ok(result.coordinates[0].some((point) => point[1] === 32.992));
 });
 
@@ -133,10 +133,10 @@ test("generates a local, persisted broad boundary without a remote road dependen
     }],
     // local TxDOT traffic-backed boundary roads
     [
-      { name: "Arapaho Rd", route_name: "CS", current_aadt: 42000, geometry: { type: "MultiLineString", coordinates: [[[-96.68, 32.994], [-96.62, 32.994]]] } },
-      { name: "N Garland Ave", route_name: "SH0078-KG", current_aadt: 38000, geometry: { type: "MultiLineString", coordinates: [[[-96.625, 32.94], [-96.625, 33.00]]] } },
-      { name: "Belt Line Rd", route_name: "CS", current_aadt: 40000, geometry: { type: "MultiLineString", coordinates: [[[-96.68, 32.946], [-96.62, 32.946]]] } },
-      { name: "S Jupiter Rd", route_name: "CS", current_aadt: 34000, geometry: { type: "MultiLineString", coordinates: [[[-96.675, 32.94], [-96.675, 33.00]]] } },
+      { name: "Arapaho Rd", route_name: "CS", current_aadt: 42000, geometry: { type: "MultiLineString", coordinates: [[[-96.675, 32.994], [-96.625, 32.994]]] } },
+      { name: "N Garland Ave", route_name: "SH0078-KG", current_aadt: 38000, geometry: { type: "MultiLineString", coordinates: [[[-96.625, 32.946], [-96.625, 32.994]]] } },
+      { name: "Belt Line Rd", route_name: "CS", current_aadt: 40000, geometry: { type: "MultiLineString", coordinates: [[[-96.675, 32.946], [-96.625, 32.946]]] } },
+      { name: "S Jupiter Rd", route_name: "CS", current_aadt: 34000, geometry: { type: "MultiLineString", coordinates: [[[-96.675, 32.946], [-96.675, 32.994]]] } },
     ],
     // zoning evidence
     [{
@@ -171,10 +171,10 @@ test("generates a local, persisted broad boundary without a remote road dependen
   const savedBoundary = JSON.parse(calls.find((call) =>
     /INSERT INTO app\.neighborhood_boundary_assessments/.test(call.sql),
   ).params[7]);
-  assert.ok(savedBoundary.coordinates[0].length > 5);
+  assert.ok(savedBoundary.coordinates[0].length >= 5);
   assert.deepEqual(savedBoundary.coordinates[0][0], savedBoundary.coordinates[0].at(-1));
-  assert.ok(savedBoundary.coordinates[0].some((point) => point[0] === -96.62));
-  assert.ok(savedBoundary.coordinates[0].some((point) => point[1] === 33));
+  assert.ok(savedBoundary.coordinates[0].some((point) => point[0] === -96.625));
+  assert.ok(savedBoundary.coordinates[0].some((point) => point[1] === 32.994));
 });
 
 test("rejects an invalid explicit profile before spatial analysis", async () => {

@@ -443,30 +443,44 @@ async function calculateLocalClippedParcelMetrics(pool, boundary) {
   const { rows } = await pool.query(
     `WITH boundary AS MATERIALIZED (
        SELECT ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)) AS geom
+     ), parcel_candidates AS MATERIALIZED (
+       SELECT
+         parcel.object_id,
+         parcel.account_id,
+         parcel.land_use_category AS category,
+         parcel.built_up,
+         parcel.parcel_area_sqft,
+         CASE
+           WHEN ST_IsValid(parcel.geom) THEN parcel.geom
+           ELSE ST_Multi(ST_CollectionExtract(ST_MakeValid(parcel.geom), 3))
+         END AS safe_geom
+       FROM gis.dcad_parcels parcel
+       CROSS JOIN boundary
+       WHERE parcel.geom && boundary.geom
+         AND parcel.use_code IS DISTINCT FROM '3'
      ), clipped AS MATERIALIZED (
        SELECT
          row_number() OVER (ORDER BY parcel.object_id) - 1 AS source_index,
          parcel.account_id,
-         parcel.land_use_category AS category,
+         parcel.category,
          parcel.built_up,
          COALESCE(
            parcel.parcel_area_sqft,
-           ST_Area(parcel.geom::geography) * 10.76391041671
+           ST_Area(parcel.safe_geom::geography) * 10.76391041671
          ) AS full_area_sqft,
          CASE
-           WHEN ST_Covers(boundary.geom, parcel.geom)
+           WHEN ST_Covers(boundary.geom, parcel.safe_geom)
              THEN COALESCE(
                parcel.parcel_area_sqft,
-               ST_Area(parcel.geom::geography) * 10.76391041671
+               ST_Area(parcel.safe_geom::geography) * 10.76391041671
              )
-           ELSE ST_Area(ST_Intersection(parcel.geom, boundary.geom)::geography) *
+           ELSE ST_Area(ST_Intersection(parcel.safe_geom, boundary.geom)::geography) *
              10.76391041671
          END AS area_sqft
-       FROM gis.dcad_parcels parcel
+       FROM parcel_candidates parcel
        CROSS JOIN boundary
-       WHERE parcel.geom && boundary.geom
-         AND ST_Intersects(parcel.geom, boundary.geom)
-         AND parcel.use_code IS DISTINCT FROM '3'
+       WHERE NOT ST_IsEmpty(parcel.safe_geom)
+         AND ST_Intersects(parcel.safe_geom, boundary.geom)
      ), category_areas AS (
        SELECT category, SUM(area_sqft) AS area_sqft
        FROM clipped
@@ -618,7 +632,13 @@ export async function fetchLocalDcadLandUseParcels(pool, customGeometry) {
      FROM gis.dcad_parcels parcel
      CROSS JOIN boundary
      WHERE parcel.geom && boundary.geom
-       AND ST_Intersects(parcel.geom, boundary.geom)
+       AND ST_Intersects(
+         CASE
+           WHEN ST_IsValid(parcel.geom) THEN parcel.geom
+           ELSE ST_Multi(ST_CollectionExtract(ST_MakeValid(parcel.geom), 3))
+         END,
+         boundary.geom
+       )
      ORDER BY parcel.object_id
      LIMIT $2`,
     [JSON.stringify(geometry), MAX_PARCELS + 1],

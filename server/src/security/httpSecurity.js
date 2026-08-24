@@ -1,6 +1,8 @@
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 300;
 const DEFAULT_API_RATE_LIMIT_MAX = 600;
+const DEFAULT_SIGNUP_RATE_LIMIT_WINDOW_MS = 15 * 60_000;
+const DEFAULT_SIGNUP_RATE_LIMIT_MAX = 10;
 
 function enabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -87,6 +89,18 @@ export function createHttpSecurityConfiguration(environment = process.env) {
       DEFAULT_API_RATE_LIMIT_MAX,
       10,
       20_000,
+    ),
+    signupRateLimitWindowMs: boundedInteger(
+      environment.SIGNUP_RATE_LIMIT_WINDOW_MS,
+      DEFAULT_SIGNUP_RATE_LIMIT_WINDOW_MS,
+      60_000,
+      24 * 60 * 60_000,
+    ),
+    signupRateLimitMax: boundedInteger(
+      environment.SIGNUP_RATE_LIMIT_MAX,
+      DEFAULT_SIGNUP_RATE_LIMIT_MAX,
+      1,
+      100,
     ),
     rateLimitClientIpHeader: clientIpHeader,
     trustProxyHops: boundedInteger(environment.TRUST_PROXY_HOPS, 0, 0, 10),

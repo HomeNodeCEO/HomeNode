@@ -39,6 +39,8 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
   assert.equal(configuration.rateLimitEnabled, true);
   assert.equal(configuration.apiRateLimitEnabled, true);
   assert.equal(configuration.apiRateLimitMax, 600);
+  assert.equal(configuration.signupRateLimitWindowMs, 15 * 60_000);
+  assert.equal(configuration.signupRateLimitMax, 10);
   assert.equal(configuration.trustProxyHops, 1);
   assert.equal(configuration.rateLimitClientIpHeader, null);
   assert.deepEqual(configuration.corsOrigins, [
@@ -52,6 +54,15 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
     }),
     /invalid_cors_origin/,
   );
+});
+
+test("signup throttling remains independently bounded", () => {
+  const configuration = createHttpSecurityConfiguration({
+    SIGNUP_RATE_LIMIT_WINDOW_MS: "999999999",
+    SIGNUP_RATE_LIMIT_MAX: "999999",
+  });
+  assert.equal(configuration.signupRateLimitWindowMs, 24 * 60 * 60_000);
+  assert.equal(configuration.signupRateLimitMax, 100);
 });
 
 test("Render rate limiting uses Cloudflare's single-address client header", () => {

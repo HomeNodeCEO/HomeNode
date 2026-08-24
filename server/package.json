@@ -19,6 +19,7 @@
         "verify:redteam:kill-switch": "node scripts/verifyUadRedTeamKillSwitch.js",
         "verify:redteam:integrity": "node scripts/verifyUadRedTeamIntegrity.js",
         "verify:redteam:artifacts": "node scripts/verifyUadArtifactSecurity.js",
+        "verify:redteam:browser": "node scripts/verifyUadRedTeamBrowserWorkflow.js",
         "verify:uad:successful-delivery": "node scripts/verifyUadSuccessfulDelivery.js",
         "verify:uad:successful-delivery:database": "node scripts/verifyUadSuccessfulDeliveryDatabase.js",
         "verify:uad:pre-onboarding": "node scripts/verifyUadPreOnboarding.js",

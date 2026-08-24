@@ -331,10 +331,11 @@ export function createUadRouter({
   router.get("/workfiles/:workfileId/certification-readiness", authenticateIfNeeded, async (req, res) => {
     try {
       const readiness = await getUadCertificationReadiness(pool, req.params.workfileId);
-      if (!readiness.signers.some((signer) => signer.user_id === req.mobileAuth.userId)) {
+      const currentSigner = readiness.signers.find((signer) => signer.user_id === req.mobileAuth.userId);
+      if (!currentSigner) {
         return res.status(403).json({ error: "uad_signature_access_denied" });
       }
-      return res.json({ readiness });
+      return res.json({ readiness: { ...readiness, current_signer: currentSigner } });
     } catch (error) {
       return sendError(res, error);
     }

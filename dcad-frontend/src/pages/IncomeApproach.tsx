@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 
 import * as api from '@/lib/api';
+import { requestEditorCredential } from '@/lib/editorCredential';
 import {
   calculateIncomeApproach,
   incomeApproachReadinessErrors,
@@ -124,9 +125,8 @@ export default function IncomeApproach() {
 
   const save = async () => {
     if (!draft || !assignmentFile || signed) return;
-    const editorKey = sessionStorage.getItem('homenode-editor-key') || window.prompt('Enter the HomeNode editor key:', '')?.trim();
+    const editorKey = requestEditorCredential('Enter the HomeNode editor key:');
     if (!editorKey) return;
-    sessionStorage.setItem('homenode-editor-key', editorKey);
     setSaving(true);
     setMessage('Saving the Income Approach to this appraisal file...');
     try {

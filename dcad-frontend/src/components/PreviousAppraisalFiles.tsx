@@ -7,6 +7,10 @@ import {
   type AppraisalReplicationMode,
   type PreviousAppraisalFile,
 } from '@/lib/api';
+import {
+  forgetEditorCredential,
+  requestEditorCredential,
+} from '@/lib/editorCredential';
 
 const WORKFLOW_LABELS: Record<AppraisalHistoryWorkflow, string> = {
   custom_appraisal: 'Custom Appraisal',
@@ -50,11 +54,7 @@ function changeReviewRows(current: PreviousAppraisalFile, source: PreviousApprai
 }
 
 function defaultEditorKey(): string {
-  const existing = window.sessionStorage.getItem('homenode-editor-key') || '';
-  if (existing) return existing;
-  const entered = window.prompt('Enter the HomeNode editor key to replicate this appraisal file:', '')?.trim() || '';
-  if (entered) window.sessionStorage.setItem('homenode-editor-key', entered);
-  return entered;
+  return requestEditorCredential('Enter the HomeNode editor key to replicate this appraisal file:');
 }
 
 function alternateWorkflow(workflow: AppraisalHistoryWorkflow): AppraisalHistoryWorkflow {
@@ -253,7 +253,7 @@ export default function PreviousAppraisalFiles({
       await load();
     } catch (reason) {
       const nextError = reason instanceof Error ? reason.message : 'The appraisal file could not be replicated.';
-      if (/401|invalid_editor_key/i.test(nextError)) window.sessionStorage.removeItem('homenode-editor-key');
+      if (/401|invalid_editor_key/i.test(nextError)) forgetEditorCredential();
       setError(nextError);
     } finally {
       setSaving(false);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import * as api from '@/lib/api';
+import { readEditorCredential } from '@/lib/editorCredential';
 import PropertyTaxWorkfileReview from '@/components/PropertyTaxWorkfileReview';
 import {
   readAppraisalReportDraft,
@@ -13,10 +14,43 @@ const DEFAULT_ADJUSTMENT_NOTES =
   'Applied adjustments for time/date of sale, neighborhood, gross living area, room and bath count, condition, quality, and feature differences based on market-supported evidence.';
 const DEFAULT_COST_TO_CURE_TOTAL = 31_900;
 
-type PhotoPreview = {
-  file: File;
-  url: string;
-};
+const SAFE_PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
+
+function SubjectPhotoCanvas({ file, index }: { file: File; index: number }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let bitmap: ImageBitmap | null = null;
+    void createImageBitmap(file).then((decoded) => {
+      if (cancelled) {
+        decoded.close();
+        return;
+      }
+      bitmap = decoded;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const scale = Math.min(1, 1_600 / Math.max(decoded.width, decoded.height));
+      canvas.width = Math.max(1, Math.round(decoded.width * scale));
+      canvas.height = Math.max(1, Math.round(decoded.height * scale));
+      canvas.getContext('2d')?.drawImage(decoded, 0, 0, canvas.width, canvas.height);
+    }).catch(() => undefined);
+    return () => {
+      cancelled = true;
+      bitmap?.close();
+    };
+  }, [file]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      role="img"
+      aria-label={`Subject photo ${index + 1}`}
+      className="aspect-[4/3] h-full w-full object-cover"
+    />
+  );
+}
 
 export default function PropertyTaxProtest() {
   const location = useLocation();
@@ -33,7 +67,7 @@ export default function PropertyTaxProtest() {
   const [subjectAddress, setSubjectAddress] = useState('');
   const [subjectLoading, setSubjectLoading] = useState(false);
   const [subjectError, setSubjectError] = useState<string | null>(null);
-  const [photoPreviews, setPhotoPreviews] = useState<PhotoPreview[]>([]);
+  const [photoPreviews, setPhotoPreviews] = useState<File[]>([]);
   const [salesDraft, setSalesDraft] = useState<AppraisalReportSalesDraft | null>(null);
   const [assignmentFileId, setAssignmentFileId] = useState<number | null>(null);
   const workfileRevisionRef = useRef(0);
@@ -108,12 +142,7 @@ export default function PropertyTaxProtest() {
     };
     setSalesDraft(updatedDraft);
     if (propertyId && assignmentFileId) {
-      let editorKey = '';
-      try {
-        editorKey = window.sessionStorage.getItem('homenode-editor-key') || '';
-      } catch {
-        editorKey = '';
-      }
+      const editorKey = readEditorCredential();
       if (editorKey) {
         void api.saveCustomAppraisalWorkfileSection(
           propertyId,
@@ -155,20 +184,10 @@ export default function PropertyTaxProtest() {
     };
   }, [propertyId]);
 
-  useEffect(
-    () => () => {
-      photoPreviews.forEach((photo) => URL.revokeObjectURL(photo.url));
-    },
-    [photoPreviews],
-  );
-
   const replacePhotos = (files: File[]) => {
-    setPhotoPreviews(
-      files.map((file) => ({
-        file,
-        url: URL.createObjectURL(file),
-      })),
-    );
+    setPhotoPreviews(files
+      .filter((file) => SAFE_PHOTO_TYPES.has(file.type) && file.size <= MAX_PHOTO_BYTES)
+      .slice(0, 100));
   };
 
   const generateSummary = async () => {
@@ -218,14 +237,25 @@ export default function PropertyTaxProtest() {
   };
 
   const downloadSummaryPdf = () => {
-    const printable = `<!doctype html><html><head><meta charset="utf-8"><title>Property Tax Protest Summary</title>
-      <style>body{font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;line-height:1.45;padding:24px;color:#0f172a}h1{font-size:22px;margin:0 0 8px}.meta{color:#475569;font-size:12px;margin-bottom:18px}</style>
-      </head><body><h1>Property Tax Protest Summary</h1><div class="meta">${subjectAddress || propertyId || 'Subject property'} · Generated ${new Date().toLocaleString()}</div><div>${summary.replace(/\r?\n/g, '<br/>')}</div></body></html>`;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
-    printWindow.document.open();
-    printWindow.document.write(printable);
-    printWindow.document.close();
+    const printableDocument = printWindow.document;
+    const style = printableDocument.createElement('style');
+    style.textContent = 'body{font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;line-height:1.45;padding:24px;color:#0f172a}h1{font-size:22px;margin:0 0 8px}.meta{color:#475569;font-size:12px;margin-bottom:18px}';
+    const title = printableDocument.createElement('title');
+    title.textContent = 'Property Tax Protest Summary';
+    printableDocument.head.replaceChildren(title, style);
+    const heading = printableDocument.createElement('h1');
+    heading.textContent = 'Property Tax Protest Summary';
+    const meta = printableDocument.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = `${subjectAddress || propertyId || 'Subject property'} · Generated ${new Date().toLocaleString()}`;
+    const narrative = printableDocument.createElement('div');
+    summary.split(/\r?\n/).forEach((line, index) => {
+      if (index > 0) narrative.append(printableDocument.createElement('br'));
+      narrative.append(printableDocument.createTextNode(line));
+    });
+    printableDocument.body.replaceChildren(heading, meta, narrative);
     printWindow.focus();
     window.setTimeout(() => {
       try {
@@ -305,7 +335,7 @@ export default function PropertyTaxProtest() {
             <input
               ref={photoInputRef}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp"
               multiple
               className="hidden"
               onChange={(event) => replacePhotos(Array.from(event.target.files || []))}
@@ -316,14 +346,10 @@ export default function PropertyTaxProtest() {
             <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
               {photoPreviews.map((photo, index) => (
                 <figure
-                  key={`${photo.file.name}-${photo.file.lastModified}-${index}`}
+                  key={`${photo.name}-${photo.lastModified}-${index}`}
                   className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
                 >
-                  <img
-                    src={photo.url}
-                    alt={`Subject photo ${index + 1}`}
-                    className="aspect-[4/3] h-full w-full object-cover"
-                  />
+                  <SubjectPhotoCanvas file={photo} index={index} />
                 </figure>
               ))}
             </div>

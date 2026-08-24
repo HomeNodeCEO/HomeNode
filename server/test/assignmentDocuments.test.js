@@ -75,6 +75,25 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   assert.ok(result.storage_verified_at instanceof Date);
 });
 
+test("document uploads accept only non-empty PDF buffers", async () => {
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error("unexpected_database_write");
+    },
+  };
+  for (const content of ["%PDF-string", [37, 80, 68, 70], new Uint8Array([37, 80, 68, 70])]) {
+    await assert.rejects(
+      createAssignmentDocument(pool, { accountId: "1", fileName: "invalid.pdf", content }),
+      /document_content_required/,
+    );
+  }
+  await assert.rejects(
+    createAssignmentDocument(pool, { accountId: "1", fileName: "invalid.pdf", content: Buffer.from("not-pdf") }),
+    /document_not_pdf/,
+  );
+});
+
 test("private document reads fail closed when downloaded bytes do not match the checksum", async () => {
   const expected = Buffer.from("%PDF-expected");
   const pool = {

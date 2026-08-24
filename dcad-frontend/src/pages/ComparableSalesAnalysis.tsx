@@ -22,6 +22,7 @@ import ConditionQualityStudy, {
 } from '@/components/ConditionQualityStudy';
 import ComparableSalesMap from '@/components/ComparableSalesMap';
 import { fetchDetail } from '@/lib/dcad';
+import { readEditorCredential, rememberEditorCredential } from '@/lib/editorCredential';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 import {
   bathroomEquivalentValue,
@@ -491,13 +492,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     sourceUrl: '',
     notes: '',
   });
-  const [housingEditorKey, setHousingEditorKey] = useState(() => {
-    try {
-      return window.sessionStorage.getItem('homenode-editor-key') || '';
-    } catch {
-      return '';
-    }
-  });
+  const [housingEditorKey, setHousingEditorKey] = useState(readEditorCredential);
   const [housingEditSaving, setHousingEditSaving] = useState(false);
   const [housingEditError, setHousingEditError] = useState<string | null>(null);
   const [savedSubjectRating, setSavedSubjectRating] =
@@ -1522,11 +1517,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         },
         housingEditorKey.trim(),
       );
-      try {
-        window.sessionStorage.setItem('homenode-editor-key', housingEditorKey.trim());
-      } catch {
-        // The edit still succeeds when session storage is unavailable.
-      }
+      rememberEditorCredential(housingEditorKey);
 
       const profile = result.housing_profile;
       const withProfile = (item: SaleRow): SaleRow =>
@@ -2556,12 +2547,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const pending = pendingWorkfileSaveRef.current;
     pendingWorkfileSaveRef.current = null;
     if (!activeAssignmentFile || workfileLocked) return;
-    let editorKey = '';
-    try {
-      editorKey = window.sessionStorage.getItem('homenode-editor-key') || '';
-    } catch {
-      editorKey = '';
-    }
+    const editorKey = readEditorCredential();
     if (!editorKey.trim()) {
       pendingWorkfileSaveRef.current = pending;
       setWorkfileSaveStatus('Database autosave is paused until the editor key is entered on the Property Report.');
@@ -3111,11 +3097,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           return next;
         });
       }
-      try {
-        window.sessionStorage.setItem('homenode-editor-key', editorKey);
-      } catch {
-        // Saving does not depend on browser storage availability.
-      }
+      rememberEditorCredential(editorKey);
       const savedAt = savedReviews[savedReviews.length - 1]?.review.updated_at || savedSubject?.updated_at || new Date().toISOString();
       setRatingsSavedAt(savedAt);
       setDirtyRatingKeys({});

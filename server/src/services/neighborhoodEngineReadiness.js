@@ -12,9 +12,11 @@ function percent(value, total) {
 }
 
 function normalizeCounty(value) {
-  return String(value || "Dallas")
-    .trim()
-    .replace(/\s+county$/i, "") || "Dallas";
+  const trimmed = String(value || "Dallas").trim();
+  const withoutSuffix = trimmed.toLowerCase().endsWith(" county")
+    ? trimmed.slice(0, -" county".length).trim()
+    : trimmed;
+  return withoutSuffix || "Dallas";
 }
 
 function sourceByKey(sources, key) {

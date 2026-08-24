@@ -100,9 +100,8 @@ export function cityHintFromSalesSource(sourceName, sourceFiles = []) {
     sourceName,
     ...(Array.isArray(sourceFiles) ? sourceFiles : []),
   ].filter(Boolean).join(" ")).replace(/[#/-]+/g, " ");
-  return SOURCE_CITY_HINTS.find((city) =>
-    new RegExp(`(^| )${city.replace(/ /g, " ")}( |$)`).test(evidence)
-  ) || null;
+  const paddedEvidence = ` ${evidence} `;
+  return SOURCE_CITY_HINTS.find((city) => paddedEvidence.includes(` ${city} `)) || null;
 }
 
 export function salesAddressMatchEvidence(rawPayload, { fallbackCity = null } = {}) {

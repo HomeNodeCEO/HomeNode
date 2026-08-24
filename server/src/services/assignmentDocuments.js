@@ -37,9 +37,10 @@ export function buildAssignmentDocumentObjectKey({
     + `/assignment-files/${assignment}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
 }
 
-function verifiedR2Object(inspected, { content, checksumSha256 }) {
+function verifiedR2Object(inspected, { content, checksumSha256, byteLength }) {
+  if (!Buffer.isBuffer(content)) throw new Error("assignment_document_storage_content_invalid");
   const actualSize = Number(inspected?.byte_size || 0);
-  if (actualSize !== content.length) throw new Error("assignment_document_storage_size_mismatch");
+  if (actualSize !== byteLength) throw new Error("assignment_document_storage_size_mismatch");
   if (createHash("sha256").update(content).digest("hex") !== checksumSha256) {
     throw new Error("assignment_document_storage_checksum_mismatch");
   }
@@ -329,14 +330,19 @@ export async function createAssignmentDocument(pool, {
   logger = console,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
-  if (!Buffer.isBuffer(content) || !content.length) throw new Error("document_content_required");
-  if (content.length > MAX_ASSIGNMENT_DOCUMENT_BYTES) throw new Error("document_too_large");
-  if (content.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("document_not_pdf");
+  const pdfContent = Buffer.isBuffer(content)
+    ? Buffer.from(content.buffer, content.byteOffset, content.byteLength)
+    : null;
+  if (pdfContent === null) throw new Error("document_content_required");
+  const pdfByteLength = Buffer.byteLength(pdfContent);
+  if (pdfByteLength === 0) throw new Error("document_content_required");
+  if (pdfByteLength > MAX_ASSIGNMENT_DOCUMENT_BYTES) throw new Error("document_too_large");
+  if (pdfContent.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("document_not_pdf");
   const normalizedType = normalizeDocumentType(documentType);
   const safeFileName = cleanText(fileName, 255) || "document.pdf";
   const safeTitle = cleanText(title, 300) || safeFileName;
-  const checksum = createHash("sha256").update(content).digest("hex");
-  let storedContent = content;
+  const checksum = createHash("sha256").update(pdfContent).digest("hex");
+  let storedContent = pdfContent;
   let storageProvider = "postgres";
   let storageStatus = "stored";
   let storageBucket = null;
@@ -356,10 +362,14 @@ export async function createAssignmentDocument(pool, {
       await storage.putObject({
         objectKey,
         contentType: "application/pdf",
-        body: content,
+        body: pdfContent,
       });
       const inspected = await storage.inspectObject({ objectKey });
-      const verified = verifiedR2Object(inspected, { content, checksumSha256: checksum });
+      const verified = verifiedR2Object(inspected, {
+        content: pdfContent,
+        checksumSha256: checksum,
+        byteLength: pdfByteLength,
+      });
       storedContent = null;
       storageProvider = "r2";
       storageBucket = storage.bucket;
@@ -429,7 +439,7 @@ export async function createAssignmentDocument(pool, {
       safeFileName,
       storedContent,
       checksum,
-      content.length,
+      pdfByteLength,
       cleanText(uploadedBy, 200),
       storageProvider,
       storageStatus,

@@ -9,7 +9,7 @@ import {
 } from "./propertyContextStore.js";
 import { NEIGHBORHOOD_BOUNDARY_DISCLOSURE } from "./neighborhoodRelevance.js";
 
-export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 4;
+export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 5;
 
 // TODO(neighborhood-boundary-validation): Test automated boundary suggestions on
 // representative properties in multiple Dallas County cities and urban,
@@ -77,9 +77,9 @@ function orderedRoadPoints(candidate, side, limits) {
     .filter((point) => point.every(Number.isFinite))
     .filter(([longitude, latitude]) => {
       if (side === "north" || side === "south") {
-        return longitude >= limits.west - 0.002 && longitude <= limits.east + 0.002;
+        return longitude >= limits.west - 0.01 && longitude <= limits.east + 0.01;
       }
-      return latitude >= limits.south - 0.002 && latitude <= limits.north + 0.002;
+      return latitude >= limits.south - 0.01 && latitude <= limits.north + 0.01;
     });
   const ascending = side === "south"
     ? (left, right) => left[0] - right[0] || left[1] - right[1]
@@ -144,19 +144,17 @@ export function buildRoadwayBoundary(roadEvidence, subjectPoint) {
   if (tracedRing.length && !samePoint(tracedRing[0], tracedRing.at(-1))) {
     tracedRing.push(tracedRing[0]);
   }
-  const rectangularRing = [
-    [west, south],
-    [east, south],
-    [east, north],
-    [west, north],
-    [west, south],
-  ];
-  const ring = tracedRing.length >= 9 && pointInsideRing([longitude, latitude], tracedRing)
-    ? tracedRing
-    : rectangularRing;
+  // A four-point cardinal box is not evidence of a roadway-bounded
+  // neighborhood. Only replace the parcel-derived discovery polygon when the
+  // selected corridors provide enough actual linework to trace a closed ring
+  // that contains the subject. Otherwise the caller retains the irregular
+  // parcel-derived boundary and reports the road evidence as incomplete.
+  if (tracedRing.length < 9 || !pointInsideRing([longitude, latitude], tracedRing)) {
+    return null;
+  }
   return {
     type: "Polygon",
-    coordinates: [ring],
+    coordinates: [tracedRing],
   };
 }
 
@@ -611,11 +609,7 @@ export async function generateNeighborhoodBoundary(pool, {
         ? approximateBoundaryAreaSquareMiles(roadwayBoundary)
         : finiteNumber(boundaryRow.boundary_area_square_miles),
       boundary_generation_mode: roadwayBoundary
-        ? Object.values(roadEvidence?.cardinal_boundaries || {}).every((side) =>
-          side?.candidates?.some((candidate) => candidate.selected && candidate.geometry_paths?.length),
-        )
-          ? "traffic_backed_traced_road_polygon"
-          : "traffic_backed_cardinal_road_enclosure"
+        ? "traffic_backed_traced_road_polygon"
         : "parcel_discovery_shape_fallback",
       physical_characteristic_coverage_percent: Math.round(physicalCoverage * 1000) / 10,
       year_built_count: Number(boundaryRow.year_built_count || 0),

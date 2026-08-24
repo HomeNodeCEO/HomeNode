@@ -859,7 +859,7 @@ type NeighborhoodRangeRowDefinition = {
   format: string;
 };
 
-const ROADWAY_BOUNDARY_METHODOLOGY_VERSION = 4;
+const ROADWAY_BOUNDARY_METHODOLOGY_VERSION = 5;
 
 function NeighborhoodRangeGrid({
   rows,

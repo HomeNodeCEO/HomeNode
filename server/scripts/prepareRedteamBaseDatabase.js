@@ -106,7 +106,7 @@ try {
       ADD COLUMN IF NOT EXISTS fireplaces integer,
       ADD COLUMN IF NOT EXISTS sprinkler text,
       ADD COLUMN IF NOT EXISTS spa text,
-      ADD COLUMN IF NOT EXISTS pool text,
+      ADD COLUMN IF NOT EXISTS pool boolean,
       ADD COLUMN IF NOT EXISTS sauna text,
       ADD COLUMN IF NOT EXISTS air_conditioning text,
       ADD COLUMN IF NOT EXISTS heating text,
@@ -119,6 +119,28 @@ try {
       ADD COLUMN IF NOT EXISTS total_area_sqft integer,
       ADD COLUMN IF NOT EXISTS baths_full integer,
       ADD COLUMN IF NOT EXISTS baths_half integer;
+
+    DO $redteam_pool_type$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'core'
+          AND table_name = 'primary_improvements'
+          AND column_name = 'pool'
+          AND data_type <> 'boolean'
+      ) THEN
+        ALTER TABLE core.primary_improvements
+          ALTER COLUMN pool TYPE boolean
+          USING CASE
+            WHEN pool IS NULL THEN NULL
+            WHEN lower(btrim(pool::text)) IN ('true', 't', 'yes', 'y', '1') THEN true
+            WHEN lower(btrim(pool::text)) IN ('false', 'f', 'no', 'n', '0', '') THEN false
+            ELSE NULL
+          END;
+      END IF;
+    END
+    $redteam_pool_type$;
 
     CREATE TABLE IF NOT EXISTS core.land_detail (
       id bigserial PRIMARY KEY,

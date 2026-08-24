@@ -19,6 +19,13 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
         to_regclass('core.v_sales_media_summary') IS NOT NULL AS sales_media_summary,
         to_regclass('core.v_sales_enriched') IS NOT NULL AS sales_enriched,
         (
+          SELECT data_type
+          FROM information_schema.columns
+          WHERE table_schema = 'core'
+            AND table_name = 'primary_improvements'
+            AND column_name = 'pool'
+        ) AS pool_data_type,
+        (
           SELECT count(*)::integer
           FROM information_schema.columns
           WHERE table_schema = 'core'
@@ -36,6 +43,7 @@ test("red-team bootstrap contains only the deterministic synthetic boundary", { 
       sales_source_media: true,
       sales_media_summary: true,
       sales_enriched: true,
+      pool_data_type: "boolean",
       location_columns: 7,
     });
 

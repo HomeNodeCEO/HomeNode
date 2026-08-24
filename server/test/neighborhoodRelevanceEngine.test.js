@@ -6,7 +6,17 @@ import {
   applyLandUsePrerequisite,
   ensureNeighborhoodRelevanceSchema,
   generateNeighborhoodRelevance,
+  normalizeLegalNeighborhoodName,
 } from "../src/services/neighborhoodRelevanceEngine.js";
+
+test("derives stable neighborhood identity from subdivision or legal description", () => {
+  assert.equal(normalizeLegalNeighborhoodName("Holiday Park North 6", null), "HOLIDAY PARK NORTH 6");
+  assert.equal(
+    normalizeLegalNeighborhoodName(null, "HOLIDAY PARK NORTH 6 BLK F LOT 15"),
+    "HOLIDAY PARK NORTH 6",
+  );
+  assert.equal(normalizeLegalNeighborhoodName(null, "LOT 15"), null);
+});
 
 const boundary = {
   type: "Polygon",
@@ -177,6 +187,8 @@ test("scores and persists the local parcel population without time-adjusting sal
   assert.ok(statements.some((sql) => /core\.v_sales_enriched/.test(sql)));
   assert.equal(statements.filter((sql) => /core\.v_sales_enriched/.test(sql)).length, 1);
   assert.ok(statements.some((sql) => /primary_account_id = ANY\(\$1::text\[\]\)/.test(sql)));
+  assert.ok(statements.some((sql) => /subject\.legal_description/.test(sql)));
+  assert.ok(statements.some((sql) => /\$4::double precision \* 1609\.344/.test(sql)));
   assert.ok(statements.every((sql) => !/LEFT JOIN LATERAL[\s\S]+core\.v_sales_enriched/.test(sql)));
   assert.ok(statements.some((sql) => /DELETE FROM app\.neighborhood_relevance_candidates/.test(sql)));
   assert.ok(statements.some((sql) => /jsonb_to_recordset/.test(sql)));

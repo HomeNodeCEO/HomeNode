@@ -22,6 +22,7 @@
         "verify:redteam:browser": "node scripts/verifyUadRedTeamBrowserWorkflow.js",
         "verify:uad:successful-delivery": "node scripts/verifyUadSuccessfulDelivery.js",
         "verify:uad:successful-delivery:database": "node scripts/verifyUadSuccessfulDeliveryDatabase.js",
+        "export:uad:synthetic-fixture": "node scripts/exportUadSyntheticWorkfileFixture.js",
         "verify:uad:pre-onboarding": "node scripts/verifyUadPreOnboarding.js",
         "verify:uad:compliance-config": "node scripts/verifyUadComplianceConfiguration.js",
         "verify:redteam:recovery": "node scripts/verifyRedteamRecoveryDatabase.js",

@@ -441,9 +441,6 @@ try {
   const finalXmlResult = await generateXmlThroughUi();
   const finalPdf = finalPdfResult.artifact;
   const finalXml = finalXmlResult.artifact;
-  const pdfBody = await artifactObject(finalPdf, "pdf");
-  const xmlBody = await artifactObject(finalXml, "xml");
-  const xmlText = xmlBody.toString("utf8");
   evidence.delivery.pdf = {
     status: finalPdf?.generation_status,
     revision_number: finalPdf?.revision_number,
@@ -463,10 +460,18 @@ try {
     schema_warning_count: finalXmlResult.schema_validation?.warning_count,
     signer_count: finalXml?.metadata?.signer_count,
     image_reference_count: finalXml?.metadata?.image_reference_count,
-    sales_comparable_count: (xmlText.match(/ValuationUseType="SalesComparable"/g) || []).length,
-    adjustment_count: (xmlText.match(/<ComparableAdjustmentAmount>/g) || []).length,
-    reconciliation_count: (xmlText.match(/<SalesComparisonCommentDescription>/g) || []).length,
+    schema_findings: (finalXmlResult.schema_validation?.findings || []).slice(0, 20).map((finding) => ({
+      message: sanitizeBrowserDiagnostic(finding.message),
+      line: finding.metadata?.line || null,
+      code: finding.metadata?.code || null,
+    })),
   };
+  const pdfBody = await artifactObject(finalPdf, "pdf");
+  const xmlBody = await artifactObject(finalXml, "xml");
+  const xmlText = xmlBody.toString("utf8");
+  evidence.delivery.xml.sales_comparable_count = (xmlText.match(/ValuationUseType="SalesComparable"/g) || []).length;
+  evidence.delivery.xml.adjustment_count = (xmlText.match(/<ComparableAdjustmentAmount>/g) || []).length;
+  evidence.delivery.xml.reconciliation_count = (xmlText.match(/<SalesComparisonCommentDescription>/g) || []).length;
   evidence.checks.signed_pdf_verified = pdfBody.subarray(0, 5).toString("ascii") === "%PDF-"
     && finalPdf?.generation_status === "ready"
     && Number(finalPdf?.metadata?.page_count || 0) > 0

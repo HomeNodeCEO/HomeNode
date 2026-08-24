@@ -151,6 +151,7 @@ try {
   if (!workfile?.id) throw new Error("redteam_browser_delivery_workfile_missing");
   const editor = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/editor`);
   const immutableAtStart = ["signed", "exported", "submitted"].includes(editor.workfile?.status);
+  const exportedAtStart = ["exported", "submitted"].includes(editor.workfile?.status);
 
   await page.getByRole("button", { name: /^Section 22: Sales Comparison Approach/ }).click();
   await page.getByText("Section 22O subject Summary redisplays", { exact: true }).waitFor({ timeout: 15_000 }).catch(() => {});
@@ -363,7 +364,9 @@ try {
     && postAssetValidation?.warning_count === 0
     && postAssetFindings.length === 0;
   evidence.checks.workfile_ready_for_export = postAssetValidation?.status === "passed"
-    && postAssetValidation?.ready_for_export === true;
+    && (immutableAtStart
+      ? postAssetValidation?.fatal_count === 0 && postAssetFindings.length === 0
+      : postAssetValidation?.ready_for_export === true);
 
   const artifactPanel = (heading) => page.getByRole("heading", { name: heading, exact: true })
     .locator("xpath=ancestor::section[1]");
@@ -459,8 +462,12 @@ try {
   evidence.checks.signature_sealed = signedStatuses.has(evidence.delivery.signature?.workfile_status)
     && Number(evidence.delivery.signature?.revision_number) === Number(validatedEditor.workfile?.current_revision);
 
-  const finalPdfResult = await generatePdfThroughUi();
-  const finalXmlResult = await generateXmlThroughUi();
+  const finalPdfResult = exportedAtStart
+    ? await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/artifacts/pdf`)
+    : await generatePdfThroughUi();
+  const finalXmlResult = exportedAtStart
+    ? await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/artifacts/xml`)
+    : await generateXmlThroughUi();
   const finalPdf = finalPdfResult.artifact;
   const finalXml = finalXmlResult.artifact;
   evidence.delivery.pdf = {
@@ -480,7 +487,8 @@ try {
     schema_status: finalXmlResult.schema_validation?.status,
     schema_fatal_count: finalXmlResult.schema_validation?.fatal_count,
     schema_warning_count: finalXmlResult.schema_validation?.warning_count,
-    signer_count: finalXml?.metadata?.signer_count,
+    signer_count: finalXml?.metadata?.signer_count
+      ?? finalXmlResult.schema_validation?.metadata?.signer_count,
     image_reference_count: finalXml?.metadata?.image_reference_count,
     schema_findings: (finalXmlResult.schema_validation?.findings || []).slice(0, 20).map((finding) => ({
       message: sanitizeBrowserDiagnostic(finding.message),
@@ -503,18 +511,20 @@ try {
     && finalXml?.generation_status === "ready"
     && finalXmlResult.schema_validation?.status === "passed"
     && finalXmlResult.schema_validation?.fatal_count === 0
-    && Number(finalXml?.metadata?.signer_count || 0) >= 1
+    && Number(evidence.delivery.xml.signer_count || 0) >= 1
     && Number(finalXml?.metadata?.image_reference_count || 0) === requiredAssets.length
     && evidence.delivery.xml.sales_comparable_count >= 3
     && evidence.delivery.xml.adjustment_count >= 1
     && evidence.delivery.xml.reconciliation_count >= 1;
 
-  const packageResult = await triggerArtifactGeneration({
-    heading: "Revision-bound UAD delivery package",
-    button: /^(?:Generate package|Regenerate package)$/,
-    route: "/artifacts/submission-package",
-    timeout: 180_000,
-  });
+  const packageResult = exportedAtStart
+    ? await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/artifacts/submission-package`)
+    : await triggerArtifactGeneration({
+        heading: "Revision-bound UAD delivery package",
+        button: /^(?:Generate package|Regenerate package)$/,
+        route: "/artifacts/submission-package",
+        timeout: 180_000,
+      });
   const manifestBody = await artifactObject(packageResult.manifest, "manifest");
   const packageBody = await artifactObject(packageResult.package, "package");
   const manifest = JSON.parse(manifestBody.toString("utf8"));

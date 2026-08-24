@@ -282,6 +282,7 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
       delivery_specification_version: generated.delivery_specification_version,
       subschema_version: generated.subschema_version,
       system_value_count: generated.system_value_count,
+      signer_count: generated.signer_count,
       image_reference_count: generated.image_reference_count,
       referenced_pdf_file_name: generated.pdf_file_name,
       schema_valid: schema.valid,

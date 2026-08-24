@@ -219,6 +219,10 @@ test("red-team bootstrap and account reads preserve optional sales availability"
     serverSource,
     /sale\.mls_pool_yn,[\s\S]*?lower\(btrim\(sale\.cad_pool::text\)\)[\s\S]*?AS pool_yn/,
   );
+  assert.match(
+    serverSource,
+    /getMarketContext\(pool, subjectAccountId, \{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,
+  );
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS listing_key text/);
   assert.match(redTeamBaseSource, /CREATE TABLE IF NOT EXISTS core\.sales_source_media/);
   assert.match(redTeamBaseSource, /CREATE OR REPLACE VIEW core\.v_sales_media_summary/);

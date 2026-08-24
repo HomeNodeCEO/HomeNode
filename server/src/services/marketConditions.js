@@ -300,8 +300,10 @@ async function loadSubject(pool, subjectAccountId) {
   return rows[0] || null;
 }
 
-export async function getMarketContext(pool, subjectAccountId) {
-  if (!/^[0-9A-Za-z]{17}$/.test(subjectAccountId)) {
+export async function getMarketContext(pool, subjectAccountId, {
+  accountIdAllowed = (value) => /^[0-9A-Za-z]{17}$/.test(value),
+} = {}) {
+  if (typeof accountIdAllowed !== "function" || !accountIdAllowed(subjectAccountId)) {
     throw new Error("invalid_subject_account_id");
   }
   await ensureSpatialSupport(pool);

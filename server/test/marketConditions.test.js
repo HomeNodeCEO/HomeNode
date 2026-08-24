@@ -5,10 +5,43 @@ import {
   buildMarketTrendRecommendation,
   calculateMarketStudyStatistics,
   completeCalendarMonthWindow,
+  getMarketContext,
   parseMarketAreaKeys,
   validateCustomMarketGeometry,
   weightedCompositeDispersion,
 } from "../src/services/marketConditions.js";
+
+test("market context can use an environment-scoped account-id policy", async () => {
+  const statements = [];
+  const pool = {
+    async query(sql) {
+      statements.push(String(sql));
+      if (/SELECT\s+account\.account_id/.test(String(sql))) {
+        return {
+          rows: [{
+            account_id: "UAD-REDTEAM-SFR-0001",
+            address: "300 Red Team Test Dr",
+            city: "Garland",
+            county: "Dallas",
+            postal_code: "75044",
+            neighborhood_code: "RT-001",
+            latitude: 32.95,
+            longitude: -96.65,
+            location_status: "matched",
+            location_source: "redteam_fixture",
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const subject = await getMarketContext(pool, "UAD-REDTEAM-SFR-0001", {
+    accountIdAllowed: (value) => value === "UAD-REDTEAM-SFR-0001",
+  });
+  assert.equal(subject.account_id, "UAD-REDTEAM-SFR-0001");
+  assert.equal(subject.location_status, "matched");
+  assert.ok(statements.some((statement) => /location_geom/.test(statement)));
+});
 
 test("market studies use the requested number of complete calendar months", () => {
   assert.deepEqual(completeCalendarMonthWindow("2026-08-03", 24), {

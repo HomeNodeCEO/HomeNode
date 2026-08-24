@@ -5237,7 +5237,9 @@ app.get("/api/sales/market-context", async (req, res) => {
     req.query.subject_account_id || "",
   ).trim();
   try {
-    const subject = await getMarketContext(pool, subjectAccountId);
+    const subject = await getMarketContext(pool, subjectAccountId, {
+      accountIdAllowed: legacyAccountIdAllowed,
+    });
     res.json({ subject });
   } catch (error) {
     const message = error?.message || "market_context_failed";

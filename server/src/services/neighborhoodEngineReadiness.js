@@ -188,8 +188,8 @@ export async function getNeighborhoodEngineReadiness(
            COUNT(*) FILTER (WHERE parcel_match.residential_year_built > 0)::bigint AS year_built_accounts,
            COUNT(*) FILTER (WHERE parcel_match.parcel_area_sqft > 0)::bigint AS site_size_accounts,
            COUNT(*) FILTER (
-             WHERE location.location_geom IS NOT NULL
-                OR (location.latitude IS NOT NULL AND location.longitude IS NOT NULL)
+             WHERE location.latitude IS NOT NULL
+               AND location.longitude IS NOT NULL
            )::bigint AS coordinate_accounts
          FROM county_accounts account
          LEFT JOIN parcel_match ON parcel_match.account_id = account.account_id
@@ -202,8 +202,8 @@ export async function getNeighborhoodEngineReadiness(
            COUNT(DISTINCT sale.primary_account_id)::bigint AS distinct_sale_accounts,
            COUNT(*) FILTER (WHERE sale.sale_price > 0)::bigint AS price_sales,
            COUNT(*) FILTER (
-             WHERE location.location_geom IS NOT NULL
-                OR (location.latitude IS NOT NULL AND location.longitude IS NOT NULL)
+             WHERE location.latitude IS NOT NULL
+               AND location.longitude IS NOT NULL
            )::bigint AS coordinate_sales,
            COUNT(*) FILTER (
              WHERE COALESCE(sale.mls_year_built, sale.cad_effective_year_built, sale.cad_year_built) > 0

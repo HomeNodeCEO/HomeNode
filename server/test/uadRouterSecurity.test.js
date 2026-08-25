@@ -87,6 +87,7 @@ function securityPool({ membershipOrganizationId = ORGANIZATION_ID } = {}) {
           snapshot_version: 1,
         }] };
       }
+      if (sql.includes("UPDATE appraisal.delivery_attempts")) return { rows: [] };
       throw new Error(`unexpected_query:${sql.slice(0, 80)}`);
     },
   };
@@ -140,6 +141,23 @@ test("strict UAD routes return a bounded generic response after the configured r
     assert.deepEqual(await blocked.json(), { error: "rate_limit_exceeded" });
     assert.ok(blocked.headers.get("retry-after"));
   }, { rateLimitMax: 2 });
+});
+
+test("completed or unknown delivery attempts return a conflict without exposing persistence details", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const attemptId = "6a1f59f2-0ab1-47ce-8754-0277864c51d1";
+    const response = await fetch(
+      `${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/delivery-attempts/${attemptId}`,
+      {
+        method: "PATCH",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ status: "cancelled" }),
+      },
+    );
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "delivery_attempt_not_found_or_completed" });
+  });
 });
 
 test("rate limiting keeps one client bucket across rotating proxy addresses", async () => {

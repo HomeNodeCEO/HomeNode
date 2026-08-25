@@ -99,15 +99,16 @@ function discoverTargets(result) {
   if (result.status !== 200 || result.transportError || !Array.isArray(result.body?.workfiles)) return null;
   const targets = {};
   for (const workfile of result.body.workfiles) {
-    const label = workfile.organization_id === REDTEAM_ORGANIZATIONS.organizationA.id
+    const label = workfile.file_number === "HN-REDTEAM-ORG-A-0001"
       ? "organization_a"
-      : workfile.organization_id === REDTEAM_ORGANIZATIONS.organizationB.id
+      : workfile.file_number === "HN-REDTEAM-ORG-B-0001"
         ? "organization_b"
         : null;
-    const expectedFile = label === "organization_a"
-      ? "HN-REDTEAM-ORG-A-0001"
-      : "HN-REDTEAM-ORG-B-0001";
-    if (!label || targets[label] || workfile.file_number !== expectedFile || typeof workfile.id !== "string") {
+    if (!label) continue;
+    const expectedOrganization = label === "organization_a"
+      ? REDTEAM_ORGANIZATIONS.organizationA.id
+      : REDTEAM_ORGANIZATIONS.organizationB.id;
+    if (targets[label] || workfile.organization_id !== expectedOrganization || typeof workfile.id !== "string") {
       return null;
     }
     targets[label] = workfile.id;

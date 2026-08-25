@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 const PLATFORM_DEFINITIONS = [
   {
     key: "valuelink_spur",
@@ -120,17 +122,39 @@ export const DELIVERY_PLATFORMS = Object.freeze(PLATFORM_DEFINITIONS.map(publicP
 function normalizePortalUrl(value) {
   const text = String(value || "").trim();
   if (!text) throw new Error("delivery_portal_url_required");
+  if (text.length > 2_048 || /[\0-\x20\x7f]/.test(text)) {
+    throw new Error("delivery_portal_url_invalid");
+  }
   let parsed;
   try {
     parsed = new URL(text);
   } catch {
     throw new Error("delivery_portal_url_invalid");
   }
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash) {
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.port
+    || parsed.search
+    || parsed.hash
+  ) {
     throw new Error("delivery_portal_url_invalid");
   }
   const hostname = parsed.hostname.toLowerCase();
-  if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost")) {
+  const unwrappedHostname = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+  if (
+    !hostname
+    || isIP(unwrappedHostname)
+    || !hostname.includes(".")
+    || hostname === "localhost"
+    || hostname.endsWith(".localhost")
+    || hostname.endsWith(".local")
+    || hostname.endsWith(".internal")
+    || hostname.endsWith(".home.arpa")
+  ) {
     throw new Error("delivery_portal_url_invalid");
   }
   const path = parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/$/, "");

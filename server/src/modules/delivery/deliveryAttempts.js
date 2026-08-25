@@ -138,6 +138,11 @@ export async function createGuidedDeliveryAttempt(pool, workfileIdValue, input =
        ) VALUES ($1, $2, $3, $4, $5, $6, 'guided_manual', 'prepared', $7, $8, $9, $10, $11::jsonb)
        ON CONFLICT (destination_id, idempotency_key) DO UPDATE
          SET external_order_id = COALESCE(appraisal.delivery_attempts.external_order_id, EXCLUDED.external_order_id)
+       WHERE appraisal.delivery_attempts.workfile_id = EXCLUDED.workfile_id
+         AND appraisal.delivery_attempts.revision_number = EXCLUDED.revision_number
+         AND appraisal.delivery_attempts.artifact_id = EXCLUDED.artifact_id
+         AND appraisal.delivery_attempts.package_byte_size = EXCLUDED.package_byte_size
+         AND appraisal.delivery_attempts.package_checksum_sha256 = EXCLUDED.package_checksum_sha256
        RETURNING *`,
       [
         randomUUID(), destination.id, workfile.id, Number(workfile.current_revision), artifact.id,
@@ -146,6 +151,7 @@ export async function createGuidedDeliveryAttempt(pool, workfileIdValue, input =
       ],
     );
     const storedAttempt = attemptResult.rows[0];
+    if (!storedAttempt) throw new Error("delivery_idempotency_key_conflict");
     const hydrated = {
       ...storedAttempt,
       platform_key: destination.platform_key,

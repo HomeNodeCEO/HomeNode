@@ -51,6 +51,26 @@ test("portal resolver rejects insecure, credential-bearing, and tokenized URLs",
   );
 });
 
+test("portal resolver rejects local, literal-address, alternate-port, and whitespace targets", () => {
+  for (const portalUrl of [
+    "https://127.0.0.1/login",
+    "https://[::1]/login",
+    "https://169.254.169.254/latest/meta-data",
+    "https://portal.internal/login",
+    "https://portal.local/login",
+    "https://portal.home.arpa/login",
+    "https://single-label/login",
+    "https://orders.example.com:8443/login",
+    "https://orders.example.com/line\nbreak",
+  ]) {
+    assert.throws(
+      () => resolveDeliveryDestination({ portal_url: portalUrl }),
+      /delivery_portal_url_invalid/,
+      portalUrl,
+    );
+  }
+});
+
 test("explicit platform keys cannot disguise a different host", () => {
   assert.throws(
     () => resolveDeliveryDestination({

@@ -134,3 +134,38 @@ test("graceful shutdown drains once, closes idle sockets, and releases the pool"
     controller.dispose();
   }
 });
+
+test("shutdown deadline force-closes stuck connections and releases the database pool", async () => {
+  const processTarget = new EventEmitter();
+  processTarget.exitCode = 0;
+  let forceDeadline = null;
+  let closeAllCount = 0;
+  let poolEndCount = 0;
+  const controller = installGracefulShutdown({
+    server: {
+      close() {},
+      closeIdleConnections() {},
+      closeAllConnections() { closeAllCount += 1; },
+    },
+    pool: { async end() { poolEndCount += 1; } },
+    graceMs: 5_000,
+    processTarget,
+    logger: {},
+    setTimeoutImpl(callback, milliseconds) {
+      assert.equal(milliseconds, 5_000);
+      forceDeadline = callback;
+      return { unref() {} };
+    },
+    clearTimeoutImpl() {},
+  });
+  try {
+    assert.equal(controller.begin("chaos-test"), true);
+    forceDeadline();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(closeAllCount, 1);
+    assert.equal(poolEndCount, 1);
+    assert.equal(processTarget.exitCode, 1);
+  } finally {
+    controller.dispose();
+  }
+});

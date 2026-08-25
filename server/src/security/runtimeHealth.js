@@ -13,6 +13,23 @@ function memorySnapshot(memoryUsage) {
   });
 }
 
+async function queryWithDeadline(pool, timeoutMs) {
+  let timer = null;
+  try {
+    await Promise.race([
+      Promise.resolve().then(() => pool.query({
+        text: "SELECT 1 AS ready",
+        query_timeout: timeoutMs,
+      })),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("database_readiness_timeout")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function createRuntimeHealthHandlers({
   pool,
   isShuttingDown = () => false,
@@ -27,6 +44,12 @@ export function createRuntimeHealthHandlers({
     5,
     0,
     1_000,
+  );
+  const databaseProbeTimeoutMs = boundedInteger(
+    environment.READINESS_DATABASE_TIMEOUT_MS,
+    2_000,
+    100,
+    10_000,
   );
   const constrainedBytes = Number(constrainedMemory() || 0);
   const constrainedDefaultMb = constrainedBytes > 0
@@ -54,7 +77,7 @@ export function createRuntimeHealthHandlers({
     if (isShuttingDown()) blockers.push("server_shutting_down");
     let databaseConnected = false;
     try {
-      await pool.query("SELECT 1 AS ready");
+      await queryWithDeadline(pool, databaseProbeTimeoutMs);
       databaseConnected = true;
     } catch {
       blockers.push("database_unavailable");
@@ -78,6 +101,7 @@ export function createRuntimeHealthHandlers({
             idle: Number(pool.idleCount || 0),
             waiting,
             maximum_waiting: maxWaitingClients,
+            probe_timeout_ms: databaseProbeTimeoutMs,
           },
         },
         artifact_executor: artifacts,

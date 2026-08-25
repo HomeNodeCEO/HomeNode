@@ -104,7 +104,13 @@ async function attachRenderableBodies(storage, assets) {
       continue;
     }
     if (Number(asset.byte_size || 0) > MAX_RENDER_ASSET_BYTES) throw new Error("uad_pdf_image_bytes_exceeded");
-    const downloaded = await storage.getObject({ objectKey: asset.object_key });
+    const downloaded = await storage.getObject({
+      objectKey: asset.object_key,
+      maxBytes: Math.min(
+        MAX_RENDER_ASSET_BYTES,
+        Number(asset.byte_size || MAX_RENDER_ASSET_BYTES),
+      ),
+    });
     if (asset.byte_size != null && Number(downloaded.byte_size) !== Number(asset.byte_size)) {
       throw new Error("uad_pdf_image_size_mismatch");
     }

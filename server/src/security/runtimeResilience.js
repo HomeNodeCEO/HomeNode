@@ -116,6 +116,8 @@ export function installGracefulShutdown({
   processTarget = process,
   logger = console,
   onBegin = null,
+  setTimeoutImpl = setTimeout,
+  clearTimeoutImpl = clearTimeout,
 }) {
   if (!server?.close || !pool?.end) throw new Error("shutdown_dependencies_required");
   let shuttingDown = false;
@@ -138,7 +140,7 @@ export function installGracefulShutdown({
       logger.error?.("[shutdown] shutdown hook failed", error?.message || error);
     }
     server.close((error) => {
-      if (forceTimer) clearTimeout(forceTimer);
+      if (forceTimer) clearTimeoutImpl(forceTimer);
       closePool()
         .catch(() => { processTarget.exitCode = 1; })
         .finally(() => {
@@ -146,7 +148,7 @@ export function installGracefulShutdown({
         });
     });
     server.closeIdleConnections?.();
-    forceTimer = setTimeout(() => {
+    forceTimer = setTimeoutImpl(() => {
       forced = true;
       processTarget.exitCode = 1;
       logger.error?.("[shutdown] drain deadline exceeded; closing remaining connections");
@@ -167,7 +169,7 @@ export function installGracefulShutdown({
     dispose() {
       processTarget.removeListener("SIGTERM", onSigterm);
       processTarget.removeListener("SIGINT", onSigint);
-      if (forceTimer) clearTimeout(forceTimer);
+      if (forceTimer) clearTimeoutImpl(forceTimer);
     },
   });
 }

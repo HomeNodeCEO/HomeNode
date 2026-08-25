@@ -161,6 +161,15 @@ database-readiness recovery probes. The deployed API also caps header/body
 receipt time, headers per request, keep-alive reuse, PostgreSQL statement/query
 duration, idle transactions, and deploy shutdown drain time.
 
+The API readiness database probe has its own short deadline, independent of the
+ordinary query ceiling, so a stalled PostgreSQL connection cannot leave the
+load-balancer health request hanging. A full artifact queue makes readiness
+degrade until capacity returns. Private-object downloads reject advertised
+length mismatches and remove partial disk output. The interrupted-artifact
+recovery pass runs at startup and on a bounded interval, allowing a generation
+that was too recent to reclaim during restart to become retryable later without
+another deployment.
+
 ### Temporary dependency exception
 
 `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` affect `image-size` through

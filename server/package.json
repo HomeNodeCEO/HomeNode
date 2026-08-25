@@ -5,6 +5,7 @@
     "main": "index.js",
     "scripts": {
         "test": "node --test",
+        "test:uad-chaos-recovery": "node --test test/runtimeHealth.test.js test/runtimeResilience.test.js test/r2StorageResilience.test.js test/uadArtifactExecution.test.js test/uadArtifactRecovery.test.js test/uadRouterSecurity.test.js",
         "migrate:uad": "node scripts/runUadMigrations.js",
         "migrate:mobile": "node scripts/runMobileMigrations.js",
         "prepare:staging:uad": "node scripts/prepareUadStagingDatabase.js",

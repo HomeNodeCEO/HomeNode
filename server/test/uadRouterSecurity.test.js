@@ -10,7 +10,7 @@ const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
 const ORGANIZATION_ID = "f62aa408-18eb-4ee1-bdae-167b8ff92a0c";
 const OTHER_ORGANIZATION_ID = "b5250368-e8f1-4d47-9f62-a8a7cb2ea383";
 
-async function withServer(pool, callback, securityOverrides = {}) {
+async function withServer(pool, callback, securityOverrides = {}, routerOverrides = {}) {
   const app = express();
   app.use("/api/uad", createUadRouter({
     pool,
@@ -21,7 +21,7 @@ async function withServer(pool, callback, securityOverrides = {}) {
         return { iss: "https://identity.example", sub: "oidc-subject" };
       },
     },
-    enabled: true,
+    enabled: routerOverrides.enabled ?? true,
     authenticationRequired: true,
     security: {
       strict: true,
@@ -43,6 +43,34 @@ async function withServer(pool, callback, securityOverrides = {}) {
     await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 }
+
+test("disabled UAD workspace keeps diagnostics public and fails protected routes before authentication", async () => {
+  let databaseCalls = 0;
+  const pool = {
+    async query() {
+      databaseCalls += 1;
+      throw new Error("disabled_workspace_must_not_query_database");
+    },
+  };
+  await withServer(pool, async (baseUrl) => {
+    const capabilities = await fetch(`${baseUrl}/api/uad/capabilities`);
+    assert.equal(capabilities.status, 200);
+    assert.equal((await capabilities.json()).enabled, false);
+
+    const protectedRead = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}`);
+    assert.equal(protectedRead.status, 503);
+    assert.deepEqual(await protectedRead.json(), { error: "uad_workspace_disabled" });
+
+    const protectedWrite = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sections/assignment`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ expected_revision: 1, fields: [] }),
+    });
+    assert.equal(protectedWrite.status, 503);
+    assert.deepEqual(await protectedWrite.json(), { error: "uad_workspace_disabled" });
+    assert.equal(databaseCalls, 0);
+  }, {}, { enabled: false });
+});
 
 function securityPool({ membershipOrganizationId = ORGANIZATION_ID } = {}) {
   const accessQueries = [];

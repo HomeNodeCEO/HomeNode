@@ -36,8 +36,8 @@ test("readiness proves database, pool, artifact executor, and configured memory 
     totalCount: 4,
     idleCount: 3,
     waitingCount: 0,
-    async query(sql) {
-      assert.equal(sql, "SELECT 1 AS ready");
+    async query(config) {
+      assert.deepEqual(config, { text: "SELECT 1 AS ready", query_timeout: 2_000 });
       return { rows: [{ ready: 1 }] };
     },
   };
@@ -52,7 +52,24 @@ test("readiness proves database, pool, artifact executor, and configured memory 
   assert.equal(ready.statusCode, 200);
   assert.equal(ready.body.ok, true);
   assert.equal(ready.body.checks.database.pool.total, 4);
+  assert.equal(ready.body.checks.database.pool.probe_timeout_ms, 2_000);
   assert.equal(ready.body.checks.memory.rss_mb, 128);
+});
+
+test("readiness bounds a stalled database probe instead of hanging the health endpoint", async () => {
+  const handlers = createRuntimeHealthHandlers({
+    pool: {
+      async query() { return new Promise(() => {}); },
+    },
+    environment: { READINESS_DATABASE_TIMEOUT_MS: "100" },
+  });
+  const startedAt = Date.now();
+  const degraded = response();
+  await handlers.readiness({}, degraded);
+  assert.equal(degraded.statusCode, 503);
+  assert.deepEqual(degraded.body.blockers, ["database_unavailable"]);
+  assert.equal(degraded.body.checks.database.pool.probe_timeout_ms, 100);
+  assert.ok(Date.now() - startedAt < 1_000);
 });
 
 test("readiness returns bounded blocker codes without leaking dependency errors", async () => {

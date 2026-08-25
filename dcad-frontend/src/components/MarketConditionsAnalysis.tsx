@@ -777,7 +777,7 @@ function StudyStatistics({
           </div>
         </div>
         <div
-          title="Weighted coefficient of dispersion. Living area is 60%; price/SF, sale price, age, and housing-type mix are 10% each. Lower is more congruent."
+          title="Weighted coefficient of dispersion. Living area is 40%, age 30%, housing-type mix 20%, and price/SF and sale price are 5% each. Lower is more congruent."
         >
           <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
             Composite COD
@@ -787,7 +787,7 @@ function StudyStatistics({
           </div>
         </div>
         <div
-          title="Weighted coefficient of variation. Living area is 60%; price/SF, sale price, age, and housing-type mix are 10% each. Lower is more congruent."
+          title="Weighted coefficient of variation. Living area is 40%, age 30%, housing-type mix 20%, and price/SF and sale price are 5% each. Lower is more congruent."
         >
           <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
             Composite CV
@@ -806,9 +806,9 @@ function StudyStatistics({
         </div>
       </div>
       <div className="mt-2 text-center text-[11px] text-slate-500">
-        Congruency weights: living area 60%; price/SF, sale price, age, and
-        housing type 10% each. Lower COD and CV indicate a more consistent
-        study population.
+        Congruency weights: living area 40%, age 30%, housing type 20%, price
+        per SF 5%, and sale price 5%. Lower COD and CV indicate a more
+        consistent study population.
       </div>
       <details className="mt-2 text-xs text-slate-600">
         <summary className="cursor-pointer text-center font-semibold text-slate-700">

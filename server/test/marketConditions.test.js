@@ -191,7 +191,7 @@ test("market context override coordinates must be complete and inside DFW", () =
   );
 });
 
-test("market congruency gives living area 60 percent of the composite", () => {
+test("market congruency prioritizes living area, age, and housing type", () => {
   const factors = {
     living_area: { count: 50, cod: 20, cv: 20 },
     price_per_square_foot: { count: 50, cod: 30, cv: 30 },
@@ -200,11 +200,11 @@ test("market congruency gives living area 60 percent of the composite", () => {
     housing_type: { count: 50, dispersion: 10 },
   };
   assert.deepEqual(weightedCompositeDispersion(factors, "cod"), {
-    value: 25,
+    value: 28.5,
     available_weight: 1,
   });
   assert.deepEqual(weightedCompositeDispersion(factors, "cv"), {
-    value: 25,
+    value: 28.5,
     available_weight: 1,
   });
 });
@@ -218,8 +218,8 @@ test("missing congruency factors are omitted and remaining weights renormalize",
     housing_type: { count: 0, dispersion: null },
   };
   assert.deepEqual(weightedCompositeDispersion(factors, "cod"), {
-    value: 26.25,
-    available_weight: 0.8,
+    value: 33.33,
+    available_weight: 0.75,
   });
 });
 
@@ -241,8 +241,8 @@ test("market statistics annualize first-to-last complete monthly medians", () =>
     },
   });
   assert.equal(statistics.annualized_change_percent, 10);
-  assert.equal(statistics.composite_cod, 12.8);
-  assert.equal(statistics.composite_cv, 15.2);
+  assert.equal(statistics.composite_cod, 14.85);
+  assert.equal(statistics.composite_cv, 17.5);
   assert.equal(statistics.sample_sufficient, true);
 });
 

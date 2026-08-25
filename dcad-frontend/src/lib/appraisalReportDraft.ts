@@ -25,6 +25,8 @@ export type AppraisalReportComparable = {
     concessions: number;
     time: number;
     roomCount: number;
+    bedrooms?: number;
+    bathrooms?: number;
     livingArea: number;
     garage: number;
     pool: number;

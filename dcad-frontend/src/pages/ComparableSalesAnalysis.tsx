@@ -2641,6 +2641,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             concessions: finiteNumber(compConcessions[index]) || 0,
             time: finiteNumber(compTimeAdjustments[index]) || 0,
             roomCount: roomCountTotalAdjustments[index] || 0,
+            bedrooms: roomCountBedAdjustments[index] || 0,
+            bathrooms: roomCountBathAdjustments[index] || 0,
             livingArea: glaAdjustments[index] || 0,
             garage: garageAdjustments[index] || 0,
             pool: poolAdjustments[index] || 0,

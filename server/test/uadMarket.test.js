@@ -121,7 +121,7 @@ test("server, shared-data adapter, and frontend enforce the Section 17 workflow"
   assert.match(editor, /market_sale_price_order/);
   assert.match(assets, /invalid_uad_market_content_type/);
   assert.match(assets, /invalid_uad_market_asset_entity/);
-  assert.match(shared, /market_fields: marketSuggestions/);
+  assert.match(shared, /market_fields: marketFields/);
   assert.match(frontend, /Market graphs and exhibits/);
   assert.match(frontend, /existing market and neighborhood tools/);
 });

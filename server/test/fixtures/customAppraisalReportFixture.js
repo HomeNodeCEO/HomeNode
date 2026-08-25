@@ -145,6 +145,8 @@ export function customAppraisalReportFixture() {
         population: { eligible_sale_count: 143 },
         period: { start: "2025-08-01", end: "2026-07-31" },
         summary: {
+          minimum_sale_price: 215000,
+          maximum_sale_price: 462000,
           median_sale_price: 306000,
           median_days_on_market: 18,
           median_sale_to_list_ratio: 99.2,

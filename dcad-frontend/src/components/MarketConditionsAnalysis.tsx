@@ -1470,9 +1470,9 @@ export default function MarketConditionsAnalysis({
             type: 'circle',
             source: RELEVANCE_SOURCE_ID,
             paint: {
-              'circle-radius': 8,
-              'circle-blur': 0.3,
-              'circle-opacity': 0.5,
+              'circle-radius': 7,
+              'circle-blur': 0.55,
+              'circle-opacity': 0.34,
               'circle-color': [
                 'match', ['get', 'relevance_band'],
                 'highest', '#14532d',
@@ -1490,8 +1490,8 @@ export default function MarketConditionsAnalysis({
             type: 'circle',
             source: RELEVANCE_SOURCE_ID,
             paint: {
-              'circle-radius': 4,
-              'circle-opacity': 0.9,
+              'circle-radius': 3.25,
+              'circle-opacity': 0.84,
               'circle-color': [
                 'match', ['get', 'relevance_band'],
                 'highest', '#052e16',
@@ -1502,9 +1502,9 @@ export default function MarketConditionsAnalysis({
                 'insufficient_data', '#7c3aed',
                 '#64748b',
                 ],
-              'circle-stroke-width': ['case', ['get', 'primary_population'], 2, 0],
+              'circle-stroke-width': ['case', ['get', 'primary_population'], 0.8, 0],
               'circle-stroke-color': '#ffffff',
-              'circle-stroke-opacity': 0.95,
+              'circle-stroke-opacity': 0.8,
             },
           });
           map.on('click', (event) => {

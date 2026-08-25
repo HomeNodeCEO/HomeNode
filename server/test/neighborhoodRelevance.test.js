@@ -34,12 +34,12 @@ function candidates(count = 40) {
   }));
 }
 
-test("locks the initial 40/30/20/10 relevance weights", () => {
+test("locks the tightened age and proximity relevance weights", () => {
   assert.deepEqual(NEIGHBORHOOD_RELEVANCE_WEIGHTS, {
-    age: 0.40,
-    site_size: 0.30,
-    proximity: 0.20,
-    sale_price: 0.10,
+    age: 0.45,
+    site_size: 0.20,
+    proximity: 0.30,
+    sale_price: 0.05,
   });
   assert.equal(NEIGHBORHOOD_RELEVANCE_EXCLUSION_THRESHOLD, 20);
 });
@@ -77,7 +77,7 @@ test("does not exclude low-information records solely because their normalized s
       distance_miles: 2,
     },
   });
-  assert.equal(result.available_weight_percent, 20);
+  assert.equal(result.available_weight_percent, 30);
   assert.equal(result.excluded, false);
   assert.equal(result.statistical_classification, "insufficient_data");
 });
@@ -192,7 +192,7 @@ test("normalizes across available factors without treating missing sale price as
     },
   });
   assert.equal(result.score, 100);
-  assert.equal(result.available_weight_percent, 90);
+  assert.equal(result.available_weight_percent, 95);
   assert.equal(result.statistical_classification, "relevant_candidate");
 });
 

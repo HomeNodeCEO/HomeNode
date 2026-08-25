@@ -22,6 +22,11 @@ const WORKFILES = Object.freeze({
     file_number: "HN-REDTEAM-ORG-B-0001",
   }),
 });
+const DELIVERY_WORKFILE = Object.freeze({
+  id: "11111111-1111-4111-8111-111111111113",
+  organization_id: "10000000-0000-4000-8000-000000000001",
+  file_number: "HN-REDTEAM-DELIVERY-A-0001",
+});
 
 const ACCESS = Object.freeze({
   assigned_appraiser_a: { list: ["organization_a"], read: ["organization_a"], write: ["organization_a"] },
@@ -57,7 +62,9 @@ function matrixFetch({ leakCrossTenant = false, reviewerCanWrite = false } = {})
     if (path === "/api/mobile/me") return json({ user: { userId: `synthetic:${persona}` } });
     if (path.includes("/api/uad/accounts/") && path.endsWith("/workfiles")) {
       if (access.listError) return json({ error: access.listError }, 403);
-      return json({ workfiles: access.list.map((label) => WORKFILES[label]) });
+      const workfiles = access.list.map((label) => WORKFILES[label]);
+      if (access.list.includes("organization_a")) workfiles.push(DELIVERY_WORKFILE);
+      return json({ workfiles });
     }
 
     const label = Object.entries(WORKFILES).find(([, workfile]) => path.includes(workfile.id))?.[0];
@@ -88,7 +95,9 @@ test("authenticated red-team matrix proves role and tenant boundaries without mu
 
   assert.equal(result.ok, true);
   assert.equal(result.request_count, 73);
+  assert.equal(result.discovery.workfile_count, 3);
   assert.equal(Object.keys(result.personas).length, REDTEAM_AUTHORIZATION_PERSONAS.length);
+  assert.equal(result.personas.reviewer_a.list.workfile_count, 2);
   assert.equal(result.personas.reviewer_a.targets.organization_a.read.http_status, 200);
   assert.equal(result.personas.reviewer_a.targets.organization_a.write_probe.http_status, 403);
   assert.equal(result.personas.homenode_admin.targets.organization_b.write_probe.error_code, "invalid_uad_expected_revision");

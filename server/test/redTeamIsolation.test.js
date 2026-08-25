@@ -20,6 +20,10 @@ const redTeamIntegrityWorkflow = fs.readFileSync(
   new URL("../../.github/workflows/uad-redteam-integrity.yml", import.meta.url),
   "utf8",
 );
+const redTeamAuthorizationWorkflow = fs.readFileSync(
+  new URL("../../.github/workflows/uad-redteam-authorization.yml", import.meta.url),
+  "utf8",
+);
 const mobileMigrationSource = fs.readFileSync(new URL("../src/database/mobileMigrations.js", import.meta.url), "utf8");
 const packageJson = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -289,11 +293,16 @@ test("red-team workfiles receive an idempotent complete assignment baseline", ()
   );
 });
 
-test("red-team integrity workflow preserves the verifier exit code through evidence capture", () => {
+test("red-team evidence workflows preserve verifier exit codes through evidence capture", () => {
   assert.match(redTeamIntegrityWorkflow, /set -o pipefail/);
   assert.match(
     redTeamIntegrityWorkflow,
     /verify:redteam:integrity \| tee uad-redteam-integrity\.json/,
+  );
+  assert.match(redTeamAuthorizationWorkflow, /set -o pipefail/);
+  assert.match(
+    redTeamAuthorizationWorkflow,
+    /verify:redteam:authorization \| tee uad-redteam-authorization\.json/,
   );
 });
 

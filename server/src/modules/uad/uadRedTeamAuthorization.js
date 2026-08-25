@@ -104,11 +104,6 @@ function exactFailure(result, status, error) {
   return result.status === status && result.error === error;
 }
 
-function exactLabels(actual, expected) {
-  return actual.length === expected.length
-    && [...actual].sort().every((value, index) => value === [...expected].sort()[index]);
-}
-
 function evidence(result, extra = {}) {
   return Object.freeze({
     ready: Boolean(extra.ready),
@@ -135,12 +130,17 @@ function discoverWorkfiles(result) {
   if (result.status !== 200 || result.error || !Array.isArray(result.body?.workfiles)) return null;
   const discovered = {};
   for (const workfile of result.body.workfiles) {
-    const label = workfileLabel(workfile);
-    if (!label || discovered[label] || typeof workfile?.id !== "string") return null;
-    const expectedFileNumber = label === "organization_a"
-      ? "HN-REDTEAM-ORG-A-0001"
-      : "HN-REDTEAM-ORG-B-0001";
-    if (workfile.file_number !== expectedFileNumber) return null;
+    const label = workfile.file_number === "HN-REDTEAM-ORG-A-0001"
+      ? "organization_a"
+      : workfile.file_number === "HN-REDTEAM-ORG-B-0001"
+        ? "organization_b"
+        : null;
+    if (!label) continue;
+    if (
+      discovered[label]
+      || workfileLabel(workfile) !== label
+      || typeof workfile?.id !== "string"
+    ) return null;
     discovered[label] = workfile.id;
   }
   return Object.keys(discovered).length === Object.keys(ORGANIZATION_LABELS).length
@@ -213,18 +213,22 @@ export async function runUadRedTeamAuthorizationMatrix({
       ? exactFailure(identityResponse, 403, expectedAuthenticationError)
       : identityResponse.status === 200 && !identityResponse.error;
 
-    const listLabels = Array.isArray(listResponse.body?.workfiles)
-      ? listResponse.body.workfiles.map(workfileLabel).filter(Boolean)
+    const listedWorkfiles = Array.isArray(listResponse.body?.workfiles)
+      ? listResponse.body.workfiles
       : [];
+    const listLabels = listedWorkfiles.map(workfileLabel).filter(Boolean);
     const expectedListError = expectedAuthenticationError || expectation.listError;
+    const expectedLabels = expectation.list || [];
     const listReady = expectedListError
       ? exactFailure(listResponse, 403, expectedListError)
       : listResponse.status === 200
         && !listResponse.error
         && Array.isArray(listResponse.body?.workfiles)
-        && listLabels.length === listResponse.body.workfiles.length
-        && listResponse.body.workfiles.length === (expectation.list || []).length
-        && exactLabels(listLabels, expectation.list || []);
+        && listLabels.length === listedWorkfiles.length
+        && listLabels.every((label) => expectedLabels.includes(label))
+        && expectedLabels.every((label) => (
+          listedWorkfiles.some((workfile) => workfile.id === targets[label])
+        ));
 
     const targetEvidence = {};
     for (const label of Object.keys(ORGANIZATION_LABELS)) {

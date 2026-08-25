@@ -47,6 +47,7 @@ import {
 
 function errorStatus(error) {
   const message = String(error?.message || "");
+  if (message === "delivery_attempt_not_found_or_completed") return 409;
   if (message.includes("not_found")) return 404;
   if (message === "uad_authentication_required") return 401;
   if (message === "uad_organization_required") return 400;
@@ -79,7 +80,6 @@ function errorStatus(error) {
     message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_changed")
   )) return 409;
   if (message.startsWith("uad_compliance_")) return 422;
-  if (message === "delivery_attempt_not_found_or_completed") return 409;
   if (message === "delivery_idempotency_key_conflict") return 409;
   if (message.startsWith("delivery_") && message.includes("not_found")) return 404;
   if ([

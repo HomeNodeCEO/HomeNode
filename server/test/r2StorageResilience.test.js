@@ -38,6 +38,7 @@ test("R2 operations retry bounded transient responses and expose safe resilience
   assert.equal(uploaded.etag, '"ok"');
   assert.deepEqual(storage.resilience, {
     request_timeout_ms: 1000,
+    stream_timeout_ms: 120000,
     max_attempts: 3,
     max_buffered_download_bytes: 64 * 1024 * 1024,
   });

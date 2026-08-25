@@ -5,6 +5,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_STREAM_TIMEOUT_MS = 120_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const DEFAULT_RETRY_BASE_MS = 250;
 const DEFAULT_MAX_BUFFERED_DOWNLOAD_BYTES = 64 * 1024 * 1024;
@@ -185,6 +186,12 @@ export function createUadObjectStorage(env = process.env, {
       1_000,
       120_000,
     ),
+    streamTimeoutMs: boundedInteger(
+      env.R2_STREAM_TIMEOUT_MS,
+      DEFAULT_STREAM_TIMEOUT_MS,
+      5_000,
+      600_000,
+    ),
     maxAttempts: boundedInteger(env.R2_MAX_ATTEMPTS, DEFAULT_MAX_ATTEMPTS, 1, 5),
     retryBaseMs: boundedInteger(env.R2_RETRY_BASE_MS, DEFAULT_RETRY_BASE_MS, 25, 5_000),
     maxBufferedDownloadBytes: boundedInteger(
@@ -199,6 +206,7 @@ export function createUadObjectStorage(env = process.env, {
   async function request(operation, url, init = {}, {
     attempts = config.maxAttempts,
     bodyFactory = null,
+    timeoutMs = config.requestTimeoutMs,
   } = {}) {
     if (typeof fetchImpl !== "function") throw new Error(`uad_object_${operation}_network_error`);
     let lastError = null;
@@ -209,7 +217,7 @@ export function createUadObjectStorage(env = process.env, {
         response = await fetchImpl(url, {
           ...init,
           ...(body === undefined ? {} : { body }),
-          signal: AbortSignal.timeout(config.requestTimeoutMs),
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (error) {
         lastError = normalizedStorageError(operation, error);
@@ -265,6 +273,7 @@ export function createUadObjectStorage(env = process.env, {
     configured,
     resilience: Object.freeze({
       request_timeout_ms: config.requestTimeoutMs,
+      stream_timeout_ms: config.streamTimeoutMs,
       max_attempts: config.maxAttempts,
       max_buffered_download_bytes: config.maxBufferedDownloadBytes,
     }),
@@ -320,7 +329,10 @@ export function createUadObjectStorage(env = process.env, {
         method: upload.method,
         headers: { ...upload.headers, "content-length": String(size) },
         duplex: "half",
-      }, { bodyFactory: () => createReadStream(filePath) });
+      }, {
+        bodyFactory: () => createReadStream(filePath),
+        timeoutMs: config.streamTimeoutMs,
+      });
       return {
         etag: response.headers.get("etag"),
         byte_size: size,
@@ -373,7 +385,7 @@ export function createUadObjectStorage(env = process.env, {
         try {
           const response = await request("download", download.url, {
             method: download.method,
-          }, { attempts: 1 });
+          }, { attempts: 1, timeoutMs: config.streamTimeoutMs });
           const advertised = Number(response.headers.get("content-length") || 0);
           if (advertised > maximum) {
             await response.body?.cancel?.().catch(() => undefined);

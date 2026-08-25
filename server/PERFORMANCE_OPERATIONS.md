@@ -1,5 +1,46 @@
 # Performance and scheduled-maintenance operations
 
+## UAD artifact and object-storage resilience
+
+The UAD web process coalesces duplicate XML, PDF, and submission-package
+requests and admits a bounded number of heavyweight artifact operations. The
+safe defaults are one active operation and two queued operations. Excess work
+returns `503 uad_artifact_capacity_exceeded`; queued work that cannot begin in
+15 seconds returns `503 uad_artifact_queue_timeout`.
+
+Submission packages are assembled as deterministic temporary files. Verified
+source objects are streamed from R2, incorporated into the ZIP, removed from
+temporary storage, and the finished ZIP is streamed back to R2. The web process
+does not retain all evidence files plus a second complete ZIP buffer in memory.
+
+Supported controls:
+
+```text
+UAD_ARTIFACT_MAX_CONCURRENT=1
+UAD_ARTIFACT_MAX_QUEUED=2
+UAD_ARTIFACT_QUEUE_TIMEOUT_MS=15000
+UAD_ARTIFACT_STALE_AFTER_MINUTES=15
+UAD_PDF_MAX_SOURCE_BYTES=67108864
+R2_REQUEST_TIMEOUT_MS=30000
+R2_MAX_ATTEMPTS=3
+R2_RETRY_BASE_MS=250
+R2_MAX_BUFFERED_DOWNLOAD_BYTES=67108864
+READINESS_MAX_DATABASE_WAITERS=5
+```
+
+`GET /health` is the inexpensive liveness probe. `GET /ready` checks shutdown
+state, database connectivity and pool pressure, artifact-executor availability,
+and memory pressure. Memory readiness defaults to 85 percent of the container
+limit when Node can discover that limit. `READINESS_MAX_RSS_MB` can override it.
+Render should use `/health` for automatic process restart and `/ready` for
+deployment verification and alerting; a database outage should not create a
+liveness restart loop.
+
+At startup, artifact rows left in `generating` beyond the configured stale
+window are marked `failed` with the bounded recovery code
+`uad_artifact_generation_interrupted`. A normal regeneration can then replace
+the interrupted artifact for the same workfile revision.
+
 ## Runtime separation
 
 The web process serves property searches, reports, comparisons, and on-demand

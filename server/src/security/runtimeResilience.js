@@ -115,6 +115,7 @@ export function installGracefulShutdown({
   graceMs,
   processTarget = process,
   logger = console,
+  onBegin = null,
 }) {
   if (!server?.close || !pool?.end) throw new Error("shutdown_dependencies_required");
   let shuttingDown = false;
@@ -130,6 +131,12 @@ export function installGracefulShutdown({
     if (shuttingDown) return false;
     shuttingDown = true;
     logger.info?.(`[shutdown] ${signal} received; draining connections`);
+    try {
+      onBegin?.(signal);
+    } catch (error) {
+      processTarget.exitCode = 1;
+      logger.error?.("[shutdown] shutdown hook failed", error?.message || error);
+    }
     server.close((error) => {
       if (forceTimer) clearTimeout(forceTimer);
       closePool()

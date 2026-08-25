@@ -11,6 +11,7 @@ import { validateUadSubschema } from "./uadSubschema.js";
 import { buildUadMismoXml } from "./uadXml.js";
 import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { runUadArtifactOperation } from "./uadArtifactExecution.js";
 
 const XML_CONTENT_TYPE = "application/xml";
 const DOWNLOADABLE_WORKFILE_STATUSES = new Set(["ready", "signed", "exported", "submitted"]);
@@ -147,7 +148,7 @@ export async function getLatestUadXmlArtifact(pool, storage, workfileIdValue) {
   };
 }
 
-export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
+async function generateUadXmlArtifactOperation(pool, storage, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const client = await pool.connect();
   let artifactRow;
@@ -276,6 +277,7 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
     const artifactId = randomUUID();
     const artifactMetadata = {
       file_name: fileName,
+      generation_started_at: new Date().toISOString(),
       input_digest_sha256: inputDigest,
       validation_run_id: schemaRunId,
       generator_version: generated.generator_version,
@@ -386,4 +388,13 @@ export async function generateUadXmlArtifact(pool, storage, workfileIdValue) {
     await persistUploadFailure(pool, artifactRow.id, error.message);
     throw error;
   }
+}
+
+export function generateUadXmlArtifact(pool, storage, workfileIdValue) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  return runUadArtifactOperation(
+    "xml",
+    workfileId,
+    () => generateUadXmlArtifactOperation(pool, storage, workfileId),
+  );
 }

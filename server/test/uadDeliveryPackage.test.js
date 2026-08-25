@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -8,6 +10,7 @@ import {
   buildDeterministicZip,
   buildUadDeliveryAssetEntries,
   buildUadImagesManifest,
+  writeDeterministicZipToFile,
 } from "../src/modules/uad/uadDeliveryPackage.js";
 
 const TEST_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
@@ -132,6 +135,29 @@ test("ZIP output is deterministic and rejects unsafe entry paths", () => {
   assert.throws(() => buildDeterministicZip([{ path: "C:\\escape", body: "x" }]), /uad_package_entry_path_invalid/);
 });
 
+test("streamed ZIP output matches deterministic buffered output without retaining source bodies", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "uad-streamed-zip-test-"));
+  try {
+    const sourcePath = path.join(directory, "front.bin");
+    const outputPath = path.join(directory, "package.zip");
+    await writeFile(sourcePath, Buffer.from([1, 2, 3, 4]));
+    const files = [
+      { path: "report.xml", body: Buffer.from("xml") },
+      { path: "Images/front.jpg", file_path: sourcePath, byte_size: 4 },
+    ];
+    const streamed = await writeDeterministicZipToFile(files, outputPath);
+    const expected = buildDeterministicZip([
+      { path: "report.xml", body: Buffer.from("xml") },
+      { path: "Images/front.jpg", body: Buffer.from([1, 2, 3, 4]) },
+    ]);
+    assert.equal(streamed.byte_size, expected.byte_size);
+    assert.equal(streamed.checksum_sha256, expected.checksum_sha256);
+    assert.deepEqual(await readFile(outputPath), expected.content);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("wires package routes and keeps the legacy report renderer isolated", () => {
   const router = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/router.js"), "utf8");
   const legacy = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/services/customAppraisalReportPdf.js"), "utf8");
@@ -142,10 +168,11 @@ test("wires package routes and keeps the legacy report renderer isolated", () =>
 
 test("keeps the audit manifest outside the strict UCDP delivery ZIP", () => {
   const service = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/uadPackageArtifacts.js"), "utf8");
-  const zipInputs = service.match(/buildDeterministicZip\(\[([\s\S]*?)\]\);/)?.[1] || "";
+  const zipInputs = service.match(/writeDeterministicZipToFile\(\[([\s\S]*?)\],/)?.[1] || "";
   assert.match(zipInputs, /pdfFileName/);
   assert.match(zipInputs, /xmlFileName/);
   assert.match(zipInputs, /entry\.package_path/);
   assert.doesNotMatch(zipInputs, /manifest\.content|manifestFileName/);
+  assert.match(service, /streamed_generation: true/);
   assert.match(service, /artifactType: "images_manifest"/);
 });

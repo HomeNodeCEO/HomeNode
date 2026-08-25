@@ -64,6 +64,16 @@ function errorStatus(error) {
     message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_changed")
   )) return 409;
   if (message.startsWith("uad_package_")) return 422;
+  if ([
+    "uad_artifact_capacity_exceeded",
+    "uad_artifact_queue_timeout",
+    "uad_artifact_executor_shutting_down",
+  ].includes(message)) return 503;
+  if (message.startsWith("uad_object_") && message.endsWith("_timeout")) return 504;
+  if (message.startsWith("uad_object_") && (
+    message.endsWith("_network_error") || message.includes("_failed:")
+  )) return 502;
+  if (message === "uad_object_download_too_large") return 422;
   if (message === "uad_compliance_authentication_required") return 401;
   if (
     message === "uad_compliance_disabled"

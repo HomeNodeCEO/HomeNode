@@ -108,6 +108,7 @@ test("graceful shutdown drains once, closes idle sockets, and releases the pool"
   let closeCallback = null;
   let idleCloseCount = 0;
   let poolEndCount = 0;
+  let shutdownHookCount = 0;
   const controller = installGracefulShutdown({
     server: {
       close(callback) { closeCallback = callback; },
@@ -117,12 +118,14 @@ test("graceful shutdown drains once, closes idle sockets, and releases the pool"
     graceMs: 5_000,
     processTarget,
     logger: {},
+    onBegin() { shutdownHookCount += 1; },
   });
   try {
     assert.equal(controller.begin("test"), true);
     assert.equal(controller.begin("duplicate"), false);
     assert.equal(controller.isShuttingDown(), true);
     assert.equal(idleCloseCount, 1);
+    assert.equal(shutdownHookCount, 1);
     closeCallback(null);
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(poolEndCount, 1);

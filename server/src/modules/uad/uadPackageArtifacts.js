@@ -1,17 +1,21 @@
 import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { listUadAssets } from "./assets.js";
 import { getUadEditor } from "./editor.js";
 import { buildUadGeneratedArtifactObjectKey, sanitizeUadFileName } from "./r2Storage.js";
 import { listUadSketches } from "./sketches.js";
 import {
-  buildDeterministicZip,
   buildUadDeliveryAssetEntries,
   buildUadImagesManifest,
+  writeDeterministicZipToFile,
 } from "./uadDeliveryPackage.js";
 import { buildUadValidationInputDigest } from "./validation.js";
 import { inspectUadAssetPayload } from "./uadFileSecurity.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { runUadArtifactOperation } from "./uadArtifactExecution.js";
 
 const MANIFEST_CONTENT_TYPE = "application/json";
 const PACKAGE_CONTENT_TYPE = "application/zip";
@@ -62,18 +66,32 @@ async function loadDeliveryAssets(queryable, workfileId) {
   return result.rows;
 }
 
-async function downloadVerified(storage, row, errorPrefix) {
-  const downloaded = await storage.getObject({ objectKey: row.object_key });
-  const checksum = createHash("sha256").update(downloaded.body).digest("hex");
+async function downloadVerifiedToFile(storage, row, errorPrefix, filePath, maxBytes) {
+  let downloaded;
+  if (typeof storage.downloadObjectToFile === "function") {
+    downloaded = await storage.downloadObjectToFile({
+      objectKey: row.object_key,
+      filePath,
+      maxBytes,
+    });
+  } else {
+    const buffered = await storage.getObject({ objectKey: row.object_key, maxBytes });
+    await writeFile(filePath, buffered.body);
+    downloaded = {
+      file_path: filePath,
+      byte_size: buffered.body.length,
+      checksum_sha256: createHash("sha256").update(buffered.body).digest("hex"),
+    };
+  }
   const expectedByteSize = row.expected_byte_size ?? row.byte_size;
   const expectedChecksum = row.expected_checksum_sha256 ?? row.checksum_sha256;
-  if (expectedByteSize != null && Number(expectedByteSize) !== downloaded.body.length) {
+  if (expectedByteSize != null && Number(expectedByteSize) !== Number(downloaded.byte_size)) {
     throw new Error(`${errorPrefix}_size_mismatch`);
   }
-  if (expectedChecksum && expectedChecksum !== checksum) {
+  if (expectedChecksum && expectedChecksum !== downloaded.checksum_sha256) {
     throw new Error(`${errorPrefix}_checksum_mismatch`);
   }
-  return { body: downloaded.body, byte_size: downloaded.body.length, checksum_sha256: checksum };
+  return downloaded;
 }
 
 async function upsertGeneratingArtifact(queryable, {
@@ -108,7 +126,11 @@ async function upsertGeneratingArtifact(queryable, {
     [
       artifactId, workfile.id, Number(workfile.current_revision), artifactType,
       storage.provider, storage.bucket, objectKey, contentType, byteSize, checksumSha256,
-      JSON.stringify({ file_name: fileName, ...metadata }),
+      JSON.stringify({
+        file_name: fileName,
+        generation_started_at: new Date().toISOString(),
+        ...metadata,
+      }),
     ],
   );
   return result.rows[0];
@@ -135,7 +157,7 @@ export async function getLatestUadSubmissionPackage(pool, storage, workfileIdVal
   };
 }
 
-export async function generateUadSubmissionPackage(pool, storage, workfileIdValue) {
+async function generateUadSubmissionPackageOperation(pool, storage, workfileIdValue) {
   if (!storage?.configured) throw new Error("uad_object_storage_not_configured");
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const client = await pool.connect();
@@ -210,132 +232,196 @@ export async function generateUadSubmissionPackage(pool, storage, workfileIdValu
     client.release();
   }
 
-  const pdfArtifact = sourceArtifacts.get("pdf");
-  const xmlArtifact = sourceArtifacts.get("xml");
-  const pdf = await downloadVerified(storage, pdfArtifact, "uad_package_pdf");
-  const xml = await downloadVerified(storage, xmlArtifact, "uad_package_xml");
-  const verifiedEntries = [];
-  let totalAssetBytes = 0;
-  for (const entry of deliveryEntries) {
-    const downloaded = await downloadVerified(storage, entry, "uad_package_asset");
-    try {
-      inspectUadAssetPayload(downloaded.body, entry.content_type);
-    } catch {
-      throw new Error("uad_package_asset_payload_invalid");
-    }
-    totalAssetBytes += downloaded.byte_size;
-    if (totalAssetBytes > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");
-    verifiedEntries.push({ ...entry, ...downloaded });
-  }
-  const manifest = buildUadImagesManifest({ workfile, inputDigest, entries: verifiedEntries });
-  const pdfFileName = sanitizeUadFileName(pdfArtifact.metadata?.file_name || `${workfile.file_number}.pdf`);
-  const xmlFileName = sanitizeUadFileName(xmlArtifact.metadata?.file_name || `${workfile.file_number}.xml`);
-  const manifestFileName = "images-manifest.json";
-  const packageFileName = sanitizeUadFileName(`${workfile.file_number || workfile.id}-revision-${workfile.current_revision}.zip`);
-  const zip = buildDeterministicZip([
-    { path: pdfFileName, body: pdf.body },
-    { path: xmlFileName, body: xml.body },
-    ...verifiedEntries.map((entry) => ({ path: entry.package_path, body: entry.body })),
-  ]);
-  if (zip.byte_size > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");
-
-  const persistClient = await pool.connect();
-  let manifestRow;
-  let packageRow;
+  const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "homenode-uad-package-"));
   try {
-    await persistClient.query("BEGIN");
-    const unchanged = await persistClient.query(
-      `SELECT id, organization_id, file_number, current_revision,
-              specification_release_key, status, updated_at
-         FROM appraisal.uad_workfiles
-        WHERE id = $1 FOR UPDATE`,
-      [workfileId],
+    const pdfArtifact = sourceArtifacts.get("pdf");
+    const xmlArtifact = sourceArtifacts.get("xml");
+    const pdf = await downloadVerifiedToFile(
+      storage,
+      pdfArtifact,
+      "uad_package_pdf",
+      path.join(temporaryDirectory, "source.pdf"),
+      MAX_PACKAGE_BYTES,
     );
-    if (!unchanged.rows.length
-      || Number(unchanged.rows[0].current_revision) !== Number(workfile.current_revision)
-      || new Date(unchanged.rows[0].updated_at).getTime() !== new Date(workfile.updated_at).getTime()
-      || !DOWNLOADABLE_WORKFILE_STATUSES.has(unchanged.rows[0].status)) {
-      throw new Error("uad_package_workfile_changed");
-    }
-    const commonMetadata = {
-      input_digest_sha256: inputDigest,
-      source_pdf_artifact_id: pdfArtifact.id,
-      source_xml_artifact_id: xmlArtifact.id,
-      source_pdf_checksum_sha256: pdf.checksum_sha256,
-      source_xml_checksum_sha256: xml.checksum_sha256,
-      image_count: verifiedEntries.length,
-    };
-    manifestRow = await upsertGeneratingArtifact(persistClient, {
-      artifactId: randomUUID(), workfile, storage, artifactType: "images_manifest",
-      contentType: MANIFEST_CONTENT_TYPE, byteSize: manifest.byte_size,
-      checksumSha256: manifest.checksum_sha256, fileName: manifestFileName,
-      metadata: commonMetadata,
-    });
-    packageRow = await upsertGeneratingArtifact(persistClient, {
-      artifactId: randomUUID(), workfile, storage, artifactType: "submission_package",
-      contentType: PACKAGE_CONTENT_TYPE, byteSize: zip.byte_size,
-      checksumSha256: zip.checksum_sha256, fileName: packageFileName,
-      metadata: { ...commonMetadata, entry_count: zip.entry_count, manifest_artifact_id: manifestRow.id },
-    });
-    for (const entry of verifiedEntries) {
-      await persistClient.query(
-        `UPDATE appraisal.uad_assets SET checksum_sha256 = COALESCE(checksum_sha256, $2)
-          WHERE id = $1 AND status = 'verified'`,
-        [entry.asset_id, entry.checksum_sha256],
+    const xml = await downloadVerifiedToFile(
+      storage,
+      xmlArtifact,
+      "uad_package_xml",
+      path.join(temporaryDirectory, "source.xml"),
+      MAX_PACKAGE_BYTES,
+    );
+    const verifiedEntries = [];
+    let totalAssetBytes = 0;
+    for (const [index, entry] of deliveryEntries.entries()) {
+      const downloaded = await downloadVerifiedToFile(
+        storage,
+        entry,
+        "uad_package_asset",
+        path.join(temporaryDirectory, `asset-${String(index + 1).padStart(4, "0")}.bin`),
+        Math.min(MAX_PACKAGE_BYTES, Number(entry.byte_size || MAX_PACKAGE_BYTES)),
       );
+      try {
+        inspectUadAssetPayload(await readFile(downloaded.file_path), entry.content_type);
+      } catch {
+        throw new Error("uad_package_asset_payload_invalid");
+      }
+      totalAssetBytes += downloaded.byte_size;
+      if (totalAssetBytes > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");
+      verifiedEntries.push({ ...entry, ...downloaded });
     }
-    await persistClient.query("COMMIT");
-  } catch (error) {
-    await persistClient.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    persistClient.release();
-  }
+    const manifest = buildUadImagesManifest({ workfile, inputDigest, entries: verifiedEntries });
+    const pdfFileName = sanitizeUadFileName(pdfArtifact.metadata?.file_name || `${workfile.file_number}.pdf`);
+    const xmlFileName = sanitizeUadFileName(xmlArtifact.metadata?.file_name || `${workfile.file_number}.xml`);
+    const manifestFileName = "images-manifest.json";
+    const packageFileName = sanitizeUadFileName(`${workfile.file_number || workfile.id}-revision-${workfile.current_revision}.zip`);
+    const zip = await writeDeterministicZipToFile([
+      {
+        path: pdfFileName,
+        file_path: pdf.file_path,
+        byte_size: pdf.byte_size,
+        remove_after_write: true,
+      },
+      {
+        path: xmlFileName,
+        file_path: xml.file_path,
+        byte_size: xml.byte_size,
+        remove_after_write: true,
+      },
+      ...verifiedEntries.map((entry) => ({
+        path: entry.package_path,
+        file_path: entry.file_path,
+        byte_size: entry.byte_size,
+        remove_after_write: true,
+      })),
+    ], path.join(temporaryDirectory, "submission-package.zip"));
+    if (zip.byte_size > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");
 
-  try {
-    const [manifestUpload, packageUpload] = await Promise.all([
-      storage.putObject({ objectKey: manifestRow.object_key, contentType: MANIFEST_CONTENT_TYPE, body: manifest.content }),
-      storage.putObject({ objectKey: packageRow.object_key, contentType: PACKAGE_CONTENT_TYPE, body: zip.content }),
-    ]);
-    const finalized = await pool.query(
-      `WITH finalized AS (
-         UPDATE appraisal.uad_generated_artifacts
-            SET generation_status = 'ready', generated_at = now(),
-                metadata = metadata || CASE artifact_type
-                  WHEN 'images_manifest' THEN $3::jsonb ELSE $4::jsonb END
-          WHERE id IN ($1, $2)
-          RETURNING *
-       ), exported AS (
-         UPDATE appraisal.uad_workfiles SET status = 'exported', updated_at = now()
-          WHERE id = $5 AND current_revision = $6
-       ), audit AS (
-         INSERT INTO appraisal.uad_audit_events (
-           workfile_id, event_type, entity_type, entity_id, after_data, metadata
-         ) VALUES ($5, 'uad_package.generated', 'uad_generated_artifact', $2,
-                   jsonb_build_object('checksum_sha256', $7::text, 'byte_size', $8::bigint),
-                   jsonb_build_object('revision_number', $6::integer, 'image_count', $9::integer))
-       ) SELECT * FROM finalized`,
-      [
-        manifestRow.id, packageRow.id,
-        JSON.stringify({ storage_etag: manifestUpload.etag || null }),
-        JSON.stringify({ storage_etag: packageUpload.etag || null }),
-        workfileId, Number(workfile.current_revision), zip.checksum_sha256, zip.byte_size,
-        verifiedEntries.length,
-      ],
-    );
-    const byType = new Map(finalized.rows.map((row) => [row.artifact_type, row]));
-    const currentWorkfile = { ...workfile, status: "exported" };
-    return {
-      manifest: artifactResponse(byType.get("images_manifest"), currentWorkfile, storage),
-      package: artifactResponse(byType.get("submission_package"), currentWorkfile, storage),
-    };
-  } catch (error) {
-    await pool.query(
-      `UPDATE appraisal.uad_generated_artifacts
-          SET generation_status = 'failed', metadata = metadata || $3::jsonb
-        WHERE id IN ($1, $2)`,
-      [manifestRow.id, packageRow.id, JSON.stringify({ upload_error: String(error.message).split(":")[0] })],
-    );
-    throw error;
+    const persistClient = await pool.connect();
+    let manifestRow;
+    let packageRow;
+    try {
+      await persistClient.query("BEGIN");
+      const unchanged = await persistClient.query(
+        `SELECT id, organization_id, file_number, current_revision,
+                specification_release_key, status, updated_at
+           FROM appraisal.uad_workfiles
+          WHERE id = $1 FOR UPDATE`,
+        [workfileId],
+      );
+      if (!unchanged.rows.length
+        || Number(unchanged.rows[0].current_revision) !== Number(workfile.current_revision)
+        || new Date(unchanged.rows[0].updated_at).getTime() !== new Date(workfile.updated_at).getTime()
+        || !DOWNLOADABLE_WORKFILE_STATUSES.has(unchanged.rows[0].status)) {
+        throw new Error("uad_package_workfile_changed");
+      }
+      const commonMetadata = {
+        input_digest_sha256: inputDigest,
+        source_pdf_artifact_id: pdfArtifact.id,
+        source_xml_artifact_id: xmlArtifact.id,
+        source_pdf_checksum_sha256: pdf.checksum_sha256,
+        source_xml_checksum_sha256: xml.checksum_sha256,
+        image_count: verifiedEntries.length,
+        streamed_generation: true,
+      };
+      manifestRow = await upsertGeneratingArtifact(persistClient, {
+        artifactId: randomUUID(), workfile, storage, artifactType: "images_manifest",
+        contentType: MANIFEST_CONTENT_TYPE, byteSize: manifest.byte_size,
+        checksumSha256: manifest.checksum_sha256, fileName: manifestFileName,
+        metadata: commonMetadata,
+      });
+      packageRow = await upsertGeneratingArtifact(persistClient, {
+        artifactId: randomUUID(), workfile, storage, artifactType: "submission_package",
+        contentType: PACKAGE_CONTENT_TYPE, byteSize: zip.byte_size,
+        checksumSha256: zip.checksum_sha256, fileName: packageFileName,
+        metadata: { ...commonMetadata, entry_count: zip.entry_count, manifest_artifact_id: manifestRow.id },
+      });
+      for (const entry of verifiedEntries) {
+        await persistClient.query(
+          `UPDATE appraisal.uad_assets SET checksum_sha256 = COALESCE(checksum_sha256, $2)
+            WHERE id = $1 AND status = 'verified'`,
+          [entry.asset_id, entry.checksum_sha256],
+        );
+      }
+      await persistClient.query("COMMIT");
+    } catch (error) {
+      await persistClient.query("ROLLBACK").catch(() => {});
+      throw error;
+    } finally {
+      persistClient.release();
+    }
+
+    try {
+      const packageUpload = typeof storage.putFile === "function"
+        ? storage.putFile({
+            objectKey: packageRow.object_key,
+            contentType: PACKAGE_CONTENT_TYPE,
+            filePath: zip.file_path,
+            byteSize: zip.byte_size,
+          })
+        : readFile(zip.file_path).then((body) => storage.putObject({
+            objectKey: packageRow.object_key,
+            contentType: PACKAGE_CONTENT_TYPE,
+            body,
+          }));
+      const [manifestUpload, uploadedPackage] = await Promise.all([
+        storage.putObject({
+          objectKey: manifestRow.object_key,
+          contentType: MANIFEST_CONTENT_TYPE,
+          body: manifest.content,
+        }),
+        packageUpload,
+      ]);
+      const finalized = await pool.query(
+        `WITH finalized AS (
+           UPDATE appraisal.uad_generated_artifacts
+              SET generation_status = 'ready', generated_at = now(),
+                  metadata = metadata || CASE artifact_type
+                    WHEN 'images_manifest' THEN $3::jsonb ELSE $4::jsonb END
+            WHERE id IN ($1, $2)
+            RETURNING *
+         ), exported AS (
+           UPDATE appraisal.uad_workfiles SET status = 'exported', updated_at = now()
+            WHERE id = $5 AND current_revision = $6
+         ), audit AS (
+           INSERT INTO appraisal.uad_audit_events (
+             workfile_id, event_type, entity_type, entity_id, after_data, metadata
+           ) VALUES ($5, 'uad_package.generated', 'uad_generated_artifact', $2,
+                     jsonb_build_object('checksum_sha256', $7::text, 'byte_size', $8::bigint),
+                     jsonb_build_object('revision_number', $6::integer, 'image_count', $9::integer))
+         ) SELECT * FROM finalized`,
+        [
+          manifestRow.id, packageRow.id,
+          JSON.stringify({ storage_etag: manifestUpload.etag || null }),
+          JSON.stringify({ storage_etag: uploadedPackage.etag || null }),
+          workfileId, Number(workfile.current_revision), zip.checksum_sha256, zip.byte_size,
+          verifiedEntries.length,
+        ],
+      );
+      const byType = new Map(finalized.rows.map((row) => [row.artifact_type, row]));
+      const currentWorkfile = { ...workfile, status: "exported" };
+      return {
+        manifest: artifactResponse(byType.get("images_manifest"), currentWorkfile, storage),
+        package: artifactResponse(byType.get("submission_package"), currentWorkfile, storage),
+      };
+    } catch (error) {
+      await pool.query(
+        `UPDATE appraisal.uad_generated_artifacts
+            SET generation_status = 'failed', metadata = metadata || $3::jsonb
+          WHERE id IN ($1, $2)`,
+        [manifestRow.id, packageRow.id, JSON.stringify({ upload_error: String(error.message).split(":")[0] })],
+      );
+      throw error;
+    }
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
   }
+}
+
+export function generateUadSubmissionPackage(pool, storage, workfileIdValue) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  return runUadArtifactOperation(
+    "submission-package",
+    workfileId,
+    () => generateUadSubmissionPackageOperation(pool, storage, workfileId),
+  );
 }

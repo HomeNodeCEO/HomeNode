@@ -11,6 +11,64 @@ import { customAppraisalReportFixture } from "./fixtures/customAppraisalReportFi
 
 const databaseUrl = process.env.DATABASE_URL;
 
+async function cleanupIntegrationFixture(pool, accountId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM app.appraisal_file_replications
+        WHERE source_report_file_id IN (SELECT id FROM app.report_files WHERE account_id = $1)
+           OR target_report_file_id IN (SELECT id FROM app.report_files WHERE account_id = $1)`,
+      [accountId],
+    );
+    await client.query(
+      `UPDATE app.report_files
+          SET subject_snapshot_id = NULL, previous_report_file_id = NULL
+        WHERE account_id = $1`,
+      [accountId],
+    );
+    await client.query(
+      `DELETE FROM app.appraisal_subject_snapshots
+        WHERE appraisal_case_id IN (SELECT id FROM app.appraisal_cases WHERE account_id = $1)`,
+      [accountId],
+    );
+    await client.query("DELETE FROM app.report_files WHERE account_id = $1", [accountId]);
+    await client.query(
+      `DELETE FROM app.custom_appraisal_workfile_sections
+        WHERE assignment_file_id IN (SELECT id FROM app.assignment_files WHERE account_id = $1)`,
+      [accountId],
+    );
+    await client.query(
+      `DELETE FROM app.custom_appraisal_workfiles
+        WHERE assignment_file_id IN (SELECT id FROM app.assignment_files WHERE account_id = $1)`,
+      [accountId],
+    );
+    await client.query("DELETE FROM app.assignment_files WHERE account_id = $1", [accountId]);
+    await client.query("DELETE FROM app.appraisal_cases WHERE account_id = $1", [accountId]);
+
+    const workfiles = "SELECT id FROM appraisal.uad_workfiles WHERE account_id = $1";
+    await client.query(`DELETE FROM appraisal.uad_audit_events WHERE workfile_id IN (${workfiles})`, [accountId]);
+    await client.query(`DELETE FROM appraisal.uad_revisions WHERE workfile_id IN (${workfiles})`, [accountId]);
+    await client.query(`DELETE FROM appraisal.uad_field_values WHERE workfile_id IN (${workfiles})`, [accountId]);
+    await client.query(
+      `DELETE FROM appraisal.uad_entities
+        WHERE workfile_id IN (${workfiles}) AND parent_entity_id IS NOT NULL`,
+      [accountId],
+    );
+    await client.query(`DELETE FROM appraisal.uad_entities WHERE workfile_id IN (${workfiles})`, [accountId]);
+    await client.query(`DELETE FROM appraisal.uad_subject_snapshots WHERE workfile_id IN (${workfiles})`, [accountId]);
+    await client.query("DELETE FROM appraisal.uad_workfiles WHERE account_id = $1", [accountId]);
+    await client.query("DELETE FROM core.primary_improvements WHERE account_id = $1", [accountId]);
+    await client.query("DELETE FROM core.accounts WHERE account_id = $1", [accountId]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 test("reviewed Custom Appraisal suggestions apply atomically to a real UAD database", {
   skip: !databaseUrl,
 }, async () => {
@@ -126,6 +184,7 @@ test("reviewed Custom Appraisal suggestions apply atomically to a real UAD datab
     );
     assert.equal(audit.rows[0].count, 1);
   } finally {
+    await cleanupIntegrationFixture(pool, accountId);
     await pool.end();
   }
 });

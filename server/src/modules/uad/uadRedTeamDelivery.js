@@ -153,7 +153,7 @@ export async function runUadRedTeamDeliveryChecks({
   const workfilePath = `/api/uad/workfiles/${deliveryWorkfile.id}`;
   const otherPath = `/api/uad/workfiles/${crossTenantWorkfile.id}`;
   const packageResult = await api("assigned_appraiser_a", `${workfilePath}/artifacts/submission-package`);
-  const artifact = packageResult.body?.artifact;
+  const artifact = packageResult.body?.package || packageResult.body?.artifact;
   const packageReady = packageResult.status === 200
     && !packageResult.transportError
     && artifact?.ready_for_download === true

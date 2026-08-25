@@ -918,11 +918,11 @@ function numberOrNull(value) {
 }
 
 const CONGRUENCY_WEIGHTS = Object.freeze({
-  living_area: 0.6,
-  price_per_square_foot: 0.1,
-  sale_price: 0.1,
-  age: 0.1,
-  housing_type: 0.1,
+  living_area: 0.4,
+  price_per_square_foot: 0.05,
+  sale_price: 0.05,
+  age: 0.3,
+  housing_type: 0.2,
 });
 
 function rounded(value, digits = 2) {

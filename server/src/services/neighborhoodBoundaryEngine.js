@@ -15,6 +15,10 @@ export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 5;
 // representative properties in multiple Dallas County cities and urban,
 // suburban, semi-rural, and rural settings before treating these road-selection
 // thresholds and reporting aliases as stable appraisal methodology.
+// TODO(neighborhood-narrative-boundary): Build and validate a defensible closed
+// roadway/physical-boundary workflow. Similarity pockets are an analytical
+// inclusion tool and must never be presented as the appraiser's narrative
+// neighborhood boundary merely because their statistics are reliable.
 
 const METERS_PER_MILE = 1609.344;
 const MAX_BOUNDARY_POINTS = 2500;

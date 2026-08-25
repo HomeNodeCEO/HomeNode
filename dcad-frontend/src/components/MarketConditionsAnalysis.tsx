@@ -112,6 +112,8 @@ type Props = {
     score: number | null;
     excluded: boolean;
     classification: string;
+    primary_population: boolean;
+    relevance_band: string;
     point: { type: 'Point'; coordinates: [number, number] };
   }>;
   onCustomGeometryChange?: (
@@ -137,6 +139,8 @@ function makeRelevanceFeatureCollection(
         score: Number(candidate.score) || 0,
         excluded: candidate.excluded,
         classification: candidate.classification,
+        primary_population: candidate.primary_population,
+        relevance_band: candidate.relevance_band,
       },
     })),
   };
@@ -1466,18 +1470,19 @@ export default function MarketConditionsAnalysis({
             type: 'circle',
             source: RELEVANCE_SOURCE_ID,
             paint: {
-              'circle-radius': 10,
-              'circle-blur': 0.65,
-              'circle-opacity': 0.34,
+              'circle-radius': 8,
+              'circle-blur': 0.3,
+              'circle-opacity': 0.5,
               'circle-color': [
-                'case',
-                ['get', 'excluded'], '#94a3b8',
-                ['interpolate', ['linear'], ['get', 'score'],
-                  20, '#facc15',
-                  60, '#86efac',
-                  85, '#15803d',
+                'match', ['get', 'relevance_band'],
+                'highest', '#14532d',
+                'high', '#16a34a',
+                'relevant', '#86efac',
+                'marginal', '#facc15',
+                'low', '#f97316',
+                'insufficient_data', '#a78bfa',
+                '#94a3b8',
                 ],
-              ],
             },
           });
           map.addLayer({
@@ -1485,17 +1490,21 @@ export default function MarketConditionsAnalysis({
             type: 'circle',
             source: RELEVANCE_SOURCE_ID,
             paint: {
-              'circle-radius': 3,
-              'circle-opacity': 0.78,
+              'circle-radius': 4,
+              'circle-opacity': 0.9,
               'circle-color': [
-                'case',
-                ['get', 'excluded'], '#64748b',
-                ['interpolate', ['linear'], ['get', 'score'],
-                  20, '#eab308',
-                  60, '#22c55e',
-                  85, '#166534',
+                'match', ['get', 'relevance_band'],
+                'highest', '#052e16',
+                'high', '#15803d',
+                'relevant', '#22c55e',
+                'marginal', '#eab308',
+                'low', '#ea580c',
+                'insufficient_data', '#7c3aed',
+                '#64748b',
                 ],
-              ],
+              'circle-stroke-width': ['case', ['get', 'primary_population'], 2, 0],
+              'circle-stroke-color': '#ffffff',
+              'circle-stroke-opacity': 0.95,
             },
           });
           map.on('click', (event) => {
@@ -2281,9 +2290,12 @@ export default function MarketConditionsAnalysis({
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600">
                 <span className="font-semibold text-slate-700">Property similarity:</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-800" />Highest relevance</span>
-                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-400" />Relevant</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-600" />High relevance</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-green-300" />Relevant</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" />Marginal</span>
+                <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-orange-500" />Low relevance</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Excluded</span>
+                <span className="basis-full text-slate-500">White-outlined points form the primary statistical population used for neighborhood medians and predominant values.</span>
                 {customGeometryOrigin === 'automatic' ? (
                   <span className="basis-full text-slate-500">
                     The dashed outline is a discovery envelope, not an appraiser-confirmed neighborhood boundary. Draw or edit the final narrative boundary as needed.

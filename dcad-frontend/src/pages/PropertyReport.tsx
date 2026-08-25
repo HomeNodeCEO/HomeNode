@@ -1579,8 +1579,10 @@ function NeighborhoodCharacteristicsContent({
         onAssignmentChange("neighborhood_all_gla_predominant", properties.gla?.median ?? "");
       }
       setRelevanceAssessment(result);
+      const primaryCount = result.summary.relevant_statistics?.included_property_count ??
+        result.summary.included_count;
       setRelevanceMessage(
-        `${result.summary.included_count.toLocaleString()} of ${result.summary.candidate_count.toLocaleString()} parcels remain in the relevant dataset; ${result.summary.excluded_count.toLocaleString()} were excluded and ${result.summary.insufficient_data_count.toLocaleString()} remain visible for insufficient-data review.`,
+        `${primaryCount.toLocaleString()} properties form the primary statistical population at a ${result.summary.primary_population_threshold}% relevance threshold. ${result.summary.included_count.toLocaleString()} properties remain reviewable on the map; ${result.summary.excluded_count.toLocaleString()} were excluded.`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Relevant-property analysis failed.";
@@ -2144,6 +2146,8 @@ function NeighborhoodCharacteristicsContent({
                 {relevanceAssessment.summary.relevant_statistics ? (
                   <>
                     <span>Relevant sales: <strong>{relevanceAssessment.summary.relevant_statistics.included_sale_count}</strong></span>
+                    <span>Primary cutoff: <strong>{relevanceAssessment.summary.primary_population_threshold}%</strong></span>
+                    <span>30-sale target: <strong>{relevanceAssessment.summary.primary_population_target_met ? "Met" : "Not met"}</strong></span>
                     <span>Composite COD: <strong>{relevanceAssessment.summary.relevant_statistics.composite_cod ?? "Pending"}</strong></span>
                     <span>Reliability: <strong>{relevanceAssessment.summary.relevant_statistics.reliability_score}/100</strong></span>
                   </>

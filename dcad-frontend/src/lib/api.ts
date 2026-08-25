@@ -2228,8 +2228,13 @@ export interface NeighborhoodRelevanceAssessment {
     sale_history_months: number;
     sale_prices_time_adjusted: false;
     minimum_dissimilar_pocket_size: number;
+    primary_population_threshold: number;
+    primary_population_target_sale_count: number;
+    primary_population_sale_count: number;
+    primary_population_target_met: boolean;
     relevant_statistics?: {
-      population_rule: 'relevance_included_only';
+      population_rule: 'adaptive_primary_relevance_population';
+      reviewable_property_count: number;
       included_property_count: number;
       included_sale_count: number;
       sale_coverage_percent: number;
@@ -2265,6 +2270,8 @@ export interface NeighborhoodRelevanceAssessment {
     excluded: boolean;
     classification: string;
     cluster_id: string | null;
+    primary_population: boolean;
+    relevance_band: 'highest' | 'high' | 'relevant' | 'marginal' | 'low' | 'excluded' | 'insufficient_data';
     point: { type: 'Point'; coordinates: [number, number] };
   }>;
 }

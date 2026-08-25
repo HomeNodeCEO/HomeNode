@@ -1,10 +1,10 @@
-export const NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION = 3;
+export const NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION = 4;
 
 export const NEIGHBORHOOD_RELEVANCE_WEIGHTS = Object.freeze({
-  age: 0.40,
-  site_size: 0.30,
-  proximity: 0.20,
-  sale_price: 0.10,
+  age: 0.45,
+  site_size: 0.20,
+  proximity: 0.30,
+  sale_price: 0.05,
 });
 
 // Version 1 intentionally starts with a permissive cutoff. It is exported and

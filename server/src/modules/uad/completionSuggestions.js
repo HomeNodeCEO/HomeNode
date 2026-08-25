@@ -2,7 +2,7 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 export const UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION = 1;
-export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-20.9";
+export const UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION = "2026-08-25.10";
 
 const MAX_OMISSIONS = 200;
 const UAD_CONDITION = /^C[1-6]$/;
@@ -1538,6 +1538,16 @@ function buildMarketSuggestions(completion, omissions) {
   addField(fields, field("market_total_sales:3000.0026", saleCount, completion, "analyses.market_conditions.studies.population"));
 
   const medianSalePrice = number(study?.summary?.median_sale_price);
+  const lowestSalePrice = number(study?.summary?.minimum_sale_price);
+  const highestSalePrice = number(study?.summary?.maximum_sale_price);
+  addField(fields, field(
+    "market_total_sales:3000.0028",
+    lowestSalePrice !== null && lowestSalePrice >= 0 && lowestSalePrice <= 999_999_999.99
+      ? lowestSalePrice
+      : null,
+    completion,
+    "analyses.market_conditions.studies.summary.minimum_sale_price",
+  ));
   addField(fields, field(
     "market_total_sales:3000.0029",
     medianSalePrice !== null && medianSalePrice > 0 && medianSalePrice <= 999_999_999.99
@@ -1545,6 +1555,14 @@ function buildMarketSuggestions(completion, omissions) {
       : null,
     completion,
     "analyses.market_conditions.studies.summary.median_sale_price",
+  ));
+  addField(fields, field(
+    "market_total_sales:3000.0027",
+    highestSalePrice !== null && highestSalePrice >= 0 && highestSalePrice <= 999_999_999.99
+      ? highestSalePrice
+      : null,
+    completion,
+    "analyses.market_conditions.studies.summary.maximum_sale_price",
   ));
 
   addField(fields, field(
@@ -1616,10 +1634,22 @@ function finiteAdjustment(value) {
   return parsed !== null && Math.abs(parsed) <= 999_999_999 ? parsed : null;
 }
 
+function additionalPropertyStatus(sale) {
+  const normalized = String(sale?.mls_status || sale?.status || sale?.record_type || "").toLowerCase();
+  if (sale?.record_type === "closed_sale" || sale?.closing_date || /closed|sold|settled/.test(normalized)) {
+    return "SettledSale";
+  }
+  if (/pending|contract|option/.test(normalized)) return "Pending";
+  if (/active/.test(normalized)) return "Active";
+  if (/off.?market|expired|withdrawn|cancelled/.test(normalized)) return "OffMarket";
+  return null;
+}
+
 function buildComparableSuggestions(completion, omissions) {
   const sales = completion.analyses?.comparable_sales || {};
   const fields = [];
   const entities = [];
+  const additionalProperties = [];
   const comparables = Array.isArray(sales.primary_comparables)
     ? sales.primary_comparables.slice(0, 12)
     : [];
@@ -1710,6 +1740,8 @@ function buildComparableSuggestions(completion, omissions) {
     const adjustments = plainObject(comparable.adjustments) ? comparable.adjustments : {};
     const mappedAdjustments = [
       ["time", "sales_comparable_adjustment_sale_date:1800.0317"],
+      ["bedrooms", "sales_comparable_adjustment_bedrooms:1800.0317"],
+      ["bathrooms", "sales_comparable_adjustment_bathrooms:1800.0317"],
       ["livingArea", "sales_comparable_adjustment_standard_above:1800.0317"],
       ["garage", "sales_comparable_adjustment_vehicle_storage:1800.0317"],
       ["pool", "sales_comparable_adjustment_water_features_amenity:1800.0317"],
@@ -1729,7 +1761,11 @@ function buildComparableSuggestions(completion, omissions) {
         concession > 0 ? -concession : concession,
       );
     }
-    if (finiteAdjustment(adjustments.roomCount)) {
+    if (
+      finiteAdjustment(adjustments.roomCount)
+      && finiteAdjustment(adjustments.bedrooms) === null
+      && finiteAdjustment(adjustments.bathrooms) === null
+    ) {
       addOmission(omissions, {
         scope: `comparable:${sourceKey}`,
         code: "combined_room_count_adjustment_requires_split",
@@ -1818,7 +1854,60 @@ function buildComparableSuggestions(completion, omissions) {
     });
   });
 
-  return { fields, entities };
+  const secondaryComparables = Array.isArray(sales.secondary_comparables)
+    ? sales.secondary_comparables.slice(0, 25)
+    : [];
+  secondaryComparables.forEach((sale, index) => {
+    const ordinal = index + 1;
+    const sourceKey = comparableSourceKey(sale, ordinal);
+    const address = text(sale?.address, 100);
+    const city = text(sale?.city, 50);
+    const state = text(sale?.state, 2)?.toUpperCase();
+    const postalCode = text(sale?.zip || sale?.postal_code, 10);
+    const status = additionalPropertyStatus(sale);
+    if (!address || !city || !state || !postalCode || !status) {
+      addOmission(omissions, {
+        scope: `additional_property:${sourceKey}`,
+        code: "additional_property_identity_requires_appraiser_completion",
+        source_value: { address, city, state, postal_code: postalCode, status },
+      });
+      return;
+    }
+    const values = {
+      "sales_comparison_additional_property:1900.0017": ordinal,
+      "sales_comparison_additional_property:1900.0001": address,
+      "sales_comparison_additional_property:1900.0003": city,
+      "sales_comparison_additional_property:1900.0005": state,
+      "sales_comparison_additional_property:1900.0004": postalCode,
+      "sales_comparison_additional_property:1900.0007": status,
+      ...(status === "SettledSale" && isoDate(sale?.closing_date)
+        ? { "sales_comparison_additional_property:1900.0013": isoDate(sale.closing_date) }
+        : {}),
+    };
+    additionalProperties.push({
+      suggestion_id: `entity:sales_comparison_additional_property:${sourceKey}`,
+      entity_type: "sales_comparison_additional_property",
+      source_key: sourceKey,
+      ordinal,
+      values,
+      ...sourceMetadata(completion, `analyses.comparable_sales.secondary_comparables.${index}`),
+      data_quality_flags: Array.isArray(sale?.data_quality_flags)
+        ? sale.data_quality_flags.slice(0, 25)
+        : [],
+      requires_additional_review: true,
+    });
+    addOmission(omissions, {
+      scope: `additional_property:${sourceKey}`,
+      code: "additional_property_exclusion_reason_requires_appraiser_entry",
+      target_field_keys: [
+        "sales_comparison_additional_property:1900.0010",
+        "sales_comparison_additional_property:1900.0011",
+        "sales_comparison_additional_property:1900.0009",
+      ],
+    });
+  });
+
+  return { fields, entities, additionalProperties };
 }
 
 function buildReconciliationSuggestions(completion, omissions) {
@@ -1961,6 +2050,7 @@ export function buildUadCompletionSuggestions(completion) {
   return {
     schema_version: UAD_COMPLETION_SUGGESTION_SCHEMA_VERSION,
     adapter_version: UAD_COMPLETION_SUGGESTION_ADAPTER_VERSION,
+    source_kind: "custom_appraisal_completion",
     source_completion: {
       schema_version: completion.schema_version,
       adapter_version: completion.adapter_version,
@@ -1991,6 +2081,7 @@ export function buildUadCompletionSuggestions(completion) {
       market_entities: market.entities,
       sales_comparison_fields: sales.fields,
       sales_comparable_entities: sales.entities,
+      sales_comparison_additional_property_entities: sales.additionalProperties,
       reconciliation_fields: reconciliation.fields,
     },
     omissions,
@@ -2001,7 +2092,7 @@ export function buildUadCompletionSuggestions(completion) {
         + salesContract.fields.length + priorTransfers.fields.length
         + market.fields.length + sales.fields.length + reconciliation.fields.length,
       entity_suggestions: subjectAmenities.entities.length + subjectListings.entities.length + priorTransfers.entities.length
-        + siteLocation.entities.length + market.entities.length + sales.entities.length,
+        + siteLocation.entities.length + market.entities.length + sales.entities.length + sales.additionalProperties.length,
       omissions: omissions.length,
     },
     apply_mode: "review_only",

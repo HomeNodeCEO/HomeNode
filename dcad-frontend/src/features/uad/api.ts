@@ -397,7 +397,7 @@ export interface UadCompletionSuggestionField {
   target_entity?: { entity_type: string; entity_identifier: string };
   source_reference: string;
   source_digest_sha256: string;
-  observed_at: string;
+  observed_at: string | null;
   requires_appraiser_confirmation: true;
 }
 
@@ -405,23 +405,25 @@ export interface UadCompletionSuggestionEntity {
   suggestion_id: string;
   entity_type: string;
   ordinal: number;
+  source_key?: string;
   values: Record<string, UadFieldValue>;
   related_entities?: Array<Omit<UadCompletionSuggestionEntity, "suggestion_id">>;
   source_reference: string;
   source_digest_sha256: string;
-  observed_at: string;
+  observed_at: string | null;
   requires_appraiser_confirmation: true;
 }
 
 export interface UadCompletionSuggestions {
   schema_version: number;
   adapter_version: string;
+  source_kind?: "custom_appraisal_completion" | "homenode_shared_data";
   status: "ready_for_review" | "source_review_required";
   source_completion: {
     source_report_file_id: string;
     target_report_file_id: string;
-    appraisal_case_id: string;
-    subject_snapshot_id: string;
+    appraisal_case_id: string | null;
+    subject_snapshot_id: string | null;
     source_digest_sha256: string;
   };
   xml: {
@@ -452,9 +454,10 @@ export interface UadCompletionSuggestions {
     market_entities: UadCompletionSuggestionEntity[];
     sales_comparison_fields: UadCompletionSuggestionField[];
     sales_comparable_entities: UadCompletionSuggestionEntity[];
+    sales_comparison_additional_property_entities: UadCompletionSuggestionEntity[];
     reconciliation_fields: UadCompletionSuggestionField[];
   };
-  omissions: Array<{ scope?: string; code: string; source_value?: unknown; target_field_key?: string }>;
+  omissions: Array<{ scope?: string; code: string; source_value?: unknown; target_field_key?: string; target_field_keys?: string[] }>;
   counts: { field_suggestions: number; entity_suggestions: number; omissions: number };
   apply_mode: "review_only";
   requires_appraiser_confirmation: true;
@@ -479,6 +482,7 @@ export async function getUadSharedData(workfileId: string): Promise<{
     subject_prior_transfer_fields: unknown[];
     subject_prior_transfer_entities: unknown[];
     custom_completion: UadCompletionSuggestions | null;
+    review_document: UadCompletionSuggestions | null;
   };
   adapters: Record<string, { ready: boolean; mode: string; enabled_in_uad_editor: boolean }>;
 }> {

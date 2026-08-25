@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { getLatestNeighborhoodBoundary } from "../../services/neighborhoodBoundaryEngine.js";
 import { getAccountPropertyActivityHistory } from "../../services/accountSalesHistory.js";
 import { getStoredPropertyContext } from "../../services/propertyContext.js";
@@ -5,6 +7,31 @@ import { getPropertyInfluenceContexts } from "../../services/propertyInfluenceSt
 import { getPropertyZoningEvidence } from "../../services/zoningEvidence.js";
 import { loadUadCompletionSuggestions } from "./completionSuggestions.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+
+export const UAD_SHARED_SUGGESTION_ADAPTER_VERSION = "2026-08-25.1";
+
+const EMPTY_REVIEW_SUGGESTIONS = Object.freeze({
+  assignment_fields: [],
+  subject_entity_fields: [],
+  subject_amenity_fields: [],
+  subject_amenity_entities: [],
+  site_fields: [],
+  site_influence_entities: [],
+  condition_fields: [],
+  project_fields: [],
+  highest_best_use_fields: [],
+  subject_listing_fields: [],
+  subject_listing_entities: [],
+  sales_contract_fields: [],
+  subject_prior_transfer_fields: [],
+  subject_prior_transfer_entities: [],
+  market_fields: [],
+  market_entities: [],
+  sales_comparison_fields: [],
+  sales_comparable_entities: [],
+  sales_comparison_additional_property_entities: [],
+  reconciliation_fields: [],
+});
 
 const influenceTypeByHomeNodeCategory = Object.freeze({
   external_use: "Other",
@@ -20,6 +47,115 @@ function settledSource(name, result) {
     return { name, available: Boolean(result.value), data: result.value || null };
   }
   return { name, available: false, data: null, error: String(result.reason?.message || result.reason || "unavailable") };
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableJson(value[key])]));
+  }
+  return value;
+}
+
+function digest(value) {
+  return createHash("sha256").update(JSON.stringify(stableJson(value))).digest("hex");
+}
+
+function normalizeStandaloneField(suggestion, sourceDigest) {
+  const sourceReference = String(suggestion.source_reference || "homenode_shared_data").slice(0, 1_000);
+  return {
+    ...suggestion,
+    suggestion_id: suggestion.suggestion_id
+      || `field:${suggestion.field_key}:${digest(sourceReference).slice(0, 16)}`,
+    source_reference: sourceReference,
+    source_digest_sha256: sourceDigest,
+    observed_at: suggestion.observed_at || null,
+    requires_appraiser_confirmation: true,
+  };
+}
+
+function normalizeStandaloneEntity(suggestion, sourceDigest, ordinal) {
+  const sourceReference = String(suggestion.source_reference || "homenode_shared_data").slice(0, 1_000);
+  const sourceKey = String(suggestion.source_key || sourceReference).slice(0, 120);
+  return {
+    ...suggestion,
+    suggestion_id: suggestion.suggestion_id
+      || `entity:${suggestion.entity_type}:${digest(sourceKey).slice(0, 20)}`,
+    source_key: sourceKey,
+    ordinal: suggestion.ordinal || ordinal,
+    source_reference: sourceReference,
+    source_digest_sha256: sourceDigest,
+    observed_at: suggestion.observed_at || null,
+    requires_appraiser_confirmation: true,
+    related_entities: (suggestion.related_entities || []).map((child, childIndex) => ({
+      ...normalizeStandaloneEntity(child, sourceDigest, childIndex + 1),
+      suggestion_id: undefined,
+    })),
+  };
+}
+
+export function buildUadStandaloneReviewDocument({
+  workfile,
+  siteFields = [],
+  siteEntities = [],
+  marketFields = [],
+  subjectListingFields = [],
+  subjectListingEntities = [],
+  subjectPriorTransferFields = [],
+  subjectPriorTransferEntities = [],
+}) {
+  const rawSuggestions = {
+    ...EMPTY_REVIEW_SUGGESTIONS,
+    site_fields: siteFields,
+    site_influence_entities: siteEntities,
+    market_fields: marketFields,
+    subject_listing_fields: subjectListingFields,
+    subject_listing_entities: subjectListingEntities,
+    subject_prior_transfer_fields: subjectPriorTransferFields,
+    subject_prior_transfer_entities: subjectPriorTransferEntities,
+  };
+  const sourceDigest = digest({
+    adapter_version: UAD_SHARED_SUGGESTION_ADAPTER_VERSION,
+    workfile_id: workfile.id,
+    report_file_id: workfile.report_file_id,
+    suggestions: rawSuggestions,
+  });
+  const suggestions = Object.fromEntries(Object.entries(rawSuggestions).map(([key, items]) => [
+    key,
+    key.endsWith("_entities")
+      ? items.map((item, index) => normalizeStandaloneEntity(item, sourceDigest, index + 1))
+      : items.map((item) => normalizeStandaloneField(item, sourceDigest)),
+  ]));
+  const fieldCount = Object.entries(suggestions)
+    .filter(([key]) => key.endsWith("_fields"))
+    .reduce((total, [, items]) => total + items.length, 0);
+  const entityCount = Object.entries(suggestions)
+    .filter(([key]) => key.endsWith("_entities"))
+    .reduce((total, [, items]) => total + items.length, 0);
+  if (!fieldCount && !entityCount) return null;
+  return {
+    schema_version: 1,
+    adapter_version: UAD_SHARED_SUGGESTION_ADAPTER_VERSION,
+    source_kind: "homenode_shared_data",
+    source_completion: {
+      source_report_file_id: workfile.report_file_id || workfile.id,
+      target_report_file_id: workfile.report_file_id || workfile.id,
+      appraisal_case_id: workfile.appraisal_case_id || null,
+      subject_snapshot_id: workfile.subject_snapshot_id || null,
+      source_digest_sha256: sourceDigest,
+    },
+    status: "ready_for_review",
+    source_readiness: { status: "complete", blockers: [], warnings: [] },
+    suggestions,
+    omissions: [],
+    counts: {
+      field_suggestions: fieldCount,
+      entity_suggestions: entityCount,
+      omissions: 0,
+    },
+    apply_mode: "review_only",
+    requires_appraiser_confirmation: true,
+  };
 }
 
 function influenceSuggestions(influence) {
@@ -169,11 +305,25 @@ export function subjectPriorTransferSuggestions(activityRows) {
 export async function getUadSharedData(pool, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const workfileResult = await pool.query(
-    `SELECT id, account_id FROM appraisal.uad_workfiles WHERE id = $1`,
+    `SELECT workfile.id, workfile.account_id,
+            report_file.id AS report_file_id,
+            report_file.appraisal_case_id,
+            report_file.subject_snapshot_id
+       FROM appraisal.uad_workfiles workfile
+       LEFT JOIN LATERAL (
+         SELECT id, appraisal_case_id, subject_snapshot_id
+           FROM app.report_files
+          WHERE uad_workfile_id = workfile.id
+            AND workflow_type = 'uad_3_6'
+          ORDER BY is_current DESC, updated_at DESC, id
+          LIMIT 1
+       ) report_file ON true
+      WHERE workfile.id = $1`,
     [workfileId],
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
-  const accountId = workfileResult.rows[0].account_id;
+  const workfile = workfileResult.rows[0];
+  const accountId = workfile.account_id;
 
   const [contextResult, influenceResult, zoningResult, boundaryResult, activityResult, completionResult] = await Promise.allSettled([
     getStoredPropertyContext(pool, { accountId }),
@@ -191,6 +341,32 @@ export async function getUadSharedData(pool, workfileIdValue) {
   const customCompletion = settledSource("custom_appraisal_completion", completionResult);
   const listingSuggestions = subjectListingSuggestions(activity.data);
   const priorTransferSuggestions = subjectPriorTransferSuggestions(activity.data);
+  const siteFields = zoningSuggestions(zoning.data);
+  const siteEntities = influenceSuggestions(influence.data);
+  const marketFields = marketSuggestions(boundary.data);
+  const subjectListingFields = listingSuggestions.length ? [{
+    field_key: "subject_listing_summary:0900.0004",
+    value: true,
+    source_reference: "property_activity_history:current_or_relevant_candidates",
+    requires_appraiser_confirmation: true,
+  }] : [];
+  const subjectPriorTransferFields = priorTransferSuggestions.length ? [{
+    field_key: "subject_prior_transfer_summary:0800.0005",
+    value: true,
+    source_reference: "property_activity_history:prior_transfer_candidates",
+    requires_appraiser_confirmation: true,
+  }] : [];
+  const standaloneReview = buildUadStandaloneReviewDocument({
+    workfile,
+    siteFields,
+    siteEntities,
+    marketFields,
+    subjectListingFields,
+    subjectListingEntities: listingSuggestions,
+    subjectPriorTransferFields,
+    subjectPriorTransferEntities: priorTransferSuggestions,
+  });
+  const reviewDocument = customCompletion.data || standaloneReview;
 
   return {
     workfile_id: workfileId,
@@ -204,24 +380,15 @@ export async function getUadSharedData(pool, workfileIdValue) {
       custom_appraisal_completion: customCompletion,
     },
     suggestions: {
-      site_fields: zoningSuggestions(zoning.data),
-      site_entities: influenceSuggestions(influence.data),
-      market_fields: marketSuggestions(boundary.data),
-      subject_listing_fields: listingSuggestions.length ? [{
-        field_key: "subject_listing_summary:0900.0004",
-        value: true,
-        source_reference: "property_activity_history:current_or_relevant_candidates",
-        requires_appraiser_confirmation: true,
-      }] : [],
+      site_fields: siteFields,
+      site_entities: siteEntities,
+      market_fields: marketFields,
+      subject_listing_fields: subjectListingFields,
       subject_listing_entities: listingSuggestions,
-      subject_prior_transfer_fields: priorTransferSuggestions.length ? [{
-        field_key: "subject_prior_transfer_summary:0800.0005",
-        value: true,
-        source_reference: "property_activity_history:prior_transfer_candidates",
-        requires_appraiser_confirmation: true,
-      }] : [],
+      subject_prior_transfer_fields: subjectPriorTransferFields,
       subject_prior_transfer_entities: priorTransferSuggestions,
       custom_completion: customCompletion.data || null,
+      review_document: reviewDocument,
     },
     adapters: {
       comparable_search: { ready: true, mode: "existing_homenode_services", enabled_in_uad_editor: false },
@@ -236,6 +403,26 @@ export async function getUadSharedData(pool, workfileIdValue) {
         mode: "guarded_review_apply",
         enabled_in_uad_editor: true,
       },
+      standalone_homenode_suggestions: {
+        ready: Boolean(standaloneReview),
+        mode: "guarded_review_apply",
+        enabled_in_uad_editor: true,
+      },
     },
   };
+}
+
+export async function loadUadReviewSuggestions(pool, workfileIdValue) {
+  try {
+    return await loadUadCompletionSuggestions(pool, workfileIdValue);
+  } catch (error) {
+    const expectedMissingSource = new Set([
+      "shared_appraisal_completion_source_not_found",
+      "uad_completion_report_file_not_registered",
+    ]);
+    if (!expectedMissingSource.has(String(error?.message || error))) throw error;
+  }
+  const shared = await getUadSharedData(pool, workfileIdValue);
+  if (!shared.suggestions.review_document) throw new Error("uad_review_suggestions_not_available");
+  return shared.suggestions.review_document;
 }

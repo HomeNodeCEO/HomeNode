@@ -52,7 +52,30 @@ function entityLabel(entity: UadCompletionSuggestionEntity) {
     const transferDate = entity.values["subject_prior_transfer:0800.0011"];
     return `Subject prior transfer ${entity.ordinal}${transferDate ? `: ${String(transferDate)}` : ""}`;
   }
+  if (entity.entity_type === "sales_comparison_additional_property") {
+    return `Additional analyzed property ${entity.ordinal}: ${String(entity.values["sales_comparison_additional_property:1900.0001"] || "Address pending")}`;
+  }
   return String(entity.values["market_price_trend_source:3000.0051"] || titleCase(entity.entity_type));
+}
+
+function importedSuggestionMetadata(entity: UadEntity): Record<string, unknown> | null {
+  const review = entity.data?.review_suggestion;
+  if (review && typeof review === "object" && !Array.isArray(review)) return review as Record<string, unknown>;
+  const legacy = entity.data?.custom_completion;
+  if (legacy && typeof legacy === "object" && !Array.isArray(legacy)) return legacy as Record<string, unknown>;
+  return null;
+}
+
+function entitySuggestionConflict(entities: UadEntity[], suggestion: UadCompletionSuggestionEntity) {
+  const sameType = entities.filter((entity) => entity.entity_type === suggestion.entity_type);
+  if (!sameType.length) return null;
+  const metadata = sameType.map(importedSuggestionMetadata);
+  if (metadata.some((item) => item?.suggestion_id === suggestion.suggestion_id)) return "Suggestion already applied";
+  if (suggestion.source_key && metadata.some((item) => item?.source_key === suggestion.source_key)) {
+    return "Source record already applied";
+  }
+  if (metadata.some((item) => !item)) return "Existing manually managed UAD data preserved";
+  return null;
 }
 
 export default function UadCompletionSuggestionPanel({
@@ -80,12 +103,12 @@ export default function UadCompletionSuggestionPanel({
     void getUadSharedData(workfileId)
       .then((response) => {
         if (!active) return;
-        setDocument(response.suggestions.custom_completion);
+        setDocument(response.suggestions.review_document || response.suggestions.custom_completion);
         setSelected([]);
         setConfirmed(false);
       })
       .catch((reason) => {
-        if (active) setError(reason instanceof Error ? reason.message : "Custom Appraisal suggestions could not be loaded.");
+        if (active) setError(reason instanceof Error ? reason.message : "HomeNode suggestions could not be loaded.");
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -108,7 +131,6 @@ export default function UadCompletionSuggestionPanel({
       `${value.entity_id}:${value.context_key}:${value.uid}`
     )),
   ), [values]);
-  const existingEntityTypes = useMemo(() => new Set(entities.map((entity) => entity.entity_type)), [entities]);
   const suggestions = useMemo(() => {
     if (!document) return [];
     const suggestedFields = [
@@ -154,14 +176,18 @@ export default function UadCompletionSuggestionPanel({
       ...(document.suggestions.subject_prior_transfer_entities || []),
       ...document.suggestions.market_entities,
       ...document.suggestions.sales_comparable_entities,
-    ].map((suggestion) => ({
-      kind: "entity" as const,
-      suggestion,
-      conflict: existingEntityTypes.has(suggestion.entity_type),
-      conflictReason: existingEntityTypes.has(suggestion.entity_type) ? "Existing UAD data preserved" : null,
-    }));
+      ...(document.suggestions.sales_comparison_additional_property_entities || []),
+    ].map((suggestion) => {
+      const conflictReason = entitySuggestionConflict(entities, suggestion);
+      return {
+        kind: "entity" as const,
+        suggestion,
+        conflict: Boolean(conflictReason),
+        conflictReason,
+      };
+    });
     return [...suggestedFields, ...suggestedEntities];
-  }, [document, entityTargets, existingEntityTypes, existingEntityValueKeys, existingRootKeys]);
+  }, [document, entities, entityTargets, existingEntityValueKeys, existingRootKeys]);
   const selectable = suggestions.filter((item) => !item.conflict).map((item) => item.suggestion.suggestion_id);
 
   function toggle(id: string) {
@@ -172,7 +198,7 @@ export default function UadCompletionSuggestionPanel({
 
   async function handleApply() {
     if (!document || applying || dirty || !confirmed || !selected.length) return;
-    if (!window.confirm(`Apply ${selected.length} reviewed Custom Appraisal suggestion${selected.length === 1 ? "" : "s"} to this UAD workfile? Existing UAD values will be preserved.`)) return;
+    if (!window.confirm(`Apply ${selected.length} reviewed HomeNode suggestion${selected.length === 1 ? "" : "s"} to this UAD workfile? Existing UAD values will be preserved.`)) return;
     setApplying(true);
     setError(null);
     setNotice(null);
@@ -197,7 +223,7 @@ export default function UadCompletionSuggestionPanel({
   }
 
   if (loading && !document) {
-    return <div className="mb-5 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Checking for same-assignment Custom Appraisal suggestions…</div>;
+    return <div className="mb-5 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Checking for HomeNode completion suggestions…</div>;
   }
   if (!document && !error) return null;
 
@@ -205,9 +231,11 @@ export default function UadCompletionSuggestionPanel({
     <section className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-950">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-semibold">Custom Appraisal completion suggestions</h3>
+          <h3 className="font-semibold">HomeNode completion suggestions</h3>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-emerald-900">
-            Review-only values from the exact same assignment and subject snapshot. Nothing is selected automatically, and existing UAD values are never replaced by this action.
+            {document?.source_kind === "homenode_shared_data"
+              ? "Review-only evidence from HomeNode's stored property, zoning, influence, neighborhood, listing, and transfer services. Nothing is selected automatically, and existing UAD values are never replaced."
+              : "Review-only values from the exact same assignment and subject snapshot. Nothing is selected automatically, and existing UAD values are never replaced by this action."}
           </p>
         </div>
         <button className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800" onClick={() => setExpanded((value) => !value)} type="button">

@@ -8,6 +8,7 @@ import {
   loadUadCompletionSuggestions,
 } from "../src/modules/uad/completionSuggestions.js";
 import { applyUadCompletionSuggestions, buildUadCompletionApplyPlan } from "../src/modules/uad/completionApply.js";
+import { buildUadStandaloneReviewDocument } from "../src/modules/uad/sharedData.js";
 import { customAppraisalReportFixture } from "./fixtures/customAppraisalReportFixture.js";
 
 const CASE_ID = "9be0a6ef-71a8-4503-bb4a-d1c6efb83fe7";
@@ -598,7 +599,9 @@ test("maps canonical market evidence to review-only official UAD fields", () => 
   assert.match(fieldByKey(suggestions, "market:3000.0008").value, /North: Arapaho Road/);
   assert.equal(fieldByKey(suggestions, "market:3000.0009").value, 12);
   assert.equal(fieldByKey(suggestions, "market_total_sales:3000.0026").value, 143);
+  assert.equal(fieldByKey(suggestions, "market_total_sales:3000.0028").value, 215000);
   assert.equal(fieldByKey(suggestions, "market_total_sales:3000.0029").value, 306000);
+  assert.equal(fieldByKey(suggestions, "market_total_sales:3000.0027").value, 462000);
   assert.equal(fieldByKey(suggestions, "market:3000.0033").value, "InBalance");
   assert.equal(fieldByKey(suggestions, "market:3000.0031").value, "UnderThreeMonths");
   assert.equal(
@@ -647,6 +650,33 @@ test("maps only unambiguous comparable facts, ratings, and typed adjustments", (
   assert.equal(
     suggestions.omissions.some((item) => item.code === "combined_room_count_adjustment_requires_split"),
     true,
+  );
+  const additional = suggestions.suggestions.sales_comparison_additional_property_entities[0];
+  assert.equal(additional.values["sales_comparison_additional_property:1900.0001"], "2214 Swiss Court");
+  assert.equal(additional.values["sales_comparison_additional_property:1900.0007"], "SettledSale");
+  assert.equal(additional.values["sales_comparison_additional_property:1900.0013"], "2026-08-15");
+  assert.equal(
+    suggestions.omissions.some((item) => item.code === "additional_property_exclusion_reason_requires_appraiser_entry"),
+    true,
+  );
+});
+
+test("maps split bedroom and bathroom adjustments without reusing the combined room amount", () => {
+  const input = fixtureParts();
+  const first = input.customSections.sales_comparison.value.comparables[0];
+  first.adjustments.bedrooms = 1500;
+  first.adjustments.bathrooms = 3500;
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+  const comparable = suggestions.suggestions.sales_comparable_entities[0];
+  assert.equal(comparable.values["sales_comparable_adjustment_bedrooms:1800.0317"], 1500);
+  assert.equal(comparable.values["sales_comparable_adjustment_bathrooms:1800.0317"], 3500);
+  assert.equal(
+    suggestions.omissions.some((item) => item.scope === `comparable:${comparable.source_key}`
+      && item.code === "combined_room_count_adjustment_requires_split"),
+    false,
   );
 });
 
@@ -777,6 +807,7 @@ test("validates every generated suggestion against the official UAD catalog", ()
     ...suggestions.suggestions.subject_prior_transfer_entities,
     ...suggestions.suggestions.market_entities,
     ...suggestions.suggestions.sales_comparable_entities,
+    ...suggestions.suggestions.sales_comparison_additional_property_entities,
   ];
   const plan = buildUadCompletionApplyPlan(
     suggestions,
@@ -795,6 +826,45 @@ test("validates every generated suggestion against the official UAD catalog", ()
   assert.equal(plan.fields.length, suggestions.counts.field_suggestions);
   assert.equal(plan.entities.length, suggestions.counts.entity_suggestions);
   assert.equal(plan.entities.some((item) => item.children.length > 0), true);
+});
+
+test("turns standalone HomeNode evidence into a provenance-locked review document", () => {
+  const suggestions = buildUadStandaloneReviewDocument({
+    workfile: {
+      id: UAD_WORKFILE_ID,
+      report_file_id: UAD_REPORT_ID,
+      appraisal_case_id: null,
+      subject_snapshot_id: null,
+    },
+    siteFields: [{
+      field_key: "site_zoning:1500.0122",
+      value: "PD-SF",
+      source_reference: "property_zoning_verification",
+    }],
+    siteEntities: [{
+      entity_type: "site_influence",
+      values: {
+        "site_influence:1500.0087": "BusyRoadway",
+        "site_influence:1500.0181": "Arterial road influence candidate",
+      },
+      source_reference: "property_influence_context:major_road:1",
+    }],
+  });
+  assert.equal(suggestions.source_kind, "homenode_shared_data");
+  assert.match(suggestions.source_completion.source_digest_sha256, /^[a-f0-9]{64}$/);
+  assert.equal(suggestions.counts.field_suggestions, 1);
+  assert.equal(suggestions.counts.entity_suggestions, 1);
+  const all = [
+    ...suggestions.suggestions.site_fields,
+    ...suggestions.suggestions.site_influence_entities,
+  ];
+  const plan = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, all.map((item) => item.suggestion_id)),
+  );
+  assert.equal(plan.fields.length, 1);
+  assert.equal(plan.entities.length, 1);
+  assert.equal(plan.conflicts.length, 0);
 });
 
 test("applies reviewed project and overall condition fields while preserving existing values", () => {
@@ -854,6 +924,34 @@ test("preserves existing UAD values and populated entity groups", () => {
     "existing_value_preserved",
     "entity_type_already_populated",
   ]);
+});
+
+test("allows incremental imported entities while preserving manual records and duplicate sources", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const first = suggestions.suggestions.sales_comparable_entities[0];
+  const second = suggestions.suggestions.sales_comparable_entities[1];
+  const imported = {
+    id: "imported-comparable",
+    entity_type: "sales_comparable",
+    data: { review_suggestion: { suggestion_id: first.suggestion_id, source_key: first.source_key } },
+  };
+  const incremental = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [first.suggestion_id, second.suggestion_id]),
+    { existingEntities: [imported] },
+  );
+  assert.deepEqual(incremental.conflicts, [{ suggestion_id: first.suggestion_id, reason: "already_applied" }]);
+  assert.equal(incremental.entities[0].suggestion.suggestion_id, second.suggestion_id);
+
+  const manual = buildUadCompletionApplyPlan(
+    suggestions,
+    applyInput(suggestions, [second.suggestion_id]),
+    { existingEntities: [{ id: "manual-comparable", entity_type: "sales_comparable", data: {} }] },
+  );
+  assert.deepEqual(manual.conflicts, [{
+    suggestion_id: second.suggestion_id,
+    reason: "entity_type_already_populated",
+  }]);
 });
 
 test("preserves existing subject listing and prior-transfer groups independently", () => {

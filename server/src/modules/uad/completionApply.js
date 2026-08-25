@@ -7,7 +7,7 @@ import {
   normalizeAndValidateUadValue,
   uadFieldAppliesToEntity,
 } from "./fieldCatalog.js";
-import { loadUadCompletionSuggestions } from "./completionSuggestions.js";
+import { loadUadReviewSuggestions } from "./sharedData.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
@@ -112,13 +112,24 @@ function resolveTargetEntity(existingEntities, suggestion) {
   return { entity: matches[0], conflict: null };
 }
 
-function existingEntityConflict(existingEntities, suggestion) {
+function suggestionMetadata(entity) {
+  return entity.data?.review_suggestion || entity.data?.custom_completion || null;
+}
+
+function existingEntityConflict(existingEntities, suggestion, plannedCount = 0) {
   const sameType = existingEntities.filter((entity) => entity.entity_type === suggestion.entity_type);
   const exact = sameType.find((entity) => (
-    entity.data?.custom_completion?.suggestion_id === suggestion.suggestion_id
+    suggestionMetadata(entity)?.suggestion_id === suggestion.suggestion_id
   ));
   if (exact) return "already_applied";
-  return sameType.length ? "entity_type_already_populated" : null;
+  const sameSource = suggestion.source_key && sameType.find((entity) => (
+    suggestionMetadata(entity)?.source_key === suggestion.source_key
+  ));
+  if (sameSource) return "already_applied";
+  if (sameType.some((entity) => !suggestionMetadata(entity))) return "entity_type_already_populated";
+  const maximum = Number(UAD_REPEATABLE_ENTITY_GROUPS[suggestion.entity_type]?.maxItems || 0);
+  if (maximum > 0 && sameType.length + plannedCount >= maximum) return "entity_type_limit_reached";
+  return null;
 }
 
 export function buildUadCompletionApplyPlan(document, input, {
@@ -158,6 +169,7 @@ export function buildUadCompletionApplyPlan(document, input, {
     ...(document.suggestions?.subject_prior_transfer_entities || []),
     ...(document.suggestions?.market_entities || []),
     ...(document.suggestions?.sales_comparable_entities || []),
+    ...(document.suggestions?.sales_comparison_additional_property_entities || []),
   ];
   const allById = new Map([...fieldSuggestions, ...entitySuggestions].map((item) => [item.suggestion_id, item]));
   if (request.selectedSuggestionIds.some((id) => !allById.has(id))) {
@@ -168,6 +180,7 @@ export function buildUadCompletionApplyPlan(document, input, {
   const fields = [];
   const entities = [];
   const conflicts = [];
+  const plannedByEntityType = new Map();
   for (const suggestionId of request.selectedSuggestionIds) {
     const suggestion = allById.get(suggestionId);
     if (suggestion.field_key) {
@@ -186,11 +199,13 @@ export function buildUadCompletionApplyPlan(document, input, {
       }
       continue;
     }
-    const conflict = existingEntityConflict(existingEntities, suggestion);
+    const plannedCount = plannedByEntityType.get(suggestion.entity_type) || 0;
+    const conflict = existingEntityConflict(existingEntities, suggestion, plannedCount);
     if (conflict) {
       conflicts.push({ suggestion_id: suggestionId, reason: conflict });
     } else {
       entities.push(validateEntitySuggestion(suggestion));
+      plannedByEntityType.set(suggestion.entity_type, plannedCount + 1);
     }
   }
   return { request, fields, entities, conflicts };
@@ -213,17 +228,22 @@ async function insertFieldValue(client, workfileId, entityId, item) {
 async function insertEntityTree(client, workfileId, plan, source, parentEntityId = null, path = "") {
   const suggestion = plan.suggestion;
   const metadata = {
-    custom_completion: {
+    review_suggestion: {
+      source_kind: source.sourceKind,
       suggestion_id: suggestion.suggestion_id || path,
+      source_key: suggestion.source_key || null,
       source_reference: suggestion.source_reference || source.sourceReference,
       source_digest_sha256: source.sourceDigest,
       adapter_version: source.adapterVersion,
     },
   };
+  if (source.sourceKind === "custom_appraisal_completion") {
+    metadata.custom_completion = { ...metadata.review_suggestion };
+  }
   const label = suggestion.entity_type === "sales_comparable"
     ? String(suggestion.values?.["sales_comparable_address:1800.0001"] || `Comparable ${suggestion.ordinal || ""}`).trim()
     : suggestion.entity_type === "market_price_trend_source"
-      ? "Custom Appraisal market source"
+      ? "HomeNode market source"
       : undefined;
   const entity = await createUadEntityWithClient(client, workfileId, {
     entity_type: suggestion.entity_type,
@@ -271,7 +291,7 @@ export async function applyUadCompletionSuggestions(pool, workfileIdValue, input
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
     const currentRevision = Number(locked.rows[0].current_revision);
-    const suggestions = await loadUadCompletionSuggestions(client, workfileId);
+    const suggestions = await loadUadReviewSuggestions(client, workfileId);
     const [existingValues, existingEntities] = await Promise.all([
       loadValues(client, workfileId, "FOR UPDATE"),
       listUadEntities(client, workfileId),
@@ -286,6 +306,7 @@ export async function applyUadCompletionSuggestions(pool, workfileIdValue, input
         sourceReference: entity.suggestion.source_reference,
         sourceDigest: suggestions.source_completion.source_digest_sha256,
         adapterVersion: suggestions.adapter_version,
+        sourceKind: suggestions.source_kind || "custom_appraisal_completion",
       }, null, entity.suggestion.suggestion_id));
     }
     const appliedCount = plan.fields.length + plan.entities.length;
@@ -329,7 +350,7 @@ export async function applyUadCompletionSuggestions(pool, workfileIdValue, input
       [
         randomUUID(), workfileId, revisionNumber, locked.rows[0].specification_release_key,
         JSON.stringify(revisionDocument),
-        `Applied ${appliedCount} reviewed Custom Appraisal suggestion${appliedCount === 1 ? "" : "s"}`,
+        `Applied ${appliedCount} reviewed HomeNode suggestion${appliedCount === 1 ? "" : "s"}`,
       ],
     );
     await client.query(
@@ -354,6 +375,7 @@ export async function applyUadCompletionSuggestions(pool, workfileIdValue, input
           subject_snapshot_id: suggestions.source_completion.subject_snapshot_id,
           source_digest_sha256: suggestions.source_completion.source_digest_sha256,
           adapter_version: suggestions.adapter_version,
+          source_kind: suggestions.source_kind || "custom_appraisal_completion",
           preserve_existing: true,
           conflict_count: plan.conflicts.length,
         }),

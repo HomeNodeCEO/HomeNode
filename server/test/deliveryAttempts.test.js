@@ -9,7 +9,7 @@ const ARTIFACT_ID = "4c4e7e82-fcc9-42d1-a7d2-b0d3b8f528a9";
 const DESTINATION_ID = "67ea2826-d1c4-4c6d-99b8-eed058fef0e7";
 const ATTEMPT_ID = "5ef7598f-53c2-44fc-8417-d538446dcb12";
 
-function deliveryPool({ workfileStatus = "signed" } = {}) {
+function deliveryPool({ workfileStatus = "signed", conflictingIdempotencyKey = false } = {}) {
   const queries = [];
   const client = {
     async query(sql, params = []) {
@@ -54,6 +54,7 @@ function deliveryPool({ workfileStatus = "signed" } = {}) {
         };
       }
       if (sql.includes("INSERT INTO appraisal.delivery_attempts")) {
+        if (conflictingIdempotencyKey) return { rows: [] };
         return {
           rows: [{
             id: ATTEMPT_ID,
@@ -93,7 +94,25 @@ test("prepares an AmeriMac guided delivery against the signed package checksum",
   assert.equal(result.attempt.status, "prepared");
   assert.equal(result.plan.package.artifact_id, ARTIFACT_ID);
   assert.equal(result.plan.package.checksum_sha256, "b".repeat(64));
+  const attemptInsert = fixture.queries.find(({ sql }) => sql.includes("INSERT INTO appraisal.delivery_attempts"));
+  assert.match(attemptInsert.sql, /delivery_attempts\.workfile_id = EXCLUDED\.workfile_id/);
+  assert.match(attemptInsert.sql, /delivery_attempts\.revision_number = EXCLUDED\.revision_number/);
+  assert.match(attemptInsert.sql, /delivery_attempts\.artifact_id = EXCLUDED\.artifact_id/);
+  assert.match(attemptInsert.sql, /delivery_attempts\.package_checksum_sha256 = EXCLUDED\.package_checksum_sha256/);
   assert.ok(fixture.queries.some(({ sql }) => sql === "COMMIT"));
+});
+
+test("rejects an idempotency key already bound to another package identity", async () => {
+  const fixture = deliveryPool({ conflictingIdempotencyKey: true });
+  await assert.rejects(
+    createGuidedDeliveryAttempt(fixture.pool, WORKFILE_ID, {
+      portal_url: "https://amerimacamc.spurams.com/login.aspx",
+      idempotency_key: "desktop-shared-key",
+    }),
+    /delivery_idempotency_key_conflict/,
+  );
+  assert.ok(fixture.queries.some(({ sql }) => sql === "ROLLBACK"));
+  assert.equal(fixture.queries.some(({ sql }) => sql === "COMMIT"), false);
 });
 
 test("refuses to prepare delivery before the workfile revision is signed", async () => {

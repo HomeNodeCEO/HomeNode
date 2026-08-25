@@ -80,6 +80,7 @@ function errorStatus(error) {
   )) return 409;
   if (message.startsWith("uad_compliance_")) return 422;
   if (message === "delivery_attempt_not_found_or_completed") return 409;
+  if (message === "delivery_idempotency_key_conflict") return 409;
   if (message.startsWith("delivery_") && message.includes("not_found")) return 404;
   if ([
     "delivery_organization_required",

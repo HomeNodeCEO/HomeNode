@@ -184,6 +184,11 @@ import {
 } from "./util/requestPerformance.js";
 import { createUadRouter, uadBodyParserErrorHandler } from "./modules/uad/router.js";
 import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
+import {
+  closeUadArtifactExecution,
+  getUadArtifactExecutionSnapshot,
+} from "./modules/uad/uadArtifactExecution.js";
+import { recoverStaleUadArtifactGenerations } from "./modules/uad/uadArtifactRecovery.js";
 import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.js";
 import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
@@ -216,6 +221,7 @@ import {
   createRuntimeResilienceConfiguration,
   installGracefulShutdown,
 } from "./security/runtimeResilience.js";
+import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import {
   normalizeSignupPayload,
   signupDeliveryStatus,
@@ -286,6 +292,15 @@ const signupRateLimiter = rateLimit({
 });
 
 const uadObjectStorage = createUadObjectStorage();
+let gracefulShutdown = null;
+const runtimeHealth = createRuntimeHealthHandlers({
+  pool,
+  isShuttingDown: () => Boolean(gracefulShutdown?.isShuttingDown()),
+  artifactExecutorSnapshot: getUadArtifactExecutionSnapshot,
+});
+void recoverStaleUadArtifactGenerations(pool).catch((error) => {
+  console.warn("[uad-artifacts] interrupted generation recovery unavailable", error?.message || error);
+});
 const uadComplianceRegistry = createUadComplianceRegistry();
 const documentOcrProvider = createDocumentOcrProvider();
 const mobileOidcVerifier = createOidcAccessTokenVerifier({
@@ -644,8 +659,11 @@ const censusGeographyReady = accountLocationsReady
     );
   });
 
-// simple health
-app.get("/health", (_req, res) => res.json({ ok: true }));
+// Liveness is intentionally cheap; readiness proves the database and bounded
+// artifact executor can accept useful work without turning dependency outages
+// into restart loops.
+app.get("/health", runtimeHealth.liveness);
+app.get("/ready", runtimeHealth.readiness);
 
 // Operational acceptance endpoint. It intentionally reports aggregate timing
 // and worker state only; credentials, SQL text, and raw property identifiers
@@ -676,6 +694,7 @@ app.get("/api/system/performance", async (_req, res) => {
       ocr_runs_in_scheduled_maintenance: true,
     },
     requests: requestPerformance.snapshot(),
+    artifact_executor: getUadArtifactExecutionSnapshot(),
     maintenance: {
       status: maintenanceStatus,
       recent_runs: recentMaintenance,
@@ -6310,8 +6329,9 @@ const port = parseInt(process.env.PORT || "4000", 10);
 app.use(jsonErrorHandler);
 const server = createResilientHttpServer(app, runtimeResilience);
 server.listen(port, () => console.log(`API listening on http://localhost:${port}`));
-installGracefulShutdown({
+gracefulShutdown = installGracefulShutdown({
   server,
   pool,
   graceMs: runtimeResilience.shutdownGraceMs,
+  onBegin: () => closeUadArtifactExecution(),
 });

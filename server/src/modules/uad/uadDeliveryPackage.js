@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { open, rm, stat } from "node:fs/promises";
 
 import { sanitizeUadFileName } from "./r2Storage.js";
 
@@ -142,10 +144,20 @@ function getCrcTable() {
   return crcTable;
 }
 
-function crc32(buffer) {
-  let crc = 0xffffffff;
+function updateCrc32(crc, buffer) {
   const table = getCrcTable();
   for (const byte of buffer) crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return crc;
+}
+
+function crc32(buffer) {
+  const crc = updateCrc32(0xffffffff, buffer);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+async function fileCrc32(filePath) {
+  let crc = 0xffffffff;
+  for await (const chunk of createReadStream(filePath)) crc = updateCrc32(crc, chunk);
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -223,5 +235,109 @@ export function buildDeterministicZip(files = []) {
     byte_size: content.length,
     checksum_sha256: createHash("sha256").update(content).digest("hex"),
     entry_count: files.length,
+  };
+}
+
+export async function writeDeterministicZipToFile(files = [], outputPath) {
+  if (!Array.isArray(files) || files.length > UAD_ZIP_LIMITS.max_entries) {
+    throw new Error("uad_package_entry_count_exceeded");
+  }
+  if (!outputPath) throw new Error("uad_package_output_path_required");
+  const sorted = [...files].sort((left, right) => String(left.path).localeCompare(String(right.path)));
+  const entries = [];
+  const seen = new Set();
+  let totalUncompressedBytes = 0;
+  for (const file of sorted) {
+    const path = validateZipPath(file.path);
+    const portablePath = path.toLocaleLowerCase("en-US");
+    if (seen.has(portablePath)) throw new Error("uad_package_entry_duplicate");
+    seen.add(portablePath);
+    const body = file.body == null ? null : (Buffer.isBuffer(file.body) ? file.body : Buffer.from(file.body));
+    if (!body && !file.file_path) throw new Error("uad_package_entry_body_required");
+    const fileSize = body ? body.length : Number((await stat(file.file_path)).size);
+    if (!Number.isSafeInteger(fileSize) || fileSize < 0) throw new Error("uad_package_entry_size_invalid");
+    if (file.byte_size != null && Number(file.byte_size) !== fileSize) {
+      throw new Error("uad_package_entry_size_mismatch");
+    }
+    totalUncompressedBytes += fileSize;
+    if (totalUncompressedBytes > UAD_ZIP_LIMITS.max_uncompressed_bytes) {
+      throw new Error("uad_package_bytes_exceeded");
+    }
+    entries.push({
+      path,
+      name: Buffer.from(path, "utf8"),
+      body,
+      filePath: file.file_path || null,
+      removeAfterWrite: Boolean(file.remove_after_write),
+      byteSize: fileSize,
+      crc: body ? crc32(body) : await fileCrc32(file.file_path),
+    });
+  }
+
+  const handle = await open(outputPath, "w");
+  const digest = createHash("sha256");
+  const centralParts = [];
+  let position = 0;
+  const writePart = async (part) => {
+    const buffer = Buffer.isBuffer(part) ? part : Buffer.from(part);
+    await handle.write(buffer, 0, buffer.length, position);
+    position += buffer.length;
+    digest.update(buffer);
+  };
+  try {
+    for (const entry of entries) {
+      const offset = position;
+      const local = Buffer.alloc(30);
+      local.writeUInt32LE(0x04034b50, 0);
+      local.writeUInt16LE(20, 4);
+      local.writeUInt16LE(0x0800, 6);
+      local.writeUInt16LE(0, 8);
+      local.writeUInt32LE(0, 10);
+      local.writeUInt32LE(entry.crc, 14);
+      local.writeUInt32LE(entry.byteSize, 18);
+      local.writeUInt32LE(entry.byteSize, 22);
+      local.writeUInt16LE(entry.name.length, 26);
+      await writePart(local);
+      await writePart(entry.name);
+      if (entry.body) {
+        await writePart(entry.body);
+      } else {
+        for await (const chunk of createReadStream(entry.filePath)) await writePart(chunk);
+        if (entry.removeAfterWrite) await rm(entry.filePath, { force: true });
+      }
+
+      const central = Buffer.alloc(46);
+      central.writeUInt32LE(0x02014b50, 0);
+      central.writeUInt16LE(20, 4);
+      central.writeUInt16LE(20, 6);
+      central.writeUInt16LE(0x0800, 8);
+      central.writeUInt16LE(0, 10);
+      central.writeUInt32LE(0, 12);
+      central.writeUInt32LE(entry.crc, 16);
+      central.writeUInt32LE(entry.byteSize, 20);
+      central.writeUInt32LE(entry.byteSize, 24);
+      central.writeUInt16LE(entry.name.length, 28);
+      central.writeUInt32LE(offset, 42);
+      centralParts.push(central, entry.name);
+    }
+    const centralOffset = position;
+    const centralDirectory = Buffer.concat(centralParts);
+    await writePart(centralDirectory);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(centralDirectory.length, 12);
+    end.writeUInt32LE(centralOffset, 16);
+    await writePart(end);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return {
+    file_path: outputPath,
+    byte_size: position,
+    checksum_sha256: digest.digest("hex"),
+    entry_count: entries.length,
   };
 }

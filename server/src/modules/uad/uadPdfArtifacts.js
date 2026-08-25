@@ -8,12 +8,16 @@ import { renderUadNativePdf } from "./uadPdf.js";
 import { inspectUadAssetPayload } from "./uadFileSecurity.js";
 import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { runUadArtifactOperation } from "./uadArtifactExecution.js";
 
 const PDF_CONTENT_TYPE = "application/pdf";
 const DOWNLOADABLE_WORKFILE_STATUSES = new Set(["ready", "signed", "exported", "submitted"]);
 const MAX_RENDER_ASSETS = 250;
 const MAX_RENDER_ASSET_BYTES = 12 * 1024 * 1024;
-const MAX_RENDER_TOTAL_BYTES = 100 * 1024 * 1024;
+const MAX_RENDER_TOTAL_BYTES = Math.max(
+  16 * 1024 * 1024,
+  Math.min(Number(process.env.UAD_PDF_MAX_SOURCE_BYTES) || 64 * 1024 * 1024, 100 * 1024 * 1024),
+);
 
 function artifactResponse(row, workfile, storage) {
   if (!row) return null;
@@ -134,7 +138,7 @@ export async function getLatestUadPdfArtifact(pool, storage, workfileIdValue) {
   return { artifact: artifactResponse(artifactResult.rows[0] || null, workfileResult.rows[0], storage) };
 }
 
-export async function generateUadPdfArtifact(pool, storage, workfileIdValue) {
+async function generateUadPdfArtifactOperation(pool, storage, workfileIdValue) {
   if (!storage?.configured) throw new Error("uad_object_storage_not_configured");
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const client = await pool.connect();
@@ -193,6 +197,7 @@ export async function generateUadPdfArtifact(pool, storage, workfileIdValue) {
   const artifactId = randomUUID();
   const artifactMetadata = {
     file_name: generated.file_name,
+    generation_started_at: new Date().toISOString(),
     input_digest_sha256: inputDigest,
     renderer: generated.renderer,
     renderer_version: generated.renderer_version,
@@ -283,4 +288,13 @@ export async function generateUadPdfArtifact(pool, storage, workfileIdValue) {
     [workfileId],
   );
   return { artifact: artifactResponse(artifactRow, current.rows[0] || workfile, storage) };
+}
+
+export function generateUadPdfArtifact(pool, storage, workfileIdValue) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  return runUadArtifactOperation(
+    "pdf",
+    workfileId,
+    () => generateUadPdfArtifactOperation(pool, storage, workfileId),
+  );
 }

@@ -75,6 +75,47 @@ test("buffered R2 downloads stop before an advertised oversized body is allocate
   );
 });
 
+test("R2 downloads reject truncated bodies and remove partial disk output", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "uad-r2-truncated-test-"));
+  try {
+    const filePath = path.join(directory, "partial.bin");
+    const storage = createUadObjectStorage(ENVIRONMENT, {
+      fetchImpl: async () => new Response("short", {
+        status: 200,
+        headers: { "content-length": "10" },
+      }),
+    });
+    await assert.rejects(
+      () => storage.getObject({ objectKey: "private/truncated", maxBytes: 1024 }),
+      /uad_object_download_size_mismatch/,
+    );
+    await assert.rejects(
+      () => storage.downloadObjectToFile({
+        objectKey: "private/truncated",
+        filePath,
+        maxBytes: 1024,
+      }),
+      /uad_object_download_size_mismatch/,
+    );
+    await assert.rejects(() => readFile(filePath), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("R2 downloads treat an explicit zero content length as an integrity boundary", async () => {
+  const storage = createUadObjectStorage(ENVIRONMENT, {
+    fetchImpl: async () => new Response("unexpected", {
+      status: 200,
+      headers: { "content-length": "0" },
+    }),
+  });
+  await assert.rejects(
+    () => storage.getObject({ objectKey: "private/zero-length", maxBytes: 1024 }),
+    /uad_object_download_size_mismatch/,
+  );
+});
+
 test("R2 file downloads and uploads stream through disk with exact size and checksum", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "uad-r2-stream-test-"));
   try {

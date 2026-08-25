@@ -43,8 +43,9 @@ test("artifact execution rejects excess work instead of exhausting server resour
     /uad_artifact_capacity_exceeded/,
   );
   assert.deepEqual(gate.snapshot(), {
-    ready: true,
+    ready: false,
     closed: false,
+    saturated: true,
     active: 1,
     queued: 1,
     max_concurrent: 1,
@@ -55,6 +56,8 @@ test("artifact execution rejects excess work instead of exhausting server resour
   active.resolve("first");
   assert.equal(await first, "first");
   assert.equal(await second, "second");
+  assert.equal(gate.snapshot().ready, true);
+  assert.equal(gate.snapshot().saturated, false);
 });
 
 test("artifact shutdown stops queued generation while allowing active cleanup", async () => {

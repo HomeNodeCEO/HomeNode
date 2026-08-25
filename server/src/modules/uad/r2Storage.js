@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -241,8 +241,10 @@ export function createUadObjectStorage(env = process.env, {
       1,
       512 * 1024 * 1024,
     );
-    const advertised = Number(response.headers.get("content-length") || 0);
-    if (advertised > maximum) {
+    const contentLength = response.headers.get("content-length");
+    const advertisedKnown = /^\d+$/.test(String(contentLength || ""));
+    const advertised = advertisedKnown ? Number(contentLength) : 0;
+    if (advertisedKnown && advertised > maximum) {
       await response.body?.cancel?.().catch(() => undefined);
       throw new Error("uad_object_download_too_large");
     }
@@ -250,6 +252,9 @@ export function createUadObjectStorage(env = process.env, {
     if (!reader) {
       const body = Buffer.from(await response.arrayBuffer());
       if (body.length > maximum) throw new Error("uad_object_download_too_large");
+      if (advertisedKnown && body.length !== advertised) {
+        throw new Error("uad_object_download_size_mismatch");
+      }
       return body;
     }
     const chunks = [];
@@ -263,6 +268,9 @@ export function createUadObjectStorage(env = process.env, {
         throw new Error("uad_object_download_too_large");
       }
       chunks.push(Buffer.from(value));
+    }
+    if (advertisedKnown && bytes !== advertised) {
+      throw new Error("uad_object_download_size_mismatch");
     }
     return Buffer.concat(chunks, bytes);
   }
@@ -383,11 +391,14 @@ export function createUadObjectStorage(env = process.env, {
       let lastError = null;
       for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
         try {
+          await rm(filePath, { force: true }).catch(() => undefined);
           const response = await request("download", download.url, {
             method: download.method,
           }, { attempts: 1, timeoutMs: config.streamTimeoutMs });
-          const advertised = Number(response.headers.get("content-length") || 0);
-          if (advertised > maximum) {
+          const contentLength = response.headers.get("content-length");
+          const advertisedKnown = /^\d+$/.test(String(contentLength || ""));
+          const advertised = advertisedKnown ? Number(contentLength) : 0;
+          if (advertisedKnown && advertised > maximum) {
             await response.body?.cancel?.().catch(() => undefined);
             throw new Error("uad_object_download_too_large");
           }
@@ -410,6 +421,9 @@ export function createUadObjectStorage(env = process.env, {
             meter,
             createWriteStream(filePath, { flags: "w" }),
           );
+          if (advertisedKnown && bytes !== advertised) {
+            throw new Error("uad_object_download_size_mismatch");
+          }
           return {
             file_path: filePath,
             byte_size: bytes,
@@ -418,6 +432,7 @@ export function createUadObjectStorage(env = process.env, {
             content_type: response.headers.get("content-type"),
           };
         } catch (error) {
+          await rm(filePath, { force: true }).catch(() => undefined);
           lastError = normalizedStorageError("download", error);
           if (attempt >= config.maxAttempts || !transientStorageError(lastError)) throw lastError;
           await sleep(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))));

@@ -21,9 +21,13 @@ export function createUadArtifactExecutionGate({
   let failed = 0;
 
   function snapshot() {
+    const saturated = !closed
+      && active >= concurrency
+      && queue.length >= queueLimit;
     return Object.freeze({
-      ready: !closed,
+      ready: !closed && !saturated,
       closed,
+      saturated,
       active,
       queued: queue.length,
       max_concurrent: concurrency,

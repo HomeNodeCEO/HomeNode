@@ -188,7 +188,7 @@ import {
   closeUadArtifactExecution,
   getUadArtifactExecutionSnapshot,
 } from "./modules/uad/uadArtifactExecution.js";
-import { recoverStaleUadArtifactGenerations } from "./modules/uad/uadArtifactRecovery.js";
+import { startUadArtifactRecoveryMonitor } from "./modules/uad/uadArtifactRecovery.js";
 import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.js";
 import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
@@ -298,8 +298,8 @@ const runtimeHealth = createRuntimeHealthHandlers({
   isShuttingDown: () => Boolean(gracefulShutdown?.isShuttingDown()),
   artifactExecutorSnapshot: getUadArtifactExecutionSnapshot,
 });
-void recoverStaleUadArtifactGenerations(pool).catch((error) => {
-  console.warn("[uad-artifacts] interrupted generation recovery unavailable", error?.message || error);
+const artifactRecoveryMonitor = startUadArtifactRecoveryMonitor(pool, {
+  shouldRun: () => getUadArtifactExecutionSnapshot().active === 0,
 });
 const uadComplianceRegistry = createUadComplianceRegistry();
 const documentOcrProvider = createDocumentOcrProvider();
@@ -695,6 +695,7 @@ app.get("/api/system/performance", async (_req, res) => {
     },
     requests: requestPerformance.snapshot(),
     artifact_executor: getUadArtifactExecutionSnapshot(),
+    artifact_recovery: artifactRecoveryMonitor.snapshot(),
     maintenance: {
       status: maintenanceStatus,
       recent_runs: recentMaintenance,
@@ -6333,5 +6334,8 @@ gracefulShutdown = installGracefulShutdown({
   server,
   pool,
   graceMs: runtimeResilience.shutdownGraceMs,
-  onBegin: () => closeUadArtifactExecution(),
+  onBegin: () => {
+    artifactRecoveryMonitor.dispose();
+    closeUadArtifactExecution();
+  },
 });

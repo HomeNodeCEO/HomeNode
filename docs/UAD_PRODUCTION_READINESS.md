@@ -20,6 +20,12 @@ only when all local delivery prerequisites are ready:
 - private object storage is configured; and
 - OIDC is configured for the authenticated signature boundary.
 
+The process-level `/ready` probe separately enforces a bounded database probe,
+database-pool headroom, artifact-executor capacity, and container memory
+headroom. Artifact generation rows interrupted by a process restart are marked
+retryable after the configured stale interval; the recovery monitor repeats
+without requiring another restart.
+
 The response contains booleans, counts, the public UAD release key, and stable
 blocker codes. It does not return a database name or URL, storage bucket,
 OIDC issuer/audience, provider endpoint, client ID, client secret, or token.

@@ -1,0 +1,43 @@
+name: UAD chaos recovery
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/uad-chaos-recovery.yml"
+      - "server/package.json"
+      - "server/package-lock.json"
+      - "server/src/security/runtimeHealth.js"
+      - "server/src/security/runtimeResilience.js"
+      - "server/src/modules/uad/r2Storage.js"
+      - "server/src/modules/uad/uadArtifactExecution.js"
+      - "server/src/modules/uad/uadArtifactRecovery.js"
+      - "server/src/modules/uad/uadPdfArtifacts.js"
+      - "server/src/oldServer.js"
+      - "server/test/runtimeHealth.test.js"
+      - "server/test/runtimeResilience.test.js"
+      - "server/test/r2StorageResilience.test.js"
+      - "server/test/uadArtifactExecution.test.js"
+      - "server/test/uadArtifactRecovery.test.js"
+      - "server/test/uadRouterSecurity.test.js"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bounded-chaos-recovery:
+    name: Database, R2, queue, and restart recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npm run test:uad-chaos-recovery

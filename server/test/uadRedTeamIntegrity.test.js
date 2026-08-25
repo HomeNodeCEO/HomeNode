@@ -6,6 +6,7 @@ import { runUadRedTeamIntegrityChecks } from "../src/modules/uad/uadRedTeamInteg
 const ACCOUNT = "UAD-REDTEAM-SFR-0001";
 const WORKFILE_A = "11111111-1111-4111-8111-111111111111";
 const WORKFILE_B = "22222222-2222-4222-8222-222222222222";
+const DELIVERY_WORKFILE = "11111111-1111-4111-8111-111111111113";
 const ORGANIZATION_A = "10000000-0000-4000-8000-000000000001";
 const ORGANIZATION_B = "20000000-0000-4000-8000-000000000001";
 
@@ -70,6 +71,13 @@ function integrityFetch({
           organization_id: ORGANIZATION_B,
           file_number: "HN-REDTEAM-ORG-B-0001",
           current_revision: 1,
+        },
+        {
+          id: DELIVERY_WORKFILE,
+          organization_id: ORGANIZATION_A,
+          file_number: "HN-REDTEAM-DELIVERY-A-0001",
+          current_revision: 1,
+          status: "exported",
         },
       ] });
     }

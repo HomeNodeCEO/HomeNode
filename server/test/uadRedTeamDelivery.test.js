@@ -32,7 +32,7 @@ function deliveryFetch({ acceptPrivatePortal = false } = {}) {
       ] });
     }
     if (path === `/api/uad/workfiles/${DELIVERY_ID}/artifacts/submission-package`) {
-      return json({ artifact: {
+      return json({ package: {
         id: ARTIFACT_ID,
         ready_for_download: true,
         generation_status: "ready",

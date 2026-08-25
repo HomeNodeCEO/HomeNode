@@ -38,7 +38,10 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - name: Run sanitized authenticated authorization matrix
-        run: npm run --silent verify:redteam:authorization | tee uad-redteam-authorization.json
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run --silent verify:redteam:authorization | tee uad-redteam-authorization.json
       - name: Preserve sanitized evidence
         if: always()
         uses: actions/upload-artifact@v6

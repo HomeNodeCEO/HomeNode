@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applyContiguousPocketClassification,
+  applyAdaptivePrimaryPopulation,
   applyLandUsePrerequisite,
   ensureNeighborhoodRelevanceSchema,
   generateNeighborhoodRelevance,
@@ -79,19 +80,45 @@ test("does not remove a same-neighborhood parcel during prerequisite or pocket s
 
 test("calculates neighborhood ranges from the exact included relevance population", () => {
   const result = summarizeRelevantPopulation([
-    { excluded: false, score: 90, year_built: 1980, site_area_sqft: 8000, sale_price: 300000,
+    { excluded: false, primary_population: true, score: 90, year_built: 1980, site_area_sqft: 8000, sale_price: 300000,
       gla_diagnostic: { candidate_gla_sqft: 1500 } },
-    { excluded: false, score: 80, year_built: 1990, site_area_sqft: 10000, sale_price: 400000,
+    { excluded: false, primary_population: true, score: 80, year_built: 1990, site_area_sqft: 10000, sale_price: 400000,
       gla_diagnostic: { candidate_gla_sqft: 2000 } },
     { excluded: true, score: 10, year_built: 2025, site_area_sqft: 50000, sale_price: 1500000,
       gla_diagnostic: { candidate_gla_sqft: 5000 } },
   ]);
-  assert.equal(result.population_rule, "relevance_included_only");
+  assert.equal(result.population_rule, "adaptive_primary_relevance_population");
   assert.equal(result.included_property_count, 2);
   assert.equal(result.included_sale_count, 2);
   assert.equal(result.sales_profile.sale_price.median, 350000);
   assert.equal(result.sales_profile.price_per_square_foot.median, 200);
   assert.equal(result.property_profile.age.median, 1985);
+});
+
+test("widens the primary population only enough to meet the target sale count", () => {
+  const candidates = [
+    ...Array.from({ length: 10 }, (_, index) => ({ score: 85, sale_price: 300000 + index, excluded: false })),
+    ...Array.from({ length: 25 }, (_, index) => ({ score: 75, sale_price: 310000 + index, excluded: false })),
+    ...Array.from({ length: 10 }, (_, index) => ({ score: 65, sale_price: 320000 + index, excluded: false })),
+    { score: 95, sale_price: 500000, excluded: true },
+  ];
+  const result = applyAdaptivePrimaryPopulation(candidates);
+  assert.equal(result.threshold, 70);
+  assert.equal(result.primary_sale_count, 35);
+  assert.equal(result.target_met, true);
+  assert.equal(result.candidates.filter((candidate) => candidate.primary_population).length, 35);
+  assert.equal(result.candidates.at(-1).primary_population, false);
+});
+
+test("uses the sixty-percent floor and reports a sparse primary sample", () => {
+  const result = applyAdaptivePrimaryPopulation([
+    { score: 81, sale_price: 300000, excluded: false },
+    { score: 61, sale_price: 310000, excluded: false },
+    { score: 59, sale_price: 320000, excluded: false },
+  ]);
+  assert.equal(result.threshold, 60);
+  assert.equal(result.primary_sale_count, 2);
+  assert.equal(result.target_met, false);
 });
 
 test("creates normalized assessment and candidate persistence", async () => {

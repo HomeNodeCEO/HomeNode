@@ -14,6 +14,8 @@ const RELEVANCE_SALE_HISTORY_MONTHS = 36;
 const MINIMUM_DISSIMILAR_POCKET_SIZE = 3;
 const MAX_CANDIDATE_PARCELS = 5000;
 const ADJACENCY_DISTANCE_METERS = 20;
+const PRIMARY_POPULATION_THRESHOLDS = Object.freeze([80, 70, 60]);
+const TARGET_PRIMARY_SALE_COUNT = 30;
 const schemaReadyByPool = new WeakMap();
 
 function normalizedAccountId(value) {
@@ -80,6 +82,8 @@ function relevanceVisualization(candidates = []) {
       excluded: candidate.excluded === true,
       classification: candidate.statistical_classification,
       cluster_id: candidate.contiguous_cluster?.id || candidate.cluster_id || null,
+      primary_population: candidate.primary_population === true,
+      relevance_band: candidate.relevance_band || null,
       point: candidate.point,
     }));
 }
@@ -130,6 +134,8 @@ export async function ensureNeighborhoodRelevanceSchema(pool) {
         exclusion_reason text,
         cluster_id text,
         cluster_size integer,
+        primary_population boolean NOT NULL DEFAULT false,
+        relevance_band text,
         year_built integer,
         site_area_sqft numeric,
         sale_price numeric,
@@ -147,6 +153,9 @@ export async function ensureNeighborhoodRelevanceSchema(pool) {
         ADD COLUMN IF NOT EXISTS neighborhood_code text,
         ADD COLUMN IF NOT EXISTS legal_neighborhood_name text,
         ADD COLUMN IF NOT EXISTS same_subject_neighborhood boolean NOT NULL DEFAULT false;
+      ALTER TABLE app.neighborhood_relevance_candidates
+        ADD COLUMN IF NOT EXISTS primary_population boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS relevance_band text;
       CREATE INDEX IF NOT EXISTS neighborhood_relevance_candidate_score_idx
         ON app.neighborhood_relevance_candidates
           (assessment_id, excluded, score DESC NULLS LAST);
@@ -496,6 +505,48 @@ function summarizeCandidates(candidates) {
   };
 }
 
+function relevanceBand(score, excluded = false) {
+  if (excluded) return "excluded";
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric)) return "insufficient_data";
+  if (numeric >= 85) return "highest";
+  if (numeric >= 70) return "high";
+  if (numeric >= 55) return "relevant";
+  if (numeric >= 35) return "marginal";
+  return "low";
+}
+
+export function applyAdaptivePrimaryPopulation(
+  candidates = [],
+  { targetSaleCount = TARGET_PRIMARY_SALE_COUNT } = {},
+) {
+  const eligible = candidates.filter(
+    (candidate) => !candidate.excluded && Number.isFinite(Number(candidate.score)),
+  );
+  const salesAt = (threshold) => eligible.filter(
+    (candidate) => Number(candidate.score) >= threshold && Number(candidate.sale_price) > 0,
+  ).length;
+  let selectedThreshold = PRIMARY_POPULATION_THRESHOLDS.at(-1);
+  for (const threshold of PRIMARY_POPULATION_THRESHOLDS) {
+    selectedThreshold = threshold;
+    if (salesAt(threshold) >= targetSaleCount) break;
+  }
+  const primarySaleCount = salesAt(selectedThreshold);
+  return {
+    threshold: selectedThreshold,
+    target_sale_count: targetSaleCount,
+    primary_sale_count: primarySaleCount,
+    target_met: primarySaleCount >= targetSaleCount,
+    candidates: candidates.map((candidate) => ({
+      ...candidate,
+      primary_population: !candidate.excluded &&
+        Number.isFinite(Number(candidate.score)) &&
+        Number(candidate.score) >= selectedThreshold,
+      relevance_band: relevanceBand(candidate.score, candidate.excluded),
+    })),
+  };
+}
+
 function finiteValues(values) {
   return values.map(Number).filter(Number.isFinite);
 }
@@ -551,7 +602,8 @@ function distributionSummary(values) {
  * narrower population represented to the appraiser.
  */
 export function summarizeRelevantPopulation(candidates = []) {
-  const included = candidates.filter((candidate) => !candidate.excluded);
+  const reviewable = candidates.filter((candidate) => !candidate.excluded);
+  const included = candidates.filter((candidate) => candidate.primary_population === true);
   const sales = included.filter((candidate) => Number(candidate.sale_price) > 0);
   const gla = (candidate) => Number(candidate.gla_diagnostic?.candidate_gla_sqft) || null;
   const salePpsf = sales.map((candidate) => {
@@ -588,7 +640,8 @@ export function summarizeRelevantPopulation(candidates = []) {
       100 - Math.min(70, averageCod * 1.5) + Math.min(20, saleCoverage / 5),
     ));
   return {
-    population_rule: "relevance_included_only",
+    population_rule: "adaptive_primary_relevance_population",
+    reviewable_property_count: reviewable.length,
     included_property_count: included.length,
     included_sale_count: sales.length,
     sale_coverage_percent: roundedMetric(saleCoverage, 1),
@@ -635,6 +688,8 @@ function candidatePersistencePayload(candidates) {
       contiguous_cluster: candidate.contiguous_cluster || null,
     },
     point: candidate.point,
+    primary_population: candidate.primary_population === true,
+    relevance_band: candidate.relevance_band || null,
   }));
 }
 
@@ -686,7 +741,8 @@ async function persistAssessment(pool, assessment) {
          legal_neighborhood_name,
          available_weight_percent, statistical_classification, excluded,
          exclusion_reason, cluster_id, cluster_size, year_built, site_area_sqft,
-         sale_price, sale_date, distance_miles, factors, diagnostics, point
+         sale_price, sale_date, distance_miles, factors, diagnostics, point,
+         primary_population, relevance_band
        )
        SELECT $1, item.parcel_object_id, item.account_id, item.address,
               item.land_use_category, item.subdivision_name, item.neighborhood_code,
@@ -698,7 +754,7 @@ async function persistAssessment(pool, assessment) {
               item.distance_miles, item.factors, item.diagnostics,
               CASE WHEN item.point IS NULL THEN NULL
                    ELSE ST_SetSRID(ST_GeomFromGeoJSON(item.point::text), 4326)
-              END
+              END, item.primary_population, item.relevance_band
        FROM jsonb_to_recordset($2::jsonb) AS item(
          parcel_object_id bigint, account_id text, address text,
          land_use_category text, subdivision_name text, neighborhood_code text,
@@ -708,6 +764,7 @@ async function persistAssessment(pool, assessment) {
          cluster_size integer, year_built integer, site_area_sqft numeric,
          sale_price numeric, sale_date date, distance_miles numeric,
          factors jsonb, diagnostics jsonb, point jsonb
+         , primary_population boolean, relevance_band text
        )`,
       [row.id, JSON.stringify(payload)],
     );
@@ -767,8 +824,16 @@ export async function generateNeighborhoodRelevance(pool, {
     )
     .map((candidate) => candidate.parcel_object_id);
   const adjacency = await loadPotentialPocketAdjacency(pool, potentialIds);
-  const candidates = applyContiguousPocketClassification(landUseScreened, adjacency);
-  const summary = summarizeCandidates(candidates);
+  const pocketScreened = applyContiguousPocketClassification(landUseScreened, adjacency);
+  const primaryPopulation = applyAdaptivePrimaryPopulation(pocketScreened);
+  const candidates = primaryPopulation.candidates;
+  const summary = {
+    ...summarizeCandidates(candidates),
+    primary_population_threshold: primaryPopulation.threshold,
+    primary_population_target_sale_count: primaryPopulation.target_sale_count,
+    primary_population_sale_count: primaryPopulation.primary_sale_count,
+    primary_population_target_met: primaryPopulation.target_met,
+  };
   const signature = hashInput({
     methodology_version: NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION,
     boundary_assessment_id: latestBoundary.id,
@@ -834,6 +899,7 @@ export async function getLatestNeighborhoodRelevance(pool, {
   const { rows: candidateRows } = await pool.query(
     `SELECT parcel_object_id, account_id, address, score, excluded,
             statistical_classification AS classification, cluster_id,
+            primary_population, relevance_band,
             ST_AsGeoJSON(point)::jsonb AS point
      FROM app.neighborhood_relevance_candidates
      WHERE assessment_id = $1

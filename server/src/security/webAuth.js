@@ -64,6 +64,40 @@ function readTransaction(value, secret, now = Date.now()) {
   return transaction;
 }
 
+const SAFE_AUTH_FAILURES = new Set([
+  "expired_auth_transaction",
+  "identity_not_provisioned",
+  "invalid_auth_callback",
+  "invalid_auth_transaction",
+  "invalid_oidc_discovery",
+  "oidc_discovery_unavailable",
+  "organization_membership_required",
+  "token_exchange_failed",
+]);
+
+function safeDiagnostic(value, fallback = "unexpected_error") {
+  const normalized = String(value || "").trim().toLowerCase();
+  return /^[a-z0-9_:-]{1,120}$/.test(normalized) ? normalized : fallback;
+}
+
+function authFailureReason(error) {
+  if (error?.diagnostic) return safeDiagnostic(error.diagnostic);
+  return SAFE_AUTH_FAILURES.has(error?.message) ? error.message : "unexpected_error";
+}
+
+async function tokenExchangeFailure(response) {
+  let providerCode = "provider_error";
+  try {
+    const value = await response.json();
+    providerCode = safeDiagnostic(value?.error, providerCode);
+  } catch {
+    // Provider bodies are optional and never copied into logs or client responses.
+  }
+  const error = new Error("token_exchange_failed");
+  error.diagnostic = `http_${Number(response?.status) || 0}:${providerCode}`;
+  return error;
+}
+
 async function loadIdentity(pool, issuer, subject) {
   const { rows } = await pool.query(
     `SELECT users.id AS user_id, users.email, users.display_name,
@@ -156,7 +190,13 @@ export function createWebSessionAuthenticator({ pool }) {
   };
 }
 
-export function createWebAuthRouter({ pool, verifier, environment = process.env, fetchImpl = globalThis.fetch }) {
+export function createWebAuthRouter({
+  pool,
+  verifier,
+  environment = process.env,
+  fetchImpl = globalThis.fetch,
+  logger = console,
+}) {
   const router = express.Router();
   const clientId = String(environment.OIDC_WEB_CLIENT_ID || "").trim();
   const clientSecret = String(environment.OIDC_WEB_CLIENT_SECRET || "").trim();
@@ -222,9 +262,11 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
   router.get("/callback", async (req, res) => {
     clearBrowserCookie(res, TRANSACTION_COOKIE);
     if (!configured) return res.status(503).json({ error: "web_auth_not_configured" });
+    let stage = "transaction";
     try {
       const transaction = readTransaction(cookies(req).get(TRANSACTION_COOKIE), sessionSecret);
       if (!req.query.code || req.query.state !== transaction.state) throw new Error("invalid_auth_callback");
+      stage = "discovery";
       const metadata = await getDiscovery();
       const body = new URLSearchParams({
         grant_type: "authorization_code",
@@ -234,16 +276,20 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
         redirect_uri: redirectUri,
         code_verifier: transaction.verifier,
       });
+      stage = "token_exchange";
       const response = await fetchImpl(metadata.token_endpoint, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
         body,
       });
-      if (!response.ok) throw new Error("token_exchange_failed");
+      if (!response.ok) throw await tokenExchangeFailure(response);
       const tokens = await response.json();
+      stage = "token_verification";
       const claims = await verifier.verify(tokens.access_token);
+      stage = "identity_lookup";
       const identity = await loadIdentity(pool, claims.iss, claims.sub);
       const token = base64url(randomBytes(32));
+      stage = "session_create";
       await pool.query(
         `INSERT INTO app_auth.web_sessions
            (id, token_sha256, user_id, expires_at, created_ip_sha256, created_user_agent)
@@ -254,6 +300,7 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
       setBrowserCookie(res, SESSION_COOKIE, token, SESSION_SECONDS);
       return res.redirect(302, frontendUrl);
     } catch (error) {
+      logger.warn?.(`[web-auth] callback failed stage=${stage} reason=${authFailureReason(error)}`);
       const code = ["identity_not_provisioned", "organization_membership_required"].includes(error?.message)
         ? "account_not_provisioned"
         : "authentication_failed";

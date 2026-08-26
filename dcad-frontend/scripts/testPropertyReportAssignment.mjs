@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { assignmentValidationErrors } from "../src/lib/propertyReportAssignment.ts";
+import {
+  assignmentDraftFromDetail,
+  assignmentValidationErrors,
+} from "../src/lib/propertyReportAssignment.ts";
+
+test("assignment hydration preserves explicit values and clones arrays", () => {
+  const source = {
+    pud: true,
+    subject_conforms_to_neighborhood: false,
+    assignment_types: ["purchase_transaction"],
+    lender_revision_count: -2,
+  };
+  const draft = assignmentDraftFromDetail(source);
+  assert.equal(draft.pud, true);
+  assert.equal(draft.subject_conforms_to_neighborhood, false);
+  assert.deepEqual(draft.assignment_types, ["purchase_transaction"]);
+  assert.notEqual(draft.assignment_types, source.assignment_types);
+  assert.equal(draft.lender_revision_count, 0);
+});
 
 test("assignment validation retains established PUD and explanation rules", () => {
   assert.deepEqual(

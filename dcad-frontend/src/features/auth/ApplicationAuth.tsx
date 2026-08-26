@@ -17,6 +17,7 @@ type Session = {
 type AuthState = {
   ready: boolean;
   configured: boolean;
+  required: boolean;
   session: Session | null;
   signIn: () => void;
   signOut: () => Promise<void>;
@@ -31,6 +32,7 @@ const authUrl = (path: string) => `${API_BASE}${path}`;
 export function ApplicationAuthProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [configured, setConfigured] = useState(false);
+  const [required, setRequired] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
 
   useEffect(() => {
@@ -38,9 +40,12 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
     void (async () => {
       try {
         const statusResponse = await fetch(authUrl('/api/auth/status'), { credentials: 'include' });
-        const status = statusResponse.ok ? await statusResponse.json() : { configured: false };
+        const status = statusResponse.ok
+          ? await statusResponse.json()
+          : { configured: false, required: false };
         if (!active) return;
         setConfigured(Boolean(status.configured));
+        setRequired(Boolean(status.configured && status.required));
         if (status.configured) {
           const sessionResponse = await fetch(authUrl('/api/auth/me'), { credentials: 'include' });
           if (sessionResponse.ok) {
@@ -58,13 +63,14 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
   const value = useMemo<AuthState>(() => ({
     ready,
     configured,
+    required,
     session,
     signIn: () => { window.location.assign(authUrl('/api/auth/login')); },
     signOut: async () => {
       await fetch(authUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' });
       setSession(null);
     },
-  }), [configured, ready, session]);
+  }), [configured, ready, required, session]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -82,7 +88,7 @@ export function ApplicationAuthGate({ children }: { children: React.ReactNode })
   }
   // Preserve the existing editor-key workflow until production WorkOS values
   // and the first organization administrator have been provisioned.
-  if (!auth.configured || auth.session) return <>{children}</>;
+  if (!auth.required || auth.session) return <>{children}</>;
   return (
     <main className="min-h-screen grid place-items-center bg-slate-100 px-6">
       <section className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-xl">

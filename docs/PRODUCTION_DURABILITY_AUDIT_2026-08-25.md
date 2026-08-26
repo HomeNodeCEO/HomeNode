@@ -18,7 +18,7 @@ object keys.
 | Service health monitoring | Render health-check path is `/health` | Enabled during this audit |
 | Production deployment gate | Auto-deploy waits for GitHub CI checks to pass | Enabled during this audit |
 | Pre-deploy migration gate | Render runs `npm run migrate:uad` before starting each production release | Enabled during this audit; the advisory-locked, checksummed runner is UAD-only and does not run Custom Appraisal, Property Tax, or mobile migrations |
-| R2 bucket isolation | A private `homenode-uad-production` bucket now exists. The application supports a dedicated `UAD_R2_BUCKET` while preserving `R2_BUCKET` for Custom Appraisal documents and shared mobile photos | Activate after CI, then run the credential-safe object round-trip probe; current UAD inventory contains no objects requiring migration |
+| R2 bucket isolation | A private `homenode-uad-production` bucket now exists. The application supports dedicated `UAD_R2_BUCKET`, `UAD_R2_ACCOUNT_ID`, `UAD_R2_ACCESS_KEY_ID`, and `UAD_R2_SECRET_ACCESS_KEY` overrides while preserving the shared `R2_*` configuration for Custom Appraisal documents and shared mobile photos | Activate after CI, then run the credential-safe object round-trip probe; current UAD inventory contains no objects requiring migration |
 | R2 retention lock | Not changed during this audit | Correct until HomeNode approves a written retention and legal-hold schedule |
 
 ## Required follow-through

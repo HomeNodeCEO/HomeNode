@@ -303,6 +303,9 @@ const signupRateLimiter = rateLimit({
 // preserves existing deployments until UAD_R2_BUCKET is configured.
 const sharedObjectStorage = createUadObjectStorage();
 const uadObjectStorage = createUadObjectStorage(process.env, {
+  accountId: process.env.UAD_R2_ACCOUNT_ID || process.env.R2_ACCOUNT_ID,
+  accessKeyId: process.env.UAD_R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID,
+  secretAccessKey: process.env.UAD_R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY,
   bucket: process.env.UAD_R2_BUCKET || process.env.R2_BUCKET,
   isolated: Boolean(
     process.env.UAD_R2_BUCKET
@@ -340,6 +343,7 @@ if (applicationAuthenticationRequired && (
   || !process.env.OIDC_WEB_CLIENT_ID
   || !process.env.OIDC_WEB_CLIENT_SECRET
   || !process.env.OIDC_WEB_REDIRECT_URI
+  || !process.env.WEB_APP_URL
   || String(process.env.APP_SESSION_SECRET || "").length < 32
 )) {
   throw new Error("application_authentication_required_but_not_configured");

@@ -5,6 +5,10 @@ const SESSION_COOKIE = "__Host-homenode_session";
 const TRANSACTION_COOKIE = "__Host-homenode_auth_tx";
 const SESSION_SECONDS = 8 * 60 * 60;
 
+function enabled(value) {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -146,9 +150,20 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
   const clientId = String(environment.OIDC_WEB_CLIENT_ID || "").trim();
   const clientSecret = String(environment.OIDC_WEB_CLIENT_SECRET || "").trim();
   const redirectUri = String(environment.OIDC_WEB_REDIRECT_URI || "").trim();
-  const frontendUrl = String(environment.WEB_APP_URL || "/").trim();
+  const frontendUrl = String(environment.WEB_APP_URL || "").trim();
   const sessionSecret = String(environment.APP_SESSION_SECRET || "").trim();
-  const configured = Boolean(verifier?.configured && clientId && clientSecret && redirectUri && sessionSecret.length >= 32);
+  const configured = Boolean(
+    verifier?.configured
+    && clientId
+    && clientSecret
+    && redirectUri
+    && frontendUrl
+    && sessionSecret.length >= 32
+  );
+  // Configuration and enforcement are deliberately separate rollout stages.
+  // WorkOS can be provisioned and tested without replacing the editor-key
+  // workflow until APPLICATION_AUTHENTICATION_REQUIRED is explicitly enabled.
+  const required = enabled(environment.APPLICATION_AUTHENTICATION_REQUIRED);
   let discovery = null;
 
   async function getDiscovery() {
@@ -163,7 +178,9 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
     return discovery;
   }
 
-  router.get("/status", (_req, res) => res.json({ configured }));
+  router.get("/status", (_req, res) => res
+    .set("cache-control", "no-store")
+    .json({ configured, required: Boolean(configured && required) }));
 
   router.get("/login", async (_req, res) => {
     if (!configured) return res.status(503).json({ error: "web_auth_not_configured" });

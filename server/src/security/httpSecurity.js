@@ -42,7 +42,11 @@ function normalizedOrigin(value, { allowHttp = false } = {}) {
 
 export function createHttpSecurityConfiguration(environment = process.env) {
   const strict = enabled(environment.UAD_SECURITY_STRICT);
-  const authenticationRequired = enabled(environment.UAD_AUTHENTICATION_REQUIRED);
+  // APPLICATION_AUTHENTICATION_REQUIRED is the single browser-application
+  // activation switch. Keep the older UAD-specific switch as a compatible,
+  // stricter override for isolated UAD deployments.
+  const authenticationRequired = enabled(environment.UAD_AUTHENTICATION_REQUIRED)
+    || enabled(environment.APPLICATION_AUTHENTICATION_REQUIRED);
   const rateLimitEnabled = strict || enabled(environment.UAD_RATE_LIMIT_ENABLED);
   const apiRateLimitEnabled = environment.NODE_ENV === "production"
     || enabled(environment.API_RATE_LIMIT_ENABLED);

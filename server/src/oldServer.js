@@ -326,11 +326,17 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });
+const webOidcVerifier = createOidcAccessTokenVerifier({
+  issuer: process.env.OIDC_WEB_ISSUER || process.env.OIDC_ISSUER,
+  audience: process.env.OIDC_WEB_CLIENT_ID,
+  jwksUri: process.env.OIDC_WEB_JWKS_URI || process.env.OIDC_JWKS_URI,
+  clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
+});
 const applicationAuthenticationRequired = environmentFlag(
   process.env.APPLICATION_AUTHENTICATION_REQUIRED,
 );
 if (applicationAuthenticationRequired && (
-  !mobileOidcVerifier.configured
+  !webOidcVerifier.configured
   || !process.env.OIDC_WEB_CLIENT_ID
   || !process.env.OIDC_WEB_CLIENT_SECRET
   || !process.env.OIDC_WEB_REDIRECT_URI
@@ -338,6 +344,10 @@ if (applicationAuthenticationRequired && (
 )) {
   throw new Error("application_authentication_required_but_not_configured");
 }
+// Browser sessions must be hydrated before UAD routing so the same secure
+// HomeNode session can authorize UAD pages without requiring a mobile bearer
+// token. Mobile continues to use its separate public-client audience below.
+app.use("/api", createWebSessionAuthenticator({ pool }));
 app.use("/api/uad", createUadRouter({
   pool,
   storage: uadObjectStorage,
@@ -369,8 +379,7 @@ const authenticateApplicationUser = createMobileAuthenticator({
   verifier: mobileOidcVerifier,
 });
 app.use("/api", createOptionalApplicationAuthenticator(authenticateApplicationUser));
-app.use("/api", createWebSessionAuthenticator({ pool }));
-app.use("/api/auth", createWebAuthRouter({ pool, verifier: mobileOidcVerifier }));
+app.use("/api/auth", createWebAuthRouter({ pool, verifier: webOidcVerifier }));
 
 app.get("/api/auth/me", (req, res) => {
   res.set("cache-control", "no-store");
@@ -545,7 +554,7 @@ const REPORT_MANUAL_SECTION_KEYS = new Set([
 
 const ASSIGNMENT_FILE_SELECT = `
   SELECT f.id, f.account_id, f.file_number, f.assignment_details,
-         f.organization_id, f.assigned_appraiser_user_id,
+         f.organization_id, f.assigned_appraiser_user_id, f.supervisory_appraiser_user_id,
          f.inherited_from_file_id, parent.file_number AS inherited_from_file_number,
          f.reviewer, f.revision, f.created_at, f.updated_at,
          workfile.workfile_key, workfile.canonical_file_name,

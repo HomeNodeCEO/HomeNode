@@ -8,6 +8,7 @@
         "test:uad-chaos-recovery": "node --test test/runtimeHealth.test.js test/runtimeResilience.test.js test/r2StorageResilience.test.js test/uadArtifactExecution.test.js test/uadArtifactRecovery.test.js test/uadRouterSecurity.test.js",
         "migrate:uad": "node scripts/runUadMigrations.js",
         "migrate:mobile": "node scripts/runMobileMigrations.js",
+        "migrate:application": "node scripts/runApplicationMigrations.js",
         "prepare:staging:uad": "node scripts/prepareUadStagingDatabase.js",
         "start:staging:uad": "npm run migrate:uad && npm run migrate:mobile && npm run prepare:staging:uad && npm run verify:mobile-oidc && npm start",
         "verify:redteam:isolation": "node scripts/verifyRedteamEnvironment.js",

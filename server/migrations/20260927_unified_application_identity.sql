@@ -16,6 +16,7 @@ SET display_name = EXCLUDED.display_name,
 ALTER TABLE app.assignment_files
   ADD COLUMN IF NOT EXISTS organization_id uuid REFERENCES app_auth.organizations(id) ON DELETE RESTRICT,
   ADD COLUMN IF NOT EXISTS assigned_appraiser_user_id uuid REFERENCES app_auth.users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS supervisory_appraiser_user_id uuid REFERENCES app_auth.users(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS created_by_user_id uuid REFERENCES app_auth.users(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS updated_by_user_id uuid REFERENCES app_auth.users(id) ON DELETE SET NULL;
 

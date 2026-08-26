@@ -43,3 +43,12 @@ test("unassigned legacy files fail closed for authenticated users", () => {
     organization_id: null,
   }, "read"), false);
 });
+
+test("administrators cannot sign unless separately assigned as a licensed signing role", () => {
+  assert.equal(decideAssignmentAccess(actor("admin-1", ["organization_admin"]), assignment, "sign"), false);
+  assert.equal(decideAssignmentAccess(actor("platform-1", ["homenode_admin"]), assignment, "sign"), false);
+  assert.equal(decideAssignmentAccess(actor("supervisor-1", ["supervisory_appraiser"]), {
+    ...assignment,
+    supervisory_appraiser_user_id: "supervisor-1",
+  }, "sign"), true);
+});

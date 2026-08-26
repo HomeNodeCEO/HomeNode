@@ -13,7 +13,11 @@ async function uadFetchJSON<T = unknown>(input: string, init?: RequestInit & { t
   const timeout = window.setTimeout(() => controller.abort(), init?.timeoutMs ?? 25_000);
   try {
     const authorizedInit = await withUadAuthorization(init);
-    const response = await fetch(input, { ...authorizedInit, signal: controller.signal });
+    const response = await fetch(input, {
+      credentials: "include",
+      ...authorizedInit,
+      signal: controller.signal,
+    });
     const isJson = (response.headers.get("content-type") || "").includes("application/json");
     if (!response.ok) {
       const body = isJson ? await response.json().catch(() => null) as {

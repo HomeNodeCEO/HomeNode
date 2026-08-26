@@ -2,17 +2,17 @@ const WORKFLOW_PERMISSIONS = Object.freeze({
   custom_appraisal: Object.freeze({
     read: new Set(["appraiser", "supervisory_appraiser", "reviewer", "office_assistant", "read_only", "organization_admin", "homenode_admin"]),
     write: new Set(["appraiser", "supervisory_appraiser", "office_assistant", "organization_admin", "homenode_admin"]),
-    sign: new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]),
+    sign: new Set(["appraiser", "supervisory_appraiser"]),
   }),
   uad_3_6: Object.freeze({
     read: new Set(["appraiser", "supervisory_appraiser", "reviewer", "office_assistant", "read_only", "organization_admin", "homenode_admin"]),
     write: new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]),
-    sign: new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]),
+    sign: new Set(["appraiser", "supervisory_appraiser"]),
   }),
   property_tax_protest: Object.freeze({
     read: new Set(["appraiser", "supervisory_appraiser", "reviewer", "office_assistant", "read_only", "organization_admin", "homenode_admin"]),
     write: new Set(["appraiser", "supervisory_appraiser", "office_assistant", "organization_admin", "homenode_admin"]),
-    sign: new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]),
+    sign: new Set(["appraiser", "supervisory_appraiser"]),
   }),
 });
 

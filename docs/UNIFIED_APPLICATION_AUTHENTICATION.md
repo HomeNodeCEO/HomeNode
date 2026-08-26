@@ -33,6 +33,7 @@ Configure these secret or environment values while leaving enforcement off:
 - `OIDC_WEB_CLIENT_SECRET`
 - `OIDC_WEB_REDIRECT_URI`
 - `APP_SESSION_SECRET` (at least 32 characters)
+- `APP_SIGNING_SECRET` (a separate value of at least 32 characters)
 - `WEB_APP_URL`
 
 `OIDC_WEB_ISSUER` may fall back to the existing `OIDC_ISSUER`, but the web
@@ -43,6 +44,60 @@ Provision the initial organization, memberships, and roles before activation.
 Use `npm run provision:application-user` for provisioned OIDC identities and
 `npm run migrate:legacy-appraisals:organization` for the controlled assignment
 of legacy Custom Appraisal files.
+
+The rollout is deliberately split into reversible inspection and explicit
+application steps:
+
+```text
+npm run audit:application-auth-rollout -- --organization-legal-name "Example Appraisal Services, LLC"
+
+npm run bootstrap:application-organization -- \
+  --email appraiser@example.com \
+  --display-name "Example Appraiser" \
+  --organization-legal-name "Example Appraisal Services, LLC" \
+  --organization-display-name "Example Appraisal" \
+  --roles appraiser,organization_admin
+```
+
+Both commands above are read-only: the bootstrap runs inside a transaction and
+rolls it back unless `--apply` is present. In production, an applying bootstrap
+also requires `--confirm-production` to exactly match the legal name. The
+bootstrap creates the internal organization, user, membership, roles, optional
+license, and appraiser profile without inventing an identity-provider subject.
+
+After the confidential WorkOS application and user exist, map the exact WorkOS
+issuer/subject with `npm run provision:application-user` or
+`npm run provision:mobile-identity`. Never derive or guess an OIDC subject from
+an email address.
+
+Run the legacy ownership command without `--apply` first. Record its
+`pending_before.assignment_files` value, then supply that exact value with
+`--expected-assignment-files` during application. Production also requires the
+exact legal-name confirmation:
+
+```text
+npm run migrate:legacy-appraisals:organization -- \
+  --organization-legal-name "Example Appraisal Services, LLC" \
+  --assigned-appraiser-email appraiser@example.com
+
+npm run migrate:legacy-appraisals:organization -- \
+  --organization-legal-name "Example Appraisal Services, LLC" \
+  --assigned-appraiser-email appraiser@example.com \
+  --expected-assignment-files 123 \
+  --confirm-production "Example Appraisal Services, LLC" \
+  --apply
+```
+
+The applying command refuses to run if the count changed after the dry run. It
+adds ownership to legacy Custom assignment rows, their report registry rows,
+and their appraisal cases; it does not rewrite appraisal observations, sales,
+adjustments, photos, documents, revisions, or signed snapshots.
+
+Authenticated mobile discovery and replication never expose organization-less
+legacy files. Previous Appraisal Files, completion snapshots, photos, and
+documents are additionally checked against the canonical assignment and
+assignee. Legacy property-level documents that are not attached to an owned
+assignment fail closed and appear in the rollout audit for manual disposition.
 
 ## Activation stage
 
@@ -58,6 +113,17 @@ Startup fails closed if the confidential web client, callback, application URL,
 or session secret is incomplete. The frontend reads both `configured` and
 `required` from `/api/auth/status`, so pre-provisioning WorkOS cannot
 accidentally lock the existing application.
+
+Do not enable the flag until `audit:application-auth-rollout` reports
+`activation_ready: true`. That requires a mapped OIDC identity, active
+membership, complete file/appraiser ownership, no cross-table organization
+mismatches, and no unattached legacy document evidence.
+
+When enforcement is active, signing cannot use the shared editor key. The
+server derives the signer from the authenticated assignment, records an
+immutable signature event with organization/user/request attribution, and
+authenticates the snapshot checksum with `APP_SIGNING_SECRET`. Signed Custom
+Appraisal snapshots are append-only at the database trigger layer.
 
 The shared editor key remains a temporary migration path. Retire it only after
 all expected users can log in and access the correct organization files.

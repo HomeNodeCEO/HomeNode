@@ -224,6 +224,10 @@ import {
 import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
 import { authorizeCustomAssignmentFile, decideAssignmentAccess } from "./security/assignmentAccess.js";
 import {
+  authorizeAppraisalReportFile,
+  buildAppraisalHistoryAccessScope,
+} from "./security/appraisalHistoryAccess.js";
+import {
   createResilientHttpServer,
   createRuntimeResilienceConfiguration,
   installGracefulShutdown,
@@ -345,6 +349,7 @@ if (applicationAuthenticationRequired && (
   || !process.env.OIDC_WEB_REDIRECT_URI
   || !process.env.WEB_APP_URL
   || String(process.env.APP_SESSION_SECRET || "").length < 32
+  || String(process.env.APP_SIGNING_SECRET || "").length < 32
 )) {
   throw new Error("application_authentication_required_but_not_configured");
 }
@@ -1779,7 +1784,10 @@ app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
     if (!schema.rows[0]?.table_name) {
       return res.status(503).json({ error: "appraisal_history_schema_unavailable" });
     }
-    return res.json(await listPreviousAppraisalFiles(pool, canonicalId));
+    const accessScope = applicationAuthenticationRequired && req.mobileAuth
+      ? buildAppraisalHistoryAccessScope(req.mobileAuth)
+      : null;
+    return res.json(await listPreviousAppraisalFiles(pool, canonicalId, accessScope));
   } catch (error) {
     if (String(error?.message || "").startsWith("invalid_")) {
       return res.status(400).json({ error: error.message });
@@ -1798,6 +1806,13 @@ app.get("/api/accounts/:id/appraisal-history/:reportFileId/completion", async (r
   }
   try {
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (applicationAuthenticationRequired && req.mobileAuth) {
+      await authorizeAppraisalReportFile(pool, req.mobileAuth, {
+        accountId: canonicalId,
+        reportFileId: req.params.reportFileId,
+        permission: "read",
+      });
+    }
     const completion = await loadSharedAppraisalCompletion(pool, {
       accountId: canonicalId,
       reportFileId: req.params.reportFileId,
@@ -1805,6 +1820,9 @@ app.get("/api/accounts/:id/appraisal-history/:reportFileId/completion", async (r
     return res.json({ ok: true, account_id: canonicalId, completion });
   } catch (error) {
     const message = String(error?.message || "");
+    if (message === "appraisal_report_file_access_denied") {
+      return res.status(403).json({ error: message });
+    }
     if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
     if (message.startsWith("invalid_")) return res.status(400).json({ error: message });
     if (
@@ -1827,14 +1845,37 @@ app.post("/api/accounts/:id/appraisal-history/:reportFileId/replicate", async (r
   if (!requireEditor(req, res)) return;
   try {
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    let sourceAccess = null;
+    if (applicationAuthenticationRequired && req.mobileAuth) {
+      sourceAccess = await authorizeAppraisalReportFile(pool, req.mobileAuth, {
+        accountId: canonicalId,
+        reportFileId: req.params.reportFileId,
+        permission: "write",
+      });
+      const targetWorkflow = String(req.body?.target_workflow_type || "").trim();
+      if (["custom_appraisal", "uad_3_6"].includes(targetWorkflow)
+          && !hasApplicationPermission(
+            req.mobileAuth,
+            targetWorkflow,
+            "write",
+            sourceAccess.organization_id,
+          )) {
+        return res.status(403).json({ error: "appraisal_replication_access_denied" });
+      }
+    }
     const result = await replicateAppraisalFile(pool, {
       accountId: canonicalId,
       sourceReportFileId: req.params.reportFileId,
       input: req.body || {},
+      actorUserId: req.mobileAuth?.userId || null,
+      organizationId: sourceAccess?.organization_id || null,
     });
     return res.status(201).json({ ok: true, ...result });
   } catch (error) {
     const message = String(error?.message || "");
+    if (message === "appraisal_report_file_access_denied") {
+      return res.status(403).json({ error: message });
+    }
     if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
     if (
       message.startsWith("invalid_")
@@ -1979,7 +2020,22 @@ app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
   try {
     await Promise.all([accountQualityReady, propertyEnrichmentReady]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    const file = await getDesktopPropertyTaxFile(pool, canonicalId, req.query.file_id || null);
+    const organizationIds = applicationAuthenticationRequired && req.mobileAuth
+      ? (req.mobileAuth.organizations || [])
+        .filter((organization) => hasApplicationPermission(
+          req.mobileAuth,
+          "property_tax_protest",
+          "read",
+          organization.organizationId,
+        ))
+        .map((organization) => organization.organizationId)
+      : null;
+    const file = await getDesktopPropertyTaxFile(
+      pool,
+      canonicalId,
+      req.query.file_id || null,
+      { organizationIds },
+    );
     if (
       applicationAuthenticationRequired
       && req.mobileAuth
@@ -2120,9 +2176,10 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
           `SELECT id, assignment_details
            FROM app.assignment_files
            WHERE account_id = $1
+             AND ($2::uuid IS NULL OR organization_id = $2)
            ORDER BY created_at DESC, id DESC
            LIMIT 1`,
-          [canonicalId],
+          [canonicalId, creationOrganizationId],
         );
         sourceFile = latestResult.rows[0] || null;
         if (sourceFile) inheritedFromFileId = Number(sourceFile.id);
@@ -2411,7 +2468,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/readiness", async (
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
-  if (!requireEditor(req, res)) return;
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   try {
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
@@ -2440,7 +2497,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/download", async (r
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
-  if (!requireEditor(req, res)) return;
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   try {
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
@@ -2476,7 +2533,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/report.pdf", async 
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
-  if (!requireEditor(req, res)) return;
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   try {
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
@@ -2566,6 +2623,9 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
     return res.status(400).json({ error: "invalid_account_id" });
   }
   if (!requireEditor(req, res)) return;
+  if (applicationAuthenticationRequired && !req.mobileAuth) {
+    return res.status(401).json({ error: "authenticated_signer_required" });
+  }
   try {
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
@@ -2575,6 +2635,10 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
       accountId: canonicalId,
       assignmentFileId,
       signedBy: req.mobileAuth?.displayName || req.body?.signed_by || req.body?.reviewer,
+      signerUserId: req.mobileAuth?.userId || null,
+      signedFromIp: req.ip,
+      signedUserAgent: req.get("user-agent"),
+      signingSecret: process.env.APP_SIGNING_SECRET,
       acknowledgedWarningCodes: req.body?.acknowledged_warning_codes,
     });
     return res.json({ ok: true, account_id: canonicalId, workfile });
@@ -2584,6 +2648,12 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
     }
     if (["custom_appraisal_workfile_signed", "custom_appraisal_workfile_empty"].includes(error?.message)) {
       return res.status(409).json({ error: error.message });
+    }
+    if (error?.message === "custom_appraisal_signer_not_assigned") {
+      return res.status(403).json({ error: error.message });
+    }
+    if (error?.message === "custom_appraisal_signing_secret_not_configured") {
+      return res.status(503).json({ error: error.message });
     }
     if (error?.message === "custom_appraisal_eo_incomplete") {
       return res.status(422).json({
@@ -6081,6 +6151,42 @@ async function requireCustomAssignmentAccess(req, res, accountId, assignmentFile
   }
 }
 
+async function requireAssignmentDocumentAccess(req, res, documentIdValue, permission) {
+  if (!applicationAuthenticationRequired) return true;
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return true;
+  }
+  if (!req.mobileAuth) {
+    res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
+    return false;
+  }
+  const documentId = Number(documentIdValue);
+  if (!Number.isSafeInteger(documentId) || documentId < 1) {
+    res.status(400).json({ error: "invalid_document_id" });
+    return false;
+  }
+  const { rows } = await pool.query(
+    `SELECT document.id, document.assignment_file_id,
+            assignment.account_id, assignment.organization_id,
+            assignment.assigned_appraiser_user_id, assignment.supervisory_appraiser_user_id
+       FROM app.assignment_documents document
+       LEFT JOIN app.assignment_files assignment ON assignment.id = document.assignment_file_id
+      WHERE document.id = $1`,
+    [documentId],
+  );
+  if (!rows.length) {
+    res.status(404).json({ error: "document_not_found" });
+    return false;
+  }
+  if (!rows[0].assignment_file_id
+      || !decideAssignmentAccess(req.mobileAuth, rows[0], permission)) {
+    res.set("cache-control", "no-store").status(403).json({ error: "assignment_document_access_denied" });
+    return false;
+  }
+  return true;
+}
+
 function requireWorkflowAccess(req, res, workflow, permission) {
   if (hasApplicationPermission(req.mobileAuth, workflow, permission)) return true;
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
@@ -6107,11 +6213,12 @@ function assignmentPhotoErrorStatus(message) {
 
 /** List one Custom Appraisal file's shared desktop and mobile photo evidence. */
 app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos", async (req, res) => {
-  if (!requireEditor(req, res)) return;
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   try {
     const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
     if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
+    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
     const result = await listAssignmentPhotos(pool, sharedObjectStorage, { accountId, assignmentFileId });
     return res.json({ ok: true, account_id: accountId, ...result });
   } catch (error) {
@@ -6127,6 +6234,7 @@ app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/upload-req
     const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
     if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
+    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
     const result = await createAssignmentPhotoUpload(pool, sharedObjectStorage, {
       accountId,
       assignmentFileId,
@@ -6146,6 +6254,7 @@ app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId/v
     const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
     if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
+    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
     const photo = await verifyAssignmentPhoto(pool, sharedObjectStorage, {
       accountId,
       assignmentFileId,
@@ -6165,6 +6274,7 @@ app.delete("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId
     const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
     if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
+    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
     const result = await removeAssignmentPhoto(pool, {
       accountId,
       assignmentFileId,
@@ -6180,12 +6290,21 @@ app.delete("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId
 /** List assignment PDFs and their machine-review status for a property file. */
 app.get("/api/accounts/:id/documents", async (req, res) => {
   const requestedId = String(req.params.id || "").trim();
-  if (!requireEditor(req, res)) return;
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   try {
     await ensureAssignmentDocumentsAvailable();
     const accountId = await resolveCanonicalAccountId(pool, requestedId);
     const assignmentFileId = normalizeAssignmentFileId(req.query.assignment_file_id);
-    const documents = await listAssignmentDocuments(pool, { accountId, assignmentFileId });
+    if (applicationAuthenticationRequired && req.mobileAuth && !assignmentFileId) {
+      return res.status(400).json({ error: "assignment_file_required" });
+    }
+    if (assignmentFileId
+        && !await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
+    const documents = await listAssignmentDocuments(pool, {
+      accountId,
+      assignmentFileId,
+      includePropertyEvidence: !(applicationAuthenticationRequired && req.mobileAuth),
+    });
     return res.json({ ok: true, account_id: accountId, documents });
   } catch (error) {
     const message = error?.message || "assignment_documents_lookup_failed";
@@ -6205,23 +6324,26 @@ app.post(
   }),
   async (req, res) => {
     const requestedId = String(req.params.id || "").trim();
-    const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-    if (!configuredEditorKey) return res.status(503).json({ error: "document_editor_not_configured" });
-    if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-      return res.status(401).json({ error: "invalid_editor_key" });
-    }
+    if (!requireEditor(req, res)) return;
     try {
       await ensureAssignmentDocumentsAvailable();
       const accountId = await resolveCanonicalAccountId(pool, requestedId);
       const assignmentFileId = normalizeAssignmentFileId(req.get("x-assignment-file-id"));
+      if (applicationAuthenticationRequired && req.mobileAuth && !assignmentFileId) {
+        return res.status(400).json({ error: "assignment_file_required" });
+      }
+      let documentOrganizationId = null;
       if (assignmentFileId) {
-        const { rowCount } = await pool.query(
-          "SELECT 1 FROM app.assignment_files WHERE id = $1 AND account_id = $2",
+        const { rows } = await pool.query(
+          "SELECT organization_id FROM app.assignment_files WHERE id = $1 AND account_id = $2",
           [assignmentFileId, accountId],
         );
-        if (!rowCount) return res.status(400).json({ error: "invalid_assignment_file" });
+        if (!rows.length) return res.status(400).json({ error: "invalid_assignment_file" });
+        if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
+        documentOrganizationId = rows[0].organization_id || null;
       }
       const document = await createAssignmentDocument(pool, {
+        organizationId: documentOrganizationId,
         accountId,
         assignmentFileId,
         documentType: decodedDocumentHeader(req, "x-document-type", "other"),
@@ -6255,9 +6377,10 @@ app.post(
 
 /** Load a document plus page-cited field candidates. */
 app.get("/api/documents/:id", async (req, res) => {
-  if (!requireEditor(req, res)) return;
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   try {
     await ensureAssignmentDocumentsAvailable();
+    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "read")) return;
     const document = await getAssignmentDocument(pool, req.params.id);
     if (!document) return res.status(404).json({ error: "document_not_found" });
     return res.json({ ok: true, document });
@@ -6269,9 +6392,10 @@ app.get("/api/documents/:id", async (req, res) => {
 
 /** Stream immutable uploaded source bytes inline for the embedded PDF viewer. */
 app.get("/api/documents/:id/content", async (req, res) => {
-  if (!requireEditor(req, res)) return;
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   try {
     await ensureAssignmentDocumentsAvailable();
+    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "read")) return;
     const document = await getAssignmentDocument(pool, req.params.id, {
       includeContent: true,
       storage: sharedObjectStorage,
@@ -6295,13 +6419,10 @@ app.get("/api/documents/:id/content", async (req, res) => {
 
 /** Retry text extraction after a worker interruption or parser improvement. */
 app.post("/api/documents/:id/reprocess", async (req, res) => {
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (!configuredEditorKey) return res.status(503).json({ error: "document_editor_not_configured" });
-  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    return res.status(401).json({ error: "invalid_editor_key" });
-  }
+  if (!requireEditor(req, res)) return;
   try {
     await ensureAssignmentDocumentsAvailable();
+    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
     const document = await processAssignmentDocument(pool, req.params.id, {
       force: true,
       storage: sharedObjectStorage,
@@ -6322,13 +6443,10 @@ app.post("/api/documents/:id/reprocess", async (req, res) => {
 
 /** Confirm or reject one machine suggestion without mutating the source PDF. */
 app.patch("/api/documents/:documentId/candidates/:candidateId", async (req, res) => {
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (!configuredEditorKey) return res.status(503).json({ error: "document_editor_not_configured" });
-  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    return res.status(401).json({ error: "invalid_editor_key" });
-  }
+  if (!requireEditor(req, res)) return;
   try {
     await ensureAssignmentDocumentsAvailable();
+    if (!await requireAssignmentDocumentAccess(req, res, req.params.documentId, "write")) return;
     const candidate = await reviewAssignmentDocumentCandidate(pool, {
       documentId: req.params.documentId,
       candidateId: req.params.candidateId,

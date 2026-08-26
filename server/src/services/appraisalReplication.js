@@ -60,15 +60,19 @@ async function availableFileNumber(client, {
 
 async function insertCustomTarget(client, {
   accountId,
+  organizationId,
   fileNumber,
   sourceReportFile,
   mode,
+  assignedAppraiserUserId,
+  actorUserId,
 }) {
   const assignmentDetails = {};
   const inserted = await client.query(
     `INSERT INTO app.assignment_files (
-       account_id, file_number, assignment_details, inherited_from_file_id, reviewer
-     ) VALUES ($1, $2, $3::jsonb, $4, 'HomeNode replication')
+       account_id, file_number, assignment_details, inherited_from_file_id, reviewer,
+       organization_id, assigned_appraiser_user_id, created_by_user_id, updated_by_user_id
+     ) VALUES ($1, $2, $3::jsonb, $4, 'HomeNode replication', $5, $6, $7, $7)
      RETURNING id`,
     [
       accountId,
@@ -77,6 +81,9 @@ async function insertCustomTarget(client, {
       mode === "same_assignment_alternate"
         ? sourceReportFile.custom_assignment_file_id || null
         : null,
+      organizationId,
+      assignedAppraiserUserId,
+      actorUserId,
     ],
   );
   const assignmentFileId = Number(inserted.rows[0].id);
@@ -100,9 +107,13 @@ async function insertUadTarget(client, {
   organizationId,
   fileNumber,
   sourceReportFile,
+  assignedAppraiserUserId,
+  actorUserId,
 }) {
   const workfile = await createUadWorkfileWithClient(client, accountId, {
     organization_id: organizationId || null,
+    assigned_appraiser_user_id: assignedAppraiserUserId || actorUserId || null,
+    actor_user_id: actorUserId || null,
     file_number: fileNumber,
     assignment_purpose: sourceReportFile.assignment_purpose || "Mortgage finance appraisal",
   });
@@ -113,6 +124,8 @@ export async function replicateAppraisalFile(pool, {
   accountId: accountIdValue,
   sourceReportFileId: sourceReportFileIdValue,
   input = {},
+  actorUserId = null,
+  organizationId = null,
 }) {
   const accountId = String(accountIdValue || "").trim();
   if (!accountId || accountId.length > 100) throw new Error("invalid_account_id");
@@ -123,18 +136,24 @@ export async function replicateAppraisalFile(pool, {
   try {
     await client.query("BEGIN");
     const sourceResult = await client.query(
-      `SELECT report_file.*, uad_workfile.assignment_purpose
+      `SELECT report_file.*, uad_workfile.assignment_purpose,
+              COALESCE(assignment.assigned_appraiser_user_id, uad_workfile.assigned_appraiser_user_id) AS assigned_appraiser_user_id,
+              COALESCE(assignment.supervisory_appraiser_user_id, uad_workfile.supervisory_appraiser_user_id) AS supervisory_appraiser_user_id
          FROM app.report_files report_file
+         LEFT JOIN app.assignment_files assignment
+           ON assignment.id = report_file.custom_assignment_file_id
          LEFT JOIN appraisal.uad_workfiles uad_workfile
            ON uad_workfile.id = report_file.uad_workfile_id
         WHERE report_file.id = $1
           AND report_file.account_id = $2
           AND report_file.workflow_type IN ('custom_appraisal', 'uad_3_6')
+          AND ($3::uuid IS NULL OR report_file.organization_id = $3)
         FOR UPDATE OF report_file`,
-      [sourceReportFileId, accountId],
+      [sourceReportFileId, accountId, organizationId],
     );
     if (!sourceResult.rows.length) throw new Error("appraisal_report_file_not_found");
     const source = sourceResult.rows[0];
+    const targetAssignedAppraiserUserId = source.assigned_appraiser_user_id || actorUserId || null;
     if (
       request.mode === "same_assignment_alternate"
       && source.workflow_type === request.targetWorkflow
@@ -185,15 +204,20 @@ export async function replicateAppraisalFile(pool, {
     const target = request.targetWorkflow === "custom_appraisal"
       ? await insertCustomTarget(client, {
         accountId,
+        organizationId: source.organization_id,
         fileNumber: fileAllocation.fileNumber,
         sourceReportFile: source,
         mode: request.mode,
+        assignedAppraiserUserId: targetAssignedAppraiserUserId,
+        actorUserId,
       })
       : await insertUadTarget(client, {
         accountId,
         organizationId: source.organization_id,
         fileNumber: fileAllocation.fileNumber,
         sourceReportFile: source,
+        assignedAppraiserUserId: targetAssignedAppraiserUserId,
+        actorUserId,
       });
 
     await client.query(
@@ -201,16 +225,17 @@ export async function replicateAppraisalFile(pool, {
           SET is_current = false, updated_at = now()
         WHERE account_id = $1
           AND workflow_type = $2
+          AND organization_id IS NOT DISTINCT FROM $3::uuid
           AND is_current = true`,
-      [accountId, request.targetWorkflow],
+      [accountId, request.targetWorkflow, source.organization_id || null],
     );
     targetReportFileId = randomUUID();
     await client.query(
       `INSERT INTO app.report_files (
          id, organization_id, account_id, workflow_type, file_number, sequence_number,
          previous_report_file_id, custom_assignment_file_id, uad_workfile_id,
-         is_current, registry_revision, replication_mode
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, 1, $10)`,
+         is_current, registry_revision, replication_mode, created_by_user_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, 1, $10, $11)`,
       [
         targetReportFileId,
         source.organization_id || null,
@@ -222,6 +247,7 @@ export async function replicateAppraisalFile(pool, {
         target.customAssignmentFileId || null,
         target.uadWorkfileId || null,
         request.mode,
+        actorUserId,
       ],
     );
 
@@ -250,8 +276,8 @@ export async function replicateAppraisalFile(pool, {
       `INSERT INTO app.appraisal_file_replications (
          source_report_file_id, target_report_file_id, source_snapshot_id,
          replication_mode, source_workflow_type, target_workflow_type,
-         change_review_required, attestation
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
+         change_review_required, attestation, created_by_user_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)`,
       [
         source.id,
         targetReportFileId,
@@ -267,13 +293,14 @@ export async function replicateAppraisalFile(pool, {
           mutable_subject_data_copied_to_target: false,
           source_snapshot_available_for_review: true,
         }),
+        actorUserId,
       ],
     );
     await client.query(
       `INSERT INTO app.report_file_events (
-         report_file_id, event_type, next_registry_revision, metadata
-       ) VALUES ($1, 'report_file.replicated', 1, $2::jsonb)`,
-      [targetReportFileId, JSON.stringify({
+         report_file_id, actor_user_id, event_type, next_registry_revision, metadata
+       ) VALUES ($1, $2, 'report_file.replicated', 1, $3::jsonb)`,
+      [targetReportFileId, actorUserId, JSON.stringify({
         source_report_file_id: source.id,
         source_snapshot_id: sourceSnapshot.id,
         replication_mode: request.mode,
@@ -289,12 +316,23 @@ export async function replicateAppraisalFile(pool, {
     client.release();
   }
 
-  const history = await listPreviousAppraisalFiles(pool, accountId);
+  const history = await listPreviousAppraisalFiles(pool, accountId, sourceOrganizationScope(organizationId));
   const targetFile = history.files.find((file) => file.id === targetReportFileId);
   if (!targetFile) throw new Error("replicated_report_file_not_found");
   return {
     source_report_file_id: sourceReportFileId,
     report_file: targetFile,
     change_review_required: request.mode === "new_assignment_template",
+  };
+}
+
+function sourceOrganizationScope(organizationId) {
+  if (!organizationId) return null;
+  return {
+    userId: null,
+    platformAdministrator: false,
+    organizationIds: [organizationId],
+    customOrganizationWideReadIds: [organizationId],
+    uadOrganizationWideReadIds: [organizationId],
   };
 }

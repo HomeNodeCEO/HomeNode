@@ -116,7 +116,16 @@ test("mobile report files preserve prior versions and allocate separate workflow
     });
     assert.equal(firstCustom.created, true);
     assert.match(firstCustom.reportFile.file_number, /^HN-CA-\d{4}-000001$/);
-    assert.equal(firstCustom.reportFile.previous_report_file_id, legacyReportFileId);
+    assert.equal(firstCustom.reportFile.previous_report_file_id, null);
+    const firstCustomOwnership = await pool.query(
+      `SELECT organization_id, assigned_appraiser_user_id, created_by_user_id, updated_by_user_id
+         FROM app.assignment_files WHERE id = $1`,
+      [firstCustom.reportFile.target_id],
+    );
+    assert.equal(firstCustomOwnership.rows[0].organization_id, organizationId);
+    assert.equal(firstCustomOwnership.rows[0].assigned_appraiser_user_id, userId);
+    assert.equal(firstCustomOwnership.rows[0].created_by_user_id, userId);
+    assert.equal(firstCustomOwnership.rows[0].updated_by_user_id, userId);
 
     const retried = await createReportFile(pool, auth, {
       organization_id: organizationId,
@@ -343,7 +352,7 @@ test("mobile report files preserve prior versions and allocate separate workflow
     assert.equal(Number(conflictPreservedCanonical.rows[0].revision), 3);
 
     const discovery = await listReportFiles(pool, auth, { accountId });
-    assert.equal(discovery.files.length, 5);
+    assert.equal(discovery.files.length, 4);
     assert.equal(discovery.recentlyCreated, true);
     assert.ok(discovery.files.some((file) => file.id === firstCustom.reportFile.id && !file.is_current));
     assert.ok(discovery.files.some((file) => file.id === secondCustom.reportFile.id && file.is_current));
@@ -351,13 +360,13 @@ test("mobile report files preserve prior versions and allocate separate workflow
     const search = await searchMobileProperties(pool, auth, { query: "100 Test" });
     assert.equal(search.results.length, 1);
     assert.equal(search.results[0].account_id, accountId);
-    assert.equal(search.results[0].workflows.custom_appraisal.count, 3);
+    assert.equal(search.results[0].workflows.custom_appraisal.count, 2);
     assert.equal(search.results[0].workflows.uad_3_6.count, 1);
     assert.equal(search.results[0].workflows.property_tax_protest.count, 1);
 
     const selected = await getMobileProperty(pool, auth, accountId);
     assert.equal(selected.property.address, "100 Test Street");
-    assert.equal(selected.files.length, 5);
+    assert.equal(selected.files.length, 4);
 
     const session = await createInspectionSession(pool, auth, {
       report_file_id: secondCustom.reportFile.id,

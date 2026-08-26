@@ -2,8 +2,6 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 
-import { normalizeOidcIssuer } from "../src/modules/mobile/auth.js";
-
 function option(name) {
   const index = process.argv.indexOf(`--${name}`);
   return index >= 0 ? String(process.argv[index + 1] || "").trim() : "";
@@ -15,22 +13,42 @@ function requiredOption(name, maximumLength) {
   return value;
 }
 
+function normalizeDate(value, name) {
+  if (!value) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(`${value}T00:00:00Z`))) {
+    throw new Error(`valid --${name} is required`);
+  }
+  return value;
+}
+
+const apply = process.argv.includes("--apply");
 const email = requiredOption("email", 320).toLowerCase();
 const displayName = requiredOption("display-name", 200);
 const organizationLegalName = requiredOption("organization-legal-name", 300);
 const organizationDisplayName = option("organization-display-name") || organizationLegalName;
 const organizationDbaName = option("organization-dba-name") || null;
-const issuer = normalizeOidcIssuer(requiredOption("issuer", 500));
-const subject = requiredOption("subject", 500);
-const providerKey = option("provider") || "workos";
-const roles = [...new Set((option("roles") || "appraiser").split(",").map((role) => role.trim()).filter(Boolean))];
+const roles = [...new Set((option("roles") || "appraiser,organization_admin")
+  .split(",").map((role) => role.trim()).filter(Boolean))];
+const licenseJurisdiction = option("license-jurisdiction").toUpperCase();
+const licenseNumber = option("license-number");
+const licenseType = option("license-type");
+const licenseExpiresOn = normalizeDate(option("license-expires-on"), "license-expires-on");
+const licenseValues = [licenseJurisdiction, licenseNumber, licenseType, licenseExpiresOn];
 
 if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("valid --email is required");
 if (organizationDisplayName.length > 300) throw new Error("valid --organization-display-name is required");
 if (organizationDbaName?.length > 300) throw new Error("valid --organization-dba-name is required");
 if (!roles.length) throw new Error("at least one --roles value is required");
+if (licenseValues.some(Boolean) && !licenseValues.every(Boolean)) {
+  throw new Error("license jurisdiction, number, type, and expiration must be supplied together");
+}
 if (process.env.NODE_ENV === "production" && email.endsWith(".invalid")) {
   throw new Error("synthetic users cannot be provisioned in production");
+}
+if (apply && process.env.NODE_ENV === "production"
+    && option("confirm-production") !== organizationLegalName) {
+  throw new Error("--confirm-production must exactly match --organization-legal-name");
 }
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
@@ -38,6 +56,7 @@ const client = await pool.connect();
 
 try {
   await client.query("BEGIN");
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('application-auth-bootstrap'))");
 
   const organizationResult = await client.query(
     `SELECT id, active
@@ -46,13 +65,12 @@ try {
       FOR UPDATE`,
     [organizationLegalName],
   );
-  if (organizationResult.rows.length > 1) throw new Error("organization legal name is ambiguous");
+  if (organizationResult.rowCount > 1) throw new Error("organization legal name is ambiguous");
   if (organizationResult.rows[0] && !organizationResult.rows[0].active) {
     throw new Error("matching HomeNode organization is inactive");
   }
-
   const organizationId = organizationResult.rows[0]?.id || randomUUID();
-  if (!organizationResult.rows.length) {
+  if (!organizationResult.rowCount) {
     await client.query(
       `INSERT INTO app_auth.organizations (
          id, legal_name, display_name, dba_name, contact_email, active, metadata
@@ -63,7 +81,7 @@ try {
         organizationDisplayName,
         organizationDbaName,
         email,
-        JSON.stringify({ provisioned_by: "provisionMobileUser", identity_provider: providerKey }),
+        JSON.stringify({ provisioned_by: "bootstrapApplicationOrganization" }),
       ],
     );
   }
@@ -75,17 +93,16 @@ try {
       FOR UPDATE`,
     [email],
   );
-  if (userResult.rows.length > 1) throw new Error("HomeNode user email is ambiguous");
+  if (userResult.rowCount > 1) throw new Error("HomeNode user email is ambiguous");
   if (userResult.rows[0] && !userResult.rows[0].active) {
     throw new Error("matching HomeNode user is inactive");
   }
-
   const userId = userResult.rows[0]?.id || randomUUID();
-  if (!userResult.rows.length) {
+  if (!userResult.rowCount) {
     await client.query(
       `INSERT INTO app_auth.users (id, email, display_name, active, metadata)
        VALUES ($1, $2, $3, true, $4::jsonb)`,
-      [userId, email, displayName, JSON.stringify({ provisioned_by: "provisionMobileUser", identity_provider: providerKey })],
+      [userId, email, displayName, JSON.stringify({ provisioned_by: "bootstrapApplicationOrganization" })],
     );
   }
 
@@ -96,7 +113,6 @@ try {
        SET status = 'active', updated_at = now()`,
     [organizationId, userId],
   );
-
   const roleResult = await client.query(
     "SELECT code FROM app_auth.roles WHERE code = ANY($1::text[])",
     [roles],
@@ -104,7 +120,6 @@ try {
   const validRoles = new Set(roleResult.rows.map((row) => row.code));
   const invalidRoles = roles.filter((role) => !validRoles.has(role));
   if (invalidRoles.length) throw new Error(`unknown HomeNode role: ${invalidRoles.join(",")}`);
-
   for (const role of roles) {
     await client.query(
       `INSERT INTO app_auth.membership_roles (organization_id, user_id, role_code)
@@ -115,61 +130,55 @@ try {
   }
 
   if (validRoles.has("appraiser") || validRoles.has("supervisory_appraiser")) {
-    const profileResult = await client.query(
-      "SELECT profile_status FROM app_auth.appraiser_profiles WHERE user_id = $1 FOR UPDATE",
-      [userId],
+    await client.query(
+      `INSERT INTO app_auth.appraiser_profiles (
+         user_id, default_organization_id, signature_policy, profile_status, metadata
+       ) VALUES ($1, $2, 'session', 'active', $3::jsonb)
+       ON CONFLICT (user_id) DO UPDATE
+         SET default_organization_id = COALESCE(app_auth.appraiser_profiles.default_organization_id, EXCLUDED.default_organization_id),
+             updated_at = now()`,
+      [userId, organizationId, JSON.stringify({ provisioned_by: "bootstrapApplicationOrganization" })],
     );
-    if (profileResult.rows[0]?.profile_status === "inactive") {
-      throw new Error("matching HomeNode appraiser profile is inactive");
-    }
-    if (!profileResult.rows.length) {
-      await client.query(
-        `INSERT INTO app_auth.appraiser_profiles (
-           user_id, default_organization_id, signature_policy, profile_status, metadata
-         ) VALUES ($1, $2, 'reauthentication', 'active', $3::jsonb)`,
-        [userId, organizationId, JSON.stringify({ provisioned_by: "provisionMobileUser" })],
-      );
-    }
+  }
+  if (licenseValues.every(Boolean)) {
+    await client.query(
+      `INSERT INTO app_auth.appraiser_licenses (
+         id, user_id, jurisdiction, license_number, license_type, expires_on, status, metadata
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'active', $7::jsonb)
+       ON CONFLICT (user_id, jurisdiction, license_number) DO UPDATE
+         SET license_type = EXCLUDED.license_type,
+             expires_on = EXCLUDED.expires_on,
+             status = 'active',
+             updated_at = now()`,
+      [
+        randomUUID(),
+        userId,
+        licenseJurisdiction,
+        licenseNumber,
+        licenseType,
+        licenseExpiresOn,
+        JSON.stringify({ provisioned_by: "bootstrapApplicationOrganization" }),
+      ],
+    );
   }
 
-  const identityResult = await client.query(
-    `SELECT issuer, subject, user_id
-       FROM app_auth.oidc_identities
-      WHERE (issuer = $1 AND subject = $2) OR (user_id = $3 AND issuer = $1)
-      FOR UPDATE`,
-    [issuer, subject, userId],
-  );
-  if (identityResult.rows.some((identity) => identity.user_id !== userId)) {
-    throw new Error("OIDC identity is already mapped to another HomeNode user");
-  }
-  if (identityResult.rows.some((identity) => identity.subject !== subject)) {
-    throw new Error("HomeNode user is already mapped to another subject for this issuer");
-  }
-
-  await client.query(
-    `INSERT INTO app_auth.oidc_identities (issuer, subject, user_id, provider_key)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (issuer, subject) DO UPDATE
-       SET provider_key = EXCLUDED.provider_key, updated_at = now()`,
-    [issuer, subject, userId, providerKey],
-  );
-
-  await client.query("COMMIT");
+  if (apply) await client.query("COMMIT");
+  else await client.query("ROLLBACK");
   console.log(JSON.stringify({
-    provisioned: true,
+    mode: apply ? "applied" : "dry_run",
+    organization_id: organizationId,
+    organization_legal_name: organizationLegalName,
+    organization_display_name: organizationDisplayName,
     user_id: userId,
     email,
-    organization_id: organizationId,
-    organization_display_name: organizationDisplayName,
     roles,
-    issuer,
-    subject,
+    license_configured: licenseValues.every(Boolean),
+    oidc_identity_configured: false,
   }));
 } catch (error) {
-  await client.query("ROLLBACK");
+  await client.query("ROLLBACK").catch(() => {});
   throw error;
 } finally {
   client.release();
   await pool.end();
 }
-

@@ -46,6 +46,27 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     assert.equal(unifiedIdentity.rows[0]?.web_sessions_ready, true);
     assert.equal(unifiedIdentity.rows[0]?.assignment_identity_column_count, 5);
 
+    const signatureHardening = await pool.query(`
+      SELECT
+        count(*) FILTER (
+          WHERE column_name IN (
+            'organization_id', 'signed_by_user_id', 'signature_event_id',
+            'signed_from_ip', 'signed_user_agent', 'signature_hmac_sha256'
+          )
+        )::integer AS signature_column_count,
+        EXISTS (
+          SELECT 1 FROM pg_trigger
+           WHERE tgrelid = 'app.custom_appraisal_signed_snapshots'::regclass
+             AND tgname = 'custom_appraisal_signed_snapshot_append_only'
+             AND NOT tgisinternal
+        ) AS append_only_trigger
+      FROM information_schema.columns
+      WHERE table_schema = 'app'
+        AND table_name = 'custom_appraisal_signed_snapshots'
+    `);
+    assert.equal(signatureHardening.rows[0]?.signature_column_count, 6);
+    assert.equal(signatureHardening.rows[0]?.append_only_trigger, true);
+
     const release = await pool.query(
       "SELECT status FROM uad_ref.specification_releases WHERE release_key = $1",
       ["uad-3.6-2026-08-13-h1.5"],

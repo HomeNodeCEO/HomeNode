@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   canonicalCustomAppraisalFileName,
+  customAppraisalSignatureHmac,
   normalizeCustomAppraisalSaveReason,
   normalizeCustomAppraisalSectionKey,
   normalizeCustomAppraisalSectionRevision,
@@ -60,5 +61,26 @@ test("normalizes an exact bounded set of acknowledged E&O warning codes", () => 
   assert.throws(
     () => normalizeCustomAppraisalWarningCodes("subject_gla_missing"),
     /invalid_custom_appraisal_warning_codes/,
+  );
+});
+
+test("authenticates a signed snapshot with a server-held deterministic HMAC", () => {
+  const input = {
+    signatureEventId: "10000000-0000-4000-8000-000000000001",
+    organizationId: "20000000-0000-4000-8000-000000000001",
+    signerUserId: "30000000-0000-4000-8000-000000000001",
+    signedAt: "2026-08-26T12:00:00.000Z",
+    snapshotChecksumSha256: "a".repeat(64),
+  };
+  const first = customAppraisalSignatureHmac("s".repeat(32), input);
+  assert.match(first, /^[a-f0-9]{64}$/);
+  assert.equal(first, customAppraisalSignatureHmac("s".repeat(32), input));
+  assert.notEqual(first, customAppraisalSignatureHmac("s".repeat(32), {
+    ...input,
+    snapshotChecksumSha256: "b".repeat(64),
+  }));
+  assert.throws(
+    () => customAppraisalSignatureHmac("too-short", input),
+    /custom_appraisal_signing_secret_not_configured/,
   );
 });

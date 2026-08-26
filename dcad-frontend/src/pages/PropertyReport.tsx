@@ -17,7 +17,6 @@ import {
   getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileReadiness,
   getAccountPhotos,
-  getRelatedParcels,
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
   updateAssignmentFile,
@@ -27,7 +26,6 @@ import {
   type AssignmentDetailsPayload,
   type PropertyComplexityAssessment,
   type ReportManualSectionKey,
-  type RelatedParcelsResponse,
   makeUrl,
 } from "@/lib/api";
 import {
@@ -37,6 +35,7 @@ import {
 import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
 import { usePropertyContext } from "@/hooks/usePropertyContext";
 import PropertyContextSection from "@/components/PropertyContextSection";
+import { useRelatedParcels } from "@/hooks/useRelatedParcels";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
@@ -276,10 +275,6 @@ function AddressHero({
     return requestEditorCredential("Enter the HomeNode editor key to save verified changes:");
   }, []);
   const [photoIndex, setPhotoIndex] = useState(0);
-  const [relatedParcelSearchVersion, setRelatedParcelSearchVersion] = useState(0);
-  const [relatedParcels, setRelatedParcels] = useState<RelatedParcelsResponse | null>(null);
-  const [relatedParcelsLoading, setRelatedParcelsLoading] = useState(false);
-  const [relatedParcelsError, setRelatedParcelsError] = useState("");
   const [editingSection, setEditingSection] = useState<EditableReportSection | null>(null);
   const [savingSection, setSavingSection] = useState(false);
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDetails>(() =>
@@ -442,6 +437,16 @@ function AddressHero({
   });
   const detailLoaded = Boolean(detail);
   const exactAddress = detail?.property_location?.address?.trim() || "";
+  const {
+    relatedParcels,
+    relatedParcelsLoading,
+    relatedParcelsError,
+    refreshRelatedParcels,
+  } = useRelatedParcels({
+    accountId,
+    address: exactAddress,
+    enabled: detailLoaded,
+  });
 
 
   useEffect(() => {
@@ -462,45 +467,6 @@ function AddressHero({
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
   }, [accountId, detailLoaded, hydrateAssignmentDraft, resetProfileTracking]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setRelatedParcels(null);
-    setRelatedParcelsError("");
-    if (!accountId?.trim() || !detailLoaded) {
-      setRelatedParcelsLoading(false);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const startRelatedParcelLookup = () => {
-      if (cancelled) return;
-      setRelatedParcelsLoading(true);
-      void getRelatedParcels(accountId, exactAddress || undefined)
-        .then((response) => {
-          if (!cancelled) setRelatedParcels(response);
-        })
-        .catch((error: unknown) => {
-          if (!cancelled) {
-            setRelatedParcelsError(
-              error instanceof Error ? error.message : "The related-parcel check was unavailable.",
-            );
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setRelatedParcelsLoading(false);
-        });
-    };
-    // Related-parcel review is useful but is not required to display the
-    // subject. Let the browser paint the primary report before starting it.
-    const relatedParcelTimer = window.setTimeout(startRelatedParcelLookup, 900);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(relatedParcelTimer);
-    };
-  }, [accountId, detailLoaded, exactAddress, relatedParcelSearchVersion]);
 
   const address = displayValue(detail?.property_location?.address, "Property address unavailable");
   const streetAddress = address.split(",")[0].trim() || address;
@@ -1875,7 +1841,7 @@ function AddressHero({
               type="button"
               className="btn btn-sm normal-case border-amber-300 bg-white text-slate-800 hover:border-amber-400 hover:bg-amber-100"
               disabled={relatedParcelsLoading || !accountId}
-              onClick={() => setRelatedParcelSearchVersion((current) => current + 1)}
+              onClick={() => void refreshRelatedParcels()}
             >
               {relatedParcelsLoading ? "Checking DCAD..." : "Check Again"}
             </button>

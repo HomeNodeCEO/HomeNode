@@ -140,6 +140,37 @@ test("allows UAD storage to override the shared R2 bucket without mutating the e
   assert.equal(environment.R2_BUCKET, "homenode-shared-production");
 });
 
+test("allows dedicated UAD R2 credentials without changing shared storage credentials", () => {
+  const environment = {
+    UAD_OBJECT_STORAGE_PROVIDER: "r2",
+    R2_ACCOUNT_ID: "shared-account",
+    R2_ACCESS_KEY_ID: "shared-key",
+    R2_SECRET_ACCESS_KEY: "shared-secret",
+    R2_BUCKET: "homenode-shared-production",
+    UAD_R2_ACCOUNT_ID: "uad-account",
+    UAD_R2_ACCESS_KEY_ID: "uad-key",
+    UAD_R2_SECRET_ACCESS_KEY: "uad-secret",
+    UAD_R2_BUCKET: "homenode-uad-production",
+  };
+  const sharedStorage = createUadObjectStorage(environment);
+  const uadStorage = createUadObjectStorage(environment, {
+    accountId: environment.UAD_R2_ACCOUNT_ID || environment.R2_ACCOUNT_ID,
+    accessKeyId: environment.UAD_R2_ACCESS_KEY_ID || environment.R2_ACCESS_KEY_ID,
+    secretAccessKey: environment.UAD_R2_SECRET_ACCESS_KEY || environment.R2_SECRET_ACCESS_KEY,
+    bucket: environment.UAD_R2_BUCKET || environment.R2_BUCKET,
+    isolated: environment.UAD_R2_BUCKET !== environment.R2_BUCKET,
+  });
+
+  assert.equal(sharedStorage.bucket, "homenode-shared-production");
+  assert.equal(uadStorage.bucket, "homenode-uad-production");
+  const upload = new URL(uadStorage.createUploadUrl({
+    objectKey: "organizations/org/uad/workfile/assets/asset/front.jpg",
+    contentType: "image/jpeg",
+  }).url);
+  assert.equal(upload.hostname, "homenode-uad-production.uad-account.r2.cloudflarestorage.com");
+  assert.match(upload.searchParams.get("X-Amz-Credential"), /^uad-key\//);
+});
+
 test("uploads generated artifacts through a private signed R2 request", async () => {
   const originalFetch = globalThis.fetch;
   let request;

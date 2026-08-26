@@ -42,7 +42,11 @@ function normalizedOrigin(value, { allowHttp = false } = {}) {
 
 export function createHttpSecurityConfiguration(environment = process.env) {
   const strict = enabled(environment.UAD_SECURITY_STRICT);
-  const authenticationRequired = enabled(environment.UAD_AUTHENTICATION_REQUIRED);
+  // APPLICATION_AUTHENTICATION_REQUIRED is the single browser-application
+  // activation switch. Keep the older UAD-specific switch as a compatible,
+  // stricter override for isolated UAD deployments.
+  const authenticationRequired = enabled(environment.UAD_AUTHENTICATION_REQUIRED)
+    || enabled(environment.APPLICATION_AUTHENTICATION_REQUIRED);
   const rateLimitEnabled = strict || enabled(environment.UAD_RATE_LIMIT_ENABLED);
   const apiRateLimitEnabled = environment.NODE_ENV === "production"
     || enabled(environment.API_RATE_LIMIT_ENABLED);
@@ -141,16 +145,22 @@ function requestOriginHost(origin) {
 }
 
 export function createCorsMiddleware(configuration) {
-  const allowed = new Set(configuration.corsOrigins);
+  const allowedOrigins = [...configuration.corsOrigins];
   return function enforceCors(req, res, next) {
     const origin = String(req.get?.("origin") || "").trim();
     if (!origin) return next();
     const requestHost = String(req.get?.("host") || "").trim().toLowerCase();
     const sameOrigin = requestHost && requestOriginHost(origin) === requestHost;
-    if (!sameOrigin && !allowed.has(origin)) {
+    // Same-origin requests do not need CORS response headers. For an allowed
+    // cross-origin request, emit the canonical server-configured value rather
+    // than reflecting the request header back to the browser.
+    if (sameOrigin) return next();
+    const allowedOrigin = allowedOrigins.find((candidate) => candidate === origin);
+    if (!allowedOrigin) {
       return res.status(403).json({ error: "cors_origin_denied" });
     }
-    res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("access-control-allow-origin", allowedOrigin);
+    res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
     res.setHeader("access-control-allow-headers", "Authorization, Content-Type, Idempotency-Key");
     res.setHeader("access-control-max-age", "600");

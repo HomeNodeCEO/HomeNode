@@ -256,7 +256,7 @@ export function createUadRouter({
   });
   router.use((req, res, next) => {
     if (!authenticationRequired) return next();
-    return authenticateSigner(req, res, next);
+    return authenticateIfNeeded(req, res, next);
   });
 
   router.get("/accounts/:accountId/workfiles", async (req, res) => {

@@ -56,6 +56,13 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
   );
 });
 
+test("unified application authentication also protects UAD routes", () => {
+  const configuration = createHttpSecurityConfiguration({
+    APPLICATION_AUTHENTICATION_REQUIRED: "true",
+  });
+  assert.equal(configuration.authenticationRequired, true);
+});
+
 test("signup throttling remains independently bounded", () => {
   const configuration = createHttpSecurityConfiguration({
     SIGNUP_RATE_LIMIT_WINDOW_MS: "999999999",

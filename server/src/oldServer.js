@@ -190,7 +190,7 @@ import {
 } from "./modules/uad/uadArtifactExecution.js";
 import { startUadArtifactRecoveryMonitor } from "./modules/uad/uadArtifactRecovery.js";
 import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.js";
-import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
+import { createMobileAuthenticator, createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
 import {
   getAssignmentInspectionSketch,
@@ -216,6 +216,13 @@ import {
 } from "./security/httpSecurity.js";
 import { isLegacyAccountIdAllowed } from "./security/accountIdPolicy.js";
 import { createRedTeamIsolationConfiguration } from "./security/redTeamIsolation.js";
+import {
+  buildApplicationSession,
+  createOptionalApplicationAuthenticator,
+  hasApplicationPermission,
+} from "./security/applicationAccess.js";
+import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
+import { authorizeCustomAssignmentFile, decideAssignmentAccess } from "./security/assignmentAccess.js";
 import {
   createResilientHttpServer,
   createRuntimeResilienceConfiguration,
@@ -296,6 +303,9 @@ const signupRateLimiter = rateLimit({
 // preserves existing deployments until UAD_R2_BUCKET is configured.
 const sharedObjectStorage = createUadObjectStorage();
 const uadObjectStorage = createUadObjectStorage(process.env, {
+  accountId: process.env.UAD_R2_ACCOUNT_ID || process.env.R2_ACCOUNT_ID,
+  accessKeyId: process.env.UAD_R2_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID,
+  secretAccessKey: process.env.UAD_R2_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY,
   bucket: process.env.UAD_R2_BUCKET || process.env.R2_BUCKET,
   isolated: Boolean(
     process.env.UAD_R2_BUCKET
@@ -319,6 +329,29 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });
+const webOidcVerifier = createOidcAccessTokenVerifier({
+  issuer: process.env.OIDC_WEB_ISSUER || process.env.OIDC_ISSUER,
+  audience: process.env.OIDC_WEB_CLIENT_ID,
+  jwksUri: process.env.OIDC_WEB_JWKS_URI || process.env.OIDC_JWKS_URI,
+  clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
+});
+const applicationAuthenticationRequired = environmentFlag(
+  process.env.APPLICATION_AUTHENTICATION_REQUIRED,
+);
+if (applicationAuthenticationRequired && (
+  !webOidcVerifier.configured
+  || !process.env.OIDC_WEB_CLIENT_ID
+  || !process.env.OIDC_WEB_CLIENT_SECRET
+  || !process.env.OIDC_WEB_REDIRECT_URI
+  || !process.env.WEB_APP_URL
+  || String(process.env.APP_SESSION_SECRET || "").length < 32
+)) {
+  throw new Error("application_authentication_required_but_not_configured");
+}
+// Browser sessions must be hydrated before UAD routing so the same secure
+// HomeNode session can authorize UAD pages without requiring a mobile bearer
+// token. Mobile continues to use its separate public-client audience below.
+app.use("/api", createWebSessionAuthenticator({ pool }));
 app.use("/api/uad", createUadRouter({
   pool,
   storage: uadObjectStorage,
@@ -339,6 +372,24 @@ app.use("/api/mobile", createMobileRouter({
   recentFileDays: Number(process.env.MOBILE_RECENT_FILE_DAYS || 30),
   security: httpSecurity,
 }));
+
+// UAD, Custom Appraisal, Property Tax Protest, and mobile all share the same
+// provisioned OIDC identity and organization membership model. The UAD/mobile
+// routers authenticate themselves above; this optional middleware attaches the
+// same identity to the remaining application routes whenever a bearer token is
+// present. Legacy editor-key access remains available during migration.
+const authenticateApplicationUser = createMobileAuthenticator({
+  pool,
+  verifier: mobileOidcVerifier,
+});
+app.use("/api", createOptionalApplicationAuthenticator(authenticateApplicationUser));
+app.use("/api/auth", createWebAuthRouter({ pool, verifier: webOidcVerifier }));
+
+app.get("/api/auth/me", (req, res) => {
+  res.set("cache-control", "no-store");
+  if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
+  return res.json({ ok: true, session: buildApplicationSession(req.mobileAuth) });
+});
 
 const trestleClient = new TrestleClient();
 
@@ -507,6 +558,7 @@ const REPORT_MANUAL_SECTION_KEYS = new Set([
 
 const ASSIGNMENT_FILE_SELECT = `
   SELECT f.id, f.account_id, f.file_number, f.assignment_details,
+         f.organization_id, f.assigned_appraiser_user_id, f.supervisory_appraiser_user_id,
          f.inherited_from_file_id, parent.file_number AS inherited_from_file_number,
          f.reviewer, f.revision, f.created_at, f.updated_at,
          workfile.workfile_key, workfile.canonical_file_name,
@@ -1576,6 +1628,7 @@ app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
 
 /** List the independently versioned appraisal files for one property. */
 app.get("/api/accounts/:id/assignment-files", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1595,7 +1648,7 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
     if (!accountResult.rowCount) {
       return res.status(404).json({ error: "account_not_found" });
     }
-    const [{ rows }, legacyResult] = await Promise.all([
+    const [{ rows: queriedRows }, legacyResult] = await Promise.all([
       pool.query(
         `${ASSIGNMENT_FILE_SELECT}
          WHERE f.account_id = $1
@@ -1609,6 +1662,9 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
         [canonicalId],
       ),
     ]);
+    const rows = applicationAuthenticationRequired && req.mobileAuth
+      ? queriedRows.filter((row) => decideAssignmentAccess(req.mobileAuth, row, "read"))
+      : queriedRows;
     const assignmentIds = rows.map((row) => Number(row.id));
     let sectionRows = [];
     let mobilePhotoRows = [];
@@ -1710,6 +1766,7 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
 
 /** List Custom and UAD appraisal history without treating prior observations as current facts. */
 app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1734,6 +1791,7 @@ app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
 
 /** Load the workflow-neutral completion document anchored to one immutable subject snapshot. */
 app.get("/api/accounts/:id/appraisal-history/:reportFileId/completion", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1795,6 +1853,7 @@ app.post("/api/accounts/:id/appraisal-history/:reportFileId/replicate", async (r
 
 /** Download or embed the current report-file sketch as a scalable vector exhibit. */
 app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1809,6 +1868,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", 
       ensureCustomAppraisalWorkfilesAvailable(),
     ]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "read")) return;
     const result = await getAssignmentInspectionSketch(pool, canonicalId, assignmentFileId);
     if (!result) return res.status(404).json({ error: "assignment_sketch_not_found" });
     const fileName = (result.artifact_options.fileNumber || "homenode")
@@ -1830,6 +1890,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", 
 
 /** Download the current report-file sketch as a report-ready PDF exhibit. */
 app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/report.pdf", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1844,6 +1905,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/report.pdf", a
       ensureCustomAppraisalWorkfilesAvailable(),
     ]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "read")) return;
     const result = await getAssignmentInspectionSketch(pool, canonicalId, assignmentFileId);
     if (!result) return res.status(404).json({ error: "assignment_sketch_not_found" });
     const fileName = (result.artifact_options.fileNumber || "homenode")
@@ -1875,6 +1937,7 @@ app.patch("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req
     assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await Promise.all([accountQualityReady, propertyEnrichmentReady, ensureAssignmentFilesAvailable()]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "write")) return;
     const result = await saveAssignmentInspectionSketch(
       pool,
       canonicalId,
@@ -1908,6 +1971,7 @@ app.patch("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req
 
 /** Load the current canonical Property Tax Protest file and accepted mobile evidence. */
 app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "property_tax_protest", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1916,6 +1980,14 @@ app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
     await Promise.all([accountQualityReady, propertyEnrichmentReady]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
     const file = await getDesktopPropertyTaxFile(pool, canonicalId, req.query.file_id || null);
+    if (
+      applicationAuthenticationRequired
+      && req.mobileAuth
+      && file
+      && !decideAssignmentAccess(req.mobileAuth, file, "read")
+    ) {
+      return res.status(403).json({ error: "property_tax_protest_access_denied" });
+    }
     return res.json({ account_id: canonicalId, file });
   } catch (error) {
     if (String(error?.message || "").startsWith("invalid_")) {
@@ -1936,6 +2008,16 @@ app.patch("/api/accounts/:id/property-tax-protest/:fileId", async (req, res) => 
   try {
     await Promise.all([accountQualityReady, propertyEnrichmentReady]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const existingFile = await getDesktopPropertyTaxFile(pool, canonicalId, req.params.fileId);
+    if (
+      applicationAuthenticationRequired
+      && req.mobileAuth
+      && (!existingFile || !decideAssignmentAccess(req.mobileAuth, existingFile, "write"))
+    ) {
+      return res.status(existingFile ? 403 : 404).json({
+        error: existingFile ? "property_tax_protest_access_denied" : "property_tax_protest_file_not_found",
+      });
+    }
     const file = await saveDesktopPropertyTaxFile(
       pool,
       canonicalId,
@@ -1965,6 +2047,24 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
     return res.status(400).json({ error: "invalid_account_id" });
   }
   if (!requireEditor(req, res)) return;
+  let creationOrganizationId = null;
+  let creatorUserId = null;
+  if (applicationAuthenticationRequired && req.mobileAuth) {
+    const requestedOrganizationId = String(req.body?.organization_id || "").trim();
+    const writable = (req.mobileAuth.organizations || []).filter((organization) =>
+      hasApplicationPermission(
+        req.mobileAuth,
+        "custom_appraisal",
+        "write",
+        organization.organizationId,
+      ));
+    const selected = requestedOrganizationId
+      ? writable.find((organization) => organization.organizationId === requestedOrganizationId)
+      : writable.length === 1 ? writable[0] : null;
+    if (!selected) return res.status(400).json({ error: "organization_selection_required" });
+    creationOrganizationId = selected.organizationId;
+    creatorUserId = req.mobileAuth.userId;
+  }
   let fileNumber;
   let inheritedFromFileId;
   try {
@@ -2000,8 +2100,9 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
       const sourceResult = await client.query(
         `SELECT id, assignment_details
          FROM app.assignment_files
-         WHERE id = $1 AND account_id = $2`,
-        [inheritedFromFileId, canonicalId],
+         WHERE id = $1 AND account_id = $2
+           AND ($3::uuid IS NULL OR organization_id = $3)`,
+        [inheritedFromFileId, canonicalId, creationOrganizationId],
       );
       sourceFile = sourceResult.rows[0] || null;
       if (!sourceFile) {
@@ -2041,10 +2142,12 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
 
     const inserted = await client.query(
       `INSERT INTO app.assignment_files (
-         account_id, file_number, assignment_details, inherited_from_file_id, reviewer
-       ) VALUES ($1,$2,$3::jsonb,$4,$5)
+         account_id, file_number, assignment_details, inherited_from_file_id, reviewer,
+         organization_id, assigned_appraiser_user_id, created_by_user_id, updated_by_user_id
+       ) VALUES ($1,$2,$3::jsonb,$4,$5,$6,$7,$7,$7)
        RETURNING id`,
-      [canonicalId, fileNumber, JSON.stringify(assignmentDetails), inheritedFromFileId, reviewer],
+      [canonicalId, fileNumber, JSON.stringify(assignmentDetails), inheritedFromFileId, reviewer,
+        creationOrganizationId, creatorUserId],
     );
     const assignmentFileId = Number(inserted.rows[0].id);
     await client.query(
@@ -2071,18 +2174,18 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
       await client.query(
         `UPDATE app.report_files
             SET is_current = false, updated_at = now()
-          WHERE organization_id IS NULL
+          WHERE organization_id IS NOT DISTINCT FROM $2::uuid
             AND account_id = $1
             AND workflow_type = 'custom_appraisal'
             AND is_current = true`,
-        [canonicalId],
+        [canonicalId, creationOrganizationId],
       );
       const reportFileResult = await client.query(
         `INSERT INTO app.report_files (
            organization_id, account_id, workflow_type, file_number,
            previous_report_file_id, custom_assignment_file_id,
-           is_current, registry_revision
-         ) VALUES (NULL, $1, 'custom_appraisal', $2, $3, $4, true, 1)
+           is_current, registry_revision, created_by_user_id
+         ) VALUES ($5, $1, 'custom_appraisal', $2, $3, $4, true, 1, $6)
          ON CONFLICT (custom_assignment_file_id)
            WHERE custom_assignment_file_id IS NOT NULL
          DO UPDATE SET is_current = true, updated_at = now()
@@ -2092,6 +2195,8 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
           fileNumber,
           previousRegistryResult.rows[0]?.id || null,
           assignmentFileId,
+          creationOrganizationId,
+          creatorUserId,
         ],
       );
       const historyRegistry = await client.query(
@@ -2199,8 +2304,9 @@ app.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
       ensureAssignmentFilesAvailable(),
       ensureCustomAppraisalWorkfilesAvailable(),
     ]);
-    await client.query("BEGIN");
     const canonicalId = await resolveCanonicalAccountId(client, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "write")) return;
+    await client.query("BEGIN");
     const existingResult = await client.query(
       `SELECT assignment_file.id, assignment_file.file_number, assignment_file.revision,
               workfile.status AS workfile_status
@@ -2271,6 +2377,7 @@ app.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
 
 /** Load all database-backed sections for one Custom Appraisal file. */
 app.get("/api/accounts/:id/assignment-files/:fileId/workfile", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -2280,6 +2387,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile", async (req, res) 
     assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "read")) return;
     const workfile = await getCustomAppraisalWorkfile(pool, {
       accountId: canonicalId,
       assignmentFileId,
@@ -2308,6 +2416,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/readiness", async (
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "read")) return;
     const readiness = await getCustomAppraisalWorkfileReadiness(pool, {
       accountId: canonicalId,
       assignmentFileId,
@@ -2336,6 +2445,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/download", async (r
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "read")) return;
     const download = await getCustomAppraisalWorkfileDownload(pool, {
       accountId: canonicalId,
       assignmentFileId,
@@ -2371,6 +2481,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/report.pdf", async 
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "read")) return;
     const download = await getCustomAppraisalWorkfileDownload(pool, {
       accountId: canonicalId,
       assignmentFileId,
@@ -2413,6 +2524,7 @@ app.put("/api/accounts/:id/assignment-files/:fileId/workfile/sections/:sectionKe
     assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "write")) return;
     const section = await saveCustomAppraisalWorkfileSection(pool, {
       accountId: canonicalId,
       assignmentFileId,
@@ -2458,10 +2570,11 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
     const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
     await ensureCustomAppraisalWorkfilesAvailable();
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "sign")) return;
     const workfile = await signCustomAppraisalWorkfile(pool, {
       accountId: canonicalId,
       assignmentFileId,
-      signedBy: req.body?.signed_by || req.body?.reviewer,
+      signedBy: req.mobileAuth?.displayName || req.body?.signed_by || req.body?.reviewer,
       acknowledgedWarningCodes: req.body?.acknowledged_warning_codes,
     });
     return res.json({ ok: true, account_id: canonicalId, workfile });
@@ -2495,6 +2608,12 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
 });
 
 function requireEditor(req, res) {
+  if (
+    hasApplicationPermission(req.mobileAuth, "custom_appraisal", "write")
+    || hasApplicationPermission(req.mobileAuth, "property_tax_protest", "write")
+  ) {
+    return true;
+  }
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
   if (!configuredEditorKey) {
     res.status(503).json({ error: "editor_not_configured" });
@@ -5934,6 +6053,46 @@ function decodedDocumentHeader(req, name, fallback = "") {
   } catch {
     return value;
   }
+}
+
+async function requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, permission) {
+  if (!applicationAuthenticationRequired) return true;
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return true;
+  }
+  if (!req.mobileAuth) {
+    res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
+    return false;
+  }
+  try {
+    await authorizeCustomAssignmentFile(pool, req.mobileAuth, {
+      accountId,
+      assignmentFileId,
+      permission,
+    });
+    return true;
+  } catch (error) {
+    const notFound = error?.message === "assignment_file_not_found";
+    res.set("cache-control", "no-store").status(notFound ? 404 : 403).json({
+      error: notFound ? "assignment_file_not_found" : "assignment_file_access_denied",
+    });
+    return false;
+  }
+}
+
+function requireWorkflowAccess(req, res, workflow, permission) {
+  if (hasApplicationPermission(req.mobileAuth, workflow, permission)) return true;
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return true;
+  }
+  if (!applicationAuthenticationRequired) return true;
+  res.set("cache-control", "no-store");
+  res.status(req.mobileAuth ? 403 : 401).json({
+    error: req.mobileAuth ? "application_access_denied" : "authentication_required",
+  });
+  return false;
 }
 
 function assignmentPhotoErrorStatus(message) {

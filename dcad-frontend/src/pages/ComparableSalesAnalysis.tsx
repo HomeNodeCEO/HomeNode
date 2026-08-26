@@ -21,6 +21,7 @@ import ConditionQualityStudy, {
   type ConditionQualityRatingAssignment,
 } from '@/components/ConditionQualityStudy';
 import ComparableSalesMap from '@/components/ComparableSalesMap';
+import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
 import { fetchDetail } from '@/lib/dcad';
 import { readEditorCredential, rememberEditorCredential } from '@/lib/editorCredential';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
@@ -48,11 +49,24 @@ import {
   type MarketConditionsDraft,
 } from '@/lib/marketConditionsDraft';
 import { resolveComparableCharacteristic } from '@/lib/propertySourceResolution';
+import {
+  COMPARABLE_COUNT,
+  LISTING_COUNT,
+  SECONDARY_COMPARABLE_COUNT,
+  booleanValue,
+  calculateLivingAreaGroupedAdjustment,
+  calculatePoolGroupedAdjustment,
+  compactComparableSlots,
+  createCostToCureLine,
+  finiteNumber,
+  garageSpacesFromArea,
+  localDateString,
+  monthsBeforeDate,
+  swapArrayItems,
+  type CostToCureLine,
+  type SalesAnalysisPeriodMonths,
+} from '@/lib/comparableSalesPresentation';
 
-const COMPARABLE_COUNT = 6;
-const SECONDARY_COMPARABLE_COUNT = 6;
-const LISTING_COUNT = 6;
-type SalesAnalysisPeriodMonths = 12 | 24 | 36;
 type ComparableSearchProfileOption = {
   key: ComparableSearchProfileKey;
   label: string;
@@ -78,68 +92,6 @@ const DEFAULT_SALES_NOTES =
   "Comparable sales are analyzed based on the subject's condition to provide the best comparisons possible.";
 const DEFAULT_ADJUSTMENT_NOTES =
   'Applied adjustments for time/date of sale, neighborhood, gross living area, room and bath count, condition, quality, and feature differences based on market-supported evidence.';
-
-type CostToCureLine = {
-  id: string;
-  description: string;
-  cost: string;
-};
-
-let costToCureLineSequence = 0;
-
-function createCostToCureLine(
-  description = '',
-  cost: string | number = '',
-): CostToCureLine {
-  costToCureLineSequence += 1;
-  return {
-    id: `repair-${Date.now()}-${costToCureLineSequence}`,
-    description,
-    cost: cost === '' ? '' : String(cost),
-  };
-}
-
-function swapArrayItems<T>(values: T[], from: number, to: number): T[] {
-  const next = [...values];
-  [next[from], next[to]] = [next[to], next[from]];
-  return next;
-}
-
-function compactComparableSlots<T>(
-  values: T[],
-  retainedSlots: number[],
-  createEmptyValue: () => T,
-): T[] {
-  return [
-    ...retainedSlots.map((slot) => values[slot]),
-    ...Array.from(
-      { length: Math.max(0, COMPARABLE_COUNT - retainedSlots.length) },
-      createEmptyValue,
-    ),
-  ];
-}
-
-function localDateString(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function monthsBeforeDate(value: string, months: SalesAnalysisPeriodMonths): string {
-  const date = new Date(`${value}T12:00:00`);
-  if (Number.isNaN(date.getTime())) return '';
-  const originalDay = date.getDate();
-  date.setDate(1);
-  date.setMonth(date.getMonth() - months);
-  const finalDay = new Date(
-    date.getFullYear(),
-    date.getMonth() + 1,
-    0,
-  ).getDate();
-  date.setDate(Math.min(originalDay, finalDay));
-  return localDateString(date);
-}
 
 type SubjectData = {
   accountId: string;
@@ -195,37 +147,6 @@ function normalizeUadConditionRating(value: unknown): string {
   return normalizeUadRating(value, 'condition');
 }
 
-function UadRatingSelect({
-  ariaLabel,
-  value,
-  ratings,
-  onChange,
-  disabled = false,
-}: {
-  ariaLabel: string;
-  value: string;
-  ratings: readonly string[];
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <select
-      aria-label={ariaLabel}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      disabled={disabled}
-      className="w-full min-w-[4.75rem] rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-800 shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-    >
-      <option value="">Select</option>
-      {ratings.map((rating) => (
-        <option key={rating} value={rating}>
-          {rating}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 type GalleryState = {
   title: string;
   photos: SalePhoto[];
@@ -233,105 +154,6 @@ type GalleryState = {
   loading: boolean;
   error: string | null;
 };
-
-function MlsPhoto({
-  src,
-  alt,
-  photoCount = 0,
-  onOpen,
-  compact = false,
-}: {
-  src?: string | null;
-  alt: string;
-  photoCount?: number;
-  onOpen?: () => void;
-  compact?: boolean;
-}) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-
-  const size = compact ? 'h-16 w-24' : 'h-28 w-full min-w-0';
-  if (!src || failed) {
-    return (
-      <div
-        className={`${size} flex items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 px-2 text-center text-[11px] font-medium text-slate-500`}
-        aria-label={`${alt}: MLS photo unavailable`}
-      >
-        MLS photo unavailable
-      </div>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      disabled={!onOpen}
-      className={`${size} group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-left shadow-sm disabled:cursor-default`}
-      aria-label={`View ${photoCount || 1} MLS photo${photoCount === 1 ? '' : 's'} for ${alt}`}
-    >
-      <img
-        src={src}
-        alt={alt}
-        loading="lazy"
-        className="h-full w-full object-cover transition-transform duration-200 group-enabled:hover:scale-[1.03]"
-        onError={() => setFailed(true)}
-      />
-      {onOpen && (
-        <span className="absolute bottom-1.5 right-1.5 rounded-full bg-slate-950/80 px-2 py-0.5 text-[10px] font-semibold text-white">
-          View {photoCount || 1}
-        </span>
-      )}
-    </button>
-  );
-}
-
-function finiteNumber(value: unknown): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function booleanValue(value: unknown): boolean | null {
-  if (value === true || value === false) return value;
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (['true', 't', 'yes', 'y', '1'].includes(normalized)) return true;
-  if (['false', 'f', 'no', 'n', '0', 'none'].includes(normalized)) return false;
-  return null;
-}
-
-function garageSpacesFromArea(value: unknown): number | null {
-  const area = finiteNumber(value);
-  if (area === null || area <= 0) return null;
-  return Math.max(1, Math.min(12, Math.round(area / 225)));
-}
-
-function calculatePoolGroupedAdjustment(
-  adjustments: AppliedGroupedAdjustment[],
-  subjectValue: boolean | null,
-  comparableValue: boolean | null,
-): number {
-  if (subjectValue === null || comparableValue === null || subjectValue === comparableValue) return 0;
-  const poolAdjustment = adjustments
-    .filter((adjustment) => adjustment.dimensionKey === 'pool')
-    .reduce((total, adjustment) => total + adjustment.amount, 0);
-  return subjectValue ? poolAdjustment : -poolAdjustment;
-}
-
-function calculateLivingAreaGroupedAdjustment(
-  adjustments: AppliedGroupedAdjustment[],
-  subjectValue: number | null,
-  comparableValue: number | null,
-): number {
-  if (subjectValue === null || comparableValue === null || subjectValue === comparableValue) return 0;
-  const eligibleAdjustments = adjustments.filter(
-    (adjustment) => adjustment.dimensionKey === 'living_area',
-  );
-  const selectedAdjustment = eligibleAdjustments[eligibleAdjustments.length - 1];
-  if (!selectedAdjustment) return 0;
-  const signedDifference = (subjectValue - comparableValue) * selectedAdjustment.amount;
-  return Math.round(signedDifference / 100) * 100;
-}
 
 export default function ComparableSalesAnalysis() {
   const location = useLocation();

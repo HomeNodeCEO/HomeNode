@@ -82,8 +82,9 @@ upload objects, sign reports, or invoke an external GSE API.
 2. Back up the production database and record the backup identifier outside the
    repository.
 3. Deploy with the UAD workspace and both compliance-provider flags disabled.
-4. Apply UAD migrations, then mobile migrations. Do not run the staging fixture
-   bootstrap against production.
+4. Confirm the Render pre-deploy gate ran `npm run migrate:uad` successfully.
+   Apply mobile migrations only as part of the separately controlled mobile
+   release. Do not run the staging fixture bootstrap against production.
 5. Configure R2 and OIDC secrets, enable the UAD workspace, and verify the
    readiness endpoint.
 6. Create a real internal test assignment through the normal search-tile

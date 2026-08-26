@@ -19,6 +19,7 @@
     "test:property-report-assignment": "node --experimental-strip-types scripts/testPropertyReportAssignment.mjs",
     "test:assignment-file-selection": "node --experimental-strip-types scripts/testAssignmentFileSelection.mjs",
     "test:timed-request-cache": "node --experimental-strip-types scripts/testTimedRequestCache.mjs",
+    "test:zoning-evidence-presentation": "node --experimental-strip-types scripts/testZoningEvidencePresentation.mjs",
     "test:uad-auth": "node --experimental-strip-types scripts/testUadAuth.mjs"
   },
   "dependencies": {

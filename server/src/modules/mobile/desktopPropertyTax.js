@@ -35,7 +35,10 @@ function response(row, extras = {}) {
   };
 }
 
-async function selectFile(queryable, accountId, fileId = null, { lock = false } = {}) {
+async function selectFile(queryable, accountId, fileId = null, {
+  lock = false,
+  organizationIds = null,
+} = {}) {
   const result = await queryable.query(
     `SELECT report_file.id AS report_file_id, report_file.registry_revision,
             report_file.is_current, report_file.organization_id,
@@ -49,18 +52,21 @@ async function selectFile(queryable, accountId, fileId = null, { lock = false } 
       WHERE report_file.account_id = $1
         AND report_file.workflow_type = 'property_tax_protest'
         AND ($2::uuid IS NULL OR protest.id = $2)
+        AND ($3::uuid[] IS NULL OR report_file.organization_id = ANY($3::uuid[]))
       ORDER BY report_file.is_current DESC, protest.updated_at DESC, protest.created_at DESC
       LIMIT 1
       ${lock ? "FOR UPDATE OF report_file, protest" : ""}`,
-    [accountId, fileId],
+    [accountId, fileId, organizationIds],
   );
   return result.rows[0] || null;
 }
 
-export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValue = null) {
+export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValue = null, {
+  organizationIds = null,
+} = {}) {
   const accountId = normalizeAccountId(accountIdValue);
   const fileId = fileIdValue ? normalizeUuid(fileIdValue, "invalid_property_tax_protest_file_id") : null;
-  const row = await selectFile(pool, accountId, fileId);
+  const row = await selectFile(pool, accountId, fileId, { organizationIds });
   if (!row) return null;
   const [photos, sketch] = await Promise.all([
     pool.query(

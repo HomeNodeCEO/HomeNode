@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   customAppraisalReportReadiness,
@@ -65,6 +65,52 @@ export function normalizeCustomAppraisalWarningCodes(value) {
     throw new Error("invalid_custom_appraisal_warning_codes");
   }
   return [...new Set(codes)];
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value.toJSON === "function") return stableJson(value.toJSON());
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableJson(value[key])]));
+  }
+  return value;
+}
+
+export function customAppraisalSnapshotChecksum(snapshot) {
+  return createHash("sha256").update(JSON.stringify(stableJson(snapshot))).digest("hex");
+}
+
+export function customAppraisalSignatureHmac(signingSecretValue, input) {
+  const signingSecret = String(signingSecretValue || "");
+  if (signingSecret.length < 32) throw new Error("custom_appraisal_signing_secret_not_configured");
+  return createHmac("sha256", signingSecret).update(JSON.stringify({
+    signature_event_id: input.signatureEventId,
+    organization_id: input.organizationId || null,
+    signer_user_id: input.signerUserId || null,
+    signed_at: input.signedAt,
+    snapshot_checksum_sha256: input.snapshotChecksumSha256,
+  })).digest("hex");
+}
+
+export function verifyCustomAppraisalSignedSnapshot(row, signingSecretValue) {
+  if (!row?.signature_hmac_sha256) return true;
+  const snapshotChecksum = customAppraisalSnapshotChecksum(row.snapshot);
+  if (snapshotChecksum !== row.checksum_sha256) {
+    throw new Error("custom_appraisal_signed_snapshot_integrity_failed");
+  }
+  const expected = customAppraisalSignatureHmac(signingSecretValue, {
+    signatureEventId: row.signature_event_id,
+    organizationId: row.organization_id,
+    signerUserId: row.signed_by_user_id,
+    signedAt: row.signed_at,
+    snapshotChecksumSha256: row.checksum_sha256,
+  });
+  const actual = String(row.signature_hmac_sha256 || "");
+  if (!/^[a-f0-9]{64}$/.test(actual)
+      || !timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"))) {
+    throw new Error("custom_appraisal_signed_snapshot_integrity_failed");
+  }
+  return true;
 }
 
 export function canonicalCustomAppraisalFileName(fileNumber, assignmentFileId) {
@@ -150,11 +196,26 @@ export async function ensureCustomAppraisalWorkfileSchema(pool) {
       snapshot jsonb NOT NULL,
       checksum_sha256 text NOT NULL,
       signed_by text NOT NULL,
+      organization_id uuid REFERENCES app_auth.organizations(id) ON DELETE RESTRICT,
+      signed_by_user_id uuid REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+      signature_event_id uuid NOT NULL DEFAULT gen_random_uuid(),
+      signed_from_ip text,
+      signed_user_agent text,
+      signature_hmac_sha256 text,
       signed_at timestamptz NOT NULL DEFAULT now(),
       CHECK (schema_version >= 1),
       CHECK (jsonb_typeof(snapshot) = 'object'),
       CHECK (checksum_sha256 ~ '^[a-f0-9]{64}$')
     );
+    ALTER TABLE app.custom_appraisal_signed_snapshots
+      ADD COLUMN IF NOT EXISTS organization_id uuid REFERENCES app_auth.organizations(id) ON DELETE RESTRICT,
+      ADD COLUMN IF NOT EXISTS signed_by_user_id uuid REFERENCES app_auth.users(id) ON DELETE RESTRICT,
+      ADD COLUMN IF NOT EXISTS signature_event_id uuid NOT NULL DEFAULT gen_random_uuid(),
+      ADD COLUMN IF NOT EXISTS signed_from_ip text,
+      ADD COLUMN IF NOT EXISTS signed_user_agent text,
+      ADD COLUMN IF NOT EXISTS signature_hmac_sha256 text;
+    CREATE UNIQUE INDEX IF NOT EXISTS custom_appraisal_signed_signature_event_uidx
+      ON app.custom_appraisal_signed_snapshots (signature_event_id);
   `);
 
     await pool.query(`
@@ -221,6 +282,10 @@ function workfileResponse(workfile, sections, signedSnapshot = null) {
       checksum_sha256: signedSnapshot.checksum_sha256,
       signed_at: signedSnapshot.signed_at,
       signed_by: signedSnapshot.signed_by,
+      signed_by_user_id: signedSnapshot.signed_by_user_id || null,
+      organization_id: signedSnapshot.organization_id || null,
+      signature_event_id: signedSnapshot.signature_event_id || null,
+      signature_hmac_sha256: signedSnapshot.signature_hmac_sha256 || null,
     } : null,
     sections: Object.fromEntries(sections.map((section) => [section.section_key, {
       value: section.section_value || {},
@@ -250,7 +315,9 @@ export async function getCustomAppraisalWorkfile(pool, { accountId, assignmentFi
       [assignmentFileId],
     ),
     pool.query(
-      `SELECT id, checksum_sha256, signed_at, signed_by
+      `SELECT id, checksum_sha256, signed_at, signed_by,
+              organization_id, signed_by_user_id, signature_event_id,
+              signature_hmac_sha256
          FROM app.custom_appraisal_signed_snapshots
         WHERE assignment_file_id = $1`,
       [assignmentFileId],
@@ -526,10 +593,25 @@ export async function signCustomAppraisalWorkfile(pool, {
   accountId,
   assignmentFileId,
   signedBy: signedByValue,
+  signerUserId = null,
+  signatureEventId: signatureEventIdValue = null,
+  signedFromIp: signedFromIpValue = null,
+  signedUserAgent: signedUserAgentValue = null,
+  signingSecret: signingSecretValue = null,
   acknowledgedWarningCodes: acknowledgedWarningCodesValue,
 }) {
   const signedBy = String(signedByValue || "HomeNode editor").trim().slice(0, 200);
   if (!signedBy) throw new Error("invalid_custom_appraisal_signer");
+  const signingSecret = String(signingSecretValue || "");
+  if (signerUserId && signingSecret.length < 32) {
+    throw new Error("custom_appraisal_signing_secret_not_configured");
+  }
+  const signatureEventId = String(signatureEventIdValue || randomUUID()).trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(signatureEventId)) {
+    throw new Error("invalid_custom_appraisal_signature_event");
+  }
+  const signedFromIp = String(signedFromIpValue || "").trim().slice(0, 200) || null;
+  const signedUserAgent = String(signedUserAgentValue || "").trim().slice(0, 1_000) || null;
   const acknowledgedWarningCodes = normalizeCustomAppraisalWarningCodes(
     acknowledgedWarningCodesValue,
   );
@@ -540,7 +622,10 @@ export async function signCustomAppraisalWorkfile(pool, {
     await client.query("BEGIN");
     await ensureWorkfileRow(client, accountId, assignmentFileId);
     const metaResult = await client.query(
-      `SELECT workfile.*, assignment_file.file_number
+      `SELECT workfile.*, assignment_file.file_number,
+              assignment_file.organization_id,
+              assignment_file.assigned_appraiser_user_id,
+              assignment_file.supervisory_appraiser_user_id
          FROM app.custom_appraisal_workfiles workfile
          JOIN app.assignment_files assignment_file ON assignment_file.id = workfile.assignment_file_id
         WHERE workfile.assignment_file_id = $1 AND assignment_file.account_id = $2
@@ -550,6 +635,12 @@ export async function signCustomAppraisalWorkfile(pool, {
     const workfile = metaResult.rows[0];
     if (!workfile) throw new Error("assignment_file_not_found");
     if (workfile.status === "signed") throw new Error("custom_appraisal_workfile_signed");
+    if (signerUserId && ![
+      workfile.assigned_appraiser_user_id,
+      workfile.supervisory_appraiser_user_id,
+    ].includes(signerUserId)) {
+      throw new Error("custom_appraisal_signer_not_assigned");
+    }
     const sectionResult = await client.query(
       `SELECT section_key, section_value, revision, updated_by, updated_at
          FROM app.custom_appraisal_workfile_sections
@@ -567,6 +658,13 @@ export async function signCustomAppraisalWorkfile(pool, {
     snapshot.status = "signed";
     snapshot.signed_at = signedAt;
     snapshot.signed_by = signedBy;
+    snapshot.signature = {
+      event_id: signatureEventId,
+      organization_id: workfile.organization_id || null,
+      signer_user_id: signerUserId || null,
+      signed_from_ip: signedFromIp,
+      signed_user_agent: signedUserAgent,
+    };
     const readiness = customAppraisalReportReadiness(
       snapshot,
       manifest.evidence.property_report_data,
@@ -596,12 +694,24 @@ export async function signCustomAppraisalWorkfile(pool, {
       acknowledged_by: signedBy,
     };
     const serialized = JSON.stringify(snapshot);
-    const checksum = createHash("sha256").update(serialized).digest("hex");
+    const checksum = customAppraisalSnapshotChecksum(snapshot);
+    const signatureHmac = signingSecret
+      ? customAppraisalSignatureHmac(signingSecret, {
+        signatureEventId,
+        organizationId: workfile.organization_id,
+        signerUserId,
+        signedAt,
+        snapshotChecksumSha256: checksum,
+      })
+      : null;
     const signedResult = await client.query(
       `INSERT INTO app.custom_appraisal_signed_snapshots (
          assignment_file_id, canonical_file_name, schema_version,
-         snapshot, checksum_sha256, signed_by, signed_at
-       ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::timestamptz)
+         snapshot, checksum_sha256, signed_by, signed_at,
+         organization_id, signed_by_user_id, signature_event_id,
+         signed_from_ip, signed_user_agent, signature_hmac_sha256
+       ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7::timestamptz,
+                 $8, $9, $10, $11, $12, $13)
        RETURNING id`,
       [
         assignmentFileId,
@@ -611,6 +721,12 @@ export async function signCustomAppraisalWorkfile(pool, {
         checksum,
         signedBy,
         signedAt,
+        workfile.organization_id || null,
+        signerUserId || null,
+        signatureEventId,
+        signedFromIp,
+        signedUserAgent,
+        signatureHmac,
       ],
     );
     await client.query(
@@ -651,11 +767,14 @@ export async function signCustomAppraisalWorkfile(pool, {
 export async function getCustomAppraisalWorkfileDownload(pool, {
   accountId,
   assignmentFileId,
+  signingSecret = null,
 }) {
   await ensureCustomAppraisalWorkfileSchema(pool);
   const signedResult = await pool.query(
     `SELECT snapshot.snapshot, snapshot.canonical_file_name,
-            snapshot.checksum_sha256, snapshot.signed_at
+            snapshot.checksum_sha256, snapshot.signed_at,
+            snapshot.organization_id, snapshot.signed_by_user_id,
+            snapshot.signature_event_id, snapshot.signature_hmac_sha256
        FROM app.custom_appraisal_signed_snapshots snapshot
        JOIN app.assignment_files assignment_file
          ON assignment_file.id = snapshot.assignment_file_id
@@ -664,6 +783,7 @@ export async function getCustomAppraisalWorkfileDownload(pool, {
     [assignmentFileId, accountId],
   );
   if (signedResult.rows.length) {
+    verifyCustomAppraisalSignedSnapshot(signedResult.rows[0], signingSecret);
     return {
       snapshot: signedResult.rows[0].snapshot,
       canonical_file_name: signedResult.rows[0].canonical_file_name,

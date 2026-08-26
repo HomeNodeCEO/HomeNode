@@ -4,6 +4,8 @@ const READ_ROLES = new Set([
   "appraiser",
   "supervisory_appraiser",
   "reviewer",
+  "office_assistant",
+  "read_only",
   "organization_admin",
   "homenode_admin",
 ]);
@@ -15,6 +17,8 @@ const WRITE_ROLES = new Set([
 ]);
 const ORGANIZATION_WIDE_READ_ROLES = new Set([
   "reviewer",
+  "office_assistant",
+  "read_only",
   "organization_admin",
   "homenode_admin",
 ]);

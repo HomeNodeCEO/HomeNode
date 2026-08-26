@@ -22,6 +22,7 @@ function positiveInteger(value) {
 }
 
 export function buildAssignmentDocumentObjectKey({
+  organizationId = null,
   accountId,
   assignmentFileId = null,
   checksumSha256,
@@ -29,11 +30,12 @@ export function buildAssignmentDocumentObjectKey({
 } = {}) {
   const account = sanitizeUadFileName(accountId || "unassigned-account");
   const assignment = positiveInteger(assignmentFileId) || "property-evidence";
+  const organization = sanitizeUadFileName(organizationId || "unassigned");
   const checksum = String(checksumSha256 || "unverified")
     .replace(/[^a-f0-9]/gi, "")
     .toLowerCase()
     .slice(0, 64) || "unverified";
-  return `organizations/unassigned/custom-appraisal/accounts/${account}`
+  return `organizations/${organization}/custom-appraisal/accounts/${account}`
     + `/assignment-files/${assignment}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
 }
 
@@ -318,6 +320,7 @@ export async function ensureAssignmentDocumentsSchema(pool) {
 }
 
 export async function createAssignmentDocument(pool, {
+  organizationId = null,
   accountId,
   assignmentFileId = null,
   documentType = "other",
@@ -354,6 +357,7 @@ export async function createAssignmentDocument(pool, {
   if (storage?.configured) {
     try {
       objectKey = buildAssignmentDocumentObjectKey({
+        organizationId,
         accountId,
         assignmentFileId,
         checksumSha256: checksum,
@@ -503,13 +507,17 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
     const id = Number(candidate.id);
     try {
       const current = await pool.query(
-        `SELECT * FROM app.assignment_documents
-         WHERE id = $1 AND storage_provider = 'postgres' AND content IS NOT NULL`,
+        `SELECT document.*, assignment.organization_id
+           FROM app.assignment_documents document
+           LEFT JOIN app.assignment_files assignment ON assignment.id = document.assignment_file_id
+          WHERE document.id = $1
+            AND document.storage_provider = 'postgres' AND document.content IS NOT NULL`,
         [id],
       );
       const document = current.rows[0];
       if (!document) continue;
       const objectKey = buildAssignmentDocumentObjectKey({
+        organizationId: document.organization_id,
         accountId: document.account_id,
         assignmentFileId: document.assignment_file_id,
         checksumSha256: document.checksum_sha256,
@@ -825,6 +833,7 @@ export async function processPendingAssignmentDocuments(pool, {
 export async function listAssignmentDocuments(pool, {
   accountId,
   assignmentFileId = null,
+  includePropertyEvidence = true,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const { rows } = await pool.query(
@@ -837,16 +846,19 @@ export async function listAssignmentDocuments(pool, {
        ON candidate.document_id = document.id
      WHERE document.account_id = $1
        AND (
-         ($2::bigint IS NULL AND document.assignment_file_id IS NULL)
+         ($2::bigint IS NULL AND $3::boolean = true AND document.assignment_file_id IS NULL)
          OR (
            $2::bigint IS NOT NULL
-           AND (document.assignment_file_id = $2 OR document.assignment_file_id IS NULL)
+           AND (
+             document.assignment_file_id = $2
+             OR ($3::boolean = true AND document.assignment_file_id IS NULL)
+           )
          )
        )
      GROUP BY document.id
      ORDER BY CASE WHEN document.assignment_file_id = $2 THEN 0 ELSE 1 END,
               document.uploaded_at DESC`,
-    [accountId, positiveInteger(assignmentFileId)],
+    [accountId, positiveInteger(assignmentFileId), Boolean(includePropertyEvidence)],
   );
   return rows.map((row) => ({
     ...publicDocument(row),

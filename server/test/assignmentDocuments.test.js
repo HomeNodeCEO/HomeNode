@@ -13,12 +13,13 @@ import {
 test("assignment document object keys are assignment-scoped and content-addressed", () => {
   assert.equal(
     buildAssignmentDocumentObjectKey({
+      organizationId: "10000000-0000-4000-8000-000000000001",
       accountId: "26272500060150000",
       assignmentFileId: 91,
       checksumSha256: "A".repeat(64),
       fileName: "Purchase Contract / Final.pdf",
     }),
-    `organizations/unassigned/custom-appraisal/accounts/26272500060150000/assignment-files/91/documents/${"a".repeat(64)}/Purchase-Contract-Final.pdf`,
+    `organizations/10000000-0000-4000-8000-000000000001/custom-appraisal/accounts/26272500060150000/assignment-files/91/documents/${"a".repeat(64)}/Purchase-Contract-Final.pdf`,
   );
 });
 

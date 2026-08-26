@@ -127,6 +127,19 @@ test("reviewers are read-only while organization and HomeNode administrators ret
   )).id, WORKFILE_ID);
 });
 
+test("office assistants and read-only users can inspect organization UAD files but cannot edit them", async () => {
+  const anotherAssignee = pool({ assigned_appraiser_user_id: OTHER_USER_ID });
+  for (const role of ["office_assistant", "read_only"]) {
+    const scope = buildUadAccessScope(auth(role));
+    assert.deepEqual(scope.organizationWideReadIds, [ORGANIZATION_ID]);
+    assert.equal((await authorizeUadWorkfileAccess(anotherAssignee, auth(role), WORKFILE_ID)).id, WORKFILE_ID);
+    await assert.rejects(
+      () => authorizeUadWorkfileAccess(anotherAssignee, auth(role), WORKFILE_ID, { write: true }),
+      /uad_workfile_access_denied/,
+    );
+  }
+});
+
 test("legacy organization-less workfiles fail closed in authenticated mode", async () => {
   await assert.rejects(
     () => authorizeUadWorkfileAccess(pool({ organization_id: null }), auth(), WORKFILE_ID),

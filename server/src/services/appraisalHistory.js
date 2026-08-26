@@ -469,7 +469,7 @@ export function summarizeAppraisalHistoryRow(row) {
   };
 }
 
-export async function listPreviousAppraisalFiles(pool, accountIdValue) {
+export async function listPreviousAppraisalFiles(pool, accountIdValue, accessScope = null) {
   const accountId = String(accountIdValue || "").trim();
   if (!accountId || accountId.length > 100) throw new Error("invalid_account_id");
   const { rows } = await pool.query(
@@ -524,8 +524,35 @@ export async function listPreviousAppraisalFiles(pool, accountIdValue) {
        ) sketch_summary ON true
       WHERE report_file.account_id = $1
         AND report_file.workflow_type IN ('custom_appraisal', 'uad_3_6')
+        AND (
+          $2::uuid[] IS NULL
+          OR $6::boolean = true
+          OR (
+            report_file.organization_id = ANY($2::uuid[])
+            AND (
+              (report_file.workflow_type = 'custom_appraisal' AND (
+                report_file.organization_id = ANY($3::uuid[])
+                OR custom_assignment.assigned_appraiser_user_id = $5::uuid
+                OR custom_assignment.supervisory_appraiser_user_id = $5::uuid
+              ))
+              OR
+              (report_file.workflow_type = 'uad_3_6' AND (
+                report_file.organization_id = ANY($4::uuid[])
+                OR uad_workfile.assigned_appraiser_user_id = $5::uuid
+                OR uad_workfile.supervisory_appraiser_user_id = $5::uuid
+              ))
+            )
+          )
+        )
       ORDER BY report_file.updated_at DESC, report_file.created_at DESC, report_file.id`,
-    [accountId],
+    [
+      accountId,
+      accessScope?.organizationIds || null,
+      accessScope?.customOrganizationWideReadIds || [],
+      accessScope?.uadOrganizationWideReadIds || [],
+      accessScope?.userId || null,
+      Boolean(accessScope?.platformAdministrator),
+    ],
   );
   const currentRows = [];
   for (const row of rows) {

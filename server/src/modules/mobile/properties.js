@@ -74,7 +74,6 @@ export async function searchMobileProperties(pool, auth, { query: value, limit: 
        SELECT report_file.*
         FROM app.report_files report_file
        WHERE report_file.organization_id = ANY($3::uuid[])
-           OR (report_file.organization_id IS NULL AND report_file.workflow_type = 'custom_appraisal')
      ), matching_accounts AS (
        SELECT account.account_id, account.address, account.city, account.postal_code,
               account.county, account.neighborhood_code, account.subdivision,

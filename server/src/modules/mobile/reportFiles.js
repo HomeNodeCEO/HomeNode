@@ -96,10 +96,7 @@ export async function listReportFiles(pool, auth, {
        JOIN core.accounts account ON account.account_id = report_file.account_id
       WHERE report_file.account_id = $1
         AND ($2::text IS NULL OR report_file.workflow_type = $2)
-        AND (
-          report_file.organization_id = ANY($3::uuid[])
-          OR (report_file.organization_id IS NULL AND report_file.workflow_type = 'custom_appraisal')
-        )
+        AND report_file.organization_id = ANY($3::uuid[])
       ORDER BY report_file.is_current DESC, report_file.updated_at DESC, report_file.id`,
     [accountId, workflowType, organizationIds, boundedRecentDays],
   );
@@ -132,18 +129,27 @@ async function insertCanonicalTarget(client, {
       const source = await client.query(
         `SELECT assignment_details
            FROM app.assignment_files
-          WHERE id = $1 AND account_id = $2`,
-        [inheritedFromFileId, accountId],
+          WHERE id = $1 AND account_id = $2 AND organization_id = $3`,
+        [inheritedFromFileId, accountId, organizationId],
       );
       if (!source.rows.length) throw new Error("previous_report_file_not_found");
       assignmentDetails = source.rows[0].assignment_details || {};
     }
     const { rows } = await client.query(
       `INSERT INTO app.assignment_files (
-         account_id, file_number, assignment_details, inherited_from_file_id, reviewer
-       ) VALUES ($1, $2, $3::jsonb, $4, $5)
+         account_id, file_number, assignment_details, inherited_from_file_id, reviewer,
+         organization_id, assigned_appraiser_user_id, created_by_user_id, updated_by_user_id
+       ) VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $7, $7)
        RETURNING id`,
-      [accountId, fileNumber, JSON.stringify(assignmentDetails), inheritedFromFileId, "HomeNode mobile"],
+      [
+        accountId,
+        fileNumber,
+        JSON.stringify(assignmentDetails),
+        inheritedFromFileId,
+        "HomeNode mobile",
+        organizationId,
+        userId,
+      ],
     );
     await client.query(
       `INSERT INTO app.assignment_file_history (
@@ -221,7 +227,7 @@ export async function createReportFile(pool, auth, input = {}) {
     if (!account.rows.length) throw new Error("account_not_found");
     const previousResult = await client.query(
       `SELECT * FROM app.report_files
-        WHERE (organization_id = $1 OR (organization_id IS NULL AND workflow_type = 'custom_appraisal'))
+        WHERE organization_id = $1
           AND account_id = $2 AND workflow_type = $3
           AND ($4::uuid IS NULL OR id = $4)
         ORDER BY (organization_id = $1) DESC, is_current DESC, updated_at DESC, id

@@ -1660,12 +1660,14 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
          ORDER BY f.created_at DESC, f.id DESC`,
         [canonicalId],
       ),
-      pool.query(
-        `SELECT attribute_value
-         FROM app.property_attribute_manual_values
-         WHERE account_id = $1 AND attribute_key = 'report.assignment_details'`,
-        [canonicalId],
-      ),
+      applicationAuthenticationRequired && req.mobileAuth
+        ? Promise.resolve({ rows: [] })
+        : pool.query(
+          `SELECT attribute_value
+           FROM app.property_attribute_manual_values
+           WHERE account_id = $1 AND attribute_key = 'report.assignment_details'`,
+          [canonicalId],
+        ),
     ]);
     const rows = applicationAuthenticationRequired && req.mobileAuth
       ? queriedRows.filter((row) => decideAssignmentAccess(req.mobileAuth, row, "read"))
@@ -1761,7 +1763,9 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
       account_id: canonicalId,
       files,
       latest_file: files[0] || null,
-      legacy_assignment_details: legacyResult.rows[0]?.attribute_value || null,
+      legacy_assignment_details: applicationAuthenticationRequired && req.mobileAuth
+        ? null
+        : legacyResult.rows[0]?.attribute_value || null,
     });
   } catch (error) {
     console.error("assignment file list failed", error);
@@ -2185,7 +2189,7 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
         if (sourceFile) inheritedFromFileId = Number(sourceFile.id);
         assignmentDetails = sourceFile?.assignment_details;
       }
-      if (assignmentDetails === undefined) {
+      if (assignmentDetails === undefined && (!applicationAuthenticationRequired || !req.mobileAuth)) {
         const legacyResult = await client.query(
           `SELECT attribute_value
            FROM app.property_attribute_manual_values
@@ -2194,6 +2198,7 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
         );
         assignmentDetails = legacyResult.rows[0]?.attribute_value || {};
       }
+      if (assignmentDetails === undefined) assignmentDetails = {};
     }
     validateReportManualSection("report.assignment_details", assignmentDetails);
 
@@ -2271,13 +2276,15 @@ app.post("/api/accounts/:id/assignment-files", async (req, res) => {
        ) VALUES ($1,$2,$3,$4::jsonb,$5,1)`,
       [assignmentFileId, canonicalId, fileNumber, JSON.stringify(assignmentDetails), reviewer],
     );
-    await mirrorLatestAssignmentDetails(
-      client,
-      canonicalId,
-      assignmentDetails,
-      reviewer,
-      fileNumber,
-    );
+    if (!applicationAuthenticationRequired || !req.mobileAuth) {
+      await mirrorLatestAssignmentDetails(
+        client,
+        canonicalId,
+        assignmentDetails,
+        reviewer,
+        fileNumber,
+      );
+    }
     const { rows } = await client.query(
       `${ASSIGNMENT_FILE_SELECT} WHERE f.id = $1`,
       [assignmentFileId],

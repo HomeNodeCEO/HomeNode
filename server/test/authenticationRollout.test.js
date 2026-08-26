@@ -44,6 +44,8 @@ test("desktop latest-file lookups remain organization scoped after authenticatio
   assert.match(server, /AND \(\$2::uuid IS NULL OR organization_id = \$2\)/);
   assert.match(propertyTax, /report_file\.organization_id = ANY\(\$3::uuid\[\]\)/);
   assert.match(server, /\{ organizationIds \}/);
+  assert.match(server, /legacy_assignment_details: applicationAuthenticationRequired && req\.mobileAuth/);
+  assert.match(server, /if \(!applicationAuthenticationRequired \|\| !req\.mobileAuth\) \{\s+await mirrorLatestAssignmentDetails/);
 });
 
 test("previous-appraisal history, completion, and replication enforce canonical ownership", () => {

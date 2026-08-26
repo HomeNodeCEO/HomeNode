@@ -19,6 +19,7 @@ function response(row, extras = {}) {
     report_file_id: row.report_file_id,
     tax_protest_file_id: row.tax_protest_file_id,
     organization_id: row.organization_id,
+    assigned_appraiser_user_id: row.assigned_appraiser_user_id || null,
     account_id: row.account_id,
     file_number: row.file_number,
     previous_file_id: row.previous_file_id || null,
@@ -40,6 +41,7 @@ async function selectFile(queryable, accountId, fileId = null, { lock = false } 
             report_file.is_current, report_file.organization_id,
             protest.id AS tax_protest_file_id, protest.account_id,
             protest.file_number, protest.previous_file_id, protest.workfile_data,
+            protest.assigned_appraiser_user_id,
             protest.status, protest.revision, protest.completed_at,
             protest.created_at, protest.updated_at
        FROM app.report_files report_file

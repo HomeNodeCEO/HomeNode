@@ -1967,6 +1967,14 @@ app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
     await Promise.all([accountQualityReady, propertyEnrichmentReady]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
     const file = await getDesktopPropertyTaxFile(pool, canonicalId, req.query.file_id || null);
+    if (
+      applicationAuthenticationRequired
+      && req.mobileAuth
+      && file
+      && !decideAssignmentAccess(req.mobileAuth, file, "read")
+    ) {
+      return res.status(403).json({ error: "property_tax_protest_access_denied" });
+    }
     return res.json({ account_id: canonicalId, file });
   } catch (error) {
     if (String(error?.message || "").startsWith("invalid_")) {
@@ -1987,6 +1995,16 @@ app.patch("/api/accounts/:id/property-tax-protest/:fileId", async (req, res) => 
   try {
     await Promise.all([accountQualityReady, propertyEnrichmentReady]);
     const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const existingFile = await getDesktopPropertyTaxFile(pool, canonicalId, req.params.fileId);
+    if (
+      applicationAuthenticationRequired
+      && req.mobileAuth
+      && (!existingFile || !decideAssignmentAccess(req.mobileAuth, existingFile, "write"))
+    ) {
+      return res.status(existingFile ? 403 : 404).json({
+        error: existingFile ? "property_tax_protest_access_denied" : "property_tax_protest_file_not_found",
+      });
+    }
     const file = await saveDesktopPropertyTaxFile(
       pool,
       canonicalId,

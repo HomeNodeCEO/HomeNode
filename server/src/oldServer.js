@@ -396,6 +396,22 @@ app.get("/api/auth/me", (req, res) => {
   return res.json({ ok: true, session: buildApplicationSession(req.mobileAuth) });
 });
 
+// UAD and mobile are mounted above with their own enforcement. Once unified
+// authentication is activated, fail closed for every remaining legacy API
+// route instead of depending on each historical handler to remember a guard.
+// The editor key is retained only as the documented temporary migration path.
+app.use("/api", (req, res, next) => {
+  if (!applicationAuthenticationRequired || req.mobileAuth) return next();
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (configuredEditorKey
+      && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return next();
+  }
+  return res.set("cache-control", "no-store")
+    .status(401)
+    .json({ error: "authentication_required" });
+});
+
 const trestleClient = new TrestleClient();
 
 // Ensure a simple signups table exists (no external migrations required)

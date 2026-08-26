@@ -98,6 +98,9 @@ legacy files. Previous Appraisal Files, completion snapshots, photos, and
 documents are additionally checked against the canonical assignment and
 assignee. Legacy property-level documents that are not attached to an owned
 assignment fail closed and appear in the rollout audit for manual disposition.
+When mandatory authentication is activated, one fail-closed gate also covers
+the remaining legacy property, search, enrichment, and report API surface so a
+missed handler-specific guard cannot expose application data.
 
 ## Activation stage
 

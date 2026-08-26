@@ -103,3 +103,15 @@ test("rollout audit covers identity, ownership, and canonical registry consisten
     "activation_ready",
   ]) assert.match(source, new RegExp(expected));
 });
+
+test("mandatory unified authentication fails closed across the legacy API surface", () => {
+  const server = read("../src/oldServer.js");
+  const authMe = server.indexOf('app.get("/api/auth/me"');
+  const legacyGate = server.indexOf('app.use("/api", (req, res, next) =>', authMe);
+  const accountRead = server.indexOf('app.get("/api/accounts/:id"');
+  assert.ok(authMe >= 0 && legacyGate > authMe && accountRead > legacyGate);
+  assert.match(server.slice(legacyGate, accountRead), /applicationAuthenticationRequired/);
+  assert.match(server.slice(legacyGate, accountRead), /req\.mobileAuth/);
+  assert.match(server.slice(legacyGate, accountRead), /x-homenode-editor-key/);
+  assert.match(server.slice(legacyGate, accountRead), /authentication_required/);
+});

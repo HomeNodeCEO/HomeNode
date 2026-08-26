@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
 import * as api from '@/lib/api';
+import NumericField from '@/components/NumericField';
+import { loadAppraisalFileContext, useAppraisalFileRequest } from '@/hooks/useAppraisalFileContext';
 import { requestEditorCredential } from '@/lib/editorCredential';
 import {
   calculateIncomeApproach,
@@ -41,42 +42,8 @@ function initialDraft(): IncomeApproachDraft {
   });
 }
 
-function NumericField({ label, value, onChange, step = '1', prefix, suffix, readOnly = false }: {
-  label: string;
-  value: number | null | undefined;
-  onChange?: (value: number | null) => void;
-  step?: string;
-  prefix?: string;
-  suffix?: string;
-  readOnly?: boolean;
-}) {
-  return (
-    <label className="grid gap-1 text-sm text-slate-700">
-      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      <div className="flex rounded-md border border-slate-300 bg-white focus-within:border-slate-900">
-        {prefix ? <span className="px-3 py-2 text-slate-500">{prefix}</span> : null}
-        <input
-          type="number"
-          min="0"
-          step={step}
-          readOnly={readOnly}
-          className={`min-w-0 flex-1 rounded-md px-3 py-2 outline-none ${readOnly ? 'bg-slate-100 font-semibold' : 'bg-white'}`}
-          value={value ?? ''}
-          onChange={(event) => onChange?.(event.target.value === '' ? null : Number(event.target.value))}
-        />
-        {suffix ? <span className="px-3 py-2 text-slate-500">{suffix}</span> : null}
-      </div>
-    </label>
-  );
-}
-
 export default function IncomeApproach() {
-  const location = useLocation();
-  const propertyId = useMemo(() => (new URLSearchParams(location.search).get('propertyId') || '').trim(), [location.search]);
-  const requestedFileId = useMemo(() => {
-    const parsed = Number(new URLSearchParams(location.search).get('assignmentFileId'));
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [location.search]);
+  const { propertyId, requestedFileId } = useAppraisalFileRequest();
   const [detail, setDetail] = useState<api.AccountDetail | null>(null);
   const [assignmentFile, setAssignmentFile] = useState<api.AppraisalAssignmentFile | null>(null);
   const [revision, setRevision] = useState(0);
@@ -92,21 +59,16 @@ export default function IncomeApproach() {
       setLoading(false);
       return () => { cancelled = true; };
     }
-    void Promise.all([api.getAccount(propertyId), api.getAssignmentFiles(propertyId)])
-      .then(async ([property, files]) => {
+    void loadAppraisalFileContext(propertyId, requestedFileId)
+      .then(({ property, assignmentFile: selected, workfile }) => {
         if (cancelled) return;
-        const selected = requestedFileId
-          ? files.files.find((file) => file.id === requestedFileId) || null
-          : files.latest_file;
         setDetail(property);
         setAssignmentFile(selected);
         if (!selected) {
           setDraft(initialDraft());
           return;
         }
-        const result = await api.getCustomAppraisalWorkfile(propertyId, selected.id);
-        if (cancelled) return;
-        const section = result.workfile.sections.income_approach;
+        const section = workfile?.sections.income_approach;
         setRevision(section?.revision || 0);
         setDraft(section?.value
           ? calculateIncomeApproach(section.value as Partial<IncomeApproachDraft>)

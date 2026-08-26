@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
 import * as api from '@/lib/api';
+import NumericField from '@/components/NumericField';
+import { loadAppraisalFileContext, useAppraisalFileRequest } from '@/hooks/useAppraisalFileContext';
 import { requestEditorCredential } from '@/lib/editorCredential';
 import {
   calculateCostApproach,
@@ -11,7 +12,13 @@ import {
 } from '@/lib/costApproach';
 
 const MONEY = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-const NUMBER = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+
+type CadAdditionalImprovement = {
+  improvement_type?: unknown;
+  description?: unknown;
+  area_sqft?: unknown;
+  area?: unknown;
+};
 
 function money(value: unknown) {
   const parsed = Number(value);
@@ -23,10 +30,13 @@ function initialDraft(detail: api.AccountDetail): CostApproachDraft {
   const currentYear = new Date().getFullYear();
   const effectiveYear = Number(improvement.effective_year_built || improvement.year_built || 0);
   const effectiveAge = Number(improvement.actual_age) || (effectiveYear > 0 ? Math.max(0, currentYear - effectiveYear) : null);
-  const rawAdditional = Array.isArray((detail as any).additional_improvements)
-    ? (detail as any).additional_improvements
+  const additionalImprovements = (detail as api.AccountDetail & {
+    additional_improvements?: CadAdditionalImprovement[];
+  }).additional_improvements;
+  const rawAdditional = Array.isArray(additionalImprovements)
+    ? additionalImprovements
     : [];
-  const otherImprovements: CostApproachLine[] = rawAdditional.slice(0, 12).map((row: any, index: number) => ({
+  const otherImprovements: CostApproachLine[] = rawAdditional.slice(0, 12).map((row, index) => ({
     id: `cad-improvement-${index + 1}`,
     description: String(row?.improvement_type || row?.description || `Additional improvement ${index + 1}`),
     quantity: Number(row?.area_sqft || row?.area || 1) || 1,
@@ -45,40 +55,8 @@ function initialDraft(detail: api.AccountDetail): CostApproachDraft {
   });
 }
 
-function NumericField({ label, value, onChange, step = '1', prefix, readOnly = false }: {
-  label: string;
-  value: number | null | undefined;
-  onChange?: (value: number | null) => void;
-  step?: string;
-  prefix?: string;
-  readOnly?: boolean;
-}) {
-  return (
-    <label className="grid gap-1 text-sm text-slate-700">
-      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      <div className="flex rounded-md border border-slate-300 bg-white focus-within:border-slate-900">
-        {prefix ? <span className="px-3 py-2 text-slate-500">{prefix}</span> : null}
-        <input
-          type="number"
-          min="0"
-          step={step}
-          readOnly={readOnly}
-          className={`min-w-0 flex-1 rounded-md px-3 py-2 outline-none ${readOnly ? 'bg-slate-100 font-semibold' : 'bg-white'}`}
-          value={value ?? ''}
-          onChange={(event) => onChange?.(event.target.value === '' ? null : Number(event.target.value))}
-        />
-      </div>
-    </label>
-  );
-}
-
 export default function CostApproach() {
-  const location = useLocation();
-  const propertyId = useMemo(() => (new URLSearchParams(location.search).get('propertyId') || '').trim(), [location.search]);
-  const requestedFileId = useMemo(() => {
-    const parsed = Number(new URLSearchParams(location.search).get('assignmentFileId'));
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [location.search]);
+  const { propertyId, requestedFileId } = useAppraisalFileRequest();
   const [detail, setDetail] = useState<api.AccountDetail | null>(null);
   const [assignmentFile, setAssignmentFile] = useState<api.AppraisalAssignmentFile | null>(null);
   const [revision, setRevision] = useState(0);
@@ -94,21 +72,16 @@ export default function CostApproach() {
       setLoading(false);
       return () => { cancelled = true; };
     }
-    void Promise.all([api.getAccount(propertyId), api.getAssignmentFiles(propertyId)])
-      .then(async ([property, files]) => {
+    void loadAppraisalFileContext(propertyId, requestedFileId)
+      .then(({ property, assignmentFile: selected, workfile }) => {
         if (cancelled) return;
-        const selected = requestedFileId
-          ? files.files.find((file) => file.id === requestedFileId) || null
-          : files.latest_file;
         setDetail(property);
         setAssignmentFile(selected);
         if (!selected) {
           setDraft(initialDraft(property));
           return;
         }
-        const result = await api.getCustomAppraisalWorkfile(propertyId, selected.id);
-        if (cancelled) return;
-        const section = result.workfile.sections.cost_approach;
+        const section = workfile?.sections.cost_approach;
         setRevision(section?.revision || 0);
         setDraft(section?.value
           ? calculateCostApproach(section.value as Partial<CostApproachDraft>)

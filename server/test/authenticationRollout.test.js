@@ -80,6 +80,8 @@ test("custom appraisal signatures are identity-bound, authenticated, and append-
   assert.match(workfiles, /custom_appraisal_signer_not_assigned/);
   assert.match(workfiles, /createHmac\("sha256", signingSecret\)/);
   assert.match(workfiles, /signature_event_id/);
+  assert.match(workfiles, /verifyCustomAppraisalSignedSnapshot/);
+  assert.match(workfiles, /custom_appraisal_signed_snapshot_integrity_failed/);
   assert.match(migration, /BEFORE UPDATE OR DELETE/);
   assert.match(migration, /custom_appraisal_signed_snapshot_append_only/);
 });

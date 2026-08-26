@@ -3,12 +3,14 @@ import test from "node:test";
 
 import {
   canonicalCustomAppraisalFileName,
+  customAppraisalSnapshotChecksum,
   customAppraisalSignatureHmac,
   normalizeCustomAppraisalSaveReason,
   normalizeCustomAppraisalSectionKey,
   normalizeCustomAppraisalSectionRevision,
   normalizeCustomAppraisalSectionValue,
   normalizeCustomAppraisalWarningCodes,
+  verifyCustomAppraisalSignedSnapshot,
 } from "../src/services/customAppraisalWorkfiles.js";
 
 test("builds stable unique Custom Appraisal workfile names", () => {
@@ -83,4 +85,38 @@ test("authenticates a signed snapshot with a server-held deterministic HMAC", ()
     () => customAppraisalSignatureHmac("too-short", input),
     /custom_appraisal_signing_secret_not_configured/,
   );
+});
+
+test("verifies HMAC-protected signed snapshots and rejects database tampering", () => {
+  const signingSecret = "v".repeat(32);
+  const snapshot = { z: 3, nested: { y: 2, a: 1 } };
+  assert.equal(
+    customAppraisalSnapshotChecksum(snapshot),
+    customAppraisalSnapshotChecksum({ nested: { a: 1, y: 2 }, z: 3 }),
+  );
+  const row = {
+    snapshot,
+    checksum_sha256: customAppraisalSnapshotChecksum(snapshot),
+    signature_event_id: "10000000-0000-4000-8000-000000000001",
+    organization_id: "20000000-0000-4000-8000-000000000001",
+    signed_by_user_id: "30000000-0000-4000-8000-000000000001",
+    signed_at: new Date("2026-08-26T12:00:00.000Z"),
+  };
+  row.signature_hmac_sha256 = customAppraisalSignatureHmac(signingSecret, {
+    signatureEventId: row.signature_event_id,
+    organizationId: row.organization_id,
+    signerUserId: row.signed_by_user_id,
+    signedAt: row.signed_at,
+    snapshotChecksumSha256: row.checksum_sha256,
+  });
+  assert.equal(verifyCustomAppraisalSignedSnapshot(row, signingSecret), true);
+  assert.throws(
+    () => verifyCustomAppraisalSignedSnapshot({ ...row, snapshot: { ...snapshot, z: 4 } }, signingSecret),
+    /custom_appraisal_signed_snapshot_integrity_failed/,
+  );
+  assert.throws(
+    () => verifyCustomAppraisalSignedSnapshot({ ...row, signature_hmac_sha256: "0".repeat(64) }, signingSecret),
+    /custom_appraisal_signed_snapshot_integrity_failed/,
+  );
+  assert.equal(verifyCustomAppraisalSignedSnapshot({ snapshot: { legacy: true } }, null), true);
 });

@@ -123,7 +123,9 @@ When enforcement is active, signing cannot use the shared editor key. The
 server derives the signer from the authenticated assignment, records an
 immutable signature event with organization/user/request attribution, and
 authenticates the snapshot checksum with `APP_SIGNING_SECRET`. Signed Custom
-Appraisal snapshots are append-only at the database trigger layer.
+Appraisal snapshots are append-only at the database trigger layer. HMAC-backed
+snapshots are re-verified before JSON download or PDF rendering and fail closed
+if either the stored snapshot or its authentication value has changed.
 
 The shared editor key remains a temporary migration path. Retire it only after
 all expected users can log in and access the correct organization files.

@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import {
   customAppraisalReportReadiness,
@@ -67,6 +67,18 @@ export function normalizeCustomAppraisalWarningCodes(value) {
   return [...new Set(codes)];
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableJson(value[key])]));
+  }
+  return value;
+}
+
+export function customAppraisalSnapshotChecksum(snapshot) {
+  return createHash("sha256").update(JSON.stringify(stableJson(snapshot))).digest("hex");
+}
+
 export function customAppraisalSignatureHmac(signingSecretValue, input) {
   const signingSecret = String(signingSecretValue || "");
   if (signingSecret.length < 32) throw new Error("custom_appraisal_signing_secret_not_configured");
@@ -77,6 +89,27 @@ export function customAppraisalSignatureHmac(signingSecretValue, input) {
     signed_at: input.signedAt,
     snapshot_checksum_sha256: input.snapshotChecksumSha256,
   })).digest("hex");
+}
+
+export function verifyCustomAppraisalSignedSnapshot(row, signingSecretValue) {
+  if (!row?.signature_hmac_sha256) return true;
+  const snapshotChecksum = customAppraisalSnapshotChecksum(row.snapshot);
+  if (snapshotChecksum !== row.checksum_sha256) {
+    throw new Error("custom_appraisal_signed_snapshot_integrity_failed");
+  }
+  const expected = customAppraisalSignatureHmac(signingSecretValue, {
+    signatureEventId: row.signature_event_id,
+    organizationId: row.organization_id,
+    signerUserId: row.signed_by_user_id,
+    signedAt: row.signed_at,
+    snapshotChecksumSha256: row.checksum_sha256,
+  });
+  const actual = String(row.signature_hmac_sha256 || "");
+  if (!/^[a-f0-9]{64}$/.test(actual)
+      || !timingSafeEqual(Buffer.from(actual, "hex"), Buffer.from(expected, "hex"))) {
+    throw new Error("custom_appraisal_signed_snapshot_integrity_failed");
+  }
+  return true;
 }
 
 export function canonicalCustomAppraisalFileName(fileNumber, assignmentFileId) {
@@ -281,7 +314,9 @@ export async function getCustomAppraisalWorkfile(pool, { accountId, assignmentFi
       [assignmentFileId],
     ),
     pool.query(
-      `SELECT id, checksum_sha256, signed_at, signed_by
+      `SELECT id, checksum_sha256, signed_at, signed_by,
+              organization_id, signed_by_user_id, signature_event_id,
+              signature_hmac_sha256
          FROM app.custom_appraisal_signed_snapshots
         WHERE assignment_file_id = $1`,
       [assignmentFileId],
@@ -658,7 +693,7 @@ export async function signCustomAppraisalWorkfile(pool, {
       acknowledged_by: signedBy,
     };
     const serialized = JSON.stringify(snapshot);
-    const checksum = createHash("sha256").update(serialized).digest("hex");
+    const checksum = customAppraisalSnapshotChecksum(snapshot);
     const signatureHmac = signingSecret
       ? customAppraisalSignatureHmac(signingSecret, {
         signatureEventId,
@@ -731,11 +766,14 @@ export async function signCustomAppraisalWorkfile(pool, {
 export async function getCustomAppraisalWorkfileDownload(pool, {
   accountId,
   assignmentFileId,
+  signingSecret = null,
 }) {
   await ensureCustomAppraisalWorkfileSchema(pool);
   const signedResult = await pool.query(
     `SELECT snapshot.snapshot, snapshot.canonical_file_name,
-            snapshot.checksum_sha256, snapshot.signed_at
+            snapshot.checksum_sha256, snapshot.signed_at,
+            snapshot.organization_id, snapshot.signed_by_user_id,
+            snapshot.signature_event_id, snapshot.signature_hmac_sha256
        FROM app.custom_appraisal_signed_snapshots snapshot
        JOIN app.assignment_files assignment_file
          ON assignment_file.id = snapshot.assignment_file_id
@@ -744,6 +782,7 @@ export async function getCustomAppraisalWorkfileDownload(pool, {
     [assignmentFileId, accountId],
   );
   if (signedResult.rows.length) {
+    verifyCustomAppraisalSignedSnapshot(signedResult.rows[0], signingSecret);
     return {
       snapshot: signedResult.rows[0].snapshot,
       canonical_file_name: signedResult.rows[0].canonical_file_name,

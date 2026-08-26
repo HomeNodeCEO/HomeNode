@@ -2506,6 +2506,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/download", async (r
     const download = await getCustomAppraisalWorkfileDownload(pool, {
       accountId: canonicalId,
       assignmentFileId,
+      signingSecret: process.env.APP_SIGNING_SECRET,
     });
     const fileName = String(download.canonical_file_name).replace(/[\r\n"]/g, "_");
     const serialized = `${JSON.stringify(download.snapshot, null, 2)}\n`;
@@ -2521,6 +2522,9 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/download", async (r
   } catch (error) {
     if (error?.message === "assignment_file_not_found") {
       return res.status(404).json({ error: error.message });
+    }
+    if (error?.message === "custom_appraisal_signing_secret_not_configured") {
+      return res.status(503).json({ error: error.message });
     }
     console.error("custom appraisal workfile download failed", error);
     return res.status(500).json({ error: "custom_appraisal_workfile_download_failed" });
@@ -2542,6 +2546,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/report.pdf", async 
     const download = await getCustomAppraisalWorkfileDownload(pool, {
       accountId: canonicalId,
       assignmentFileId,
+      signingSecret: process.env.APP_SIGNING_SECRET,
     });
     const report = await getCustomAppraisalReportPdf(pool, {
       accountId: canonicalId,
@@ -2563,6 +2568,9 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/report.pdf", async 
   } catch (error) {
     if (error?.message === "assignment_file_not_found") {
       return res.status(404).json({ error: error.message });
+    }
+    if (error?.message === "custom_appraisal_signing_secret_not_configured") {
+      return res.status(503).json({ error: error.message });
     }
     console.error("custom appraisal report PDF failed", error);
     return res.status(500).json({ error: "custom_appraisal_report_pdf_failed" });

@@ -59,3 +59,13 @@ can create database roles and databases. It is not a superuser, cannot
 replicate, and cannot bypass row security. Runtime/migration credential
 separation therefore remains a high-priority infrastructure item; the audit
 must stay in report mode until that cutover is tested.
+
+The isolated UAD storage release passed CI and deployed successfully. A live
+write/read/checksum/delete probe then received HTTP 401 from R2, proving the
+existing credential is scoped away from the new production bucket. The
+`UAD_R2_BUCKET` binding was immediately removed and the service redeployed on
+the known-good shared-bucket fallback. Production health and UAD readiness
+returned HTTP 200 with all 41 migrations and no blockers after rollback. The
+dedicated bucket remains private and empty; isolation will be activated only
+after a credential authorized for that bucket is installed and the same probe
+passes. No Custom Appraisal document or shared mobile-photo binding changed.

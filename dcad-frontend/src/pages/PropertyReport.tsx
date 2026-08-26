@@ -13,14 +13,11 @@ import {
   createAssignmentFile,
   downloadCustomAppraisalReportPdf,
   downloadCustomAppraisalWorkfile,
-  analyzePropertyContext as runPropertyContextAnalysis,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
-  getPropertyContextAssessment,
   getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileReadiness,
   getAccountPhotos,
   getRelatedParcels,
-  savePropertyContextReview,
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
   updateAssignmentFile,
@@ -29,7 +26,6 @@ import {
   type AssignmentDocumentType,
   type AssignmentDetailsPayload,
   type PropertyComplexityAssessment,
-  type PropertyComplexityLevel,
   type ReportManualSectionKey,
   type RelatedParcelsResponse,
   makeUrl,
@@ -39,6 +35,8 @@ import {
   type MarketConditionsDraft,
 } from "@/lib/marketConditionsDraft";
 import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
+import { usePropertyContext } from "@/hooks/usePropertyContext";
+import PropertyContextSection from "@/components/PropertyContextSection";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
@@ -302,18 +300,6 @@ function AddressHero({
   const marketWorkfileRevisionRef = useRef(0);
   const marketWorkfileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [workfileStatusMessage, setWorkfileStatusMessage] = useState("");
-  const [propertyContext, setPropertyContext] = useState<PropertyComplexityAssessment | null>(
-    () => detail?.property_context || null,
-  );
-  const [propertyContextLoading, setPropertyContextLoading] = useState(false);
-  const [propertyContextSaving, setPropertyContextSaving] = useState(false);
-  const [propertyContextMessage, setPropertyContextMessage] = useState("");
-  const [propertyComplexityDraft, setPropertyComplexityDraft] = useState<PropertyComplexityLevel>(
-    () => detail?.property_context?.effective_complexity || "simple",
-  );
-  const [propertyComplexityNotes, setPropertyComplexityNotes] = useState(
-    () => detail?.property_context?.appraiser_notes || "",
-  );
   const hydrateAssignmentDraft = useCallback((value: AssignmentDetails) => {
     const next = assignmentDraftFromDetail(value);
     setAssignmentDraft((current) => {
@@ -339,6 +325,22 @@ function AddressHero({
       return { ...next, ...zipComparison, ...cityComparison };
     });
   }, []);
+  const {
+    propertyContext,
+    propertyContextLoading,
+    propertyContextSaving,
+    propertyContextMessage,
+    propertyComplexityDraft,
+    setPropertyComplexityDraft,
+    propertyComplexityNotes,
+    setPropertyComplexityNotes,
+    loadAssessment: loadPropertyContextAssessment,
+    analyzeCurrentPropertyContext: runPropertyContextAnalysis,
+    saveCurrentPropertyComplexity: savePropertyComplexityReview,
+  } = usePropertyContext({
+    accountId,
+    initialAssessment: detail?.property_context || null,
+  });
   const handleSelectedAssignmentFile = useCallback(async (
     selectedFile: AppraisalAssignmentFile,
     isCancelled: () => boolean,
@@ -373,18 +375,8 @@ function AddressHero({
         );
       }
     }
-    void getPropertyContextAssessment(accountId, selectedFile.id)
-      .then((assessment) => {
-        if (isCancelled() || !assessment) return;
-        setPropertyContext(assessment);
-        setPropertyComplexityDraft(assessment.effective_complexity);
-        setPropertyComplexityNotes(assessment.appraiser_notes || "");
-      })
-      .catch(() => {
-        // The core report remains usable; source and assessment notices
-        // are shown when the appraiser runs the local context analysis.
-      });
-  }, [accountId, hydrateAssignmentDraft]);
+    void loadPropertyContextAssessment(selectedFile.id, isCancelled);
+  }, [accountId, hydrateAssignmentDraft, loadPropertyContextAssessment]);
   const {
     assignmentFiles,
     setAssignmentFiles,
@@ -455,14 +447,6 @@ function AddressHero({
   useEffect(() => {
     if (photoIndex >= photos.length) setPhotoIndex(0);
   }, [photoIndex, photos.length]);
-
-  useEffect(() => {
-    const context = detail?.property_context || null;
-    setPropertyContext(context);
-    setPropertyComplexityDraft(context?.effective_complexity || "simple");
-    setPropertyComplexityNotes(context?.appraiser_notes || "");
-    setPropertyContextMessage("");
-  }, [accountId, detail?.property_context]);
 
   useEffect(() => {
     if (unemploymentHydrationAccount.current !== (accountId || "")) {
@@ -1213,64 +1197,16 @@ function AddressHero({
     await saveAssignmentDetails();
   };
 
-  const analyzeCurrentPropertyContext = async () => {
-    if (!accountId || propertyContextLoading) return;
-    setPropertyContextLoading(true);
-    setPropertyContextMessage("Analyzing locally stored property and neighborhood context...");
-    try {
-      const assessment = await runPropertyContextAnalysis(accountId, {
-        assignmentFileId: activeAssignmentFile?.id || null,
-        customGeometry:
-          assignmentDraft.neighborhood_boundary_geometry ||
-          customMarketStudy?.market.custom_geometry ||
-          null,
-        geography: assignmentDraft.neighborhood_location_type || null,
-      });
-      setPropertyContext(assessment);
-      setPropertyComplexityDraft(assessment.effective_complexity);
-      setPropertyComplexityNotes(assessment.appraiser_notes || "");
-      const stale = assessment.source_health.filter((source) => source.serving_stale_data);
-      const unavailable = assessment.source_health.filter((source) => !source.usable);
-      setPropertyContextMessage(
-        stale.length
-          ? "Analysis completed from the most recent locally stored data; one or more source synchronizations currently need attention."
-          : unavailable.length
-            ? "Core characteristics were analyzed. GIS factors will populate after the first county parcel and road synchronization."
-            : "Property context and complexity screening updated from local data.",
-      );
-    } catch (error) {
-      setPropertyContextMessage(
-        error instanceof Error ? error.message : "Property-context analysis could not be completed.",
-      );
-    } finally {
-      setPropertyContextLoading(false);
-    }
-  };
+  const analyzeCurrentPropertyContext = () => runPropertyContextAnalysis({
+    assignmentFileId: activeAssignmentFile?.id || null,
+    customGeometry: assignmentDraft.neighborhood_boundary_geometry ||
+      customMarketStudy?.market.custom_geometry || null,
+    geography: assignmentDraft.neighborhood_location_type || null,
+  });
 
-  const saveCurrentPropertyComplexity = async () => {
-    if (!accountId || !propertyContext || propertyContextSaving) return;
-    setPropertyContextSaving(true);
-    setPropertyContextMessage("");
-    try {
-      const assessment = await savePropertyContextReview(accountId, {
-        assignmentFileId: activeAssignmentFile?.id || null,
-        complexity: propertyComplexityDraft,
-        notes: propertyComplexityNotes,
-      });
-      setPropertyContext(assessment);
-      setPropertyContextMessage(
-        assessment.review_status === "overridden"
-          ? "Appraiser complexity override saved without changing the automated source evidence."
-          : "Automated complexity recommendation reviewed and confirmed.",
-      );
-    } catch (error) {
-      setPropertyContextMessage(
-        error instanceof Error ? error.message : "The complexity review could not be saved.",
-      );
-    } finally {
-      setPropertyContextSaving(false);
-    }
-  };
+  const saveCurrentPropertyComplexity = () => savePropertyComplexityReview({
+    assignmentFileId: activeAssignmentFile?.id || null,
+  });
 
   const startNewAssignmentFile = () => {
     setAssignmentDraft(assignmentDraftFromDetail());
@@ -2699,144 +2635,18 @@ function AddressHero({
               />
             ) : null}
 
-            <div className="mt-5 border-t border-slate-200 pt-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-sm font-semibold text-slate-800">
-                      Property Context &amp; Complexity
-                    </h3>
-                    {propertyContext ? (
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                        propertyContext.effective_complexity === "complex"
-                          ? "bg-red-100 text-red-800"
-                          : propertyContext.effective_complexity === "moderate"
-                            ? "bg-amber-100 text-amber-900"
-                            : "bg-emerald-100 text-emerald-800"
-                      }`}>
-                        {propertyContext.effective_complexity[0].toUpperCase() + propertyContext.effective_complexity.slice(1)}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p className="mt-1 max-w-3xl text-xs leading-5 text-slate-500">
-                    Appraisal screening based on GLA, age, site size, amenities, parcel configuration,
-                    nearby land uses, and road influences. The appraiser remains responsible for the final determination.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void analyzeCurrentPropertyContext()}
-                  disabled={propertyContextLoading}
-                  className="btn btn-sm normal-case rounded-lg border-slate-900 bg-slate-900 text-white hover:bg-black disabled:opacity-60"
-                >
-                  {propertyContextLoading ? "Analyzing..." : propertyContext ? "Refresh Context" : "Analyze Context"}
-                </button>
-              </div>
-
-              {propertyContext ? (
-                <div className="mt-4 space-y-4">
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                    <SummaryField
-                      label="Automatic Recommendation"
-                      value={`${propertyContext.automatic_complexity[0].toUpperCase()}${propertyContext.automatic_complexity.slice(1)} (${propertyContext.score}/100)`}
-                    />
-                    <SummaryField
-                      label="Confidence"
-                      value={`${propertyContext.confidence[0].toUpperCase()}${propertyContext.confidence.slice(1)}`}
-                    />
-                    <SummaryField
-                      label="Comparable Search Profile"
-                      value={propertyContext.recommended_search_profile
-                        .split("_")
-                        .map((part) => part[0].toUpperCase() + part.slice(1))
-                        .join(" - ")}
-                    />
-                    <SummaryField
-                      label="Peer Properties"
-                      value={`${propertyContext.peer_statistics.peer_count.toLocaleString()} analyzed`}
-                    />
-                  </div>
-
-                  {propertyContext.factors.length ? (
-                    <div className="grid gap-2 md:grid-cols-2">
-                      {propertyContext.factors.map((factor) => (
-                        <div
-                          key={factor.code}
-                          className={`rounded-lg border px-3 py-2 ${
-                            factor.severity === "high"
-                              ? "border-red-200 bg-red-50"
-                              : factor.severity === "moderate"
-                                ? "border-amber-200 bg-amber-50"
-                                : "border-slate-200 bg-slate-50"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-900">
-                            <span>{factor.label}</span>
-                            <span>+{factor.points}</span>
-                          </div>
-                          <p className="mt-1 text-xs leading-5 text-slate-700">{factor.detail}</p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-                      No measured characteristic or location factor currently raises the automatic complexity score.
-                    </div>
-                  )}
-
-                  {propertyContext.warnings.length ? (
-                    <details className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                      <summary className="cursor-pointer text-xs font-semibold text-amber-950">
-                        Data coverage and source notices ({propertyContext.warnings.length})
-                      </summary>
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-5 text-amber-950">
-                        {propertyContext.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                      </ul>
-                    </details>
-                  ) : null}
-
-                  <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[220px_minmax(0,1fr)_auto] lg:items-end">
-                    <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Appraiser Complexity
-                      <select
-                        value={propertyComplexityDraft}
-                        onChange={(event) => setPropertyComplexityDraft(event.target.value as PropertyComplexityLevel)}
-                        className="select select-bordered select-sm bg-white text-sm font-normal normal-case"
-                      >
-                        <option value="simple">Simple</option>
-                        <option value="moderate">Moderate</option>
-                        <option value="complex">Complex</option>
-                      </select>
-                    </label>
-                    <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Review Notes
-                      <input
-                        value={propertyComplexityNotes}
-                        onChange={(event) => setPropertyComplexityNotes(event.target.value)}
-                        placeholder="Optional support for confirmation or override"
-                        className="input input-bordered input-sm bg-white text-sm font-normal normal-case"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void saveCurrentPropertyComplexity()}
-                      disabled={propertyContextSaving}
-                      className="btn btn-sm normal-case rounded-lg border-slate-900 bg-slate-900 text-white hover:bg-black disabled:opacity-60"
-                    >
-                      {propertyContextSaving ? "Saving..." : "Save Complexity Review"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-                  Run the local context analysis to establish the assignment-complexity recommendation before selecting comparable sales.
-                </div>
-              )}
-
-              {propertyContextMessage ? (
-                <p className="mt-3 text-xs font-medium text-slate-700">{propertyContextMessage}</p>
-              ) : null}
-            </div>
+            <PropertyContextSection
+              context={propertyContext}
+              loading={propertyContextLoading}
+              saving={propertyContextSaving}
+              message={propertyContextMessage}
+              complexity={propertyComplexityDraft}
+              notes={propertyComplexityNotes}
+              onAnalyze={() => void analyzeCurrentPropertyContext()}
+              onComplexityChange={setPropertyComplexityDraft}
+              onNotesChange={setPropertyComplexityNotes}
+              onSave={() => void saveCurrentPropertyComplexity()}
+            />
 
             <div className="mt-5 border-t border-slate-200 pt-4">
               <div className="mb-4">

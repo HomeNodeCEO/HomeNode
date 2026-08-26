@@ -33,3 +33,8 @@ venv/
 /output/
 /tmp/
 .DS_Store
+
+# Local source snapshots and ad-hoc archive bundles do not belong in Git.
+*.bak
+*.zip
+backup/

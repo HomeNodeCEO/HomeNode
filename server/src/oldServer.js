@@ -190,7 +190,7 @@ import {
 } from "./modules/uad/uadArtifactExecution.js";
 import { startUadArtifactRecoveryMonitor } from "./modules/uad/uadArtifactRecovery.js";
 import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.js";
-import { createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
+import { createMobileAuthenticator, createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
 import {
   getAssignmentInspectionSketch,
@@ -216,6 +216,11 @@ import {
 } from "./security/httpSecurity.js";
 import { isLegacyAccountIdAllowed } from "./security/accountIdPolicy.js";
 import { createRedTeamIsolationConfiguration } from "./security/redTeamIsolation.js";
+import {
+  buildApplicationSession,
+  createOptionalApplicationAuthenticator,
+  hasApplicationPermission,
+} from "./security/applicationAccess.js";
 import {
   createResilientHttpServer,
   createRuntimeResilienceConfiguration,
@@ -339,6 +344,23 @@ app.use("/api/mobile", createMobileRouter({
   recentFileDays: Number(process.env.MOBILE_RECENT_FILE_DAYS || 30),
   security: httpSecurity,
 }));
+
+// UAD, Custom Appraisal, Property Tax Protest, and mobile all share the same
+// provisioned OIDC identity and organization membership model. The UAD/mobile
+// routers authenticate themselves above; this optional middleware attaches the
+// same identity to the remaining application routes whenever a bearer token is
+// present. Legacy editor-key access remains available during migration.
+const authenticateApplicationUser = createMobileAuthenticator({
+  pool,
+  verifier: mobileOidcVerifier,
+});
+app.use("/api", createOptionalApplicationAuthenticator(authenticateApplicationUser));
+
+app.get("/api/auth/me", (req, res) => {
+  res.set("cache-control", "no-store");
+  if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
+  return res.json({ ok: true, session: buildApplicationSession(req.mobileAuth) });
+});
 
 const trestleClient = new TrestleClient();
 
@@ -2495,6 +2517,12 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
 });
 
 function requireEditor(req, res) {
+  if (
+    hasApplicationPermission(req.mobileAuth, "custom_appraisal", "write")
+    || hasApplicationPermission(req.mobileAuth, "property_tax_protest", "write")
+  ) {
+    return true;
+  }
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
   if (!configuredEditorKey) {
     res.status(503).json({ error: "editor_not_configured" });

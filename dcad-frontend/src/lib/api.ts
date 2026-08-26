@@ -26,7 +26,14 @@ export async function fetchJSON<T = any>(input: string, init?: RequestInit & { t
   const timeout = setTimeout(() => controller.abort(), init?.timeoutMs ?? 25000);
 
   try {
-    const res = await fetch(input, { ...init, signal: controller.signal });
+    const headers = new Headers(init?.headers);
+    const accessToken = typeof window !== 'undefined'
+      ? await window.homenodeAuth?.getAccessToken?.()
+      : null;
+    if (typeof accessToken === 'string' && accessToken.trim() && !headers.has('authorization')) {
+      headers.set('authorization', `Bearer ${accessToken.trim()}`);
+    }
+    const res = await fetch(input, { ...init, headers, signal: controller.signal });
     const ct = res.headers.get('content-type') || '';
     const isJson = ct.includes('application/json');
 

@@ -17,7 +17,7 @@ object keys.
 | External database access | Inbound database networking permits all external IPv4 sources | High-priority hardening item; inventory every legitimate external client, then restrict the allowlist without cutting off operations |
 | Service health monitoring | Render health-check path is `/health` | Enabled during this audit |
 | Production deployment gate | Auto-deploy waits for GitHub CI checks to pass | Enabled during this audit |
-| Pre-deploy migration gate | No provider pre-deploy command is configured | Keep migrations in an explicit controlled release step until runtime and migration credentials are separated |
+| Pre-deploy migration gate | Render runs `npm run migrate:uad` before starting each production release | Enabled during this audit; the advisory-locked, checksummed runner is UAD-only and does not run Custom Appraisal, Property Tax, or mobile migrations |
 | R2 bucket isolation | The production web service currently points at `homenode-uad-staging` | High-priority isolation item; do not change in place until referenced objects are inventoried and a migration/read-fallback plan is tested |
 | R2 retention lock | Not changed during this audit | Correct until HomeNode approves a written retention and legal-hold schedule |
 
@@ -42,3 +42,19 @@ The database and R2 isolation findings do not invalidate the minute-level
 autosave implementation. They describe the remaining infrastructure work needed
 to preserve that recovery objective through a provider, credential, or operator
 failure rather than only an application-process failure.
+
+## Post-release evidence
+
+After the CI-approved release deployed, production reported all 41 ordered UAD
+migrations applied with no checksum mismatch and no readiness blocker. The UAD
+assurance graph passed every invariant with zero findings across two workfiles,
+three immutable revisions, eleven entities, and 34 canonical field values. The
+public `/health` and `/api/uad/readiness` endpoints both returned HTTP 200 after
+the migration.
+
+The privilege audit confirmed that the application still uses the provider
+owner credential: it owns and can create in all five application schemas and
+can create database roles and databases. It is not a superuser, cannot
+replicate, and cannot bypass row security. Runtime/migration credential
+separation therefore remains a high-priority infrastructure item; the audit
+must stay in report mode until that cutover is tested.

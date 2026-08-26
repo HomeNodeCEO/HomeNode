@@ -16,8 +16,6 @@ import {
   analyzePropertyContext as runPropertyContextAnalysis,
   getPropertyZoningEvidence,
   getZoningDocumentDescriptionSuggestion,
-  getCensusCityProfile,
-  getCensusZipProfile,
   getNeighborhoodProfile,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getPropertyContextAssessment,
@@ -25,7 +23,6 @@ import {
   getCustomAppraisalWorkfileReadiness,
   getAccountPhotos,
   getRelatedParcels,
-  lookupAccountCensusGeography,
   savePropertyContextReview,
   savePropertyZoningVerification,
   saveCustomAppraisalWorkfileSection,
@@ -100,6 +97,10 @@ import {
   cloneEditorValue,
 } from "@/lib/propertyReportAssignment";
 import { useAssignmentFiles } from "@/hooks/useAssignmentFiles";
+import {
+  useCensusProfile,
+  type CensusProfilesLoaded,
+} from "@/hooks/useCensusProfile";
 
 type DcadOwner = {
   owner_name?: string;
@@ -290,11 +291,6 @@ function AddressHero({
   const [assignmentDirty, setAssignmentDirty] = useState(false);
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
   const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
-  const [censusLookupLoading, setCensusLookupLoading] = useState(false);
-  const [censusLookupMessage, setCensusLookupMessage] = useState("");
-  const [unemploymentLookupLoading, setUnemploymentLookupLoading] = useState(false);
-  const [unemploymentLookupMessage, setUnemploymentLookupMessage] = useState("");
-  const [unemploymentAutoAttemptedSignature, setUnemploymentAutoAttemptedSignature] = useState("");
   const unemploymentLookupSucceeded = useRef(false);
   const unemploymentHydrationAccount = useRef("");
   const [neighborhoodProfileLoading, setNeighborhoodProfileLoading] = useState(false);
@@ -511,9 +507,6 @@ function AddressHero({
     setAssignmentSaveMessage("");
     setNeighborhoodProfileMessage("");
     neighborhoodProfileAttemptedSignature.current = "";
-    setCensusLookupMessage("");
-    setUnemploymentLookupMessage("");
-    setUnemploymentAutoAttemptedSignature("");
     marketWorkfileRevisionRef.current = 0;
     setWorkfileStatusMessage("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
@@ -567,6 +560,52 @@ function AddressHero({
   const censusZip = String(detail?.property_location?.postal_code || "")
     .replace(/\D/g, "")
     .slice(0, 5);
+  const handleCensusProfilesLoaded = useCallback(({
+    zipProfile,
+    cityProfile,
+  }: CensusProfilesLoaded) => {
+    unemploymentLookupSucceeded.current = true;
+    setAssignmentDraft((current) => ({
+      ...current,
+      ...(zipProfile ? {
+        neighborhood_unemployment_pct: zipProfile.unemployment_percent,
+        neighborhood_unemployment_zip: zipProfile.postal_code,
+        neighborhood_unemployment_source: zipProfile.source,
+        neighborhood_unemployment_dataset_year: zipProfile.dataset_year,
+        neighborhood_unemployment_variable: zipProfile.variable,
+      } : {}),
+      ...(cityProfile ? {
+        neighborhood_city_unemployment_pct: cityProfile.unemployment_percent,
+        neighborhood_city_unemployment_name:
+          cityProfile.geography_name || `${cityProfile.city}, ${cityProfile.state}`,
+        neighborhood_city_unemployment_source: cityProfile.source,
+        neighborhood_city_unemployment_dataset_year: cityProfile.dataset_year,
+        neighborhood_city_unemployment_variable: cityProfile.variable,
+      } : {}),
+    }));
+    setAssignmentDirty(true);
+  }, []);
+  const {
+    censusLookupLoading,
+    censusLookupMessage,
+    lookupCensusTractNow: runCensusTractLookup,
+    unemploymentLookupLoading,
+    unemploymentLookupMessage,
+    lookupUnemploymentComparison,
+  } = useCensusProfile({
+    accountId,
+    censusZip,
+    city,
+    state,
+    autoEnabled: neighborhoodSectionReady &&
+      !assignmentFilesLoading &&
+      assignmentFilesLoaded,
+    hasExistingZipProfile: hasValue(assignmentDraft.neighborhood_unemployment_pct),
+    hasExistingCityProfile: hasValue(assignmentDraft.neighborhood_city_unemployment_pct),
+    onProfilesLoaded: handleCensusProfilesLoaded,
+    onTractReload: onReload,
+    onCredentialRejected: forgetEditorCredential,
+  });
   const neighborhood = displayValue(detail?.property_location?.neighborhood);
   const subdivision = displayValue(detail?.property_location?.subdivision);
   const county = displayValue(detail?.property_location?.county);
@@ -907,32 +946,7 @@ function AddressHero({
     if (!accountId || censusLookupLoading) return;
     const editorKey = editorKeyForSave();
     if (!editorKey) return;
-    setCensusLookupLoading(true);
-    setCensusLookupMessage("");
-    try {
-      const response = await lookupAccountCensusGeography(accountId, editorKey);
-      const tract = response.census_geography?.tract_code;
-      setCensusLookupMessage(
-        response.census_geography?.status === "matched"
-          ? `Census tract ${formatCensusTract(tract)} added.`
-          : "The Census response needs review before it can be treated as a verified tract.",
-      );
-      await onReload();
-    } catch (error) {
-      const message = error instanceof Error
-        ? error.message
-        : "The Census tract could not be looked up.";
-      if (/401|invalid_editor_key/i.test(message)) {
-        forgetEditorCredential();
-      }
-      setCensusLookupMessage(
-        message === "census_lookup_input_missing"
-          ? "This property needs a usable address or coordinate before Census lookup."
-          : message,
-      );
-    } finally {
-      setCensusLookupLoading(false);
-    }
+    await runCensusTractLookup(editorKey);
   };
 
   const saveEditedSection = async (value: Record<string, unknown>) => {
@@ -1330,57 +1344,6 @@ function AddressHero({
     }
   };
 
-  const lookupUnemploymentComparison = useCallback(async () => {
-    if ((!censusZip && !city) || unemploymentLookupLoading) return;
-    const lookupSignature = `${censusZip}:${city}:${state}`;
-    setUnemploymentAutoAttemptedSignature(lookupSignature);
-    setUnemploymentLookupLoading(true);
-    setUnemploymentLookupMessage("");
-    const [zipResult, cityResult] = await Promise.allSettled([
-      censusZip ? getCensusZipProfile(censusZip) : Promise.reject(new Error("ZIP not reported")),
-      city && city !== "Not reported"
-        ? getCensusCityProfile(city, state)
-        : Promise.reject(new Error("City not reported")),
-    ]);
-    if (zipResult.status === "fulfilled" || cityResult.status === "fulfilled") {
-      unemploymentLookupSucceeded.current = true;
-      setAssignmentDraft((current) => ({
-        ...current,
-        ...(zipResult.status === "fulfilled" ? {
-          neighborhood_unemployment_pct: zipResult.value.unemployment_percent,
-          neighborhood_unemployment_zip: zipResult.value.postal_code,
-          neighborhood_unemployment_source: zipResult.value.source,
-          neighborhood_unemployment_dataset_year: zipResult.value.dataset_year,
-          neighborhood_unemployment_variable: zipResult.value.variable,
-        } : {}),
-        ...(cityResult.status === "fulfilled" ? {
-          neighborhood_city_unemployment_pct: cityResult.value.unemployment_percent,
-          neighborhood_city_unemployment_name:
-            cityResult.value.geography_name || `${cityResult.value.city}, ${cityResult.value.state}`,
-          neighborhood_city_unemployment_source: cityResult.value.source,
-          neighborhood_city_unemployment_dataset_year: cityResult.value.dataset_year,
-          neighborhood_city_unemployment_variable: cityResult.value.variable,
-        } : {}),
-      }));
-      setAssignmentDirty(true);
-    }
-    const failures = [zipResult, cityResult]
-      .filter((result): result is PromiseRejectedResult => result.status === "rejected")
-      .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
-    if (!failures.length) {
-      setUnemploymentLookupMessage(`Census unemployment updated for ZIP ${censusZip} and ${city}.`);
-    } else if (zipResult.status === "fulfilled" || cityResult.status === "fulfilled") {
-      setUnemploymentLookupMessage(`One Census geography updated; the other lookup needs review (${failures.join(", ")}).`);
-    } else {
-      const message = failures.join(", ") || "Census unemployment lookup failed.";
-      setUnemploymentLookupMessage(
-        /census_api_key_not_configured/i.test(message)
-          ? "A Census API key must be configured before automatic lookup can run; manual entry remains available."
-          : message,
-      );
-    }
-    setUnemploymentLookupLoading(false);
-  }, [censusZip, city, state, unemploymentLookupLoading]);
 
   useEffect(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
@@ -1455,31 +1418,6 @@ function AddressHero({
     }
   }, []);
 
-  useEffect(() => {
-    if (
-      !neighborhoodSectionReady ||
-      assignmentFilesLoading ||
-      !assignmentFilesLoaded ||
-      (!/^\d{5}$/.test(censusZip) && (!city || city === "Not reported")) ||
-      unemploymentAutoAttemptedSignature === `${censusZip}:${city}:${state}` ||
-      (
-        hasValue(assignmentDraft.neighborhood_unemployment_pct) &&
-        hasValue(assignmentDraft.neighborhood_city_unemployment_pct)
-      )
-    ) return;
-    void lookupUnemploymentComparison();
-  }, [
-    assignmentDraft.neighborhood_city_unemployment_pct,
-    assignmentDraft.neighborhood_unemployment_pct,
-    assignmentFilesLoaded,
-    assignmentFilesLoading,
-    censusZip,
-    city,
-    lookupUnemploymentComparison,
-    neighborhoodSectionReady,
-    state,
-    unemploymentAutoAttemptedSignature,
-  ]);
 
   const saveAssignmentDetails = async () => {
     const validationErrors = assignmentValidationErrors(assignmentDraft);

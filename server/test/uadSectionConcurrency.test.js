@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   normalizeUadExpectedRevision,
+  normalizeUadSaveReason,
   saveUadSection,
 } from "../src/modules/uad/editor.js";
 
@@ -20,6 +21,44 @@ test("UAD section saves require a positive optimistic-concurrency revision", asy
     /invalid_uad_expected_revision/,
   );
   assert.equal(connected, false);
+});
+
+test("UAD saves distinguish bounded autosaves from explicit section saves", () => {
+  assert.equal(normalizeUadSaveReason(undefined), "manual_save");
+  assert.equal(normalizeUadSaveReason("manual_save"), "manual_save");
+  assert.equal(normalizeUadSaveReason("autosave"), "autosave");
+  assert.throws(() => normalizeUadSaveReason("background"), /invalid_uad_save_reason/);
+});
+
+test("an empty autosave commits without manufacturing a new revision", async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const statement = String(sql).trim();
+      queries.push(statement);
+      if (statement.includes("SELECT id, current_revision")) {
+        return { rows: [{ id: WORKFILE_ID, current_revision: 7, specification_release_key: "release" }] };
+      }
+      return { rows: [] };
+    },
+    release() {
+      queries.push("RELEASE");
+    },
+  };
+
+  const result = await saveUadSection(
+    { async connect() { return client; } },
+    WORKFILE_ID,
+    "assignment",
+    { expected_revision: 7, save_reason: "autosave", values: [] },
+  );
+
+  assert.equal(result.current_revision, 7);
+  assert.equal(result.changed_field_count, 0);
+  assert.equal(result.save_reason, "autosave");
+  assert.ok(queries.includes("COMMIT"));
+  assert.equal(queries.some((sql) => sql.includes("INSERT INTO appraisal.uad_revisions")), false);
+  assert.equal(queries.some((sql) => sql.includes("UPDATE appraisal.uad_workfiles")), false);
 });
 
 test("a stale section save rolls back before reading or changing field values", async () => {

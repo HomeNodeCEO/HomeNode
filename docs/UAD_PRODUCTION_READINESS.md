@@ -26,6 +26,13 @@ headroom. Artifact generation rows interrupted by a process restart are marked
 retryable after the configured stale interval; the recovery monitor repeats
 without requiring another restart.
 
+The desktop UAD editor provides bounded canonical autosave. Online field edits
+are committed as complete PostgreSQL revisions after ten seconds of inactivity
+and no later than 55 seconds after the first pending change. Concurrent
+same-field edits require an explicit appraiser decision. See
+`docs/UAD_DURABILITY_ASSURANCE.md` for the guarantee, limitations, assurance
+graph, and recovery evidence.
+
 The response contains booleans, counts, the public UAD release key, and stable
 blocker codes. It does not return a database name or URL, storage bucket,
 OIDC issuer/audience, provider endpoint, client ID, client secret, or token.
@@ -133,6 +140,11 @@ At minimum, production operations must verify:
 - legal or regulatory holds override ordinary review dates; and
 - a human approves any future purge design after comparing database references,
   object checksums, and backup coverage.
+
+Run `npm run audit:assurance:uad` against every disposable restore. Run
+`npm run audit:database-privileges` against the web-service login, then switch
+that audit to enforce mode only after the runtime login no longer owns or can
+create application schema objects.
 
 ## Acceptance matrix
 

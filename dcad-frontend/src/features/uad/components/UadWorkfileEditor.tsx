@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createUadEntity,
@@ -27,6 +27,8 @@ interface Props {
 }
 
 const inputClass = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";
+const AUTOSAVE_IDLE_MS = 10_000;
+const AUTOSAVE_MAX_WAIT_MS = 55_000;
 
 const SITE_CAPTIONS = [
   "PropertyAccess", "PropertyPhoto", "SiteInfluence", "View", "SiteCharacteristic",
@@ -97,6 +99,16 @@ function fieldValueKey(contextKey: string, uid: string, entityId: string | null 
   return `${entityId || "root"}:${contextKey}:${uid}`;
 }
 
+function editorDraft(editor: UadEditorResponse) {
+  return Object.fromEntries(
+    editor.values.map((item) => [fieldValueKey(item.context_key, item.uid, item.entity_id), item.value]),
+  );
+}
+
+function jsonEqual(left: UadFieldValue | undefined, right: UadFieldValue | undefined) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function valueIsPresent(value: UadFieldValue | undefined) {
   if (value === null || value === undefined || value === "") return false;
   if (Array.isArray(value)) return value.length > 0;
@@ -129,27 +141,54 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [entityBusy, setEntityBusy] = useState(false);
-  const [dirty, setDirty] = useState(false);
+  const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(() => new Set());
+  const [autosaveState, setAutosaveState] = useState<"idle" | "pending" | "saving" | "saved" | "error" | "conflict">("idle");
+  const [lastAutosavedAt, setLastAutosavedAt] = useState<string | null>(null);
+  const [conflictKeys, setConflictKeys] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const editorRef = useRef<UadEditorResponse | null>(null);
+  const draftRef = useRef<Record<string, UadFieldValue>>({});
+  const dirtyKeysRef = useRef<Set<string>>(new Set());
+  const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const firstDirtyAtRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  const dirty = dirtyKeys.size > 0;
 
-  const loadEditor = useCallback(async (preservedDraft?: Record<string, UadFieldValue>) => {
+  const replaceDirtyKeys = useCallback((keys: Set<string>) => {
+    dirtyKeysRef.current = keys;
+    setDirtyKeys(keys);
+    if (!keys.size) firstDirtyAtRef.current = null;
+  }, []);
+
+  const loadEditor = useCallback(async (
+    preservedDraft?: Record<string, UadFieldValue>,
+    preservedDirtyKeys: Set<string> = new Set(),
+  ) => {
     setLoading(true);
     setError(null);
     try {
       const response = await getUadEditor(workfileId);
+      if (!mountedRef.current) return;
+      editorRef.current = response;
       setEditor(response);
-      const responseDraft = Object.fromEntries(response.values.map((item) => [fieldValueKey(item.context_key, item.uid, item.entity_id), item.value]));
-      setDraft(preservedDraft ? { ...responseDraft, ...preservedDraft } : responseDraft);
-      setDirty(Boolean(preservedDraft));
+      const responseDraft = editorDraft(response);
+      const nextDraft = preservedDraft ? { ...responseDraft, ...preservedDraft } : responseDraft;
+      draftRef.current = nextDraft;
+      setDraft(nextDraft);
+      replaceDirtyKeys(preservedDirtyKeys);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "The UAD editor could not be loaded.");
+      if (mountedRef.current) setError(reason instanceof Error ? reason.message : "The UAD editor could not be loaded.");
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  }, [workfileId]);
+  }, [replaceDirtyKeys, workfileId]);
 
-  useEffect(() => { void loadEditor(); }, [loadEditor]);
+  useEffect(() => {
+    mountedRef.current = true;
+    void loadEditor();
+    return () => { mountedRef.current = false; };
+  }, [loadEditor]);
 
   const section = editor?.sections.find((item) => item.key === activeSection);
   const allFields = useMemo(
@@ -160,6 +199,168 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     () => new Map(editor?.values.map((item) => [fieldValueKey(item.context_key, item.uid, item.entity_id), item]) || []),
     [editor],
   );
+  const persistAutosave = useCallback((): Promise<boolean> => {
+    if (saveInFlightRef.current) return saveInFlightRef.current;
+
+    const task = (async () => {
+      const baseEditor = editorRef.current;
+      const requestedKeys = new Set(dirtyKeysRef.current);
+      if (!baseEditor || !requestedKeys.size) return true;
+
+      const draftSnapshot = { ...draftRef.current };
+      const fieldsByIdentity = new Map<string, UadFieldDefinition>();
+      for (const candidateSection of baseEditor.sections) {
+        for (const group of candidateSection.groups) {
+          for (const field of group.fields) fieldsByIdentity.set(`${field.contextKey}:${field.uid}`, field);
+        }
+      }
+      const batches = new Map<UadSectionKey, Array<{
+        key: string;
+        uid: string;
+        context_key: string;
+        entity_id?: string | null;
+        value: UadFieldValue;
+      }>>();
+      for (const key of requestedKeys) {
+        const [entityKey, contextKey, uid] = key.split(":");
+        const field = fieldsByIdentity.get(`${contextKey}:${uid}`);
+        if (!field || field.readOnly) continue;
+        const values = batches.get(field.section) || [];
+        values.push({
+          key,
+          uid,
+          context_key: contextKey,
+          entity_id: entityKey === "root" ? null : entityKey,
+          value: draftSnapshot[key] ?? null,
+        });
+        batches.set(field.section, values);
+      }
+      if (!batches.size) {
+        replaceDirtyKeys(new Set());
+        return true;
+      }
+
+      if (mountedRef.current) {
+        setSaving(true);
+        setAutosaveState("saving");
+        setError(null);
+      }
+      let revision = baseEditor.workfile.current_revision;
+      const savedKeys = new Set<string>();
+      try {
+        for (const candidateSection of baseEditor.sections) {
+          const values = batches.get(candidateSection.key);
+          if (!values?.length) continue;
+          const result = await saveUadSection(
+            workfileId,
+            candidateSection.key,
+            values.map((value) => ({
+              uid: value.uid,
+              context_key: value.context_key,
+              entity_id: value.entity_id,
+              value: value.value,
+            })),
+            revision,
+            { saveReason: "autosave" },
+          );
+          revision = result.current_revision;
+          for (const value of values) savedKeys.add(value.key);
+        }
+
+        const latest = await getUadEditor(workfileId);
+        const currentDraft = draftRef.current;
+        const remaining = new Set(dirtyKeysRef.current);
+        for (const key of savedKeys) {
+          if (jsonEqual(currentDraft[key], draftSnapshot[key])) remaining.delete(key);
+        }
+        const mergedDraft = editorDraft(latest);
+        for (const key of remaining) mergedDraft[key] = currentDraft[key];
+
+        editorRef.current = latest;
+        draftRef.current = mergedDraft;
+        if (mountedRef.current) {
+          setEditor(latest);
+          setDraft(mergedDraft);
+          replaceDirtyKeys(remaining);
+          setConflictKeys(new Set());
+          const savedAt = new Date().toISOString();
+          setLastAutosavedAt(savedAt);
+          setAutosaveState(remaining.size ? "pending" : "saved");
+          setSavedMessage(remaining.size
+            ? `Revision ${latest.workfile.current_revision} is protected; newer edits are queued.`
+            : `Changes autosaved in revision ${latest.workfile.current_revision}.`);
+        }
+        firstDirtyAtRef.current = remaining.size ? Date.now() : null;
+        return true;
+      } catch (reason) {
+        const message = reason instanceof Error ? reason.message : "The UAD autosave failed.";
+        try {
+          const latest = await getUadEditor(workfileId);
+          const baseDraft = editorDraft(baseEditor);
+          const latestDraft = editorDraft(latest);
+          const currentDraft = draftRef.current;
+          const remaining = new Set(dirtyKeysRef.current);
+          for (const key of savedKeys) {
+            if (jsonEqual(currentDraft[key], draftSnapshot[key])) remaining.delete(key);
+          }
+          const conflicts = new Set<string>();
+          for (const key of remaining) {
+            if (!jsonEqual(latestDraft[key], baseDraft[key]) && !jsonEqual(latestDraft[key], currentDraft[key])) {
+              conflicts.add(key);
+            }
+            latestDraft[key] = currentDraft[key];
+          }
+          editorRef.current = latest;
+          draftRef.current = latestDraft;
+          if (mountedRef.current) {
+            setEditor(latest);
+            setDraft(latestDraft);
+            replaceDirtyKeys(remaining);
+            setConflictKeys(conflicts);
+            setAutosaveState(conflicts.size ? "conflict" : "error");
+            setError(conflicts.size
+              ? "Another session changed fields that are also edited here. Your values are preserved; choose which version to keep before autosaving."
+              : message === "uad_section_stale_revision"
+                ? "The workfile changed in another session. Your edits were preserved and rebased for another autosave attempt."
+                : `Autosave could not complete: ${message}`);
+          }
+        } catch {
+          if (mountedRef.current) {
+            setAutosaveState("error");
+            setError(`Autosave could not complete: ${message}`);
+          }
+        }
+        firstDirtyAtRef.current = Date.now();
+        return false;
+      } finally {
+        if (mountedRef.current) setSaving(false);
+      }
+    })();
+
+    saveInFlightRef.current = task;
+    void task.finally(() => {
+      if (saveInFlightRef.current === task) saveInFlightRef.current = null;
+    });
+    return task;
+  }, [replaceDirtyKeys, workfileId]);
+
+  useEffect(() => {
+    if (!dirty || saving || autosaveState === "conflict") return undefined;
+    firstDirtyAtRef.current ||= Date.now();
+    const elapsed = Date.now() - firstDirtyAtRef.current;
+    const delay = Math.min(AUTOSAVE_IDLE_MS, Math.max(0, AUTOSAVE_MAX_WAIT_MS - elapsed));
+    setAutosaveState((current) => current === "saving" ? current : "pending");
+    const timer = window.setTimeout(() => { void persistAutosave(); }, delay);
+    return () => window.clearTimeout(timer);
+  }, [autosaveState, dirty, dirtyKeys, persistAutosave, saving]);
+
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden" && dirtyKeysRef.current.size) void persistAutosave();
+    };
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => document.removeEventListener("visibilitychange", flushWhenHidden);
+  }, [persistAutosave]);
   const disasterFeatures = draft[fieldValueKey("disaster_mitigation", "3700.0002")];
   const disasterSectionDisplays = Array.isArray(disasterFeatures) && disasterFeatures.length > 0 && !disasterFeatures.includes("None");
   const energySectionDisplays = ["2600.0005", "2600.0004", "2600.0003"]
@@ -305,9 +506,42 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
 
   function setValue(field: UadFieldDefinition, entityId: string | null, value: UadFieldValue) {
     if (field.readOnly) return;
-    setDraft((current) => ({ ...current, [fieldValueKey(field.contextKey, field.uid, entityId)]: value }));
-    setDirty(true);
+    const key = fieldValueKey(field.contextKey, field.uid, entityId);
+    setDraft((current) => {
+      const next = { ...current, [key]: value };
+      draftRef.current = next;
+      return next;
+    });
+    setDirtyKeys((current) => {
+      const next = new Set(current).add(key);
+      dirtyKeysRef.current = next;
+      return next;
+    });
+    firstDirtyAtRef.current ||= Date.now();
+    setAutosaveState("pending");
     setSavedMessage(null);
+  }
+
+  function resolveAutosaveConflict(keepLocal: boolean) {
+    const serverDraft = editor ? editorDraft(editor) : {};
+    const nextDraft = { ...draftRef.current };
+    const nextDirty = new Set(dirtyKeysRef.current);
+    if (!keepLocal) {
+      for (const key of conflictKeys) {
+        nextDraft[key] = serverDraft[key];
+        nextDirty.delete(key);
+      }
+    }
+    draftRef.current = nextDraft;
+    setDraft(nextDraft);
+    replaceDirtyKeys(nextDirty);
+    setConflictKeys(new Set());
+    setError(null);
+    firstDirtyAtRef.current = nextDirty.size ? Date.now() : null;
+    setAutosaveState(nextDirty.size ? "pending" : "idle");
+    setSavedMessage(keepLocal
+      ? "Your local values will be saved as the next revision."
+      : "The newer server values were restored for the conflicting fields.");
   }
 
   function isVisible(field: UadFieldDefinition, entityId: string | null = null) {
@@ -327,14 +561,14 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   }
 
   async function handleEntityAdd(entityType: string, parentEntityId?: string, data?: Record<string, unknown>) {
-    if (entityBusy) return;
-    const preservedDraft = dirty ? draft : undefined;
+    if (entityBusy || saving) return;
     setEntityBusy(true);
     setError(null);
     try {
+      if (dirtyKeysRef.current.size && !(await persistAutosave())) return;
       await createUadEntity(workfileId, entityType, parentEntityId, data);
-      await loadEditor(preservedDraft);
-      setSavedMessage(preservedDraft ? "Record added; your unsaved field changes were retained." : "Record added to the UAD workfile.");
+      await loadEditor();
+      setSavedMessage("Record added to the UAD workfile after protecting pending field changes.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The record could not be added.");
     } finally {
@@ -343,19 +577,15 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   }
 
   async function handleEntityDelete(entity: UadEntity) {
-    if (entityBusy) return;
+    if (entityBusy || saving) return;
     if (!window.confirm(`Remove ${entity.label || "this UAD record"}? Its saved field values will also be removed.`)) return;
-    const preservedDraft = dirty
-      ? Object.fromEntries(Object.entries(draft).filter(([key]) => !key.startsWith(`${entity.id}:`)))
-      : undefined;
     setEntityBusy(true);
     setError(null);
     try {
+      if (dirtyKeysRef.current.size && !(await persistAutosave())) return;
       await deleteUadEntity(workfileId, entity.id);
-      await loadEditor(preservedDraft);
-      setSavedMessage(preservedDraft
-        ? "Record removed; your other unsaved field changes were retained."
-        : "Record removed from the UAD workfile and captured in its audit history.");
+      await loadEditor();
+      setSavedMessage("Record removed from the UAD workfile and captured in its audit history.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The record could not be removed.");
     } finally {
@@ -395,9 +625,19 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     setError(null);
     setSavedMessage(null);
     try {
-      await saveUadSection(workfileId, activeSection, submitted, editor.workfile.current_revision);
+      const result = await saveUadSection(
+        workfileId,
+        activeSection,
+        submitted,
+        editor.workfile.current_revision,
+        { saveReason: "manual_save" },
+      );
       await loadEditor();
-      setSavedMessage(`${section.title} saved and added to the workfile audit history.`);
+      setAutosaveState("idle");
+      setConflictKeys(new Set());
+      setSavedMessage(result.changed_field_count
+        ? `${section.title} saved in revision ${result.current_revision} and added to the workfile audit history.`
+        : `${section.title} reviewed; its saved values were already current.`);
     } catch (reason) {
       setError(
         reason instanceof Error && reason.message === "uad_section_stale_revision"
@@ -411,11 +651,24 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     }
   }
 
+  async function handleSectionChange(nextSection: UadSectionKey) {
+    if (nextSection === activeSection || saving) return;
+    if (dirtyKeysRef.current.size && !(await persistAutosave())) return;
+    setActiveSection(nextSection);
+  }
+
+  async function handleCloseEditor() {
+    if (saving) return;
+    if (dirtyKeysRef.current.size && !(await persistAutosave())) return;
+    onClose();
+  }
+
   function renderControl(field: UadFieldDefinition, entityId: string | null) {
     const key = fieldValueKey(field.contextKey, field.uid, entityId);
     const value = draft[key];
     const readOnly = Boolean(
       field.readOnly
+      || saving
       || (
         field.contextKey === "defect_summary"
         && field.uid === "3900.0002"
@@ -521,7 +774,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             <h2 className="mt-1 text-xl font-semibold">{editor.workfile.file_number}</h2>
             <p className="mt-1 text-xs text-slate-300">Revision {editor.workfile.current_revision} · UAD 3.6 · {editor.workfile.specification_release_key}</p>
           </div>
-          <button className="rounded-lg border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800" onClick={onClose} type="button">Close editor</button>
+          <button className="rounded-lg border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseEditor()} type="button">Close editor</button>
         </div>
       </header>
 
@@ -529,7 +782,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         {editor.sections.filter((item) => item.applicable !== false).map((item) => {
           const completion = editor.completion[item.key];
           return (
-            <button className={`px-3 py-4 text-left transition ${activeSection === item.key ? "border-b-2 border-emerald-700 bg-emerald-50" : "hover:bg-slate-50"}`} key={item.key} onClick={() => setActiveSection(item.key)} type="button">
+            <button className={`px-3 py-4 text-left transition ${activeSection === item.key ? "border-b-2 border-emerald-700 bg-emerald-50" : "hover:bg-slate-50"}`} disabled={saving} key={item.key} onClick={() => void handleSectionChange(item.key)} type="button">
               <div className="text-sm font-semibold">Section {item.officialSectionNumber}: {item.title}</div>
               <div className="mt-1 text-xs text-slate-500">{completion.completed} of {completion.required} required · {completion.percent}%</div>
             </button>
@@ -867,6 +1120,16 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           </section>
         )}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
+        {autosaveState === "conflict" && (
+          <div className="mb-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            <div className="font-semibold">Concurrent edit protection paused autosave.</div>
+            <p className="mt-1 leading-6">Your {conflictKeys.size} conflicting field value{conflictKeys.size === 1 ? " is" : "s are"} still displayed locally. Choose explicitly instead of allowing one session to silently overwrite another.</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button className="rounded-lg bg-amber-900 px-3 py-2 text-xs font-semibold text-white" onClick={() => resolveAutosaveConflict(true)} type="button">Keep my values</button>
+              <button className="rounded-lg border border-amber-800 bg-white px-3 py-2 text-xs font-semibold text-amber-950" onClick={() => resolveAutosaveConflict(false)} type="button">Use newer server values</button>
+            </div>
+          </div>
+        )}
         {savedMessage && <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{savedMessage}</div>}
 
         <div className="space-y-5">
@@ -1396,9 +1659,19 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
 
         <div className="sticky bottom-3 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
-          <div className="text-xs text-slate-600">{dirty ? "Unsaved changes" : "All displayed changes saved"}</div>
-          <button className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving || !dirty} onClick={handleSave} type="button">
-            {saving ? "Saving…" : `Save ${section.title}`}
+          <div className="text-xs text-slate-600">
+            {autosaveState === "saving"
+              ? "Protecting changes in PostgreSQL…"
+              : autosaveState === "conflict"
+                ? "Autosave paused for a concurrent-edit decision"
+                : dirty
+                  ? "Changes queued for autosave within one minute"
+                  : lastAutosavedAt
+                    ? `All changes protected · ${new Date(lastAutosavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`
+                    : "All displayed changes saved"}
+          </div>
+          <button className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving || autosaveState === "conflict"} onClick={() => void handleSave()} type="button">
+            {saving ? "Saving…" : `Review & save ${section.title}`}
           </button>
         </div>
       </div>

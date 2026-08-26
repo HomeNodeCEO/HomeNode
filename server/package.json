@@ -41,6 +41,8 @@
         "verify:mobile-oidc": "node scripts/verifyMobileOidcConfiguration.js",
         "verify:staging:uad": "node scripts/verifyUadStagingReadiness.js",
         "audit:retention:uad": "node scripts/auditUadRetention.js",
+        "audit:assurance:uad": "node scripts/auditUadAssuranceGraph.js",
+        "audit:database-privileges": "node scripts/auditDatabasePrivileges.js",
         "backfill:locations": "node scripts/backfillAccountLocations.js",
         "backfill:census": "node scripts/backfillCensusGeographies.js",
         "enrich:non-dallas": "node scripts/runNonDallasEnrichment.js",

@@ -762,10 +762,10 @@ function invalid(field, code, message) {
   return { key: field.key, uid: field.uid, context_key: field.contextKey, code, message };
 }
 
-export function normalizeAndValidateUadValue(field, rawValue) {
+export function normalizeAndValidateUadValue(field, rawValue, { allowIncomplete = false } = {}) {
   if (!field) throw new Error("invalid_uad_field");
   if (isBlank(rawValue)) {
-    return field.required
+    return field.required && !allowIncomplete
       ? { value: null, error: invalid(field, "required", `${field.label} is required.`) }
       : { value: null, error: null };
   }
@@ -851,7 +851,7 @@ export function normalizeAndValidateUadValue(field, rawValue) {
 export function validateUadSectionValues(
   section,
   submittedValues,
-  { entityTypesById = new Map(), entityDataById = new Map() } = {},
+  { entityTypesById = new Map(), entityDataById = new Map(), allowIncomplete = false } = {},
 ) {
   if (!UAD_EDITOR_SECTION_KEYS.includes(section)) throw new Error("invalid_uad_section");
   if (!Array.isArray(submittedValues) || submittedValues.length > 1000) {
@@ -876,7 +876,7 @@ export function validateUadSectionValues(
       throw new Error("invalid_uad_field_values");
     }
     seen.add(submittedKey);
-    const result = normalizeAndValidateUadValue(field, submitted.value);
+    const result = normalizeAndValidateUadValue(field, submitted.value, { allowIncomplete });
     if (result.error) errors.push(result.error);
     normalized.push({ field, value: result.value, entityId });
   }

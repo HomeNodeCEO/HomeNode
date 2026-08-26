@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import * as api from '@/lib/api';
+import NumericField from '@/components/NumericField';
 import { loadAppraisalFileContext, useAppraisalFileRequest } from '@/hooks/useAppraisalFileContext';
 import { requestEditorCredential } from '@/lib/editorCredential';
 import {
@@ -52,33 +53,6 @@ function initialDraft(detail: api.AccountDetail): CostApproachDraft {
     other_improvements: otherImprovements,
     methodology: 'Replacement cost new is developed from the identified cost source and local multiplier. Accrued depreciation is estimated using the age-life method, with separately identified curable physical deterioration and functional or external obsolescence. The depreciated improvement value is added to the supported site value and site improvements.',
   });
-}
-
-function NumericField({ label, value, onChange, step = '1', prefix, readOnly = false }: {
-  label: string;
-  value: number | null | undefined;
-  onChange?: (value: number | null) => void;
-  step?: string;
-  prefix?: string;
-  readOnly?: boolean;
-}) {
-  return (
-    <label className="grid gap-1 text-sm text-slate-700">
-      <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</span>
-      <div className="flex rounded-md border border-slate-300 bg-white focus-within:border-slate-900">
-        {prefix ? <span className="px-3 py-2 text-slate-500">{prefix}</span> : null}
-        <input
-          type="number"
-          min="0"
-          step={step}
-          readOnly={readOnly}
-          className={`min-w-0 flex-1 rounded-md px-3 py-2 outline-none ${readOnly ? 'bg-slate-100 font-semibold' : 'bg-white'}`}
-          value={value ?? ''}
-          onChange={(event) => onChange?.(event.target.value === '' ? null : Number(event.target.value))}
-        />
-      </div>
-    </label>
-  );
 }
 
 export default function CostApproach() {

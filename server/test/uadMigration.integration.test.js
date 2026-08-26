@@ -21,10 +21,30 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     assert.deepEqual(roles.rows.map((row) => row.code), [
       "appraiser",
       "homenode_admin",
+      "office_assistant",
       "organization_admin",
+      "read_only",
       "reviewer",
       "supervisory_appraiser",
     ]);
+
+    const unifiedIdentity = await pool.query(`
+      SELECT bool_and(to_regclass('app_auth.web_sessions') IS NOT NULL) AS web_sessions_ready,
+             count(*) FILTER (
+               WHERE column_name IN (
+                 'organization_id',
+                 'assigned_appraiser_user_id',
+                 'supervisory_appraiser_user_id',
+                 'created_by_user_id',
+                 'updated_by_user_id'
+               )
+             )::integer AS assignment_identity_column_count
+        FROM information_schema.columns
+       WHERE table_schema = 'app'
+         AND table_name = 'assignment_files'
+    `);
+    assert.equal(unifiedIdentity.rows[0]?.web_sessions_ready, true);
+    assert.equal(unifiedIdentity.rows[0]?.assignment_identity_column_count, 5);
 
     const release = await pool.query(
       "SELECT status FROM uad_ref.specification_releases WHERE release_key = $1",

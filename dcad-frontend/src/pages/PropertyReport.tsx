@@ -21,7 +21,6 @@ import {
   getNeighborhoodProfile,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getPropertyContextAssessment,
-  getAssignmentFiles,
   getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileReadiness,
   getAccountPhotos,
@@ -100,6 +99,7 @@ import {
   assignmentValidationErrors,
   cloneEditorValue,
 } from "@/lib/propertyReportAssignment";
+import { useAssignmentFiles } from "@/hooks/useAssignmentFiles";
 
 type DcadOwner = {
   owner_name?: string;
@@ -289,12 +289,6 @@ function AddressHero({
   );
   const [assignmentDirty, setAssignmentDirty] = useState(false);
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
-  const [assignmentFiles, setAssignmentFiles] = useState<AppraisalAssignmentFile[]>([]);
-  const [assignmentFilesLoading, setAssignmentFilesLoading] = useState(false);
-  const [assignmentFilesLoaded, setAssignmentFilesLoaded] = useState(false);
-  const [assignmentFilesError, setAssignmentFilesError] = useState("");
-  const [activeAssignmentFile, setActiveAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
-  const [assignmentFileNumber, setAssignmentFileNumber] = useState("");
   const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
   const [censusLookupLoading, setCensusLookupLoading] = useState(false);
   const [censusLookupMessage, setCensusLookupMessage] = useState("");
@@ -348,6 +342,93 @@ function AddressHero({
   const [propertyComplexityNotes, setPropertyComplexityNotes] = useState(
     () => detail?.property_context?.appraiser_notes || "",
   );
+  const hydrateAssignmentDraft = useCallback((value: AssignmentDetails) => {
+    const next = assignmentDraftFromDetail(value);
+    setAssignmentDraft((current) => {
+      if (!unemploymentLookupSucceeded.current) return next;
+      const zipComparison = hasValue(current.neighborhood_unemployment_pct) ? {
+        neighborhood_unemployment_pct: current.neighborhood_unemployment_pct,
+        neighborhood_unemployment_zip: current.neighborhood_unemployment_zip,
+        neighborhood_unemployment_source: current.neighborhood_unemployment_source,
+        neighborhood_unemployment_dataset_year:
+          current.neighborhood_unemployment_dataset_year,
+        neighborhood_unemployment_variable: current.neighborhood_unemployment_variable,
+      } : {};
+      const cityComparison = hasValue(current.neighborhood_city_unemployment_pct) ? {
+        neighborhood_city_unemployment_pct: current.neighborhood_city_unemployment_pct,
+        neighborhood_city_unemployment_name: current.neighborhood_city_unemployment_name,
+        neighborhood_city_unemployment_source:
+          current.neighborhood_city_unemployment_source,
+        neighborhood_city_unemployment_dataset_year:
+          current.neighborhood_city_unemployment_dataset_year,
+        neighborhood_city_unemployment_variable:
+          current.neighborhood_city_unemployment_variable,
+      } : {};
+      return { ...next, ...zipComparison, ...cityComparison };
+    });
+  }, []);
+  const handleSelectedAssignmentFile = useCallback(async (
+    selectedFile: AppraisalAssignmentFile,
+    isCancelled: () => boolean,
+  ) => {
+    if (!accountId) return;
+    hydrateAssignmentDraft(selectedFile.assignment_details);
+    try {
+      const workfileResult = await getCustomAppraisalWorkfile(accountId, selectedFile.id);
+      if (isCancelled()) return;
+      const marketSection = workfileResult.workfile.sections.market_conditions;
+      const salesSection = workfileResult.workfile.sections.sales_comparison;
+      marketWorkfileRevisionRef.current = Number(marketSection?.revision || 0);
+      setMarketConditionsDraft(
+        (marketSection?.value as MarketConditionsDraft | undefined) ||
+          readMarketConditionsDraft(accountId),
+      );
+      setSalesComparisonDraft(
+        (salesSection?.value as AppraisalReportSalesDraft | undefined) ||
+          readAppraisalReportDraft(accountId),
+      );
+      setWorkfileStatusMessage(
+        workfileResult.workfile.status === "signed"
+          ? `Signed and locked: ${workfileResult.workfile.canonical_file_name}`
+          : `Database workfile: ${workfileResult.workfile.canonical_file_name}`,
+      );
+    } catch (workfileError) {
+      if (!isCancelled()) {
+        setWorkfileStatusMessage(
+          workfileError instanceof Error
+            ? `Workfile could not be loaded: ${workfileError.message}`
+            : "Workfile could not be loaded.",
+        );
+      }
+    }
+    void getPropertyContextAssessment(accountId, selectedFile.id)
+      .then((assessment) => {
+        if (isCancelled() || !assessment) return;
+        setPropertyContext(assessment);
+        setPropertyComplexityDraft(assessment.effective_complexity);
+        setPropertyComplexityNotes(assessment.appraiser_notes || "");
+      })
+      .catch(() => {
+        // The core report remains usable; source and assessment notices
+        // are shown when the appraiser runs the local context analysis.
+      });
+  }, [accountId, hydrateAssignmentDraft]);
+  const {
+    assignmentFiles,
+    setAssignmentFiles,
+    assignmentFilesLoading,
+    assignmentFilesLoaded,
+    assignmentFilesError,
+    activeAssignmentFile,
+    setActiveAssignmentFile,
+    assignmentFileNumber,
+    setAssignmentFileNumber,
+  } = useAssignmentFiles({
+    accountId,
+    enabled: Boolean(detail),
+    requestedAssignmentFileId,
+    onSelectedFile: handleSelectedAssignmentFile,
+  });
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
@@ -421,47 +502,15 @@ function AddressHero({
   }, [accountId, detail?.property_context]);
 
   useEffect(() => {
-    let cancelled = false;
-    const fallback = assignmentDraftFromDetail();
     if (unemploymentHydrationAccount.current !== (accountId || "")) {
       unemploymentHydrationAccount.current = accountId || "";
       unemploymentLookupSucceeded.current = false;
     }
-    const hydrateAssignmentDraft = (value: AssignmentDetails) => {
-      const next = assignmentDraftFromDetail(value);
-      setAssignmentDraft((current) => {
-        if (!unemploymentLookupSucceeded.current) return next;
-        const zipComparison = hasValue(current.neighborhood_unemployment_pct) ? {
-          neighborhood_unemployment_pct: current.neighborhood_unemployment_pct,
-          neighborhood_unemployment_zip: current.neighborhood_unemployment_zip,
-          neighborhood_unemployment_source: current.neighborhood_unemployment_source,
-          neighborhood_unemployment_dataset_year:
-            current.neighborhood_unemployment_dataset_year,
-          neighborhood_unemployment_variable: current.neighborhood_unemployment_variable,
-        } : {};
-        const cityComparison = hasValue(current.neighborhood_city_unemployment_pct) ? {
-          neighborhood_city_unemployment_pct: current.neighborhood_city_unemployment_pct,
-          neighborhood_city_unemployment_name: current.neighborhood_city_unemployment_name,
-          neighborhood_city_unemployment_source:
-            current.neighborhood_city_unemployment_source,
-          neighborhood_city_unemployment_dataset_year:
-            current.neighborhood_city_unemployment_dataset_year,
-          neighborhood_city_unemployment_variable:
-            current.neighborhood_city_unemployment_variable,
-        } : {};
-        return { ...next, ...zipComparison, ...cityComparison };
-      });
-    };
-    hydrateAssignmentDraft(fallback);
+    hydrateAssignmentDraft(assignmentDraftFromDetail());
     setAssignmentDirty(false);
     setAssignmentSaveMessage("");
     setNeighborhoodProfileMessage("");
     neighborhoodProfileAttemptedSignature.current = "";
-    setAssignmentFiles([]);
-    setAssignmentFilesLoaded(false);
-    setActiveAssignmentFile(null);
-    setAssignmentFileNumber("");
-    setAssignmentFilesError("");
     setCensusLookupMessage("");
     setUnemploymentLookupMessage("");
     setUnemploymentAutoAttemptedSignature("");
@@ -469,90 +518,7 @@ function AddressHero({
     setWorkfileStatusMessage("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
-    if (!accountId?.trim() || !detailLoaded) {
-      setAssignmentFilesLoading(false);
-      setAssignmentFilesLoaded(true);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setAssignmentFilesLoading(true);
-    void getAssignmentFiles(accountId)
-      .then(async (response) => {
-        if (cancelled) return;
-        setAssignmentFiles(response.files || []);
-        const requestedFile = requestedAssignmentFileId
-          ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
-          : null;
-        const selectedFile = requestedFile || response.latest_file;
-        if (selectedFile) {
-          hydrateAssignmentDraft(selectedFile.assignment_details);
-          setActiveAssignmentFile(selectedFile);
-          setAssignmentFileNumber(selectedFile.file_number);
-          try {
-            const workfileResult = await getCustomAppraisalWorkfile(accountId, selectedFile.id);
-            if (cancelled) return;
-            const marketSection = workfileResult.workfile.sections.market_conditions;
-            const salesSection = workfileResult.workfile.sections.sales_comparison;
-            marketWorkfileRevisionRef.current = Number(marketSection?.revision || 0);
-            setMarketConditionsDraft(
-              (marketSection?.value as MarketConditionsDraft | undefined) ||
-                readMarketConditionsDraft(accountId || ""),
-            );
-            setSalesComparisonDraft(
-              (salesSection?.value as AppraisalReportSalesDraft | undefined) ||
-                readAppraisalReportDraft(accountId || ""),
-            );
-            setWorkfileStatusMessage(
-              workfileResult.workfile.status === "signed"
-                ? `Signed and locked: ${workfileResult.workfile.canonical_file_name}`
-                : `Database workfile: ${workfileResult.workfile.canonical_file_name}`,
-            );
-          } catch (workfileError) {
-            if (!cancelled) {
-              setWorkfileStatusMessage(
-                workfileError instanceof Error
-                  ? `Workfile could not be loaded: ${workfileError.message}`
-                  : "Workfile could not be loaded.",
-              );
-            }
-          }
-          void getPropertyContextAssessment(accountId, selectedFile.id)
-            .then((assessment) => {
-              if (cancelled || !assessment) return;
-              setPropertyContext(assessment);
-              setPropertyComplexityDraft(assessment.effective_complexity);
-              setPropertyComplexityNotes(assessment.appraiser_notes || "");
-            })
-            .catch(() => {
-              // The core report remains usable; source and assessment notices
-              // are shown when the appraiser runs the local context analysis.
-            });
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setAssignmentFilesError(
-            error instanceof Error ? error.message : "The assignment log could not be loaded.",
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setAssignmentFilesLoading(false);
-          setAssignmentFilesLoaded(true);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    accountId,
-    detailLoaded,
-    requestedAssignmentFileId,
-  ]);
+  }, [accountId, detailLoaded, hydrateAssignmentDraft]);
 
   useEffect(() => {
     let cancelled = false;

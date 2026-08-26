@@ -22,6 +22,7 @@ const MIGRATIONS = Object.freeze([
   "007_assignment_documents.sql",
   "20260922_assignment_document_r2.sql",
   "20260927_unified_application_identity.sql",
+  "20260928_web_auth_sessions.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

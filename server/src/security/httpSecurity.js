@@ -151,6 +151,7 @@ export function createCorsMiddleware(configuration) {
       return res.status(403).json({ error: "cors_origin_denied" });
     }
     res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
     res.setHeader("access-control-allow-headers", "Authorization, Content-Type, Idempotency-Key");
     res.setHeader("access-control-max-age", "600");

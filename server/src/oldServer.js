@@ -221,6 +221,7 @@ import {
   createOptionalApplicationAuthenticator,
   hasApplicationPermission,
 } from "./security/applicationAccess.js";
+import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
 import {
   createResilientHttpServer,
   createRuntimeResilienceConfiguration,
@@ -324,6 +325,18 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });
+const applicationAuthenticationRequired = environmentFlag(
+  process.env.APPLICATION_AUTHENTICATION_REQUIRED,
+);
+if (applicationAuthenticationRequired && (
+  !mobileOidcVerifier.configured
+  || !process.env.OIDC_WEB_CLIENT_ID
+  || !process.env.OIDC_WEB_CLIENT_SECRET
+  || !process.env.OIDC_WEB_REDIRECT_URI
+  || String(process.env.APP_SESSION_SECRET || "").length < 32
+)) {
+  throw new Error("application_authentication_required_but_not_configured");
+}
 app.use("/api/uad", createUadRouter({
   pool,
   storage: uadObjectStorage,
@@ -355,6 +368,8 @@ const authenticateApplicationUser = createMobileAuthenticator({
   verifier: mobileOidcVerifier,
 });
 app.use("/api", createOptionalApplicationAuthenticator(authenticateApplicationUser));
+app.use("/api", createWebSessionAuthenticator({ pool }));
+app.use("/api/auth", createWebAuthRouter({ pool, verifier: mobileOidcVerifier }));
 
 app.get("/api/auth/me", (req, res) => {
   res.set("cache-control", "no-store");
@@ -1598,6 +1613,7 @@ app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
 
 /** List the independently versioned appraisal files for one property. */
 app.get("/api/accounts/:id/assignment-files", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1732,6 +1748,7 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
 
 /** List Custom and UAD appraisal history without treating prior observations as current facts. */
 app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1756,6 +1773,7 @@ app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
 
 /** Load the workflow-neutral completion document anchored to one immutable subject snapshot. */
 app.get("/api/accounts/:id/appraisal-history/:reportFileId/completion", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1817,6 +1835,7 @@ app.post("/api/accounts/:id/appraisal-history/:reportFileId/replicate", async (r
 
 /** Download or embed the current report-file sketch as a scalable vector exhibit. */
 app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1852,6 +1871,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", 
 
 /** Download the current report-file sketch as a report-ready PDF exhibit. */
 app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/report.pdf", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -1930,6 +1950,7 @@ app.patch("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req
 
 /** Load the current canonical Property Tax Protest file and accepted mobile evidence. */
 app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "property_tax_protest", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -2293,6 +2314,7 @@ app.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
 
 /** Load all database-backed sections for one Custom Appraisal file. */
 app.get("/api/accounts/:id/assignment-files/:fileId/workfile", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
@@ -5962,6 +5984,20 @@ function decodedDocumentHeader(req, name, fallback = "") {
   } catch {
     return value;
   }
+}
+
+function requireWorkflowAccess(req, res, workflow, permission) {
+  if (hasApplicationPermission(req.mobileAuth, workflow, permission)) return true;
+  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+  if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+    return true;
+  }
+  if (!applicationAuthenticationRequired) return true;
+  res.set("cache-control", "no-store");
+  res.status(req.mobileAuth ? 403 : 401).json({
+    error: req.mobileAuth ? "application_access_denied" : "authentication_required",
+  });
+  return false;
 }
 
 function assignmentPhotoErrorStatus(message) {

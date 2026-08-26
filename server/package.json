@@ -39,6 +39,7 @@
         "render:sample:appraisal-pdf": "node scripts/renderCustomAppraisalReportSample.js",
         "provision:mobile-identity": "node scripts/provisionMobileOidcIdentity.js",
         "provision:mobile-user": "node scripts/provisionMobileUser.js",
+        "provision:application-user": "node scripts/provisionMobileUser.js",
         "verify:mobile-oidc": "node scripts/verifyMobileOidcConfiguration.js",
         "verify:staging:uad": "node scripts/verifyUadStagingReadiness.js",
         "audit:retention:uad": "node scripts/auditUadRetention.js",

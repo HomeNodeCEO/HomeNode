@@ -33,7 +33,7 @@ export async function fetchJSON<T = any>(input: string, init?: RequestInit & { t
     if (typeof accessToken === 'string' && accessToken.trim() && !headers.has('authorization')) {
       headers.set('authorization', `Bearer ${accessToken.trim()}`);
     }
-    const res = await fetch(input, { ...init, headers, signal: controller.signal });
+    const res = await fetch(input, { credentials: 'include', ...init, headers, signal: controller.signal });
     const ct = res.headers.get('content-type') || '';
     const isJson = ct.includes('application/json');
 

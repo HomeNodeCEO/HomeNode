@@ -14,6 +14,7 @@ import FinalReconciliation from './pages/FinalReconciliation';
 import SignUpForm from './pages/SignUpForm';
 import PropertyTaxProtest from './pages/PropertyTaxProtest';
 import UadWorkspaceEntry from './features/uad/pages/UadWorkspaceEntry';
+import { ApplicationAuthGate, ApplicationAuthProvider } from './features/auth/ApplicationAuth';
 
 function LegacyDetailRedirect() {
   const { accountId } = useParams();
@@ -22,8 +23,10 @@ function LegacyDetailRedirect() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <Routes>
+    <ApplicationAuthProvider>
+      <ApplicationAuthGate>
+        <BrowserRouter>
+          <Routes>
         <Route path="/" element={<PropertySearch />} />
         <Route path="/property/:countyId/:accountId" element={<PropertyDetailsBase44 />} />
         <Route path="/property/:accountId" element={<LegacyDetailRedirect />} />
@@ -36,7 +39,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         <Route path="/PropertyTaxProtest" element={<PropertyTaxProtest />} />
         <Route path="/uad-3.6/:accountId" element={<UadWorkspaceEntry />} />
         <Route path="/signup" element={<SignUpForm />} />
-      </Routes>
-    </BrowserRouter>
+          </Routes>
+        </BrowserRouter>
+      </ApplicationAuthGate>
+    </ApplicationAuthProvider>
   </React.StrictMode>,
 );

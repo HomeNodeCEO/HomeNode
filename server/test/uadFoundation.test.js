@@ -118,6 +118,28 @@ test("creates a bounded R2 presigned PUT URL and requires complete configuration
   assert.match(url.searchParams.get("X-Amz-Signature"), /^[a-f0-9]{64}$/);
 });
 
+test("allows UAD storage to override the shared R2 bucket without mutating the environment", () => {
+  const environment = {
+    UAD_OBJECT_STORAGE_PROVIDER: "r2",
+    R2_ACCOUNT_ID: "example-account",
+    R2_ACCESS_KEY_ID: "example-key",
+    R2_SECRET_ACCESS_KEY: "example-secret",
+    R2_BUCKET: "homenode-shared-production",
+    UAD_R2_BUCKET: "homenode-uad-production",
+  };
+  const sharedStorage = createUadObjectStorage(environment);
+  const uadStorage = createUadObjectStorage(environment, {
+    bucket: environment.UAD_R2_BUCKET || environment.R2_BUCKET,
+    isolated: environment.UAD_R2_BUCKET !== environment.R2_BUCKET,
+  });
+
+  assert.equal(sharedStorage.bucket, "homenode-shared-production");
+  assert.equal(uadStorage.bucket, "homenode-uad-production");
+  assert.equal(sharedStorage.isolated, false);
+  assert.equal(uadStorage.isolated, true);
+  assert.equal(environment.R2_BUCKET, "homenode-shared-production");
+});
+
 test("uploads generated artifacts through a private signed R2 request", async () => {
   const originalFetch = globalThis.fetch;
   let request;

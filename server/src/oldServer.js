@@ -291,7 +291,17 @@ const signupRateLimiter = rateLimit({
     .json({ error: "signup_rate_limit_exceeded" }),
 });
 
-const uadObjectStorage = createUadObjectStorage();
+// UAD artifacts can live in a dedicated production bucket without redirecting
+// Custom Appraisal documents or the shared mobile-photo workflow. The fallback
+// preserves existing deployments until UAD_R2_BUCKET is configured.
+const sharedObjectStorage = createUadObjectStorage();
+const uadObjectStorage = createUadObjectStorage(process.env, {
+  bucket: process.env.UAD_R2_BUCKET || process.env.R2_BUCKET,
+  isolated: Boolean(
+    process.env.UAD_R2_BUCKET
+    && process.env.UAD_R2_BUCKET !== process.env.R2_BUCKET
+  ),
+});
 let gracefulShutdown = null;
 const runtimeHealth = createRuntimeHealthHandlers({
   pool,
@@ -324,7 +334,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use("/api/mobile", createMobileRouter({
   pool,
   verifier: mobileOidcVerifier,
-  storage: uadObjectStorage,
+  storage: sharedObjectStorage,
   enabled: environmentFlag(process.env.MOBILE_INSPECTION_ENABLED),
   recentFileDays: Number(process.env.MOBILE_RECENT_FILE_DAYS || 30),
   security: httpSecurity,
@@ -688,7 +698,7 @@ app.get("/api/system/performance", async (_req, res) => {
       scheduled_maintenance_expected: !censusGeographyInlineEnabled && !locationBackfillInlineEnabled,
     },
     document_evidence: {
-      private_object_storage_configured: uadObjectStorage.configured,
+      private_object_storage_configured: sharedObjectStorage.configured,
       ocr_provider: documentOcrProvider.provider,
       ocr_configured: documentOcrProvider.configured,
       ocr_runs_in_scheduled_maintenance: true,
@@ -5943,7 +5953,7 @@ app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos", async (re
     const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
     if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    const result = await listAssignmentPhotos(pool, uadObjectStorage, { accountId, assignmentFileId });
+    const result = await listAssignmentPhotos(pool, sharedObjectStorage, { accountId, assignmentFileId });
     return res.json({ ok: true, account_id: accountId, ...result });
   } catch (error) {
     const message = error?.message || "assignment_photos_lookup_failed";
@@ -5958,7 +5968,7 @@ app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/upload-req
     const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
     if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    const result = await createAssignmentPhotoUpload(pool, uadObjectStorage, {
+    const result = await createAssignmentPhotoUpload(pool, sharedObjectStorage, {
       accountId,
       assignmentFileId,
       input: req.body,
@@ -5977,7 +5987,7 @@ app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId/v
     const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
     if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    const photo = await verifyAssignmentPhoto(pool, uadObjectStorage, {
+    const photo = await verifyAssignmentPhoto(pool, sharedObjectStorage, {
       accountId,
       assignmentFileId,
       photoId: req.params.photoId,
@@ -6061,10 +6071,10 @@ app.post(
         contentType: req.get("content-type"),
         content: req.body,
         uploadedBy: decodedDocumentHeader(req, "x-document-uploaded-by"),
-        storage: uadObjectStorage,
+        storage: sharedObjectStorage,
       });
       if (document.processing_status === "uploaded") {
-        void processAssignmentDocument(pool, document.id, { storage: uadObjectStorage }).catch((error) => {
+        void processAssignmentDocument(pool, document.id, { storage: sharedObjectStorage }).catch((error) => {
           if (error?.message !== "document_processing_in_progress") {
             console.warn("[documents] background extraction failed", error?.message || error);
           }
@@ -6105,7 +6115,7 @@ app.get("/api/documents/:id/content", async (req, res) => {
     await ensureAssignmentDocumentsAvailable();
     const document = await getAssignmentDocument(pool, req.params.id, {
       includeContent: true,
-      storage: uadObjectStorage,
+      storage: sharedObjectStorage,
     });
     if (!document) return res.status(404).json({ error: "document_not_found" });
     const fileName = String(document.file_name || `document-${document.id}.pdf`)
@@ -6135,7 +6145,7 @@ app.post("/api/documents/:id/reprocess", async (req, res) => {
     await ensureAssignmentDocumentsAvailable();
     const document = await processAssignmentDocument(pool, req.params.id, {
       force: true,
-      storage: uadObjectStorage,
+      storage: sharedObjectStorage,
       ocrProvider: documentOcrProvider,
     });
     return res.json({ ok: true, document });

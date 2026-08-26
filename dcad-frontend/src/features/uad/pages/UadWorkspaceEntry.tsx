@@ -128,7 +128,11 @@ export default function UadWorkspaceEntry() {
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cloud assets</div>
             <div className="mt-2 font-medium">
-              {capabilities?.object_storage.configured ? "R2 ready" : "R2 configuration pending"}
+              {capabilities?.object_storage.configured
+                ? capabilities.object_storage.isolated
+                  ? "Dedicated R2 ready"
+                  : "R2 ready"
+                : "R2 configuration pending"}
             </div>
           </div>
         </div>

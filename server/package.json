@@ -28,6 +28,7 @@
         "export:uad:synthetic-fixture": "node scripts/exportUadSyntheticWorkfileFixture.js",
         "verify:uad:pre-onboarding": "node scripts/verifyUadPreOnboarding.js",
         "verify:uad:compliance-config": "node scripts/verifyUadComplianceConfiguration.js",
+        "verify:uad:object-storage": "node scripts/verifyUadObjectStorage.js",
         "verify:redteam:recovery": "node scripts/verifyRedteamRecoveryDatabase.js",
         "reconcile:redteam:recovery-identities": "node scripts/reconcileRedteamRecoveryIdentities.js",
         "prepare:redteam:base": "node scripts/prepareRedteamBaseDatabase.js",

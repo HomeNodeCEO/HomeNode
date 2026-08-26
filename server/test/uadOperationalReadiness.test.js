@@ -65,6 +65,7 @@ test("builds a credential-safe local-delivery readiness result", () => {
   assert.deepEqual(readiness.checks.object_storage, {
     provider: "r2",
     configured: true,
+    isolated: false,
     ready: true,
   });
   assert.equal(readiness.checks.compliance.providers.fannie.ready, false);

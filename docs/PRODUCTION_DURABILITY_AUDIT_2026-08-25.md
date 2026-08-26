@@ -10,7 +10,7 @@ object keys.
 | --- | --- | --- |
 | Active-file persistence | Canonical PostgreSQL revision transaction; browser autosave target is 10 seconds idle and 55 seconds maximum wait | Implemented in this release |
 | Database PITR | Enabled with a three-day recovery window | Useful short-horizon protection; add independent longer retention |
-| Logical exports | Provider feature is available with at least seven days of retention, but no completed export was visible during this audit | Schedule and alert on an independent logical backup |
+| Logical exports | A fresh provider logical export was requested during this audit; Render retains completed exports for at least seven days | Verify completion, then add an independently stored longer-retention backup and restore drill |
 | Database high availability | Not enabled and unavailable on the current Basic database plan | An individual database/host failure can exceed the active-file RPO; move to an HA-capable plan before production appraisal volume |
 | Database storage | 100 GB provisioned and approximately 37% used; automatic storage scaling is disabled | Current headroom is acceptable; alert before 70% and enable a bounded scaling policy |
 | Database connection pooling | Provider pooler is disabled; the application pool is bounded | Reassess with load-test evidence before adding another pooling layer |
@@ -18,15 +18,16 @@ object keys.
 | Service health monitoring | Render health-check path is `/health` | Enabled during this audit |
 | Production deployment gate | Auto-deploy waits for GitHub CI checks to pass | Enabled during this audit |
 | Pre-deploy migration gate | Render runs `npm run migrate:uad` before starting each production release | Enabled during this audit; the advisory-locked, checksummed runner is UAD-only and does not run Custom Appraisal, Property Tax, or mobile migrations |
-| R2 bucket isolation | The production web service currently points at `homenode-uad-staging` | High-priority isolation item; do not change in place until referenced objects are inventoried and a migration/read-fallback plan is tested |
+| R2 bucket isolation | A private `homenode-uad-production` bucket now exists. The application supports a dedicated `UAD_R2_BUCKET` while preserving `R2_BUCKET` for Custom Appraisal documents and shared mobile photos | Activate after CI, then run the credential-safe object round-trip probe; current UAD inventory contains no objects requiring migration |
 | R2 retention lock | Not changed during this audit | Correct until HomeNode approves a written retention and legal-hold schedule |
 
 ## Required follow-through
 
-1. Create a dedicated production R2 bucket and production-scoped credential.
-   Inventory every PostgreSQL object reference, copy and checksum-verify existing
-   production objects, support a temporary read fallback, then move new writes.
-   Never point staging/red-team cleanup at the production bucket.
+1. Activate the dedicated production R2 bucket with `UAD_R2_BUCKET`, run
+   `npm run verify:uad:object-storage`, and confirm the public capability and
+   readiness summaries report storage isolation. A production-scoped R2
+   credential remains a defense-in-depth follow-up; never point staging or
+   red-team cleanup at the production bucket.
 2. Restrict database external access after recording the exact current clients.
    Prefer Render private networking for Render services and narrowly scoped
    allowlist entries for approved administrative access.

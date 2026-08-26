@@ -281,11 +281,16 @@ export async function saveUadSection(
   section: UadSectionKey,
   values: Array<{ uid: string; context_key: string; entity_id?: string | null; value: UadFieldValue }>,
   expectedRevision: number,
-): Promise<{ current_revision: number }> {
-  const result = await uadFetchJSON<{ current_revision: number }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
+  options: { saveReason?: "manual_save" | "autosave" } = {},
+): Promise<{ current_revision: number; save_reason: "manual_save" | "autosave"; changed_field_count: number }> {
+  const result = await uadFetchJSON<{ current_revision: number; save_reason: "manual_save" | "autosave"; changed_field_count: number }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ values, expected_revision: expectedRevision }),
+    body: JSON.stringify({
+      values,
+      expected_revision: expectedRevision,
+      save_reason: options.saveReason || "manual_save",
+    }),
   });
   announceUadWorkfileMutation(workfileId);
   return result;

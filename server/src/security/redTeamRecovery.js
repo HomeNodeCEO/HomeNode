@@ -4,6 +4,7 @@ import {
   verifyRedTeamSyntheticBoundary,
 } from "./redTeamIsolation.js";
 import { REDTEAM_ORGANIZATIONS, REDTEAM_PERSONAS } from "./redTeamFixtures.js";
+import { auditUadAssuranceGraph } from "../modules/uad/uadAssuranceGraph.js";
 
 const RECOVERY_SERVICE_ID_PATTERN = /^dpg-[a-z0-9-]{12,}$/;
 const EXPECTED_FIXTURE_COUNTS = Object.freeze({
@@ -96,6 +97,15 @@ export async function verifyRedTeamRecoveryDatabase(pool) {
   if (fixtureMismatches.length) {
     throw new Error(`redteam_recovery_fixture_count_mismatch:${fixtureMismatches.join(",")}`);
   }
+  const assurance = await auditUadAssuranceGraph(pool);
+  if (!assurance.ok) {
+    const failedCodes = assurance.checks
+      .filter((check) => !check.passed)
+      .slice(0, 5)
+      .map((check) => check.code)
+      .join(",");
+    throw new Error(`redteam_recovery_assurance_failed:${assurance.finding_count}:${failedCodes}`);
+  }
 
   return Object.freeze({
     verified: true,
@@ -103,5 +113,10 @@ export async function verifyRedTeamRecoveryDatabase(pool) {
     database_name: databaseName,
     uad_migrations: Object.freeze({ expected: manifest.length, matched: manifest.length }),
     fixture_counts: Object.freeze(fixtureCounts),
+    assurance_graph: Object.freeze({
+      profile: assurance.profile,
+      finding_count: assurance.finding_count,
+      passed: assurance.ok,
+    }),
   });
 }

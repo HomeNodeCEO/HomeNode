@@ -4993,9 +4993,19 @@ export function normalizeUadExpectedRevision(value) {
   return revision;
 }
 
-export async function saveUadSection(pool, workfileIdValue, section, input = {}) {
+export function normalizeUadSaveReason(value) {
+  const reason = value == null ? "manual_save" : String(value).trim();
+  if (!["manual_save", "autosave"].includes(reason)) {
+    throw new Error("invalid_uad_save_reason");
+  }
+  return reason;
+}
+
+export async function saveUadSection(pool, workfileIdValue, section, input = {}, actorUserId = null) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const expectedRevision = normalizeUadExpectedRevision(input.expected_revision);
+  const saveReason = normalizeUadSaveReason(input.save_reason);
+  const allowIncomplete = saveReason === "autosave";
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -5046,7 +5056,11 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
           );
         })
       : input.values;
-    const validation = validateUadSectionValues(section, submittedValues, { entityTypesById, entityDataById });
+    const validation = validateUadSectionValues(section, submittedValues, {
+      entityTypesById,
+      entityDataById,
+      allowIncomplete,
+    });
     if (validation.errors.length) {
       const error = new Error("invalid_uad_field_values");
       error.details = validation.errors;
@@ -5068,7 +5082,9 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
               ...calculateCertificationSystemValues(existingRows, validation.normalized),
             ]
         : validation.normalized;
-    const completeSectionErrors = validateCompleteSection(section, existingRows, normalized, entities, assets);
+    const completeSectionErrors = allowIncomplete
+      ? []
+      : validateCompleteSection(section, existingRows, normalized, entities, assets);
     if (completeSectionErrors.length) {
       const error = new Error("invalid_uad_field_values");
       error.details = completeSectionErrors;
@@ -5092,31 +5108,50 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
           : section === "certifications"
             ? "uad.certifications_government_agency"
             : "uad.sales_comparison_summary"
-        : previous && !changedFromPrevious ? previous.source_reference : "uad_workspace.section_save";
+        : previous && !changedFromPrevious
+          ? previous.source_reference
+          : saveReason === "autosave" ? "uad_workspace.autosave" : "uad_workspace.section_save";
       const overrideReason = isOverride ? "Appraiser edited a HomeNode-prefilled value." : null;
       const id = previous?.id || randomUUID();
+
+      if (previous && !changedFromPrevious && previous.is_appraiser_confirmed) continue;
 
       if (previous) {
         await client.query(
           `UPDATE appraisal.uad_field_values
               SET value = $2::jsonb, report_field_id = $3, source_type = $4,
                   source_reference = $5, is_appraiser_confirmed = true,
-                  is_override = $6, override_reason = $7, updated_at = now()
+                  is_override = $6, override_reason = $7,
+                  updated_by_user_id = $8, updated_at = now()
             WHERE id = $1`,
-          [id, JSON.stringify(value), field.reportFieldId, sourceType, sourceReference, isOverride, overrideReason],
+          [id, JSON.stringify(value), field.reportFieldId, sourceType, sourceReference, isOverride, overrideReason, actorUserId],
         );
       } else {
         await client.query(
           `INSERT INTO appraisal.uad_field_values (
              id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
-             source_type, source_reference, is_appraiser_confirmed
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, true)`,
-          [id, workfileId, entityId, field.contextKey, field.uid, field.reportFieldId, JSON.stringify(value), sourceType, sourceReference],
+             source_type, source_reference, is_appraiser_confirmed,
+             updated_by_user_id
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, true, $10)`,
+          [id, workfileId, entityId, field.contextKey, field.uid, field.reportFieldId, JSON.stringify(value), sourceType, sourceReference, actorUserId],
         );
       }
       if (changedFromPrevious || !previous?.is_appraiser_confirmed) {
         changed.push({ key: field.key, uid: field.uid, context_key: field.contextKey, entity_id: entityId, before: previous?.value ?? null, after: value });
       }
+    }
+
+    if (!changed.length) {
+      await client.query("COMMIT");
+      return {
+        section,
+        current_revision: currentRevision,
+        save_reason: saveReason,
+        saved_field_count: normalized.length,
+        changed_field_count: 0,
+        values: existingRows.map(responseValue),
+        completion: completionFor(existingRows, entities, assets),
+      };
     }
 
     const revisionNumber = currentRevision + 1;
@@ -5139,20 +5174,36 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     );
     await client.query(
       `INSERT INTO appraisal.uad_revisions (
-         id, workfile_id, revision_number, specification_release_key, document, change_summary
-       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
-      [randomUUID(), workfileId, revisionNumber, locked.rows[0].specification_release_key, JSON.stringify(revisionDocument), `Saved ${section} information`],
+         id, workfile_id, revision_number, specification_release_key, document, change_summary,
+          created_by_user_id
+       ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
+      [
+        randomUUID(),
+        workfileId,
+        revisionNumber,
+        locked.rows[0].specification_release_key,
+        JSON.stringify(revisionDocument),
+        saveReason === "autosave" ? `Autosaved ${section} draft` : `Saved ${section} information`,
+        actorUserId,
+      ],
     );
     await client.query(
       `INSERT INTO appraisal.uad_audit_events (
-         workfile_id, event_type, entity_type, entity_id, before_data, after_data, metadata
-       ) VALUES ($1, 'uad_section.saved', 'uad_section', $2, $3::jsonb, $4::jsonb, $5::jsonb)`,
+         workfile_id, event_type, entity_type, entity_id, before_data, after_data, metadata,
+          actor_user_id
+        ) VALUES ($1, 'uad_section.saved', 'uad_section', $2, $3::jsonb, $4::jsonb, $5::jsonb, $6)`,
       [
         workfileId,
         section,
         JSON.stringify(changed.map(({ key, uid, context_key, entity_id, before }) => ({ key, uid, context_key, entity_id, value: before }))),
         JSON.stringify(changed.map(({ key, uid, context_key, entity_id, after }) => ({ key, uid, context_key, entity_id, value: after }))),
-        JSON.stringify({ revision_number: revisionNumber, submitted_field_count: normalized.length }),
+        JSON.stringify({
+          revision_number: revisionNumber,
+          submitted_field_count: normalized.length,
+          changed_field_count: changed.length,
+          save_reason: saveReason,
+        }),
+        actorUserId,
       ],
     );
     await client.query("COMMIT");
@@ -5160,6 +5211,7 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {})
     return {
       section,
       current_revision: revisionNumber,
+      save_reason: saveReason,
       saved_field_count: normalized.length,
       changed_field_count: changed.length,
       values: allRows.map(responseValue),

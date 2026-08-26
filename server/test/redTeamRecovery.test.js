@@ -55,6 +55,8 @@ test("verifies synthetic fixture counts and every UAD migration checksum", async
       if (sql.includes("AS oidc_identities")) {
         return { rows: [{ accounts: 1, organizations: 2, users: 11, oidc_identities: 11, uad_workfiles: 3 }] };
       }
+      if (sql.includes("AS workfiles")) return { rows: [{ workfiles: 3, revisions: 3 }] };
+      if (sql.includes("AS finding_count")) return { rows: [{ finding_count: 0 }] };
       throw new Error(`unexpected_query:${sql}`);
     },
   };
@@ -67,6 +69,11 @@ test("verifies synthetic fixture counts and every UAD migration checksum", async
     users: 11,
     oidc_identities: 11,
     uad_workfiles: 3,
+  });
+  assert.deepEqual(result.assurance_graph, {
+    profile: "uad_assurance_graph_v1",
+    finding_count: 0,
+    passed: true,
   });
 });
 

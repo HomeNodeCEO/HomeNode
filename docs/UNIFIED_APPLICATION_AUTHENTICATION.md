@@ -56,7 +56,8 @@ npm run bootstrap:application-organization -- \
   --display-name "Example Appraiser" \
   --organization-legal-name "Example Appraisal Services, LLC" \
   --organization-display-name "Example Appraisal" \
-  --roles appraiser,organization_admin
+  --roles appraiser,organization_admin \
+  --signature-policy session
 ```
 
 Both commands above are read-only: the bootstrap runs inside a transaction and
@@ -64,16 +65,19 @@ rolls it back unless `--apply` is present. In production, an applying bootstrap
 also requires `--confirm-production` to exactly match the legal name. The
 bootstrap creates the internal organization, user, membership, roles, optional
 license, and appraiser profile without inventing an identity-provider subject.
+Re-running it can explicitly maintain either the `session` or `reauthentication`
+signature policy.
 
 After the confidential WorkOS application and user exist, map the exact WorkOS
 issuer/subject with `npm run provision:application-user` or
 `npm run provision:mobile-identity`. Never derive or guess an OIDC subject from
 an email address.
 
-Run the legacy ownership command without `--apply` first. Record its
-`pending_before.assignment_files` value, then supply that exact value with
-`--expected-assignment-files` during application. Production also requires the
-exact legal-name confirmation:
+Run the legacy ownership command without `--apply` first. Record every value in
+`pending_before`, then supply those exact values during application. The guarded
+transaction covers Custom Appraisal and UAD workfile ownership, missing canonical
+report registry rows, and missing appraisal-case subject snapshots. Production
+also requires the exact legal-name confirmation:
 
 ```text
 npm run migrate:legacy-appraisals:organization -- \
@@ -84,14 +88,19 @@ npm run migrate:legacy-appraisals:organization -- \
   --organization-legal-name "Example Appraisal Services, LLC" \
   --assigned-appraiser-email appraiser@example.com \
   --expected-assignment-files 123 \
+  --expected-uad-workfiles 12 \
+  --expected-custom-registry-gaps 0 \
+  --expected-uad-registry-gaps 1 \
+  --expected-history-gaps 1 \
   --confirm-production "Example Appraisal Services, LLC" \
   --apply
 ```
 
-The applying command refuses to run if the count changed after the dry run. It
-adds ownership to legacy Custom assignment rows, their report registry rows,
-and their appraisal cases; it does not rewrite appraisal observations, sales,
-adjustments, photos, documents, revisions, or signed snapshots.
+The applying command refuses to run if any count changed after the dry run. It
+adds ownership to legacy Custom and UAD targets, repairs their canonical report
+registry and appraisal-history links, and captures missing immutable subject
+snapshots. It does not rewrite appraisal observations, sales, adjustments,
+photos, documents, UAD revisions, or signed snapshots.
 
 Authenticated mobile discovery and replication never expose organization-less
 legacy files. Previous Appraisal Files, completion snapshots, photos, and
@@ -119,8 +128,9 @@ accidentally lock the existing application.
 
 Do not enable the flag until `audit:application-auth-rollout` reports
 `activation_ready: true`. That requires a mapped OIDC identity, active
-membership, complete file/appraiser ownership, no cross-table organization
-mismatches, and no unattached legacy document evidence.
+membership, active appraiser profile, non-expired active license, complete
+file/appraiser ownership and canonical report/history coverage, no cross-table
+organization mismatches, and no unattached legacy document evidence.
 
 When enforcement is active, signing cannot use the shared editor key. The
 server derives the signer from the authenticated assignment, records an

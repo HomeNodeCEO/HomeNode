@@ -89,10 +89,18 @@ test("authenticates a signed snapshot with a server-held deterministic HMAC", ()
 
 test("verifies HMAC-protected signed snapshots and rejects database tampering", () => {
   const signingSecret = "v".repeat(32);
-  const snapshot = { z: 3, nested: { y: 2, a: 1 } };
+  const snapshot = {
+    z: 3,
+    nested: { y: 2, a: 1 },
+    saved_at: new Date("2026-08-26T11:00:00.000Z"),
+  };
   assert.equal(
     customAppraisalSnapshotChecksum(snapshot),
-    customAppraisalSnapshotChecksum({ nested: { a: 1, y: 2 }, z: 3 }),
+    customAppraisalSnapshotChecksum({
+      nested: { a: 1, y: 2 },
+      saved_at: "2026-08-26T11:00:00.000Z",
+      z: 3,
+    }),
   );
   const row = {
     snapshot,

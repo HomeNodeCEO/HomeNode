@@ -69,6 +69,7 @@ export function normalizeCustomAppraisalWarningCodes(value) {
 
 function stableJson(value) {
   if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value.toJSON === "function") return stableJson(value.toJSON());
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableJson(value[key])]));
   }

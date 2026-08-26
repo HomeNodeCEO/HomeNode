@@ -16,6 +16,7 @@
     "test:market-area": "node --experimental-strip-types scripts/testMarketAreaAutomation.mjs",
     "test:comparable-presentation": "node --experimental-strip-types scripts/testComparableSalesPresentation.mjs",
     "test:property-report-presentation": "node --experimental-strip-types scripts/testPropertyReportPresentation.mjs",
+    "test:property-report-assignment": "node --experimental-strip-types scripts/testPropertyReportAssignment.mjs",
     "test:uad-auth": "node --experimental-strip-types scripts/testUadAuth.mjs"
   },
   "dependencies": {

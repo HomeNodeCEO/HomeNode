@@ -29,6 +29,7 @@ const organizationDisplayName = option("organization-display-name") || organizat
 const organizationDbaName = option("organization-dba-name") || null;
 const roles = [...new Set((option("roles") || "appraiser,organization_admin")
   .split(",").map((role) => role.trim()).filter(Boolean))];
+const signaturePolicy = option("signature-policy") || "session";
 const licenseJurisdiction = option("license-jurisdiction").toUpperCase();
 const licenseNumber = option("license-number");
 const licenseType = option("license-type");
@@ -40,6 +41,9 @@ if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error("valid --email is
 if (organizationDisplayName.length > 300) throw new Error("valid --organization-display-name is required");
 if (organizationDbaName?.length > 300) throw new Error("valid --organization-dba-name is required");
 if (!roles.length) throw new Error("at least one --roles value is required");
+if (!new Set(["session", "reauthentication"]).has(signaturePolicy)) {
+  throw new Error("--signature-policy must be session or reauthentication");
+}
 if (licenseValues.some(Boolean) && !licenseValues.every(Boolean)) {
   throw new Error("license jurisdiction, number, type, and expiration must be supplied together");
 }
@@ -133,11 +137,13 @@ try {
     await client.query(
       `INSERT INTO app_auth.appraiser_profiles (
          user_id, default_organization_id, signature_policy, profile_status, metadata
-       ) VALUES ($1, $2, 'session', 'active', $3::jsonb)
+       ) VALUES ($1, $2, $3, 'active', $4::jsonb)
        ON CONFLICT (user_id) DO UPDATE
          SET default_organization_id = COALESCE(app_auth.appraiser_profiles.default_organization_id, EXCLUDED.default_organization_id),
+             signature_policy = EXCLUDED.signature_policy,
+             profile_status = 'active',
              updated_at = now()`,
-      [userId, organizationId, JSON.stringify({ provisioned_by: "bootstrapApplicationOrganization" })],
+      [userId, organizationId, signaturePolicy, JSON.stringify({ provisioned_by: "bootstrapApplicationOrganization" })],
     );
   }
   if (licenseValues.every(Boolean)) {
@@ -172,6 +178,7 @@ try {
     user_id: userId,
     email,
     roles,
+    signature_policy: signaturePolicy,
     license_configured: licenseValues.every(Boolean),
     oidc_identity_configured: false,
   }));

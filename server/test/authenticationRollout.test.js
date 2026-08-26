@@ -14,16 +14,22 @@ test("application organization bootstrap is dry-run first and production-confirm
   assert.match(source, /pg_advisory_xact_lock/);
   assert.match(source, /await client\.query\("ROLLBACK"\)/);
   assert.match(source, /oidc_identity_configured: false/);
-  assert.match(source, /VALUES \(\$1, \$2, 'session', 'active'/);
+  assert.match(source, /signature_policy = EXCLUDED\.signature_policy/);
+  assert.match(source, /--signature-policy must be session or reauthentication/);
   assert.doesNotMatch(source, /DELETE\s+FROM/i);
 });
 
-test("legacy ownership migration refuses stale counts and unconfirmed production writes", () => {
+test("legacy ownership migration covers Custom and UAD canonical records with guarded counts", () => {
   const source = read("../scripts/migrateLegacyAppraisalOrganization.js");
-  assert.match(source, /--expected-assignment-files is required with --apply/);
-  assert.match(source, /legacy assignment count changed after dry run/);
+  assert.match(source, /expected-uad-workfiles/);
+  assert.match(source, /expected-custom-registry-gaps/);
+  assert.match(source, /expected-uad-registry-gaps/);
+  assert.match(source, /expected-history-gaps/);
   assert.match(source, /--confirm-production must exactly match --organization-legal-name/);
   assert.match(source, /pg_advisory_xact_lock/);
+  assert.match(source, /appraisal\.uad_workfiles/);
+  assert.match(source, /registerOriginalAppraisalReport/);
+  assert.match(source, /assigned appraiser must resolve exactly once with an appraiser role/);
   assert.match(source, /app\.appraisal_cases/);
   assert.doesNotMatch(source, /DELETE\s+FROM/i);
 });
@@ -100,6 +106,14 @@ test("rollout audit covers identity, ownership, and canonical registry consisten
     "uad_registry_mismatches",
     "property_tax_registry_mismatches",
     "documents_without_owned_assignment",
+    "custom_assignment_files_invalid_appraiser_credentials",
+    "uad_workfiles_invalid_appraiser_credentials",
+    "custom_targets_without_registry",
+    "uad_targets_without_registry",
+    "appraisal_reports_missing_case",
+    "appraisal_reports_missing_snapshot",
+    "active_appraiser_profiles",
+    "valid_appraiser_licenses",
     "activation_ready",
   ]) assert.match(source, new RegExp(expected));
 });

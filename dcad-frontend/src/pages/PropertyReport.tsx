@@ -14,8 +14,6 @@ import {
   downloadCustomAppraisalReportPdf,
   downloadCustomAppraisalWorkfile,
   analyzePropertyContext as runPropertyContextAnalysis,
-  getPropertyZoningEvidence,
-  getZoningDocumentDescriptionSuggestion,
   getNeighborhoodProfile,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getPropertyContextAssessment,
@@ -24,7 +22,6 @@ import {
   getAccountPhotos,
   getRelatedParcels,
   savePropertyContextReview,
-  savePropertyZoningVerification,
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
   updateAssignmentFile,
@@ -35,7 +32,6 @@ import {
   type NeighborhoodProfileResponse,
   type PropertyComplexityAssessment,
   type PropertyComplexityLevel,
-  type PropertyZoningEvidence,
   type ReportManualSectionKey,
   type RelatedParcelsResponse,
   makeUrl,
@@ -101,6 +97,7 @@ import {
   useCensusProfile,
   type CensusProfilesLoaded,
 } from "@/hooks/useCensusProfile";
+import { useZoningEvidence } from "@/hooks/useZoningEvidence";
 
 type DcadOwner = {
   owner_name?: string;
@@ -278,6 +275,9 @@ function AddressHero({
   requestedAssignmentFileId?: number | null;
   onReload: () => Promise<void>;
 }) {
+  const editorKeyForSave = useCallback((): string => {
+    return requestEditorCredential("Enter the HomeNode editor key to save verified changes:");
+  }, []);
   const [photoIndex, setPhotoIndex] = useState(0);
   const [relatedParcelSearchVersion, setRelatedParcelSearchVersion] = useState(0);
   const [relatedParcels, setRelatedParcels] = useState<RelatedParcelsResponse | null>(null);
@@ -318,20 +318,6 @@ function AddressHero({
   const [propertyContextLoading, setPropertyContextLoading] = useState(false);
   const [propertyContextSaving, setPropertyContextSaving] = useState(false);
   const [propertyContextMessage, setPropertyContextMessage] = useState("");
-  const [zoningEvidence, setZoningEvidence] = useState<PropertyZoningEvidence | null>(null);
-  const [zoningEvidenceOpen, setZoningEvidenceOpen] = useState(false);
-  const [zoningEvidenceLoading, setZoningEvidenceLoading] = useState(false);
-  const [zoningEvidenceMessage, setZoningEvidenceMessage] = useState("");
-  const [zoningDraft, setZoningDraft] = useState({
-    sourceDocumentId: "",
-    sourceType: "map_pdf" as "map_pdf" | "interactive_map" | "city_confirmation" | "official_gis" | "manual",
-    zoningCode: "",
-    zoningDescription: "",
-    pageNumber: "",
-    confirmationReference: "",
-    notes: "",
-    reviewer: "",
-  });
   const [propertyComplexityDraft, setPropertyComplexityDraft] = useState<PropertyComplexityLevel>(
     () => detail?.property_context?.effective_complexity || "simple",
   );
@@ -425,6 +411,24 @@ function AddressHero({
     requestedAssignmentFileId,
     onSelectedFile: handleSelectedAssignmentFile,
   });
+  const {
+    zoningEvidence,
+    zoningEvidenceOpen,
+    setZoningEvidenceOpen,
+    zoningEvidenceLoading,
+    zoningEvidenceMessage,
+    zoningDraft,
+    setZoningDraft,
+    loadZoningEvidence,
+    saveZoningEvidence,
+    prefillVerbatimZoningDescription,
+  } = useZoningEvidence({
+    accountId,
+    assignmentFileId: activeAssignmentFile?.id || null,
+    enabled: Boolean(detail),
+    getEditorKey: editorKeyForSave,
+    onCredentialRejected: forgetEditorCredential,
+  });
   const photos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
@@ -438,52 +442,6 @@ function AddressHero({
   const detailLoaded = Boolean(detail);
   const exactAddress = detail?.property_location?.address?.trim() || "";
 
-  const hydrateZoningEvidence = useCallback((evidence: PropertyZoningEvidence) => {
-    setZoningEvidence(evidence);
-    const verification = evidence.verification;
-    const automatic = evidence.automatic_result;
-    const firstDocument = evidence.documents[0];
-    setZoningDraft((current) => ({
-      sourceDocumentId: verification?.source_document_id
-        ? String(verification.source_document_id)
-        : firstDocument ? String(firstDocument.id) : "",
-      sourceType: verification?.source_type || (firstDocument
-        ? "map_pdf"
-        : automatic ? "official_gis" : "city_confirmation"),
-      zoningCode: verification?.zoning_code || automatic?.zoning_code || current.zoningCode,
-      zoningDescription:
-        verification?.zoning_description || automatic?.zoning_description || current.zoningDescription,
-      pageNumber: verification?.page_number ? String(verification.page_number) : "",
-      confirmationReference: verification?.confirmation_reference || "",
-      notes: verification?.notes || "",
-      reviewer: verification?.reviewer || current.reviewer,
-    }));
-  }, []);
-
-  const loadZoningEvidence = useCallback(async ({ open = false } = {}) => {
-    if (!accountId) return;
-    if (open) setZoningEvidenceOpen(true);
-    setZoningEvidenceLoading(true);
-    setZoningEvidenceMessage("");
-    try {
-      const response = await getPropertyZoningEvidence(
-        accountId,
-        activeAssignmentFile?.id || null,
-      );
-      hydrateZoningEvidence(response.evidence);
-    } catch (error) {
-      setZoningEvidenceMessage(
-        error instanceof Error ? error.message : "Zoning evidence could not be loaded.",
-      );
-    } finally {
-      setZoningEvidenceLoading(false);
-    }
-  }, [accountId, activeAssignmentFile?.id, hydrateZoningEvidence]);
-
-  useEffect(() => {
-    if (!detailLoaded || !accountId) return;
-    void loadZoningEvidence();
-  }, [accountId, detailLoaded, loadZoningEvidence]);
 
   useEffect(() => {
     if (photoIndex >= photos.length) setPhotoIndex(0);
@@ -816,103 +774,6 @@ function AddressHero({
     }
   };
 
-  const editorKeyForSave = (): string => {
-    return requestEditorCredential("Enter the HomeNode editor key to save verified changes:");
-  };
-
-  const saveZoningEvidence = async () => {
-    if (!accountId || !zoningEvidence?.jurisdiction) return;
-    if (!zoningDraft.zoningCode.trim()) {
-      setZoningEvidenceMessage("Enter the confirmed zoning code before saving.");
-      return;
-    }
-    if (!zoningDraft.zoningDescription.trim()) {
-      setZoningEvidenceMessage("Enter or prefill the exact official zoning description before saving.");
-      return;
-    }
-    if (!zoningDraft.reviewer.trim()) {
-      setZoningEvidenceMessage("Enter the appraiser or reviewer name before saving.");
-      return;
-    }
-    const editorKey = editorKeyForSave();
-    if (!editorKey) return;
-    setZoningEvidenceLoading(true);
-    setZoningEvidenceMessage("");
-    try {
-      const response = await savePropertyZoningVerification(
-        accountId,
-        {
-          assignment_file_id: activeAssignmentFile?.id || null,
-          jurisdiction_city: zoningEvidence.jurisdiction.city,
-          source_document_id: zoningDraft.sourceDocumentId
-            ? Number(zoningDraft.sourceDocumentId)
-            : null,
-          source_type: zoningDraft.sourceType,
-          zoning_code: zoningDraft.zoningCode.trim(),
-          zoning_description: zoningDraft.zoningDescription.trim(),
-          page_number: zoningDraft.pageNumber ? Number(zoningDraft.pageNumber) : null,
-          confirmation_reference: zoningDraft.confirmationReference.trim(),
-          notes: zoningDraft.notes.trim(),
-          reviewer: zoningDraft.reviewer.trim(),
-        },
-        editorKey,
-      );
-      hydrateZoningEvidence({
-        ...zoningEvidence,
-        review_required: false,
-        verification: response.verification,
-      });
-      setZoningEvidenceMessage("Confirmed zoning and source provenance saved to this property file.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "The zoning verification could not be saved.";
-      if (/401|invalid_editor_key/i.test(message)) {
-        forgetEditorCredential();
-      }
-      setZoningEvidenceMessage(message);
-    } finally {
-      setZoningEvidenceLoading(false);
-    }
-  };
-
-  const prefillVerbatimZoningDescription = async () => {
-    const sourceDocument = zoningEvidence?.documents.find(
-      (document) => String(document.id) === zoningDraft.sourceDocumentId,
-    ) || zoningEvidence?.documents[0] || null;
-    if (!sourceDocument || !zoningDraft.zoningCode.trim()) {
-      setZoningEvidenceMessage("Select an official PDF and enter the zoning code first.");
-      return;
-    }
-    setZoningEvidenceLoading(true);
-    setZoningEvidenceMessage("");
-    try {
-      const result = await getZoningDocumentDescriptionSuggestion(
-        sourceDocument.id,
-        zoningDraft.zoningCode.trim(),
-      );
-      if (!result.suggestion?.raw_value) {
-        setZoningEvidenceMessage(
-          "That code was not found beside a reliable description in the PDF text layer. Review the visible document and city contact before confirming.",
-        );
-        return;
-      }
-      setZoningDraft((current) => ({
-        ...current,
-        zoningDescription: result.suggestion?.raw_value || current.zoningDescription,
-        pageNumber: result.suggestion?.page_number
-          ? String(result.suggestion.page_number)
-          : current.pageNumber,
-      }));
-      setZoningEvidenceMessage(
-        `Prefilled the exact wording found on PDF page ${result.suggestion.page_number || "unknown"}. Appraiser confirmation is still required.`,
-      );
-    } catch (error) {
-      setZoningEvidenceMessage(
-        error instanceof Error ? error.message : "The zoning description could not be suggested.",
-      );
-    } finally {
-      setZoningEvidenceLoading(false);
-    }
-  };
 
   const saveManualSection = async (
     sectionKey: ReportManualSectionKey,

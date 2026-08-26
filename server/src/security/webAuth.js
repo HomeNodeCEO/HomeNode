@@ -58,10 +58,28 @@ function readTransaction(value, secret, now = Date.now()) {
     throw new Error("invalid_auth_transaction");
   }
   const transaction = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-  if (!transaction?.state || !transaction?.verifier || Number(transaction.expires_at) < now) {
+  if (
+    !transaction?.state
+    || !transaction?.verifier
+    || !transaction?.nonce
+    || Number(transaction.expires_at) < now
+  ) {
     throw new Error("expired_auth_transaction");
   }
   return transaction;
+}
+
+function secureStringEqual(actual, expected) {
+  const actualBytes = Buffer.from(String(actual || ""), "utf8");
+  const expectedBytes = Buffer.from(String(expected || ""), "utf8");
+  return actualBytes.length === expectedBytes.length
+    && timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function idTokenError(diagnostic) {
+  const error = new Error("invalid_id_token");
+  error.diagnostic = diagnostic;
+  return error;
 }
 
 const SAFE_AUTH_FAILURES = new Set([
@@ -239,10 +257,12 @@ export function createWebAuthRouter({
       const metadata = await getDiscovery();
       const state = base64url(randomBytes(24));
       const verifierValue = base64url(randomBytes(48));
+      const nonce = base64url(randomBytes(32));
       const challenge = base64url(createHash("sha256").update(verifierValue).digest());
       setBrowserCookie(res, TRANSACTION_COOKIE, signTransaction({
         state,
         verifier: verifierValue,
+        nonce,
         expires_at: Date.now() + 10 * 60 * 1000,
       }, sessionSecret), 600);
       const url = new URL(metadata.authorization_endpoint);
@@ -251,6 +271,7 @@ export function createWebAuthRouter({
       url.searchParams.set("redirect_uri", redirectUri);
       url.searchParams.set("scope", "openid profile email");
       url.searchParams.set("state", state);
+      url.searchParams.set("nonce", nonce);
       url.searchParams.set("code_challenge", challenge);
       url.searchParams.set("code_challenge_method", "S256");
       return res.redirect(302, url.toString());
@@ -285,7 +306,11 @@ export function createWebAuthRouter({
       if (!response.ok) throw await tokenExchangeFailure(response);
       const tokens = await response.json();
       stage = "token_verification";
-      const claims = await verifier.verify(tokens.access_token);
+      if (!tokens?.id_token) throw idTokenError("id_token_missing");
+      const claims = await verifier.verify(tokens.id_token);
+      if (!secureStringEqual(claims.nonce, transaction.nonce)) {
+        throw idTokenError("nonce_mismatch");
+      }
       stage = "identity_lookup";
       const identity = await loadIdentity(pool, claims.iss, claims.sub);
       const token = base64url(randomBytes(32));

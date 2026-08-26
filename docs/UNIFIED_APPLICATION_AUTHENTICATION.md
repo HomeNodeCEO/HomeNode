@@ -40,6 +40,13 @@ Configure these secret or environment values while leaving enforcement off:
 application has its own confidential-client ID and audience. Merely configuring
 these values does not show the login gate or remove editor-key access.
 
+The browser authorization-code flow uses state, PKCE, and a signed,
+short-lived transaction cookie. HomeNode verifies the returned OpenID Connect
+ID token against the web client ID and requires its nonce to match that signed
+transaction before looking up a HomeNode identity or creating a session. The
+provider access token is not used as the browser identity assertion and is not
+stored by HomeNode.
+
 Provision the initial organization, memberships, and roles before activation.
 Use `npm run provision:application-user` for provisioned OIDC identities and
 `npm run migrate:legacy-appraisals:organization` for the controlled assignment

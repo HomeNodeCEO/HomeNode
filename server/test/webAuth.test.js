@@ -15,13 +15,17 @@ const CONFIGURED_ENVIRONMENT = Object.freeze({
 
 async function withAuthServer(environment, callback, {
   fetchImpl = async () => { throw new Error("unexpected_discovery_request"); },
+  logger = { warn() {} },
+  pool = { query: async () => ({ rows: [] }) },
+  verifier = { configured: true, issuer: "https://identity.example.test" },
 } = {}) {
   const app = express();
   app.use("/api/auth", createWebAuthRouter({
-    pool: { query: async () => ({ rows: [] }) },
-    verifier: { configured: true, issuer: "https://identity.example.test" },
+    pool,
+    verifier,
     environment,
     fetchImpl,
+    logger,
   }));
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
@@ -91,4 +95,47 @@ test("login transaction cookie is host-only, secure, HTTP-only, and short-lived"
       headers: { "content-type": "application/json" },
     }),
   });
+});
+
+test("callback diagnostics identify the failing stage without logging provider secrets", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  const warnings = [];
+  let requestCount = 0;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    const authorizationUrl = new URL(login.headers.get("location"));
+    const transactionCookie = login.headers.get("set-cookie").split(";", 1)[0];
+    const callback = await fetch(
+      `${baseUrl}/api/auth/callback?code=one-time-code&state=${authorizationUrl.searchParams.get("state")}`,
+      { headers: { cookie: transactionCookie }, redirect: "manual" },
+    );
+    assert.equal(callback.status, 401);
+    assert.deepEqual(await callback.json(), { error: "authentication_failed" });
+  }, {
+    logger: { warn(message) { warnings.push(message); } },
+    fetchImpl: async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return new Response(JSON.stringify(discovery), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({
+        error: "invalid_client",
+        error_description: "must-not-appear-in-logs secret=top-secret",
+      }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  assert.deepEqual(warnings, [
+    "[web-auth] callback failed stage=token_exchange reason=http_401:invalid_client",
+  ]);
+  assert.doesNotMatch(warnings[0], /top-secret|error_description|one-time-code/);
 });

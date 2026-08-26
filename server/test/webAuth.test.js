@@ -81,6 +81,9 @@ test("login transaction cookie is host-only, secure, HTTP-only, and short-lived"
     const response = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
     assert.equal(response.status, 302);
     assert.match(response.headers.get("location"), /^https:\/\/identity\.example\.test\/authorize\?/);
+    const authorizationUrl = new URL(response.headers.get("location"));
+    assert.equal(authorizationUrl.searchParams.get("scope"), "openid profile email");
+    assert.match(authorizationUrl.searchParams.get("nonce"), /^[A-Za-z0-9_-]{40,}$/);
     const setCookie = response.headers.get("set-cookie");
     assert.match(setCookie, /^__Host-homenode_auth_tx=/);
     assert.match(setCookie, /Path=\//i);
@@ -95,6 +98,120 @@ test("login transaction cookie is host-only, secure, HTTP-only, and short-lived"
       headers: { "content-type": "application/json" },
     }),
   });
+});
+
+test("callback verifies the client-bound ID token and nonce before creating a session", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  const verifiedTokens = [];
+  const queries = [];
+  let expectedNonce;
+  let requestCount = 0;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    const authorizationUrl = new URL(login.headers.get("location"));
+    expectedNonce = authorizationUrl.searchParams.get("nonce");
+    const transactionCookie = login.headers.get("set-cookie").split(";", 1)[0];
+    const callback = await fetch(
+      `${baseUrl}/api/auth/callback?code=one-time-code&state=${authorizationUrl.searchParams.get("state")}`,
+      { headers: { cookie: transactionCookie }, redirect: "manual" },
+    );
+    assert.equal(callback.status, 302);
+    assert.equal(callback.headers.get("location"), CONFIGURED_ENVIRONMENT.WEB_APP_URL);
+    assert.match(callback.headers.get("set-cookie"), /__Host-homenode_session=/);
+  }, {
+    fetchImpl: async () => {
+      requestCount += 1;
+      return requestCount === 1
+        ? new Response(JSON.stringify(discovery), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+        : new Response(JSON.stringify({
+          access_token: "resource-access-token-with-a-different-audience",
+          id_token: "client-bound-id-token",
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+    },
+    verifier: {
+      configured: true,
+      issuer: discovery.issuer,
+      async verify(token) {
+        verifiedTokens.push(token);
+        return { iss: discovery.issuer, sub: "workos-user", nonce: expectedNonce };
+      },
+    },
+    pool: {
+      async query(sql, parameters) {
+        queries.push({ sql, parameters });
+        if (sql.includes("FROM app_auth.oidc_identities")) {
+          return { rows: [{
+            user_id: "user-id",
+            email: "user@example.test",
+            display_name: "Test User",
+            organization_id: "organization-id",
+            organization_display_name: "Test Organization",
+            role_code: "appraiser",
+          }] };
+        }
+        if (sql.includes("INSERT INTO app_auth.web_sessions")) return { rows: [] };
+        throw new Error("unexpected_query");
+      },
+    },
+  });
+  assert.deepEqual(verifiedTokens, ["client-bound-id-token"]);
+  assert.equal(queries.length, 2);
+});
+
+test("callback rejects an ID token that is not bound to the login nonce", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  const warnings = [];
+  let requestCount = 0;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    const authorizationUrl = new URL(login.headers.get("location"));
+    const transactionCookie = login.headers.get("set-cookie").split(";", 1)[0];
+    const callback = await fetch(
+      `${baseUrl}/api/auth/callback?code=one-time-code&state=${authorizationUrl.searchParams.get("state")}`,
+      { headers: { cookie: transactionCookie }, redirect: "manual" },
+    );
+    assert.equal(callback.status, 401);
+    assert.deepEqual(await callback.json(), { error: "authentication_failed" });
+  }, {
+    logger: { warn(message) { warnings.push(message); } },
+    fetchImpl: async () => {
+      requestCount += 1;
+      return requestCount === 1
+        ? new Response(JSON.stringify(discovery), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+        : new Response(JSON.stringify({ id_token: "client-bound-id-token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+    },
+    verifier: {
+      configured: true,
+      issuer: discovery.issuer,
+      async verify() {
+        return { iss: discovery.issuer, sub: "workos-user", nonce: "wrong-nonce" };
+      },
+    },
+    pool: { async query() { throw new Error("identity_lookup_must_not_run"); } },
+  });
+  assert.deepEqual(warnings, [
+    "[web-auth] callback failed stage=token_verification reason=nonce_mismatch",
+  ]);
 });
 
 test("callback diagnostics identify the failing stage without logging provider secrets", async () => {

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
 import * as api from '@/lib/api';
+import { loadAppraisalFileContext, useAppraisalFileRequest } from '@/hooks/useAppraisalFileContext';
 import { requestEditorCredential } from '@/lib/editorCredential';
 import {
   calculateFinalReconciliation,
@@ -96,15 +96,7 @@ function defaultEffectiveDate(workfile: api.CustomAppraisalWorkfile): string {
 }
 
 export default function FinalReconciliation() {
-  const location = useLocation();
-  const propertyId = useMemo(
-    () => (new URLSearchParams(location.search).get('propertyId') || '').trim(),
-    [location.search],
-  );
-  const requestedFileId = useMemo(() => {
-    const parsed = Number(new URLSearchParams(location.search).get('assignmentFileId'));
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [location.search]);
+  const { propertyId, requestedFileId } = useAppraisalFileRequest();
   const [detail, setDetail] = useState<api.AccountDetail | null>(null);
   const [assignmentFile, setAssignmentFile] =
     useState<api.AppraisalAssignmentFile | null>(null);
@@ -122,19 +114,14 @@ export default function FinalReconciliation() {
       setLoading(false);
       return () => { cancelled = true; };
     }
-    void Promise.all([api.getAccount(propertyId), api.getAssignmentFiles(propertyId)])
-      .then(async ([property, files]) => {
+    void loadAppraisalFileContext(propertyId, requestedFileId)
+      .then(({ property, assignmentFile: selected, workfile }) => {
         if (cancelled) return;
-        const selected = requestedFileId
-          ? files.files.find((file) => file.id === requestedFileId) || null
-          : files.latest_file;
         setDetail(property);
         setAssignmentFile(selected);
-        if (!selected) return;
-        const result = await api.getCustomAppraisalWorkfile(propertyId, selected.id);
-        if (cancelled) return;
-        const approaches = deriveApproaches(result.workfile);
-        const savedSection = result.workfile.sections.final_reconciliation;
+        if (!selected || !workfile) return;
+        const approaches = deriveApproaches(workfile);
+        const savedSection = workfile.sections.final_reconciliation;
         const saved = savedSection?.value as Partial<FinalReconciliationDraft> | undefined;
         const stale = Boolean(saved?.approaches && APPROACHES.some(({ key }) =>
           Number(saved.approaches?.[key]?.source_revision || 0) !==
@@ -146,7 +133,7 @@ export default function FinalReconciliation() {
         setRevision(savedSection?.revision || 0);
         setDraft(calculateFinalReconciliation({
           ...saved,
-          effective_date: saved?.effective_date || defaultEffectiveDate(result.workfile),
+          effective_date: saved?.effective_date || defaultEffectiveDate(workfile),
           certification: saved?.certification || DEFAULT_APPRAISER_CERTIFICATION,
         }, approaches));
       })

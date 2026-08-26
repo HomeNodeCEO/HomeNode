@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 
 import * as api from '@/lib/api';
+import { loadAppraisalFileContext, useAppraisalFileRequest } from '@/hooks/useAppraisalFileContext';
 import { requestEditorCredential } from '@/lib/editorCredential';
 import {
   calculateIncomeApproach,
@@ -71,12 +71,7 @@ function NumericField({ label, value, onChange, step = '1', prefix, suffix, read
 }
 
 export default function IncomeApproach() {
-  const location = useLocation();
-  const propertyId = useMemo(() => (new URLSearchParams(location.search).get('propertyId') || '').trim(), [location.search]);
-  const requestedFileId = useMemo(() => {
-    const parsed = Number(new URLSearchParams(location.search).get('assignmentFileId'));
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [location.search]);
+  const { propertyId, requestedFileId } = useAppraisalFileRequest();
   const [detail, setDetail] = useState<api.AccountDetail | null>(null);
   const [assignmentFile, setAssignmentFile] = useState<api.AppraisalAssignmentFile | null>(null);
   const [revision, setRevision] = useState(0);
@@ -92,21 +87,16 @@ export default function IncomeApproach() {
       setLoading(false);
       return () => { cancelled = true; };
     }
-    void Promise.all([api.getAccount(propertyId), api.getAssignmentFiles(propertyId)])
-      .then(async ([property, files]) => {
+    void loadAppraisalFileContext(propertyId, requestedFileId)
+      .then(({ property, assignmentFile: selected, workfile }) => {
         if (cancelled) return;
-        const selected = requestedFileId
-          ? files.files.find((file) => file.id === requestedFileId) || null
-          : files.latest_file;
         setDetail(property);
         setAssignmentFile(selected);
         if (!selected) {
           setDraft(initialDraft());
           return;
         }
-        const result = await api.getCustomAppraisalWorkfile(propertyId, selected.id);
-        if (cancelled) return;
-        const section = result.workfile.sections.income_approach;
+        const section = workfile?.sections.income_approach;
         setRevision(section?.revision || 0);
         setDraft(section?.value
           ? calculateIncomeApproach(section.value as Partial<IncomeApproachDraft>)

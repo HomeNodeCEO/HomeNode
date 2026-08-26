@@ -212,6 +212,7 @@ export function createUadRouter({
       object_storage: {
         provider: storage.provider,
         configured: storage.configured,
+        isolated: Boolean(storage.isolated),
       },
       xml: getUadXmlMappingSummary(),
       delivery_package: {

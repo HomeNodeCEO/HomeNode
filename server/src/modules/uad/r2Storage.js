@@ -172,13 +172,15 @@ export function buildUadVerifiedAssetObjectKey({
 export function createUadObjectStorage(env = process.env, {
   fetchImpl = globalThis.fetch,
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  bucket = env.R2_BUCKET,
+  isolated = false,
 } = {}) {
   const provider = String(env.UAD_OBJECT_STORAGE_PROVIDER || "r2").trim().toLowerCase();
   const config = {
     accountId: String(env.R2_ACCOUNT_ID || "").trim(),
     accessKeyId: String(env.R2_ACCESS_KEY_ID || "").trim(),
     secretAccessKey: String(env.R2_SECRET_ACCESS_KEY || "").trim(),
-    bucket: String(env.R2_BUCKET || "").trim(),
+    bucket: String(bucket || "").trim(),
     uploadTtlSeconds: Math.max(60, Math.min(Number(env.R2_UPLOAD_URL_TTL_SECONDS) || 900, 3600)),
     requestTimeoutMs: boundedInteger(
       env.R2_REQUEST_TIMEOUT_MS,
@@ -279,6 +281,7 @@ export function createUadObjectStorage(env = process.env, {
     provider,
     bucket: config.bucket || null,
     configured,
+    isolated: Boolean(isolated),
     resilience: Object.freeze({
       request_timeout_ms: config.requestTimeoutMs,
       stream_timeout_ms: config.streamTimeoutMs,

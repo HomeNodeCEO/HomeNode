@@ -178,6 +178,12 @@ test("rejects production-shaped database, storage, origin, and OIDC boundaries",
   assert.throws(() => assertRedTeamDatabaseName("homenodedb"), /redteam_database_identity_mismatch/);
 });
 
+test("rejects a production UAD bucket override in the isolated red-team service", () => {
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    UAD_R2_BUCKET: "homenode-uad-production",
+  })), /uad_r2_bucket_marker/);
+});
+
 test("rejects live provider flags or credentials even when another flag is off", () => {
   assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
     TRESTLE_ENABLED: "true",
@@ -199,6 +205,15 @@ test("server startup evaluates isolation before database construction", () => {
   const databasePool = serverSource.indexOf("new pg.Pool");
   assert.ok(isolation > 0);
   assert.ok(databasePool > isolation);
+});
+
+test("server isolates UAD storage while preserving shared mobile and document storage", () => {
+  assert.match(serverSource, /const sharedObjectStorage = createUadObjectStorage\(\);/);
+  assert.match(serverSource, /bucket: process\.env\.UAD_R2_BUCKET \|\| process\.env\.R2_BUCKET/);
+  assert.match(serverSource, /process\.env\.UAD_R2_BUCKET !== process\.env\.R2_BUCKET/);
+  assert.match(serverSource, /createUadRouter\(\{[\s\S]*?storage: uadObjectStorage/);
+  assert.match(serverSource, /createMobileRouter\(\{[\s\S]*?storage: sharedObjectStorage/);
+  assert.match(serverSource, /createAssignmentDocument\([\s\S]*?storage: sharedObjectStorage/);
 });
 
 test("red-team startup bootstraps the guarded synthetic base before migrations", () => {

@@ -219,6 +219,10 @@ export function createRedTeamIsolationConfiguration(environment = process.env) {
   const configuredDatabaseName = databaseName(value(environment, "DATABASE_URL"));
   if (!configuredDatabaseName || !markedRedTeam(configuredDatabaseName)) failures.push("database_marker");
   if (!markedRedTeam(value(environment, "R2_BUCKET"))) failures.push("r2_bucket_marker");
+  if (value(environment, "UAD_R2_BUCKET")
+      && !markedRedTeam(value(environment, "UAD_R2_BUCKET"))) {
+    failures.push("uad_r2_bucket_marker");
+  }
   for (const key of ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY"]) {
     if (!value(environment, key)) failures.push(`${key.toLowerCase()}_required`);
   }

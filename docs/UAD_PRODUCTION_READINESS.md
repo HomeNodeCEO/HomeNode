@@ -55,7 +55,10 @@ or unverified external provider as production-ready.
    checksum for an already-applied migration.
 6. In staging only, run `NODE_ENV=staging npm run prepare:staging:uad`. The
    script refuses a database whose name does not contain `staging`.
-7. Configure private R2 and OIDC secrets in the deployment secret manager.
+7. Configure private R2 and OIDC secrets in the deployment secret manager. Set
+   `R2_BUCKET` to the shared Custom Appraisal/mobile bucket and
+   `UAD_R2_BUCKET` to the environment's dedicated UAD bucket. The UAD override
+   never redirects shared documents or mobile photos.
 8. Enable `UAD_WORKSPACE_ENABLED=true`, restart, and inspect
    `/api/uad/readiness`.
 9. Run the read-only smoke test:
@@ -85,8 +88,13 @@ upload objects, sign reports, or invoke an external GSE API.
 4. Confirm the Render pre-deploy gate ran `npm run migrate:uad` successfully.
    Apply mobile migrations only as part of the separately controlled mobile
    release. Do not run the staging fixture bootstrap against production.
-5. Configure R2 and OIDC secrets, enable the UAD workspace, and verify the
-   readiness endpoint.
+5. Configure R2 and OIDC secrets. Production must set `UAD_R2_BUCKET` to a
+   dedicated private bucket while retaining the existing `R2_BUCKET` for
+   Custom Appraisal documents and shared mobile photos. Run
+   `npm run verify:uad:object-storage`; it writes, inspects, checksum-verifies,
+   reads, and removes an opaque probe without printing credentials, bucket
+   names, or object keys. Then enable the UAD workspace and verify the readiness
+   endpoint reports `checks.object_storage.isolated=true`.
 6. Create a real internal test assignment through the normal search-tile
    workflow. Confirm Custom Appraisal and Property Tax destinations are
    unchanged.
@@ -135,6 +143,8 @@ no deletion mode.
 At minimum, production operations must verify:
 
 - automated database backups are enabled and a restore is tested;
+- a fresh provider logical export is visible before a material persistence or
+  migration release, and its identifier is recorded outside the repository;
 - R2 objects are private, credential rotation is documented, and lifecycle
   rules do not delete an object still referenced by PostgreSQL;
 - backup and object-retention settings preserve signed revision evidence;

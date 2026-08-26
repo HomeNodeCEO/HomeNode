@@ -55,6 +55,7 @@ export interface UadCapabilities {
   object_storage: {
     provider: string;
     configured: boolean;
+    isolated: boolean;
   };
   delivery_package?: {
     profile: string;

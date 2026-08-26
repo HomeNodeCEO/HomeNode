@@ -72,6 +72,7 @@ export function buildUadOperationalReadiness({
       object_storage: Object.freeze({
         provider: storage?.provider || null,
         configured: Boolean(storage?.configured),
+        isolated: Boolean(storage?.isolated),
         ready: Boolean(storage?.configured),
       }),
       oidc: Object.freeze({

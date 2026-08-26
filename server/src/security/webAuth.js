@@ -4,6 +4,12 @@ import express from "express";
 const SESSION_COOKIE = "__Host-homenode_session";
 const TRANSACTION_COOKIE = "__Host-homenode_auth_tx";
 const SESSION_SECONDS = 8 * 60 * 60;
+const BROWSER_COOKIE_OPTIONS = Object.freeze({
+  path: "/",
+  httpOnly: true,
+  secure: true,
+  sameSite: "lax",
+});
 
 function enabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -27,10 +33,15 @@ function cookies(req) {
   return result;
 }
 
-function cookie(name, value, { maxAge = null } = {}) {
-  const pieces = [`${name}=${encodeURIComponent(value)}`, "Path=/", "HttpOnly", "Secure", "SameSite=Lax"];
-  if (maxAge != null) pieces.push(`Max-Age=${Math.max(0, Math.floor(maxAge))}`);
-  return pieces.join("; ");
+function setBrowserCookie(res, name, value, maxAgeSeconds) {
+  res.cookie(name, value, {
+    ...BROWSER_COOKIE_OPTIONS,
+    maxAge: Math.max(1, Math.floor(maxAgeSeconds)) * 1_000,
+  });
+}
+
+function clearBrowserCookie(res, name) {
+  res.clearCookie(name, BROWSER_COOKIE_OPTIONS);
 }
 
 function signTransaction(value, secret) {
@@ -137,7 +148,7 @@ export function createWebSessionAuthenticator({ pool }) {
     try {
       const identity = await loadSessionIdentity(pool, token);
       if (identity) req.mobileAuth = identity;
-      else res.append("set-cookie", cookie(SESSION_COOKIE, "", { maxAge: 0 }));
+      else clearBrowserCookie(res, SESSION_COOKIE);
       return next();
     } catch {
       return res.status(503).json({ error: "authentication_unavailable" });
@@ -189,11 +200,11 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
       const state = base64url(randomBytes(24));
       const verifierValue = base64url(randomBytes(48));
       const challenge = base64url(createHash("sha256").update(verifierValue).digest());
-      res.append("set-cookie", cookie(TRANSACTION_COOKIE, signTransaction({
+      setBrowserCookie(res, TRANSACTION_COOKIE, signTransaction({
         state,
         verifier: verifierValue,
         expires_at: Date.now() + 10 * 60 * 1000,
-      }, sessionSecret), { maxAge: 600 }));
+      }, sessionSecret), 600);
       const url = new URL(metadata.authorization_endpoint);
       url.searchParams.set("response_type", "code");
       url.searchParams.set("client_id", clientId);
@@ -209,7 +220,7 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
   });
 
   router.get("/callback", async (req, res) => {
-    res.append("set-cookie", cookie(TRANSACTION_COOKIE, "", { maxAge: 0 }));
+    clearBrowserCookie(res, TRANSACTION_COOKIE);
     if (!configured) return res.status(503).json({ error: "web_auth_not_configured" });
     try {
       const transaction = readTransaction(cookies(req).get(TRANSACTION_COOKIE), sessionSecret);
@@ -240,7 +251,7 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
         [randomUUID(), sha256(token), identity.userId, SESSION_SECONDS,
           req.ip ? sha256(String(req.ip)) : null, String(req.get("user-agent") || "").slice(0, 500)],
       );
-      res.append("set-cookie", cookie(SESSION_COOKIE, token, { maxAge: SESSION_SECONDS }));
+      setBrowserCookie(res, SESSION_COOKIE, token, SESSION_SECONDS);
       return res.redirect(302, frontendUrl);
     } catch (error) {
       const code = ["identity_not_provisioned", "organization_membership_required"].includes(error?.message)
@@ -258,7 +269,7 @@ export function createWebAuthRouter({ pool, verifier, environment = process.env,
         [sha256(token)],
       ).catch(() => {});
     }
-    res.append("set-cookie", cookie(SESSION_COOKIE, "", { maxAge: 0 }));
+    clearBrowserCookie(res, SESSION_COOKIE);
     return res.status(204).end();
   });
 

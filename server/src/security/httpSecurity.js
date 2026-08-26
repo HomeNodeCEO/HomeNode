@@ -145,16 +145,21 @@ function requestOriginHost(origin) {
 }
 
 export function createCorsMiddleware(configuration) {
-  const allowed = new Set(configuration.corsOrigins);
+  const allowedOrigins = [...configuration.corsOrigins];
   return function enforceCors(req, res, next) {
     const origin = String(req.get?.("origin") || "").trim();
     if (!origin) return next();
     const requestHost = String(req.get?.("host") || "").trim().toLowerCase();
     const sameOrigin = requestHost && requestOriginHost(origin) === requestHost;
-    if (!sameOrigin && !allowed.has(origin)) {
+    // Same-origin requests do not need CORS response headers. For an allowed
+    // cross-origin request, emit the canonical server-configured value rather
+    // than reflecting the request header back to the browser.
+    if (sameOrigin) return next();
+    const allowedOrigin = allowedOrigins.find((candidate) => candidate === origin);
+    if (!allowedOrigin) {
       return res.status(403).json({ error: "cors_origin_denied" });
     }
-    res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("access-control-allow-origin", allowedOrigin);
     res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
     res.setHeader("access-control-allow-headers", "Authorization, Content-Type, Idempotency-Key");

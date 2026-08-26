@@ -13,13 +13,15 @@ const CONFIGURED_ENVIRONMENT = Object.freeze({
   APP_SESSION_SECRET: "a".repeat(32),
 });
 
-async function withAuthServer(environment, callback) {
+async function withAuthServer(environment, callback, {
+  fetchImpl = async () => { throw new Error("unexpected_discovery_request"); },
+} = {}) {
   const app = express();
   app.use("/api/auth", createWebAuthRouter({
     pool: { query: async () => ({ rows: [] }) },
     verifier: { configured: true, issuer: "https://identity.example.test" },
     environment,
-    fetchImpl: async () => { throw new Error("unexpected_discovery_request"); },
+    fetchImpl,
   }));
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
@@ -62,5 +64,31 @@ test("incomplete WorkOS configuration can never advertise required login", async
     const response = await fetch(`${baseUrl}/api/auth/status`);
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { configured: false, required: false });
+  });
+});
+
+test("login transaction cookie is host-only, secure, HTTP-only, and short-lived", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    assert.equal(response.status, 302);
+    assert.match(response.headers.get("location"), /^https:\/\/identity\.example\.test\/authorize\?/);
+    const setCookie = response.headers.get("set-cookie");
+    assert.match(setCookie, /^__Host-homenode_auth_tx=/);
+    assert.match(setCookie, /Path=\//i);
+    assert.match(setCookie, /HttpOnly/i);
+    assert.match(setCookie, /Secure/i);
+    assert.match(setCookie, /SameSite=Lax/i);
+    assert.match(setCookie, /Max-Age=600/i);
+    assert.doesNotMatch(setCookie, /Domain=/i);
+  }, {
+    fetchImpl: async () => new Response(JSON.stringify(discovery), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
   });
 });

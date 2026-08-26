@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 const DIST = resolve('dist');
 const limits = {
   javascript: 300 * 1024,
-  stylesheet: 550 * 1024,
+  stylesheet: 500 * 1024,
 };
 
 const html = await readFile(resolve(DIST, 'index.html'), 'utf8');

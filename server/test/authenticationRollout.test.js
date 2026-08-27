@@ -95,7 +95,10 @@ test("custom appraisal signatures are identity-bound, authenticated, and append-
 });
 
 test("rollout audit covers identity, ownership, and canonical registry consistency", () => {
-  const source = read("../scripts/auditApplicationAuthRollout.js");
+  const source = [
+    read("../scripts/auditApplicationAuthRollout.js"),
+    read("../src/security/applicationAuthReadiness.js"),
+  ].join("\n");
   for (const expected of [
     "active_memberships",
     "oidc_identities",
@@ -116,6 +119,19 @@ test("rollout audit covers identity, ownership, and canonical registry consisten
     "valid_appraiser_licenses",
     "activation_ready",
   ]) assert.match(source, new RegExp(expected));
+});
+
+test("hosted activation readiness is authenticated, administrator-only, and diagnostic-safe", () => {
+  const server = read("../src/oldServer.js");
+  const readiness = read("../src/security/applicationAuthReadiness.js");
+  assert.match(server, /app\.get\("\/api\/auth\/readiness"/);
+  assert.match(server, /if \(!req\.mobileAuth\).*authentication_required/);
+  assert.match(server, /auth_readiness_access_denied/);
+  assert.match(server, /auth_readiness_unavailable/);
+  assert.doesNotMatch(server, /readiness audit unavailable.*error/i);
+  assert.match(readiness, /organization_admin/);
+  assert.match(readiness, /homenode_admin/);
+  assert.match(readiness, /positiveCountBlockers/);
 });
 
 test("mandatory unified authentication fails closed across the legacy API surface", () => {

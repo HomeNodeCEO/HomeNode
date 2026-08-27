@@ -35,6 +35,7 @@ import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
 import { useManualReportSections } from "@/hooks/useManualReportSections";
 import { useCustomAppraisalDownloads } from "@/hooks/useCustomAppraisalDownloads";
+import SubjectConditionConformitySection from "@/components/SubjectConditionConformitySection";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
@@ -47,7 +48,6 @@ import {
   reconciledMedianDaysOnMarket,
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
-import { UAD_CONDITION_RATINGS } from "@/lib/conditionQualityRatings";
 import DeferredReportSection from "@/components/DeferredReportSection";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
 import AssignmentPhotoCenter from "@/components/AssignmentPhotoCenter";
@@ -240,13 +240,6 @@ type DcadDetail = {
   photos?: string[];
   report_manual_values?: Partial<Record<ReportManualSectionKey, unknown>>;
 };
-
-const SUBJECT_NONCONFORMITY_OPTIONS = [
-  ["under_improvement", "Under-Improvement"],
-  ["over_improvement", "Over-Improvement"],
-  ["functional_obsolescence", "Functional Obsolescence"],
-  ["other", "Other"],
-] as const;
 
 function AddressHero({
   detail,
@@ -2538,150 +2531,16 @@ function AddressHero({
               onSave={() => void saveCurrentPropertyComplexity()}
             />
 
-            <div className="mt-5 border-t border-slate-200 pt-4">
-              <div className="mb-4">
-                <h3 className="text-sm font-semibold text-slate-800">
-                  Subject Condition and Neighborhood Conformity
-                </h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  Appraiser selections and comments saved with the active appraisal file.
-                </p>
-              </div>
-
-              <div className="grid gap-4 lg:grid-cols-[minmax(180px,240px)_minmax(0,1fr)]">
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    Condition Rating
-                  </span>
-                  <select
-                    className="select select-bordered mt-1 w-full bg-white"
-                    value={assignmentDraft.subject_condition_rating || ""}
-                    onChange={(event) =>
-                      updateAssignment("subject_condition_rating", event.target.value)
-                    }
-                  >
-                    <option value="">Select condition rating</option>
-                    {UAD_CONDITION_RATINGS.map((rating) => (
-                      <option key={rating} value={rating}>{rating}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    Subject Condition Comments
-                  </span>
-                  <textarea
-                    className="textarea textarea-bordered mt-1 min-h-24 w-full bg-white"
-                    value={assignmentDraft.subject_condition_notes || ""}
-                    onChange={(event) =>
-                      updateAssignment("subject_condition_notes", event.target.value)
-                    }
-                    placeholder="Describe the home's condition, updating, maintenance, and other relevant observations."
-                  />
-                </label>
-              </div>
-
-              <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
-                  <legend className="px-1 text-sm font-semibold text-slate-900">
-                    Significant Physical Deficiencies
-                  </legend>
-                  <p className="mb-3 text-xs leading-5 text-slate-600">
-                    Do any deficiencies affect the subject&apos;s livability, soundness, or structural integrity?
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <CheckboxChoice
-                      checked={assignmentDraft.significant_physical_deficiencies === true}
-                      label="Yes"
-                      onChange={(checked) => updateAssignment(
-                        "significant_physical_deficiencies",
-                        checked ? true : null,
-                      )}
-                    />
-                    <CheckboxChoice
-                      checked={assignmentDraft.significant_physical_deficiencies === false}
-                      label="No"
-                      onChange={(checked) => updateAssignment(
-                        "significant_physical_deficiencies",
-                        checked ? false : null,
-                      )}
-                    />
-                  </div>
-                </fieldset>
-
-                <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
-                  <legend className="px-1 text-sm font-semibold text-slate-900">
-                    Neighborhood Conformity
-                  </legend>
-                  <p className="mb-3 text-xs leading-5 text-slate-600">
-                    Does the subject conform to the neighborhood?
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <CheckboxChoice
-                      checked={assignmentDraft.subject_conforms_to_neighborhood === true}
-                      label="Yes"
-                      onChange={(checked) => updateSubjectConformity(checked ? true : null)}
-                    />
-                    <CheckboxChoice
-                      checked={assignmentDraft.subject_conforms_to_neighborhood === false}
-                      label="No"
-                      onChange={(checked) => updateSubjectConformity(checked ? false : null)}
-                    />
-                  </div>
-
-                  {assignmentDraft.subject_conforms_to_neighborhood === false ? (
-                    <label className="mt-4 block">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                        Nonconformity Type
-                      </span>
-                      <select
-                        className="select select-bordered mt-1 w-full bg-white"
-                        value={assignmentDraft.subject_nonconformity_type || ""}
-                        onChange={(event) =>
-                          updateAssignment("subject_nonconformity_type", event.target.value)
-                        }
-                      >
-                        <option value="">Select a type</option>
-                        {SUBJECT_NONCONFORMITY_OPTIONS.map(([value, label]) => (
-                          <option key={value} value={value}>{label}</option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-
-                  {assignmentDraft.subject_conforms_to_neighborhood === false &&
-                  assignmentDraft.subject_nonconformity_type ? (
-                    <label className="mt-4 block">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                        Explanation
-                      </span>
-                      <textarea
-                        className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
-                        value={assignmentDraft.subject_nonconformity_explanation || ""}
-                        onChange={(event) =>
-                          updateAssignment("subject_nonconformity_explanation", event.target.value)
-                        }
-                        placeholder="Explain how the subject differs from the neighborhood."
-                      />
-                    </label>
-                  ) : null}
-                </fieldset>
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-xs text-slate-500">
-                  {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void saveAssignmentFromSection()}
-                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
-                  disabled={assignmentSaveDisabled}
-                >
-                  {savingAssignmentFile ? "Saving..." : "Save Condition & Conformity"}
-                </button>
-              </div>
-            </div>
+            <SubjectConditionConformitySection
+              assignment={assignmentDraft}
+              dirty={assignmentDirty}
+              saveMessage={assignmentSaveMessage}
+              saving={savingAssignmentFile}
+              saveDisabled={assignmentSaveDisabled}
+              onChange={updateAssignment}
+              onConformityChange={updateSubjectConformity}
+              onSave={() => void saveAssignmentFromSection()}
+            />
 
             <div className="mt-5 border-t border-slate-200 pt-4">
               <div className="flex flex-wrap items-start justify-between gap-3">

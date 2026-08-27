@@ -54,7 +54,8 @@ and API are served from the same site.
 
 `OIDC_WEB_ISSUER` may fall back to the existing `OIDC_ISSUER`, but the web
 application has its own confidential-client ID and audience. Merely configuring
-these values does not show the login gate or remove editor-key access.
+these values does not show the login gate or disable editor-key access; explicit
+activation does both.
 
 The browser authorization-code flow uses state, PKCE, and a signed,
 short-lived transaction cookie. HomeNode verifies the returned OpenID Connect
@@ -155,16 +156,18 @@ membership, active appraiser profile, non-expired active license, complete
 file/appraiser ownership and canonical report/history coverage, no cross-table
 organization mismatches, and no unattached legacy document evidence.
 
-When enforcement is active, signing cannot use the shared editor key. The
-server derives the signer from the authenticated assignment, records an
+When enforcement is active, no application route can use the shared editor key.
+The server derives the signer from the authenticated assignment, records an
 immutable signature event with organization/user/request attribution, and
 authenticates the snapshot checksum with `APP_SIGNING_SECRET`. Signed Custom
 Appraisal snapshots are append-only at the database trigger layer. HMAC-backed
 snapshots are re-verified before JSON download or PDF rendering and fail closed
 if either the stored snapshot or its authentication value has changed.
 
-The shared editor key remains a temporary migration path. Retire it only after
-all expected users can log in and access the correct organization files.
+The shared editor key remains a temporary migration path only while enforcement
+is disabled. After all expected users can log in and access the correct
+organization files, activate mandatory authentication; the stored key then
+becomes inert and may be removed from the hosting environment separately.
 
 ## Storage remains independent
 

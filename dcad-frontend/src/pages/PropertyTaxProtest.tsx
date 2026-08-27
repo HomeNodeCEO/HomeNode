@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import * as api from '@/lib/api';
-import { readEditorCredential } from '@/lib/editorCredential';
+import { editorCredentialForRequest } from '@/lib/editorCredential';
 import PropertyTaxWorkfileReview from '@/components/PropertyTaxWorkfileReview';
 import {
   readAppraisalReportDraft,
@@ -142,7 +142,7 @@ export default function PropertyTaxProtest() {
     };
     setSalesDraft(updatedDraft);
     if (propertyId && assignmentFileId) {
-      const editorKey = readEditorCredential();
+      const editorKey = editorCredentialForRequest();
       if (editorKey) {
         void api.saveCustomAppraisalWorkfileSection(
           propertyId,
@@ -196,7 +196,7 @@ export default function PropertyTaxProtest() {
     const subject = subjectAddress || (propertyId ? `account ${propertyId}` : 'the subject property');
     try {
       try {
-        const response = await fetch(api.makeUrl('/api/summary'), {
+        const data = await api.fetchJSON<any>(api.makeUrl('/api/summary'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -209,13 +209,10 @@ export default function PropertyTaxProtest() {
             },
           }),
         });
-        if (response.ok) {
-          const data = await response.json();
-          const generated = String(data?.summary || data?.content || '').trim();
-          if (generated) {
-            setSummary(generated);
-            return;
-          }
+        const generated = String(data?.summary || data?.content || '').trim();
+        if (generated) {
+          setSummary(generated);
+          return;
         }
       } catch {
         // The local template below keeps this rough-draft workspace functional.

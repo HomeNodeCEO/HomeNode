@@ -142,6 +142,55 @@ test("mandatory unified authentication fails closed across the legacy API surfac
   assert.ok(authMe >= 0 && legacyGate > authMe && accountRead > legacyGate);
   assert.match(server.slice(legacyGate, accountRead), /applicationAuthenticationRequired/);
   assert.match(server.slice(legacyGate, accountRead), /req\.mobileAuth/);
-  assert.match(server.slice(legacyGate, accountRead), /x-homenode-editor-key/);
+  assert.doesNotMatch(server.slice(legacyGate, accountRead), /x-homenode-editor-key|configuredEditorKey/);
   assert.match(server.slice(legacyGate, accountRead), /authentication_required/);
+});
+
+test("legacy property editors accept the authenticated workflow identity before editor-key fallback", () => {
+  const server = read("../src/oldServer.js");
+  const housingStart = server.indexOf('app.patch("/api/accounts/:id/housing-profile"');
+  const housingEnd = server.indexOf('app.patch("/api/accounts/:id/report-manual-values"', housingStart);
+  const zoningStart = server.indexOf('app.put("/api/accounts/:id/zoning-verification"');
+  const zoningEnd = server.indexOf("function decodedDocumentHeader", zoningStart);
+  assert.ok(housingStart >= 0 && housingEnd > housingStart);
+  assert.ok(zoningStart >= 0 && zoningEnd > zoningStart);
+
+  const housing = server.slice(housingStart, housingEnd);
+  assert.match(housing, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
+  assert.doesNotMatch(housing, /housing_profile_editor_not_configured|invalid_editor_key/);
+
+  const zoning = server.slice(zoningStart, zoningEnd);
+  assert.match(zoning, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
+  assert.match(zoning, /assignment_file_required/);
+  assert.match(zoning, /requireCustomAssignmentAccess\(req, res, accountId, assignmentFileId, "write"\)/);
+  assert.doesNotMatch(zoning, /zoning_editor_not_configured|invalid_editor_key/);
+});
+
+test("the legacy editor key is inert whenever mandatory authentication is active", () => {
+  const server = read("../src/oldServer.js");
+  const helpers = [
+    ["function requireEditor(req, res)", "/** Coordinate coverage", true],
+    ["async function requireCustomAssignmentAccess", "async function requireAssignmentDocumentAccess", false],
+    ["async function requireAssignmentDocumentAccess", "function requireWorkflowAccess", false],
+    ["function requireWorkflowAccess", "function assignmentPhotoErrorStatus", true],
+  ];
+  for (const [startMarker, endMarker, retainsPreActivationFallback] of helpers) {
+    const start = server.indexOf(startMarker);
+    const end = server.indexOf(endMarker, start);
+    assert.ok(start >= 0 && end > start, `missing authorization helper ${startMarker}`);
+    const helper = server.slice(start, end);
+    assert.match(helper, /applicationAuthenticationRequired/);
+    if (retainsPreActivationFallback) {
+      const enforcementCheck = helper.indexOf("if (applicationAuthenticationRequired)");
+      const keyFallback = helper.indexOf("configuredEditorKey");
+      assert.ok(enforcementCheck >= 0 && keyFallback > enforcementCheck,
+        `${startMarker} may use the key only after mandatory enforcement is ruled out`);
+    } else {
+      assert.doesNotMatch(helper, /configuredEditorKey|x-homenode-editor-key/);
+    }
+  }
+  assert.match(server.slice(
+    server.indexOf("function requireWorkflowAccess"),
+    server.indexOf("function assignmentPhotoErrorStatus"),
+  ), /application_access_denied/);
 });

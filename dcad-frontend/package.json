@@ -14,6 +14,13 @@
     "test:condition-study": "node scripts/testConditionQualityRatings.mjs",
     "test:neighborhood": "node --experimental-strip-types scripts/testNeighborhoodAutomation.mjs",
     "test:market-area": "node --experimental-strip-types scripts/testMarketAreaAutomation.mjs",
+    "test:comparable-presentation": "node --experimental-strip-types scripts/testComparableSalesPresentation.mjs",
+    "test:property-report-presentation": "node --experimental-strip-types scripts/testPropertyReportPresentation.mjs",
+    "test:property-report-assignment": "node --experimental-strip-types scripts/testPropertyReportAssignment.mjs",
+    "test:assignment-file-selection": "node --experimental-strip-types scripts/testAssignmentFileSelection.mjs",
+    "test:timed-request-cache": "node --experimental-strip-types scripts/testTimedRequestCache.mjs",
+    "test:zoning-evidence-presentation": "node --experimental-strip-types scripts/testZoningEvidencePresentation.mjs",
+    "test:application-session-editor": "node --experimental-strip-types scripts/testApplicationSessionEditor.mjs",
     "test:uad-auth": "node --experimental-strip-types scripts/testUadAuth.mjs"
   },
   "dependencies": {

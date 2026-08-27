@@ -4,6 +4,7 @@ import {
   updatePropertyTaxProtestFile,
   type PropertyTaxProtestFile,
 } from '@/lib/api';
+import { editorCredentialForRequest } from '@/lib/editorCredential';
 
 type FieldSpec = {
   path: [string, string];
@@ -114,9 +115,9 @@ export default function PropertyTaxWorkfileReview({ accountId }: { accountId: st
 
   const save = async () => {
     if (!file) return;
-    const editorKey = window.prompt('Enter the HomeNode editor key to save the reviewed protest file:') || '';
-    if (!editorKey.trim()) {
-      setError('An editor key is required to save canonical property-tax data.');
+    const editorKey = editorCredentialForRequest();
+    if (!editorKey) {
+      setError('Sign in or enter an editor key before saving canonical property-tax data.');
       return;
     }
     setSaving(true);

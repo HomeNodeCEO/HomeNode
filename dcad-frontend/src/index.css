@@ -16,7 +16,7 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
 
 /*
  * Shared application action style. Icon-only controls keep their specialized
- * shapes through aria-label; ordinary text actions use the same dark button.
+ * shapes through aria-label; ordinary text actions use the HomeNode magenta.
  */
 :where(.app-action-button, button:not([aria-label]), a.btn, [role="button"].btn) {
   display: inline-flex;
@@ -25,9 +25,9 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   justify-content: center;
   gap: 0.375rem;
   padding: 0.625rem 1rem;
-  border: 1px solid #0f172a !important;
+  border: 1px solid #e32ff7 !important;
   border-radius: 0.5rem !important;
-  background-color: #0f172a !important;
+  background-color: #e32ff7 !important;
   color: #ffffff !important;
   cursor: pointer;
   font-size: 0.875rem;
@@ -50,12 +50,12 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
 }
 
 :where(.app-action-button, button:not([aria-label]), a.btn, [role="button"].btn):hover:not(:disabled) {
-  border-color: #1e293b !important;
-  background-color: #1e293b !important;
+  border-color: #c71bd9 !important;
+  background-color: #c71bd9 !important;
 }
 
 :where(.app-action-button, button:not([aria-label]), a.btn, [role="button"].btn):focus-visible {
-  outline: 2px solid #64748b;
+  outline: 2px solid #e32ff7;
   outline-offset: 2px;
 }
 

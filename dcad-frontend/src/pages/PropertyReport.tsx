@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import {
   forgetEditorCredential,
@@ -48,7 +48,7 @@ import {
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
 import DeferredReportSection from "@/components/DeferredReportSection";
-import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
+import PreviousAppraisalFilesContent from "@/components/PreviousAppraisalFiles";
 import ReportSectionEditor from "@/components/ReportSectionEditor";
 import type { PropertyActivityRow } from "@/components/ListingsContractsSalesContent";
 import {
@@ -57,8 +57,12 @@ import {
   SummarySection,
 } from "@/components/PropertyReportControls";
 
-const AssignmentDocumentCenter = lazy(() => import("@/components/AssignmentDocumentCenter"));
-const AssignmentPhotoCenter = lazy(() => import("@/components/AssignmentPhotoCenter"));
+const AssignmentDocumentCenter = memo(
+  lazy(() => import("@/components/AssignmentDocumentCenter")),
+);
+const AssignmentPhotoCenter = memo(
+  lazy(() => import("@/components/AssignmentPhotoCenter")),
+);
 const MobileSketchReview = lazy(() => import("@/components/MobileSketchReview"));
 const NeighborhoodCharacteristicsContent = lazy(
   () => import("@/components/NeighborhoodCharacteristicsContent"),
@@ -66,6 +70,7 @@ const NeighborhoodCharacteristicsContent = lazy(
 const ListingsContractsSalesContent = lazy(
   () => import("@/components/ListingsContractsSalesContent"),
 );
+const PreviousAppraisalFiles = memo(PreviousAppraisalFilesContent);
 
 function LazyReportContent({ label, className = "" }: { label: string; className?: string }) {
   return (
@@ -849,7 +854,7 @@ function AddressHero({
     setAssignmentSaveMessage("");
   };
 
-  const applyConfirmedDocumentCandidate = (
+  const applyConfirmedDocumentCandidate = useCallback((
     fieldKey: string,
     value: string,
     documentType: AssignmentDocumentType,
@@ -916,7 +921,7 @@ function AddressHero({
     setAssignmentSaveMessage(
       "Confirmed document evidence prefills this assignment. Save Assignment Details to retain it.",
     );
-  };
+  }, []);
 
   const importCustomMarketArea = useCallback(() => {
     const geometry = customMarketStudy?.market.custom_geometry;

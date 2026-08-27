@@ -94,7 +94,7 @@ export default function UadWorkspaceEntry() {
 
   return (
     <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
-      <section className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <section className="mx-auto w-full max-w-none rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
           UAD 3.6 appraisal
         </div>

@@ -85,7 +85,7 @@ function formatDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-export default function PropertyTaxWorkfileReview({ accountId }: { accountId: string }) {
+export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accountId: string; fileId?: string | null }) {
   const [file, setFile] = useState<PropertyTaxProtestFile | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -102,7 +102,7 @@ export default function PropertyTaxWorkfileReview({ accountId }: { accountId: st
     setLoading(true);
     setError(null);
     try {
-      const result = await getPropertyTaxProtestFile(accountId);
+      const result = await getPropertyTaxProtestFile(accountId, fileId || undefined);
       setFile(result);
       setValues(result ? buildValues(result) : {});
     } catch (loadError: unknown) {
@@ -116,7 +116,7 @@ export default function PropertyTaxWorkfileReview({ accountId }: { accountId: st
     void load();
     // load is scoped to the active account and intentionally refreshed when it changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accountId]);
+  }, [accountId, fileId]);
 
   const activeFileId = file?.tax_protest_file_id || null;
   const refreshSketchEvidence = useCallback(async () => {

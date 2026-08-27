@@ -19,7 +19,10 @@ import {
   normalizeCustomAppraisalFieldValue,
 } from "../src/modules/mobile/customAppraisal.js";
 import {
+  allocateReportFileNumber,
   formatReportFileNumber,
+  formatDailyAssignmentFileNumber,
+  normalizeAssignmentDate,
   normalizeWorkflowType,
 } from "../src/modules/mobile/fileNumbers.js";
 import { calculateManualSketch } from "../src/modules/mobile/manualSketch.js";
@@ -156,6 +159,42 @@ test("formats independent, recognizable report-file sequences", () => {
     sequenceNumber: 1,
   }), "HN-PTP-2026-000001");
   assert.throws(() => normalizeWorkflowType("uploaded_jpeg"), /invalid_workflow_type/);
+});
+
+test("formats organization-wide daily appraisal file numbers", () => {
+  assert.equal(normalizeAssignmentDate("2026-08-27"), "2026-08-27");
+  assert.equal(formatDailyAssignmentFileNumber({
+    assignmentDate: "2026-08-27",
+    sequenceNumber: 1,
+  }), "2026-239-01");
+  assert.equal(formatDailyAssignmentFileNumber({
+    assignmentDate: "2026-12-31",
+    sequenceNumber: 123,
+  }), "2026-365-123");
+  assert.throws(() => normalizeAssignmentDate("2026-02-30"), /invalid_assignment_date/);
+});
+
+test("allocates one atomic sequence across report workflows for an organization day", async () => {
+  const calls = [];
+  const client = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{ sequence_number: 2 }] };
+    },
+  };
+  const allocation = await allocateReportFileNumber(client, {
+    organizationId: "10000000-0000-4000-8000-000000000001",
+    workflowType: "uad_3_6",
+    assignmentDate: "2026-08-27",
+  });
+  assert.equal(allocation.fileNumber, "2026-239-02");
+  assert.equal(allocation.workflowType, "uad_3_6");
+  assert.equal(allocation.assignmentDate, "2026-08-27");
+  assert.match(calls[0].sql, /report_file_daily_counters/);
+  assert.deepEqual(calls[0].values, [
+    "10000000-0000-4000-8000-000000000001",
+    "2026-08-27",
+  ]);
 });
 
 test("normalizes bounded mobile property searches", () => {

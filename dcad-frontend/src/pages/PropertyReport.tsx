@@ -9,7 +9,6 @@ import {
   type AppraisalReportSalesDraft,
 } from "@/lib/appraisalReportDraft";
 import {
-  createAssignmentFile,
   getAssignmentFiles,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getCustomAppraisalWorkfileReadiness,
@@ -52,6 +51,7 @@ import {
 } from "@/lib/neighborhoodAutomation";
 import DeferredReportSection from "@/components/DeferredReportSection";
 import PreviousAppraisalFilesContent from "@/components/PreviousAppraisalFiles";
+import ReportTypeChooser from "@/components/ReportTypeChooser";
 import ReportSectionEditor from "@/components/ReportSectionEditor";
 import type { PropertyActivityRow } from "@/components/ListingsContractsSalesContent";
 import {
@@ -293,6 +293,7 @@ function AddressHero({
   const [assignmentDirty, setAssignmentDirty] = useState(false);
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
   const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
+  const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
   const unemploymentLookupSucceeded = useRef(false);
   const unemploymentHydrationAccount = useRef("");
   const [neighborhoodSectionReady, setNeighborhoodSectionReady] = useState(false);
@@ -401,8 +402,6 @@ function AddressHero({
     assignmentFilesError,
     activeAssignmentFile,
     setActiveAssignmentFile,
-    assignmentFileNumber,
-    setAssignmentFileNumber,
   } = useAssignmentFiles({
     accountId,
     enabled: Boolean(detail),
@@ -1116,59 +1115,6 @@ function AddressHero({
     }
   };
 
-  const saveNewAssignmentFile = async () => {
-    if (!accountId) return;
-    const validationErrors = assignmentValidationErrors(assignmentDraft);
-    if (validationErrors.length) {
-      setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
-      return;
-    }
-    const fileNumber = assignmentFileNumber.trim();
-    if (!fileNumber) {
-      setAssignmentSaveMessage("Enter a file number before saving a new appraisal file.");
-      return;
-    }
-    const editorKey = editorKeyForSave();
-    if (!editorKey) return;
-    setSavingAssignmentFile(true);
-    setAssignmentSaveMessage("");
-    try {
-      const response = await createAssignmentFile(
-        accountId,
-        {
-          file_number: fileNumber,
-          assignment_details: cloneEditorValue(assignmentDraft),
-          inherited_from_file_id: null,
-        },
-        editorKey,
-      );
-      const created = response.assignment_file;
-      setAssignmentFiles((current) => [created, ...current.filter((file) => file.id !== created.id)]);
-      setActiveAssignmentFile(created);
-      setAssignmentFileNumber(created.file_number);
-      marketWorkfileRevisionRef.current = 0;
-      setMarketConditionsDraft(null);
-      setSalesComparisonDraft(null);
-      setWorkfileStatusMessage(
-        `New database workfile: ${created.workfile?.canonical_file_name || created.file_number}`,
-      );
-      setAssignmentDirty(false);
-      setAssignmentSaveMessage(`New appraisal file ${created.file_number} saved.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "The appraisal file could not be created.";
-      if (/401|invalid_editor_key/i.test(message)) {
-        forgetEditorCredential();
-      }
-      setAssignmentSaveMessage(
-        message === "assignment_file_number_exists"
-          ? "That file number already exists for this property. Enter a different file number."
-          : message,
-      );
-    } finally {
-      setSavingAssignmentFile(false);
-    }
-  };
-
   const saveAssignmentFromSection = async () => {
     const validationErrors = assignmentValidationErrors(assignmentDraft);
     if (validationErrors.length) {
@@ -1176,13 +1122,8 @@ function AddressHero({
       return;
     }
     if (!activeAssignmentFile) {
-      if (!assignmentFileNumber.trim()) {
-        setAssignmentSaveMessage(
-          "Enter a File Number at the top of the report, then select Save again to create the new appraisal file.",
-        );
-        return;
-      }
-      await saveNewAssignmentFile();
+      setAssignmentSaveMessage("Choose or start an assignment file before saving.");
+      setAssignmentChooserOpen(true);
       return;
     }
     await saveAssignmentDetails();
@@ -1198,18 +1139,6 @@ function AddressHero({
   const saveCurrentPropertyComplexity = () => savePropertyComplexityReview({
     assignmentFileId: activeAssignmentFile?.id || null,
   });
-
-  const startNewAssignmentFile = () => {
-    setAssignmentDraft(assignmentDraftFromDetail());
-    setActiveAssignmentFile(null);
-    setAssignmentFileNumber("");
-    marketWorkfileRevisionRef.current = 0;
-    setMarketConditionsDraft(null);
-    setSalesComparisonDraft(null);
-    setWorkfileStatusMessage("");
-    setAssignmentDirty(false);
-    setAssignmentSaveMessage("Enter a unique file number to begin a fresh appraisal assignment.");
-  };
 
   const recordLenderRevisionRequest = async () => {
     if (!accountId || !activeAssignmentFile) return;
@@ -1477,55 +1406,14 @@ function AddressHero({
               {activeAssignmentFile.file_number}
             </span>
           ) : null}
-          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end">
-            <label className="block min-w-0 flex-1 xl:w-64 xl:flex-none">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                File Number
-              </span>
-              <input
-                type="text"
-                maxLength={100}
-                className="input input-bordered input-sm mt-1 w-full bg-white font-medium"
-                placeholder="Enter assignment number"
-                value={assignmentFileNumber}
-                readOnly={Boolean(activeAssignmentFile)}
-                onChange={(event) => {
-                  setAssignmentFileNumber(event.target.value);
-                  if (event.target.value.trim() && !assignmentFileNumber.trim()) {
-                    setAssignmentDraft((current) => ({
-                      ...current,
-                      neighborhood_boundary_confirmed: false,
-                      neighborhood_boundary_confirmed_at: "",
-                    }));
-                    setAssignmentDirty(true);
-                  }
-                  setAssignmentSaveMessage("");
-                }}
-              />
-            </label>
-            {activeAssignmentFile ? (
-              <button
-                type="button"
-                className="btn btn-outline btn-sm normal-case rounded-lg border-slate-300 bg-white shadow-sm"
-                onClick={startNewAssignmentFile}
-                disabled={savingAssignmentFile}
-              >
-                Start Another File
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
-                onClick={() => void saveNewAssignmentFile()}
-                disabled={
-                  assignmentFilesLoading || savingAssignmentFile ||
-                  !assignmentFileNumber.trim() || assignmentErrors.length > 0
-                }
-              >
-                {savingAssignmentFile ? "Saving..." : "Save New File"}
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            className="btn btn-outline btn-sm normal-case rounded-lg border-slate-300 bg-white shadow-sm"
+            onClick={() => setAssignmentChooserOpen(true)}
+            disabled={assignmentFilesLoading || savingAssignmentFile}
+          >
+            {activeAssignmentFile ? "Choose or Start Another File" : "Choose or Start Assignment"}
+          </button>
         </div>
         <p
           className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-slate-600"
@@ -3079,6 +2967,16 @@ function AddressHero({
           saving={savingSection}
           onCancel={cancelEditingSection}
           onSave={saveEditedSection}
+        />
+      ) : null}
+      {assignmentChooserOpen ? (
+        <ReportTypeChooser
+          subject={{
+            accountId: accountId || "",
+            address: exactAddress || `Account ${accountId || ""}`,
+            ownerName: detail?.owner?.owner_name || null,
+          }}
+          onClose={() => setAssignmentChooserOpen(false)}
         />
       ) : null}
     </div>

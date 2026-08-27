@@ -489,6 +489,32 @@ export interface AssignmentFilesResponse {
   legacy_assignment_details: AssignmentDetailsPayload | null;
 }
 
+export type CanonicalReportWorkflow = 'custom_appraisal' | 'uad_3_6' | 'property_tax_protest';
+
+export interface CanonicalReportFile {
+  id: string;
+  organization_id: string;
+  account_id: string;
+  workflow_type: CanonicalReportWorkflow;
+  file_number: string;
+  sequence_number: number | null;
+  target_id: string | null;
+  previous_report_file_id: string | null;
+  is_current: boolean;
+  registry_revision: number;
+  ready_for_inspection: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CanonicalReportFilesResponse {
+  account_id: string;
+  workflow_type: CanonicalReportWorkflow;
+  files: CanonicalReportFile[];
+  recommended_file: CanonicalReportFile | null;
+  requires_creation: boolean;
+}
+
 export type AppraisalHistoryWorkflow = 'custom_appraisal' | 'uad_3_6';
 export type AppraisalReplicationMode = 'same_assignment_alternate' | 'new_assignment_template';
 
@@ -2821,6 +2847,34 @@ export async function getAssignmentFiles(accountId: string): Promise<AssignmentF
   return fetchJSON<AssignmentFilesResponse>(
     makeUrl(`/api/accounts/${encodeURIComponent(id)}/assignment-files`),
   );
+}
+
+export async function getCanonicalReportFiles(
+  accountId: string,
+  workflowType: CanonicalReportWorkflow,
+): Promise<CanonicalReportFilesResponse> {
+  const id = (accountId || '').trim();
+  return fetchJSON<CanonicalReportFilesResponse>(makeUrl(
+    `/api/accounts/${encodeURIComponent(id)}/report-files`,
+    { workflow_type: workflowType },
+  ));
+}
+
+export async function createCanonicalReportFile(
+  accountId: string,
+  input: {
+    workflow_type: CanonicalReportWorkflow;
+    organization_id: string;
+    client_request_id: string;
+    previous_report_file_id?: string | null;
+  },
+): Promise<{ report_file: CanonicalReportFile; created: boolean }> {
+  const id = (accountId || '').trim();
+  return fetchJSON(makeUrl(`/api/accounts/${encodeURIComponent(id)}/report-files`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 }
 
 /** Create a distinct appraisal file. Earlier file snapshots are never overwritten. */

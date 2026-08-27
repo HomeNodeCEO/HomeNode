@@ -146,6 +146,19 @@ test("CORS policy permits same-origin and allowlisted origins while rejecting ot
   const preflight = run({ origin: "https://redteam.homenode.com", method: "OPTIONS" });
   assert.equal(preflight.response.statusCode, 204);
   assert.equal(preflight.headers.get("access-control-allow-origin"), "https://redteam.homenode.com");
+  const allowedHeaders = preflight.headers.get("access-control-allow-headers");
+  for (const header of [
+    "Authorization",
+    "Content-Type",
+    "Idempotency-Key",
+    "X-Assignment-File-Id",
+    "X-Document-Type",
+    "X-Document-Title",
+    "X-Document-File-Name",
+    "X-Document-Uploaded-By",
+  ]) {
+    assert.match(allowedHeaders, new RegExp(`(?:^|, )${header}(?:,|$)`, "i"), header);
+  }
 });
 
 test("security headers remove browser interpretation and embedding ambiguity", () => {

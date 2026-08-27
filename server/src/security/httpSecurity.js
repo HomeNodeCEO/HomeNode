@@ -3,6 +3,19 @@ const DEFAULT_RATE_LIMIT_MAX = 300;
 const DEFAULT_API_RATE_LIMIT_MAX = 600;
 const DEFAULT_SIGNUP_RATE_LIMIT_WINDOW_MS = 15 * 60_000;
 const DEFAULT_SIGNUP_RATE_LIMIT_MAX = 10;
+const CORS_ALLOWED_REQUEST_HEADERS = Object.freeze([
+  "Authorization",
+  "Content-Type",
+  "Idempotency-Key",
+  // Assignment PDFs are uploaded as an unexpanded binary body. Keep the
+  // bounded metadata in headers so contracts do not incur multipart/base64
+  // overhead, while explicitly permitting the browser preflight.
+  "X-Assignment-File-Id",
+  "X-Document-Type",
+  "X-Document-Title",
+  "X-Document-File-Name",
+  "X-Document-Uploaded-By",
+]);
 
 function enabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -162,7 +175,7 @@ export function createCorsMiddleware(configuration) {
     res.setHeader("access-control-allow-origin", allowedOrigin);
     res.setHeader("access-control-allow-credentials", "true");
     res.setHeader("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.setHeader("access-control-allow-headers", "Authorization, Content-Type, Idempotency-Key");
+    res.setHeader("access-control-allow-headers", CORS_ALLOWED_REQUEST_HEADERS.join(", "));
     res.setHeader("access-control-max-age", "600");
     appendVary(res, "Origin");
     if (req.method === "OPTIONS") return res.status(204).end();

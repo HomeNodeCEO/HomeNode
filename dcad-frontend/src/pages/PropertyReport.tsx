@@ -20,7 +20,6 @@ import {
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
   updateAssignmentFile,
-  updatePropertyReportSections,
   type AppraisalAssignmentFile,
   type AssignmentDocumentType,
   type AssignmentDetailsPayload,
@@ -36,6 +35,7 @@ import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
 import { usePropertyContext } from "@/hooks/usePropertyContext";
 import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
+import { useManualReportSections } from "@/hooks/useManualReportSections";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
@@ -54,9 +54,7 @@ import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
 import AssignmentPhotoCenter from "@/components/AssignmentPhotoCenter";
 import MobileSketchReview from "@/components/MobileSketchReview";
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
-import ReportSectionEditor, {
-  type EditableReportSection,
-} from "@/components/ReportSectionEditor";
+import ReportSectionEditor from "@/components/ReportSectionEditor";
 import NeighborhoodCharacteristicsContent from "@/components/NeighborhoodCharacteristicsContent";
 import ListingsContractsSalesContent, {
   type PropertyActivityRow,
@@ -244,15 +242,6 @@ type DcadDetail = {
   report_manual_values?: Partial<Record<ReportManualSectionKey, unknown>>;
 };
 
-const EDITABLE_REPORT_SECTIONS: EditableReportSection[] = [
-  { key: "report.subject_identification", title: "Subject Identification" },
-  { key: "report.exemptions", title: "Current Exemptions" },
-  { key: "report.sales_history", title: "Listings, Contracts, and Sales History" },
-  { key: "report.property_characteristics", title: "Property Characteristics" },
-  { key: "report.land_details", title: "Land Details" },
-  { key: "report.appraisal_values", title: "Appraisal District Values" },
-];
-
 const SUBJECT_NONCONFORMITY_OPTIONS = [
   ["under_improvement", "Under-Improvement"],
   ["over_improvement", "Over-Improvement"],
@@ -274,9 +263,19 @@ function AddressHero({
   const editorKeyForSave = useCallback((): string => {
     return requestEditorCredential("Enter the HomeNode editor key to save verified changes:");
   }, []);
+  const {
+    editingSection,
+    savingSection,
+    editSection,
+    cancelEditingSection,
+    saveEditedSection,
+  } = useManualReportSections({
+    accountId,
+    getEditorKey: editorKeyForSave,
+    onReload,
+    onCredentialRejected: forgetEditorCredential,
+  });
   const [photoIndex, setPhotoIndex] = useState(0);
-  const [editingSection, setEditingSection] = useState<EditableReportSection | null>(null);
-  const [savingSection, setSavingSection] = useState(false);
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDetails>(() =>
     assignmentDraftFromDetail(),
   );
@@ -733,46 +732,11 @@ function AddressHero({
   };
 
 
-  const saveManualSection = async (
-    sectionKey: ReportManualSectionKey,
-    value: Record<string, unknown>,
-  ): Promise<boolean> => {
-    if (!accountId) return false;
-    const editorKey = editorKeyForSave();
-    if (!editorKey) return false;
-    setSavingSection(true);
-    try {
-      await updatePropertyReportSections(
-        accountId,
-        { [sectionKey]: value },
-        editorKey,
-      );
-      await onReload();
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "The report changes could not be saved.";
-      if (/401|invalid_editor_key/i.test(message)) {
-        forgetEditorCredential();
-      }
-      window.alert(message);
-      return false;
-    } finally {
-      setSavingSection(false);
-    }
-  };
-
   const lookUpCensusTractNow = async () => {
     if (!accountId || censusLookupLoading) return;
     const editorKey = editorKeyForSave();
     if (!editorKey) return;
     await runCensusTractLookup(editorKey);
-  };
-
-  const saveEditedSection = async (value: Record<string, unknown>) => {
-    if (!editingSection) return;
-    if (await saveManualSection(editingSection.key, value)) {
-      setEditingSection(null);
-    }
   };
 
   const updateAssignment = <K extends keyof AssignmentDetails,>(
@@ -1402,10 +1366,6 @@ function AddressHero({
     }
   };
 
-  const editSection = (key: ReportManualSectionKey) => {
-    const section = EDITABLE_REPORT_SECTIONS.find((item) => item.key === key);
-    if (section) setEditingSection(section);
-  };
   const sectionEditProps = (key: ReportManualSectionKey) => ({
     onEdit: () => editSection(key),
     manuallyVerified: Boolean(detail?.report_manual_values?.[key]),
@@ -3194,7 +3154,7 @@ function AddressHero({
           section={editingSection}
           initialValue={editableSectionValue(editingSection.key)}
           saving={savingSection}
-          onCancel={() => setEditingSection(null)}
+          onCancel={cancelEditingSection}
           onSave={saveEditedSection}
         />
       ) : null}

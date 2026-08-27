@@ -14,6 +14,7 @@ import {
   readEditorCredential,
   rememberEditorCredential,
 } from "@/lib/editorCredential";
+import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
 
 const PAGE_SIZE = 10;
 const NATIVE_CAD_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z ._/#-]{3,99}$/;
@@ -75,6 +76,8 @@ function caughtErrorMessage(error: unknown) {
 }
 
 export default function SalesReconciliationQueue() {
+  const { session } = useApplicationAuth();
+  const authenticated = Boolean(session);
   const [queue, setQueue] = useState<SalesReconciliationQueueResponse | null>(null);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -244,16 +247,22 @@ export default function SalesReconciliationQueue() {
         </div>
       )}
 
-      <label className="sales-reconciliation__editor">
-        <span>Personal editor key</span>
-        <input
-          type="password"
-          value={editorKey}
-          onChange={(event) => setEditorKey(event.target.value)}
-          placeholder="Required only when saving"
-          autoComplete="off"
-        />
-      </label>
+      {authenticated ? (
+        <div className="sales-reconciliation__status">
+          Saves use your signed-in HomeNode identity.
+        </div>
+      ) : (
+        <label className="sales-reconciliation__editor">
+          <span>Legacy editor key</span>
+          <input
+            type="password"
+            value={editorKey}
+            onChange={(event) => setEditorKey(event.target.value)}
+            placeholder="Temporary migration fallback"
+            autoComplete="off"
+          />
+        </label>
+      )}
 
       {loading && <div className="sales-reconciliation__status">Loading reconciliation queue…</div>}
       {error && <div className="sales-reconciliation__error">{error}</div>}

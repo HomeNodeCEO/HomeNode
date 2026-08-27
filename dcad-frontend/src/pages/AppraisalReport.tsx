@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import * as api from "@/lib/api";
+import {
+  loadAssignmentFiles,
+  loadCustomAppraisalWorkfile,
+} from "@/lib/appraisalFileRequests";
 import { forgetEditorCredential, requestEditorCredential } from "@/lib/editorCredential";
 import type {
   AppraisalAssignmentFile,
@@ -366,7 +370,7 @@ export default function AppraisalReport() {
       return () => { cancelled = true; };
     }
     setAssignmentLoading(true);
-    void api.getAssignmentFiles(propertyId)
+    void loadAssignmentFiles(propertyId)
       .then(async (response) => {
         if (cancelled) return;
         const selected = requestedAssignmentFileId
@@ -375,7 +379,7 @@ export default function AppraisalReport() {
         const assignment = selected || response.latest_file || null;
         setAssignmentFile(assignment);
         if (!assignment) return;
-        const result = await api.getCustomAppraisalWorkfile(propertyId, assignment.id);
+        const result = await loadCustomAppraisalWorkfile(propertyId, assignment.id);
         if (cancelled) return;
         setDraft(
           (result.workfile.sections.sales_comparison?.value as AppraisalReportSalesDraft | undefined) ||

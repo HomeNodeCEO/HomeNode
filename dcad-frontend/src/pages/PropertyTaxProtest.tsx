@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import * as api from '@/lib/api';
+import {
+  loadAssignmentFiles,
+  loadCustomAppraisalWorkfile,
+} from '@/lib/appraisalFileRequests';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import PropertyTaxWorkfileReview from '@/components/PropertyTaxWorkfileReview';
 import {
@@ -111,7 +115,7 @@ export default function PropertyTaxProtest() {
       hydrate(null);
       return () => { cancelled = true; };
     }
-    void api.getAssignmentFiles(propertyId)
+    void loadAssignmentFiles(propertyId)
       .then(async (response) => {
         const file = response.latest_file;
         if (!file || cancelled) {
@@ -119,7 +123,7 @@ export default function PropertyTaxProtest() {
           return;
         }
         setAssignmentFileId(file.id);
-        const result = await api.getCustomAppraisalWorkfile(propertyId, file.id);
+        const result = await loadCustomAppraisalWorkfile(propertyId, file.id);
         if (cancelled) return;
         const section = result.workfile.sections.sales_comparison;
         workfileRevisionRef.current = Number(section?.revision || 0);

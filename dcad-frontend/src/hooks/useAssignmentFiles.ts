@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  getAssignmentFiles,
-  type AppraisalAssignmentFile,
-} from "@/lib/api";
+import { type AppraisalAssignmentFile } from "@/lib/api";
+import { loadAssignmentFiles } from "@/lib/appraisalFileRequests";
 import { selectAssignmentFile } from "@/lib/assignmentFileSelection";
 
 type AssignmentFileSelectionHandler = (
@@ -50,7 +48,7 @@ export function useAssignmentFiles({
     }
 
     setAssignmentFilesLoading(true);
-    void getAssignmentFiles(accountId)
+    void loadAssignmentFiles(accountId)
       .then(async (response) => {
         if (cancelled) return;
         const files = response.files || [];

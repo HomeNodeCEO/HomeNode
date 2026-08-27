@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as api from '@/lib/api';
+import { loadCustomAppraisalWorkfile } from '@/lib/appraisalFileRequests';
 import type { DepreciatedCostAdjustmentResponse, DepreciatedCostTarget } from '@/lib/api';
 import type { CostApproachDraft, CostApproachLine } from '@/lib/costApproach';
 import type {
@@ -79,7 +80,7 @@ export default function DepreciatedCostAnalysis({
     setLoading(true);
     setError(null);
     try {
-      const response = await api.getCustomAppraisalWorkfile(subjectAccountId, assignmentFileId);
+      const response = await loadCustomAppraisalWorkfile(subjectAccountId, assignmentFileId);
       const section = response.workfile.sections.cost_approach?.value as CostApproachDraft | undefined;
       setCostApproach(section || null);
       setCanonicalName(response.workfile.canonical_file_name);

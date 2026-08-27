@@ -11,7 +11,6 @@ import {
 import {
   createAssignmentFile,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
-  getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileReadiness,
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
@@ -23,6 +22,7 @@ import {
   type ReportManualSectionKey,
   makeUrl,
 } from "@/lib/api";
+import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
 import {
   readMarketConditionsDraft,
   type MarketConditionsDraft,
@@ -354,7 +354,7 @@ function AddressHero({
     if (!accountId) return;
     hydrateAssignmentDraft(selectedFile.assignment_details);
     try {
-      const workfileResult = await getCustomAppraisalWorkfile(accountId, selectedFile.id);
+      const workfileResult = await loadCustomAppraisalWorkfile(accountId, selectedFile.id);
       if (isCancelled()) return;
       const marketSection = workfileResult.workfile.sections.market_conditions;
       const salesSection = workfileResult.workfile.sections.sales_comparison;

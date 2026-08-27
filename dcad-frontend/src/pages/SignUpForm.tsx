@@ -50,11 +50,6 @@ export default function SignUpForm() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
-  // Use the exact file name provided; place it under /public or point VITE_SIGNUP_PDF_URL to a backend URL serving the file
-  // IMPORTANT: use the true path with a space; let encodeURIComponent handle the space once
-  const rawPdfUrl = (import.meta as any)?.env?.VITE_SIGNUP_PDF_URL || '/AOA Form.pdf';
-  // PDF viewer removed; keeping only the HTML form
-
   const [fields, setFields] = useState<OverlayFields>({
     appraisalDistrictName: '',
     ownerName: '',
@@ -107,7 +102,7 @@ export default function SignUpForm() {
         if (!cancelled && ownerName) {
           setFields(f => ({ ...f, ownerName }));
         }
-      } catch (_) {
+      } catch {
         // silently ignore; user can fill manually
       }
     })();
@@ -194,10 +189,6 @@ export default function SignUpForm() {
   }, [accountId]);
 
   // --- Step 1 auto-fill: Address/City/State/Zip from mailing address when it matches subject address ---
-  function extractStreetNumber(addr: string): string | null {
-    const m = String(addr || '').trim().match(/^(\d{1,10})\b/);
-    return m ? m[1] : null;
-  }
   function parseMailingParts(addr: string): { line: string; city: string; state: string; zip: string } {
     // Simple parser for formats like:
     //   "123 Main St, Apt 5, Dallas, TX 75201" or "123 Main St Dallas TX 75201"

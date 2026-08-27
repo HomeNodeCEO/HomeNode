@@ -1092,7 +1092,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           setLoading(false);
           return;
         }
-      } catch (e: any) {
+      } catch {
         // Fall through to scraper detail
       }
       try {
@@ -1201,13 +1201,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     }
     load();
   }, [propertyId]);
-
-  const fmtSqft = (v: unknown) => {
-    if (v === null || v === undefined || v === '') return '-';
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    if (!isFinite(n) || n <= 0) return '-';
-    return `${n.toLocaleString('en-US')} sq. ft`;
-  };
 
   const fmtSqftSafe = (v: unknown) => {
     if (v === null || v === undefined || v === '') return '-';
@@ -5732,65 +5725,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     </div>
   );
 }
-
-function DistrictEvidenceAccordion() {
-  const [open, setOpen] = useState<number | null>(null);
-  const rows = [
-    'District Comp 1: 789 Elm St - $510,000',
-    'District Comp 2: 101 Oak Dr - $499,000',
-    'District Comp 3: 212 Cedar Ave - $505,000',
-    'District Comp 4: 313 Birch Rd - $515,000',
-  ];
-
-  return (
-    <div className="mt-4 divide-y divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
-      {rows.map((label, i) => {
-        const isOpen = open === i;
-        return (
-          <div key={i} className="bg-white">
-            <button
-              type="button"
-              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50"
-              onClick={() => setOpen(isOpen ? null : i)}
-            >
-              <span className="font-medium text-slate-800">{label}</span>
-              <svg
-                className={`w-4 h-4 text-slate-600 transition-transform ${isOpen ? 'rotate-180' : ''}`}
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 10.17l3.71-2.94a.75.75 0 11.92 1.18l-4.25 3.37a.75.75 0 01-.92 0L5.21 8.41a.75.75 0 01.02-1.2z" clipRule="evenodd" />
-              </svg>
-            </button>
-            {isOpen && (
-              <div className="px-4 pb-3 text-sm text-slate-600">
-                Details coming soon.
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

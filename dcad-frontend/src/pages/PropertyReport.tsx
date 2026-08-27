@@ -11,8 +11,6 @@ import {
 } from "@/lib/appraisalReportDraft";
 import {
   createAssignmentFile,
-  downloadCustomAppraisalReportPdf,
-  downloadCustomAppraisalWorkfile,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileReadiness,
@@ -36,6 +34,7 @@ import { usePropertyContext } from "@/hooks/usePropertyContext";
 import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
 import { useManualReportSections } from "@/hooks/useManualReportSections";
+import { useCustomAppraisalDownloads } from "@/hooks/useCustomAppraisalDownloads";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
@@ -294,6 +293,15 @@ function AddressHero({
   const marketWorkfileRevisionRef = useRef(0);
   const marketWorkfileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [workfileStatusMessage, setWorkfileStatusMessage] = useState("");
+  const {
+    downloadInProgress,
+    downloadCustomAppraisalFile,
+    downloadCustomAppraisalPdf,
+  } = useCustomAppraisalDownloads({
+    accountId,
+    getEditorKey: editorKeyForSave,
+    setStatusMessage: setWorkfileStatusMessage,
+  });
   const hydrateAssignmentDraft = useCallback((value: AssignmentDetails) => {
     const next = assignmentDraftFromDetail(value);
     setAssignmentDraft((current) => {
@@ -1316,56 +1324,6 @@ function AddressHero({
     }
   };
 
-  const downloadCustomAppraisalFile = async (file: AppraisalAssignmentFile) => {
-    if (!accountId) return;
-    const editorKey = editorKeyForSave();
-    if (!editorKey) return;
-    setWorkfileStatusMessage(`Preparing ${file.workfile?.canonical_file_name || file.file_number}...`);
-    try {
-      const download = await downloadCustomAppraisalWorkfile(accountId, file.id, editorKey);
-      const objectUrl = URL.createObjectURL(download.blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = download.fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-      setWorkfileStatusMessage(
-        `${download.immutable ? "Immutable signed file" : "Current database draft"} downloaded as ${download.fileName}.`,
-      );
-    } catch (error) {
-      setWorkfileStatusMessage(
-        error instanceof Error ? error.message : "The appraisal workfile could not be downloaded.",
-      );
-    }
-  };
-
-  const downloadCustomAppraisalPdf = async (file: AppraisalAssignmentFile) => {
-    if (!accountId) return;
-    const editorKey = editorKeyForSave();
-    if (!editorKey) return;
-    setWorkfileStatusMessage(`Building ${file.file_number} appraisal PDF...`);
-    try {
-      const download = await downloadCustomAppraisalReportPdf(accountId, file.id, editorKey);
-      const objectUrl = URL.createObjectURL(download.blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = download.fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-      setWorkfileStatusMessage(
-        `${download.immutable ? "Immutable signed" : "Current draft"} appraisal PDF downloaded as ${download.fileName}${download.pageCount ? ` (${download.pageCount} pages)` : ""}.`,
-      );
-    } catch (error) {
-      setWorkfileStatusMessage(
-        error instanceof Error ? error.message : "The appraisal PDF could not be generated.",
-      );
-    }
-  };
-
   const sectionEditProps = (key: ReportManualSectionKey) => ({
     onEdit: () => editSection(key),
     manuallyVerified: Boolean(detail?.report_manual_values?.[key]),
@@ -1600,15 +1558,21 @@ function AddressHero({
                         type="button"
                         className="btn btn-sm normal-case"
                         onClick={() => void downloadCustomAppraisalFile(file)}
+                        disabled={Boolean(downloadInProgress)}
                       >
-                        {file.workfile?.status === "signed" ? "Download Signed File" : "Download Draft"}
+                        {downloadInProgress === `workfile:${file.id}`
+                          ? "Preparing File..."
+                          : file.workfile?.status === "signed" ? "Download Signed File" : "Download Draft"}
                       </button>
                       <button
                         type="button"
                         className="btn btn-sm normal-case border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
                         onClick={() => void downloadCustomAppraisalPdf(file)}
+                        disabled={Boolean(downloadInProgress)}
                       >
-                        {file.workfile?.status === "signed" ? "Download Signed PDF" : "Download Draft PDF"}
+                        {downloadInProgress === `pdf:${file.id}`
+                          ? "Building PDF..."
+                          : file.workfile?.status === "signed" ? "Download Signed PDF" : "Download Draft PDF"}
                       </button>
                       {isActiveFile && file.workfile?.status !== "signed" ? (
                         <button

@@ -123,18 +123,10 @@ async function insertCanonicalTarget(client, {
   userId,
 }) {
   if (workflowType === "custom_appraisal") {
-    let inheritedFromFileId = previous?.custom_assignment_file_id || null;
-    let assignmentDetails = {};
-    if (inheritedFromFileId) {
-      const source = await client.query(
-        `SELECT assignment_details
-           FROM app.assignment_files
-          WHERE id = $1 AND account_id = $2 AND organization_id = $3`,
-        [inheritedFromFileId, accountId, organizationId],
-      );
-      if (!source.rows.length) throw new Error("previous_report_file_not_found");
-      assignmentDetails = source.rows[0].assignment_details || {};
-    }
+    // A new assignment is a fresh product. Preserve the prior report only in
+    // the canonical report-file lineage for prior-services disclosure; do not
+    // silently copy its assignment observations into the new file.
+    const assignmentDetails = {};
     const { rows } = await client.query(
       `INSERT INTO app.assignment_files (
          account_id, file_number, assignment_details, inherited_from_file_id, reviewer,
@@ -145,7 +137,7 @@ async function insertCanonicalTarget(client, {
         accountId,
         fileNumber,
         JSON.stringify(assignmentDetails),
-        inheritedFromFileId,
+        null,
         "HomeNode mobile",
         organizationId,
         userId,

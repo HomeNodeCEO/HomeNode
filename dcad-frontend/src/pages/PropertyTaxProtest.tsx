@@ -66,6 +66,10 @@ export default function PropertyTaxProtest() {
     const params = new URLSearchParams(location.search);
     return params.get('ownerName') || '';
   }, [location.search]);
+  const requestedPropertyTaxFileId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('fileId');
+  }, [location.search]);
 
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [subjectAddress, setSubjectAddress] = useState('');
@@ -308,7 +312,7 @@ export default function PropertyTaxProtest() {
           )}
         </header>
 
-        {propertyId && <PropertyTaxWorkfileReview accountId={propertyId} />}
+        {propertyId && <PropertyTaxWorkfileReview accountId={propertyId} fileId={requestedPropertyTaxFileId} />}
         <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="text-xl font-semibold">Appraisal District Evidence Analysis</h2>
           <p className="mt-2 max-w-5xl text-sm text-slate-700">

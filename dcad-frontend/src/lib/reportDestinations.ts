@@ -8,19 +8,23 @@ export type ReportDestinationSubject = {
 export function reportDestination(
   reportType: HomeNodeReportType,
   subject: ReportDestinationSubject,
+  targetId?: string | null,
 ): string {
   const accountId = encodeURIComponent(subject.accountId.trim());
   if (!accountId) return "/";
 
   if (reportType === "custom-appraisal") {
-    return `/report/${accountId}`;
+    const params = targetId ? `?assignmentFileId=${encodeURIComponent(targetId)}` : "";
+    return `/report/${accountId}${params}`;
   }
   if (reportType === "uad-3.6") {
-    return `/uad-3.6/${accountId}`;
+    const params = targetId ? `?workfileId=${encodeURIComponent(targetId)}` : "";
+    return `/uad-3.6/${accountId}${params}`;
   }
 
   const params = new URLSearchParams({ propertyId: subject.accountId.trim() });
   const ownerName = String(subject.ownerName || "").trim();
   if (ownerName) params.set("ownerName", ownerName);
+  if (targetId) params.set("fileId", targetId);
   return `/PropertyTaxProtest?${params.toString()}`;
 }

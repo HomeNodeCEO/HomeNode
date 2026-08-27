@@ -196,6 +196,10 @@ import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.j
 import { createMobileAuthenticator, createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
 import {
+  createReportFile,
+  listReportFiles,
+} from "./modules/mobile/reportFiles.js";
+import {
   getAssignmentInspectionSketch,
   saveAssignmentInspectionSketch,
   savePropertyTaxInspectionSketch,
@@ -1592,6 +1596,68 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
   } catch (error) {
     console.error("assignment file list failed", error);
     return res.status(500).json({ error: "assignment_file_list_failed" });
+  }
+});
+
+function desktopReportFileErrorStatus(error) {
+  const message = String(error?.message || "");
+  if (message.endsWith("_not_found")) return 404;
+  if (message.endsWith("_access_denied")) return 403;
+  if (message.endsWith("_conflict") || error?.code === "23505") return 409;
+  if (message.startsWith("invalid_") || message.endsWith("_required")) return 400;
+  return 500;
+}
+
+/** List one workflow's resumable report files before opening its editor. */
+app.get("/api/accounts/:id/report-files", async (req, res) => {
+  const workflowType = String(req.query.workflow_type || "").trim();
+  if (!requireWorkflowAccess(req, res, workflowType, "read")) return;
+  if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
+  try {
+    const canonicalId = await resolveCanonicalAccountId(pool, req.params.id);
+    const result = await listReportFiles(pool, req.mobileAuth, {
+      accountId: canonicalId,
+      workflowType,
+      recentDays: 365,
+    });
+    return res.json({
+      account_id: result.accountId,
+      workflow_type: result.workflowType,
+      files: result.files,
+      recommended_file: result.recommended,
+      requires_creation: result.requiresCreation,
+    });
+  } catch (error) {
+    const status = desktopReportFileErrorStatus(error);
+    if (status === 500) console.error("desktop report file list failed", error);
+    return res.status(status).json({
+      error: status === 500 ? "report_file_list_failed" : String(error.message),
+    });
+  }
+});
+
+/** Atomically create the canonical assignment before navigating to its editor. */
+app.post("/api/accounts/:id/report-files", async (req, res) => {
+  const workflowType = String(req.body?.workflow_type || "").trim();
+  if (!requireWorkflowAccess(req, res, workflowType, "write")) return;
+  if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
+  try {
+    const canonicalId = await resolveCanonicalAccountId(pool, req.params.id);
+    const result = await createReportFile(pool, req.mobileAuth, {
+      ...req.body,
+      account_id: canonicalId,
+      workflow_type: workflowType,
+    });
+    return res.status(result.created ? 201 : 200).json({
+      report_file: result.reportFile,
+      created: result.created,
+    });
+  } catch (error) {
+    const status = desktopReportFileErrorStatus(error);
+    if (status === 500) console.error("desktop report file create failed", error);
+    return res.status(status).json({
+      error: status === 500 ? "report_file_create_failed" : String(error.message),
+    });
   }
 });
 

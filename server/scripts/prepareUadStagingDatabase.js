@@ -12,6 +12,9 @@ const STAGING_ORGANIZATION_ID = "00000000-0000-4000-8000-000000000901";
 const STAGING_USER_ID = "00000000-0000-4000-8000-000000000902";
 const STAGING_LICENSE_ID = "00000000-0000-4000-8000-000000000903";
 const STAGING_USER_EMAIL = "mobile-appraiser@staging.homenode.invalid";
+const STAGING_APPLICATION_ADMIN_EMAIL = String(
+  process.env.STAGING_APPLICATION_ADMIN_EMAIL || "",
+).trim().toLowerCase();
 
 if (process.env.NODE_ENV !== "staging") {
   throw new Error("prepareUadStagingDatabase may only run with NODE_ENV=staging");
@@ -150,6 +153,41 @@ try {
        updated_at = now()`,
     [STAGING_LICENSE_ID, STAGING_USER_ID],
   );
+
+  let stagingApplicationAdminUserId = null;
+  if (STAGING_APPLICATION_ADMIN_EMAIL) {
+    const stagingApplicationAdmin = await pool.query(
+      `SELECT id
+         FROM app_auth.users
+        WHERE lower(email) = $1
+          AND active = true
+        ORDER BY id
+        LIMIT 2`,
+      [STAGING_APPLICATION_ADMIN_EMAIL],
+    );
+    if (stagingApplicationAdmin.rows.length !== 1) {
+      throw new Error("configured staging application administrator was not found uniquely");
+    }
+    stagingApplicationAdminUserId = stagingApplicationAdmin.rows[0].id;
+    await pool.query(
+      `INSERT INTO app_auth.organization_memberships (
+         organization_id, user_id, status
+       ) VALUES ($1, $2, 'active')
+       ON CONFLICT (organization_id, user_id) DO UPDATE SET
+         status = 'active',
+         updated_at = now()`,
+      [STAGING_ORGANIZATION_ID, stagingApplicationAdminUserId],
+    );
+    await pool.query(
+      `INSERT INTO app_auth.membership_roles (
+         organization_id, user_id, role_code
+       ) VALUES
+         ($1, $2, 'appraiser'),
+         ($1, $2, 'organization_admin')
+       ON CONFLICT (organization_id, user_id, role_code) DO NOTHING`,
+      [STAGING_ORGANIZATION_ID, stagingApplicationAdminUserId],
+    );
+  }
 
   await pool.query(`
     CREATE SCHEMA IF NOT EXISTS core;
@@ -1292,6 +1330,7 @@ try {
     synthetic_account_ids: [SFR_ACCOUNT_ID, MANUFACTURED_HOME_ACCOUNT_ID],
     synthetic_mobile_user_id: STAGING_USER_ID,
     synthetic_mobile_user_email: STAGING_USER_EMAIL,
+    staging_application_admin_configured: Boolean(stagingApplicationAdminUserId),
     site_built_workfile_id: sfrWorkfileId,
     manufactured_home_workfile_id: manufacturedWorkfileId,
     owned_staging_workfiles: stagingWorkfiles.rowCount,

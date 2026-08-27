@@ -320,6 +320,10 @@ test("the staging bootstrap is guarded against production execution", () => {
   assert.match(source, /organization_id: STAGING_ORGANIZATION_ID/);
   assert.match(source, /assigned_appraiser_user_id: STAGING_USER_ID/);
   assert.match(source, /actor_user_id: STAGING_USER_ID/);
+  assert.match(source, /process\.env\.STAGING_APPLICATION_ADMIN_EMAIL/);
+  assert.match(source, /configured staging application administrator was not found uniquely/);
+  assert.match(source, /\(\$1, \$2, 'organization_admin'\)/);
+  assert.match(source, /\[STAGING_ORGANIZATION_ID, stagingApplicationAdminUserId\]/);
   assert.match(source, /to_regclass\('app\.report_files'\)/);
   assert.match(source, /to_regclass\('app\.appraisal_cases'\)/);
   assert.match(source, /UPDATE appraisal\.uad_workfiles/);

@@ -78,6 +78,7 @@ import {
 import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
 import { loadAccountDetailSections } from "./services/accountDetailSections.js";
 import { indexAssignmentFileDetails } from "./services/assignmentFileDetails.js";
+import { summarizeComparableResults } from "./services/comparableResponseSummary.js";
 import {
   ensureCensusGeographySchema,
   getCensusGeographyStatus,
@@ -4324,17 +4325,12 @@ app.get("/api/sales/recommendations", async (req, res) => {
       },
     );
     const analyzedSales = outlierResult.sales;
-    const recommendedSales = analyzedSales.filter((sale) => sale.recommended);
-    const secondarySales = analyzedSales.filter(
-      (sale) =>
-        sale.insideAnalysisPeriod &&
-        sale.housingTypeCompatible !== false &&
-        !sale.recommended,
-    ).sort((left, right) =>
-      Number(Boolean(right.influence_support_candidate)) - Number(Boolean(left.influence_support_candidate)) ||
-      Number(right.influence_similarity?.priority_tier || 0) - Number(left.influence_similarity?.priority_tier || 0) ||
-      Number(right.comparableScore || 0) - Number(left.comparableScore || 0),
-    );
+    const {
+      recommendedSales,
+      secondarySales,
+      olderThanOneYearCount,
+      olderThanTwoYearsCount,
+    } = summarizeComparableResults(analyzedSales);
 
     const marketLabel = !marketBreakdown
       ? "All eligible sales"
@@ -4410,12 +4406,8 @@ app.get("/api/sales/recommendations", async (req, res) => {
         housing_type_mismatch_count:
           recommendationResult.policy.housingTypeMismatchCount,
         recommended_count: recommendedSales.length,
-        older_than_two_years_count: analyzedSales.filter(
-          (sale) => sale.soldOverTwoYears,
-        ).length,
-        older_than_one_year_count: analyzedSales.filter(
-          (sale) => sale.soldOverOneYear,
-        ).length,
+        older_than_two_years_count: olderThanTwoYearsCount,
+        older_than_one_year_count: olderThanOneYearCount,
         recent_high_score_count:
           recommendationResult.policy.recentHighScoreCount,
         influence_context_count: influenceRanked.policy.measured_sale_count,

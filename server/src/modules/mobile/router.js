@@ -21,6 +21,7 @@ import {
   listInspectionPhotos,
   MAX_MOBILE_PHOTOS_PER_INSPECTION,
   removeInspectionPhoto,
+  UAD_PHOTO_CATEGORIES,
   updateInspectionPhoto,
   verifyInspectionPhoto,
 } from "./photos.js";
@@ -145,6 +146,7 @@ export function createMobileRouter({
         display_derivative: true,
         retention_years: 5,
         custom_categories: CUSTOM_PHOTO_CATEGORIES,
+        uad_categories: UAD_PHOTO_CATEGORIES,
       },
       custom_appraisal: {
         assignment_scoped: true,

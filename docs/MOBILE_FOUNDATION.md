@@ -146,6 +146,27 @@ history and both adapters increment report registry history.
 See `docs/MOBILE_TARGET_FIELD_ADAPTERS.md` for the API, persistence, desktop
 review, and conflict boundary.
 
+### UAD photo and sketch evidence
+
+UAD inspections offer field-friendly labels for dwelling front and rear,
+street or property access, site and view, rooms, vehicle storage,
+outbuildings, amenities, and defects. These labels organize collection; they
+do not silently decide the final UAD relationship.
+
+The desktop UAD asset panels list verified mobile candidates relevant to the
+current section. The appraiser explicitly selects the official attachment
+category and, where applicable, the exact dwelling, room, defect,
+outbuilding, amenity, vehicle-storage, or comparable entity. HomeNode copies
+the verified bytes into the UAD workfile's immutable asset namespace, records
+the mobile photo and report-file provenance, and leaves the retained mobile
+source unchanged.
+
+An appraiser-confirmed mobile sketch can be imported into Section 7. HomeNode
+renders a UAD-safe PNG report image and persists the structured geometry,
+measurements, calculated areas, room labels, measurement method, confirmation
+identity, and source revision in the canonical UAD sketch record. Draft
+sketches cannot be imported.
+
 ## Inspection completion
 
 The mobile app now checks its encrypted device queues and the authoritative

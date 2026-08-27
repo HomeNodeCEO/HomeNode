@@ -21,6 +21,22 @@ export const CUSTOM_PHOTO_CATEGORIES = Object.freeze([
   "Other",
 ] as const);
 
+export const UAD_PHOTO_CATEGORIES = Object.freeze([
+  "Dwelling front",
+  "Dwelling rear",
+  "Street/property access",
+  "Site/view",
+  "Kitchen",
+  "Living room",
+  "Bedroom",
+  "Bathroom",
+  "Garage/vehicle storage",
+  "Outbuilding",
+  "Amenity",
+  "Defect/damage",
+  "Other exhibit",
+] as const);
+
 export const ROOM_PHOTO_LABELS = Object.freeze([
   "Kitchen",
   "Living room",

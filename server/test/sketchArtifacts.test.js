@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { normalizeManualSketchDocument } from "../src/modules/mobile/sketches.js";
 import { renderSketchPdf, renderSketchSvg } from "../src/modules/mobile/sketchArtifacts.js";
+import { renderSketchPng } from "../src/modules/mobile/sketchPng.js";
+import { inspectUadAssetPayload } from "../src/modules/uad/uadFileSecurity.js";
 
 function fixture() {
   return {
@@ -64,4 +66,19 @@ test("sketch PDF is a report-ready letter exhibit", async () => {
   assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");
   assert.ok(pdf.length > 2_000);
   assert.equal((pdf.toString("latin1").match(/\/Type \/Page\b/g) || []).length, 1);
+});
+
+test("confirmed mobile sketch rendering produces a deterministic UAD-safe PNG", () => {
+  const options = {
+    fileNumber: "UAD-2026-001",
+    propertyLabel: "100 Main Street, Dallas, TX 75201",
+  };
+  const first = renderSketchPng(fixture(), options);
+  const second = renderSketchPng(fixture(), options);
+  assert.deepEqual(first, second);
+  assert.deepEqual([...first.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const inspected = inspectUadAssetPayload(first, "image/png");
+  assert.equal(inspected.dimensions.width, 1400);
+  assert.equal(inspected.dimensions.height, 660);
+  assert.ok(inspected.byte_size > 2_000);
 });

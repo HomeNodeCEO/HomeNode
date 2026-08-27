@@ -23,6 +23,11 @@ import {
 import { getUadXmlMappingSummary } from "./uadXml.js";
 import { createCachedUadReadinessLoader } from "./uadOperationalReadiness.js";
 import { getUadSharedData } from "./sharedData.js";
+import {
+  importUadMobilePhoto,
+  importUadMobileSketch,
+  listUadMobileEvidence,
+} from "./mobileEvidence.js";
 import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { getLatestUadValidation, runLocalUadValidation } from "./validation.js";
 import {
@@ -52,6 +57,7 @@ function errorStatus(error) {
   if (message === "uad_authentication_required") return 401;
   if (message === "uad_organization_required") return 400;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
+  if (message.endsWith("_conflict")) return 409;
   if (message === "uad_validation_status_locked") return 409;
   if (message.endsWith("_access_denied")) return 403;
   if (message.startsWith("uad_signature_") && (message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_mismatch"))) return 409;
@@ -213,6 +219,12 @@ export function createUadRouter({
         provider: storage.provider,
         configured: storage.configured,
         isolated: Boolean(storage.isolated),
+      },
+      mobile_evidence: {
+        verified_photo_review_import: true,
+        appraiser_confirmed_sketch_import: true,
+        canonical_asset_copy: true,
+        retained_source_unchanged: true,
       },
       xml: getUadXmlMappingSummary(),
       delivery_package: {
@@ -528,7 +540,12 @@ export function createUadRouter({
 
   router.put("/workfiles/:workfileId/sketches", async (req, res) => {
     try {
-      const sketch = await saveUadSketch(pool, req.params.workfileId, req.body || {});
+      const sketch = await saveUadSketch(
+        pool,
+        req.params.workfileId,
+        req.body || {},
+        req.mobileAuth?.userId || null,
+      );
       res.json({ sketch });
     } catch (error) {
       sendError(res, error);
@@ -588,6 +605,46 @@ export function createUadRouter({
     try {
       await deleteUadAsset(pool, storage, req.params.workfileId, req.params.assetId);
       res.status(204).end();
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/mobile-evidence", async (req, res) => {
+    try {
+      res.json(await listUadMobileEvidence(pool, storage, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/mobile-evidence/photos/:photoId/import", async (req, res) => {
+    try {
+      const result = await importUadMobilePhoto(
+        pool,
+        storage,
+        req.params.workfileId,
+        req.params.photoId,
+        req.body || {},
+        req.mobileAuth?.userId || null,
+      );
+      res.status(result.idempotent ? 200 : 201).json(result);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/mobile-evidence/sketches/:sketchId/import", async (req, res) => {
+    try {
+      const result = await importUadMobileSketch(
+        pool,
+        storage,
+        req.params.workfileId,
+        req.params.sketchId,
+        req.body || {},
+        req.mobileAuth?.userId || null,
+      );
+      res.status(result.idempotent ? 200 : 201).json(result);
     } catch (error) {
       sendError(res, error);
     }

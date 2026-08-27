@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getPropertyTaxProtestFile,
   updatePropertyTaxInspectionSketch,
@@ -7,6 +7,7 @@ import {
 } from '@/lib/api';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import MobileSketchReview from '@/components/MobileSketchReview';
+import SketchWorkspaceEmptyState from '@/components/SketchWorkspaceEmptyState';
 
 type FieldSpec = {
   path: [string, string];
@@ -89,6 +90,8 @@ export default function PropertyTaxWorkfileReview({ accountId }: { accountId: st
   const [values, setValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [sketchRefreshing, setSketchRefreshing] = useState(false);
+  const sketchRefreshInFlight = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -114,6 +117,44 @@ export default function PropertyTaxWorkfileReview({ accountId }: { accountId: st
     // load is scoped to the active account and intentionally refreshed when it changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId]);
+
+  const activeFileId = file?.tax_protest_file_id || null;
+  const refreshSketchEvidence = useCallback(async () => {
+    if (!accountId || !activeFileId || sketchRefreshInFlight.current) return;
+    sketchRefreshInFlight.current = true;
+    setSketchRefreshing(true);
+    try {
+      const refreshed = await getPropertyTaxProtestFile(accountId, activeFileId);
+      if (!refreshed) return;
+      setFile((current) => current?.tax_protest_file_id === refreshed.tax_protest_file_id
+        ? {
+            ...current,
+            sketch: refreshed.sketch,
+            photos: refreshed.photos,
+            registry_revision: refreshed.registry_revision,
+            updated_at: refreshed.updated_at,
+          }
+        : current);
+    } catch {
+      // A background sync failure must never disturb the active workfile draft.
+    } finally {
+      sketchRefreshInFlight.current = false;
+      setSketchRefreshing(false);
+    }
+  }, [accountId, activeFileId]);
+
+  useEffect(() => {
+    if (!activeFileId || file?.sketch) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshSketchEvidence();
+    };
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [activeFileId, file?.sketch, refreshSketchEvidence]);
 
   const save = async () => {
     if (!file) return;
@@ -252,7 +293,14 @@ export default function PropertyTaxWorkfileReview({ accountId }: { accountId: st
               )}
               onSaved={(savedSketch) => setFile((current) => current ? { ...current, sketch: savedSketch } : current)}
             />
-          ) : null}
+          ) : (
+            <SketchWorkspaceEmptyState
+              title="Property Tax Protest measured sketch"
+              subtitle={`No measured sketch is synchronized to ${file.file_number} yet. This area checks for accepted mobile evidence every 30 seconds while the page is visible.`}
+              onRefresh={refreshSketchEvidence}
+              refreshing={sketchRefreshing}
+            />
+          )}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-3xl text-xs text-slate-600">

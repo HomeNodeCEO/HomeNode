@@ -175,6 +175,20 @@ inspection-sketch history. UAD edits append canonical UAD sketch history and
 render a new verified Section 7 PNG; the prior UAD exhibit is marked superseded
 but retained for audit, and the original mobile/photo source is never changed.
 
+Each desktop file now keeps a visible, file-scoped sketch workspace even before
+a sketch exists. While that workspace is empty, a visible report checks the
+authoritative server every 30 seconds and also offers a manual sync check, so an
+accepted mobile sketch appears without replacing unsaved report edits. Custom
+Appraisal places the workspace at the end of Property Characteristics directly
+before Land Details. UAD keeps it in official Section 7, and still requires the
+appraiser to confirm and import mobile evidence before it becomes canonical.
+
+The browser does not download an R2 folder. Structured sketch geometry and
+summary data load from PostgreSQL with the active file. Private R2 objects such
+as source images, PDF exhibits, and generated previews are fetched only when a
+user opens or downloads them through an authenticated HomeNode route. Cloud
+credentials and durable object-store locations are never exposed to the client.
+
 ## Inspection completion
 
 The mobile app now checks its encrypted device queues and the authoritative

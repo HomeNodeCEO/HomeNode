@@ -52,6 +52,33 @@ test("one desktop measured-sketch editor is wired to all three report workflows"
   assert.match(desktopSketches, /savePropertyTaxInspectionSketch/);
 });
 
+test("every report file exposes a safe mobile-sync sketch workspace", () => {
+  const custom = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
+  const protest = read("../../dcad-frontend/src/components/PropertyTaxWorkfileReview.tsx");
+  const uadAssets = read("../../dcad-frontend/src/features/uad/components/UadAssetPanel.tsx");
+  const uadSketch = read("../../dcad-frontend/src/features/uad/components/UadSketchEditor.tsx");
+
+  assert.match(custom, /<SketchWorkspaceEmptyState/);
+  assert.match(protest, /<SketchWorkspaceEmptyState/);
+  assert.match(uadSketch, /<SketchWorkspaceEmptyState/);
+  assert.match(custom, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.match(protest, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.match(uadAssets, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.match(uadSketch, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.match(uadAssets, /refreshToken={sketchEditorRefresh}/);
+});
+
+test("Custom Appraisal places the measured sketch directly before Land Details", () => {
+  const custom = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
+  const condition = custom.indexOf("<SubjectConditionConformitySection");
+  const sketch = custom.indexOf('title="Custom Appraisal measured sketch editor"');
+  const land = custom.indexOf(">Land Details</h3>");
+
+  assert.ok(condition >= 0, "condition section should exist");
+  assert.ok(sketch > condition, "sketch should follow the other property characteristics");
+  assert.ok(land > sketch, "Land Details should immediately follow the sketch workspace");
+});
+
 test("web UAD edits regenerate a verified exhibit and retain the source", () => {
   const source = read("../src/modules/uad/mobileEvidence.js");
   assert.match(source, /export async function editUadSketch/);

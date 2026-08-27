@@ -54,6 +54,7 @@ export default function UadAssetPanel({
   const [mobilePhotos, setMobilePhotos] = useState<UadMobilePhotoEvidence[]>([]);
   const [mobileSketch, setMobileSketch] = useState<UadMobileSketchEvidence | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sketchEditorRefresh, setSketchEditorRefresh] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -82,6 +83,18 @@ export default function UadAssetPanel({
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { setCaptionType(captionTypes[0]); }, [captionTypes]);
+  useEffect(() => {
+    if (sectionNumber !== 7) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [load, sectionNumber]);
 
   async function handleUpload() {
     if (!file || uploading) return;
@@ -165,6 +178,7 @@ export default function UadAssetPanel({
       });
       setCaption("");
       await load();
+      setSketchEditorRefresh((current) => current + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The mobile sketch could not be added to Section 7.");
     } finally {
@@ -256,7 +270,11 @@ export default function UadAssetPanel({
       )}
       {sectionNumber === 7
         && captionTypes.some((value) => ["SubjectPropertyImprovementSketch", "FloorPlan"].includes(value))
-        ? <UadSketchEditor workfileId={workfileId} onSaved={() => void load()} />
+        ? <UadSketchEditor
+            workfileId={workfileId}
+            onSaved={() => void load()}
+            refreshToken={sketchEditorRefresh}
+          />
         : null}
       {sectionNumber === 7
         && mobileSketch?.imported_asset

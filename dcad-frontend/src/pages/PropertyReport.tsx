@@ -10,6 +10,7 @@ import {
 } from "@/lib/appraisalReportDraft";
 import {
   createAssignmentFile,
+  getAssignmentFiles,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getCustomAppraisalWorkfileReadiness,
   saveCustomAppraisalWorkfileSection,
@@ -35,6 +36,7 @@ import { useRelatedParcels } from "@/hooks/useRelatedParcels";
 import { useManualReportSections } from "@/hooks/useManualReportSections";
 import { useCustomAppraisalDownloads } from "@/hooks/useCustomAppraisalDownloads";
 import SubjectConditionConformitySection from "@/components/SubjectConditionConformitySection";
+import SketchWorkspaceEmptyState from "@/components/SketchWorkspaceEmptyState";
 import { usePropertyReportDetail } from "@/hooks/usePropertyReportDetail";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
@@ -303,6 +305,8 @@ function AddressHero({
   const marketWorkfileRevisionRef = useRef(0);
   const marketWorkfileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [workfileStatusMessage, setWorkfileStatusMessage] = useState("");
+  const [sketchEvidenceRefreshing, setSketchEvidenceRefreshing] = useState(false);
+  const sketchEvidenceRefreshInFlight = useRef(false);
   const {
     downloadInProgress,
     downloadCustomAppraisalFile,
@@ -587,6 +591,46 @@ function AddressHero({
     : detail?.additional_improvements || [];
   const mobileInspectionPhotos = activeAssignmentFile?.mobile_inspection_photos || [];
   const mobileInspectionSketch = activeAssignmentFile?.mobile_inspection_sketch || null;
+  const activeAssignmentFileId = activeAssignmentFile?.id || null;
+  const refreshMobileSketchEvidence = useCallback(async () => {
+    if (!accountId || !activeAssignmentFileId || sketchEvidenceRefreshInFlight.current) return;
+    sketchEvidenceRefreshInFlight.current = true;
+    setSketchEvidenceRefreshing(true);
+    try {
+      const response = await getAssignmentFiles(accountId);
+      const refreshed = response.files.find((file) => file.id === activeAssignmentFileId);
+      if (!refreshed) return;
+      const mergeEvidence = (current: AppraisalAssignmentFile): AppraisalAssignmentFile => ({
+        ...current,
+        mobile_inspection_sketch: refreshed.mobile_inspection_sketch,
+        mobile_inspection_photos: refreshed.mobile_inspection_photos,
+      });
+      setActiveAssignmentFile((current) => (
+        current?.id === refreshed.id ? mergeEvidence(current) : current
+      ));
+      setAssignmentFiles((current) => current.map((file) => (
+        file.id === refreshed.id ? mergeEvidence(file) : file
+      )));
+    } catch {
+      // A background sync failure must never disturb the active report draft.
+    } finally {
+      sketchEvidenceRefreshInFlight.current = false;
+      setSketchEvidenceRefreshing(false);
+    }
+  }, [accountId, activeAssignmentFileId, setActiveAssignmentFile, setAssignmentFiles]);
+
+  useEffect(() => {
+    if (!activeAssignmentFileId || mobileInspectionSketch) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshMobileSketchEvidence();
+    };
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [activeAssignmentFileId, mobileInspectionSketch, refreshMobileSketchEvidence]);
   const salesHistory = detail?.sales_history || [];
   const propertyActivityHistory = detail?.property_activity_history || salesHistory;
   const values = detail?.value_summary;
@@ -2522,45 +2566,6 @@ function AddressHero({
               </div>
             ) : null}
 
-            {mobileInspectionSketch && activeAssignmentFile && accountId ? (
-              <Suspense fallback={<LazyReportContent label="mobile sketch" />}>
-                <MobileSketchReview
-                  sketch={mobileInspectionSketch}
-                  title="Custom Appraisal measured sketch editor"
-                  artifactUrls={{
-                    svg: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/preview.svg`, { revision: mobileInspectionSketch.revision }),
-                    pdf: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/report.pdf`, { revision: mobileInspectionSketch.revision }),
-                  }}
-                  saveDraft={async (draft, expectedRevision) => {
-                    const editorKey = editorKeyForSave();
-                    if (!editorKey) throw new Error("authentication_required");
-                    const response = await updateMobileInspectionSketch(
-                      accountId,
-                      activeAssignmentFile.id,
-                      {
-                        sketch: draft,
-                        expected_revision: expectedRevision,
-                        reviewer: "HomeNode appraiser",
-                        client_operation_id: globalThis.crypto.randomUUID(),
-                      },
-                      editorKey,
-                    );
-                    return response.sketch;
-                  }}
-                  onSaved={(savedSketch) => {
-                    const updatedFile = {
-                      ...activeAssignmentFile,
-                      mobile_inspection_sketch: savedSketch,
-                    };
-                    setActiveAssignmentFile(updatedFile);
-                    setAssignmentFiles((current) => current.map((file) =>
-                      file.id === updatedFile.id ? updatedFile : file
-                    ));
-                  }}
-                />
-              </Suspense>
-            ) : null}
-
             <PropertyContextSection
               context={propertyContext}
               loading={propertyContextLoading}
@@ -2584,6 +2589,56 @@ function AddressHero({
               onConformityChange={updateSubjectConformity}
               onSave={() => void saveAssignmentFromSection()}
             />
+
+            {activeAssignmentFile && accountId ? (
+              <div className="mt-5 border-t border-slate-200 pt-4">
+                {mobileInspectionSketch ? (
+                  <Suspense fallback={<LazyReportContent label="mobile sketch" />}>
+                    <MobileSketchReview
+                      sketch={mobileInspectionSketch}
+                      title="Custom Appraisal measured sketch editor"
+                      artifactUrls={{
+                        svg: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/preview.svg`, { revision: mobileInspectionSketch.revision }),
+                        pdf: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/report.pdf`, { revision: mobileInspectionSketch.revision }),
+                      }}
+                      saveDraft={async (draft, expectedRevision) => {
+                        const editorKey = editorKeyForSave();
+                        if (!editorKey) throw new Error("authentication_required");
+                        const response = await updateMobileInspectionSketch(
+                          accountId,
+                          activeAssignmentFile.id,
+                          {
+                            sketch: draft,
+                            expected_revision: expectedRevision,
+                            reviewer: "HomeNode appraiser",
+                            client_operation_id: globalThis.crypto.randomUUID(),
+                          },
+                          editorKey,
+                        );
+                        return response.sketch;
+                      }}
+                      onSaved={(savedSketch) => {
+                        const updatedFile = {
+                          ...activeAssignmentFile,
+                          mobile_inspection_sketch: savedSketch,
+                        };
+                        setActiveAssignmentFile(updatedFile);
+                        setAssignmentFiles((current) => current.map((file) =>
+                          file.id === updatedFile.id ? updatedFile : file
+                        ));
+                      }}
+                    />
+                  </Suspense>
+                ) : (
+                  <SketchWorkspaceEmptyState
+                    title="Custom Appraisal measured sketch"
+                    subtitle={`No measured sketch is synchronized to ${activeAssignmentFile.file_number} yet. This area checks for accepted mobile evidence every 30 seconds while the page is visible.`}
+                    onRefresh={refreshMobileSketchEvidence}
+                    refreshing={sketchEvidenceRefreshing}
+                  />
+                )}
+              </div>
+            ) : null}
 
             <div className="mt-5 border-t border-slate-200 pt-4">
               <div className="flex flex-wrap items-start justify-between gap-3">

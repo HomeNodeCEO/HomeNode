@@ -40,6 +40,30 @@ async function assignmentSketchRow(client, accountId, assignmentFileId, { lock =
   return rows[0] || null;
 }
 
+async function propertyTaxSketchRow(client, accountId, fileId, { lock = false } = {}) {
+  const sql = [
+    "SELECT sketch.* ,",
+    "       report_file.file_number AS report_file_number,",
+    "       report_file.registry_revision,",
+    "       protest.file_number AS assignment_file_number,",
+    "       account.address, account.city, account.state, account.postal_code,",
+    "       session.revision AS session_revision",
+    "  FROM app.tax_protest_files protest",
+    "  JOIN core.accounts account ON account.account_id = protest.account_id",
+    "  JOIN app.report_files report_file",
+    "    ON report_file.tax_protest_file_id = protest.id",
+    "   AND report_file.workflow_type = 'property_tax_protest'",
+    "  JOIN app.inspection_sketches sketch ON sketch.report_file_id = report_file.id",
+    "  JOIN app.inspection_sessions session ON session.id = sketch.inspection_session_id",
+    " WHERE protest.id = $1 AND protest.account_id = $2",
+    " ORDER BY sketch.updated_at DESC, sketch.id DESC",
+    " LIMIT 1",
+    lock ? " FOR UPDATE OF sketch, report_file, session" : "",
+  ].join("\n");
+  const { rows } = await client.query(sql, [fileId, accountId]);
+  return rows[0] || null;
+}
+
 export function assignmentSketchArtifactOptions(row) {
   return Object.freeze({
     fileNumber: row.assignment_file_number || row.report_file_number,
@@ -63,7 +87,13 @@ export async function getAssignmentInspectionSketch(pool, accountId, assignmentF
   }
 }
 
-export async function saveAssignmentInspectionSketch(pool, accountId, assignmentFileId, input = {}) {
+async function saveDesktopInspectionSketch(
+  pool,
+  loadRow,
+  requestScope,
+  input = {},
+  actorUserId = null,
+) {
   const expectedRevision = Number(input.expected_revision);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
     throw new Error("invalid_sketch_expected_revision");
@@ -73,12 +103,12 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
     : randomUUID();
   const reviewer = String(input.reviewer || "HomeNode editor").trim().slice(0, 200) || "HomeNode editor";
   const document = normalizeManualSketchDocument(input.sketch);
-  const requestSha = hashRequest({ accountId, assignmentFileId, expectedRevision, document });
+  const requestSha = hashRequest({ ...requestScope, expectedRevision, document });
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const row = await assignmentSketchRow(client, accountId, assignmentFileId, { lock: true });
-    if (!row) throw new Error("assignment_sketch_not_found");
+    const row = await loadRow(client, { lock: true });
+    if (!row) throw new Error(requestScope.notFoundCode || "assignment_sketch_not_found");
 
     const priorOperation = await client.query(
       [
@@ -127,7 +157,7 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
         document.review_status,
         JSON.stringify(document),
         JSON.stringify(document.summary),
-        row.updated_by_user_id,
+        actorUserId || row.updated_by_user_id,
       ],
     );
     const sketchRow = updatedResult.rows[0];
@@ -139,7 +169,7 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
         "INSERT INTO app.inspection_sketch_history (",
         "  sketch_id, inspection_session_id, revision, document, summary, rooms,",
         "  review_status, changed_by_user_id, client_operation_id",
-        ") VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, NULL, $8)",
+        ") VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb, $7, $8, $9)",
       ].join("\n"),
       [
         sketchRow.id,
@@ -149,6 +179,7 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
         JSON.stringify(document.summary),
         JSON.stringify(document.rooms),
         document.review_status,
+        actorUserId,
         clientOperationId,
       ],
     );
@@ -172,12 +203,13 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
         "INSERT INTO app.inspection_sketch_events (",
         "  sketch_id, inspection_session_id, report_file_id, actor_user_id,",
         "  client_operation_id, event_type, prior_revision, next_revision, metadata",
-        ") VALUES ($1, $2, $3, NULL, $4, $5, $6, $7, $8::jsonb)",
+        ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)",
       ].join("\n"),
       [
         sketchRow.id,
         row.inspection_session_id,
         row.report_file_id,
+        actorUserId,
         clientOperationId,
         eventType,
         expectedRevision,
@@ -195,10 +227,11 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
       [
         "INSERT INTO app.inspection_session_events (",
         "  inspection_session_id, actor_user_id, event_type, prior_revision, next_revision, metadata",
-        ") VALUES ($1, NULL, $2, $3, $3, $4::jsonb)",
+        ") VALUES ($1, $2, $3, $4, $4, $5::jsonb)",
       ].join("\n"),
       [
         row.inspection_session_id,
+        actorUserId,
         eventType,
         Number(row.session_revision),
         JSON.stringify({ source: "desktop_review", reviewer, sketch_revision: nextRevision }),
@@ -209,10 +242,11 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
         "INSERT INTO app.report_file_events (",
         "  report_file_id, actor_user_id, event_type, prior_registry_revision,",
         "  next_registry_revision, changed_fields, metadata",
-        ") VALUES ($1, NULL, 'mobile_sketch.updated', $2, $3, ARRAY['inspection_sketch'], $4::jsonb)",
+        ") VALUES ($1, $2, 'mobile_sketch.updated', $3, $4, ARRAY['inspection_sketch'], $5::jsonb)",
       ].join("\n"),
       [
         row.report_file_id,
+        actorUserId,
         Number(row.registry_revision),
         Number(reportRevision.rows[0].registry_revision),
         JSON.stringify({
@@ -233,7 +267,7 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
         "INSERT INTO app.inspection_sketch_operations (",
         "  inspection_session_id, client_operation_id, request_sha256,",
         "  base_sketch_revision, status, result, actor_user_id",
-        ") VALUES ($1, $2, $3, $4, 'applied', $5::jsonb, NULL)",
+        ") VALUES ($1, $2, $3, $4, 'applied', $5::jsonb, $6)",
       ].join("\n"),
       [
         row.inspection_session_id,
@@ -241,6 +275,7 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
         requestSha,
         expectedRevision,
         JSON.stringify(result),
+        actorUserId,
       ],
     );
     await client.query("COMMIT");
@@ -251,4 +286,46 @@ export async function saveAssignmentInspectionSketch(pool, accountId, assignment
   } finally {
     client.release();
   }
+}
+
+export async function saveAssignmentInspectionSketch(
+  pool,
+  accountId,
+  assignmentFileId,
+  input = {},
+  actorUserId = null,
+) {
+  return saveDesktopInspectionSketch(
+    pool,
+    (client, options) => assignmentSketchRow(client, accountId, assignmentFileId, options),
+    {
+      workflow: "custom_appraisal",
+      accountId,
+      assignmentFileId,
+      notFoundCode: "assignment_sketch_not_found",
+    },
+    input,
+    actorUserId,
+  );
+}
+
+export async function savePropertyTaxInspectionSketch(
+  pool,
+  accountId,
+  fileId,
+  input = {},
+  actorUserId = null,
+) {
+  return saveDesktopInspectionSketch(
+    pool,
+    (client, options) => propertyTaxSketchRow(client, accountId, fileId, options),
+    {
+      workflow: "property_tax_protest",
+      accountId,
+      fileId,
+      notFoundCode: "property_tax_protest_sketch_not_found",
+    },
+    input,
+    actorUserId,
+  );
 }

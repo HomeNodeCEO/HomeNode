@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   getPropertyTaxProtestFile,
+  updatePropertyTaxInspectionSketch,
   updatePropertyTaxProtestFile,
   type PropertyTaxProtestFile,
 } from '@/lib/api';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
+import MobileSketchReview from '@/components/MobileSketchReview';
 
 type FieldSpec = {
   path: [string, string];
@@ -236,6 +238,21 @@ export default function PropertyTaxWorkfileReview({ accountId }: { accountId: st
               </ul>
             </div>
           )}
+
+          {file.sketch?.document ? (
+            <MobileSketchReview
+              sketch={file.sketch}
+              title="Property Tax Protest measured sketch editor"
+              subtitle="Changes create a new audited inspection-sketch revision for this protest file only."
+              saveDraft={(draft) => updatePropertyTaxInspectionSketch(
+                accountId,
+                file.tax_protest_file_id,
+                file.sketch!,
+                draft,
+              )}
+              onSaved={(savedSketch) => setFile((current) => current ? { ...current, sketch: savedSketch } : current)}
+            />
+          ) : null}
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <p className="max-w-3xl text-xs text-slate-600">

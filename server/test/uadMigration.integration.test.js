@@ -147,6 +147,20 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
       "uad_assets_mobile_evidence_lookup_idx",
     ]);
 
+    const sketchEditorSchema = await pool.query(`
+      SELECT
+        EXISTS (
+          SELECT 1 FROM information_schema.columns
+           WHERE table_schema = 'appraisal' AND table_name = 'uad_sketches'
+             AND column_name = 'revision'
+        ) AS has_revision,
+        to_regclass('appraisal.uad_sketch_history') IS NOT NULL AS has_history,
+        to_regclass('appraisal.uad_assets_active_sketch_editor_revision_uidx') IS NOT NULL AS has_editor_index
+    `);
+    assert.equal(sketchEditorSchema.rows[0].has_revision, true);
+    assert.equal(sketchEditorSchema.rows[0].has_history, true);
+    assert.equal(sketchEditorSchema.rows[0].has_editor_index, true);
+
     const dwellingExteriorFields = await pool.query(`
       SELECT count(*)::integer AS count
         FROM uad_ref.fields

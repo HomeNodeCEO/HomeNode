@@ -1,7 +1,8 @@
 import { createUadAssetUpload, listUadAssets, verifyUadAssetUpload } from "./assets.js";
-import { saveUadSketch } from "./sketches.js";
+import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { renderSketchPng } from "../mobile/sketchPng.js";
+import { normalizeManualSketchDocument } from "../mobile/sketches.js";
 
 const CATEGORY_SECTIONS = Object.freeze({
   front: [8],
@@ -361,4 +362,147 @@ export async function importUadMobileSketch(pool, storage, workfileIdValue, sket
     source: "mobile",
   }, actorUserId);
   return { ...assetResult, sketch: canonicalSketch };
+}
+
+export async function editUadSketch(
+  pool,
+  storage,
+  workfileIdValue,
+  sketchIdValue,
+  input = {},
+  actorUserId = null,
+) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  const sketchId = normalizeUadWorkfileId(sketchIdValue);
+  const expectedRevision = Number(input.expected_revision);
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
+    throw new Error("invalid_uad_sketch_expected_revision");
+  }
+  const reportFile = await reportFileForWorkfile(pool, workfileId);
+  const { rows } = await pool.query(
+    `SELECT sketch.*, asset.caption_type, asset.caption, asset.id AS prior_asset_id
+       FROM appraisal.uad_sketches sketch
+       LEFT JOIN appraisal.uad_assets asset ON asset.id = sketch.rendered_asset_id
+      WHERE sketch.id = $1 AND sketch.workfile_id = $2`,
+    [sketchId, workfileId],
+  );
+  if (!rows.length) throw new Error("uad_sketch_not_found");
+  const current = rows[0];
+  const nextRevision = expectedRevision + 1;
+  const provenanceValue = `${sketchId}:${nextRevision}`;
+  const priorGenerated = await existingImport(
+    pool,
+    workfileId,
+    "uad_sketch_editor_revision",
+    provenanceValue,
+  );
+  if (
+    Number(current.revision || 1) === nextRevision
+    && priorGenerated?.status === "verified"
+    && current.rendered_asset_id === priorGenerated.id
+  ) {
+    const asset = (await listUadAssets(pool, workfileId)).find((item) => item.id === priorGenerated.id);
+    const sketch = (await listUadSketches(pool, workfileId)).find((item) => item.id === sketchId);
+    if (!asset || !sketch) throw new Error("uad_sketch_editor_retry_state_missing");
+    return { asset, sketch, idempotent: true };
+  }
+  if (Number(current.revision || 1) !== expectedRevision) {
+    const conflict = new Error("uad_sketch_revision_conflict");
+    conflict.currentRevision = Number(current.revision || 1);
+    throw conflict;
+  }
+
+  const document = normalizeManualSketchDocument(input.sketch);
+  const captionType = current.caption_type === "FloorPlan"
+    ? "FloorPlan"
+    : "SubjectPropertyImprovementSketch";
+  const body = renderSketchPng({ document, revision: nextRevision }, {
+    fileNumber: reportFile.file_number,
+    propertyLabel: input.property_label || reportFile.file_number,
+    revision: nextRevision,
+  });
+  const assetResult = await finalizeBufferImport({
+    pool,
+    storage,
+    workfileId,
+    input: {
+      asset_kind: captionType === "FloorPlan" ? "floor_plan" : "sketch",
+      section_number: 7,
+      entity_id: current.entity_id || null,
+      caption_type: captionType,
+      caption: String(input.caption || current.caption || "HomeNode measured sketch").slice(0, 100),
+      file_name: `${reportFile.file_number || "uad"}-sketch-r${nextRevision}.png`,
+      content_type: "image/png",
+      capture_metadata: {
+        source: "homenode_web_sketch_editor",
+        source_uad_sketch_id: sketchId,
+        source_uad_sketch_revision: expectedRevision,
+        uad_sketch_editor_revision: provenanceValue,
+        retained_source_asset_id: current.prior_asset_id || null,
+      },
+    },
+    body,
+    actorUserId,
+    provenanceKey: "uad_sketch_editor_revision",
+    provenanceValue,
+    eventType: "uad_asset.sketch_editor_rendered",
+  });
+
+  let sketch;
+  try {
+    sketch = await saveUadSketch(pool, workfileId, {
+      schema_version: String(document.schema_version || current.schema_version || "1.0"),
+      geometry: document,
+      measurements: {
+        standard: document.measurement_standard,
+        method: document.measurement_method,
+        rooms: document.rooms,
+      },
+      calculated_areas: document.summary || {},
+      area_overrides: current.area_overrides || {},
+      rendered_asset_id: assetResult.asset.id,
+      entity_id: current.entity_id || null,
+      source: "homenode",
+      expected_revision: expectedRevision,
+      change_source: "homenode_web_sketch_editor",
+    }, actorUserId);
+  } catch (error) {
+    if (!assetResult.idempotent) {
+      await pool.query(
+        `UPDATE appraisal.uad_assets
+            SET status = 'deleted', updated_at = now(),
+                capture_metadata = capture_metadata || '{"orphaned_editor_render":true}'::jsonb
+          WHERE id = $1 AND workfile_id = $2`,
+        [assetResult.asset.id, workfileId],
+      ).catch(() => undefined);
+    }
+    throw error;
+  }
+
+  if (current.prior_asset_id && current.prior_asset_id !== assetResult.asset.id) {
+    await pool.query(
+      `UPDATE appraisal.uad_assets
+          SET status = 'deleted', updated_at = now(),
+              capture_metadata = capture_metadata || $3::jsonb
+        WHERE id = $1 AND workfile_id = $2 AND status = 'verified'`,
+      [
+        current.prior_asset_id,
+        workfileId,
+        JSON.stringify({
+          superseded_by_asset_id: assetResult.asset.id,
+          superseded_by_sketch_revision: nextRevision,
+          retained_for_audit: true,
+        }),
+      ],
+    ).catch((error) => {
+      console.warn("Unable to mark prior UAD sketch exhibit as superseded", {
+        error: error?.message,
+        workfileId,
+        sketchId,
+        priorAssetId: current.prior_asset_id,
+        replacementAssetId: assetResult.asset.id,
+      });
+    });
+  }
+  return { ...assetResult, sketch };
 }

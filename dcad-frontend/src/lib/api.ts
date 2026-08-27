@@ -394,6 +394,10 @@ export interface AppraisalAssignmentFile {
   }>;
   mobile_inspection_sketch?: {
     id: string;
+    client_sketch_id?: string;
+    inspection_session_id?: string;
+    report_file_id?: string;
+    workflow_type?: 'custom_appraisal' | 'uad_3_6' | 'property_tax_protest';
     revision: number;
     measurement_standard: 'ansi_z765_2021' | 'jurisdiction_required_other';
     measurement_method: 'exterior' | 'interior_perimeter' | 'plans' | 'mixed';
@@ -3058,6 +3062,32 @@ export async function updateMobileInspectionSketch(
   );
 }
 
+/** Save a Property Tax Protest sketch through the authenticated desktop workflow. */
+export async function updatePropertyTaxInspectionSketch(
+  accountId: string,
+  fileId: string,
+  sketch: EditableInspectionSketch,
+  document: EditableInspectionSketch['document'],
+): Promise<EditableInspectionSketch> {
+  const response = await fetchJSON<{ sketch: EditableInspectionSketch }>(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(accountId)}`
+        + `/property-tax-protest/${encodeURIComponent(fileId)}/sketch`,
+    ),
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        client_operation_id: globalThis.crypto.randomUUID(),
+        expected_revision: sketch.revision,
+        sketch: document,
+        reviewer: 'HomeNode appraiser',
+      }),
+    },
+  );
+  return response.sketch;
+}
+
 /** Load background coordinate coverage for matched sale accounts. */
 export async function getLocationBackfillStatus(): Promise<LocationBackfillStatus> {
   const url = makeUrl('/api/location-backfill/status');
@@ -3689,13 +3719,10 @@ export interface PropertyTaxProtestFile {
       retention_until: string;
     }>;
   };
-  sketch: null | {
-    revision: number;
-    summary: Record<string, unknown>;
-    review_status: string;
-    updated_at: string;
-  };
+  sketch: AppraisalAssignmentFile['mobile_inspection_sketch'];
 }
+
+export type EditableInspectionSketch = NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
 
 /** Fit an auditable same-housing-type OLS model inside one selected market area. */
 export async function runRegressionAnalysis(request: {

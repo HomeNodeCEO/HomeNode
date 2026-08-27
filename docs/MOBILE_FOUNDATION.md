@@ -167,6 +167,14 @@ measurements, calculated areas, room labels, measurement method, confirmation
 identity, and source revision in the canonical UAD sketch record. Draft
 sketches cannot be imported.
 
+The same desktop measured-sketch editor is used by Custom Appraisal, UAD 3.6,
+and Property Tax Protest. It can revise area labels and classifications, corner
+coordinates, room labels and anchors, measurement method, and review status.
+Every save is optimistic-revision guarded. Custom and Property Tax edits append
+inspection-sketch history. UAD edits append canonical UAD sketch history and
+render a new verified Section 7 PNG; the prior UAD exhibit is marked superseded
+but retained for audit, and the original mobile/photo source is never changed.
+
 ## Inspection completion
 
 The mobile app now checks its encrypted device queues and the authoritative

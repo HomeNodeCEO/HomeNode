@@ -388,6 +388,9 @@ try {
     await createUadWorkfile(pool, SFR_ACCOUNT_ID, {
       file_number: SFR_FILE_NUMBER,
       assignment_purpose: "Synthetic site-built Sections 10-22A staging validation",
+      organization_id: STAGING_ORGANIZATION_ID,
+      assigned_appraiser_user_id: STAGING_USER_ID,
+      actor_user_id: STAGING_USER_ID,
     });
     sfrWorkfileResult = await pool.query(
       `SELECT id
@@ -1152,6 +1155,9 @@ try {
     await createUadWorkfile(pool, MANUFACTURED_HOME_ACCOUNT_ID, {
       file_number: MANUFACTURED_HOME_FILE_NUMBER,
       assignment_purpose: "Synthetic manufactured-home Section 9 staging validation",
+      organization_id: STAGING_ORGANIZATION_ID,
+      assigned_appraiser_user_id: STAGING_USER_ID,
+      actor_user_id: STAGING_USER_ID,
     });
     manufacturedWorkfileResult = await pool.query(
       `SELECT id
@@ -1210,6 +1216,75 @@ try {
     [manufacturedWorkfileId, manufacturedDwellingId, "0300.0034", JSON.stringify("Manufactured")],
   );
 
+  // Repair fixtures created before staging identity ownership was introduced. The
+  // namespace guard prevents this bootstrap from adopting ordinary appraisal data.
+  const stagingWorkfiles = await pool.query(
+    `UPDATE appraisal.uad_workfiles
+        SET organization_id = $1,
+            assigned_appraiser_user_id = COALESCE(assigned_appraiser_user_id, $2),
+            created_by_user_id = COALESCE(created_by_user_id, $2),
+            updated_by_user_id = COALESCE(updated_by_user_id, $2),
+            updated_at = now()
+      WHERE account_id LIKE 'UAD-STAGING-%'
+        AND (organization_id IS NULL OR organization_id = $1)
+        AND (
+          organization_id IS NULL
+          OR assigned_appraiser_user_id IS NULL
+          OR created_by_user_id IS NULL
+          OR updated_by_user_id IS NULL
+        )
+      RETURNING id`,
+    [STAGING_ORGANIZATION_ID, STAGING_USER_ID],
+  );
+  const canonicalRegistry = await pool.query(
+    `SELECT to_regclass('app.report_files') AS report_files,
+            to_regclass('app.appraisal_cases') AS appraisal_cases`,
+  );
+  let stagingReportFiles = { rowCount: 0 };
+  let stagingAppraisalCases = { rowCount: 0 };
+  if (canonicalRegistry.rows[0]?.report_files) {
+    stagingReportFiles = await pool.query(
+      `UPDATE app.report_files report_file
+          SET organization_id = $1,
+              created_by_user_id = COALESCE(report_file.created_by_user_id, $2),
+              updated_at = now()
+        WHERE report_file.workflow_type = 'uad_3_6'
+          AND (report_file.organization_id IS NULL OR report_file.organization_id = $1)
+          AND (report_file.organization_id IS NULL OR report_file.created_by_user_id IS NULL)
+          AND EXISTS (
+            SELECT 1
+              FROM appraisal.uad_workfiles workfile
+             WHERE workfile.id = report_file.uad_workfile_id
+               AND workfile.account_id LIKE 'UAD-STAGING-%'
+               AND workfile.organization_id = $1
+          )
+        RETURNING id`,
+      [STAGING_ORGANIZATION_ID, STAGING_USER_ID],
+    );
+  }
+  if (canonicalRegistry.rows[0]?.report_files && canonicalRegistry.rows[0]?.appraisal_cases) {
+    stagingAppraisalCases = await pool.query(
+      `UPDATE app.appraisal_cases appraisal_case
+          SET organization_id = $1,
+              created_by_user_id = COALESCE(appraisal_case.created_by_user_id, $2),
+              updated_at = now()
+        WHERE (appraisal_case.organization_id IS NULL OR appraisal_case.organization_id = $1)
+          AND (appraisal_case.organization_id IS NULL OR appraisal_case.created_by_user_id IS NULL)
+          AND EXISTS (
+            SELECT 1
+              FROM app.report_files report_file
+              JOIN appraisal.uad_workfiles workfile
+                ON workfile.id = report_file.uad_workfile_id
+             WHERE report_file.appraisal_case_id = appraisal_case.id
+               AND report_file.workflow_type = 'uad_3_6'
+               AND report_file.organization_id = $1
+               AND workfile.account_id LIKE 'UAD-STAGING-%'
+          )
+        RETURNING id`,
+      [STAGING_ORGANIZATION_ID, STAGING_USER_ID],
+    );
+  }
+
   console.log(JSON.stringify({
     prepared: true,
     database: databaseName,
@@ -1219,6 +1294,9 @@ try {
     synthetic_mobile_user_email: STAGING_USER_EMAIL,
     site_built_workfile_id: sfrWorkfileId,
     manufactured_home_workfile_id: manufacturedWorkfileId,
+    owned_staging_workfiles: stagingWorkfiles.rowCount,
+    owned_staging_report_files: stagingReportFiles.rowCount,
+    owned_staging_appraisal_cases: stagingAppraisalCases.rowCount,
   }));
 } finally {
   await pool.end();

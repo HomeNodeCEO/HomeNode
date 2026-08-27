@@ -317,6 +317,15 @@ test("the staging bootstrap is guarded against production execution", () => {
   assert.match(source, /UAD-STAGING-MH-0001/);
   assert.match(source, /HN-UAD-STAGING-MH-0001/);
   assert.match(source, /uad_staging_fixture\.manufactured_construction/);
+  assert.match(source, /organization_id: STAGING_ORGANIZATION_ID/);
+  assert.match(source, /assigned_appraiser_user_id: STAGING_USER_ID/);
+  assert.match(source, /actor_user_id: STAGING_USER_ID/);
+  assert.match(source, /to_regclass\('app\.report_files'\)/);
+  assert.match(source, /to_regclass\('app\.appraisal_cases'\)/);
+  assert.match(source, /UPDATE appraisal\.uad_workfiles/);
+  assert.match(source, /UPDATE app\.report_files report_file/);
+  assert.match(source, /UPDATE app\.appraisal_cases appraisal_case/);
+  assert.equal(source.match(/account_id LIKE 'UAD-STAGING-%'/g)?.length, 3);
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 

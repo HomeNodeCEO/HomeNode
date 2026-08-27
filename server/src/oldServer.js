@@ -76,6 +76,7 @@ import {
   qualitativeAnalysisErrorStatus,
 } from "./util/qualitativeAnalysis.js";
 import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
+import { loadAccountDetailSections } from "./services/accountDetailSections.js";
 import {
   ensureCensusGeographySchema,
   getCensusGeographyStatus,
@@ -1099,214 +1100,42 @@ app.get("/api/accounts/:id", async (req, res) => {
       return null;
     });
 
-    const impSql = `
-      SELECT
-        construction_type,
-        percent_complete,
-        year_built,
-        effective_year_built,
-        actual_age,
-        depreciation,
-        desirability,
-        stories,
-        living_area_sqft,
-        total_living_area,
-        bedroom_count,
-        bath_count,
-        basement,
-        kitchens,
-        wetbars,
-        fireplaces,
-        sprinkler,
-        spa,
-        pool,
-        sauna,
-        air_conditioning,
-        heating,
-        foundation,
-        roof_material,
-        roof_type,
-        exterior_material,
-        fence_type,
-        number_units,
-        building_class,
-        total_area_sqft,
-        baths_full,
-        baths_half
-      FROM core.primary_improvements WHERE account_id = $1
-    `;
-    const { rows: impRows } = await pool.query(impSql, [canonicalId]);
-
-    // The CAD improvement table does not contain a dependable detached/attached
-    // field. Use the account-level profile, which fills structural and
-    // architectural fields independently from the latest nonblank MLS
-    // observations and supports source-attributed verified overrides.
-    const housingSql = `
-      SELECT
-        structural_style,
-        housing_type,
-        attachment_type,
-        architectural_style,
-        source_name,
-        source_url,
-        source_record_reference,
-        observed_at,
-        confidence,
-        profile_source
-      FROM core.v_account_housing_profiles
-      WHERE account_id = $1
-    `;
-    const { rows: housingRows } = await pool.query(housingSql, [canonicalId]);
-
-    // Latest owner summary plus every party and recorded ownership share. The
-    // party rows were already being scraped, but older clients only received
-    // the one-line summary and therefore hid fractional/co-owner records.
-    const ownerSql = `
-      SELECT
-        os.owner_name,
-        os.mailing_address,
-        os.tax_year,
-        COALESCE((
-          SELECT json_agg(
-            json_build_object(
-              'owner_name', op.owner_name,
-              'ownership_pct', op.ownership_pct,
-              'tax_year', op.tax_year
-            )
-            ORDER BY op.id
-          )
-          FROM core.owner_parties op
-          WHERE op.account_id = os.account_id
-            AND op.tax_year = (
-              SELECT MAX(latest.tax_year)
-              FROM core.owner_parties latest
-              WHERE latest.account_id = os.account_id
-            )
-        ), '[]'::json) AS owner_parties
-      FROM core.owner_summary os
-      WHERE os.account_id = $1
-      ORDER BY os.tax_year DESC
-      LIMIT 1
-    `;
-    const { rows: ownerRows } = await pool.query(ownerSql, [canonicalId]);
-
-    // Current legal description info (deed date, lines/text)
-    const legalSql = `
-      SELECT tax_year, legal_lines, legal_text, deed_transfer_date
-      FROM core.legal_description_current
-      WHERE account_id = $1
-      LIMIT 1
-    `;
-    const { rows: legalRows } = await pool.query(legalSql, [canonicalId]);
-    const legalHistSql = `
-      SELECT tax_year, legal_lines, legal_text, deed_transfer_date
-      FROM core.legal_description_history
-      WHERE account_id = $1 AND deed_transfer_date IS NOT NULL
-      ORDER BY tax_year DESC
-      LIMIT 1
-    `;
-    const { rows: legalHistRows } = await pool.query(legalHistSql, [canonicalId]);
-
-    // Exemptions summary (latest year) to determine homestead
-    const exSql = `
-      SELECT tax_year, jurisdiction_key, taxing_jurisdiction, homestead_exemption, disabled_vet, taxable_value
-      FROM core.exemptions_summary
-      WHERE account_id = $1
-      ORDER BY tax_year DESC
-    `;
-    const { rows: exRowsAll } = await pool.query(exSql, [canonicalId]);
-    let exRows = [];
-    let exYear = null;
-    let homesteadYes = false;
-    if (exRowsAll && exRowsAll.length) {
-      exYear = exRowsAll[0].tax_year;
-      exRows = exRowsAll.filter((r) => r.tax_year === exYear);
-      homesteadYes = exRows.some((r) => Number(r.homestead_exemption || 0) > 0);
-    }
-
-    // Land detail for latest tax year
-    let landRows = [];
-    try {
-      const landYearSql = `SELECT MAX(tax_year) AS y FROM core.land_detail WHERE account_id = $1`;
-      const { rows: yRows } = await pool.query(landYearSql, [canonicalId]);
-      const y = yRows?.[0]?.y;
-      if (y) {
-        const landSql = `
-          SELECT line_number AS number,
-                 state_code,
-                 zoning,
-                 frontage_ft,
-                 depth_ft,
-                 area_sqft,
-                 pricing_method,
-                 unit_price,
-                 market_adjustment_pct,
-                 adjusted_price,
-                 ag_land
-          FROM core.land_detail
-          WHERE account_id = $1 AND tax_year = $2
-          ORDER BY line_number
-        `;
-        const { rows } = await pool.query(landSql, [canonicalId, y]);
-        landRows = rows || [];
-      }
-    } catch (e) {
-      console.error('land_detail query failed', e);
-    }
+    // Once the canonical account exists, these independent indexed sections can
+    // load concurrently. Land detail also selects its latest year in one query,
+    // avoiding an additional database round trip on every report open.
+    const sections = await loadAccountDetailSections(pool, canonicalId);
     const resp = {
       account: {
         ...accRows[0],
         requested_account_id: id,
         resolved_from_legacy: canonicalId !== id.toUpperCase(),
       },
-      primary_improvements: impRows[0] || null,
-      housing_profile: housingRows[0] || null,
-      owner_summary: ownerRows[0]
+      primary_improvements: sections.primaryImprovement,
+      housing_profile: sections.housingProfile,
+      owner_summary: sections.owner
         ? {
-            owner_name: ownerRows[0].owner_name,
-            mailing_address: ownerRows[0].mailing_address,
-            tax_year: ownerRows[0].tax_year,
+            owner_name: sections.owner.owner_name,
+            mailing_address: sections.owner.mailing_address,
+            tax_year: sections.owner.tax_year,
           }
         : null,
-      owner_parties: ownerRows[0]?.owner_parties || [],
-      legal_current: legalRows[0] || null,
-      legal_history: legalHistRows[0] || null,
-      exemptions_summary_year: exYear,
-      exemptions_summary: exRows,
-      homestead_yes: homesteadYes,
-      land_detail: landRows,
+      owner_parties: sections.owner?.owner_parties || [],
+      legal_current: sections.legalCurrent,
+      legal_history: sections.legalHistory,
+      exemptions_summary_year: sections.exemptionYear,
+      exemptions_summary: sections.exemptions,
+      homestead_yes: sections.homesteadYes,
+      land_detail: sections.landRows,
       property_activity_history: await propertyActivityHistoryPromise,
       census_geography: await censusGeographyPromise,
       report_manual_values: await reportManualValuesPromise,
       property_context: await propertyContextPromise,
-      // Secondary improvements (all rows for account)
-      additional_improvements: []
+      additional_improvements: sections.additionalImprovements,
     };
     resp.sales_history = resp.property_activity_history.filter(
       (row) => row.record_type === "closed_sale",
     );
 
-    // Fetch secondary improvements
-    try {
-      const secSql = `
-        SELECT
-          sec_imp_number   AS number,
-          sec_imp_type     AS improvement_type,
-          sec_imp_cons_type AS construction,
-          sec_imp_floor    AS floor,
-          sec_imp_ext_wall AS exterior_wall,
-          sec_imp_sqft     AS area_sqft,
-          sec_imp_value    AS value,
-          sec_imp_year_built AS year_built
-        FROM core.secondary_improvements
-        WHERE account_id = $1
-        ORDER BY sec_imp_number NULLS LAST, id
-      `;
-      const { rows: secRows } = await pool.query(secSql, [canonicalId]);
-      resp.additional_improvements = secRows || [];
-    } catch (e) {
-      console.error('secondary_improvements query failed', e);
-    }
     res.json(resp);
   } catch (err) {
     console.error(err);

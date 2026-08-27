@@ -766,8 +766,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   if (!editor || !section) return <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">{error || "The UAD editor is unavailable."}</div>;
 
   return (
-    <section className="mt-6 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50">
-      <header className="border-b border-slate-200 bg-slate-950 px-5 py-4 text-white">
+    <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50">
+      <header className="rounded-t-2xl border-b border-slate-200 bg-slate-950 px-5 py-4 text-white">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Active UAD workfile</div>
@@ -778,19 +778,45 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-5" aria-label="UAD workfile sections">
-        {editor.sections.filter((item) => item.applicable !== false).map((item) => {
-          const completion = editor.completion[item.key];
-          return (
-            <button className={`px-3 py-4 text-left transition ${activeSection === item.key ? "border-b-2 border-emerald-700 bg-emerald-50" : "hover:bg-slate-50"}`} disabled={saving} key={item.key} onClick={() => void handleSectionChange(item.key)} type="button">
-              <div className="text-sm font-semibold">Section {item.officialSectionNumber}: {item.title}</div>
-              <div className="mt-1 text-xs text-slate-500">{completion.completed} of {completion.required} required · {completion.percent}%</div>
-            </button>
-          );
-        })}
-      </nav>
+      <div className="lg:grid lg:grid-cols-[25%_70%] lg:items-start lg:justify-between">
+        <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:grid-cols-1 lg:overflow-y-auto lg:border-b-0 lg:border-r" aria-label="UAD workfile sections">
+          {editor.sections.filter((item) => item.applicable !== false).map((item) => {
+            const completion = editor.completion[item.key];
+            const active = activeSection === item.key;
+            return (
+              <button
+                aria-current={active ? "step" : undefined}
+                className={`px-3 py-3 text-left transition lg:border-l-4 ${active
+                  ? "border-b-2 border-emerald-700 bg-emerald-50 lg:border-b lg:border-b-slate-100 lg:border-l-emerald-700"
+                  : "border-b border-slate-100 hover:bg-slate-50 lg:border-l-transparent"}`}
+                disabled={saving}
+                key={item.key}
+                onClick={() => void handleSectionChange(item.key)}
+                type="button"
+              >
+                <div className="text-sm font-semibold">Section {item.officialSectionNumber}: {item.title}</div>
+                <div className="mt-1 text-xs text-slate-500">{completion.completed} of {completion.required} required · {completion.percent}%</div>
+              </button>
+            );
+          })}
+        </nav>
 
-      <div className="p-4 sm:p-6">
+        <div className="min-w-0 p-4 sm:p-6">
+          <details className="group mb-5 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+            <summary className="cursor-pointer list-none px-4 py-3 transition hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+              <span className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">Workfile tools &amp; Section {section.officialSectionNumber} guidance</span>
+                  <span className="mt-1 block text-xs text-slate-500">Completion suggestions, validation, PDF, XML, signing, delivery package, and section instructions</span>
+                </span>
+                <span className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                  <span className="group-open:hidden">Open when needed</span>
+                  <span className="hidden group-open:inline">Close tools</span>
+                  <span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span>
+                </span>
+              </span>
+            </summary>
+            <div className="border-t border-slate-200 p-4">
         <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
           Fields and IDs follow UAD 3.6 Appendix A-1 v1.4 and the Appendix C URAR layout. HomeNode data and automated location evidence remain suggestions until the appraiser saves them.
         </div>
@@ -938,6 +964,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             Section 26 concludes the assignment without duplicating earlier work. Approach values and the contract price redisplay from their canonical sections; defects redisplay from the exact Site, Dwelling Exterior, Unit Interior, Outbuilding, Vehicle Storage, and Amenity records. The final value, effective date, value condition, exposure time, and reconciliation narrative belong to this UAD workfile snapshot and require appraiser confirmation.
           </div>
         )}
+            </div>
+          </details>
         {activeSection === "reconciliation" && (
           <section className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
             <h3 className="text-base font-semibold">Canonical values redisplayed in Section 26</h3>
@@ -1673,6 +1701,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           <button className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving || autosaveState === "conflict"} onClick={() => void handleSave()} type="button">
             {saving ? "Saving…" : `Review & save ${section.title}`}
           </button>
+        </div>
         </div>
       </div>
     </section>

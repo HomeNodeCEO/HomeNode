@@ -16961,13 +16961,6 @@ body {
 [data-side=right] .\[\[data-side\=right\]_\&\]\:cursor-e-resize {
   cursor: e-resize;
 }
-@font-face {
-  font-family: 'WixMadeforText';
-  src: url(https://app--prop-tax-pro-d0136def.base44.app/static/media/WixMadeforTextApp-Regular_1048040404.b682f51962b316f3cd85.ttf) format('truetype');
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
 
 /* Bottom drawer animations */
 @keyframes slideUpFromBottom {

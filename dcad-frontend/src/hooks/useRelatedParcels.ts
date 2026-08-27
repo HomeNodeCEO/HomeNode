@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getRelatedParcels, type RelatedParcelsResponse } from "@/lib/api";
+import { createTimedRequestCache } from "@/lib/timedRequestCache";
+
+const RELATED_PARCEL_CACHE_TTL_MS = 60_000;
+const relatedParcelCache = createTimedRequestCache<RelatedParcelsResponse>(
+  RELATED_PARCEL_CACHE_TTL_MS,
+);
 
 type UseRelatedParcelsOptions = {
   accountId?: string;
@@ -20,7 +26,7 @@ export function useRelatedParcels({
   const requestGeneration = useRef(0);
   const automaticLookupTimer = useRef<number | null>(null);
 
-  const loadRelatedParcels = useCallback(async () => {
+  const loadRelatedParcels = useCallback(async (force = false) => {
     if (!enabled || !accountId?.trim()) return;
     if (automaticLookupTimer.current !== null) {
       window.clearTimeout(automaticLookupTimer.current);
@@ -31,7 +37,12 @@ export function useRelatedParcels({
     setRelatedParcelsLoading(true);
     setRelatedParcelsError("");
     try {
-      const response = await getRelatedParcels(accountId, address || undefined);
+      const cacheKey = `${accountId.trim().toUpperCase()}:${String(address || "").trim().toUpperCase()}`;
+      const response = await relatedParcelCache.load(
+        cacheKey,
+        () => getRelatedParcels(accountId, address || undefined),
+        { force },
+      );
       if (requestGeneration.current === generation) setRelatedParcels(response);
     } catch (error) {
       if (requestGeneration.current === generation) {
@@ -55,7 +66,7 @@ export function useRelatedParcels({
     // loading yields briefly while an explicit refresh starts immediately.
     automaticLookupTimer.current = window.setTimeout(() => {
       automaticLookupTimer.current = null;
-      void loadRelatedParcels();
+      void loadRelatedParcels(false);
     }, initialDelayMs);
     return () => {
       requestGeneration.current += 1;
@@ -75,6 +86,6 @@ export function useRelatedParcels({
     relatedParcels,
     relatedParcelsLoading,
     relatedParcelsError,
-    refreshRelatedParcels: loadRelatedParcels,
+    refreshRelatedParcels: () => loadRelatedParcels(true),
   };
 }

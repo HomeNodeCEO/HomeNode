@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
-import { fetchDetail } from "@/lib/dcad";
 import {
   forgetEditorCredential,
   requestEditorCredential,
@@ -14,7 +13,6 @@ import {
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileReadiness,
-  getAccountPhotos,
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
   updateAssignmentFile,
@@ -36,6 +34,7 @@ import { useRelatedParcels } from "@/hooks/useRelatedParcels";
 import { useManualReportSections } from "@/hooks/useManualReportSections";
 import { useCustomAppraisalDownloads } from "@/hooks/useCustomAppraisalDownloads";
 import SubjectConditionConformitySection from "@/components/SubjectConditionConformitySection";
+import { usePropertyReportDetail } from "@/hooks/usePropertyReportDetail";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
@@ -49,20 +48,32 @@ import {
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
 import DeferredReportSection from "@/components/DeferredReportSection";
-import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
-import AssignmentPhotoCenter from "@/components/AssignmentPhotoCenter";
-import MobileSketchReview from "@/components/MobileSketchReview";
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 import ReportSectionEditor from "@/components/ReportSectionEditor";
-import NeighborhoodCharacteristicsContent from "@/components/NeighborhoodCharacteristicsContent";
-import ListingsContractsSalesContent, {
-  type PropertyActivityRow,
-} from "@/components/ListingsContractsSalesContent";
+import type { PropertyActivityRow } from "@/components/ListingsContractsSalesContent";
 import {
   CheckboxChoice,
   SummaryField,
   SummarySection,
 } from "@/components/PropertyReportControls";
+
+const AssignmentDocumentCenter = lazy(() => import("@/components/AssignmentDocumentCenter"));
+const AssignmentPhotoCenter = lazy(() => import("@/components/AssignmentPhotoCenter"));
+const MobileSketchReview = lazy(() => import("@/components/MobileSketchReview"));
+const NeighborhoodCharacteristicsContent = lazy(
+  () => import("@/components/NeighborhoodCharacteristicsContent"),
+);
+const ListingsContractsSalesContent = lazy(
+  () => import("@/components/ListingsContractsSalesContent"),
+);
+
+function LazyReportContent({ label, className = "" }: { label: string; className?: string }) {
+  return (
+    <div className={`rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 ${className}`}>
+      Loading {label}...
+    </div>
+  );
+}
 import {
   displayValue,
   formatBaths,
@@ -2334,21 +2345,25 @@ function AddressHero({
             </div>
           </SummarySection>
 
-          <AssignmentDocumentCenter
-            accountId={accountId || ""}
-            assignmentFileId={activeAssignmentFile?.id || null}
-            getEditorKey={editorKeyForSave}
-            onApplyConfirmedCandidate={applyConfirmedDocumentCandidate}
-            className="order-6"
-          />
+          <Suspense fallback={<LazyReportContent label="documents" className="order-6" />}>
+            <AssignmentDocumentCenter
+              accountId={accountId || ""}
+              assignmentFileId={activeAssignmentFile?.id || null}
+              getEditorKey={editorKeyForSave}
+              onApplyConfirmedCandidate={applyConfirmedDocumentCandidate}
+              className="order-6"
+            />
+          </Suspense>
 
-          <AssignmentPhotoCenter
-            accountId={accountId || ""}
-            assignmentFileId={activeAssignmentFile?.id || null}
-            getEditorKey={editorKeyForSave}
-            readOnly={activeAssignmentFile?.workfile?.status === "signed"}
-            className="order-6"
-          />
+          <Suspense fallback={<LazyReportContent label="photos" className="order-6" />}>
+            <AssignmentPhotoCenter
+              accountId={accountId || ""}
+              assignmentFileId={activeAssignmentFile?.id || null}
+              getEditorKey={editorKeyForSave}
+              readOnly={activeAssignmentFile?.workfile?.status === "signed"}
+              className="order-6"
+            />
+          </Suspense>
 
           <div className="order-4 grid grid-cols-1 gap-5">
             <SummarySection
@@ -2356,7 +2371,8 @@ function AddressHero({
               subtitle="MLS listing activity, contracts, closed sales, and CAD deed-transfer records"
               {...sectionEditProps("report.sales_history")}
             >
-              <ListingsContractsSalesContent
+              <Suspense fallback={<LazyReportContent label="listings and sales history" />}>
+                <ListingsContractsSalesContent
                 listingRows={listingRows}
                 salesHistoryRows={salesHistoryRows}
                 assignmentDraft={assignmentDraft}
@@ -2369,7 +2385,8 @@ function AddressHero({
                 contractSellerComparison={contractSellerComparison}
                 onAssignmentChange={updateAssignment}
                 onSave={() => void saveAssignmentFromSection()}
-              />
+                />
+              </Suspense>
             </SummarySection>
           </div>
 
@@ -2501,21 +2518,23 @@ function AddressHero({
             ) : null}
 
             {mobileInspectionSketch && activeAssignmentFile && accountId ? (
-              <MobileSketchReview
-                accountId={accountId}
-                assignmentFile={activeAssignmentFile}
-                getEditorKey={editorKeyForSave}
-                onSaved={(savedSketch) => {
-                  const updatedFile = {
-                    ...activeAssignmentFile,
-                    mobile_inspection_sketch: savedSketch,
-                  };
-                  setActiveAssignmentFile(updatedFile);
-                  setAssignmentFiles((current) => current.map((file) =>
-                    file.id === updatedFile.id ? updatedFile : file
-                  ));
-                }}
-              />
+              <Suspense fallback={<LazyReportContent label="mobile sketch" />}>
+                <MobileSketchReview
+                  accountId={accountId}
+                  assignmentFile={activeAssignmentFile}
+                  getEditorKey={editorKeyForSave}
+                  onSaved={(savedSketch) => {
+                    const updatedFile = {
+                      ...activeAssignmentFile,
+                      mobile_inspection_sketch: savedSketch,
+                    };
+                    setActiveAssignmentFile(updatedFile);
+                    setAssignmentFiles((current) => current.map((file) =>
+                      file.id === updatedFile.id ? updatedFile : file
+                    ));
+                  }}
+                />
+              </Suspense>
             ) : null}
 
             <PropertyContextSection
@@ -2731,7 +2750,8 @@ function AddressHero({
               subtitle="Present land use, neighborhood factors, market ranges, and assignment boundary review"
               manuallyVerified={Boolean(activeAssignmentFile)}
             >
-              <NeighborhoodCharacteristicsContent
+              <Suspense fallback={<LazyReportContent label="neighborhood characteristics" />}>
+                <NeighborhoodCharacteristicsContent
               accountId={accountId}
               assignmentFileId={activeAssignmentFile?.id || null}
               assignmentDraft={assignmentDraft}
@@ -2772,7 +2792,8 @@ function AddressHero({
               }}
               onMarketConditionsChange={updateMarketConditions}
               onSave={() => void saveAssignmentFromSection()}
-              />
+                />
+              </Suspense>
             </SummarySection>
           </DeferredReportSection>
 
@@ -3003,42 +3024,13 @@ export default function PropertyReport() {
   }, [location.search]);
 
   const account = presetAccount;
-  const [detail, setDetail] = useState<DcadDetail | null>(null);
-  const hasAutoImported = useRef(false);
-  const loadRequestId = useRef(0);
-
-  async function importFromDatabase() {
-    if (!account) {
-      window.alert("Enter an Account ID first.");
-      return;
-    }
-    const requestedAccount = account.trim();
-    const requestId = ++loadRequestId.current;
-    try {
-      const response = await fetchDetail(requestedAccount);
-      if (requestId !== loadRequestId.current) return;
-      setDetail(response?.detail ?? null);
-
-      // The account payload is complete without MLS media. Load any future
-      // photo gallery in the background and never hold back the report.
-      void getAccountPhotos(requestedAccount)
-        .then((photoResponse) => {
-          if (requestId !== loadRequestId.current) return;
-          const photos = photoResponse?.photos
-            ?.map((photo) => photo?.media_url)
-            .filter((url): url is string => Boolean(url?.trim())) || [];
-          if (!photos.length) return;
-          setDetail((current) => (current ? { ...current, photos } : current));
-        })
-        .catch((error) => {
-          console.warn("Property photos were unavailable", error);
-        });
-    } catch (error: unknown) {
-      if (requestId !== loadRequestId.current) return;
+  const { detail, reloadDetail } = usePropertyReportDetail<DcadDetail>({
+    accountId: account,
+    onError: (error) => {
       console.error(error);
       window.alert(error instanceof Error ? error.message : "Import failed");
-    }
-  }
+    },
+  });
 
   useEffect(() => {
     subjectVisibleReported.current = false;
@@ -3063,15 +3055,6 @@ export default function PropertyReport() {
     return () => window.cancelAnimationFrame(frame);
   }, [detail]);
 
-  useEffect(() => {
-    if (!hasAutoImported.current && account) {
-      hasAutoImported.current = true;
-      void importFromDatabase();
-    }
-    // The account is intentionally imported only once when the routed report opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account]);
-
   return (
     <div className="min-h-screen bg-base-200">
       <div className="navbar bg-base-100 shadow-sm">
@@ -3093,7 +3076,7 @@ export default function PropertyReport() {
           detail={detail}
           accountId={account}
           requestedAssignmentFileId={requestedAssignmentFileId}
-          onReload={importFromDatabase}
+          onReload={reloadDetail}
         />
       </main>
     </div>

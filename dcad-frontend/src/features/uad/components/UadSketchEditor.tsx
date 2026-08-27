@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import MobileSketchReview from "@/components/MobileSketchReview";
+import SketchWorkspaceEmptyState from "@/components/SketchWorkspaceEmptyState";
 import type { EditableInspectionSketch } from "@/lib/api";
 import { editUadSketch, listUadSketches, type UadSketch } from "../api";
 
@@ -21,29 +22,57 @@ function asEditable(sketch: UadSketch): EditableInspectionSketch | null {
   };
 }
 
-export default function UadSketchEditor({ workfileId, onSaved }: {
+export default function UadSketchEditor({ workfileId, onSaved, refreshToken = 0 }: {
   workfileId: string;
   onSaved?: () => void;
+  refreshToken?: number;
 }) {
   const [canonical, setCanonical] = useState<UadSketch | null>(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       const sketches = await listUadSketches(workfileId);
       setCanonical(sketches.find((sketch) => sketch.entity_id == null) || sketches[0] || null);
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The canonical UAD sketch could not be loaded.");
+    } finally {
+      setLoading(false);
     }
   }, [workfileId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); }, [load, refreshToken]);
+
+  useEffect(() => {
+    if (canonical) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [canonical, load]);
 
   const editable = useMemo(() => canonical ? asEditable(canonical) : null, [canonical]);
-  if (!canonical || !editable) return error
-    ? <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</div>
-    : null;
+  if (!canonical || !editable) return (
+    <>
+      {error ? (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">{error}</div>
+      ) : null}
+      <SketchWorkspaceEmptyState
+        title="UAD 3.6 measured sketch"
+        subtitle="No canonical measured sketch is attached to this UAD file yet. Confirm and import the mobile sketch above; this workspace checks for newly accepted evidence every 30 seconds while the page is visible."
+        onRefresh={load}
+        refreshing={loading}
+      />
+    </>
+  );
 
   return (
     <MobileSketchReview

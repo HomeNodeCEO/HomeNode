@@ -56,7 +56,7 @@ function syncOperation(operationKind, baseSessionRevision, payload, clientOperat
   };
 }
 
-test("mobile report files preserve prior versions and allocate separate workflow sequences", {
+test("mobile report files preserve prior versions and allocate one daily assignment sequence", {
   skip: !databaseUrl,
 }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 4 });
@@ -115,7 +115,7 @@ test("mobile report files preserve prior versions and allocate separate workflow
       client_request_id: firstCustomRequest,
     });
     assert.equal(firstCustom.created, true);
-    assert.match(firstCustom.reportFile.file_number, /^HN-CA-\d{4}-000001$/);
+    assert.match(firstCustom.reportFile.file_number, /^\d{4}-\d{3}-01$/);
     assert.equal(firstCustom.reportFile.previous_report_file_id, null);
     const firstCustomOwnership = await pool.query(
       `SELECT organization_id, assigned_appraiser_user_id, created_by_user_id, updated_by_user_id
@@ -152,7 +152,7 @@ test("mobile report files preserve prior versions and allocate separate workflow
       client_request_id: randomUUID(),
       previous_report_file_id: firstCustom.reportFile.id,
     });
-    assert.match(secondCustom.reportFile.file_number, /^HN-CA-\d{4}-000002$/);
+    assert.match(secondCustom.reportFile.file_number, /^\d{4}-\d{3}-02$/);
     assert.equal(secondCustom.reportFile.previous_report_file_id, firstCustom.reportFile.id);
 
     const uad = await createReportFile(pool, auth, {
@@ -167,8 +167,8 @@ test("mobile report files preserve prior versions and allocate separate workflow
       workflow_type: "property_tax_protest",
       client_request_id: randomUUID(),
     });
-    assert.match(uad.reportFile.file_number, /^HN-UAD-\d{4}-000001$/);
-    assert.match(tax.reportFile.file_number, /^HN-PTP-\d{4}-000001$/);
+    assert.match(uad.reportFile.file_number, /^\d{4}-\d{3}-03$/);
+    assert.match(tax.reportFile.file_number, /^\d{4}-\d{3}-04$/);
 
     const uadFoundation = await pool.query(
       `SELECT
@@ -808,8 +808,8 @@ test("mobile report files preserve prior versions and allocate separate workflow
     );
     assert.equal(lineage.rows[0].prior_current, false);
     assert.equal(lineage.rows[0].previous_report_file_id, firstCustom.reportFile.id);
-    assert.equal(String(lineage.rows[0].inherited_from_file_id), firstCustom.reportFile.target_id);
-    assert.equal(lineage.rows[0].assignment_details.client_name, "Preserved client");
+    assert.equal(lineage.rows[0].inherited_from_file_id, null);
+    assert.deepEqual(lineage.rows[0].assignment_details, {});
     assert.equal(lineage.rows[0].prior_assignment_details.client_name, "Preserved client");
 
     const appraisalHistory = await listPreviousAppraisalFiles(pool, accountId);

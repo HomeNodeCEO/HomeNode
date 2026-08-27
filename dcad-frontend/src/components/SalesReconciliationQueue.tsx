@@ -9,7 +9,11 @@ import {
   type SalesReconciliationQueueItem,
   type SalesReconciliationQueueResponse,
 } from "@/lib/api";
-import { readEditorCredential, rememberEditorCredential } from "@/lib/editorCredential";
+import {
+  editorCredentialForRequest,
+  readEditorCredential,
+  rememberEditorCredential,
+} from "@/lib/editorCredential";
 
 const PAGE_SIZE = 10;
 const NATIVE_CAD_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z ._/#-]{3,99}$/;
@@ -156,8 +160,9 @@ export default function SalesReconciliationQueue() {
   async function saveMatch(item: SalesReconciliationQueueItem) {
     const key = String(item.source_record_id);
     const draft = drafts[key] || emptyDraft(item);
-    if (!editorKey.trim()) {
-      updateDraft(key, { error: "Enter your personal editor key before saving." });
+    const requestCredential = editorCredentialForRequest(editorKey);
+    if (!requestCredential) {
+      updateDraft(key, { error: "Sign in or enter your personal editor key before saving." });
       return;
     }
     if (!NATIVE_CAD_ACCOUNT_ID_PATTERN.test(draft.accountId.trim())) {
@@ -178,7 +183,7 @@ export default function SalesReconciliationQueue() {
           notes: draft.notes.trim() || null,
           reviewer: "HomeNode sales reconciliation",
         },
-        editorKey.trim(),
+        requestCredential,
       );
       rememberEditorCredential(editorKey);
       setDrafts((current) => {

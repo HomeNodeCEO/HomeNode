@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { setApplicationSessionActive } from '@/lib/editorCredential';
 
 type Organization = {
   organization_id: string;
@@ -103,6 +104,11 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
     })();
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    setApplicationSessionActive(Boolean(session));
+    return () => setApplicationSessionActive(false);
+  }, [session]);
 
   const value = useMemo<AuthState>(() => ({
     ready,

@@ -1,10 +1,11 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 const DIST = resolve('dist');
 const limits = {
   javascript: 300 * 1024,
   stylesheet: 500 * 1024,
+  comparableSalesRoute: 200 * 1024,
 };
 
 const html = await readFile(resolve(DIST, 'index.html'), 'utf8');
@@ -27,3 +28,14 @@ async function verify(label, assetPath, maximumBytes) {
 
 await verify('initial_javascript', entryScript, limits.javascript);
 await verify('initial_stylesheet', entryStylesheet, limits.stylesheet);
+
+const comparableSalesAsset = (await readdir(resolve(DIST, 'assets')))
+  .find((name) => /^ComparableSalesAnalysis-.*\.js$/.test(name));
+if (!comparableSalesAsset) {
+  throw new Error('comparable_sales_route_bundle_not_found');
+}
+await verify(
+  'comparable_sales_route',
+  `/assets/${comparableSalesAsset}`,
+  limits.comparableSalesRoute,
+);

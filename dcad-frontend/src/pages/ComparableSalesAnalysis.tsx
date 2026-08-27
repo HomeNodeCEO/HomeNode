@@ -1,5 +1,5 @@
 import { useLocation } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import {
@@ -15,16 +15,17 @@ import type {
   SalePhoto,
   SaleRow,
 } from '@/lib/api';
-import GroupedAdjustmentAnalysis, {
-  type AppliedGroupedAdjustment,
-  type GroupedAdjustmentImpactPreview,
+import type {
+  AppliedGroupedAdjustment,
+  GroupedAdjustmentImpactPreview,
 } from '@/components/GroupedAdjustmentAnalysis';
 import type { AppraiserDefinedAdjustmentArea } from '@/components/PairedSalesAnalysis';
-import ConditionQualityStudy, {
-  type ConditionQualityImpactPreview,
-  type ConditionQualityRatingAssignment,
+import type {
+  ConditionQualityImpactPreview,
+  ConditionQualityRatingAssignment,
 } from '@/components/ConditionQualityStudy';
 import ComparableSalesMap from '@/components/ComparableSalesMap';
+import DeferredReportSection from '@/components/DeferredReportSection';
 import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
 import { fetchDetail } from '@/lib/dcad';
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
@@ -75,6 +76,13 @@ import {
   type CostToCureLine,
   type SalesAnalysisPeriodMonths,
 } from '@/lib/comparableSalesPresentation';
+
+const ConditionQualityStudy = lazy(
+  () => import('@/components/ConditionQualityStudy'),
+);
+const GroupedAdjustmentAnalysis = lazy(
+  () => import('@/components/GroupedAdjustmentAnalysis'),
+);
 
 type ComparableSearchProfileOption = {
   key: ComparableSearchProfileKey;
@@ -5332,6 +5340,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           </div>
         </div>
 
+        <DeferredReportSection
+          label="Adjustment Methodologies"
+          className="mt-4"
+          minimumHeight={320}
+        >
+          <Suspense fallback={(
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">
+              Loading adjustment methodologies...
+            </div>
+          )}>
         <ConditionQualityStudy
           key={`condition-quality-${propertyId}`}
           subjectAccountId={propertyId}
@@ -5387,6 +5405,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             })
           }
         />
+          </Suspense>
+        </DeferredReportSection>
 
         {/* Adjustment Breakdown */}
         <div className="mt-6">

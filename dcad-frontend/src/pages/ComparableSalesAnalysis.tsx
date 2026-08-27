@@ -23,6 +23,7 @@ import ConditionQualityStudy, {
 import ComparableSalesMap from '@/components/ComparableSalesMap';
 import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
 import { fetchDetail } from '@/lib/dcad';
+import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import {
   editorCredentialForRequest,
   readEditorCredential,
@@ -160,6 +161,8 @@ type GalleryState = {
 };
 
 export default function ComparableSalesAnalysis() {
+  const { session: applicationSession } = useApplicationAuth();
+  const authenticatedApplicationSession = Boolean(applicationSession);
   const location = useLocation();
   const propertyId = useMemo(() => {
     const p = new URLSearchParams(location.search);
@@ -1312,8 +1315,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setHousingEditError('Housing type is required before the correction can be confirmed.');
       return;
     }
-    if (!housingEditorKey.trim()) {
-      setHousingEditError('Enter your personal editor key to save database changes.');
+    const requestCredential = editorCredentialForRequest(housingEditorKey);
+    if (!requestCredential) {
+      setHousingEditError('Sign in or enter an editor key to save database changes.');
       return;
     }
 
@@ -1332,7 +1336,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             : null,
           notes: housingEditForm.notes.trim() || null,
         },
-        housingEditorKey.trim(),
+        requestCredential,
       );
       rememberEditorCredential(housingEditorKey);
 
@@ -3558,17 +3562,23 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
             <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">
               <div className="flex flex-wrap items-end gap-3">
-                <label className="grid min-w-[220px] flex-1 gap-1 text-sm text-slate-700">
-                  <span>Personal editor key</span>
-                  <input
-                    type="password"
-                    value={housingEditorKey}
-                    autoComplete="off"
-                    onChange={(event) => setHousingEditorKey(event.target.value)}
-                    placeholder="Required only when saving"
-                    className="rounded-md border border-slate-300 px-3 py-2"
-                  />
-                </label>
+                {authenticatedApplicationSession ? (
+                  <div className="min-w-[220px] flex-1 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+                    Rating changes use your signed-in HomeNode identity.
+                  </div>
+                ) : (
+                  <label className="grid min-w-[220px] flex-1 gap-1 text-sm text-slate-700">
+                    <span>Legacy editor key</span>
+                    <input
+                      type="password"
+                      value={housingEditorKey}
+                      autoComplete="off"
+                      onChange={(event) => setHousingEditorKey(event.target.value)}
+                      placeholder="Temporary migration fallback"
+                      className="rounded-md border border-slate-300 px-3 py-2"
+                    />
+                  </label>
+                )}
                 <button
                   type="button"
                   onClick={() => void saveRatingChanges()}
@@ -4491,20 +4501,26 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   />
                 </label>
 
-                <label className="grid gap-1 text-sm text-slate-700 sm:col-span-2">
-                  <span className="font-medium">Personal editor key *</span>
-                  <input
-                    type="password"
-                    value={housingEditorKey}
-                    onChange={(event) => setHousingEditorKey(event.target.value)}
-                    autoComplete="off"
-                    placeholder="Required to write to the database"
-                    className="rounded-md border border-slate-300 px-3 py-2"
-                  />
-                  <span className="text-xs text-slate-500">
-                    After a successful save, the key is kept only for this browser tab.
-                  </span>
-                </label>
+                {authenticatedApplicationSession ? (
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 sm:col-span-2">
+                    This correction will be recorded under your signed-in HomeNode identity.
+                  </div>
+                ) : (
+                  <label className="grid gap-1 text-sm text-slate-700 sm:col-span-2">
+                    <span className="font-medium">Legacy editor key *</span>
+                    <input
+                      type="password"
+                      value={housingEditorKey}
+                      onChange={(event) => setHousingEditorKey(event.target.value)}
+                      autoComplete="off"
+                      placeholder="Temporary migration fallback"
+                      className="rounded-md border border-slate-300 px-3 py-2"
+                    />
+                    <span className="text-xs text-slate-500">
+                      This fallback is available only while account migration is being completed.
+                    </span>
+                  </label>
+                )}
               </div>
 
               {housingEditError && (

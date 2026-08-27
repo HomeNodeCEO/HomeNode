@@ -69,3 +69,16 @@ test("JSON and binary API requests share cookie, token, and marker stripping", (
     "the shared helper plus JSON, document, workfile, and PDF calls must all use authenticated fetch",
   );
 });
+
+test("remaining reviewed-data saves use the authenticated session path", () => {
+  const comparable = read("../src/pages/ComparableSalesAnalysis.tsx");
+  const propertyTaxReview = read("../src/components/PropertyTaxWorkfileReview.tsx");
+  const reconciliation = read("../src/components/SalesReconciliationQueue.tsx");
+
+  assert.match(comparable, /const requestCredential = editorCredentialForRequest\(housingEditorKey\)/);
+  assert.match(comparable, /authenticatedApplicationSession/);
+  assert.doesNotMatch(comparable, /if \(!housingEditorKey\.trim\(\)\)/);
+  assert.match(propertyTaxReview, /const editorKey = editorCredentialForRequest\(\)/);
+  assert.doesNotMatch(propertyTaxReview, /window\.prompt\([^)]*editor key/i);
+  assert.match(reconciliation, /Saves use your signed-in HomeNode identity\./);
+});

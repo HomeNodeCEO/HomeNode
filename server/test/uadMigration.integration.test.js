@@ -130,6 +130,23 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
     `);
     assert.equal(sketchRules.rows[0].count, 5);
 
+    const mobileEvidenceIndexes = await pool.query(`
+      SELECT indexname
+        FROM pg_indexes
+       WHERE schemaname = 'appraisal'
+         AND indexname IN (
+           'uad_assets_active_mobile_photo_uidx',
+           'uad_assets_active_mobile_sketch_uidx',
+           'uad_assets_mobile_evidence_lookup_idx'
+         )
+       ORDER BY indexname
+    `);
+    assert.deepEqual(mobileEvidenceIndexes.rows.map((row) => row.indexname), [
+      "uad_assets_active_mobile_photo_uidx",
+      "uad_assets_active_mobile_sketch_uidx",
+      "uad_assets_mobile_evidence_lookup_idx",
+    ]);
+
     const dwellingExteriorFields = await pool.query(`
       SELECT count(*)::integer AS count
         FROM uad_ref.fields

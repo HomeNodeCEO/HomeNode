@@ -22,6 +22,7 @@ import {
 import {
   CUSTOM_PHOTO_CATEGORIES,
   remainingPhotoCapacity,
+  UAD_PHOTO_CATEGORIES,
 } from "./model";
 import { usePhotoSync } from "./sync";
 import type { SelectedSketchRoom } from "../sketch/SketchEditorPanel";
@@ -138,6 +139,7 @@ export function PhotoCapturePanel({
   const [captions, setCaptions] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const captureCategories = workflowType === "uad_3_6" ? UAD_PHOTO_CATEGORIES : CUSTOM_PHOTO_CATEGORIES;
   const photoSync = usePhotoSync(store, api, ownerUserId, sessionId, online);
   const { refresh: refreshPhotoSummary, syncNow: syncPhotosNow } = photoSync;
   const activePhotos = photos.filter((photo) => photo.state !== "excluded");
@@ -161,6 +163,10 @@ export function PhotoCapturePanel({
     if (selectedSketchRoom) setUseSketchRoom(true);
   }, [selectedSketchRoom]);
 
+  useEffect(() => {
+    if (!captureCategories.some((item) => item === category)) setCategory(captureCategories[0]);
+  }, [captureCategories, category]);
+
   const label = useMemo(() => useSketchRoom && selectedSketchRoom ? {
     category: selectedSketchRoom.label,
     categorySource: "sketch_room" as const,
@@ -168,7 +174,11 @@ export function PhotoCapturePanel({
     roomLabel: selectedSketchRoom.label,
   } : {
     category,
-    categorySource: workflowType === "custom_appraisal" ? "custom_catalog" as const : "manual" as const,
+    categorySource: workflowType === "custom_appraisal"
+      ? "custom_catalog" as const
+      : workflowType === "uad_3_6"
+        ? "uad_catalog" as const
+        : "manual" as const,
     roomRef: null,
     roomLabel: null,
   }, [category, selectedSketchRoom, useSketchRoom, workflowType]);
@@ -272,7 +282,7 @@ export function PhotoCapturePanel({
       {!selectedSketchRoom ? <Text style={styles.help}>Tap a room marker in the measured sketch to make it available here.</Text> : null}
       {!useSketchRoom || !selectedSketchRoom ? <>
         <Text style={styles.label}>Photo category</Text>
-        <View style={styles.choices}>{CUSTOM_PHOTO_CATEGORIES.map((item) => (
+        <View style={styles.choices}>{captureCategories.map((item) => (
           <Choice key={item} label={item} selected={category === item} onPress={() => setCategory(item)} />
         ))}</View>
       </> : null}

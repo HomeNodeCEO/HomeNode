@@ -23,6 +23,21 @@ export const CUSTOM_PHOTO_CATEGORIES = Object.freeze([
   "Additional improvement",
   "Other",
 ]);
+export const UAD_PHOTO_CATEGORIES = Object.freeze([
+  "Dwelling front",
+  "Dwelling rear",
+  "Street/property access",
+  "Site/view",
+  "Kitchen",
+  "Living room",
+  "Bedroom",
+  "Bathroom",
+  "Garage/vehicle storage",
+  "Outbuilding",
+  "Amenity",
+  "Defect/damage",
+  "Other exhibit",
+]);
 
 const ALLOWED_CONTENT_TYPES = new Set([
   "image/avif",

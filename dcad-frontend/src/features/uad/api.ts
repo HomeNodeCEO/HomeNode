@@ -3,6 +3,7 @@ import { makeUrl } from "@/lib/api";
 import { withUadAuthorization } from "./auth";
 
 export const UAD_WORKFILE_MUTATED_EVENT = "homenode:uad-workfile-mutated";
+const uadMobileEvidenceCache = new Map<string, { expiresAt: number; request: Promise<UadMobileEvidence> }>();
 
 function announceUadWorkfileMutation(workfileId: string) {
   window.dispatchEvent(new CustomEvent(UAD_WORKFILE_MUTATED_EVENT, { detail: { workfileId } }));
@@ -60,6 +61,12 @@ export interface UadCapabilities {
     provider: string;
     configured: boolean;
     isolated: boolean;
+  };
+  mobile_evidence?: {
+    verified_photo_review_import: boolean;
+    appraiser_confirmed_sketch_import: boolean;
+    canonical_asset_copy: boolean;
+    retained_source_unchanged: boolean;
   };
   delivery_package?: {
     profile: string;
@@ -301,6 +308,53 @@ export async function saveUadSection(
   return result;
 }
 
+export interface UadMobilePhotoEvidence {
+  id: string;
+  report_file_id: string;
+  inspection_session_id: string;
+  category: string;
+  room_ref: string | null;
+  room_label: string | null;
+  caption: string;
+  position: number;
+  captured_at: string | null;
+  verified_at: string;
+  revision: number;
+  object: {
+    variant: "original" | "display";
+    file_name: string;
+    content_type: string;
+    byte_size: number;
+    width: number | null;
+    height: number | null;
+  };
+  view_url: string | null;
+  view_url_expires_in_seconds: number | null;
+  recommended_sections: number[];
+  imported_asset: Pick<UadAsset, "id" | "entity_id" | "section_number" | "caption_type" | "status"> | null;
+}
+
+export interface UadMobileSketchEvidence {
+  id: string;
+  report_file_id: string;
+  inspection_session_id: string;
+  revision: number;
+  review_status: "appraiser_confirmed";
+  measurement_standard: string;
+  measurement_method: string;
+  summary: Record<string, unknown>;
+  confirmed_by_user_id: string;
+  confirmed_at: string;
+  updated_at: string;
+  imported_asset: { id: string; revision: number; status: string } | null;
+}
+
+export interface UadMobileEvidence {
+  report_file_id: string;
+  photos: UadMobilePhotoEvidence[];
+  sketch: UadMobileSketchEvidence | null;
+}
+
 export async function createUadEntity(
   workfileId: string,
   entityType: string,
@@ -366,6 +420,53 @@ export async function uploadUadAsset(
   );
   announceUadWorkfileMutation(workfileId);
   return verified.asset;
+}
+
+export async function listUadMobileEvidence(workfileId: string): Promise<UadMobileEvidence> {
+  const cached = uadMobileEvidenceCache.get(workfileId);
+  if (cached && cached.expiresAt > Date.now()) return cached.request;
+  const request = uadFetchJSON<UadMobileEvidence>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/mobile-evidence`),
+  );
+  uadMobileEvidenceCache.set(workfileId, { expiresAt: Date.now() + 10_000, request });
+  request.catch(() => uadMobileEvidenceCache.delete(workfileId));
+  return request;
+}
+
+export async function importUadMobilePhoto(
+  workfileId: string,
+  photoId: string,
+  input: { section_number: number; entity_id?: string; caption_type: string; caption?: string },
+): Promise<{ asset: UadAsset; idempotent: boolean }> {
+  const result = await uadFetchJSON<{ asset: UadAsset; idempotent: boolean }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/mobile-evidence/photos/${encodeURIComponent(photoId)}/import`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  uadMobileEvidenceCache.delete(workfileId);
+  announceUadWorkfileMutation(workfileId);
+  return result;
+}
+
+export async function importUadMobileSketch(
+  workfileId: string,
+  sketchId: string,
+  input: { caption_type: "SubjectPropertyImprovementSketch" | "FloorPlan"; caption?: string },
+): Promise<{ asset: UadAsset; sketch: UadSketch; idempotent: boolean }> {
+  const result = await uadFetchJSON<{ asset: UadAsset; sketch: UadSketch; idempotent: boolean }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/mobile-evidence/sketches/${encodeURIComponent(sketchId)}/import`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  uadMobileEvidenceCache.delete(workfileId);
+  announceUadWorkfileMutation(workfileId);
+  return result;
 }
 
 export async function deleteUadAsset(workfileId: string, assetId: string): Promise<void> {

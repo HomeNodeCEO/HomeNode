@@ -8,6 +8,7 @@ import {
   inferredImageContentType,
   remainingPhotoCapacity,
   safePhotoFileName,
+  UAD_PHOTO_CATEGORIES,
 } from "../src/photos/model";
 
 test("photo capacity is bounded to 100 active inspection photos", () => {
@@ -34,4 +35,10 @@ test("normalizes image types, display dimensions, and durable file names", () =>
   assert.equal(displayWidth(4032), 2048);
   assert.equal(displayWidth(1200), 1200);
   assert.equal(safePhotoFileName("Front view #1.HEIC", "original.heic"), "Front-view-1.HEIC");
+});
+
+test("offers UAD-specific evidence labels during UAD inspections", () => {
+  assert.ok(UAD_PHOTO_CATEGORIES.includes("Dwelling front"));
+  assert.ok(UAD_PHOTO_CATEGORIES.includes("Street/property access"));
+  assert.ok(UAD_PHOTO_CATEGORIES.includes("Defect/damage"));
 });

@@ -62,7 +62,7 @@ export async function listUadSketches(pool, workfileIdValue) {
   return rows.map(sketchResponse);
 }
 
-export async function saveUadSketch(pool, workfileIdValue, input = {}) {
+export async function saveUadSketch(pool, workfileIdValue, input = {}, actorUserId = null) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const normalized = normalizeUadSketchInput(input);
   const client = await pool.connect();
@@ -111,13 +111,14 @@ export async function saveUadSketch(pool, workfileIdValue, input = {}) {
       JSON.stringify(normalized.areaOverrides),
       normalized.renderedAssetId,
       normalized.source,
+      actorUserId,
     ];
     const saved = existing.rows.length
       ? await client.query(
           `UPDATE appraisal.uad_sketches
               SET schema_version = $4, geometry = $5::jsonb, measurements = $6::jsonb,
                   calculated_areas = $7::jsonb, area_overrides = $8::jsonb,
-                  rendered_asset_id = $9, source = $10, updated_at = now()
+                  rendered_asset_id = $9, source = $10, updated_by_user_id = $11, updated_at = now()
             WHERE id = $1 AND workfile_id = $2
             RETURNING *`,
           parameters,
@@ -125,8 +126,9 @@ export async function saveUadSketch(pool, workfileIdValue, input = {}) {
       : await client.query(
           `INSERT INTO appraisal.uad_sketches (
              id, workfile_id, entity_id, schema_version, geometry, measurements,
-             calculated_areas, area_overrides, rendered_asset_id, source
-           ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10)
+             calculated_areas, area_overrides, rendered_asset_id, source,
+             created_by_user_id, updated_by_user_id
+           ) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10, $11, $11)
            RETURNING *`,
           parameters,
         );
@@ -138,14 +140,15 @@ export async function saveUadSketch(pool, workfileIdValue, input = {}) {
 
     await client.query(
       `INSERT INTO appraisal.uad_audit_events (
-         workfile_id, event_type, entity_type, entity_id, before_data, after_data, metadata
-       ) VALUES ($1, 'uad_sketch.saved', 'uad_sketch', $2, $3::jsonb, $4::jsonb, $5::jsonb)`,
+         workfile_id, actor_user_id, event_type, entity_type, entity_id, before_data, after_data, metadata
+       ) VALUES ($1, $6, 'uad_sketch.saved', 'uad_sketch', $2, $3::jsonb, $4::jsonb, $5::jsonb)`,
       [
         workfileId,
         id,
         JSON.stringify(existing.rows[0] ? sketchResponse(existing.rows[0]) : null),
         JSON.stringify(sketchResponse(saved.rows[0])),
         JSON.stringify({ source: normalized.source, schema_version: normalized.schemaVersion }),
+        actorUserId,
       ],
     );
     await client.query("COMMIT");

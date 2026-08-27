@@ -145,3 +145,45 @@ test("mandatory unified authentication fails closed across the legacy API surfac
   assert.match(server.slice(legacyGate, accountRead), /x-homenode-editor-key/);
   assert.match(server.slice(legacyGate, accountRead), /authentication_required/);
 });
+
+test("legacy property editors accept the authenticated workflow identity before editor-key fallback", () => {
+  const server = read("../src/oldServer.js");
+  const housingStart = server.indexOf('app.patch("/api/accounts/:id/housing-profile"');
+  const housingEnd = server.indexOf('app.patch("/api/accounts/:id/report-manual-values"', housingStart);
+  const zoningStart = server.indexOf('app.put("/api/accounts/:id/zoning-verification"');
+  const zoningEnd = server.indexOf("function decodedDocumentHeader", zoningStart);
+  assert.ok(housingStart >= 0 && housingEnd > housingStart);
+  assert.ok(zoningStart >= 0 && zoningEnd > zoningStart);
+
+  const housing = server.slice(housingStart, housingEnd);
+  assert.match(housing, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
+  assert.doesNotMatch(housing, /housing_profile_editor_not_configured|invalid_editor_key/);
+
+  const zoning = server.slice(zoningStart, zoningEnd);
+  assert.match(zoning, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
+  assert.match(zoning, /assignment_file_required/);
+  assert.match(zoning, /requireCustomAssignmentAccess\(req, res, accountId, assignmentFileId, "write"\)/);
+  assert.doesNotMatch(zoning, /zoning_editor_not_configured|invalid_editor_key/);
+});
+
+test("the migration editor key cannot elevate an authenticated identity", () => {
+  const server = read("../src/oldServer.js");
+  for (const [startMarker, endMarker] of [
+    ["function requireEditor(req, res)", "/** Coordinate coverage"],
+    ["async function requireCustomAssignmentAccess", "async function requireAssignmentDocumentAccess"],
+    ["async function requireAssignmentDocumentAccess", "function requireWorkflowAccess"],
+    ["function requireWorkflowAccess", "function assignmentPhotoErrorStatus"],
+  ]) {
+    const start = server.indexOf(startMarker);
+    const end = server.indexOf(endMarker, start);
+    assert.ok(start >= 0 && end > start, `missing authorization helper ${startMarker}`);
+    const helper = server.slice(start, end);
+    const identityCheck = Math.max(helper.indexOf("if (req.mobileAuth)"), helper.indexOf("if (!req.mobileAuth)"));
+    const keyFallback = helper.indexOf("configuredEditorKey");
+    assert.ok(identityCheck >= 0 && keyFallback > identityCheck, `${startMarker} must decide identity before key fallback`);
+  }
+  assert.match(server.slice(
+    server.indexOf("function requireWorkflowAccess"),
+    server.indexOf("function assignmentPhotoErrorStatus"),
+  ), /application_access_denied/);
+});

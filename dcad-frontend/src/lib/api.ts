@@ -1,6 +1,8 @@
 // src/lib/api.ts
 // Postgres-backed API client (no scraper)
 
+import { isAuthenticatedSessionEditorCredential } from '@/lib/editorCredential';
+
 type Json = Record<string, any>;
 
 const BASE =
@@ -21,19 +23,29 @@ export function makeUrl(path: string, params?: Record<string, string | number | 
 }
 
 /** Fetch JSON with timeout + nicer errors */
+async function fetchWithApplicationAuthentication(
+  input: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (isAuthenticatedSessionEditorCredential(headers.get('x-homenode-editor-key'))) {
+    headers.delete('x-homenode-editor-key');
+  }
+  const accessToken = typeof window !== 'undefined'
+    ? await window.homenodeAuth?.getAccessToken?.()
+    : null;
+  if (typeof accessToken === 'string' && accessToken.trim() && !headers.has('authorization')) {
+    headers.set('authorization', `Bearer ${accessToken.trim()}`);
+  }
+  return fetch(input, { ...init, credentials: 'include', headers });
+}
+
 export async function fetchJSON<T = any>(input: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), init?.timeoutMs ?? 25000);
 
   try {
-    const headers = new Headers(init?.headers);
-    const accessToken = typeof window !== 'undefined'
-      ? await window.homenodeAuth?.getAccessToken?.()
-      : null;
-    if (typeof accessToken === 'string' && accessToken.trim() && !headers.has('authorization')) {
-      headers.set('authorization', `Bearer ${accessToken.trim()}`);
-    }
-    const res = await fetch(input, { credentials: 'include', ...init, headers, signal: controller.signal });
+    const res = await fetchWithApplicationAuthentication(input, { ...init, signal: controller.signal });
     const ct = res.headers.get('content-type') || '';
     const isJson = ct.includes('application/json');
 
@@ -2581,7 +2593,7 @@ export async function getAssignmentDocumentContent(
   documentId: number,
   editorKey: string,
 ): Promise<Blob> {
-  const response = await fetch(makeUrl(`/api/documents/${documentId}/content`), {
+  const response = await fetchWithApplicationAuthentication(makeUrl(`/api/documents/${documentId}/content`), {
     headers: { 'x-homenode-editor-key': editorKey },
   });
   if (!response.ok) {
@@ -2946,7 +2958,7 @@ export async function downloadCustomAppraisalWorkfile(
   editorKey: string,
 ): Promise<{ blob: Blob; fileName: string; immutable: boolean }> {
   const id = (accountId || '').trim();
-  const response = await fetch(
+  const response = await fetchWithApplicationAuthentication(
     makeUrl(
       `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/download`,
     ),
@@ -2980,7 +2992,7 @@ export async function downloadCustomAppraisalReportPdf(
   editorKey: string,
 ): Promise<{ blob: Blob; fileName: string; immutable: boolean; pageCount: number | null }> {
   const id = (accountId || '').trim();
-  const response = await fetch(
+  const response = await fetchWithApplicationAuthentication(
     makeUrl(
       `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/report.pdf`,
     ),

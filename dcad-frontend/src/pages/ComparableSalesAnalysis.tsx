@@ -23,7 +23,11 @@ import ConditionQualityStudy, {
 import ComparableSalesMap from '@/components/ComparableSalesMap';
 import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
 import { fetchDetail } from '@/lib/dcad';
-import { readEditorCredential, rememberEditorCredential } from '@/lib/editorCredential';
+import {
+  editorCredentialForRequest,
+  readEditorCredential,
+  rememberEditorCredential,
+} from '@/lib/editorCredential';
 import { formatBathCount, parseWholeCount } from '@/lib/propertyCharacteristics';
 import {
   bathroomEquivalentValue,
@@ -790,7 +794,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
       // Try backend endpoint first, falling back to local template
       try {
-        let res = await fetch(api.makeUrl('/api/summary'), {
+        const request = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -799,25 +803,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             adjustmentNotes,
             costToCure: { total: costToCureTotal, items: serializedCostToCureItems },
           }),
-        });
-        if (!res.ok) {
+        };
+        let data: any;
+        try {
+          data = await api.fetchJSON(api.makeUrl('/api/summary'), request);
+        } catch {
           const base = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:8080';
-          res = await fetch(`${String(base).replace(/\/+$/, '')}/summary`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              subject: subjectAddr,
-              salesNotes,
-              adjustmentNotes,
-              costToCure: { total: costToCureTotal, items: serializedCostToCureItems },
-            }),
-          });
+          data = await api.fetchJSON(`${String(base).replace(/\/+$/, '')}/summary`, request);
         }
-        if (res.ok) {
-          const data = await res.json();
-          const text = (data && (data.summary || data.content)) || '';
-          if (text) { setSummary(String(text).trim()); return; }
-        }
+        const text = (data && (data.summary || data.content)) || '';
+        if (text) { setSummary(String(text).trim()); return; }
       } catch {}
 
       // Fallback: local template
@@ -2369,10 +2364,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const pending = pendingWorkfileSaveRef.current;
     pendingWorkfileSaveRef.current = null;
     if (!activeAssignmentFile || workfileLocked) return;
-    const editorKey = readEditorCredential();
+    const editorKey = editorCredentialForRequest();
     if (!editorKey.trim()) {
       pendingWorkfileSaveRef.current = pending;
-      setWorkfileSaveStatus('Database autosave is paused until the editor key is entered on the Property Report.');
+      setWorkfileSaveStatus('Database autosave is paused until you sign in or enter an editor key.');
       return;
     }
     workfileSaveInFlightRef.current = true;
@@ -2840,9 +2835,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const saveRatingChanges = async () => {
-    const editorKey = housingEditorKey.trim();
+    const editorKey = editorCredentialForRequest(housingEditorKey);
     if (!editorKey) {
-      setRatingPersistenceError('Enter your personal editor key before saving ratings.');
+      setRatingPersistenceError('Sign in or enter your personal editor key before saving ratings.');
       return;
     }
     if (!hasUnsavedRatingChanges) {

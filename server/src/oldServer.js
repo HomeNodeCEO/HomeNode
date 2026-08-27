@@ -1407,19 +1407,7 @@ app.patch("/api/accounts/:id/housing-profile", async (req, res) => {
   if (!legacyAccountIdAllowed(id)) {
     return res.status(400).json({ error: "invalid_account_id" });
   }
-
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (!configuredEditorKey) {
-    return res.status(503).json({ error: "housing_profile_editor_not_configured" });
-  }
-  if (
-    !editorKeyMatches(
-      req.get("x-homenode-editor-key"),
-      configuredEditorKey,
-    )
-  ) {
-    return res.status(401).json({ error: "invalid_editor_key" });
-  }
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
 
   let update;
   try {
@@ -2728,11 +2716,17 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
 });
 
 function requireEditor(req, res) {
-  if (
-    hasApplicationPermission(req.mobileAuth, "custom_appraisal", "write")
-    || hasApplicationPermission(req.mobileAuth, "property_tax_protest", "write")
-  ) {
-    return true;
+  if (req.mobileAuth) {
+    if (
+      hasApplicationPermission(req.mobileAuth, "custom_appraisal", "write")
+      || hasApplicationPermission(req.mobileAuth, "property_tax_protest", "write")
+    ) {
+      return true;
+    }
+    res.set("cache-control", "no-store")
+      .status(403)
+      .json({ error: "application_access_denied" });
+    return false;
   }
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
   if (!configuredEditorKey) {
@@ -6135,17 +6129,18 @@ app.get("/api/zoning-source-documents/:id/description-suggestion", async (req, r
 /** Save an appraiser-confirmed zoning result with its source and reviewer. */
 app.put("/api/accounts/:id/zoning-verification", async (req, res) => {
   const requestedId = String(req.params.id || "").trim();
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (!configuredEditorKey) {
-    return res.status(503).json({ error: "zoning_editor_not_configured" });
-  }
-  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    return res.status(401).json({ error: "invalid_editor_key" });
-  }
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
   try {
     await ensurePropertyContextAvailable();
     const accountId = await resolveCanonicalAccountId(pool, requestedId);
     const assignmentFileId = normalizeAssignmentFileId(req.body?.assignment_file_id);
+    if (applicationAuthenticationRequired && req.mobileAuth && !assignmentFileId) {
+      return res.status(400).json({ error: "assignment_file_required" });
+    }
+    if (assignmentFileId
+        && !await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) {
+      return;
+    }
     const verification = await savePropertyZoningVerification(pool, {
       accountId,
       assignmentFileId,
@@ -6177,37 +6172,37 @@ function decodedDocumentHeader(req, name, fallback = "") {
 
 async function requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, permission) {
   if (!applicationAuthenticationRequired) return true;
+  if (req.mobileAuth) {
+    try {
+      await authorizeCustomAssignmentFile(pool, req.mobileAuth, {
+        accountId,
+        assignmentFileId,
+        permission,
+      });
+      return true;
+    } catch (error) {
+      const notFound = error?.message === "assignment_file_not_found";
+      res.set("cache-control", "no-store").status(notFound ? 404 : 403).json({
+        error: notFound ? "assignment_file_not_found" : "assignment_file_access_denied",
+      });
+      return false;
+    }
+  }
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
   if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
     return true;
   }
-  if (!req.mobileAuth) {
-    res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
-    return false;
-  }
-  try {
-    await authorizeCustomAssignmentFile(pool, req.mobileAuth, {
-      accountId,
-      assignmentFileId,
-      permission,
-    });
-    return true;
-  } catch (error) {
-    const notFound = error?.message === "assignment_file_not_found";
-    res.set("cache-control", "no-store").status(notFound ? 404 : 403).json({
-      error: notFound ? "assignment_file_not_found" : "assignment_file_access_denied",
-    });
-    return false;
-  }
+  res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
+  return false;
 }
 
 async function requireAssignmentDocumentAccess(req, res, documentIdValue, permission) {
   if (!applicationAuthenticationRequired) return true;
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    return true;
-  }
   if (!req.mobileAuth) {
+    const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
+    if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
+      return true;
+    }
     res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
     return false;
   }
@@ -6238,7 +6233,13 @@ async function requireAssignmentDocumentAccess(req, res, documentIdValue, permis
 }
 
 function requireWorkflowAccess(req, res, workflow, permission) {
-  if (hasApplicationPermission(req.mobileAuth, workflow, permission)) return true;
+  if (req.mobileAuth) {
+    if (hasApplicationPermission(req.mobileAuth, workflow, permission)) return true;
+    res.set("cache-control", "no-store")
+      .status(403)
+      .json({ error: "application_access_denied" });
+    return false;
+  }
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
   if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
     return true;

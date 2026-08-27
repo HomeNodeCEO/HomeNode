@@ -24,6 +24,7 @@ import { getUadXmlMappingSummary } from "./uadXml.js";
 import { createCachedUadReadinessLoader } from "./uadOperationalReadiness.js";
 import { getUadSharedData } from "./sharedData.js";
 import {
+  editUadSketch,
   importUadMobilePhoto,
   importUadMobileSketch,
   listUadMobileEvidence,
@@ -225,6 +226,13 @@ export function createUadRouter({
         appraiser_confirmed_sketch_import: true,
         canonical_asset_copy: true,
         retained_source_unchanged: true,
+      },
+      sketch_editor: {
+        shared_across_report_types: true,
+        optimistic_revisions: true,
+        immutable_revision_history: true,
+        regenerated_verified_exhibits: true,
+        uploaded_source_retained: true,
       },
       xml: getUadXmlMappingSummary(),
       delivery_package: {
@@ -605,6 +613,22 @@ export function createUadRouter({
     try {
       await deleteUadAsset(pool, storage, req.params.workfileId, req.params.assetId);
       res.status(204).end();
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.patch("/workfiles/:workfileId/sketches/:sketchId", async (req, res) => {
+    try {
+      const result = await editUadSketch(
+        pool,
+        storage,
+        req.params.workfileId,
+        req.params.sketchId,
+        req.body || {},
+        req.mobileAuth?.userId || null,
+      );
+      res.json(result);
     } catch (error) {
       sendError(res, error);
     }

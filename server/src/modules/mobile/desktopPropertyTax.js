@@ -1,6 +1,7 @@
 import { normalizeAccountId, normalizeUuid } from "./reportFiles.js";
 import { canonicalJson } from "./sync.js";
 import { normalizePropertyTaxWorkfileData } from "./targetFields.js";
+import { activeRooms, sketchResponse } from "./sketches.js";
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -78,7 +79,7 @@ export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValu
       [row.report_file_id],
     ),
     pool.query(
-      `SELECT revision, summary, review_status, updated_at
+      `SELECT *
          FROM app.inspection_sketches
         WHERE report_file_id = $1
         ORDER BY revision DESC, updated_at DESC, id DESC LIMIT 1`,
@@ -91,7 +92,7 @@ export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValu
       items: photos.rows.map((item) => ({ ...item, position: Number(item.position) })),
     },
     sketch: sketch.rows[0]
-      ? { ...sketch.rows[0], revision: Number(sketch.rows[0].revision) }
+      ? sketchResponse(sketch.rows[0], await activeRooms(pool, sketch.rows[0].id))
       : null,
   });
 }

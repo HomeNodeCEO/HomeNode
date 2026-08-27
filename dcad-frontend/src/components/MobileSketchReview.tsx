@@ -1,20 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
-  makeUrl,
-  updateMobileInspectionSketch,
-  type AppraisalAssignmentFile,
+  type EditableInspectionSketch,
 } from "@/lib/api";
 
-type Sketch = NonNullable<AppraisalAssignmentFile["mobile_inspection_sketch"]>;
+type Sketch = EditableInspectionSketch;
 type Document = Sketch["document"];
 type Area = Document["areas"][number];
 type Room = Document["rooms"][number];
 
 type Props = {
-  accountId: string;
-  assignmentFile: AppraisalAssignmentFile;
-  getEditorKey: () => string;
+  sketch: Sketch;
+  title?: string;
+  subtitle?: string;
+  artifactUrls?: { svg?: string; pdf?: string };
+  saveDraft: (draft: Document, expectedRevision: number) => Promise<Sketch>;
   onSaved: (sketch: Sketch) => void;
 };
 
@@ -81,20 +81,20 @@ function plotFor(area: Area | undefined, rooms: Room[]) {
 }
 
 export default function MobileSketchReview({
-  accountId,
-  assignmentFile,
-  getEditorKey,
+  sketch,
+  title: editorTitle = "Measured sketch editor",
+  subtitle = "Edit the synchronized sketch without changing the retained field source.",
+  artifactUrls,
+  saveDraft,
   onSaved,
 }: Props) {
-  const sketch = assignmentFile.mobile_inspection_sketch;
-  const [draft, setDraft] = useState<Document | null>(sketch ? clone(sketch.document) : null);
-  const [selectedAreaId, setSelectedAreaId] = useState(sketch?.document.areas[0]?.id || "");
+  const [draft, setDraft] = useState<Document | null>(clone(sketch.document));
+  const [selectedAreaId, setSelectedAreaId] = useState(sketch.document.areas[0]?.id || "");
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (!sketch) return;
     setDraft(clone(sketch.document));
     setSelectedAreaId((current) => sketch.document.areas.some((area) => area.id === current)
       ? current
@@ -109,15 +109,7 @@ export default function MobileSketchReview({
   );
   const plot = useMemo(() => plotFor(selectedArea, selectedRooms), [selectedArea, selectedRooms]);
 
-  if (!sketch || !draft) return null;
-
-  const artifactPath = "/api/accounts/"
-    + encodeURIComponent(accountId)
-    + "/assignment-files/"
-    + assignmentFile.id
-    + "/mobile-sketch/";
-  const svgUrl = makeUrl(artifactPath + "preview.svg", { revision: sketch.revision });
-  const pdfUrl = makeUrl(artifactPath + "report.pdf", { revision: sketch.revision });
+  if (!draft) return null;
 
   const change = (update: (current: Document) => Document) => {
     setDraft((current) => current ? update(current) : current);
@@ -176,29 +168,17 @@ export default function MobileSketchReview({
   };
 
   const save = async () => {
-    const editorKey = getEditorKey();
-    if (!editorKey) return;
     setSaving(true);
     setMessage("");
     try {
-      const response = await updateMobileInspectionSketch(
-        accountId,
-        assignmentFile.id,
-        {
-          sketch: draft,
-          expected_revision: sketch.revision,
-          reviewer: "HomeNode appraiser",
-          client_operation_id: globalThis.crypto.randomUUID(),
-        },
-        editorKey,
-      );
-      onSaved(response.sketch);
+      const saved = await saveDraft(draft, sketch.revision);
+      onSaved(saved);
       setDirty(false);
-      setMessage("Sketch revision " + response.sketch.revision + " saved.");
+      setMessage("Sketch revision " + saved.revision + " saved.");
     } catch (error: unknown) {
       const errorText = error instanceof Error
         ? error.message : "Sketch save failed";
-      setMessage(errorText === "sketch_revision_conflict"
+      setMessage(errorText.endsWith("sketch_revision_conflict")
         ? "A newer sketch exists. Reload before saving."
         : errorText.replaceAll("_", " "));
     } finally {
@@ -210,14 +190,15 @@ export default function MobileSketchReview({
     <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-slate-900">Mobile measured sketch review</div>
+          <div className="text-sm font-semibold text-slate-900">{editorTitle}</div>
           <div className="mt-1 text-xs text-slate-600">
             Revision {sketch.revision} - {draft.measurement_standard === "ansi_z765_2021" ? "ANSI Z765-2021" : "Alternate standard"}
           </div>
+          <div className="mt-1 text-xs text-slate-500">{subtitle}</div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <a className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold" href={svgUrl} target="_blank" rel="noreferrer">SVG</a>
-          <a className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold" href={pdfUrl}>PDF exhibit</a>
+          {artifactUrls?.svg ? <a className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold" href={artifactUrls.svg} target="_blank" rel="noreferrer">SVG</a> : null}
+          {artifactUrls?.pdf ? <a className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-semibold" href={artifactUrls.pdf}>PDF exhibit</a> : null}
           <button className="rounded-md bg-emerald-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={!dirty || saving} onClick={() => void save()} type="button">
             {saving ? "Saving..." : "Save next revision"}
           </button>

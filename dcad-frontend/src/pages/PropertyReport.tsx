@@ -15,6 +15,7 @@ import {
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
   updateAssignmentFile,
+  updateMobileInspectionSketch,
   type AppraisalAssignmentFile,
   type AssignmentDocumentType,
   type AssignmentDetailsPayload,
@@ -2524,9 +2525,28 @@ function AddressHero({
             {mobileInspectionSketch && activeAssignmentFile && accountId ? (
               <Suspense fallback={<LazyReportContent label="mobile sketch" />}>
                 <MobileSketchReview
-                  accountId={accountId}
-                  assignmentFile={activeAssignmentFile}
-                  getEditorKey={editorKeyForSave}
+                  sketch={mobileInspectionSketch}
+                  title="Custom Appraisal measured sketch editor"
+                  artifactUrls={{
+                    svg: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/preview.svg`, { revision: mobileInspectionSketch.revision }),
+                    pdf: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/report.pdf`, { revision: mobileInspectionSketch.revision }),
+                  }}
+                  saveDraft={async (draft, expectedRevision) => {
+                    const editorKey = editorKeyForSave();
+                    if (!editorKey) throw new Error("authentication_required");
+                    const response = await updateMobileInspectionSketch(
+                      accountId,
+                      activeAssignmentFile.id,
+                      {
+                        sketch: draft,
+                        expected_revision: expectedRevision,
+                        reviewer: "HomeNode appraiser",
+                        client_operation_id: globalThis.crypto.randomUUID(),
+                      },
+                      editorKey,
+                    );
+                    return response.sketch;
+                  }}
                   onSaved={(savedSketch) => {
                     const updatedFile = {
                       ...activeAssignmentFile,

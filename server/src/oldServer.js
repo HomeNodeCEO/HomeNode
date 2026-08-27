@@ -198,6 +198,7 @@ import { createMobileRouter } from "./modules/mobile/router.js";
 import {
   getAssignmentInspectionSketch,
   saveAssignmentInspectionSketch,
+  savePropertyTaxInspectionSketch,
 } from "./modules/mobile/desktopSketches.js";
 import { renderSketchPdf, renderSketchSvg } from "./modules/mobile/sketchArtifacts.js";
 import {
@@ -1809,6 +1810,7 @@ app.patch("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req
       canonicalId,
       assignmentFileId,
       req.body,
+      req.mobileAuth?.userId || null,
     );
     return res.json({ ok: true, ...result });
   } catch (error) {
@@ -1918,6 +1920,55 @@ app.patch("/api/accounts/:id/property-tax-protest/:fileId", async (req, res) => 
     }
     console.error("property tax protest save failed", error);
     return res.status(500).json({ error: "property_tax_protest_save_failed" });
+  }
+});
+
+/** Revise the Property Tax Protest sketch through the authenticated desktop workflow. */
+app.patch("/api/accounts/:id/property-tax-protest/:fileId/sketch", async (req, res) => {
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (!requireEditor(req, res)) return;
+  try {
+    await Promise.all([accountQualityReady, propertyEnrichmentReady]);
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const existingFile = await getDesktopPropertyTaxFile(pool, canonicalId, req.params.fileId);
+    if (
+      applicationAuthenticationRequired
+      && req.mobileAuth
+      && (!existingFile || !decideAssignmentAccess(req.mobileAuth, existingFile, "write"))
+    ) {
+      return res.status(existingFile ? 403 : 404).json({
+        error: existingFile ? "property_tax_protest_access_denied" : "property_tax_protest_file_not_found",
+      });
+    }
+    const result = await savePropertyTaxInspectionSketch(
+      pool,
+      canonicalId,
+      req.params.fileId,
+      req.body || {},
+      req.mobileAuth?.userId || null,
+    );
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    if (error?.message === "property_tax_protest_sketch_not_found") {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error?.message === "sketch_revision_conflict") {
+      return res.status(409).json({ error: error.message, current_revision: error.currentRevision });
+    }
+    if (
+      String(error?.message || "").startsWith("invalid_")
+      || String(error?.message || "").startsWith("duplicate_")
+      || error?.message === "sketch_not_ready_for_confirmation"
+      || error?.message === "sketch_operation_conflict"
+    ) {
+      return res.status(error?.message === "sketch_operation_conflict" ? 409 : 400)
+        .json({ error: error.message });
+    }
+    console.error("property tax protest sketch review failed", error);
+    return res.status(500).json({ error: "property_tax_protest_sketch_update_failed" });
   }
 });
 

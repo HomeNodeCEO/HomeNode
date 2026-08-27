@@ -11,6 +11,7 @@ import {
   type UadMobilePhotoEvidence,
   type UadMobileSketchEvidence,
 } from "../api";
+import UadSketchEditor from "./UadSketchEditor";
 
 const DEFAULT_ACCEPT = "image/avif,image/bmp,image/gif,image/jpeg,image/png,image/tiff,image/webp,image/heic,image/heif,application/pdf,application/json";
 
@@ -253,6 +254,10 @@ export default function UadAssetPanel({
           </button>
         </div>
       )}
+      {sectionNumber === 7
+        && captionTypes.some((value) => ["SubjectPropertyImprovementSketch", "FloorPlan"].includes(value))
+        ? <UadSketchEditor workfileId={workfileId} onSaved={() => void load()} />
+        : null}
       {sectionNumber === 7
         && mobileSketch?.imported_asset
         && mobileSketch.imported_asset.revision !== mobileSketch.revision && (

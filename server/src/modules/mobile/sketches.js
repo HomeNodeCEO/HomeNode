@@ -293,6 +293,8 @@ export function sketchResponse(row, rooms = []) {
     report_file_id: row.report_file_id,
     workflow_type: row.workflow_type,
     revision: Number(row.revision),
+    measurement_standard: row.measurement_standard,
+    measurement_method: row.measurement_method,
     document: row.document,
     summary: row.summary,
     review_status: row.review_status,

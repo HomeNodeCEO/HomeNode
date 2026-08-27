@@ -247,6 +247,7 @@ export interface UadSketch {
   area_overrides: Record<string, unknown>;
   rendered_asset_id: string | null;
   source: "homenode" | "mobile" | "imported" | "third_party";
+  revision: number;
   created_at: string;
   updated_at: string;
 }
@@ -510,6 +511,23 @@ export interface UadCompletionSuggestionField {
   source_digest_sha256: string;
   observed_at: string | null;
   requires_appraiser_confirmation: true;
+}
+
+export async function editUadSketch(
+  workfileId: string,
+  sketchId: string,
+  input: { expected_revision: number; sketch: Record<string, unknown>; caption?: string },
+): Promise<{ asset: UadAsset; sketch: UadSketch; idempotent: boolean }> {
+  const response = await uadFetchJSON<{ asset: UadAsset; sketch: UadSketch; idempotent: boolean }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sketches/${encodeURIComponent(sketchId)}`),
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  announceUadWorkfileMutation(workfileId);
+  return response;
 }
 
 export interface UadCompletionSuggestionEntity {

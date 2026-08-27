@@ -80,7 +80,6 @@ function editorLabel(key: string): string {
     .replace(/_/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
-
 function editorValueAtPath(
   root: Record<string, unknown>,
   path: Array<string | number>,
@@ -506,4 +505,3 @@ export default function ReportSectionEditor({
     </div>
   );
 }
-

@@ -139,7 +139,6 @@ function NeighborhoodRangeGrid({
     </div>
   );
 }
-
 export default function NeighborhoodCharacteristicsContent({
   accountId,
   assignmentFileId,
@@ -1494,4 +1493,3 @@ export default function NeighborhoodCharacteristicsContent({
     </div>
   );
 }
-

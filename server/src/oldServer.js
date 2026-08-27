@@ -77,6 +77,7 @@ import {
 } from "./util/qualitativeAnalysis.js";
 import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
 import { loadAccountDetailSections } from "./services/accountDetailSections.js";
+import { indexAssignmentFileDetails } from "./services/assignmentFileDetails.js";
 import {
   ensureCensusGeographySchema,
   getCensusGeographyStatus,
@@ -1564,47 +1565,18 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
         if (error?.code !== "42P01") throw error;
       }
     }
+    const detailIndex = indexAssignmentFileDetails({
+      sectionRows,
+      mobilePhotoRows,
+      mobileSketchRows,
+    });
     const files = rows.map((row) => {
       const response = assignmentFileResponse(row);
-      const customSections = Object.fromEntries(
-        sectionRows
-          .filter((section) => Number(section.assignment_file_id) === response.id)
-          .map((section) => [section.section_key, {
-            value: section.section_value,
-            revision: Number(section.revision),
-            last_applied_session_id: section.last_applied_session_id,
-            updated_at: section.updated_at,
-          }]),
-      );
       return {
         ...response,
-        custom_appraisal_sections: customSections,
-        mobile_inspection_sketch: mobileSketchRows
-          .filter((sketch) => Number(sketch.assignment_file_id) === response.id)
-          .map((sketch) => ({
-            id: sketch.id,
-            revision: Number(sketch.revision),
-            document: sketch.document,
-            summary: sketch.summary,
-            measurement_standard: sketch.measurement_standard,
-            measurement_method: sketch.measurement_method,
-            review_status: sketch.review_status,
-            confirmed_at: sketch.confirmed_at,
-            updated_at: sketch.updated_at,
-          }))[0] || null,
-        mobile_inspection_photos: mobilePhotoRows
-          .filter((photo) => Number(photo.assignment_file_id) === response.id)
-          .map((photo) => ({
-            id: photo.id,
-            category: photo.category,
-            room_ref: photo.room_ref,
-            room_label: photo.room_label,
-            caption: photo.caption,
-            position: Number(photo.position),
-            verified_at: photo.verified_at,
-            retention_until: photo.retention_until,
-            required_retention_years: Number(photo.required_retention_years),
-          })),
+        custom_appraisal_sections: detailIndex.sectionsByFile.get(response.id) || {},
+        mobile_inspection_sketch: detailIndex.sketchesByFile.get(response.id) || null,
+        mobile_inspection_photos: detailIndex.photosByFile.get(response.id) || [],
       };
     });
     return res.json({

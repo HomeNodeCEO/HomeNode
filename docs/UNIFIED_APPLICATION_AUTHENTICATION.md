@@ -36,6 +36,22 @@ Configure these secret or environment values while leaving enforcement off:
 - `APP_SIGNING_SECRET` (a separate value of at least 32 characters)
 - `WEB_APP_URL`
 
+When the browser and API use different sites, as they do on the separate
+`homenode-uad-staging.onrender.com` and `homenode-api-staging.onrender.com`
+hosts, also configure:
+
+- `WEB_SESSION_CROSS_SITE=true`
+- `CORS_ORIGIN` containing the exact HTTPS origin from `WEB_APP_URL`
+
+Cross-site mode applies `SameSite=None` only to the opaque application session
+cookie. The authorization transaction cookie remains `SameSite=Lax`, and both
+cookies remain `Secure`, `HttpOnly`, host-only `__Host-` cookies. Every unsafe
+cookie-authenticated request must include an `Origin` exactly matching
+`WEB_APP_URL`; missing or mismatched origins fail before database access. The
+server refuses to start cross-site mode without an HTTPS application URL and
+its exact CORS allowlist entry. Prefer leaving this mode off when the frontend
+and API are served from the same site.
+
 `OIDC_WEB_ISSUER` may fall back to the existing `OIDC_ISSUER`, but the web
 application has its own confidential-client ID and audience. Merely configuring
 these values does not show the login gate or remove editor-key access.

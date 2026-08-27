@@ -4,12 +4,13 @@ import express from "express";
 const SESSION_COOKIE = "__Host-homenode_session";
 const TRANSACTION_COOKIE = "__Host-homenode_auth_tx";
 const SESSION_SECONDS = 8 * 60 * 60;
-const BROWSER_COOKIE_OPTIONS = Object.freeze({
+const TRANSACTION_COOKIE_OPTIONS = Object.freeze({
   path: "/",
   httpOnly: true,
   secure: true,
   sameSite: "lax",
 });
+const SAFE_SESSION_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 function enabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -33,15 +34,48 @@ function cookies(req) {
   return result;
 }
 
-function setBrowserCookie(res, name, value, maxAgeSeconds) {
+function webSessionSecurity(environment) {
+  const crossSite = enabled(environment.WEB_SESSION_CROSS_SITE);
+  let frontendOrigin = null;
+  try {
+    const parsed = new URL(String(environment.WEB_APP_URL || "").trim());
+    if (!parsed.username && !parsed.password && ["http:", "https:"].includes(parsed.protocol)) {
+      frontendOrigin = parsed.origin;
+    }
+  } catch {
+    // An incomplete WEB_APP_URL is already excluded from configured auth below.
+  }
+  if (crossSite) {
+    if (!frontendOrigin?.startsWith("https://")) {
+      throw new Error("cross_site_web_session_requires_https_web_app_url");
+    }
+    const corsOrigins = String(environment.CORS_ORIGIN || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (!corsOrigins.includes(frontendOrigin)) {
+      throw new Error("cross_site_web_session_requires_exact_cors_origin");
+    }
+  }
+  return Object.freeze({
+    crossSite,
+    frontendOrigin,
+    cookieOptions: Object.freeze({
+      ...TRANSACTION_COOKIE_OPTIONS,
+      sameSite: crossSite ? "none" : "lax",
+    }),
+  });
+}
+
+function setBrowserCookie(res, name, value, maxAgeSeconds, options = TRANSACTION_COOKIE_OPTIONS) {
   res.cookie(name, value, {
-    ...BROWSER_COOKIE_OPTIONS,
+    ...options,
     maxAge: Math.max(1, Math.floor(maxAgeSeconds)) * 1_000,
   });
 }
 
-function clearBrowserCookie(res, name) {
-  res.clearCookie(name, BROWSER_COOKIE_OPTIONS);
+function clearBrowserCookie(res, name, options = TRANSACTION_COOKIE_OPTIONS) {
+  res.clearCookie(name, options);
 }
 
 function signTransaction(value, secret) {
@@ -192,15 +226,24 @@ async function loadSessionIdentity(pool, token) {
   });
 }
 
-export function createWebSessionAuthenticator({ pool }) {
+export function createWebSessionAuthenticator({ pool, environment = process.env }) {
+  const sessionSecurity = webSessionSecurity(environment);
   return async function webSessionAuthenticator(req, res, next) {
     if (req.mobileAuth || /^Bearer\s+/i.test(String(req.get?.("authorization") || ""))) return next();
     const token = cookies(req).get(SESSION_COOKIE);
     if (!token) return next();
+    if (!SAFE_SESSION_METHODS.has(String(req.method || "GET").toUpperCase())) {
+      const origin = String(req.get?.("origin") || "").trim();
+      if (!sessionSecurity.frontendOrigin || origin !== sessionSecurity.frontendOrigin) {
+        return res.set("cache-control", "no-store")
+          .status(403)
+          .json({ error: "csrf_origin_denied" });
+      }
+    }
     try {
       const identity = await loadSessionIdentity(pool, token);
       if (identity) req.mobileAuth = identity;
-      else clearBrowserCookie(res, SESSION_COOKIE);
+      else clearBrowserCookie(res, SESSION_COOKIE, sessionSecurity.cookieOptions);
       return next();
     } catch {
       return res.status(503).json({ error: "authentication_unavailable" });
@@ -221,6 +264,7 @@ export function createWebAuthRouter({
   const redirectUri = String(environment.OIDC_WEB_REDIRECT_URI || "").trim();
   const frontendUrl = String(environment.WEB_APP_URL || "").trim();
   const sessionSecret = String(environment.APP_SESSION_SECRET || "").trim();
+  const sessionSecurity = webSessionSecurity(environment);
   const configured = Boolean(
     verifier?.configured
     && clientId
@@ -322,7 +366,7 @@ export function createWebAuthRouter({
         [randomUUID(), sha256(token), identity.userId, SESSION_SECONDS,
           req.ip ? sha256(String(req.ip)) : null, String(req.get("user-agent") || "").slice(0, 500)],
       );
-      setBrowserCookie(res, SESSION_COOKIE, token, SESSION_SECONDS);
+      setBrowserCookie(res, SESSION_COOKIE, token, SESSION_SECONDS, sessionSecurity.cookieOptions);
       return res.redirect(302, frontendUrl);
     } catch (error) {
       logger.warn?.(`[web-auth] callback failed stage=${stage} reason=${authFailureReason(error)}`);
@@ -341,7 +385,7 @@ export function createWebAuthRouter({
         [sha256(token)],
       ).catch(() => {});
     }
-    clearBrowserCookie(res, SESSION_COOKIE);
+    clearBrowserCookie(res, SESSION_COOKIE, sessionSecurity.cookieOptions);
     return res.status(204).end();
   });
 

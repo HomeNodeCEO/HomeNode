@@ -2,6 +2,10 @@ import { useLocation } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
+import {
+  loadAssignmentFiles,
+  loadCustomAppraisalWorkfile,
+} from '@/lib/appraisalFileRequests';
 import type {
   ComparableRecommendationsResponse,
   ComparableSearchProfileKey,
@@ -372,7 +376,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       return () => { cancelled = true; };
     }
     setWorkfileSaveStatus('Loading appraisal workfile...');
-    void api.getAssignmentFiles(propertyId)
+    void loadAssignmentFiles(propertyId)
       .then(async (response) => {
         if (cancelled) return;
         const selected = requestedAssignmentFileId
@@ -385,7 +389,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           return;
         }
         setActiveAssignmentFile(assignmentFile);
-        const result = await api.getCustomAppraisalWorkfile(propertyId, assignmentFile.id);
+        const result = await loadCustomAppraisalWorkfile(propertyId, assignmentFile.id);
         if (cancelled) return;
         const section = result.workfile.sections.sales_comparison;
         const marketSection = result.workfile.sections.market_conditions;
@@ -490,7 +494,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     let cancelled = false;
     setPropertyContextLoading(true);
     setPropertyContextError(null);
-    void api.getAssignmentFiles(propertyId)
+    void loadAssignmentFiles(propertyId)
       .catch(() => null)
       .then(async (assignmentResponse) => {
         const assignmentFileId = activeAssignmentFile?.id || assignmentResponse?.latest_file?.id || null;
@@ -2402,7 +2406,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       }
       if (/custom_appraisal_section_revision_conflict/i.test(message)) {
         pendingWorkfileSaveRef.current = pending;
-        void api.getCustomAppraisalWorkfile(propertyId, activeAssignmentFile.id)
+        void loadCustomAppraisalWorkfile(propertyId, activeAssignmentFile.id)
           .then((result) => {
             workfileSectionRevisionRef.current = Number(
               result.workfile.sections.sales_comparison?.revision || 0,

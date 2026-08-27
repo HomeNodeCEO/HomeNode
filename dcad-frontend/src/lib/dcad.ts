@@ -211,7 +211,7 @@ export async function fetchDetail(accountId: string, countyId = 1) {
       if (s.includes('hospital')) return 'hospital';
       return 'special_district';
     };
-    rows.forEach((r: any, i: number) => {
+    rows.forEach((r: any) => {
       const k = bucket(r.jurisdiction_key || r.taxing_jurisdiction);
       obj[k] = {
         taxing_jurisdiction: r.taxing_jurisdiction || r.jurisdiction_key,

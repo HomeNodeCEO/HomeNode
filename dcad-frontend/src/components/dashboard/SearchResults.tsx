@@ -1,6 +1,6 @@
 // src/components/SearchResults.tsx
 // MOOLAH_SEARCH_RESULTS_COMPONENT
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiSearch, toSearchItems, type SearchItem } from "@/lib/api"; // uses your existing mappers
 import { Link } from "react-router-dom";
 

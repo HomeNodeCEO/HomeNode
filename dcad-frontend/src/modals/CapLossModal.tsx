@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 
 export default function CapLossModal({
-  isOpen, onClose, history,
+  isOpen, onClose,
 }: { isOpen: boolean; onClose: (open:boolean)=>void; history?: { taxable_value?: any[] } }) {
   // Simple placeholder that you can expand to compute lost cap if assessed value falls, etc.
   return (

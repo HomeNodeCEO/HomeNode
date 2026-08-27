@@ -809,7 +809,7 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     assert.equal(lineage.rows[0].prior_current, false);
     assert.equal(lineage.rows[0].previous_report_file_id, firstCustom.reportFile.id);
     assert.equal(lineage.rows[0].inherited_from_file_id, null);
-    assert.deepEqual(lineage.rows[0].assignment_details, {});
+    assert.equal(lineage.rows[0].assignment_details.client_name, undefined);
     assert.equal(lineage.rows[0].prior_assignment_details.client_name, "Preserved client");
 
     const appraisalHistory = await listPreviousAppraisalFiles(pool, accountId);

@@ -142,7 +142,7 @@ test("mandatory unified authentication fails closed across the legacy API surfac
   assert.ok(authMe >= 0 && legacyGate > authMe && accountRead > legacyGate);
   assert.match(server.slice(legacyGate, accountRead), /applicationAuthenticationRequired/);
   assert.match(server.slice(legacyGate, accountRead), /req\.mobileAuth/);
-  assert.match(server.slice(legacyGate, accountRead), /x-homenode-editor-key/);
+  assert.doesNotMatch(server.slice(legacyGate, accountRead), /x-homenode-editor-key|configuredEditorKey/);
   assert.match(server.slice(legacyGate, accountRead), /authentication_required/);
 });
 
@@ -166,21 +166,28 @@ test("legacy property editors accept the authenticated workflow identity before 
   assert.doesNotMatch(zoning, /zoning_editor_not_configured|invalid_editor_key/);
 });
 
-test("the migration editor key cannot elevate an authenticated identity", () => {
+test("the legacy editor key is inert whenever mandatory authentication is active", () => {
   const server = read("../src/oldServer.js");
-  for (const [startMarker, endMarker] of [
-    ["function requireEditor(req, res)", "/** Coordinate coverage"],
-    ["async function requireCustomAssignmentAccess", "async function requireAssignmentDocumentAccess"],
-    ["async function requireAssignmentDocumentAccess", "function requireWorkflowAccess"],
-    ["function requireWorkflowAccess", "function assignmentPhotoErrorStatus"],
-  ]) {
+  const helpers = [
+    ["function requireEditor(req, res)", "/** Coordinate coverage", true],
+    ["async function requireCustomAssignmentAccess", "async function requireAssignmentDocumentAccess", false],
+    ["async function requireAssignmentDocumentAccess", "function requireWorkflowAccess", false],
+    ["function requireWorkflowAccess", "function assignmentPhotoErrorStatus", true],
+  ];
+  for (const [startMarker, endMarker, retainsPreActivationFallback] of helpers) {
     const start = server.indexOf(startMarker);
     const end = server.indexOf(endMarker, start);
     assert.ok(start >= 0 && end > start, `missing authorization helper ${startMarker}`);
     const helper = server.slice(start, end);
-    const identityCheck = Math.max(helper.indexOf("if (req.mobileAuth)"), helper.indexOf("if (!req.mobileAuth)"));
-    const keyFallback = helper.indexOf("configuredEditorKey");
-    assert.ok(identityCheck >= 0 && keyFallback > identityCheck, `${startMarker} must decide identity before key fallback`);
+    assert.match(helper, /applicationAuthenticationRequired/);
+    if (retainsPreActivationFallback) {
+      const enforcementCheck = helper.indexOf("if (applicationAuthenticationRequired)");
+      const keyFallback = helper.indexOf("configuredEditorKey");
+      assert.ok(enforcementCheck >= 0 && keyFallback > enforcementCheck,
+        `${startMarker} may use the key only after mandatory enforcement is ruled out`);
+    } else {
+      assert.doesNotMatch(helper, /configuredEditorKey|x-homenode-editor-key/);
+    }
   }
   assert.match(server.slice(
     server.indexOf("function requireWorkflowAccess"),

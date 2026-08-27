@@ -383,7 +383,8 @@ app.use("/api/mobile", createMobileRouter({
 // provisioned OIDC identity and organization membership model. The UAD/mobile
 // routers authenticate themselves above; this optional middleware attaches the
 // same identity to the remaining application routes whenever a bearer token is
-// present. Legacy editor-key access remains available during migration.
+// present. The legacy editor key is available only before mandatory unified
+// authentication is activated.
 const authenticateApplicationUser = createMobileAuthenticator({
   pool,
   verifier: mobileOidcVerifier,
@@ -418,14 +419,9 @@ app.get("/api/auth/readiness", async (req, res) => {
 // UAD and mobile are mounted above with their own enforcement. Once unified
 // authentication is activated, fail closed for every remaining legacy API
 // route instead of depending on each historical handler to remember a guard.
-// The editor key is retained only as the documented temporary migration path.
+// Once this gate is active, the legacy editor key is deliberately inert.
 app.use("/api", (req, res, next) => {
   if (!applicationAuthenticationRequired || req.mobileAuth) return next();
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (configuredEditorKey
-      && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    return next();
-  }
   return res.set("cache-control", "no-store")
     .status(401)
     .json({ error: "authentication_required" });
@@ -2726,6 +2722,12 @@ function requireEditor(req, res) {
     res.set("cache-control", "no-store")
       .status(403)
       .json({ error: "application_access_denied" });
+    return false;
+  }
+  if (applicationAuthenticationRequired) {
+    res.set("cache-control", "no-store")
+      .status(401)
+      .json({ error: "authentication_required" });
     return false;
   }
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
@@ -6188,10 +6190,6 @@ async function requireCustomAssignmentAccess(req, res, accountId, assignmentFile
       return false;
     }
   }
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    return true;
-  }
   res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
   return false;
 }
@@ -6199,10 +6197,6 @@ async function requireCustomAssignmentAccess(req, res, accountId, assignmentFile
 async function requireAssignmentDocumentAccess(req, res, documentIdValue, permission) {
   if (!applicationAuthenticationRequired) return true;
   if (!req.mobileAuth) {
-    const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-    if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-      return true;
-    }
     res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
     return false;
   }
@@ -6238,6 +6232,12 @@ function requireWorkflowAccess(req, res, workflow, permission) {
     res.set("cache-control", "no-store")
       .status(403)
       .json({ error: "application_access_denied" });
+    return false;
+  }
+  if (applicationAuthenticationRequired) {
+    res.set("cache-control", "no-store")
+      .status(401)
+      .json({ error: "authentication_required" });
     return false;
   }
   const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");

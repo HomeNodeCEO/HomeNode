@@ -221,6 +221,7 @@ import {
   createOptionalApplicationAuthenticator,
   hasApplicationPermission,
 } from "./security/applicationAccess.js";
+import { getApplicationAuthReadiness } from "./security/applicationAuthReadiness.js";
 import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
 import { authorizeCustomAssignmentFile, decideAssignmentAccess } from "./security/assignmentAccess.js";
 import {
@@ -394,6 +395,24 @@ app.get("/api/auth/me", (req, res) => {
   res.set("cache-control", "no-store");
   if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
   return res.json({ ok: true, session: buildApplicationSession(req.mobileAuth) });
+});
+
+// This read-only, administrator-only audit makes the authentication rollout
+// observable on hosted environments where an interactive database shell is
+// intentionally unavailable. It returns counts and stable blocker codes only.
+app.get("/api/auth/readiness", async (req, res) => {
+  res.set("cache-control", "no-store");
+  if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
+  try {
+    const readiness = await getApplicationAuthReadiness(pool, req.mobileAuth);
+    return res.json({ ok: true, readiness });
+  } catch (error) {
+    if (error?.code === "auth_readiness_access_denied") {
+      return res.status(403).json({ error: "auth_readiness_access_denied" });
+    }
+    console.warn("[auth] readiness audit unavailable");
+    return res.status(503).json({ error: "auth_readiness_unavailable" });
+  }
 });
 
 // UAD and mobile are mounted above with their own enforcement. Once unified

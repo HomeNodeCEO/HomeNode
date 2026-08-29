@@ -112,22 +112,22 @@ export default function UadWorkspaceEntry() {
           </div>
         )}
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Property type</div>
-            <div className="mt-2 font-medium">
+        <div className="mt-4 grid gap-2 md:grid-cols-3">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Property type</div>
+            <div className="mt-0.5 text-sm font-medium">
               {displayedPropertyType ? PROPERTY_TYPE_LABELS[displayedPropertyType] : "Loading property type…"}
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">UAD baseline</div>
-            <div className="mt-2 break-words font-medium">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">UAD baseline</div>
+            <div className="mt-0.5 break-words text-sm font-medium">
               {capabilities?.specification_release_key || "Loading specification…"}
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">Cloud assets</div>
-            <div className="mt-2 font-medium">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cloud assets</div>
+            <div className="mt-0.5 text-sm font-medium">
               {capabilities?.object_storage.configured
                 ? capabilities.object_storage.isolated
                   ? "Dedicated R2 ready"
@@ -165,9 +165,23 @@ export default function UadWorkspaceEntry() {
         )}
 
         {workfiles.length > 0 && (
-          <section className="mt-6">
-            <h2 className="text-lg font-semibold">UAD workfiles for this subject</h2>
-            <div className="mt-3 space-y-3">
+          <details className="group mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+            <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
+              <span className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  <span className="block text-sm font-semibold text-slate-900">UAD workfiles for this subject</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    {workfiles.length} file{workfiles.length === 1 ? "" : "s"}{displayedWorkfile ? ` · ${displayedWorkfile.file_number}` : ""}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <span className="group-open:hidden">Show files</span>
+                  <span className="hidden group-open:inline">Hide files</span>
+                  <span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span>
+                </span>
+              </span>
+            </summary>
+            <div className="space-y-3 border-t border-slate-200 bg-white p-3">
               {workfiles.map((workfile) => (
                 <article className="rounded-xl border border-slate-200 bg-white p-4" key={workfile.id}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
@@ -192,7 +206,7 @@ export default function UadWorkspaceEntry() {
                 </article>
               ))}
             </div>
-          </section>
+          </details>
         )}
 
         {activeWorkfileId && (

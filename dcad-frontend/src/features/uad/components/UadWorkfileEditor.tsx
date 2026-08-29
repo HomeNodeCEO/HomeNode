@@ -778,8 +778,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <div className="lg:grid lg:grid-cols-[25%_70%] lg:items-start lg:justify-between">
-        <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:grid-cols-1 lg:overflow-y-auto lg:border-b-0 lg:border-r" aria-label="UAD workfile sections">
+      <div className="lg:grid lg:grid-cols-[24%_74%] lg:items-start lg:justify-between">
+        <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 lg:grid-cols-1 lg:border-b-0 lg:border-r" aria-label="UAD workfile sections">
           {editor.sections.filter((item) => item.applicable !== false).map((item) => {
             const completion = editor.completion[item.key];
             const active = activeSection === item.key;
@@ -794,14 +794,17 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                 onClick={() => void handleSectionChange(item.key)}
                 type="button"
               >
-                <div className="text-sm font-semibold">Section {item.officialSectionNumber}: {item.title}</div>
-                <div className="mt-1 text-xs text-slate-500">{completion.completed} of {completion.required} required · {completion.percent}%</div>
+                <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-start gap-2 text-sm font-semibold text-slate-950">
+                  <span className="whitespace-nowrap">Section {item.officialSectionNumber}</span>
+                  <span>{item.title}</span>
+                </div>
+                <div className="mt-1 pl-[5.5rem] text-sm font-semibold text-black">{completion.completed} of {completion.required} required · {completion.percent}%</div>
               </button>
             );
           })}
         </nav>
 
-        <div className="min-w-0 p-4 sm:p-6">
+        <div className="min-w-0 p-3 sm:p-4">
           <details className="group mb-5 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
             <summary className="cursor-pointer list-none px-4 py-3 transition hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
               <span className="flex flex-wrap items-center justify-between gap-3">

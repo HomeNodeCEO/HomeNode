@@ -7,17 +7,29 @@ import { fileURLToPath } from "node:url";
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const read = (relative) => fs.readFileSync(path.resolve(directory, relative), "utf8");
 
-test("the UAD workspace reserves desktop width for a scrollable left section navigator", () => {
+test("the UAD workspace uses a naturally scrolling aligned left section navigator", () => {
   const entry = read("../../dcad-frontend/src/features/uad/pages/UadWorkspaceEntry.tsx");
   const editor = read("../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx");
 
   assert.match(entry, /w-full max-w-none/);
-  assert.match(editor, /lg:grid-cols-\[25%_70%\]/);
-  assert.match(editor, /lg:max-h-\[calc\(100vh-6rem\)\]/);
-  assert.match(editor, /lg:overflow-y-auto/);
-  assert.match(editor, /lg:sticky lg:top-20/);
+  assert.match(editor, /lg:grid-cols-\[24%_74%\]/);
+  assert.doesNotMatch(editor, /lg:max-h-\[calc\(100vh-6rem\)\]/);
+  assert.doesNotMatch(editor, /lg:overflow-y-auto/);
+  assert.doesNotMatch(editor, /lg:sticky lg:top-20/);
   assert.doesNotMatch(editor, /mt-6 overflow-hidden rounded-2xl/);
   assert.match(editor, /aria-current=\{active \? "step" : undefined\}/);
+  assert.match(editor, /grid-cols-\[5rem_minmax\(0,1fr\)\]/);
+  assert.match(editor, /text-sm font-semibold text-black/);
+});
+
+test("the subject workfile chooser is collapsed and the status tiles are compact", () => {
+  const entry = read("../../dcad-frontend/src/features/uad/pages/UadWorkspaceEntry.tsx");
+  const workfiles = entry.indexOf("UAD workfiles for this subject");
+
+  assert.ok(entry.lastIndexOf("<details", workfiles) >= 0, "workfile list should use a details disclosure");
+  assert.match(entry, /mt-4 grid gap-2 md:grid-cols-3/);
+  assert.match(entry, /rounded-lg border border-slate-200 bg-slate-50 px-3 py-2/);
+  assert.match(entry, /Show files/);
 });
 
 test("completion, delivery, and active-section guidance start collapsed above the form", () => {

@@ -155,7 +155,7 @@ class WorkerConfig:
                 1, int(os.getenv("SCRAPE_OWNER_RECOVERY_EVERY_ACCOUNTS", "25"))
             ),
             field_repair_every_accounts=max(
-                1, int(os.getenv("SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS", "100"))
+                1, int(os.getenv("SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS", "5"))
             ),
         )
 
@@ -2115,7 +2115,6 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
                 """
             )
         ).mappings().one()
-
     result = dict(row)
     result["loaded"] = True
     result["outage_failure_threshold"] = config.outage_failure_threshold

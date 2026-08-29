@@ -50,3 +50,23 @@ def test_fractional_owner_parties_remain_separate():
         {"owner_name": "SECOND OWNER", "ownership_pct": "33%"},
         {"owner_name": "THIRD OWNER", "ownership_pct": "33%"},
     ]
+
+
+def test_multi_owner_grid_recovers_owner_name_when_heading_text_is_unavailable():
+    soup = BeautifulSoup(
+        """
+        <span id="lblOwner" class="DtlSectionHdr">Owner (Current 2027)</span>
+        <table id="MultiOwner1_dgmultiOwner">
+          <tr><td>Owner Name</td><td>Ownership %</td></tr>
+          <tr><td>LAM DUNG LY</td><td>100%</td></tr>
+        </table>
+        """,
+        "html.parser",
+    )
+
+    owner = parse_owner(soup)
+
+    assert owner["owner_name"] == "LAM DUNG LY"
+    assert owner["multi_owner"] == [
+        {"owner_name": "LAM DUNG LY", "ownership_pct": "100%"},
+    ]

@@ -561,14 +561,25 @@ test("normalizes room-labeled photo batches with original and display objects", 
 });
 
 test("builds private report-file scoped mobile photo object keys", () => {
-  assert.equal(buildMobilePhotoObjectKey({
+  const firstFileKey = buildMobilePhotoObjectKey({
     organizationId: "org-1",
     reportFileId: "file-1",
     photoId: "photo-1",
     objectId: "object-1",
     variant: "original",
     fileName: "Front view #1.heic",
-  }), "organizations/org-1/mobile/report-files/file-1/photos/photo-1/original/object-1/Front-view-1.heic");
+  });
+  assert.equal(firstFileKey, "organizations/org-1/mobile/report-files/file-1/photos/photo-1/original/object-1/Front-view-1.heic");
+  const secondFileKey = buildMobilePhotoObjectKey({
+    organizationId: "org-1",
+    reportFileId: "file-2",
+    photoId: "photo-1",
+    objectId: "object-1",
+    variant: "original",
+    fileName: "Front view #1.heic",
+  });
+  assert.notEqual(firstFileKey, secondFileKey);
+  assert.match(secondFileKey, /\/report-files\/file-2\/photos\//);
 });
 
 test("mobile photo positions reuse an excluded slot before exceeding 100", () => {

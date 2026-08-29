@@ -1,6 +1,7 @@
 import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
+import { Platform } from "react-native";
 
 import type {
   CustomAppraisalReview,
@@ -21,7 +22,7 @@ import type {
 import { localInspectionCompletionReadiness } from "../completion/model";
 import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
 import { draftFromApiDocument, type ManualSketchDraft } from "../sketch/model";
-import { isUnreadableSqliteDatabaseError } from "./databaseRecovery";
+import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "./databaseRecovery";
 import {
   retryDelayMs,
   stableJson,
@@ -33,9 +34,11 @@ import {
 } from "./model";
 
 const DATABASE_KEY = "homenode.mobile.offline-database-key.v1";
-const ACTIVE_DATABASE_NAME_KEY = "homenode.mobile.active-offline-database.v1";
+const DATABASE_POLICY = offlineDatabasePolicy(Platform.OS);
+const ACTIVE_DATABASE_NAME_KEY = DATABASE_POLICY.activeDatabaseNameKey;
 const ACTIVE_USER_KEY = "homenode.mobile.active-offline-user.v1";
-const DATABASE_NAME = "homenode-field-v1.db";
+const DATABASE_NAME = DATABASE_POLICY.databaseName;
+const USE_SQLCIPHER = DATABASE_POLICY.useSqlCipher;
 const GENERAL_COMMENTS_PATH = "inspection.general.appraiser_comments";
 
 type QueueRow = {
@@ -300,17 +303,19 @@ async function activeDatabaseName() {
 }
 
 function recoveredDatabaseName() {
-  return `homenode-field-recovered-${Date.now()}-${Crypto.randomUUID()}.db`;
+  return `homenode-field-${DATABASE_POLICY.recoveryGeneration}-${Date.now()}-${Crypto.randomUUID()}.db`;
 }
 
 async function openInitializedDatabase(databaseName: string) {
-  const password = await databasePassword();
   const database = await SQLite.openDatabaseAsync(databaseName, { useNewConnection: true });
   try {
-    await database.execAsync(`PRAGMA key = '${password}'`);
-    // Force SQLCipher to authenticate the file before any prepared statements or schema work.
+    if (USE_SQLCIPHER) {
+      const password = await databasePassword();
+      await database.execAsync(`PRAGMA key = '${password}'`);
+    }
+    // Authenticate SQLCipher databases and verify iOS-protected databases before schema work.
     await database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
-    // WAL can retain an encrypted file lock while iOS suspends HomeNode behind Camera/Photos.
+    // DELETE journaling does not retain a WAL lock while iOS suspends HomeNode behind Camera/Photos.
     await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE; PRAGMA synchronous = NORMAL;");
     await database.execAsync(`
     CREATE TABLE IF NOT EXISTS mobile_users (
@@ -539,7 +544,6 @@ export async function clearActiveOfflineUser() {
 
 export class OfflineStore {
   private connectionRepair: Promise<void> | null = null;
-  private closedForExternalActivity = false;
 
   private constructor(private database: SQLite.SQLiteDatabase) {}
 
@@ -547,24 +551,13 @@ export class OfflineStore {
     return new OfflineStore(await openDatabase());
   }
 
-  async prepareForExternalActivity() {
-    if (this.connectionRepair) await this.connectionRepair;
-    if (this.closedForExternalActivity) return;
-    this.closedForExternalActivity = true;
-    const previous = this.database;
-    databasePromise = null;
-    await previous.closeAsync().catch(() => undefined);
-  }
-
   async ensureReady() {
     if (this.connectionRepair) return this.connectionRepair;
-    if (!this.closedForExternalActivity) {
-      try {
-        await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
-        return;
-      } catch (reason) {
-        if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
-      }
+    try {
+      await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+      return;
+    } catch (reason) {
+      if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
     }
     if (this.connectionRepair) return this.connectionRepair;
     this.connectionRepair = (async () => {
@@ -572,7 +565,6 @@ export class OfflineStore {
       databasePromise = null;
       await previous.closeAsync().catch(() => undefined);
       this.database = await openDatabase();
-      this.closedForExternalActivity = false;
     })().finally(() => {
       this.connectionRepair = null;
     });

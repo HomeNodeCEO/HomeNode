@@ -222,7 +222,6 @@ export function PhotoCapturePanel({
 
   const takePhoto = async () => {
     try {
-      await store.prepareForExternalActivity();
       const assets = await captureCameraPhoto();
       await store.ensureReady();
       await prepare(assets, "camera");
@@ -234,7 +233,6 @@ export function PhotoCapturePanel({
 
   const importPhotos = async () => {
     try {
-      await store.prepareForExternalActivity();
       const assets = await importLibraryPhotos(remaining);
       await store.ensureReady();
       await prepare(assets, "library");

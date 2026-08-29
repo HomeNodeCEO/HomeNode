@@ -587,12 +587,12 @@ export default function AppraisalReport() {
   };
 
   if (loading) {
-    return <div className="min-h-screen bg-slate-100 p-8 text-slate-700">Building report...</div>;
+    return <div className="hn-app-shell p-8 text-slate-700">Building report...</div>;
   }
 
   if (error || !detail) {
     return (
-      <div className="min-h-screen bg-slate-100 p-8">
+      <div className="hn-app-shell p-8">
         <div className="mx-auto max-w-2xl rounded-2xl bg-white p-6 shadow">
           <h1 className="text-xl font-semibold">Appraisal report unavailable</h1>
           <p className="mt-2 text-slate-600">{error || "Property data was not returned."}</p>

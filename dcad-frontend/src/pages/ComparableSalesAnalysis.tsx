@@ -3232,7 +3232,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   return (
-    <div className="sales-comparison-compact min-h-screen bg-base-200">
+    <div className="hn-app-shell sales-comparison-compact">
       <div className="max-w-6xl mx-auto p-4">
         <div className="mb-4 flex items-center justify-between">
           <div>

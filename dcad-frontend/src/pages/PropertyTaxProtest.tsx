@@ -272,12 +272,12 @@ export default function PropertyTaxProtest() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 px-4 py-4 text-slate-950">
+    <div className="hn-app-shell px-4 py-4">
       <main className="mx-auto max-w-6xl">
-        <header className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+        <header className="hn-app-header rounded-2xl border px-5 py-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
+              <div className="hn-eyebrow text-xs tracking-[0.16em]">
                 Rough-draft workspace
               </div>
               <h1 className="mt-1 text-2xl font-semibold">Property Tax Protest</h1>
@@ -292,14 +292,14 @@ export default function PropertyTaxProtest() {
               {propertyId && (
                 <a
                   href={`/report/${encodeURIComponent(propertyId)}`}
-                  className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  className="hn-action-secondary rounded-md border px-4 py-2 text-sm font-medium"
                 >
                   Back to Property Report
                 </a>
               )}
               <a
                 href={authorizationUrl}
-                className="rounded-md border border-blue-600 bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                className="hn-action-gold rounded-md border px-4 py-2 text-sm font-semibold"
               >
                 Begin Authorization Form
               </a>
@@ -313,7 +313,7 @@ export default function PropertyTaxProtest() {
         </header>
 
         {propertyId && <PropertyTaxWorkfileReview accountId={propertyId} fileId={requestedPropertyTaxFileId} />}
-        <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="hn-workspace-surface mt-4 rounded-2xl border p-4">
           <h2 className="text-xl font-semibold">Appraisal District Evidence Analysis</h2>
           <p className="mt-2 max-w-5xl text-sm text-slate-700">
             District evidence has not yet been requested for this rough draft. Once a protest is filed, this area can compare the district&apos;s sales, adjustments, and valuation support with the appraiser-selected evidence.
@@ -324,7 +324,7 @@ export default function PropertyTaxProtest() {
           <DistrictEvidenceAccordion />
         </section>
 
-        <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="hn-workspace-surface mt-4 rounded-2xl border p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold">Subject Photos</h2>
@@ -333,7 +333,7 @@ export default function PropertyTaxProtest() {
             <button
               type="button"
               onClick={() => photoInputRef.current?.click()}
-              className="rounded-md border border-blue-600 bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+              className="hn-action-primary rounded-md border px-4 py-2 text-sm font-semibold"
             >
               Upload Photos
             </button>
@@ -365,7 +365,7 @@ export default function PropertyTaxProtest() {
           )}
         </section>
 
-        <section className="mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <section className="hn-workspace-surface mt-4 rounded-2xl border p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-xl font-semibold">Protest Summary Generator</h2>

@@ -346,7 +346,7 @@ export default function SignUpForm() {
   }
 
   return (
-    <div className="min-h-screen bg-base-200">
+    <div className="hn-app-shell">
       <div className="max-w-6xl mx-auto p-4">
         <div className="flex items-center justify-between mb-3">
           <div>

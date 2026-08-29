@@ -2,7 +2,7 @@
 
 export function Card({ className = "", children }: { className?: string; children: ReactNode }) {
   // Keep children as-is so Header/Content can be separate "card-body" blocks.
-  return <div className={`card bg-base-100 shadow-sm ${className}`}>{children}</div>;
+  return <div className={`hn-workspace-surface card border bg-base-100 shadow-sm ${className}`}>{children}</div>;
 }
 
 export function CardHeader({ className = "", children }: { className?: string; children: ReactNode }) {

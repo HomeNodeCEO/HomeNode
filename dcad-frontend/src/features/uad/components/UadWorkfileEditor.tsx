@@ -26,7 +26,7 @@ interface Props {
   onClose: () => void;
 }
 
-const inputClass = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100";
+const inputClass = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-violet-700 focus:ring-2 focus:ring-violet-100";
 const AUTOSAVE_IDLE_MS = 10_000;
 const AUTOSAVE_MAX_WAIT_MS = 55_000;
 
@@ -766,15 +766,15 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   if (!editor || !section) return <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">{error || "The UAD editor is unavailable."}</div>;
 
   return (
-    <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50">
-      <header className="rounded-t-2xl border-b border-slate-200 bg-slate-950 px-5 py-4 text-white">
+    <section className="hn-workspace-surface mt-6 rounded-2xl border">
+      <header className="hn-app-header rounded-t-2xl border-b px-5 py-4 text-white">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-300">Active UAD workfile</div>
+            <div className="hn-eyebrow text-xs tracking-[0.16em]">Active UAD workfile</div>
             <h2 className="mt-1 text-xl font-semibold">{editor.workfile.file_number}</h2>
             <p className="mt-1 text-xs text-slate-300">Revision {editor.workfile.current_revision} · UAD 3.6 · {editor.workfile.specification_release_key}</p>
           </div>
-          <button className="rounded-lg border border-slate-600 px-3 py-2 text-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseEditor()} type="button">Close editor</button>
+          <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseEditor()} type="button">Close editor</button>
         </div>
       </header>
 
@@ -786,7 +786,9 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             return (
               <button
                 aria-current={active ? "step" : undefined}
-                className={`w-full px-3 py-3.5 text-left transition lg:border-l-4 ${active
+                className={`hn-navigation-button w-full px-3 py-3.5 text-left transition lg:border-l-4 ${active
+                  ? "hn-navigation-button-active "
+                  : ""}${active
                   ? "border-b-2 border-emerald-700 bg-emerald-50 lg:border-b lg:border-b-slate-100 lg:border-l-emerald-700"
                   : "border-b border-slate-100 hover:bg-slate-50 lg:border-l-transparent"}`}
                 disabled={saving}

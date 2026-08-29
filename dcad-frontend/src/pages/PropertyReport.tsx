@@ -3048,12 +3048,12 @@ export default function PropertyReport() {
   }, [detail]);
 
   return (
-    <div className="min-h-screen bg-base-200">
-      <div className="navbar bg-base-100 shadow-sm">
+    <div className="hn-app-shell">
+      <div className="hn-app-header navbar shadow-sm">
         <div className="container mx-auto px-4">
           <div className="flex w-full items-center justify-between">
             <span className="text-xl font-semibold">Property Report</span>
-            <a href="/" className="btn btn-ghost btn-sm normal-case">
+            <a href="/" className="hn-action-secondary btn btn-ghost btn-sm normal-case">
               ← Close Report
             </a>
           </div>

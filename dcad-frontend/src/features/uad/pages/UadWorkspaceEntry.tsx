@@ -93,9 +93,9 @@ export default function UadWorkspaceEntry() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-950">
-      <section className="mx-auto w-full max-w-none rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">
+    <main className="hn-app-shell px-4 py-8">
+      <section className="hn-workspace-surface mx-auto w-full max-w-none rounded-2xl border p-6">
+        <div className="hn-eyebrow text-xs tracking-[0.16em]">
           UAD 3.6 appraisal
         </div>
         <h1 className="mt-2 text-3xl font-semibold">UAD 3.6 Workspace</h1>
@@ -154,7 +154,7 @@ export default function UadWorkspaceEntry() {
               appraiser-confirmed value.
             </p>
             <button
-              className="mt-4 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="hn-action-primary mt-4 rounded-lg px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
               disabled={creating}
               onClick={handleCreateWorkfile}
               type="button"
@@ -197,7 +197,7 @@ export default function UadWorkspaceEntry() {
                     </span>
                   </div>
                   <button
-                    className="mt-3 rounded-lg border border-emerald-700 bg-white px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50"
+                    className="hn-action-secondary mt-3 rounded-lg border px-3 py-2 text-sm font-semibold"
                     onClick={() => setActiveWorkfileId(workfile.id)}
                     type="button"
                   >
@@ -221,7 +221,7 @@ export default function UadWorkspaceEntry() {
 
         <div className="mt-6 flex flex-wrap gap-3">
           <Link
-            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="hn-action-secondary rounded-lg border px-4 py-2 text-sm font-medium"
             to="/"
           >
             Back to property search

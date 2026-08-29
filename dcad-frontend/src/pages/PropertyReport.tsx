@@ -17,6 +17,7 @@ import {
   updateAssignmentFile,
   updateMobileInspectionSketch,
   type AppraisalAssignmentFile,
+  type AssignmentPhoto,
   type AssignmentDocumentType,
   type AssignmentDetailsPayload,
   type PropertyComplexityAssessment,
@@ -588,6 +589,32 @@ function AddressHero({
   const mobileInspectionPhotos = activeAssignmentFile?.mobile_inspection_photos || [];
   const mobileInspectionSketch = activeAssignmentFile?.mobile_inspection_sketch || null;
   const activeAssignmentFileId = activeAssignmentFile?.id || null;
+  const handleAssignmentPhotosChanged = useCallback((photos: AssignmentPhoto[]) => {
+    if (!activeAssignmentFileId) return;
+    const verifiedMobilePhotos = photos
+      .filter((photo) => photo.origin_channel === 'mobile' && photo.status === 'verified' && photo.verified_at)
+      .map((photo) => ({
+        id: photo.id,
+        category: photo.category,
+        room_ref: photo.room_ref,
+        room_label: photo.room_label,
+        caption: photo.caption,
+        position: photo.position,
+        verified_at: photo.verified_at as string,
+        retention_until: photo.retention_until || '',
+        required_retention_years: photo.required_retention_years,
+      }));
+    const mergePhotos = (file: AppraisalAssignmentFile): AppraisalAssignmentFile => ({
+      ...file,
+      mobile_inspection_photos: verifiedMobilePhotos,
+    });
+    setActiveAssignmentFile((current) => (
+      current?.id === activeAssignmentFileId ? mergePhotos(current) : current
+    ));
+    setAssignmentFiles((current) => current.map((file) => (
+      file.id === activeAssignmentFileId ? mergePhotos(file) : file
+    )));
+  }, [activeAssignmentFileId, setActiveAssignmentFile, setAssignmentFiles]);
   const refreshMobileSketchEvidence = useCallback(async () => {
     if (!accountId || !activeAssignmentFileId || sketchEvidenceRefreshInFlight.current) return;
     sketchEvidenceRefreshInFlight.current = true;
@@ -2303,7 +2330,9 @@ function AddressHero({
             <AssignmentPhotoCenter
               accountId={accountId || ""}
               assignmentFileId={activeAssignmentFile?.id || null}
+              assignmentFileNumber={activeAssignmentFile?.file_number || null}
               getEditorKey={editorKeyForSave}
+              onPhotosChanged={handleAssignmentPhotosChanged}
               readOnly={activeAssignmentFile?.workfile?.status === "signed"}
               className="order-6"
             />

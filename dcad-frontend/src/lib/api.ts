@@ -2465,6 +2465,8 @@ export interface AssignmentPhoto {
   client_photo_id: string;
   origin_channel: 'mobile' | 'desktop';
   category: string;
+  room_ref: string | null;
+  room_label: string | null;
   caption: string | null;
   position: number;
   captured_at: string | null;
@@ -2472,6 +2474,7 @@ export interface AssignmentPhoto {
   revision: number;
   verified_at: string | null;
   retention_until: string | null;
+  required_retention_years: number;
   view_url: string | null;
   view_url_expires_in_seconds: number | null;
   objects: AssignmentPhotoObject[];

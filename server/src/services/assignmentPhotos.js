@@ -125,6 +125,8 @@ function photoPayload(storage, row, objects) {
     client_photo_id: row.client_photo_id,
     origin_channel: row.origin_channel || "mobile",
     category: row.category,
+    room_ref: row.room_ref || null,
+    room_label: row.room_label || null,
     caption: row.caption || null,
     position: Number(row.position),
     captured_at: row.captured_at || null,
@@ -132,6 +134,7 @@ function photoPayload(storage, row, objects) {
     revision: Number(row.revision),
     verified_at: row.verified_at || null,
     retention_until: row.retention_until || null,
+    required_retention_years: Number(row.required_retention_years || 5),
     view_url: view?.url || null,
     view_url_expires_in_seconds: view?.expires_in_seconds || null,
     objects: objects.map((item) => ({
@@ -169,8 +172,25 @@ export async function listAssignmentPhotos(pool, storage, { accountId, assignmen
         ORDER BY position, created_at, id`,
       [report.id],
     );
-    const photos = [];
-    for (const row of rows) photos.push(photoPayload(storage, row, await photoObjects(client, row.id)));
+    const objectsByPhoto = new Map();
+    if (rows.length) {
+      const objectResult = await client.query(
+        `SELECT * FROM app.inspection_photo_objects
+          WHERE photo_id = ANY($1::uuid[])
+          ORDER BY photo_id, CASE variant WHEN 'display' THEN 0 ELSE 1 END, id`,
+        [rows.map((row) => row.id)],
+      );
+      for (const object of objectResult.rows) {
+        const objects = objectsByPhoto.get(object.photo_id) || [];
+        objects.push(object);
+        objectsByPhoto.set(object.photo_id, objects);
+      }
+    }
+    const photos = rows.map((row) => photoPayload(
+      storage,
+      row,
+      objectsByPhoto.get(row.id) || [],
+    ));
     return { report_file_id: report.id, workfile_status: report.workfile_status, photos };
   } finally {
     client.release();

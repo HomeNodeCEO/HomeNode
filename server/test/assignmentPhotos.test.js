@@ -76,3 +76,35 @@ test("desktop photo migration preserves mobile rows while enabling file-scoped d
   assert.match(source, /inspection_photos_report_client_uidx/);
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });
+
+test("desktop photo listing is bulk-loaded and preserves mobile room metadata", () => {
+  const source = fs.readFileSync(
+    path.resolve(directory, "../src/services/assignmentPhotos.js"),
+    "utf8",
+  );
+  assert.match(source, /photo_id = ANY\(\$1::uuid\[\]\)/);
+  assert.match(source, /room_ref: row\.room_ref \|\| null/);
+  assert.match(source, /room_label: row\.room_label \|\| null/);
+  assert.match(source, /required_retention_years: Number\(row\.required_retention_years \|\| 5\)/);
+});
+
+test("desktop photo center watches the exact active file for mobile changes", () => {
+  const center = fs.readFileSync(
+    path.resolve(directory, "../../dcad-frontend/src/components/AssignmentPhotoCenter.tsx"),
+    "utf8",
+  );
+  const report = fs.readFileSync(
+    path.resolve(directory, "../../dcad-frontend/src/pages/PropertyReport.tsx"),
+    "utf8",
+  );
+  assert.match(center, /const LIVE_REFRESH_MS = 5_000/);
+  assert.match(center, /if \(!accountId \|\| !assignmentFileId\) return;\s+void load\(\)/);
+  assert.doesNotMatch(center, /\[accountId, assignmentFileId, load, open\]/);
+  assert.match(center, /document\.addEventListener\('visibilitychange', refreshWhenVisible\)/);
+  assert.match(center, /window\.addEventListener\('focus', refreshWhenVisible\)/);
+  assert.match(center, /photoVersionSignature/);
+  assert.match(center, /generation !== loadGeneration\.current/);
+  assert.match(center, /Refresh now/);
+  assert.match(report, /assignmentFileNumber=\{activeAssignmentFile\?\.file_number \|\| null\}/);
+  assert.match(report, /onPhotosChanged=\{handleAssignmentPhotosChanged\}/);
+});

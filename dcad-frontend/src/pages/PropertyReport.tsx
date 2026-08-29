@@ -2083,10 +2083,6 @@ function AddressHero({
                         <input className="input input-bordered input-sm mt-1 w-full bg-white" placeholder="Appraiser name" value={zoningDraft.reviewer} onChange={(event) => setZoningDraft((current) => ({ ...current, reviewer: event.target.value }))} />
                       </label>
                       <label className="block sm:col-span-2 xl:col-span-1 2xl:col-span-2">
-                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">City Confirmation / Reference</span>
-                        <input className="input input-bordered input-sm mt-1 w-full bg-white" placeholder="Contact name, call date, letter number, or ordinance" value={zoningDraft.confirmationReference} onChange={(event) => setZoningDraft((current) => ({ ...current, confirmationReference: event.target.value }))} />
-                      </label>
-                      <label className="block sm:col-span-2 xl:col-span-1 2xl:col-span-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Review Notes</span>
                         <textarea className="textarea textarea-bordered textarea-sm mt-1 min-h-20 w-full bg-white" value={zoningDraft.notes} onChange={(event) => setZoningDraft((current) => ({ ...current, notes: event.target.value }))} />
                       </label>

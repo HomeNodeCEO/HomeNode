@@ -84,9 +84,9 @@ SELECT t.account_id,
            THEN parties.ownership_percentage
            ELSE NULL
        END AS ownership_percentage,
-       (primary.account_id IS NOT NULL) AS has_primary_improvement,
-       primary.building_class,
-       primary.gla,
+       (improvement.account_id IS NOT NULL) AS has_primary_improvement,
+       improvement.building_class,
+       improvement.gla,
        values.improvement_value,
        values.land_value,
        values.market_value,
@@ -103,7 +103,8 @@ LEFT JOIN core.accounts a ON a.account_id = t.account_id
 LEFT JOIN latest_raw raw ON raw.account_id = t.account_id
 LEFT JOIN latest_owner owner ON owner.account_id = t.account_id
 LEFT JOIN party_stats parties ON parties.account_id = t.account_id
-LEFT JOIN primary_improvement primary ON primary.account_id = t.account_id
+LEFT JOIN primary_improvement improvement
+  ON improvement.account_id = t.account_id
 LEFT JOIN core.value_summary_current values ON values.account_id = t.account_id
 LEFT JOIN land_stats land ON land.account_id = t.account_id
 LEFT JOIN core.legal_description_current legal ON legal.account_id = t.account_id

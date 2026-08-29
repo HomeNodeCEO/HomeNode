@@ -6,6 +6,7 @@ import {
   automaticPhotoLabel,
   displayWidth,
   inferredImageContentType,
+  isPhotoVisible,
   photoSyncErrorMessage,
   remainingPhotoCapacity,
   safePhotoFileName,
@@ -23,6 +24,13 @@ test("offline photo positions reuse an excluded slot", () => {
   const occupied = Array.from({ length: 100 }, (_unused, index) => index + 1)
     .filter((position) => position !== 37);
   assert.deepEqual(availablePhotoPositions(occupied), [37]);
+});
+
+test("hides photos as soon as removal is queued", () => {
+  assert.equal(isPhotoVisible("synchronized", null), true);
+  assert.equal(isPhotoVisible("remove_pending", "remove-operation"), false);
+  assert.equal(isPhotoVisible("failed", "remove-operation"), false);
+  assert.equal(isPhotoVisible("excluded", null), false);
 });
 
 test("room selection creates an automatic photo label", () => {
@@ -45,6 +53,10 @@ test("offers UAD-specific evidence labels during UAD inspections", () => {
 });
 
 test("turns cloud photo failures into actionable field messages", () => {
+  assert.equal(
+    photoSyncErrorMessage("mobile_photo_upload_http_401:Unauthorized"),
+    "HomeNode's cloud-storage credential is not authorized. Service configuration must be repaired before retrying.",
+  );
   assert.equal(
     photoSyncErrorMessage("mobile_photo_upload_http_403:SignatureDoesNotMatch"),
     "Cloud storage rejected the upload (HTTP 403 · SignatureDoesNotMatch).",

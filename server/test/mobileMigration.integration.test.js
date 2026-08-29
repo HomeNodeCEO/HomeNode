@@ -501,6 +501,53 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     );
     assert.equal(retriedPhotoBatch.photos[0].photo.id, uploadBatch.photos[0].photo.id);
 
+    const placeholderRequest = {
+      photos: [{
+        ...photoRequest.photos[0],
+        client_photo_id: randomUUID(),
+        category: "Front",
+        category_source: "custom_catalog",
+        room_ref: null,
+        room_label: null,
+        objects: photoRequest.photos[0].objects.map((object) => ({
+          ...object,
+          client_object_id: randomUUID(),
+        })),
+      }],
+    };
+    const placeholderBatch = await createPhotoUploadBatch(
+      pool,
+      photoStorage,
+      auth,
+      session.session.id,
+      placeholderRequest,
+    );
+    const placeholderRemovalOperationId = randomUUID();
+    const deletedPlaceholder = await removeInspectionPhoto(
+      pool,
+      auth,
+      session.session.id,
+      placeholderBatch.photos[0].photo.id,
+      {
+        client_operation_id: placeholderRemovalOperationId,
+        base_revision: placeholderBatch.photos[0].photo.revision,
+      },
+    );
+    assert.equal(deletedPlaceholder.disposition, "placeholder_deleted");
+    assert.equal(deletedPlaceholder.photo.status, "deleted");
+    const retriedPlaceholderRemoval = await removeInspectionPhoto(
+      pool,
+      auth,
+      session.session.id,
+      placeholderBatch.photos[0].photo.id,
+      {
+        client_operation_id: placeholderRemovalOperationId,
+        base_revision: placeholderBatch.photos[0].photo.revision,
+      },
+    );
+    assert.equal(retriedPlaceholderRemoval.disposition, "placeholder_deleted");
+    assert.equal(retriedPlaceholderRemoval.photo.status, "deleted");
+
     const verifiedPhoto = await verifyInspectionPhoto(
       pool,
       photoStorage,

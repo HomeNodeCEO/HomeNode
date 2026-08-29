@@ -680,7 +680,7 @@ async function existingPhotoOperation(client, photoId, operation) {
   return true;
 }
 
-async function lockedAccessiblePhoto(client, auth, sessionId, photoId) {
+async function lockedAccessiblePhoto(client, auth, sessionId, photoId, { includeDeleted = false } = {}) {
   const { rows } = await client.query(
     `SELECT photo.*
        FROM app.inspection_photos photo
@@ -691,7 +691,9 @@ async function lockedAccessiblePhoto(client, auth, sessionId, photoId) {
       FOR UPDATE OF photo`,
     [photoId, sessionId, organizationIds(auth), auth.userId],
   );
-  if (!rows.length || rows[0].status === "deleted") throw new Error("mobile_photo_not_found");
+  if (!rows.length || (!includeDeleted && rows[0].status === "deleted")) {
+    throw new Error("mobile_photo_not_found");
+  }
   return rows[0];
 }
 
@@ -773,12 +775,16 @@ export async function removeInspectionPhoto(pool, auth, sessionIdValue, photoIdV
   try {
     await client.query("BEGIN");
     await lockSession(client, auth, sessionId);
-    const photo = await lockedAccessiblePhoto(client, auth, sessionId, photoId);
+    const photo = await lockedAccessiblePhoto(client, auth, sessionId, photoId, { includeDeleted: true });
     if (await existingPhotoOperation(client, photoId, operation)) {
       const objects = await objectRows(client, photoId);
       await client.query("COMMIT");
-      return { photo: photoResponse(photo, objects), disposition: photo.status === "excluded" ? "excluded_retained" : "placeholder_deleted" };
+      return {
+        photo: photoResponse(photo, objects),
+        disposition: photo.status === "excluded" ? "excluded_retained" : "placeholder_deleted",
+      };
     }
+    if (photo.status === "deleted") throw new Error("mobile_photo_not_found");
     if (Number(photo.revision) !== operation.baseRevision) throw new Error("mobile_photo_revision_conflict");
     const retain = photo.verified_at != null || photo.status === "verified" || photo.status === "excluded";
     const status = retain ? "excluded" : "deleted";

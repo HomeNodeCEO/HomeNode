@@ -588,7 +588,7 @@ test("mobile photo positions reuse an excluded slot before exceeding 100", () =>
   assert.deepEqual(availableMobilePhotoPositions(occupied), [37]);
 });
 
-test("mobile app photo retries bypass backoff and use the supported Expo file upload path", () => {
+test("mobile app photo retries, removals, and previews remain deterministic", () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
   const syncSource = fs.readFileSync(
     path.resolve(directory, "../../homenode-mobile/src/photos/sync.ts"),
@@ -605,9 +605,13 @@ test("mobile app photo retries bypass backoff and use the supported Expo file up
 
   assert.match(syncSource, /import \{ fetch as expoFetch \} from "expo\/fetch"/);
   assert.match(syncSource, /body: file/);
+  assert.match(syncSource, /reason\.code !== "mobile_photo_not_found"/);
+  assert.doesNotMatch(syncSource, /setInterval/);
   assert.match(panelSource, /makeFailedPhotosImmediatelyRetryable/);
+  assert.match(panelSource, /isPhotoVisible\(photo\.state, photo\.removeOperationId\)/);
   assert.match(panelSource, /photoSyncErrorMessage\(photo\.errorCode\)/);
   assert.match(storeSource, /SET next_attempt_at = 0/);
+  assert.match(storeSource, /async deletePhotoDraft/);
 });
 
 test("accepts only a bounded bearer token and HTTPS OIDC issuer", () => {

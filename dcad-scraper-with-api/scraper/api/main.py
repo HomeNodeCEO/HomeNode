@@ -1105,15 +1105,24 @@ async def get_detail(account_id: str):
                 owner = (db_detail.get("owner") or {}) if isinstance(db_detail, dict) else {}
                 primary = (db_detail.get("main_improvement") or {}) if isinstance(db_detail, dict) else {}
                 need_loc = not bool(pl.get("address") or pl.get("subject_address")) or not bool(pl.get("neighborhood")) or not bool(pl.get("mapsco"))
-                need_owner = owner.get("mailing_address") in (None, "")
-                need_legal = not bool((db_detail.get("legal_description") or {}).get("lines"))
+                need_owner = (
+                    owner.get("owner_name") in (None, "", "N/A")
+                    or owner.get("mailing_address") in (None, "")
+                    or not owner.get("multi_owner")
+                )
+                current_legal = db_detail.get("legal_description") or {}
+                need_legal = (
+                    not bool(current_legal.get("lines"))
+                    or current_legal.get("deed_transfer_date") in (None, "")
+                )
+                need_building_class = primary.get("building_class") in (None, "")
                 need_bedroom = primary.get("bedroom_count") in (None, "")
                 need_baths = (
                     primary.get("baths_full") in (None, "")
                     and primary.get("baths_half") in (None, "")
                     and primary.get("bath_count") in (None, "")
                 )
-                need_characteristics = need_bedroom or need_baths
+                need_characteristics = need_bedroom or need_baths or need_building_class
                 if need_loc or need_owner or need_legal or need_characteristics:
                     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
                         detail_html = await _fetch_text(client, _mkurl(ACCOUNT_PATH, account_id))
@@ -1126,9 +1135,15 @@ async def get_detail(account_id: str):
                         or parsed.get("primary_improvements")
                         or {}
                     ) if isinstance(parsed, dict) else {}
+                    parsed_tax_year = parsed.get("tax_year") if isinstance(parsed, dict) else None
+                    if db_detail.get("tax_year") in (None, "") and parsed_tax_year not in (None, ""):
+                        db_detail["tax_year"] = parsed_tax_year
                     recovered_characteristics = {}
                     if isinstance(parsed_primary, dict):
-                        for key in ("bedroom_count", "baths_full", "baths_half", "bath_count"):
+                        for key in (
+                            "bedroom_count", "baths_full", "baths_half", "bath_count",
+                            "building_class",
+                        ):
                             value = parsed_primary.get(key)
                             if value not in (None, ""):
                                 recovered_characteristics[key] = value
@@ -1139,6 +1154,19 @@ async def get_detail(account_id: str):
                                 for key, value in recovered_characteristics.items():
                                     if db_detail[primary_key].get(key) in (None, ""):
                                         db_detail[primary_key][key] = value
+                    if isinstance(parsed_owner, dict):
+                        db_detail.setdefault("owner", {})
+                        if isinstance(db_detail["owner"], dict):
+                            for key in ("owner_name", "mailing_address"):
+                                value = parsed_owner.get(key)
+                                if (
+                                    value not in (None, "", "N/A")
+                                    and db_detail["owner"].get(key) in (None, "", "N/A")
+                                ):
+                                    db_detail["owner"][key] = value
+                            parsed_parties = parsed_owner.get("multi_owner")
+                            if parsed_parties and not db_detail["owner"].get("multi_owner"):
+                                db_detail["owner"]["multi_owner"] = parsed_parties
                     # Merge location
                     if parsed_pl:
                         db_detail.setdefault("property_location", {})
@@ -1210,8 +1238,19 @@ async def get_detail(account_id: str):
                             db_detail["owner"]["mailing_address"] = mailing
                     # Best-effort persist address fields back to accounts for future requests
                     # Merge legal description if missing
-                    if need_legal and isinstance(parsed_legal, dict) and parsed_legal.get("lines"):
-                        db_detail["legal_description"] = parsed_legal
+                    if need_legal and isinstance(parsed_legal, dict):
+                        db_detail.setdefault("legal_description", {})
+                        if isinstance(db_detail["legal_description"], dict):
+                            if (
+                                parsed_legal.get("lines")
+                                and not db_detail["legal_description"].get("lines")
+                            ):
+                                db_detail["legal_description"]["lines"] = parsed_legal.get("lines")
+                            if (
+                                parsed_legal.get("deed_transfer_date")
+                                and not db_detail["legal_description"].get("deed_transfer_date")
+                            ):
+                                db_detail["legal_description"]["deed_transfer_date"] = parsed_legal.get("deed_transfer_date")
 
                     try:
                         with engine.begin() as conn2:
@@ -1227,47 +1266,93 @@ async def get_detail(account_id: str):
                                     subdivisions = lines[0]
                             except Exception:
                                 subdivisions = None
-                            mailing_persist = (db_detail.get("owner") or {}).get("mailing_address")
+                            owner_persist = db_detail.get("owner") or {}
+                            owner_name_persist = owner_persist.get("owner_name")
+                            mailing_persist = owner_persist.get("mailing_address")
+                            owner_parties_persist = owner_persist.get("multi_owner") or []
+                            ty = db_detail.get("tax_year") if isinstance(db_detail, dict) else None
                             refreshed_primary = (db_detail.get("main_improvement") or {})
                             if addr or nbh or mco or mailing_persist:
                                 conn2.execute(
                                     _sql_text(f"UPDATE {_tblname('accounts')} SET address=COALESCE(:a,address), neighborhood_code=COALESCE(:n,neighborhood_code), mapsco=COALESCE(:m,mapsco), subdivision=COALESCE(:s, subdivision) WHERE account_id=:id"),
                                     {"a": addr, "n": nbh, "m": mco, "s": subdivisions, "id": account_id},
                                 )
-                                if mailing_persist:
-                                    conn2.execute(
-                                        _sql_text(f"UPDATE {_tblname('owner_summary')} SET mailing_address=COALESCE(:mail, mailing_address) WHERE account_id=:id"),
-                                        {"mail": mailing_persist, "id": account_id},
-                                    )
-                                # Persist legal description if we have it and know the tax year
-                                legal = db_detail.get("legal_description") if isinstance(db_detail, dict) else None
-                                ty = db_detail.get("tax_year") if isinstance(db_detail, dict) else None
-                                if legal and isinstance(legal, dict) and legal.get("lines") and ty:
+                            if ty and (owner_name_persist or mailing_persist):
+                                conn2.execute(
+                                    _sql_text(
+                                        f"""
+                                        INSERT INTO {_tblname('owner_summary')} (
+                                          account_id, tax_year, owner_name, mailing_address
+                                        ) VALUES (:id, :tax_year, :owner_name, :mailing_address)
+                                        ON CONFLICT (account_id, tax_year) DO UPDATE SET
+                                          owner_name = COALESCE(EXCLUDED.owner_name, {_tblname('owner_summary')}.owner_name),
+                                          mailing_address = COALESCE(EXCLUDED.mailing_address, {_tblname('owner_summary')}.mailing_address)
+                                        """
+                                    ),
+                                    {
+                                        "id": account_id,
+                                        "tax_year": ty,
+                                        "owner_name": owner_name_persist,
+                                        "mailing_address": mailing_persist,
+                                    },
+                                )
+                            if ty and owner_parties_persist:
+                                conn2.execute(
+                                    _sql_text(
+                                        f"DELETE FROM {_tblname('owner_parties')} WHERE account_id=:id AND tax_year=:tax_year"
+                                    ),
+                                    {"id": account_id, "tax_year": ty},
+                                )
+                                for party in owner_parties_persist:
+                                    party_name = party.get("owner_name") if isinstance(party, dict) else None
+                                    if not party_name:
+                                        continue
                                     conn2.execute(
                                         _sql_text(
                                             f"""
-                                            INSERT INTO {_tblname('legal_description_current')} (
-                                              account_id, tax_year, legal_lines, legal_text, deed_transfer_raw, deed_transfer_date
+                                            INSERT INTO {_tblname('owner_parties')} (
+                                              account_id, tax_year, owner_name, ownership_pct
                                             ) VALUES (
-                                              :account_id, :tax_year, CAST(:legal_lines_json AS JSONB), :legal_text, :deed_raw, :deed_date
+                                              :id, :tax_year, :owner_name,
+                                              NULLIF(regexp_replace(:ownership_pct, '[^0-9.-]', '', 'g'), '')::numeric
                                             )
-                                            ON CONFLICT (account_id) DO UPDATE SET
-                                              tax_year = EXCLUDED.tax_year,
-                                              legal_lines = EXCLUDED.legal_lines,
-                                              legal_text = EXCLUDED.legal_text,
-                                              deed_transfer_raw = EXCLUDED.deed_transfer_raw,
-                                              deed_transfer_date = COALESCE(EXCLUDED.deed_transfer_date, {_tblname('legal_description_current')}.deed_transfer_date)
                                             """
                                         ),
                                         {
-                                            "account_id": account_id,
+                                            "id": account_id,
                                             "tax_year": ty,
-                                            "legal_lines_json": json.dumps(legal.get("lines")),
-                                            "legal_text": "; ".join(legal.get("lines") or []),
-                                            "deed_raw": legal.get("deed_transfer_date"),
-                                            "deed_date": None,
+                                            "owner_name": party_name,
+                                            "ownership_pct": str(party.get("ownership_pct") or ""),
                                         },
                                     )
+                            # Persist legal description if we have it and know the tax year
+                            legal = db_detail.get("legal_description") if isinstance(db_detail, dict) else None
+                            if legal and isinstance(legal, dict) and legal.get("lines") and ty:
+                                conn2.execute(
+                                    _sql_text(
+                                        f"""
+                                        INSERT INTO {_tblname('legal_description_current')} (
+                                          account_id, tax_year, legal_lines, legal_text, deed_transfer_raw, deed_transfer_date
+                                        ) VALUES (
+                                          :account_id, :tax_year, CAST(:legal_lines_json AS JSONB), :legal_text, :deed_raw, :deed_date
+                                        )
+                                        ON CONFLICT (account_id) DO UPDATE SET
+                                          tax_year = EXCLUDED.tax_year,
+                                          legal_lines = EXCLUDED.legal_lines,
+                                          legal_text = EXCLUDED.legal_text,
+                                          deed_transfer_raw = EXCLUDED.deed_transfer_raw,
+                                          deed_transfer_date = COALESCE(EXCLUDED.deed_transfer_date, {_tblname('legal_description_current')}.deed_transfer_date)
+                                        """
+                                    ),
+                                    {
+                                        "account_id": account_id,
+                                        "tax_year": ty,
+                                        "legal_lines_json": json.dumps(legal.get("lines")),
+                                        "legal_text": "; ".join(legal.get("lines") or []),
+                                        "deed_raw": legal.get("deed_transfer_date"),
+                                        "deed_date": None,
+                                    },
+                                )
                             if recovered_characteristics:
                                 conn2.execute(
                                     _sql_text(
@@ -1276,7 +1361,8 @@ async def get_detail(account_id: str):
                                         SET bedroom_count = COALESCE(bedroom_count, CAST(:bedroom_count AS INTEGER)),
                                             baths_full = COALESCE(baths_full, CAST(:baths_full AS INTEGER)),
                                             baths_half = COALESCE(baths_half, CAST(:baths_half AS INTEGER)),
-                                            bath_count = COALESCE(bath_count, :bath_count)
+                                            bath_count = COALESCE(bath_count, :bath_count),
+                                            building_class = COALESCE(building_class, :building_class)
                                         WHERE account_id = :account_id
                                         """
                                     ),
@@ -1286,6 +1372,7 @@ async def get_detail(account_id: str):
                                         "baths_full": refreshed_primary.get("baths_full"),
                                         "baths_half": refreshed_primary.get("baths_half"),
                                         "bath_count": refreshed_primary.get("bath_count"),
+                                        "building_class": refreshed_primary.get("building_class"),
                                     },
                                 )
                     except Exception:

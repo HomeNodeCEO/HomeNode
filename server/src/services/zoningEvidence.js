@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 
-import { DALLAS_COUNTY_ZONING_JURISDICTIONS } from "./propertyZoningSources.js";
+import {
+  DALLAS_COUNTY_ZONING_JURISDICTIONS,
+  OFFICIAL_ZONING_SOURCES,
+} from "./propertyZoningSources.js";
 import {
   extractPdfEvidence,
   findZoningDescriptionInPages,
@@ -30,6 +33,76 @@ function jurisdictionForCity(city) {
   return DALLAS_COUNTY_ZONING_JURISDICTIONS.find(
     (entry) => entry.city.toUpperCase() === normalized,
   ) || null;
+}
+
+function firstSourceText(attributes, fields) {
+  for (const field of fields || []) {
+    const value = cleanText(attributes?.[field], 1_000);
+    if (value) return value;
+  }
+  return null;
+}
+
+export async function fetchOfficialZoningAtPoint(jurisdiction, {
+  latitude,
+  longitude,
+  fetchImpl = fetch,
+} = {}) {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)
+      || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  const source = OFFICIAL_ZONING_SOURCES.find(
+    (entry) => entry.providerKey === jurisdiction?.providerKey,
+  );
+  if (!source) return null;
+  const querySources = source.queryUrls?.length
+    ? source.queryUrls
+    : [{ url: source.url, recordPrefix: null }];
+  for (const querySource of querySources) {
+    const params = new URLSearchParams({
+      f: "json",
+      where: "1=1",
+      geometry: JSON.stringify({
+        x: lon,
+        y: lat,
+        spatialReference: { wkid: 4326 },
+      }),
+      geometryType: "esriGeometryPoint",
+      inSR: "4326",
+      spatialRel: "esriSpatialRelIntersects",
+      outFields: source.outFields,
+      returnGeometry: "false",
+    });
+    const response = await fetchImpl(`${querySource.url}?${params}`, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`official_zoning_http_${response.status}`);
+    const payload = await response.json();
+    if (payload?.error) throw new Error(`official_zoning_${payload.error.code || "query_failed"}`);
+    const feature = payload?.features?.[0];
+    if (!feature) continue;
+    const attributes = feature.attributes || feature.properties || {};
+    const zoningCode = firstSourceText(attributes, source.zoningCodeFields);
+    if (!zoningCode) continue;
+    const rawSourceId = firstSourceText(attributes, source.sourceIdFields)
+      || cleanText(feature.id, 500)
+      || createHash("sha256").update(JSON.stringify(attributes)).digest("hex");
+    return {
+      zoning_code: zoningCode,
+      zoning_description: firstSourceText(attributes, source.descriptionFields),
+      provider_key: source.providerKey,
+      source_record_id: querySource.recordPrefix
+        ? `${querySource.recordPrefix}:${rawSourceId}`
+        : rawSourceId,
+      source_attributes: attributes,
+      source_updated_at: null,
+      synced_at: null,
+      lookup_mode: "official_gis_live",
+    };
+  }
+  return null;
 }
 
 function publicDocument(row) {
@@ -301,9 +374,11 @@ export async function getPropertyZoningEvidence(pool, {
 } = {}) {
   await ensureZoningEvidenceSchema(pool);
   const { rows: accountRows } = await pool.query(
-    `SELECT account_id, address, city, county
-     FROM core.accounts
-     WHERE account_id = $1`,
+    `SELECT account.account_id, account.address, account.city, account.county,
+            location.latitude, location.longitude
+     FROM core.accounts account
+     LEFT JOIN core.account_locations location ON location.account_id = account.account_id
+     WHERE account.account_id = $1`,
     [accountId],
   );
   const account = accountRows[0];
@@ -353,6 +428,20 @@ export async function getPropertyZoningEvidence(pool, {
       [accountId, jurisdiction.providerKey],
     ),
   ]);
+  let automaticResult = automaticRows[0] || null;
+  let liveLookupError = null;
+  if (!automaticResult && jurisdiction.automationStatus === "automatic") {
+    try {
+      automaticResult = await fetchOfficialZoningAtPoint(jurisdiction, {
+        latitude: account.latitude,
+        longitude: account.longitude,
+      });
+    } catch (error) {
+      liveLookupError = cleanText(error?.message || error, 500);
+    }
+  }
+  const verification = publicVerification(verificationRows[0]);
+  const reviewRequired = !verification && !automaticResult;
   return {
     account,
     jurisdiction: {
@@ -363,13 +452,17 @@ export async function getPropertyZoningEvidence(pool, {
       reference_url: jurisdiction.referenceUrl,
       contact: jurisdiction.contact,
     },
-    review_required: jurisdiction.automationStatus !== "automatic" && !verificationRows[0],
-    review_reason: jurisdiction.automationStatus === "automatic"
+    review_required: reviewRequired,
+    review_reason: !reviewRequired
       ? null
-      : "The city does not expose a verified queryable zoning polygon. Confirm the map or contact the city before relying on the result.",
+      : jurisdiction.automationStatus === "automatic"
+        ? liveLookupError
+          ? "The official GIS lookup is temporarily unavailable and no cached zoning result is available. Verify the linked city map before relying on zoning."
+          : "Stored coordinates are missing or the official GIS did not return a zoning polygon at them. Verify the linked city map before relying on zoning."
+        : "The city does not expose a verified queryable zoning polygon. Confirm the map or contact the city before relying on the result.",
     documents: documentRows.map(publicDocument),
-    automatic_result: automaticRows[0] || null,
-    verification: publicVerification(verificationRows[0]),
+    automatic_result: automaticResult,
+    verification,
   };
 }
 

@@ -289,7 +289,7 @@ export default function AssignmentDocumentCenter({
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">PDF File</span>
               <input className="file-input file-input-bordered file-input-sm mt-1 w-full bg-white" type="file" accept="application/pdf,.pdf" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} />
             </label>
-            <button type="button" className="btn btn-primary btn-sm normal-case rounded-lg" onClick={() => void upload()} disabled={loading || !selectedFile}>
+            <button type="button" className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg" onClick={() => void upload()} disabled={loading || !selectedFile}>
               {loading ? 'Working...' : 'Upload and Analyze'}
             </button>
           </div>
@@ -336,7 +336,7 @@ export default function AssignmentDocumentCenter({
                       <p className="mt-1 break-words">Last error: {selectedDocument.last_processing_error}</p>
                     ) : null}
                     {['ocr_required', 'extraction_failed'].includes(selectedDocument.processing_status) ? (
-                      <button type="button" className="btn btn-primary btn-xs mt-2 normal-case rounded-lg" onClick={() => void reprocess()} disabled={loading}>Retry Extraction</button>
+                      <button type="button" className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg" onClick={() => void reprocess()} disabled={loading}>Retry Extraction</button>
                     ) : null}
                   </div>
                   <div className="space-y-3">
@@ -355,8 +355,8 @@ export default function AssignmentDocumentCenter({
                         <p className="mt-2 rounded bg-slate-50 p-2 text-[11px] leading-4 text-slate-600">{candidate.evidence_excerpt || candidate.raw_value}</p>
                         {candidate.review_status === 'suggested' && candidate.id ? (
                           <div className="mt-2 flex gap-2">
-                            <button type="button" className="btn btn-primary btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'confirmed')} disabled={loading}>Confirm</button>
-                            <button type="button" className="btn btn-outline btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'rejected')} disabled={loading}>Reject</button>
+                            <button type="button" className="hn-action-primary btn btn-primary btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'confirmed')} disabled={loading}>Confirm</button>
+                            <button type="button" className="hn-action-secondary btn btn-outline btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'rejected')} disabled={loading}>Reject</button>
                           </div>
                         ) : null}
                       </div>

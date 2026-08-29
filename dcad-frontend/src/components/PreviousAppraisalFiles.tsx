@@ -175,11 +175,11 @@ function ReplicationForm({
       )}
 
       <div className="mt-3 flex flex-wrap justify-end gap-2">
-        <button className="btn btn-ghost btn-sm normal-case" disabled={saving} onClick={onCancel} type="button">
+        <button className="hn-action-secondary btn btn-ghost btn-sm normal-case" disabled={saving} onClick={onCancel} type="button">
           Cancel
         </button>
         <button
-          className="btn btn-sm normal-case border-blue-700 bg-blue-700 text-white hover:bg-blue-800"
+          className="hn-action-primary btn btn-sm normal-case"
           disabled={saving || (mode === 'same_assignment_alternate' && !confirmed)}
           onClick={() => void onReplicate({
             mode,
@@ -288,7 +288,7 @@ export default function PreviousAppraisalFiles({
           <p className="text-[11px] leading-4 text-slate-500">
             Custom and UAD files with preserved snapshots and lineage.
           </p>
-          <button className="btn btn-xs normal-case" disabled={loading} onClick={() => void load()} type="button">
+          <button className="hn-action-primary btn btn-xs normal-case" disabled={loading} onClick={() => void load()} type="button">
             Refresh
           </button>
         </div>
@@ -332,9 +332,9 @@ export default function PreviousAppraisalFiles({
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  <a className="btn btn-xs normal-case" href={file.view_url}>View File</a>
+                  <a className="hn-action-primary btn btn-xs normal-case" href={file.view_url}>View File</a>
                   <button
-                    className="btn btn-xs normal-case border-blue-700 bg-blue-700 text-white hover:bg-blue-800"
+                    className="hn-action-primary btn btn-xs normal-case"
                     disabled={saving}
                     onClick={() => setActiveReplicationId((current) => current === file.id ? null : file.id)}
                     type="button"

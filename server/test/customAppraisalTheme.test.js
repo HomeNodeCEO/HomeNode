@@ -53,3 +53,23 @@ test("the Custom Appraisal editor and print output retain legible themed surface
   assert.match(css, /@media print[\s\S]*\.hn-custom-report/);
   assert.match(css, /@media print[\s\S]*\.hn-custom-section-header-active/);
 });
+
+test("dark purple headers and actions keep white text in every interaction state", () => {
+  const css = read("../../dcad-frontend/src/index.css");
+  const report = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
+  const photos = read("../../dcad-frontend/src/components/AssignmentPhotoCenter.tsx");
+  const documents = read("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx");
+  const history = read("../../dcad-frontend/src/components/PreviousAppraisalFiles.tsx");
+  const uadEditor = read("../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx");
+
+  assert.match(css, /\.hn-app-header :where\([^)]*strong[^)]*\) \{ color: inherit !important; \}/);
+  assert.match(css, /\.hn-action-primary:hover:not\(:disabled\)[\s\S]*color: #fff !important;/);
+  assert.match(css, /\.hn-action-primary :where\([^)]*span[^)]*\) \{ color: inherit !important; \}/);
+  assert.match(css, /\.hn-custom-file-status[\s\S]*color: #fff !important;/);
+  assert.match(report, /hn-custom-file-status/);
+  assert.match(uadEditor, /hn-app-header[\s\S]*editor\.workfile\.file_number/);
+
+  for (const source of [report, photos, documents, history]) {
+    assert.doesNotMatch(source, /className="btn btn-primary/);
+  }
+});

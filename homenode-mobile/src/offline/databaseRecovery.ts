@@ -18,3 +18,20 @@ export function isUnreadableSqliteDatabaseError(reason: unknown) {
   const text = errorText(reason);
   return /file is not a database|error code\s*26|sqlite_notadb|sqliteerror.*\b26\b/i.test(text);
 }
+
+export function offlineDatabasePolicy(platform: string) {
+  if (platform === "ios") {
+    return Object.freeze({
+      databaseName: "homenode-field-ios-v2.db",
+      activeDatabaseNameKey: "homenode.mobile.active-offline-database.ios-v2",
+      recoveryGeneration: "ios-v2",
+      useSqlCipher: false,
+    });
+  }
+  return Object.freeze({
+    databaseName: "homenode-field-v1.db",
+    activeDatabaseNameKey: "homenode.mobile.active-offline-database.v1",
+    recoveryGeneration: "recovered",
+    useSqlCipher: true,
+  });
+}

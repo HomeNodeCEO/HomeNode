@@ -133,3 +133,27 @@ export function safePhotoFileName(value: string | null | undefined, fallback: st
 export function automaticPhotoLabel({ roomLabel, category }: { roomLabel?: string | null; category: string }) {
   return String(roomLabel || category).trim();
 }
+
+export function photoSyncErrorMessage(value: string | null | undefined) {
+  const code = String(value || "mobile_photo_sync_failed").trim();
+  const uploadHttp = code.match(/^mobile_photo_upload_http_(\d+)(?::([A-Za-z0-9_.-]+))?$/);
+  if (uploadHttp) {
+    return `Cloud storage rejected the upload (HTTP ${uploadHttp[1]}${uploadHttp[2] ? ` · ${uploadHttp[2]}` : ""}).`;
+  }
+  if (code.startsWith("mobile_photo_upload_transport_failed:")) {
+    return `The iPhone could not transfer this photo to cloud storage (${code.slice(code.indexOf(":") + 1)}).`;
+  }
+  const messages: Record<string, string> = {
+    mobile_camera_permission_required: "Camera access is required to take appraisal photos.",
+    mobile_library_permission_required: "Photo-library access is required to import photos.",
+    empty_mobile_photo_file: "An empty photo was skipped.",
+    mobile_photo_limit_conflict: "This inspection already has 100 active photos.",
+    mobile_photo_storage_not_configured: "Cloud photo storage is not configured.",
+    mobile_photo_registration_failed: "HomeNode could not register this photo for upload.",
+    mobile_photo_upload_not_found: "Cloud storage did not receive the complete photo.",
+    mobile_photo_verification_failed: "Cloud storage received the photo, but verification could not be completed.",
+    invalid_mobile_photo_upload: "The uploaded photo did not match its expected size or file type.",
+    network_request_failed: "HomeNode could not reach the cloud service.",
+  };
+  return messages[code] || code.replaceAll("_", " ");
+}

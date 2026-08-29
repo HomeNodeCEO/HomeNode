@@ -1,4 +1,5 @@
-import { File, UploadType } from "expo-file-system";
+import { fetch as expoFetch } from "expo/fetch";
+import { File } from "expo-file-system";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 
@@ -14,15 +15,27 @@ async function uploadObject(photo: LocalPhotoDraft, upload: PresignedPhotoUpload
   if (!file.exists || Number(file.size) !== object.byteSize || object.byteSize <= 0) {
     throw new Error("empty_mobile_photo_file");
   }
-  const result = await file.upload(upload.url, {
-    httpMethod: "PUT",
-    uploadType: UploadType.BINARY_CONTENT,
-    headers: upload.headers,
-    mimeType: object.contentType,
-    sessionType: "background",
-  });
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`mobile_photo_upload_http_${result.status}`);
+  let response: Response;
+  try {
+    response = await expoFetch(upload.url, {
+      method: "PUT",
+      headers: upload.headers,
+      body: file,
+    });
+  } catch (reason) {
+    const detail = (reason instanceof Error ? reason.message : "unknown")
+      .replace(/[\u0000-\u001f\u007f]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160) || "unknown";
+    throw new Error(`mobile_photo_upload_transport_failed:${detail}`);
+  }
+  if (!response.ok) {
+    const responseBody = await response.text().catch(() => "");
+    const providerCode = responseBody.match(/<Code>([^<]+)<\/Code>/i)?.[1]
+      ?.replace(/[^A-Za-z0-9_.-]/g, "")
+      .slice(0, 80);
+    throw new Error(`mobile_photo_upload_http_${response.status}${providerCode ? `:${providerCode}` : ""}`);
   }
 }
 

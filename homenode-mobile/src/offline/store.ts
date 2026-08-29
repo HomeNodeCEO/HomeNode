@@ -1658,6 +1658,17 @@ export class OfflineStore {
     );
   }
 
+  async makeFailedPhotosImmediatelyRetryable(ownerUserId: string, sessionId: string) {
+    await this.database.runAsync(
+      `UPDATE photo_drafts
+          SET next_attempt_at = 0, updated_at = ?
+        WHERE owner_user_id = ? AND session_id = ? AND state = 'failed'`,
+      Date.now(),
+      ownerUserId,
+      sessionId,
+    );
+  }
+
   async cacheRegisteredPhoto(ownerUserId: string, clientPhotoId: string, photo: MobilePhoto) {
     await this.database.runAsync(
       `UPDATE photo_drafts

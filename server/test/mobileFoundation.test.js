@@ -588,6 +588,28 @@ test("mobile photo positions reuse an excluded slot before exceeding 100", () =>
   assert.deepEqual(availableMobilePhotoPositions(occupied), [37]);
 });
 
+test("mobile app photo retries bypass backoff and use the supported Expo file upload path", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const syncSource = fs.readFileSync(
+    path.resolve(directory, "../../homenode-mobile/src/photos/sync.ts"),
+    "utf8",
+  );
+  const panelSource = fs.readFileSync(
+    path.resolve(directory, "../../homenode-mobile/src/photos/PhotoCapturePanel.tsx"),
+    "utf8",
+  );
+  const storeSource = fs.readFileSync(
+    path.resolve(directory, "../../homenode-mobile/src/offline/store.ts"),
+    "utf8",
+  );
+
+  assert.match(syncSource, /import \{ fetch as expoFetch \} from "expo\/fetch"/);
+  assert.match(syncSource, /body: file/);
+  assert.match(panelSource, /makeFailedPhotosImmediatelyRetryable/);
+  assert.match(panelSource, /photoSyncErrorMessage\(photo\.errorCode\)/);
+  assert.match(storeSource, /SET next_attempt_at = 0/);
+});
+
 test("accepts only a bounded bearer token and HTTPS OIDC issuer", () => {
   assert.equal(parseBearerToken("Bearer abc.def.ghi"), "abc.def.ghi");
   assert.throws(() => parseBearerToken("Basic abc"), /invalid_access_token/);

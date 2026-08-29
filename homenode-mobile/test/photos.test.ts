@@ -6,6 +6,7 @@ import {
   automaticPhotoLabel,
   displayWidth,
   inferredImageContentType,
+  photoSyncErrorMessage,
   remainingPhotoCapacity,
   safePhotoFileName,
   UAD_PHOTO_CATEGORIES,
@@ -41,4 +42,19 @@ test("offers UAD-specific evidence labels during UAD inspections", () => {
   assert.ok(UAD_PHOTO_CATEGORIES.includes("Dwelling front"));
   assert.ok(UAD_PHOTO_CATEGORIES.includes("Street/property access"));
   assert.ok(UAD_PHOTO_CATEGORIES.includes("Defect/damage"));
+});
+
+test("turns cloud photo failures into actionable field messages", () => {
+  assert.equal(
+    photoSyncErrorMessage("mobile_photo_upload_http_403:SignatureDoesNotMatch"),
+    "Cloud storage rejected the upload (HTTP 403 · SignatureDoesNotMatch).",
+  );
+  assert.equal(
+    photoSyncErrorMessage("mobile_photo_verification_failed"),
+    "Cloud storage received the photo, but verification could not be completed.",
+  );
+  assert.match(
+    photoSyncErrorMessage("mobile_photo_upload_transport_failed:Network request failed"),
+    /iPhone could not transfer/,
+  );
 });

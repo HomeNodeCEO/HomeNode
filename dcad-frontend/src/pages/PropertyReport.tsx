@@ -1398,10 +1398,10 @@ function AddressHero({
 
   return (
     <div
-      className="card overflow-hidden rounded-2xl bg-white shadow-lg"
+      className="hn-custom-report card overflow-hidden rounded-2xl border"
       style={{ backgroundColor: "#ffffff" }}
     >
-      <section className="border-b border-slate-200 bg-slate-50/80 px-4 py-3 sm:px-6">
+      <section className="hn-custom-report-toolbar border-b px-4 py-3 sm:px-6">
         <div className="flex min-h-[52px] flex-col gap-2 sm:flex-row sm:items-end sm:justify-end">
           {activeAssignmentFile ? (
             <span className={`mb-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
@@ -1415,7 +1415,7 @@ function AddressHero({
           ) : null}
           <button
             type="button"
-            className="btn btn-outline btn-sm normal-case rounded-lg border-slate-300 bg-white shadow-sm"
+            className="hn-action-gold btn btn-outline btn-sm normal-case rounded-lg shadow-sm"
             onClick={() => setAssignmentChooserOpen(true)}
             disabled={assignmentFilesLoading || savingAssignmentFile}
           >
@@ -1423,7 +1423,7 @@ function AddressHero({
           </button>
         </div>
         <p
-          className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-slate-600"
+          className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-violet-100"
           aria-live="polite"
         >
           {workfileStatusMessage || "\u00a0"}
@@ -1459,14 +1459,14 @@ function AddressHero({
                     key={file.id}
                     className={`flex flex-col gap-2 rounded-lg border px-3 py-2 sm:flex-row sm:items-center sm:justify-between ${
                       isActiveFile
-                        ? "border-emerald-200 bg-emerald-50"
+                        ? "hn-custom-selection"
                         : "border-slate-200 bg-white"
                     }`}
                   >
                     <div className="min-w-0 text-xs text-slate-600">
                       <span className="font-semibold text-slate-900">{file.file_number}</span>
                       {isActiveFile ? (
-                        <span className="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">
+                        <span className="hn-custom-verified ml-2 rounded-full px-2 py-0.5 font-semibold">
                           Current
                         </span>
                       ) : null}
@@ -1556,7 +1556,7 @@ function AddressHero({
       </section>
 
       {accountId ? (
-        <PreviousAppraisalFiles accountId={accountId} getEditorKey={editorKeyForSave} />
+        <PreviousAppraisalFiles accountId={accountId} getEditorKey={editorKeyForSave} customTheme />
       ) : null}
 
       <figure className="relative h-64 bg-slate-100 sm:h-72">
@@ -1673,7 +1673,7 @@ function AddressHero({
             {assignmentTypeLabels.length ? (
               <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                 {assignmentTypeLabels.map((label) => (
-                  <span key={label} className="rounded-full bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-900">
+                  <span key={label} className="hn-custom-verified rounded-full px-2 py-1 text-xs font-semibold">
                     {label}
                   </span>
                 ))}
@@ -2549,7 +2549,7 @@ function AddressHero({
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-sm font-semibold text-slate-800">Land Details</h3>
                     {detail?.report_manual_values?.["report.land_details"] ? (
-                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800">
+                      <span className="hn-custom-verified rounded-full px-2 py-0.5 text-[11px] font-semibold">
                         Manually verified
                       </span>
                     ) : null}
@@ -2561,7 +2561,7 @@ function AddressHero({
                 <button
                   type="button"
                   onClick={() => editSection("report.land_details")}
-                  className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+                  className="hn-action-secondary btn btn-sm normal-case"
                 >
                   Edit Land Details
                 </button>
@@ -2620,7 +2620,7 @@ function AddressHero({
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-slate-800">Highest and Best Use</h3>
                       {assignmentDraft.highest_best_use_source ? (
-                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800">
+                        <span className="hn-custom-verified rounded-full px-2 py-0.5 text-[11px] font-semibold">
                           Automated screening
                         </span>
                       ) : null}
@@ -2789,14 +2789,14 @@ function AddressHero({
                 <button
                   type="button"
                   onClick={() => editSection("report.appraisal_values")}
-                  className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+                  className="hn-action-secondary btn btn-sm normal-case"
                 >
                   Edit Values
                 </button>
                 <button
                   type="button"
                   onClick={() => editSection("report.exemptions")}
-                  className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+                  className="hn-action-secondary btn btn-sm normal-case"
                 >
                   Edit Taxes &amp; Exemptions
                 </button>
@@ -2873,7 +2873,7 @@ function AddressHero({
             }
             aria-label="Sales Comparison Approach"
             aria-disabled={!accountId}
-            className={`btn normal-case rounded-md px-4 py-2 ${
+            className={`hn-custom-approach-link btn normal-case rounded-md px-4 py-2 ${
               accountId
                 ? "border-emerald-600 bg-emerald-600 text-white hover:border-emerald-700 hover:bg-emerald-700"
                 : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
@@ -2893,7 +2893,7 @@ function AddressHero({
             }
             aria-label="Cost Approach"
             aria-disabled={!accountId}
-            className={`btn normal-case rounded-md px-4 py-2 ${
+            className={`hn-custom-approach-link btn normal-case rounded-md px-4 py-2 ${
               accountId
                 ? "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
                 : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
@@ -2913,7 +2913,7 @@ function AddressHero({
             }
             aria-label="Income Approach"
             aria-disabled={!accountId}
-            className={`btn normal-case rounded-md px-4 py-2 ${
+            className={`hn-custom-approach-link btn normal-case rounded-md px-4 py-2 ${
               accountId
                 ? "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
                 : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
@@ -2933,7 +2933,7 @@ function AddressHero({
             }
             aria-label="Final Reconciliation"
             aria-disabled={!accountId}
-            className={`btn normal-case rounded-md px-4 py-2 ${
+            className={`hn-custom-approach-link btn normal-case rounded-md px-4 py-2 ${
               accountId
                 ? "border-violet-700 bg-violet-700 text-white hover:border-violet-800 hover:bg-violet-800"
                 : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
@@ -2944,7 +2944,7 @@ function AddressHero({
           <a
             href={protestUrl}
             aria-label="Property Tax Protest"
-            className="btn normal-case rounded-md border-blue-600 bg-blue-600 px-4 py-2 text-white hover:border-blue-700 hover:bg-blue-700"
+            className="hn-custom-approach-link btn normal-case rounded-md px-4 py-2"
           >
             Property Tax Protest
           </a>
@@ -3050,9 +3050,12 @@ export default function PropertyReport() {
   return (
     <div className="hn-app-shell">
       <div className="hn-app-header navbar shadow-sm">
-        <div className="container mx-auto px-4">
+        <div className="mx-auto w-full max-w-[1600px] px-4">
           <div className="flex w-full items-center justify-between">
-            <span className="text-xl font-semibold">Property Report</span>
+            <div>
+              <span className="hn-eyebrow block text-[10px]">HomeNode</span>
+              <span className="block text-xl font-semibold">Custom Appraisal Workspace</span>
+            </div>
             <a href="/" className="hn-action-secondary btn btn-ghost btn-sm normal-case">
               ← Close Report
             </a>
@@ -3061,7 +3064,7 @@ export default function PropertyReport() {
       </div>
 
       <main
-        className="container mx-auto space-y-4 px-4 py-4"
+        className="mx-auto w-full max-w-[1600px] space-y-4 px-4 py-4"
         data-report-subject-loaded={detail ? "true" : "false"}
       >
         <AddressHero

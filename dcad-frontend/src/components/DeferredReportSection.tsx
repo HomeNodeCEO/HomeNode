@@ -62,7 +62,7 @@ export default function DeferredReportSection({
       {ready ? children : (
         <div
           ref={placeholderRef}
-          className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-5"
+          className="hn-custom-section flex items-center justify-between gap-4 rounded-2xl border p-5"
           style={{ minHeight: `${minimumHeight}px` }}
           aria-label={`${label} is ready to load`}
         >
@@ -76,7 +76,7 @@ export default function DeferredReportSection({
           </div>
           <button
             type="button"
-            className="btn btn-sm normal-case rounded-lg border-slate-950 bg-slate-950 text-white hover:border-black hover:bg-black"
+            className="hn-action-primary btn btn-sm normal-case rounded-lg"
             onClick={reveal}
           >
             Load Section

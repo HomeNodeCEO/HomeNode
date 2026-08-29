@@ -201,9 +201,11 @@ function ReplicationForm({
 export default function PreviousAppraisalFiles({
   accountId,
   getEditorKey = defaultEditorKey,
+  customTheme = false,
 }: {
   accountId: string;
   getEditorKey?: () => string;
+  customTheme?: boolean;
 }) {
   const [files, setFiles] = useState<PreviousAppraisalFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -261,8 +263,8 @@ export default function PreviousAppraisalFiles({
   }
 
   return (
-    <details className="group mt-2 overflow-hidden border-y border-slate-200 bg-white shadow-sm">
-      <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 marker:content-none hover:bg-slate-50 sm:px-6">
+    <details className={`group mt-2 overflow-hidden ${customTheme ? 'hn-custom-history hn-custom-section rounded-xl border' : 'border-y border-slate-200 bg-white shadow-sm'}`}>
+      <summary className={`flex min-h-10 cursor-pointer list-none items-center justify-between gap-3 px-4 py-2 marker:content-none sm:px-6 ${customTheme ? 'hn-custom-section-header' : 'hover:bg-slate-50'}`}>
         <div className="flex min-w-0 items-center gap-2">
           <svg
             aria-hidden="true"
@@ -272,7 +274,7 @@ export default function PreviousAppraisalFiles({
           >
             <path d="m7 5 5 5-5 5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.75" />
           </svg>
-          <h2 className="truncate text-sm font-semibold text-slate-950">Previous Appraisal Files</h2>
+          <h2 className={`truncate text-sm font-semibold ${customTheme ? 'hn-custom-section-title' : 'text-slate-950'}`}>Previous Appraisal Files</h2>
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
             {loading ? "…" : orderedFiles.length}
           </span>

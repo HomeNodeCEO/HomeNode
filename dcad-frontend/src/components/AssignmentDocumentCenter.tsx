@@ -250,21 +250,24 @@ export default function AssignmentDocumentCenter({
   };
 
   return (
-    <section className={`rounded-2xl border border-slate-200 bg-white shadow-sm ${className}`}>
+    <section
+      className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
+      data-section-expanded={open ? 'true' : 'false'}
+    >
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+        className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 px-5 py-4 text-left`}
         onClick={() => setOpen((value) => !value)}
       >
         <span>
-          <span className="block text-sm font-semibold uppercase tracking-[0.12em] text-slate-900">
+          <span className="hn-custom-section-title block text-sm font-semibold uppercase tracking-[0.12em]">
             Document Evidence Center
           </span>
           <span className="mt-1 block text-xs text-slate-500">
             Zoning records, contracts, engagement letters, MLS sheets, maps, and other assignment PDFs
           </span>
         </span>
-        <span className="btn btn-primary btn-sm normal-case rounded-lg">
+        <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>
           {open ? 'Close Documents' : `Review Documents${documents.length ? ` (${documents.length})` : ''}`}
         </span>
       </button>
@@ -298,7 +301,7 @@ export default function AssignmentDocumentCenter({
                 <button type="button" className="text-xs font-semibold text-blue-700 hover:underline" onClick={() => void loadDocuments()} disabled={loading}>Refresh</button>
               </div>
               {documents.length ? documents.map((document) => (
-                <button key={document.id} type="button" onClick={() => void loadDocument(document.id)} className={`w-full rounded-lg border p-3 text-left transition ${selectedDocument?.id === document.id ? 'border-blue-500 bg-blue-50' : 'border-slate-200 bg-white hover:border-slate-400'}`}>
+                <button key={document.id} type="button" onClick={() => void loadDocument(document.id)} className={`w-full rounded-lg border p-3 text-left transition ${selectedDocument?.id === document.id ? 'hn-custom-selection' : 'border-slate-200 bg-white hover:border-violet-400 hover:bg-violet-50'}`}>
                   <span className="block truncate text-sm font-semibold text-slate-900">{document.title}</span>
                   <span className="mt-1 block text-[11px] text-slate-500">{fileSize(document.file_size_bytes)} · {document.page_count || 'Pending'} page(s)</span>
                   <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusStyle(document.processing_status)}`}>

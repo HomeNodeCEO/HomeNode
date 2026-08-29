@@ -170,16 +170,19 @@ export default function AssignmentPhotoCenter({
   };
 
   return (
-    <section className={`rounded-2xl border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
-      <button type="button" className="flex w-full items-center justify-between gap-4 text-left" onClick={() => setOpen((value) => !value)}>
+    <section
+      className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
+      data-section-expanded={open ? 'true' : 'false'}
+    >
+      <button type="button" className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 px-5 py-4 text-left`} onClick={() => setOpen((value) => !value)}>
         <span>
-          <span className="block text-sm font-semibold uppercase tracking-[0.16em] text-slate-900">Appraisal Photo Evidence</span>
+          <span className="hn-custom-section-title block text-sm font-semibold uppercase tracking-[0.16em]">Appraisal Photo Evidence</span>
           <span className="mt-1 block text-xs text-slate-500">Shared mobile and desktop photos saved to this appraisal file</span>
         </span>
-        <span className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white">{open ? 'Collapse' : 'Manage Photos'}</span>
+        <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>{open ? 'Collapse' : 'Manage Photos'}</span>
       </button>
       {open ? (
-        <div className="mt-4 border-t border-slate-200 pt-4">
+        <div className="border-t border-slate-200 p-5">
           {!assignmentFileId ? (
             <p className="text-sm text-amber-700">Create or open an appraisal file before adding photos.</p>
           ) : (

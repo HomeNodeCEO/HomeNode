@@ -137,23 +137,12 @@ export const OFFICIAL_ZONING_SOURCES = Object.freeze([
   }),
   officialSource({
     city: "Duncanville",
-    url: "https://services3.arcgis.com/mjqW4t1A3YDrjss0/arcgis/rest/services/Zoning_Web_Map_WFL1/FeatureServer/0/query",
+    url: "https://services3.arcgis.com/mjqW4t1A3YDrjss0/arcgis/rest/services/Zoning_view/FeatureServer/0/query",
     layer: 0,
-    queryUrls: [
-      {
-        url: "https://services3.arcgis.com/mjqW4t1A3YDrjss0/arcgis/rest/services/Zoning_Web_Map_WFL1/FeatureServer/0/query",
-        recordPrefix: "multi_address",
-      },
-      {
-        url: "https://services3.arcgis.com/mjqW4t1A3YDrjss0/arcgis/rest/services/Zoning_Web_Map_WFL1/FeatureServer/1/query",
-        recordPrefix: "single_parcel",
-      },
-    ],
-    outFields: "FID,GIS_ID,NEW_ZONING,N_ZONING_L,NEW_ORD_NU,OLD_ZONING,PROPERTY_N,CITY_JURIS",
-    zoningCodeFields: ["NEW_ZONING", "OLD_ZONING"],
-    descriptionFields: ["N_ZONING_L", "PROPERTY_N"],
-    sourceIdFields: ["GIS_ID", "FID"],
-    referenceUrl: "https://www.duncanvilletx.gov/",
+    outFields: "FID,NEW_ZONING",
+    zoningCodeFields: ["NEW_ZONING"],
+    sourceIdFields: ["FID"],
+    referenceUrl: "https://duncanville.maps.arcgis.com/apps/instant/basic/index.html?appid=64164a8429db49f2864d9361f30e4720",
   }),
   officialSource({
     city: "Farmers Branch",

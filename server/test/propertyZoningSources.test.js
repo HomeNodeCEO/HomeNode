@@ -88,6 +88,23 @@ test("multi-layer municipal records retain a stable layer prefix", () => {
   assert.equal(record.zoning_code, "SF-7");
 });
 
+test("Duncanville uses the current official interactive map and query layer", () => {
+  const source = OFFICIAL_ZONING_SOURCES.find((entry) => entry.jurisdiction === "Duncanville");
+  const jurisdiction = DALLAS_COUNTY_ZONING_JURISDICTIONS.find(
+    (entry) => entry.city === "Duncanville",
+  );
+  assert.ok(source);
+  assert.equal(
+    source.url,
+    "https://services3.arcgis.com/mjqW4t1A3YDrjss0/arcgis/rest/services/Zoning_view/FeatureServer/0/query",
+  );
+  assert.equal(source.outFields, "FID,NEW_ZONING");
+  assert.equal(
+    jurisdiction.referenceUrl,
+    "https://duncanville.maps.arcgis.com/apps/instant/basic/index.html?appid=64164a8429db49f2864d9361f30e4720",
+  );
+});
+
 test("zoning synchronization can select a bounded municipal batch", () => {
   assert.deepEqual(
     selectOfficialZoningSources("Balch Springs,Carrollton").map((source) => source.jurisdiction),

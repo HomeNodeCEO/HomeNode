@@ -39,7 +39,7 @@ test("official PDF and automatic zoning hydrate an unverified draft", () => {
   assert.equal(draft.reviewer, "Keep reviewer");
 });
 
-test("review-required zoning prefills the best suggestion and official contact phones", () => {
+test("review-required zoning prefills the best suggestion without duplicating the contact card", () => {
   const draft = zoningDraftFromEvidence({
     documents: [],
     automatic_result: null,
@@ -58,6 +58,5 @@ test("review-required zoning prefills the best suggestion and official contact p
   }, EMPTY_ZONING_EVIDENCE_DRAFT);
   assert.equal(draft.zoningCode, "PD");
   assert.equal(draft.zoningDescription, "Planned Development District");
-  assert.match(draft.confirmationReference, /Planning & Zoning: 972-707-3878/);
-  assert.match(draft.confirmationReference, /Building Inspections: 972-780-5000/);
+  assert.equal(draft.confirmationReference, "");
 });

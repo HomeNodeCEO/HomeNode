@@ -313,8 +313,16 @@ def parse_main_improvement(soup: BeautifulSoup) -> Dict[str, Any]:
 
     total_liv = to_sqft(get_any(kv, "total living area", "total liv area", "living area total", "total_living_area"))
 
+    # The current DCAD residential page wraps the Building Class label in a
+    # link.  Prefer the generic table value, but retain the stable field-id
+    # fallback so a harmless label/layout change cannot drop this field.
+    building_class = g("building class") or _txt(
+        soup.select_one("#MainImpRes1_lblBuildClass"),
+        "",
+    )
+
     out = {
-        "building_class": g("building class"),
+        "building_class": building_class,
 
         "year_built": to_num(get_any(kv, "year built", "yr built", "built")),
         "effective_year_built": to_num(get_any(kv, "effective year built", "eff year built", "eff yr")),
@@ -980,6 +988,15 @@ def parse_owner(soup: BeautifulSoup) -> Dict[str, Any]:
         if is_full_interest and grid_looks_truncated:
             multi_owner[0]["owner_name"] = owner_name
 
+    if not owner_name and multi_owner:
+        reported_names = [
+            clean_text(str(party.get("owner_name") or ""))
+            for party in multi_owner
+            if clean_text(str(party.get("owner_name") or "")) not in {"", "N/A"}
+        ]
+        if reported_names:
+            owner_name = " / ".join(reported_names)
+
     out = {"owner_name": owner_name or "N/A", "multi_owner": multi_owner}
     # Always include mailing_address key for downstream consistency (may be None)
     out["mailing_address"] = mailing_address if mailing_address else None
@@ -1136,10 +1153,19 @@ def parse_detail_html(
     land_detail = parse_land_detail(soup)
 
     tax_year = None
-    the_hdr = soup.find(string=lambda x: x and "certified values" in str(x).lower())
-    if the_hdr:
-        m = re.search(r"(20\d{2})", str(the_hdr))
-        tax_year = int(m.group(1)) if m else None
+    # Target the value-summary year before using a broad text search. The
+    # navigation bar also contains a yearless "Certified Value Summaries"
+    # link and previously caused a false match that left tax_year blank.
+    year_candidates = [soup.select_one("#ValueSummary1_lblApprYr")]
+    year_candidates.extend(
+        soup.find_all(string=lambda x: x and "certified values" in str(x).lower())
+    )
+    for candidate in year_candidates:
+        candidate_text = candidate.get_text(" ", strip=True) if hasattr(candidate, "get_text") else str(candidate or "")
+        m = re.search(r"(20\d{2})", candidate_text)
+        if m:
+            tax_year = int(m.group(1))
+            break
 
     history = {"history_url": "N/A","owner_history": [],"market_value": [],"taxable_value": [],"exemptions": []}
     if history_html:

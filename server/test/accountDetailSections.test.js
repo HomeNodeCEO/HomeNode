@@ -25,7 +25,7 @@ test("account detail sections launch independent indexed lookups concurrently", 
   };
 
   const loading = loadAccountDetailSections(pool, "26572500130160000");
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 9);
   assert.ok(calls.every((call) => call.params[0] === "26572500130160000"));
 
   const responses = [
@@ -41,6 +41,7 @@ test("account detail sections launch independent indexed lookups concurrently", 
     ],
     [{ number: 1, area_sqft: 9000 }],
     [{ number: 1, improvement_type: "Attached Garage" }],
+    [],
   ];
   pending.forEach((request, index) => request.resolve({ rows: responses[index] }));
 
@@ -58,6 +59,111 @@ test("account detail sections launch independent indexed lookups concurrently", 
   assert.equal(landCalls.length, 1);
   assert.match(landCalls[0].sql, /SELECT MAX\(latest\.tax_year\)/);
 });
+
+test("latest raw DCAD snapshot fills normalized CAD fields that are still blank", async () => {
+  const pool = {
+    query(sql) {
+      if (/FROM core\.primary_improvements/.test(sql)) {
+        return Promise.resolve({ rows: [{ living_area_sqft: 1812, building_class: null }] });
+      }
+      if (/FROM core\.owner_summary/.test(sql)) {
+        return Promise.resolve({ rows: [{
+          owner_name: null,
+          mailing_address: null,
+          tax_year: 2026,
+          owner_parties: [],
+        }] });
+      }
+      if (/FROM core\.legal_description_current/.test(sql)) {
+        return Promise.resolve({ rows: [{ legal_text: "LOT 19", deed_transfer_date: null }] });
+      }
+      if (/FROM core\.dcad_json_raw/.test(sql)) {
+        return Promise.resolve({ rows: [{
+          tax_year: 2026,
+          detail: {
+            primary_improvements: { living_area_sqft: 1700, building_class: null },
+            owner: {
+              owner_name: null,
+              mailing_address: "1402 AARON PL, DUNCANVILLE, TX 75137",
+              multi_owner: [{ owner_name: "AARON PLACE OWNER", ownership_pct: "100%" }],
+            },
+            legal_description: {
+              lines: ["LOT 19"],
+              deed_transfer_date: "2020-05-14",
+            },
+            land_detail: [{ number: 1, zoning: "PD, Planned Development District" }],
+          },
+          source_attributes: {
+            OWNERNME1: "AARON PLACE OWNER",
+            PSTLADDRESS: "1402 AARON PL",
+            PSTLCITY: "DUNCANVILLE",
+            PSTLSTATE: "TX",
+            PSTLZIP5: "75137",
+            PSTLZIP4: "4907",
+            STRCLASS: "14",
+          },
+        }] });
+      }
+      if (/FROM core\.land_detail/.test(sql)) {
+        return Promise.resolve({ rows: [{ number: 1, area_sqft: 9000, zoning: null }] });
+      }
+      return Promise.resolve({ rows: [] });
+    },
+  };
+
+  const result = await loadAccountDetailSections(pool, "221508800I0190000");
+  assert.equal(result.primaryImprovement.living_area_sqft, 1812);
+  assert.equal(result.primaryImprovement.building_class, "14");
+  assert.equal(result.owner.owner_name, "AARON PLACE OWNER");
+  assert.equal(result.owner.mailing_address, "1402 AARON PL, DUNCANVILLE, TX 75137");
+  assert.equal(result.owner.owner_parties[0].ownership_pct, "100%");
+  assert.equal(result.legalCurrent.legal_text, "LOT 19");
+  assert.equal(result.legalCurrent.deed_transfer_date, "2020-05-14");
+  assert.equal(result.landRows[0].area_sqft, 9000);
+  assert.equal(result.landRows[0].zoning, "PD, Planned Development District");
+});
+
+test("missing historical fields use the official DCAD parcel fallback", async () => {
+  const pool = {
+    query(sql) {
+      if (/FROM core\.primary_improvements/.test(sql)) {
+        return Promise.resolve({ rows: [{ building_class: null }] });
+      }
+      if (/FROM core\.owner_summary/.test(sql)) {
+        return Promise.resolve({ rows: [{ owner_name: null, owner_parties: [] }] });
+      }
+      if (/FROM core\.dcad_json_raw/.test(sql)) {
+        return Promise.resolve({ rows: [{ tax_year: 2026, detail: {}, source_attributes: {} }] });
+      }
+      return Promise.resolve({ rows: [] });
+    },
+  };
+  const fetchCalls = [];
+  const result = await loadAccountDetailSections(pool, "221508800I0190000", {
+    fetchImpl: async (_url, options) => {
+      fetchCalls.push(options);
+      return {
+        ok: true,
+        json: async () => ({ features: [{ attributes: {
+          STRCLASS: "14",
+          OWNERNME1: "LAM DUNG LY",
+          PSTLADDRESS: "1402 AARON PL",
+          PSTLCITY: "DUNCANVILLE",
+          PSTLSTATE: "TX",
+          PSTLZIP5: "75137",
+          PSTLZIP4: "4907",
+        } }] }),
+      };
+    },
+  });
+
+  assert.equal(fetchCalls.length, 1);
+  assert.match(String(fetchCalls[0].body), /221508800I0190000/);
+  assert.equal(result.primaryImprovement.building_class, "14");
+  assert.equal(result.owner.owner_name, "LAM DUNG LY");
+  assert.equal(result.owner.owner_parties[0].ownership_pct, null);
+  assert.equal(result.owner.mailing_address, "1402 AARON PL, DUNCANVILLE, TX 75137-4907");
+});
 test("optional land and secondary-improvement failures preserve the account response", async () => {
   const errors = [];
   const pool = {
@@ -72,6 +178,7 @@ test("optional land and secondary-improvement failures preserve the account resp
 
   const result = await loadAccountDetailSections(pool, "ACCOUNT", {
     logger: { error: (...args) => errors.push(args) },
+    fetchImpl: async () => { throw new Error("should not query for a non-DCAD id"); },
   });
 
   assert.deepEqual(result.landRows, []);

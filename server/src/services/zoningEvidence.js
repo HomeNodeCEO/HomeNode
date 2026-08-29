@@ -10,6 +10,7 @@ import {
   extractPdfEvidence,
   findZoningDescriptionInPages,
 } from "./documentIntelligence.js";
+import { refreshAccountLocations } from "./accountLocations.js";
 
 const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 45_000;
@@ -45,15 +46,22 @@ function firstSourceText(attributes, fields) {
   return null;
 }
 
+function validCoordinate(value, minimum, maximum) {
+  if (value == null || String(value).trim() === "") return false;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= minimum && parsed <= maximum;
+}
+
 export async function fetchOfficialZoningAtPoint(jurisdiction, {
   latitude,
   longitude,
   fetchImpl = fetch,
 } = {}) {
+  if (!validCoordinate(latitude, -90, 90) || !validCoordinate(longitude, -180, 180)) {
+    return null;
+  }
   const lat = Number(latitude);
   const lon = Number(longitude);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)
-      || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
   const source = OFFICIAL_ZONING_SOURCES.find(
     (entry) => entry.providerKey === jurisdiction?.providerKey,
   );
@@ -377,6 +385,8 @@ export async function syncOfficialZoningDocuments(pool, { logger = console } = {
 export async function getPropertyZoningEvidence(pool, {
   accountId,
   assignmentFileId = null,
+  fetchImpl = fetch,
+  refreshLocationsImpl = refreshAccountLocations,
 } = {}) {
   await ensureZoningEvidenceSchema(pool);
   const { rows: accountRows } = await pool.query(
@@ -408,6 +418,31 @@ export async function getPropertyZoningEvidence(pool, {
       documents: [],
       verification: null,
     };
+  }
+  let locationLookupError = null;
+  if (jurisdiction.automationStatus === "automatic" &&
+      (!validCoordinate(account.latitude, -90, 90) ||
+       !validCoordinate(account.longitude, -180, 180))) {
+    try {
+      await refreshLocationsImpl(pool, [account], {
+        fetchImpl,
+        batchSize: 1,
+        maximumAttempts: 1,
+      });
+      const { rows: refreshedLocationRows } = await pool.query(
+        `SELECT latitude, longitude
+         FROM core.account_locations
+         WHERE account_id = $1 AND status = 'matched'
+         LIMIT 1`,
+        [accountId],
+      );
+      if (refreshedLocationRows[0]) {
+        account.latitude = refreshedLocationRows[0].latitude;
+        account.longitude = refreshedLocationRows[0].longitude;
+      }
+    } catch (error) {
+      locationLookupError = cleanText(error?.message || error, 500);
+    }
   }
   const [
     { rows: documentRows },
@@ -449,10 +484,32 @@ export async function getPropertyZoningEvidence(pool, {
     ),
     pool.query(
       `SELECT zoning
-       FROM core.land_detail
-       WHERE account_id = $1
-         AND NULLIF(BTRIM(zoning), '') IS NOT NULL
-       ORDER BY tax_year DESC, line_number
+       FROM (
+         SELECT zoning, tax_year, line_number, 0 AS source_priority
+         FROM core.land_detail
+         WHERE account_id = $1
+           AND NULLIF(BTRIM(zoning), '') IS NOT NULL
+         UNION ALL
+         SELECT raw_land ->> 'zoning' AS zoning,
+                raw.tax_year,
+                CASE
+                  WHEN raw_land ->> 'number' ~ '^[0-9]+$'
+                    THEN (raw_land ->> 'number')::integer
+                  ELSE 1
+                END AS line_number,
+                1 AS source_priority
+         FROM core.dcad_json_raw raw
+         CROSS JOIN LATERAL jsonb_array_elements(
+           CASE
+             WHEN jsonb_typeof(raw.raw #> '{detail,land_detail}') = 'array'
+               THEN raw.raw #> '{detail,land_detail}'
+             ELSE '[]'::jsonb
+           END
+         ) raw_land
+         WHERE raw.account_id = $1
+           AND NULLIF(BTRIM(raw_land ->> 'zoning'), '') IS NOT NULL
+       ) zoning_evidence
+       ORDER BY source_priority, tax_year DESC, line_number
        LIMIT 1`,
       [accountId],
     ),
@@ -477,6 +534,7 @@ export async function getPropertyZoningEvidence(pool, {
       automaticResult = await fetchOfficialZoningAtPoint(jurisdiction, {
         latitude: account.latitude,
         longitude: account.longitude,
+        fetchImpl,
       });
     } catch (error) {
       liveLookupError = cleanText(error?.message || error, 500);
@@ -512,7 +570,7 @@ export async function getPropertyZoningEvidence(pool, {
     review_reason: !reviewRequired
       ? null
       : jurisdiction.automationStatus === "automatic"
-        ? liveLookupError
+        ? liveLookupError || locationLookupError
           ? "The official GIS lookup is temporarily unavailable and no cached zoning result is available. Verify the linked city map before relying on zoning."
           : "Stored coordinates are missing or the official GIS did not return a zoning polygon at them. Verify the linked city map before relying on zoning."
         : "The city does not expose a verified queryable zoning polygon. Confirm the map or contact the city before relying on the result.",

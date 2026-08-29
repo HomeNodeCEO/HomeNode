@@ -21,6 +21,8 @@ test("property zoning evidence only accepts the subject city's official GIS prov
             address: "1 TEST ST",
             city: "Dallas",
             county: "Dallas",
+            latitude: 32.8,
+            longitude: -96.8,
           }],
         };
       }
@@ -37,6 +39,7 @@ test("property zoning evidence only accepts the subject city's official GIS prov
 
   const result = await getPropertyZoningEvidence(pool, {
     accountId: "00000000000000000",
+    fetchImpl: async () => ({ ok: true, json: async () => ({ features: [] }) }),
   });
 
   assert.equal(result.jurisdiction.provider_key, "city_dallas_official");
@@ -115,6 +118,7 @@ test("review-required zoning retains the best CAD suggestion for appraiser revie
       if (/FROM gis\.zoning_source_documents/.test(sql)) return { rows: [] };
       if (/FROM app\.property_zoning_verifications/.test(sql)) return { rows: [] };
       if (/JOIN gis\.zoning_districts zoning/.test(sql)) return { rows: [] };
+      if (/FROM core\.account_locations/.test(sql)) return { rows: [] };
       if (/FROM core\.land_detail/.test(sql)) {
         return { rows: [{ zoning: "PD, Planned Development District" }] };
       }
@@ -124,6 +128,7 @@ test("review-required zoning retains the best CAD suggestion for appraiser revie
 
   const result = await getPropertyZoningEvidence(pool, {
     accountId: "221508800I0190000",
+    refreshLocationsImpl: async () => ({ matched: 0 }),
   });
   assert.equal(result.review_required, true);
   assert.equal(result.automatic_result, null);
@@ -131,4 +136,55 @@ test("review-required zoning retains the best CAD suggestion for appraiser revie
   assert.equal(result.suggested_result.zoning_description, "Planned Development District");
   assert.equal(result.jurisdiction.contact.planningPhone, "972-707-3878 / 972-707-3876");
   assert.equal(result.jurisdiction.contact.buildingPhone, "972-780-5000");
+});
+
+test("missing coordinates are repaired on demand before official zoning lookup", async () => {
+  let refreshed = false;
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS gis\.zoning_source_documents/.test(sql)) return { rows: [] };
+      if (/FROM core\.accounts account/.test(sql)) {
+        return { rows: [{
+          account_id: "221508800I0190000",
+          address: "1402 AARON PL",
+          city: "Duncanville",
+          county: "Dallas",
+          latitude: null,
+          longitude: null,
+        }] };
+      }
+      if (/FROM core\.account_locations\s+WHERE/.test(sql)) {
+        return refreshed
+          ? { rows: [{ latitude: 32.634289703627, longitude: -96.89040171769 }] }
+          : { rows: [] };
+      }
+      if (/FROM gis\.zoning_source_documents/.test(sql)) return { rows: [] };
+      if (/FROM app\.property_zoning_verifications/.test(sql)) return { rows: [] };
+      if (/JOIN gis\.zoning_districts zoning/.test(sql)) return { rows: [] };
+      if (/FROM core\.land_detail/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected_query:${sql.slice(0, 80)}`);
+    },
+  };
+
+  const result = await getPropertyZoningEvidence(pool, {
+    accountId: "221508800I0190000",
+    refreshLocationsImpl: async () => {
+      refreshed = true;
+      return { matched: 1 };
+    },
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { features: [{ attributes: {
+          FID: 7,
+          NEW_ZONING: "PD, Planned Development District",
+        } }] };
+      },
+    }),
+  });
+
+  assert.equal(refreshed, true);
+  assert.equal(result.review_required, false);
+  assert.equal(result.automatic_result.zoning_code, "PD");
+  assert.equal(result.automatic_result.zoning_description, "Planned Development District");
 });

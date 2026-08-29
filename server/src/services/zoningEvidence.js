@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   DALLAS_COUNTY_ZONING_JURISDICTIONS,
   OFFICIAL_ZONING_SOURCES,
+  officialZoningClassificationDescription,
 } from "./propertyZoningSources.js";
 import {
   extractPdfEvidence,
@@ -91,7 +92,8 @@ export async function fetchOfficialZoningAtPoint(jurisdiction, {
       || createHash("sha256").update(JSON.stringify(attributes)).digest("hex");
     return {
       zoning_code: zoningCode,
-      zoning_description: firstSourceText(attributes, source.descriptionFields),
+      zoning_description: firstSourceText(attributes, source.descriptionFields)
+        || officialZoningClassificationDescription(source, zoningCode),
       provider_key: source.providerKey,
       source_record_id: querySource.recordPrefix
         ? `${querySource.recordPrefix}:${rawSourceId}`
@@ -429,6 +431,18 @@ export async function getPropertyZoningEvidence(pool, {
     ),
   ]);
   let automaticResult = automaticRows[0] || null;
+  if (automaticResult && !automaticResult.zoning_description) {
+    const source = OFFICIAL_ZONING_SOURCES.find(
+      (entry) => entry.providerKey === automaticResult.provider_key,
+    );
+    automaticResult = {
+      ...automaticResult,
+      zoning_description: officialZoningClassificationDescription(
+        source,
+        automaticResult.zoning_code,
+      ),
+    };
+  }
   let liveLookupError = null;
   if (!automaticResult && jurisdiction.automationStatus === "automatic") {
     try {

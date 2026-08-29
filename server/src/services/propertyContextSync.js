@@ -6,6 +6,7 @@ import {
 } from "./neighborhoodLandUse.js";
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
 import {
+  officialZoningClassificationDescription,
   selectOfficialZoningSources,
 } from "./propertyZoningSources.js";
 
@@ -355,7 +356,8 @@ export function normalizeOfficialZoningFeature(feature, runId, source) {
     return null;
   }
   const zoningCode = firstText(attributes, source.zoningCodeFields);
-  const zoningDescription = firstText(attributes, source.descriptionFields);
+  const zoningDescription = firstText(attributes, source.descriptionFields)
+    || officialZoningClassificationDescription(source, zoningCode);
   const normalized = {
     provider_key: source.providerKey,
     source_record_id: sourceRecordId,

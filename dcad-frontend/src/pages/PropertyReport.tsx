@@ -1371,6 +1371,14 @@ function AddressHero({
     zoningEvidence?.automatic_result?.zoning_code ||
     landRows.map((row) => row.zoning).find((value) => hasValue(value)) ||
     "Not reported";
+  const primaryZoningDescription =
+    zoningEvidence?.verification?.zoning_description ||
+    zoningEvidence?.automatic_result?.zoning_description ||
+    null;
+  const primaryZoningDisplay = primaryZoningDescription &&
+      String(primaryZoningDescription).trim().toLowerCase() !== String(primaryZoning).trim().toLowerCase()
+    ? `${primaryZoning} — ${primaryZoningDescription}`
+    : primaryZoning;
   const selectedZoningDocument = zoningEvidence?.documents.find(
     (document) => String(document.id) === zoningDraft.sourceDocumentId,
   ) || zoningEvidence?.documents[0] || null;
@@ -1836,7 +1844,7 @@ function AddressHero({
               <SummaryField label="County" value={county} />
               <SummaryField label="Subdivision" value={subdivision} />
               <div className="hidden lg:block" aria-hidden="true" />
-              <SummaryField label="Zoning" value={primaryZoning} />
+              <SummaryField label="Zoning Classification" value={primaryZoningDisplay} />
               <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
               <SummaryField
                 label={ownerParties.length > 1 ? "Owner Names" : "Owner Name"}

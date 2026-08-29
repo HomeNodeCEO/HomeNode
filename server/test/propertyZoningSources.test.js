@@ -103,6 +103,16 @@ test("Duncanville uses the current official interactive map and query layer", ()
     jurisdiction.referenceUrl,
     "https://duncanville.maps.arcgis.com/apps/instant/basic/index.html?appid=64164a8429db49f2864d9361f30e4720",
   );
+  const record = normalizeOfficialZoningFeature({
+    type: "Feature",
+    properties: { FID: 42, NEW_ZONING: "SF-7" },
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[-96.9, 32.6], [-96.8, 32.6], [-96.8, 32.7], [-96.9, 32.6]]],
+    },
+  }, "ffffffff-ffff-4fff-8fff-ffffffffffff", source);
+  assert.equal(record.zoning_description, "Single-Family Residential District (SF-7)");
+  assert.equal(record.generalized_use, "residential");
 });
 
 test("zoning synchronization can select a bounded municipal batch", () => {

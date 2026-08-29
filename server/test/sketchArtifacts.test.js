@@ -21,6 +21,7 @@ function fixture() {
         level_label: "Level 1",
         classification: "above_grade_finished",
         position: 1,
+        dimension_labels: [{ segment_index: 0, offset: { x: 0, y: -3 } }],
         vertices: [
           { x: 0, y: 0 },
           { x: 40, y: 0 },
@@ -54,6 +55,7 @@ test("sketch SVG is deterministic, escaped, and dimensioned", () => {
   assert.match(first, /100 Main &amp; Oak/);
   assert.match(first, /Living &amp; Dining/);
   assert.match(first, /40\.0 ft/);
+  assert.match(first, /<line x1=/);
   assert.match(first, /1,200 sf/);
   assert.doesNotMatch(first, /<script/i);
 });

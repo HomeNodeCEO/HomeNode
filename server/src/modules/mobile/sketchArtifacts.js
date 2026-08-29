@@ -93,6 +93,37 @@ function areaSegments(area) {
   });
 }
 
+function dimensionPlacement(area, segment, segmentIndex, transform) {
+  const from = transform.point(segment.from);
+  const to = transform.point(segment.to);
+  const midpoint = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+  const saved = area.dimension_labels?.find((label) => label.segment_index === segmentIndex);
+  if (saved) {
+    return {
+      midpoint,
+      label: transform.point({
+        x: ((Number(segment.from.x) + Number(segment.to.x)) / 2) + Number(saved.offset.x),
+        y: ((Number(segment.from.y) + Number(segment.to.y)) / 2) + Number(saved.offset.y),
+      }),
+    };
+  }
+  const center = transform.point(area.calculation?.centroid || {
+    x: area.vertices.reduce((total, point) => total + Number(point.x), 0) / area.vertices.length,
+    y: area.vertices.reduce((total, point) => total + Number(point.y), 0) / area.vertices.length,
+  });
+  const screenLength = Math.max(0.001, Math.hypot(to.x - from.x, to.y - from.y));
+  const firstNormal = { x: -(to.y - from.y) / screenLength, y: (to.x - from.x) / screenLength };
+  const secondNormal = { x: -firstNormal.x, y: -firstNormal.y };
+  const away = { x: midpoint.x - center.x, y: midpoint.y - center.y };
+  const outward = ((away.x * firstNormal.x) + (away.y * firstNormal.y))
+    >= ((away.x * secondNormal.x) + (away.y * secondNormal.y)) ? firstNormal : secondNormal;
+  const distance = screenLength < 48 ? 25 + ((segmentIndex % 2) * 8) : 18;
+  return {
+    midpoint,
+    label: { x: midpoint.x + (outward.x * distance), y: midpoint.y + (outward.y * distance) },
+  };
+}
+
 function metadataFor(sketch, options) {
   return {
     fileNumber: ascii(options.fileNumber || sketch?.file_number || "Unassigned"),
@@ -110,13 +141,13 @@ function svgArea(area, rooms, index, metadata) {
     .map((point) => point.x.toFixed(2) + "," + point.y.toFixed(2))
     .join(" ");
   const style = styleFor(area.classification);
-  const dimensions = areaSegments(area).map((segment) => {
-    const from = transform.point(segment.from);
-    const to = transform.point(segment.to);
-    const x = (from.x + to.x) / 2;
-    const y = (from.y + to.y) / 2;
+  const dimensions = areaSegments(area).map((segment, segmentIndex) => {
+    const placement = dimensionPlacement(area, segment, segmentIndex, transform);
+    const x = placement.label.x;
+    const y = placement.label.y;
     return [
       "<g>",
+      '<line x1="' + placement.midpoint.x.toFixed(2) + '" y1="' + placement.midpoint.y.toFixed(2) + '" x2="' + x.toFixed(2) + '" y2="' + y.toFixed(2) + '" stroke="#64748b" stroke-width="1"/>',
       '<rect x="' + (x - 20).toFixed(2) + '" y="' + (y - 9).toFixed(2) + '" width="40" height="18" rx="4" fill="#ffffff" fill-opacity="0.9"/>',
       '<text x="' + x.toFixed(2) + '" y="' + (y + 4).toFixed(2) + '" text-anchor="middle" class="dimension">' + xml(Number(segment.length_feet).toFixed(1)) + " ft</text>",
       "</g>",
@@ -200,11 +231,11 @@ function drawPdfArea(doc, area, rooms, index, count, metadata, document) {
   for (const point of points.slice(1)) doc.lineTo(point.x, point.y);
   doc.fillAndStroke(style.fill, style.stroke).restore();
 
-  for (const segment of areaSegments(area)) {
-    const from = transform.point(segment.from);
-    const to = transform.point(segment.to);
-    const x = (from.x + to.x) / 2;
-    const y = (from.y + to.y) / 2;
+  for (const [segmentIndex, segment] of areaSegments(area).entries()) {
+    const placement = dimensionPlacement(area, segment, segmentIndex, transform);
+    const x = placement.label.x;
+    const y = placement.label.y;
+    doc.moveTo(placement.midpoint.x, placement.midpoint.y).lineTo(x, y).strokeColor("#64748b").lineWidth(0.6).stroke();
     doc.roundedRect(x - 17, y - 6, 34, 12, 3).fill("#ffffff");
     doc.font("Helvetica-Bold").fontSize(6.5).fillColor("#0f172a")
       .text(Number(segment.length_feet).toFixed(1) + " ft", x - 18, y - 2.6, { width: 36, align: "center", lineBreak: false });

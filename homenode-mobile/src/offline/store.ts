@@ -308,7 +308,10 @@ async function openInitializedDatabase(databaseName: string) {
   const database = await SQLite.openDatabaseAsync(databaseName, { useNewConnection: true });
   try {
     await database.execAsync(`PRAGMA key = '${password}'`);
-    await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
+    // Force SQLCipher to authenticate the file before any prepared statements or schema work.
+    await database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+    // WAL can retain an encrypted file lock while iOS suspends HomeNode behind Camera/Photos.
+    await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE; PRAGMA synchronous = NORMAL;");
     await database.execAsync(`
     CREATE TABLE IF NOT EXISTS mobile_users (
       user_id TEXT PRIMARY KEY NOT NULL,
@@ -499,6 +502,13 @@ async function initializeDatabase() {
     return await openInitializedDatabase(databaseName);
   } catch (reason) {
     if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
+    // A native connection can be poisoned after an iOS background transition. Retry the
+    // same encrypted file on a genuinely new handle before creating a recovery database.
+    try {
+      return await openInitializedDatabase(databaseName);
+    } catch (retryReason) {
+      if (!isUnreadableSqliteDatabaseError(retryReason)) throw retryReason;
+    }
     const replacementName = recoveredDatabaseName();
     const replacement = await openInitializedDatabase(replacementName);
     try {
@@ -529,6 +539,7 @@ export async function clearActiveOfflineUser() {
 
 export class OfflineStore {
   private connectionRepair: Promise<void> | null = null;
+  private closedForExternalActivity = false;
 
   private constructor(private database: SQLite.SQLiteDatabase) {}
 
@@ -536,13 +547,24 @@ export class OfflineStore {
     return new OfflineStore(await openDatabase());
   }
 
+  async prepareForExternalActivity() {
+    if (this.connectionRepair) await this.connectionRepair;
+    if (this.closedForExternalActivity) return;
+    this.closedForExternalActivity = true;
+    const previous = this.database;
+    databasePromise = null;
+    await previous.closeAsync().catch(() => undefined);
+  }
+
   async ensureReady() {
     if (this.connectionRepair) return this.connectionRepair;
-    try {
-      await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
-      return;
-    } catch (reason) {
-      if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
+    if (!this.closedForExternalActivity) {
+      try {
+        await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+        return;
+      } catch (reason) {
+        if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
+      }
     }
     if (this.connectionRepair) return this.connectionRepair;
     this.connectionRepair = (async () => {
@@ -550,6 +572,7 @@ export class OfflineStore {
       databasePromise = null;
       await previous.closeAsync().catch(() => undefined);
       this.database = await openDatabase();
+      this.closedForExternalActivity = false;
     })().finally(() => {
       this.connectionRepair = null;
     });

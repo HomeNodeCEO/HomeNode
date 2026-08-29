@@ -222,20 +222,24 @@ export function PhotoCapturePanel({
 
   const takePhoto = async () => {
     try {
+      await store.prepareForExternalActivity();
       const assets = await captureCameraPhoto();
       await store.ensureReady();
       await prepare(assets, "camera");
     } catch (reason) {
+      await store.ensureReady().catch(() => undefined);
       setError(photoError(reason));
     }
   };
 
   const importPhotos = async () => {
     try {
+      await store.prepareForExternalActivity();
       const assets = await importLibraryPhotos(remaining);
       await store.ensureReady();
       await prepare(assets, "library");
     } catch (reason) {
+      await store.ensureReady().catch(() => undefined);
       setError(photoError(reason));
     }
   };

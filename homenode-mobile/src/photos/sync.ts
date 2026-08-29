@@ -5,6 +5,7 @@ import { AppState } from "react-native";
 
 import { ApiError, type MobileApi, type PresignedPhotoUpload } from "../api/client";
 import { OfflineStore, type LocalPhotoDraft, type PhotoQueueSummary } from "../offline/store";
+import { deletePreparedPhotoFiles } from "./capture";
 
 const EMPTY_SUMMARY: PhotoQueueSummary = { total: 0, pending: 0, synchronized: 0, failed: 0 };
 
@@ -42,13 +43,27 @@ async function uploadObject(photo: LocalPhotoDraft, upload: PresignedPhotoUpload
 async function synchronizePhoto(store: OfflineStore, api: MobileApi, ownerUserId: string, photo: LocalPhotoDraft) {
   await store.markPhotoDraftState(ownerUserId, photo.clientPhotoId, "registering", { incrementAttempts: true });
   if (photo.removeOperationId && photo.serverPhotoId && photo.serverRevision) {
-    const removed = await api.removePhoto(
-      photo.sessionId,
-      photo.serverPhotoId,
-      photo.removeOperationId,
-      photo.serverRevision,
-    );
+    let removed;
+    try {
+      removed = await api.removePhoto(
+        photo.sessionId,
+        photo.serverPhotoId,
+        photo.removeOperationId,
+        photo.serverRevision,
+      );
+    } catch (reason) {
+      if (!(reason instanceof ApiError) || reason.code !== "mobile_photo_not_found") throw reason;
+      await store.deletePhotoDraft(ownerUserId, photo.clientPhotoId);
+      await deletePreparedPhotoFiles(photo);
+      return;
+    }
+    if (removed.disposition === "placeholder_deleted") {
+      await store.deletePhotoDraft(ownerUserId, photo.clientPhotoId);
+      await deletePreparedPhotoFiles(photo);
+      return;
+    }
     await store.applyServerPhoto(ownerUserId, photo.clientPhotoId, removed.photo);
+    await deletePreparedPhotoFiles(photo);
     return;
   }
   if (photo.metadataOperationId && photo.serverPhotoId && photo.serverRevision) {
@@ -109,19 +124,19 @@ export function usePhotoSync(
 
   const syncNow = useCallback(async () => {
     if (!online) return;
-    if (!active.current) {
-      setSyncing(true);
-      active.current = synchronizeDuePhotos(store, api, ownerUserId)
-        .then(() => setError(null))
-        .catch((reason) => {
-          setError(reason instanceof Error ? reason.message : "mobile_photo_sync_failed");
-        })
-        .finally(() => {
-          active.current = null;
-          setSyncing(false);
-        });
+    while (active.current) await active.current;
+    setSyncing(true);
+    const task = synchronizeDuePhotos(store, api, ownerUserId);
+    active.current = task;
+    try {
+      await task;
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "mobile_photo_sync_failed");
+    } finally {
+      if (active.current === task) active.current = null;
+      setSyncing(false);
     }
-    await active.current;
     try {
       await refresh();
     } catch (reason) {
@@ -134,7 +149,6 @@ export function usePhotoSync(
   }); }, [refresh]);
   useEffect(() => { if (online) void syncNow(); }, [online, syncNow]);
   useEffect(() => {
-    const timer = setInterval(() => { if (online && AppState.currentState === "active") void syncNow(); }, 15_000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active" && online) {
         void store.ensureReady().then(syncNow).catch((reason) => {
@@ -143,7 +157,6 @@ export function usePhotoSync(
       }
     });
     return () => {
-      clearInterval(timer);
       subscription.remove();
     };
   }, [online, syncNow]);

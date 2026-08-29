@@ -1704,6 +1704,14 @@ export class OfflineStore {
     );
   }
 
+  async deletePhotoDraft(ownerUserId: string, clientPhotoId: string) {
+    await this.database.runAsync(
+      "DELETE FROM photo_drafts WHERE owner_user_id = ? AND client_photo_id = ?",
+      ownerUserId,
+      clientPhotoId,
+    );
+  }
+
   async queuePhotoCaption(ownerUserId: string, clientPhotoId: string, caption: string) {
     const row = await this.database.getFirstAsync<PhotoDraftRow>(
       "SELECT * FROM photo_drafts WHERE owner_user_id = ? AND client_photo_id = ?",

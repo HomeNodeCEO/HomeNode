@@ -21,6 +21,7 @@ import {
 } from "./capture";
 import {
   CUSTOM_PHOTO_CATEGORIES,
+  isPhotoVisible,
   photoSyncErrorMessage,
   remainingPhotoCapacity,
   UAD_PHOTO_CATEGORIES,
@@ -82,9 +83,32 @@ function PhotoCard({
   onRemove: () => void;
 }) {
   const display = photo.objects.find((object) => object.variant === "display");
+  const original = photo.objects.find((object) => object.variant === "original");
+  const preferredUri = display?.uri || original?.uri || null;
+  const [previewUri, setPreviewUri] = useState(preferredUri);
+  useEffect(() => setPreviewUri(preferredUri), [preferredUri]);
+
+  const handlePreviewFailure = () => {
+    if (original?.uri && previewUri !== original.uri) {
+      setPreviewUri(original.uri);
+      return;
+    }
+    setPreviewUri(null);
+  };
   return (
     <View style={styles.photoCard}>
-      {display ? <Image accessibilityLabel={photo.caption} source={{ uri: display.uri }} style={styles.preview} /> : null}
+      {previewUri ? (
+        <Image
+          accessibilityLabel={photo.caption}
+          onError={handlePreviewFailure}
+          source={{ uri: previewUri }}
+          style={styles.preview}
+        />
+      ) : (
+        <View style={[styles.preview, styles.previewUnavailable]}>
+          <Text style={styles.previewUnavailableText}>Photo saved · preview unavailable</Text>
+        </View>
+      )}
       <View style={styles.photoBody}>
         <View style={styles.rowBetween}>
           <Text style={styles.photoTitle}>{photo.roomLabel || photo.category}</Text>
@@ -136,11 +160,12 @@ export function PhotoCapturePanel({
   const [useSketchRoom, setUseSketchRoom] = useState(Boolean(selectedSketchRoom));
   const [captions, setCaptions] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const captureCategories = workflowType === "uad_3_6" ? UAD_PHOTO_CATEGORIES : CUSTOM_PHOTO_CATEGORIES;
   const photoSync = usePhotoSync(store, api, ownerUserId, sessionId, online);
   const { refresh: refreshPhotoSummary, syncNow: syncPhotosNow } = photoSync;
-  const activePhotos = photos.filter((photo) => photo.state !== "excluded");
+  const activePhotos = photos.filter((photo) => isPhotoVisible(photo.state, photo.removeOperationId));
   const remaining = remainingPhotoCapacity(activePhotos.length);
 
   const load = useCallback(async () => {
@@ -155,7 +180,7 @@ export function PhotoCapturePanel({
 
   useEffect(() => {
     void load().catch((reason) => setError(photoError(reason)));
-  }, [load, photoSync.summary.pending, photoSync.summary.synchronized]);
+  }, [load, photoSync.summary.failed, photoSync.summary.pending, photoSync.summary.synchronized]);
 
   useEffect(() => {
     if (selectedSketchRoom) setUseSketchRoom(true);
@@ -219,6 +244,8 @@ export function PhotoCapturePanel({
   }, []);
 
   const takePhoto = async () => {
+    if (busy) return;
+    setBusy(true);
     try {
       const assets = await captureCameraPhoto();
       await store.ensureReady();
@@ -226,10 +253,14 @@ export function PhotoCapturePanel({
     } catch (reason) {
       await store.ensureReady().catch(() => undefined);
       setError(photoError(reason));
+    } finally {
+      setBusy(false);
     }
   };
 
   const importPhotos = async () => {
+    if (busy) return;
+    setBusy(true);
     try {
       const assets = await importLibraryPhotos(remaining);
       await store.ensureReady();
@@ -237,6 +268,8 @@ export function PhotoCapturePanel({
     } catch (reason) {
       await store.ensureReady().catch(() => undefined);
       setError(photoError(reason));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -248,11 +281,16 @@ export function PhotoCapturePanel({
   };
 
   const remove = async (photo: LocalPhotoDraft) => {
-    const result = await store.queuePhotoRemoval(ownerUserId, photo.clientPhotoId);
-    if (result.localOnly) await deletePreparedPhotoFiles(result.photo);
-    await load();
-    if (online && !result.localOnly) await syncPhotosNow();
-    await load();
+    try {
+      setError(null);
+      const result = await store.queuePhotoRemoval(ownerUserId, photo.clientPhotoId);
+      if (result.localOnly) await deletePreparedPhotoFiles(result.photo);
+      await load();
+      if (online && !result.localOnly) await syncPhotosNow();
+      await load();
+    } catch (reason) {
+      setError(photoError(reason));
+    }
   };
 
   const cleanEmpty = async () => {
@@ -262,16 +300,17 @@ export function PhotoCapturePanel({
   };
 
   const retryFailed = async () => {
+    if (retrying || photoSync.syncing) return;
+    setRetrying(true);
     try {
       setError(null);
       await store.makeFailedPhotosImmediatelyRetryable(ownerUserId, sessionId);
       await syncPhotosNow();
-      // A scheduled sync may already have been finishing when the appraiser
-      // tapped Retry. A second idempotent pass guarantees the reset row is read.
-      await syncPhotosNow();
       await load();
     } catch (reason) {
       setError(photoError(reason));
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -305,13 +344,20 @@ export function PhotoCapturePanel({
         <Action title="Take photo" disabled={busy || remaining < 1} onPress={() => void takePhoto()} />
         <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || remaining < 1} onPress={() => void importPhotos()} />
       </View>
-      {busy || photoSync.syncing ? <View style={styles.progress}><ActivityIndicator color="#1d5a43" /><Text style={styles.help}>{busy ? "Preparing originals and display copies…" : "Uploading and verifying…"}</Text></View> : null}
+      {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color="#1d5a43" /><Text style={styles.help}>{busy ? "Preparing originals and display copies…" : "Uploading and verifying…"}</Text></View> : null}
       <Text style={styles.syncLine}>
         {online ? "Online" : "Offline"} · {photoSync.summary.pending} pending · {photoSync.summary.failed} failed · {photoSync.summary.synchronized} verified
       </Text>
       {error || photoSync.error ? <Text style={styles.error}>{error || photoError(new Error(photoSync.error || ""))}</Text> : null}
       {online && (photoSync.summary.pending || photoSync.summary.failed) ? (
-        <Action title="Retry photo sync" secondary disabled={photoSync.syncing} onPress={() => void retryFailed()} />
+        <Action
+          title={photoSync.summary.failed
+            ? `Retry ${photoSync.summary.failed} failed photo${photoSync.summary.failed === 1 ? "" : "s"}`
+            : `Sync ${photoSync.summary.pending} pending photo${photoSync.summary.pending === 1 ? "" : "s"}`}
+          secondary
+          disabled={photoSync.syncing || retrying}
+          onPress={() => void retryFailed()}
+        />
       ) : null}
 
       <View style={styles.list}>{activePhotos.map((photo) => (
@@ -355,6 +401,8 @@ const styles = StyleSheet.create({
   list: { gap: 12 },
   photoCard: { backgroundColor: "white", borderColor: "#dce4df", borderRadius: 13, borderWidth: 1, overflow: "hidden" },
   preview: { aspectRatio: 4 / 3, backgroundColor: "#edf0ee", width: "100%" },
+  previewUnavailable: { alignItems: "center", justifyContent: "center" },
+  previewUnavailableText: { color: "#6b7772", fontSize: 12, fontWeight: "700" },
   photoBody: { gap: 9, padding: 12 },
   photoTitle: { color: "#183f31", flex: 1, fontSize: 16, fontWeight: "800" },
   photoError: { backgroundColor: "#fff0ef", borderRadius: 8, color: "#9e2c25", fontSize: 12, lineHeight: 18, padding: 9 },

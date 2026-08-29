@@ -134,10 +134,17 @@ export function automaticPhotoLabel({ roomLabel, category }: { roomLabel?: strin
   return String(roomLabel || category).trim();
 }
 
+export function isPhotoVisible(state: LocalPhotoState, removeOperationId?: string | null) {
+  return state !== "excluded" && !removeOperationId;
+}
+
 export function photoSyncErrorMessage(value: string | null | undefined) {
   const code = String(value || "mobile_photo_sync_failed").trim();
   const uploadHttp = code.match(/^mobile_photo_upload_http_(\d+)(?::([A-Za-z0-9_.-]+))?$/);
   if (uploadHttp) {
+    if (uploadHttp[1] === "401") {
+      return "HomeNode's cloud-storage credential is not authorized. Service configuration must be repaired before retrying.";
+    }
     return `Cloud storage rejected the upload (HTTP ${uploadHttp[1]}${uploadHttp[2] ? ` · ${uploadHttp[2]}` : ""}).`;
   }
   if (code.startsWith("mobile_photo_upload_transport_failed:")) {
@@ -150,6 +157,7 @@ export function photoSyncErrorMessage(value: string | null | undefined) {
     mobile_photo_limit_conflict: "This inspection already has 100 active photos.",
     mobile_photo_storage_not_configured: "Cloud photo storage is not configured.",
     mobile_photo_registration_failed: "HomeNode could not register this photo for upload.",
+    mobile_photo_not_found: "The cloud photo placeholder is already gone. HomeNode will remove its local copy.",
     mobile_photo_upload_not_found: "Cloud storage did not receive the complete photo.",
     mobile_photo_verification_failed: "Cloud storage received the photo, but verification could not be completed.",
     invalid_mobile_photo_upload: "The uploaded photo did not match its expected size or file type.",

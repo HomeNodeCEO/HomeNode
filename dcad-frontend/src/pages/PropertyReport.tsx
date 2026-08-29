@@ -1404,11 +1404,7 @@ function AddressHero({
       <section className="hn-custom-report-toolbar border-b px-4 py-3 sm:px-6">
         <div className="flex min-h-[52px] flex-col gap-2 sm:flex-row sm:items-end sm:justify-end">
           {activeAssignmentFile ? (
-            <span className={`mb-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
-              activeAssignmentFile.workfile?.status === "signed"
-                ? "bg-amber-100 text-amber-900"
-                : "bg-emerald-100 text-emerald-800"
-            }`}>
+            <span className="hn-custom-file-status mb-1 rounded-full px-2 py-0.5 text-xs font-semibold">
               {activeAssignmentFile.workfile?.status === "signed" ? "Signed file" : "Active file"}{" "}
               {activeAssignmentFile.file_number}
             </span>
@@ -1495,7 +1491,7 @@ function AddressHero({
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <a
-                        className="btn btn-sm normal-case"
+                        className="hn-action-primary btn btn-sm normal-case"
                         href={`/AppraisalReport?propertyId=${encodeURIComponent(accountId || "")}&assignmentFileId=${encodeURIComponent(String(file.id))}`}
                         target="_blank"
                         rel="noreferrer"
@@ -1504,7 +1500,7 @@ function AddressHero({
                       </a>
                       <button
                         type="button"
-                        className="btn btn-sm normal-case"
+                        className="hn-action-primary btn btn-sm normal-case"
                         onClick={() => void downloadCustomAppraisalFile(file)}
                         disabled={Boolean(downloadInProgress)}
                       >
@@ -1525,7 +1521,7 @@ function AddressHero({
                       {isActiveFile && file.workfile?.status !== "signed" ? (
                         <button
                           type="button"
-                          className="btn btn-sm normal-case"
+                          className="hn-action-primary btn btn-sm normal-case"
                           onClick={() => void recordLenderRevisionRequest()}
                           disabled={savingAssignmentFile}
                         >
@@ -1658,7 +1654,7 @@ function AddressHero({
             <button
               type="button"
               onClick={() => void saveAssignmentFromSection()}
-              className="btn btn-primary btn-xs mx-auto mt-2 normal-case rounded-lg"
+              className="hn-action-primary btn btn-primary btn-xs mx-auto mt-2 normal-case rounded-lg"
               disabled={assignmentSaveDisabled}
             >
               {savingAssignmentFile ? "Saving..." : "Save Prepared For"}
@@ -1947,7 +1943,7 @@ function AddressHero({
                 </div>
                 <button
                   type="button"
-                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                  className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                   onClick={() => zoningEvidenceOpen
                     ? setZoningEvidenceOpen(false)
                     : void loadZoningEvidence({ open: true })}
@@ -2013,7 +2009,7 @@ function AddressHero({
                             href={zoningEvidence.jurisdiction.reference_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="btn btn-primary btn-sm mt-4 normal-case rounded-lg"
+                            className="hn-action-primary btn btn-primary btn-sm mt-4 normal-case rounded-lg"
                           >
                             Open Official Zoning Resource
                           </a>
@@ -2098,7 +2094,7 @@ function AddressHero({
                     <p className="text-[11px] leading-4 text-slate-500">
                       Blurry or machine-read map labels are suggestions only. Saving requires an identified reviewer and never alters the official source document.
                     </p>
-                    <button type="button" className="btn btn-primary btn-sm w-full normal-case rounded-lg shadow-sm" onClick={() => void saveZoningEvidence()} disabled={zoningEvidenceLoading}>
+                    <button type="button" className="hn-action-primary btn btn-primary btn-sm w-full normal-case rounded-lg shadow-sm" onClick={() => void saveZoningEvidence()} disabled={zoningEvidenceLoading}>
                       {zoningEvidenceLoading ? "Saving..." : "Save Confirmed Zoning"}
                     </button>
                   </div>
@@ -2115,7 +2111,7 @@ function AddressHero({
                 <button
                   type="button"
                   onClick={() => void saveAssignmentFromSection()}
-                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                  className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                   disabled={assignmentSaveDisabled}
                 >
                   {savingAssignmentFile ? "Saving..." : "Save Occupancy"}
@@ -2222,7 +2218,7 @@ function AddressHero({
                 <button
                   type="button"
                   onClick={() => void saveAssignmentFromSection()}
-                  className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                  className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                   disabled={assignmentSaveDisabled}
                 >
                   {savingAssignmentFile ? "Saving..." : "Save PUD / HOA"}
@@ -2289,7 +2285,7 @@ function AddressHero({
               <button
                 type="button"
                 onClick={() => void saveAssignmentFromSection()}
-                className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                 disabled={assignmentSaveDisabled}
               >
                 {savingAssignmentFile ? "Saving..." : "Save Assignment Details"}
@@ -2711,7 +2707,7 @@ function AddressHero({
                   <button
                     type="button"
                     onClick={() => void saveAssignmentFromSection()}
-                    className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                    className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
                     disabled={assignmentSaveDisabled}
                   >
                     {savingAssignmentFile ? "Saving..." : "Save Highest and Best Use"}

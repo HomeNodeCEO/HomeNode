@@ -199,7 +199,7 @@ export default function AssignmentPhotoCenter({
                     Caption
                     <input className="input input-bordered mt-1 w-full bg-white" maxLength={200} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Optional; category used by default" />
                   </label>
-                  <label className={`btn btn-primary btn-sm normal-case rounded-lg text-white ${busy ? 'btn-disabled' : ''}`}>
+                  <label className={`hn-action-primary btn btn-primary btn-sm normal-case rounded-lg ${busy ? 'btn-disabled' : ''}`}>
                     {busy ? 'Saving...' : 'Add Photos'}
                     <input ref={inputRef} className="hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={busy} onChange={(event) => void upload(event.target.files)} />
                   </label>

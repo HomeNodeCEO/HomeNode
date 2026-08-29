@@ -240,15 +240,38 @@ try {
     `${value.entity_id || "root"}:${value.uid}`,
     value.value,
   ]));
-  const requiredAssets = [{
-    entity_id: null,
-    asset_kind: "sketch",
-    section_number: 7,
-    caption_type: "SubjectPropertyImprovementSketch",
-  }];
+  const requiredAssets = [
+    {
+      entity_id: null,
+      asset_kind: "photo",
+      section_number: 4,
+      caption_type: "PropertyAccess",
+    },
+    {
+      entity_id: null,
+      asset_kind: "sketch",
+      section_number: 7,
+      caption_type: "SubjectPropertyImprovementSketch",
+    },
+    {
+      entity_id: null,
+      asset_kind: "photo",
+      section_number: 22,
+      caption_type: "PropertyPhoto",
+    },
+    {
+      entity_id: null,
+      asset_kind: "photo",
+      section_number: 22,
+      caption_type: "SalesComparableMap",
+    },
+  ];
   for (const entity of editor.entities) {
     if (entity.entity_type === "dwelling") {
-      requiredAssets.push({ entity_id: entity.id, asset_kind: "photo", section_number: 8, caption_type: "DwellingFront" });
+      requiredAssets.push(
+        { entity_id: entity.id, asset_kind: "photo", section_number: 8, caption_type: "DwellingFront" },
+        { entity_id: entity.id, asset_kind: "photo", section_number: 8, caption_type: "DwellingRear" },
+      );
     }
     if (entity.entity_type === "outbuilding") {
       requiredAssets.push(
@@ -268,16 +291,20 @@ try {
   const assetKey = (asset) => `${asset.entity_id || "root"}:${asset.section_number}:${asset.caption_type}`;
   const expectedAssetFindingCodes = new Set([
     "dwelling_front_photo_required",
+    "dwelling_rear_photo_required",
     "outbuilding_photo_required",
+    "sales_comparable_map_required",
     "sales_comparable_photo_required",
+    "sales_subject_property_photo_required",
     "sketch_asset_required",
+    "site_property_access_photo_required",
     "unit_room_photo_required",
   ]);
   evidence.storage.required_count = requiredAssets.length;
   evidence.checks.only_expected_asset_findings = findings.every((finding) => (
     finding.severity === "fatal" && expectedAssetFindingCodes.has(finding.metadata?.code)
   ));
-  evidence.checks.required_asset_plan_complete = requiredAssets.length === 13
+  evidence.checks.required_asset_plan_complete = requiredAssets.length === 17
     && new Set(requiredAssets.map(assetKey)).size === requiredAssets.length;
 
   const initialAssets = await apiJson(`/api/uad/workfiles/${encodeURIComponent(workfile.id)}/assets`);

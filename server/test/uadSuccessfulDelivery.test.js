@@ -13,7 +13,7 @@ test("builds a deterministic schema-valid signed synthetic UAD delivery package"
   assert.equal(evidence.fixture.workfile_status, "signed");
   assert.equal(evidence.xml.schema_valid, true);
   assert.equal(evidence.xml.schema_error_count, 0);
-  assert.equal(evidence.xml.image_reference_count, 4);
+  assert.equal(evidence.xml.image_reference_count, 8);
   assert.equal(evidence.sales_comparison.comparable_count, 3);
   assert.equal(evidence.sales_comparison.settled_sale_count, 3);
   assert.equal(evidence.sales_comparison.adjusted_comparable_count, 3);
@@ -25,11 +25,15 @@ test("builds a deterministic schema-valid signed synthetic UAD delivery package"
   assert.equal(evidence.xml.reconciliation_count, 1);
   assert.ok(evidence.pdf.page_count > 0);
   assert.equal(evidence.pdf.signer_count, 1);
-  assert.equal(evidence.pdf.rendered_asset_count, 4);
+  assert.equal(evidence.pdf.rendered_asset_count, 8);
   assert.ok(evidence.pdf.sales_comparable_group_count >= 3);
   assert.equal(evidence.manifest.private_object_keys_excluded, true);
   assert.equal(evidence.package.deterministic, true);
-  assert.equal(evidence.package.entries.length, 6);
+  assert.equal(evidence.package.entries.length, 10);
+  assert.ok(evidence.package.entries.some((entry) => entry.endsWith("subject-street-scene.png")));
+  assert.ok(evidence.package.entries.some((entry) => entry.endsWith("subject-rear.png")));
+  assert.ok(evidence.package.entries.some((entry) => entry.endsWith("subject-property.png")));
+  assert.ok(evidence.package.entries.some((entry) => entry.endsWith("sales-comparable-map.png")));
   assert.ok(evidence.package.entries.includes("UAD-STAGING-SFR-0001.pdf"));
   assert.ok(evidence.package.entries.includes("UAD-STAGING-SFR-0001.xml"));
 });

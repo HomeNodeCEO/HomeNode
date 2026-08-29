@@ -35,6 +35,10 @@ export type SketchClassification = typeof SKETCH_CLASSIFICATIONS[number][0];
 export type SketchRoomType = typeof SKETCH_ROOM_TYPES[number][0];
 export type SketchPoint = Readonly<{ x: number; y: number }>;
 export type SketchGlaTreatment = "included" | "excluded" | "deduction";
+export type SketchDimensionLabel = Readonly<{
+  segmentIndex: number;
+  offset: SketchPoint;
+}>;
 
 export type SketchClosureTarget = Readonly<{
   kind: "projected_corner" | "starting_point";
@@ -62,6 +66,7 @@ export type SketchAreaDraft = Readonly<{
   parentAreaId: string | null;
   notes: string;
   vertices: SketchPoint[];
+  dimensionLabels: SketchDimensionLabel[];
   position: number;
 }>;
 
@@ -103,6 +108,10 @@ export type ManualSketchApiDocument = Readonly<{
     parent_area_id?: string | null;
     notes: string | null;
     vertices: SketchPoint[];
+    dimension_labels?: Array<{
+      segment_index: number;
+      offset: SketchPoint;
+    }>;
     position: number;
   }>;
   rooms: Array<{
@@ -435,6 +444,7 @@ export function emptySketchDraft(areaId: string): ManualSketchDraft {
       parentAreaId: null,
       notes: "",
       vertices: [],
+      dimensionLabels: [],
       position: 1,
     }],
     rooms: [],
@@ -457,6 +467,10 @@ export function toSketchApiDocument(draft: ManualSketchDraft): ManualSketchApiDo
       parent_area_id: area.parentAreaId,
       notes: area.notes.trim() || null,
       vertices: area.vertices,
+      dimension_labels: area.dimensionLabels.map((label) => ({
+        segment_index: label.segmentIndex,
+        offset: label.offset,
+      })),
       position: area.position,
     })),
     rooms: draft.rooms.map((room) => ({
@@ -486,6 +500,10 @@ export function draftFromApiDocument(document: ManualSketchApiDocument): ManualS
       parentAreaId: area.parent_area_id || null,
       notes: area.notes || "",
       vertices: area.vertices,
+      dimensionLabels: (area.dimension_labels || []).map((label) => ({
+        segmentIndex: label.segment_index,
+        offset: label.offset,
+      })),
       position: area.position,
     })),
     rooms: document.rooms.map((room) => ({

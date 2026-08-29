@@ -96,6 +96,27 @@ function roomRef(clientRoomId) {
   return `sketch-room:${clientRoomId}`;
 }
 
+function normalizeDimensionLabels(input, segmentCount) {
+  if (input == null) return Object.freeze([]);
+  if (!Array.isArray(input) || input.length > segmentCount) throw new Error("invalid_sketch_dimension_labels");
+  const labels = input.map((label) => {
+    if (!plainObject(label) || !plainObject(label.offset) || segmentCount < 1) {
+      throw new Error("invalid_sketch_dimension_label");
+    }
+    return Object.freeze({
+      segment_index: boundedInteger(label.segment_index, "invalid_sketch_dimension_segment", 0, segmentCount - 1),
+      offset: Object.freeze({
+        x: finiteCoordinate(label.offset.x, "invalid_sketch_dimension_offset"),
+        y: finiteCoordinate(label.offset.y, "invalid_sketch_dimension_offset"),
+      }),
+    });
+  }).sort((left, right) => left.segment_index - right.segment_index);
+  if (new Set(labels.map((label) => label.segment_index)).size !== labels.length) {
+    throw new Error("duplicate_sketch_dimension_segment");
+  }
+  return Object.freeze(labels);
+}
+
 function normalizeArea(input, index) {
   if (!plainObject(input)) throw new Error("invalid_sketch_area");
   const id = normalizeUuid(input.id || input.client_area_id, "invalid_sketch_area_id");
@@ -123,6 +144,7 @@ function normalizeArea(input, index) {
       : normalizeUuid(input.parent_area_id, "invalid_sketch_parent_area_id"),
     notes: input.notes == null ? null : boundedText(input.notes, "invalid_sketch_area_notes", 1000, { nullable: true }),
     vertices: calculation.vertices,
+    dimension_labels: normalizeDimensionLabels(input.dimension_labels, Math.max(0, calculation.vertices.length - 1)),
     calculation,
     position: boundedInteger(input.position ?? index + 1, "invalid_sketch_area_position", 1, MAX_AREAS),
   });

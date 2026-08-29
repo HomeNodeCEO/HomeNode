@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   type GestureResponderEvent,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -37,6 +38,7 @@ import {
   type SketchClosureTarget,
   type SketchRoomDraft,
   type SketchRoomType,
+  type SketchPoint,
 } from "./model";
 import { useSketchSync } from "./sync";
 
@@ -128,7 +130,64 @@ function updateArea(draft: ManualSketchDraft, areaId: string, update: (area: Ske
   };
 }
 
-function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGarage, selectedRoomId, onSelectRoom, onMoveRoom, onConnectTarget, onStartGarage }: {
+const CANVAS_PADDING = 54;
+const DIMENSION_WIDTH = 54;
+const DIMENSION_HEIGHT = 25;
+
+function lineStyle(from: SketchPoint, to: SketchPoint, thickness = 1) {
+  const length = Math.hypot(to.x - from.x, to.y - from.y);
+  const angle = Math.atan2(to.y - from.y, to.x - from.x);
+  return {
+    left: ((from.x + to.x) / 2) - (length / 2),
+    top: ((from.y + to.y) / 2) - (thickness / 2),
+    width: length,
+    transform: [{ rotate: `${angle}rad` }],
+  };
+}
+
+function DraggableDimension({ midpoint, position, label, deduction, canvasWidth, canvasHeight, onMove }: {
+  midpoint: SketchPoint;
+  position: SketchPoint;
+  label: string;
+  deduction: boolean;
+  canvasWidth: number;
+  canvasHeight: number;
+  onMove: (position: SketchPoint) => void;
+}) {
+  const [translation, setTranslation] = useState({ x: 0, y: 0 });
+  const panResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) + Math.abs(gesture.dy) > 2,
+    onPanResponderMove: (_, gesture) => setTranslation({ x: gesture.dx, y: gesture.dy }),
+    onPanResponderRelease: (_, gesture) => {
+      onMove({
+        x: Math.max(DIMENSION_WIDTH / 2, Math.min(canvasWidth - (DIMENSION_WIDTH / 2), position.x + gesture.dx)),
+        y: Math.max(DIMENSION_HEIGHT / 2, Math.min(canvasHeight - (DIMENSION_HEIGHT / 2), position.y + gesture.dy)),
+      });
+      setTranslation({ x: 0, y: 0 });
+    },
+    onPanResponderTerminate: () => setTranslation({ x: 0, y: 0 }),
+    onPanResponderTerminationRequest: () => false,
+  }), [canvasHeight, canvasWidth, onMove, position.x, position.y]);
+  const current = { x: position.x + translation.x, y: position.y + translation.y };
+  return <>
+    <View style={[styles.dimensionLeader, lineStyle(midpoint, current)]} />
+    <View
+      accessibilityHint="Drag to move this dimension label away from nearby labels"
+      accessibilityLabel={`${label} wall dimension`}
+      {...panResponder.panHandlers}
+      style={[
+        styles.dimension,
+        deduction && styles.deductionDimension,
+        { left: current.x - (DIMENSION_WIDTH / 2), top: current.y - (DIMENSION_HEIGHT / 2) },
+      ]}
+    >
+      <Text style={[styles.dimensionText, deduction && styles.deductionDimensionText]}>{label}</Text>
+    </View>
+  </>;
+}
+
+function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGarage, selectedRoomId, onSelectRoom, onMoveRoom, onMoveDimension, onConnectTarget, onStartGarage }: {
   areas: SketchAreaDraft[];
   selectedAreaId: string;
   rooms: SketchRoomDraft[];
@@ -137,6 +196,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
   selectedRoomId: string | null;
   onSelectRoom: (room: SketchRoomDraft) => void;
   onMoveRoom: (roomId: string, point: { x: number; y: number }) => void;
+  onMoveDimension: (areaId: string, segmentIndex: number, offset: SketchPoint) => void;
   onConnectTarget: (target: SketchClosureTarget) => void;
   onStartGarage: (point: { x: number; y: number }) => void;
 }) {
@@ -150,7 +210,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
   const canvasWidth = Math.max(300, Math.min(560, windowWidth - 44));
   const canvasHeight = Math.max(280, Math.min(
     520,
-    72 + ((canvasWidth - 40) * (bounds.height / bounds.width)),
+    108 + ((canvasWidth - (CANVAS_PADDING * 2)) * (bounds.height / bounds.width)),
   ));
   const lines = areas.flatMap((area) => {
     const canvasVertices = area.vertices.map((point) => modelToCanvas(
@@ -158,25 +218,49 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
       displayVertices,
       canvasWidth,
       canvasHeight,
+      CANVAS_PADDING,
     ));
+    const calculation = calculateSketchOutline(area.vertices);
+    const areaCenter = calculation.centroid
+      ? modelToCanvas(calculation.centroid, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING)
+      : canvasVertices.reduce((total, point) => ({ x: total.x + point.x, y: total.y + point.y }), { x: 0, y: 0 });
+    if (!calculation.centroid && canvasVertices.length) {
+      areaCenter.x /= canvasVertices.length;
+      areaCenter.y /= canvasVertices.length;
+    }
     return canvasVertices.slice(0, -1).map((point, index) => {
       const next = canvasVertices[index + 1]!;
       const length = Math.hypot(next.x - point.x, next.y - point.y);
-      const angle = Math.atan2(next.y - point.y, next.x - point.x);
+      const midpoint = { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
+      const firstNormal = { x: -(next.y - point.y) / length, y: (next.x - point.x) / length };
+      const secondNormal = { x: -firstNormal.x, y: -firstNormal.y };
+      const away = { x: midpoint.x - areaCenter.x, y: midpoint.y - areaCenter.y };
+      const outward = ((away.x * firstNormal.x) + (away.y * firstNormal.y))
+        >= ((away.x * secondNormal.x) + (away.y * secondNormal.y)) ? firstNormal : secondNormal;
+      const autoDistance = length < 58 ? 40 + ((index % 2) * 12) : 29;
+      const saved = area.dimensionLabels.find((label) => label.segmentIndex === index);
+      const modelMidpoint = {
+        x: (area.vertices[index]!.x + area.vertices[index + 1]!.x) / 2,
+        y: (area.vertices[index]!.y + area.vertices[index + 1]!.y) / 2,
+      };
+      const dimensionPosition = saved
+        ? modelToCanvas({
+          x: modelMidpoint.x + saved.offset.x,
+          y: modelMidpoint.y + saved.offset.y,
+        }, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING)
+        : { x: midpoint.x + (outward.x * autoDistance), y: midpoint.y + (outward.y * autoDistance) };
       return {
         area,
+        index,
         key: `${area.id}-${index}-${point.x}-${point.y}`,
-        style: {
-          left: ((point.x + next.x) / 2) - (length / 2),
-          top: ((point.y + next.y) / 2) - 1.5,
-          width: length,
-          transform: [{ rotate: `${angle}rad` }],
-        },
+        style: lineStyle(point, next, 3),
         length: Math.hypot(
           area.vertices[index + 1]!.x - area.vertices[index]!.x,
           area.vertices[index + 1]!.y - area.vertices[index]!.y,
         ),
-        midpoint: { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 },
+        midpoint,
+        modelMidpoint,
+        dimensionPosition,
       };
     });
   });
@@ -187,6 +271,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
       displayVertices,
       canvasWidth,
       canvasHeight,
+      CANVAS_PADDING,
     );
     if (placingGarage) {
       onStartGarage(point);
@@ -211,18 +296,26 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
           line.area.id !== selectedAreaId && styles.wallMuted,
           line.style,
         ]} />
-        <Text style={[
-          styles.dimension,
-          line.area.glaTreatment === "deduction" && styles.deductionDimension,
-          { left: line.midpoint.x - 18, top: line.midpoint.y - 18 },
-        ]}>
-          {line.length.toFixed(1)}′
-        </Text>
+        <DraggableDimension
+          midpoint={line.midpoint}
+          position={line.dimensionPosition}
+          label={`${line.length.toFixed(1)}′`}
+          deduction={line.area.glaTreatment === "deduction"}
+          canvasWidth={canvasWidth}
+          canvasHeight={canvasHeight}
+          onMove={(position) => {
+            const anchor = canvasToModel(position, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING);
+            onMoveDimension(line.area.id, line.index, {
+              x: anchor.x - line.modelMidpoint.x,
+              y: anchor.y - line.modelMidpoint.y,
+            });
+          }}
+        />
       </React.Fragment>)}
       {areas.map((area) => {
         const calculation = calculateSketchOutline(area.vertices);
         if (!calculation.ready || !calculation.centroid) return null;
-        const point = modelToCanvas(calculation.centroid, displayVertices, canvasWidth, canvasHeight);
+        const point = modelToCanvas(calculation.centroid, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING);
         return <Text
           key={`label-${area.id}`}
           numberOfLines={2}
@@ -237,17 +330,18 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
       })}
       {placingGarage ? areas.filter((area) => area.glaTreatment === "included").flatMap((area) => (
         area.vertices.slice(0, -1).map((vertex, index) => {
-          const point = modelToCanvas(vertex, displayVertices, canvasWidth, canvasHeight);
+          const point = modelToCanvas(vertex, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING);
           return <View key={`anchor-${area.id}-${index}`} style={[styles.wallAnchor, { left: point.x - 5, top: point.y - 5 }]} />;
         })
       )) : null}
       {closureTargets.map((target) => {
-        const point = modelToCanvas(target.point, displayVertices, canvasWidth, canvasHeight);
+        const point = modelToCanvas(target.point, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING);
         const current = modelToCanvas(
           selectedArea.vertices[selectedArea.vertices.length - 1]!,
           displayVertices,
           canvasWidth,
           canvasHeight,
+          CANVAS_PADDING,
         );
         const guideLength = Math.hypot(point.x - current.x, point.y - current.y);
         const guideAngle = Math.atan2(point.y - current.y, point.x - current.x);
@@ -291,7 +385,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
         </React.Fragment>;
       })}
       {rooms.map((room) => {
-        const point = modelToCanvas(room.anchor, displayVertices, canvasWidth, canvasHeight);
+        const point = modelToCanvas(room.anchor, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING);
         const selected = room.id === selectedRoomId;
         return (
           <Pressable
@@ -404,14 +498,25 @@ export function SketchEditorPanel({
   };
 
   const changeAreaVertices = (vertices: SketchAreaDraft["vertices"]) => {
-    const nextArea = { ...selectedArea, vertices };
+    const dimensionLabels = selectedArea.dimensionLabels.filter((label) => label.segmentIndex < Math.max(0, vertices.length - 1));
+    const nextArea = { ...selectedArea, vertices, dimensionLabels };
     const nextAreas = draft.areas.map((area) => area.id === selectedArea.id ? nextArea : area);
     if (
       nextArea.glaTreatment === "deduction"
       && calculateSketchOutline(vertices).ready
       && !garageCutoutFitsParent(nextArea, nextAreas)
     ) throw new Error("invalid_garage_cutout_bounds");
-    changeArea((area) => ({ ...area, vertices }));
+    changeArea((area) => ({ ...area, vertices, dimensionLabels }));
+  };
+
+  const moveDimension = (areaId: string, segmentIndex: number, offset: SketchPoint) => {
+    changeDraft((current) => updateArea(current, areaId, (area) => ({
+      ...area,
+      dimensionLabels: [
+        ...area.dimensionLabels.filter((label) => label.segmentIndex !== segmentIndex),
+        { segmentIndex, offset },
+      ].sort((left, right) => left.segmentIndex - right.segmentIndex),
+    })));
   };
 
   const addWall = () => {
@@ -459,6 +564,7 @@ export function SketchEditorPanel({
         parentAreaId: null,
         notes: "",
         vertices: [],
+        dimensionLabels: [],
         position: nextPosition,
       }],
     }));
@@ -495,6 +601,7 @@ export function SketchEditorPanel({
         parentAreaId: parent.id,
         notes: "",
         vertices: [snap.point],
+        dimensionLabels: [],
         position: current.areas.length + 1,
       }],
     }));
@@ -725,6 +832,7 @@ export function SketchEditorPanel({
         selectedRoomId={selectedRoomId}
         onSelectRoom={selectRoom}
         onMoveRoom={moveRoom}
+        onMoveDimension={moveDimension}
         onConnectTarget={connectTarget}
         onStartGarage={startGarageCutout}
       />
@@ -848,8 +956,11 @@ const styles = StyleSheet.create({
   closureDotProjected: { backgroundColor: "#d67b2f" },
   closureDotStart: { backgroundColor: "#1d8a5b" },
   closureHelp: { backgroundColor: "#fff7e7", borderRadius: 8, color: "#714a14", fontSize: 12, fontWeight: "700", lineHeight: 18, padding: 9 },
-  dimension: { backgroundColor: "#fbfcfb", color: "#456457", fontSize: 10, fontWeight: "700", paddingHorizontal: 2, position: "absolute", width: 42 },
-  deductionDimension: { backgroundColor: "#fff7ed", color: "#8b4b22" },
+  dimensionLeader: { backgroundColor: "#8aa095", height: 1, opacity: 0.75, position: "absolute" },
+  dimension: { alignItems: "center", backgroundColor: "#fbfcfb", borderColor: "#b7c7bf", borderRadius: 5, borderWidth: 1, height: DIMENSION_HEIGHT, justifyContent: "center", position: "absolute", width: DIMENSION_WIDTH },
+  dimensionText: { color: "#36584a", fontSize: 10, fontWeight: "800" },
+  deductionDimension: { backgroundColor: "#fff7ed", borderColor: "#cf9a73" },
+  deductionDimensionText: { color: "#8b4b22" },
   deductionNotice: { backgroundColor: "#fff7ed", borderRadius: 8, color: "#8b4b22", fontSize: 12, fontWeight: "700", lineHeight: 18, padding: 9 },
   roomPin: { alignItems: "center", backgroundColor: "#e8f1ed", borderColor: "#1d5a43", borderRadius: 13, borderWidth: 1, height: 28, justifyContent: "center", paddingHorizontal: 5, position: "absolute", width: 60 },
   roomPinSelected: { backgroundColor: "#1d5a43" },

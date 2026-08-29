@@ -166,6 +166,7 @@ test("deducts a closed garage cutout from the main GLA", () => {
       { x: 5, y: -10 },
       { x: 5, y: 0 },
     ],
+    dimensionLabels: [],
     position: 2,
   };
   assert.equal(garageCutoutFitsParent(garage, [exterior, garage]), true);
@@ -188,6 +189,7 @@ test("serializes offline sketch drafts without losing stable room identity", () 
     reviewStatus: "appraiser_confirmed" as const,
     areas: [{
       ...base.areas[0]!,
+      dimensionLabels: [{ segmentIndex: 0, offset: { x: 0, y: -3 } }],
       vertices: [
         { x: 0, y: 0 },
         { x: 20, y: 0 },
@@ -208,6 +210,8 @@ test("serializes offline sketch drafts without losing stable room identity", () 
   assert.equal(sketchReadyForConfirmation(draft), true);
   const api = toSketchApiDocument(draft);
   assert.equal(api.rooms[0]!.id, roomId);
-  assert.equal(draftFromApiDocument(api).rooms[0]!.label, "Kitchen");
+  const restored = draftFromApiDocument(api);
+  assert.equal(restored.rooms[0]!.label, "Kitchen");
+  assert.deepEqual(restored.areas[0]!.dimensionLabels, [{ segmentIndex: 0, offset: { x: 0, y: -3 } }]);
   assert.equal(sketchRoomRef(roomId), `sketch-room:${roomId}`);
 });

@@ -89,29 +89,39 @@ const INSPECTION_TABS = Object.freeze([
 
 type InspectionTab = typeof INSPECTION_TABS[number][0];
 
-function InspectionTabs({ selected, onSelect }: {
+function InspectionDrawer({ selected, propertyAddress, fileNumber, onSelect, onClose }: {
   selected: InspectionTab;
+  propertyAddress: string;
+  fileNumber: string;
   onSelect: (tab: InspectionTab) => void;
+  onClose: () => void;
 }) {
   return (
-    <ScrollView
-      contentContainerStyle={styles.inspectionTabs}
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.inspectionTabsScroll}
-    >
+    <View accessibilityViewIsModal style={styles.inspectionDrawer}>
+      <View style={styles.drawerHeader}>
+        <View style={styles.flex}>
+          <Text style={styles.drawerEyebrow}>FIELD APPRAISAL</Text>
+          <Text numberOfLines={2} style={styles.drawerProperty}>{propertyAddress || "Subject property"}</Text>
+          <Text style={styles.drawerFile}>{fileNumber}</Text>
+        </View>
+        <Pressable accessibilityLabel="Close section menu" accessibilityRole="button" hitSlop={10} onPress={onClose}>
+          <Text style={styles.drawerClose}>×</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.drawerSectionLabel}>SECTIONS</Text>
       {INSPECTION_TABS.map(([key, label]) => (
         <Pressable
-          accessibilityRole="tab"
+          accessibilityRole="button"
           accessibilityState={{ selected: key === selected }}
           key={key}
           onPress={() => onSelect(key)}
-          style={[styles.inspectionTab, key === selected && styles.inspectionTabSelected]}
+          style={[styles.drawerItem, key === selected && styles.drawerItemSelected]}
         >
-          <Text style={[styles.inspectionTabText, key === selected && styles.inspectionTabTextSelected]}>{label}</Text>
+          <View style={[styles.drawerIndicator, key === selected && styles.drawerIndicatorSelected]} />
+          <Text style={[styles.drawerItemText, key === selected && styles.drawerItemTextSelected]}>{label}</Text>
         </Pressable>
       ))}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -404,7 +414,9 @@ function InspectionScreen({
   const [error, setError] = useState<string | null>(null);
   const [selectedSketchRoom, setSelectedSketchRoom] = useState<SelectedSketchRoom | null>(null);
   const [selectedTab, setSelectedTab] = useState<InspectionTab>("subject");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const completed = session.status === "completed";
+  const selectedTabLabel = INSPECTION_TABS.find(([key]) => key === selectedTab)?.[1] || "Subject";
 
   const loadLocal = useCallback(async () => {
     const [draft, nextConflicts, nextSummary] = await Promise.all([
@@ -422,7 +434,13 @@ function InspectionScreen({
   useEffect(() => {
     setSelectedSketchRoom(null);
     setSelectedTab("subject");
+    setDrawerOpen(false);
   }, [session.id]);
+
+  const selectTab = (tab: InspectionTab) => {
+    setSelectedTab(tab);
+    setDrawerOpen(false);
+  };
 
   const save = async () => {
     setSaving(true);
@@ -458,7 +476,20 @@ function InspectionScreen({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
+    <View style={styles.inspectionShell}>
+      {!completed ? <View style={styles.inspectionToolbar}>
+        <Pressable
+          accessibilityLabel="Open appraisal sections"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={() => setDrawerOpen(true)}
+          style={({ pressed }) => [styles.hamburgerButton, pressed && styles.buttonPressed]}
+        >
+          <Text style={styles.hamburgerIcon}>☰</Text>
+        </Pressable>
+        <Text numberOfLines={1} style={styles.toolbarTitle}>{selectedTabLabel}</Text>
+      </View> : null}
+      <ScrollView contentContainerStyle={[styles.content, !completed && styles.inspectionContent]}>
       <Text style={styles.eyebrow}>OFFLINE FIELD INSPECTION</Text>
       <Text style={styles.title}>{property.address}</Text>
       <Text style={[styles.networkBanner, online ? styles.onlineBanner : styles.offlineBanner]}>
@@ -470,8 +501,6 @@ function InspectionScreen({
         <Text style={styles.label}>Local draft</Text><Text style={styles.badge}>{draftState.replaceAll("_", " ")}</Text>
       </View>
       {!completed ? <>
-        <InspectionTabs selected={selectedTab} onSelect={setSelectedTab} />
-
         <View style={[styles.tabPanel, selectedTab !== "subject" && styles.tabPanelHidden]}>
           <View style={styles.subjectOverview}>
             <View style={styles.rowBetween}>
@@ -591,7 +620,23 @@ function InspectionScreen({
         />
       </>}
       <Button title="Return to property" secondary onPress={onBack} />
-    </ScrollView>
+      </ScrollView>
+      {drawerOpen ? <>
+        <Pressable
+          accessibilityLabel="Close section menu"
+          accessibilityRole="button"
+          onPress={() => setDrawerOpen(false)}
+          style={styles.drawerScrim}
+        />
+        <InspectionDrawer
+          selected={selectedTab}
+          propertyAddress={property.address || "Subject property"}
+          fileNumber={file.file_number}
+          onSelect={selectTab}
+          onClose={() => setDrawerOpen(false)}
+        />
+      </> : null}
+    </View>
   );
 }
 
@@ -715,6 +760,26 @@ export default function App() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#f4f7f3" },
   content: { padding: 22, paddingTop: 54, paddingBottom: 48, backgroundColor: "#f4f7f3", minHeight: "100%" },
+  inspectionShell: { backgroundColor: "#f4f7f3", flex: 1 },
+  inspectionContent: { paddingTop: 18 },
+  inspectionToolbar: { alignItems: "center", backgroundColor: "#f4f7f3", borderBottomColor: "#dce4df", borderBottomWidth: 1, flexDirection: "row", gap: 11, minHeight: 54, paddingHorizontal: 14, zIndex: 2 },
+  hamburgerButton: { alignItems: "center", backgroundColor: "#1d5a43", borderRadius: 9, height: 38, justifyContent: "center", width: 42 },
+  hamburgerIcon: { color: "white", fontSize: 21, fontWeight: "800", lineHeight: 23 },
+  toolbarTitle: { color: "#183f31", flex: 1, fontSize: 17, fontWeight: "800" },
+  drawerScrim: { backgroundColor: "rgba(14,31,24,0.38)", bottom: 0, left: 0, position: "absolute", right: 0, top: 0, zIndex: 20 },
+  inspectionDrawer: { backgroundColor: "#fbfcfb", bottom: 0, elevation: 16, gap: 5, left: 0, paddingBottom: 24, paddingHorizontal: 14, paddingTop: 18, position: "absolute", shadowColor: "#000", shadowOffset: { width: 3, height: 0 }, shadowOpacity: 0.18, shadowRadius: 12, top: 0, width: "78%", maxWidth: 310, zIndex: 21 },
+  drawerHeader: { alignItems: "flex-start", borderBottomColor: "#dce4df", borderBottomWidth: 1, flexDirection: "row", gap: 10, marginBottom: 12, paddingBottom: 16 },
+  drawerEyebrow: { color: "#668076", fontSize: 10, fontWeight: "800", letterSpacing: 1.2 },
+  drawerProperty: { color: "#183f31", fontSize: 18, fontWeight: "800", lineHeight: 23, marginTop: 5 },
+  drawerFile: { color: "#66766f", fontFamily: "monospace", fontSize: 11, marginTop: 5 },
+  drawerClose: { color: "#40564d", fontSize: 30, lineHeight: 31 },
+  drawerSectionLabel: { color: "#75847e", fontSize: 10, fontWeight: "800", letterSpacing: 1.1, marginBottom: 4, marginLeft: 12 },
+  drawerItem: { alignItems: "center", borderRadius: 10, flexDirection: "row", gap: 11, minHeight: 49, paddingHorizontal: 11 },
+  drawerItemSelected: { backgroundColor: "#e0ece5" },
+  drawerIndicator: { backgroundColor: "#d3ddd7", borderRadius: 2, height: 24, width: 4 },
+  drawerIndicatorSelected: { backgroundColor: "#1d5a43" },
+  drawerItemText: { color: "#53665e", fontSize: 15, fontWeight: "700" },
+  drawerItemTextSelected: { color: "#183f31", fontWeight: "800" },
   signIn: { flex: 1, justifyContent: "center", padding: 30, gap: 16 },
   center: { flex: 1, minHeight: 180, alignItems: "center", justifyContent: "center", gap: 12 },
   brand: { color: "#1d5a43", fontSize: 20, fontWeight: "800", letterSpacing: 1 },
@@ -755,12 +820,6 @@ const styles = StyleSheet.create({
   choiceSelected: { borderColor: "#1d5a43", backgroundColor: "#e0ece5" },
   conflictCard: { backgroundColor: "#fff4e1", padding: 16, borderRadius: 14, borderWidth: 1, borderColor: "#dfbd79", gap: 6 },
   label: { color: "#697a72", fontSize: 12, fontWeight: "700", marginTop: 6 },
-  inspectionTabsScroll: { marginTop: 18, marginHorizontal: -4 },
-  inspectionTabs: { gap: 8, paddingHorizontal: 4, paddingBottom: 6 },
-  inspectionTab: { backgroundColor: "white", borderColor: "#cbd7d0", borderRadius: 18, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 9 },
-  inspectionTabSelected: { backgroundColor: "#1d5a43", borderColor: "#1d5a43" },
-  inspectionTabText: { color: "#607269", fontSize: 13, fontWeight: "800" },
-  inspectionTabTextSelected: { color: "white" },
   tabPanel: { marginTop: 8 },
   tabPanelHidden: { display: "none" },
   tabTitle: { color: "#17251f", fontSize: 20, fontWeight: "800" },

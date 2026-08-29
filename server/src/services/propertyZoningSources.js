@@ -48,6 +48,8 @@ function officialSource({
   outFields,
   zoningCodeFields,
   descriptionFields = [],
+  classificationLabels = {},
+  classificationPrefixLabels = {},
   sourceIdFields = [],
   sourceUpdatedFields = [],
   queryUrls,
@@ -64,11 +66,24 @@ function officialSource({
     outFields,
     zoningCodeFields,
     descriptionFields,
+    classificationLabels: Object.freeze({ ...classificationLabels }),
+    classificationPrefixLabels: Object.freeze({ ...classificationPrefixLabels }),
     sourceIdFields,
     sourceUpdatedFields,
     queryUrls,
     referenceUrl,
   });
+}
+
+export function officialZoningClassificationDescription(source, zoningCode) {
+  const normalized = String(zoningCode || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+  if (!normalized) return null;
+  const exact = String(source?.classificationLabels?.[normalized] || "").trim();
+  if (exact) return exact;
+  for (const [prefix, description] of Object.entries(source?.classificationPrefixLabels || {})) {
+    if (normalized.startsWith(prefix)) return String(description || "").trim() || null;
+  }
+  return null;
 }
 
 export const OFFICIAL_ZONING_SOURCES = Object.freeze([
@@ -141,6 +156,29 @@ export const OFFICIAL_ZONING_SOURCES = Object.freeze([
     layer: 0,
     outFields: "FID,NEW_ZONING",
     zoningCodeFields: ["NEW_ZONING"],
+    classificationLabels: {
+      C: "Commercial District",
+      DD: "Downtown Duncanville District",
+      GOR: "General Office/Retail District",
+      I: "Industrial District",
+      LOR: "Local Office/Retail District",
+      MF14: "Multi-Family Residential District (MF-14)",
+      MF21: "Multi-Family Residential District (MF-21)",
+      NOR: "Neighborhood Office/Retail District",
+      NP: "Nature Preserve District",
+      PD: "Planned Development District",
+      RR: "Railroad",
+      SF7: "Single-Family Residential District (SF-7)",
+      SF10: "Single-Family Residential District (SF-10)",
+      SF13: "Single-Family Residential District (SF-13)",
+      SF43: "Estate Single-Family Residential District (SF-43)",
+      SUP: "Specific Use",
+      TF7: "Duplex Residential District (TF-7)",
+    },
+    classificationPrefixLabels: {
+      PD: "Planned Development District",
+      SUP: "Specific Use",
+    },
     sourceIdFields: ["FID"],
     referenceUrl: "https://duncanville.maps.arcgis.com/apps/instant/basic/index.html?appid=64164a8429db49f2864d9361f30e4720",
   }),

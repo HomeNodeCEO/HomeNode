@@ -2403,6 +2403,8 @@ export interface PropertyZoningEvidence {
       department: string;
       contactName?: string | null;
       phone: string | null;
+      planningPhone?: string | null;
+      buildingPhone?: string | null;
       email: string | null;
       address: string | null;
       sourceUrl: string;
@@ -2419,6 +2421,16 @@ export interface PropertyZoningEvidence {
     source_attributes?: Record<string, unknown> | null;
     source_updated_at: string | null;
     synced_at: string;
+  } | null;
+  suggested_result?: {
+    zoning_code: string | null;
+    zoning_description: string | null;
+    provider_key: string;
+    source_record_id?: string | null;
+    source_attributes?: Record<string, unknown> | null;
+    source_updated_at: string | null;
+    synced_at: string | null;
+    lookup_mode?: string | null;
   } | null;
   verification: ZoningVerification | null;
 }

@@ -54,6 +54,7 @@ function officialSource({
   sourceUpdatedFields = [],
   queryUrls,
   referenceUrl,
+  combinedZoningValue = false,
 }) {
   const slug = city.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
   return Object.freeze({
@@ -72,7 +73,27 @@ function officialSource({
     sourceUpdatedFields,
     queryUrls,
     referenceUrl,
+    combinedZoningValue,
   });
+}
+
+export function officialZoningClassification(source, zoningValue) {
+  const rawValue = String(zoningValue || "").trim();
+  if (!rawValue) return { zoningCode: null, zoningDescription: null };
+  if (source?.combinedZoningValue) {
+    const [rawCode, ...descriptionParts] = rawValue.split(",");
+    const zoningCode = String(rawCode || "").trim() || rawValue;
+    const verbatimDescription = descriptionParts.join(",").trim();
+    return {
+      zoningCode,
+      zoningDescription: verbatimDescription
+        || officialZoningClassificationDescription(source, zoningCode),
+    };
+  }
+  return {
+    zoningCode: rawValue,
+    zoningDescription: officialZoningClassificationDescription(source, rawValue),
+  };
 }
 
 export function officialZoningClassificationDescription(source, zoningCode) {
@@ -179,6 +200,7 @@ export const OFFICIAL_ZONING_SOURCES = Object.freeze([
       PD: "Planned Development District",
       SUP: "Specific Use",
     },
+    combinedZoningValue: true,
     sourceIdFields: ["FID"],
     referenceUrl: "https://duncanville.maps.arcgis.com/apps/instant/basic/index.html?appid=64164a8429db49f2864d9361f30e4720",
   }),
@@ -390,6 +412,15 @@ const MANUAL_ZONING_CONTACTS = Object.freeze({
     email: "city@combinetx.com",
     address: "100 Davis Road, Combine, TX 75159",
     sourceUrl: "https://www.combinetx.com/",
+  },
+  Duncanville: {
+    department: "Planning and Zoning / Permit & Inspection Services",
+    phone: "972-780-5000",
+    planningPhone: "972-707-3878 / 972-707-3876",
+    buildingPhone: "972-780-5000",
+    email: null,
+    address: "203 E Wheatland Road, Duncanville, TX 75116",
+    sourceUrl: "https://www.duncanvilletx.gov/business/permitting_resources/planning_and_zoning",
   },
   Ferris: {
     department: "Community Development - Planning",

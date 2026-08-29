@@ -1366,11 +1366,13 @@ function AddressHero({
   const primaryZoning =
     zoningEvidence?.verification?.zoning_code ||
     zoningEvidence?.automatic_result?.zoning_code ||
+    zoningEvidence?.suggested_result?.zoning_code ||
     landRows.map((row) => row.zoning).find((value) => hasValue(value)) ||
     "Not reported";
   const primaryZoningDescription =
     zoningEvidence?.verification?.zoning_description ||
     zoningEvidence?.automatic_result?.zoning_description ||
+    zoningEvidence?.suggested_result?.zoning_description ||
     null;
   const primaryZoningDisplay = primaryZoningDescription &&
       String(primaryZoningDescription).trim().toLowerCase() !== String(primaryZoning).trim().toLowerCase()
@@ -2026,8 +2028,16 @@ function AddressHero({
                         <h4 className="font-semibold text-slate-900">City verification contact</h4>
                         <p className="mt-1 font-medium">{zoningEvidence.jurisdiction.contact.department}</p>
                         {zoningEvidence.jurisdiction.contact.contactName ? <p>{zoningEvidence.jurisdiction.contact.contactName}</p> : null}
-                        {zoningEvidence.jurisdiction.contact.phone ? (
+                        {zoningEvidence.jurisdiction.contact.phone &&
+                        !zoningEvidence.jurisdiction.contact.planningPhone &&
+                        !zoningEvidence.jurisdiction.contact.buildingPhone ? (
                           <p className="mt-1"><a className="font-semibold text-blue-800 hover:underline" href={`tel:${zoningEvidence.jurisdiction.contact.phone}`}>{zoningEvidence.jurisdiction.contact.phone}</a></p>
+                        ) : null}
+                        {zoningEvidence.jurisdiction.contact.planningPhone ? (
+                          <p className="mt-1"><span className="font-medium">Planning & Zoning:</span> {zoningEvidence.jurisdiction.contact.planningPhone}</p>
+                        ) : null}
+                        {zoningEvidence.jurisdiction.contact.buildingPhone ? (
+                          <p><span className="font-medium">Building Inspections:</span> {zoningEvidence.jurisdiction.contact.buildingPhone}</p>
                         ) : null}
                         {zoningEvidence.jurisdiction.contact.email ? (
                           <p><a className="font-semibold text-blue-800 hover:underline" href={`mailto:${zoningEvidence.jurisdiction.contact.email}`}>{zoningEvidence.jurisdiction.contact.email}</a></p>

@@ -28,7 +28,16 @@ export function zoningDraftFromEvidence(
 ): ZoningEvidenceDraft {
   const verification = evidence.verification;
   const automatic = evidence.automatic_result;
+  const suggestion = automatic || evidence.suggested_result;
   const firstDocument = evidence.documents[0];
+  const contact = evidence.jurisdiction?.contact;
+  const defaultContactReference = [
+    contact?.planningPhone ? `Planning & Zoning: ${contact.planningPhone}` : null,
+    contact?.buildingPhone ? `Building Inspections: ${contact.buildingPhone}` : null,
+    !contact?.planningPhone && !contact?.buildingPhone && contact?.phone
+      ? `${contact.department}: ${contact.phone}`
+      : null,
+  ].filter(Boolean).join("; ");
   return {
     sourceDocumentId: verification?.source_document_id
       ? String(verification.source_document_id)
@@ -36,11 +45,13 @@ export function zoningDraftFromEvidence(
     sourceType: verification?.source_type || (firstDocument
       ? "map_pdf"
       : automatic ? "official_gis" : "city_confirmation"),
-    zoningCode: verification?.zoning_code || automatic?.zoning_code || current.zoningCode,
+    zoningCode: verification?.zoning_code || suggestion?.zoning_code || current.zoningCode,
     zoningDescription:
-      verification?.zoning_description || automatic?.zoning_description || current.zoningDescription,
+      verification?.zoning_description || suggestion?.zoning_description || current.zoningDescription,
     pageNumber: verification?.page_number ? String(verification.page_number) : "",
-    confirmationReference: verification?.confirmation_reference || "",
+    confirmationReference: verification?.confirmation_reference
+      || current.confirmationReference
+      || defaultContactReference,
     notes: verification?.notes || "",
     reviewer: verification?.reviewer || current.reviewer,
   };

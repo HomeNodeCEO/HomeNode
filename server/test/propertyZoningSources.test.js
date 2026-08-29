@@ -99,6 +99,8 @@ test("Duncanville uses the current official interactive map and query layer", ()
     "https://services3.arcgis.com/mjqW4t1A3YDrjss0/arcgis/rest/services/Zoning_view/FeatureServer/0/query",
   );
   assert.equal(source.outFields, "FID,NEW_ZONING");
+  assert.equal(jurisdiction.contact.planningPhone, "972-707-3878 / 972-707-3876");
+  assert.equal(jurisdiction.contact.buildingPhone, "972-780-5000");
   assert.equal(
     jurisdiction.referenceUrl,
     "https://duncanville.maps.arcgis.com/apps/instant/basic/index.html?appid=64164a8429db49f2864d9361f30e4720",
@@ -113,6 +115,20 @@ test("Duncanville uses the current official interactive map and query layer", ()
   }, "ffffffff-ffff-4fff-8fff-ffffffffffff", source);
   assert.equal(record.zoning_description, "Single-Family Residential District (SF-7)");
   assert.equal(record.generalized_use, "residential");
+});
+
+test("Duncanville splits combined official GIS zoning values into code and verbatim description", () => {
+  const source = OFFICIAL_ZONING_SOURCES.find((entry) => entry.jurisdiction === "Duncanville");
+  const record = normalizeOfficialZoningFeature({
+    type: "Feature",
+    properties: { FID: 7, NEW_ZONING: "PD, Planned Development District" },
+    geometry: {
+      type: "Polygon",
+      coordinates: [[[-96.9, 32.6], [-96.8, 32.6], [-96.8, 32.7], [-96.9, 32.6]]],
+    },
+  }, "dddddddd-dddd-4ddd-8ddd-dddddddddddd", source);
+  assert.equal(record.zoning_code, "PD");
+  assert.equal(record.zoning_description, "Planned Development District");
 });
 
 test("zoning synchronization can select a bounded municipal batch", () => {

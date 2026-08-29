@@ -2,7 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { listUadAssets } from "./assets.js";
 import { UAD_CERTIFICATION_FIELD_KEYS } from "./certificationsCatalog.js";
-import { isVerifiedDwellingFrontAsset } from "./dwellingExteriorCatalog.js";
+import {
+  isVerifiedDwellingExteriorAsset,
+  isVerifiedDwellingFrontAsset,
+} from "./dwellingExteriorCatalog.js";
 import { UAD_FUNCTIONAL_ISSUE_TYPES } from "./functionalObsolescenceCatalog.js";
 import { listUadEntities } from "./entities.js";
 import {
@@ -445,6 +448,19 @@ function completionFor(values, entities, assets = []) {
     if (section === "site") {
       const influences = entities.filter((entity) => entity.entity_type === "site_influence");
       const bodies = entities.filter((entity) => entity.entity_type === "site_body_of_water");
+      const views = entities.filter((entity) => entity.entity_type === "site_view");
+      required += 1;
+      if (assets.some((asset) => isVerifiedSiteAsset(asset, "PropertyAccess"))) completed += 1;
+      if (byKey.get("root:site_mixed_use:1500.0034") === true) {
+        required += 1;
+        if (assets.some((asset) => isVerifiedSiteAsset(asset, "NonResidentialUse"))) completed += 1;
+      }
+      for (const view of views.filter((entity) => (
+        ["Adverse", "Beneficial"].includes(valueLookup(byKey, entity.id)("site_view:1500.0184"))
+      ))) {
+        required += 1;
+        if (assets.some((asset) => isVerifiedSiteAsset(asset, "View", view.id))) completed += 1;
+      }
       let hasPrivateWaterAccess = false;
       for (const influence of influences) {
         if (valueLookup(byKey, influence.id)("site_influence:1500.0087") !== "BodyOfWater") continue;
@@ -469,6 +485,10 @@ function completionFor(values, entities, assets = []) {
       const dwellings = entities.filter((entity) => entity.entity_type === "dwelling");
       required += dwellings.length;
       completed += dwellings.filter((dwelling) => assets.some((asset) => isVerifiedDwellingFrontAsset(asset, dwelling.id))).length;
+      if (dwellings.length) {
+        required += 1;
+        if (assets.some((asset) => isVerifiedDwellingExteriorAsset(asset, "DwellingRear"))) completed += 1;
+      }
     }
     if (section === "manufactured_home") {
       const manufacturedDwellings = entities.filter((entity) => (
@@ -707,7 +727,18 @@ function completionFor(values, entities, assets = []) {
           ) required += 1;
         }
         const comparables = entities.filter((entity) => entity.entity_type === "sales_comparable");
-        if (!comparables.length) required += 1;
+        const settledCount = comparables.filter((comparable) => (
+          valueLookup(byKey, comparable.id)(UAD_SALES_COMPARISON_FIELD_KEYS.listingStatus) === "SettledSale"
+        )).length;
+        required += Math.max(0, 3 - settledCount);
+        required += 1;
+        if (assets.some((asset) => isVerifiedSalesComparisonAsset(asset, "PropertyPhoto", null))) {
+          completed += 1;
+        }
+        required += 1;
+        if (assets.some((asset) => isVerifiedSalesComparisonAsset(asset, "SalesComparableMap", null))) {
+          completed += 1;
+        }
         for (const comparable of comparables) {
           const sources = entities.filter((entity) => (
             entity.entity_type === "sales_comparable_data_source"
@@ -972,6 +1003,40 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     }
   }
 
+  if (section === "assignment") {
+    const rootLookup = valueLookup(merged);
+    const valuationMethodField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "assignment:1000.0158");
+    const exteriorInspectionField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "appraiser_inspection:2400.0081");
+    const interiorInspectionField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "appraiser_inspection:2400.0082");
+    const valuationMethod = rootLookup("assignment:1000.0158");
+    const exteriorInspection = rootLookup("appraiser_inspection:2400.0081");
+    const interiorInspection = rootLookup("appraiser_inspection:2400.0082");
+    if (valuationMethod === "ExteriorAppraisal") {
+      errors.push(validationError(
+        valuationMethodField,
+        null,
+        "fannie_exterior_appraisal_not_eligible",
+        "Exterior Appraisal is present in the UAD dataset but is not currently eligible for Fannie Mae delivery. Select an eligible valuation method for this Fannie-targeted report.",
+      ));
+    }
+    if (valuationMethod === "TraditionalAppraisal" && exteriorInspection !== "Physical") {
+      errors.push(validationError(
+        exteriorInspectionField,
+        null,
+        "traditional_appraisal_exterior_inspection_required",
+        "A Traditional Appraisal requires the signing appraiser to perform a physical exterior inspection.",
+      ));
+    }
+    if (valuationMethod === "TraditionalAppraisal" && interiorInspection !== "Physical") {
+      errors.push(validationError(
+        interiorInspectionField,
+        null,
+        "traditional_appraisal_interior_inspection_required",
+        "A Traditional Appraisal requires the signing appraiser to perform a physical interior inspection.",
+      ));
+    }
+  }
+
   if (section === "reconciliation") {
     const rootLookup = valueLookup(merged);
     const fieldFor = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
@@ -1210,6 +1275,40 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         ));
       }
     }
+
+    if (rootLookup(UAD_RECONCILIATION_FIELD_KEYS.incomeDeveloped) === true) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.incomeDeveloped),
+        null,
+        "native_income_approach_section_required",
+        "Do not complete or export this report until the native UAD Section 24 Income Approach analysis is complete. An indicated value copied from another report is not a compliant substitute.",
+      ));
+    }
+    if (rootLookup(UAD_RECONCILIATION_FIELD_KEYS.costDeveloped) === true) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.costDeveloped),
+        null,
+        "native_cost_approach_section_required",
+        "Do not complete or export this report until the native UAD Section 25 Cost Approach analysis is complete. An indicated value copied from another report is not a compliant substitute.",
+      ));
+    }
+    const subjectUnitCount = Number(rootLookup("subject:0100.0022"));
+    if (Number.isInteger(subjectUnitCount) && subjectUnitCount > 1) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.incomeDeveloped),
+        null,
+        "two_to_four_unit_native_income_approach_required",
+        "A two- to four-unit Fannie Mae appraisal requires the Income Approach. HomeNode must provide the native UAD Sections 23 and 24 before this assignment can be completed or exported.",
+      ));
+    }
+    if (workfileHasManufacturedHome(merged, entities)) {
+      errors.push(validationError(
+        fieldFor(UAD_RECONCILIATION_FIELD_KEYS.costDeveloped),
+        null,
+        "manufactured_home_native_cost_approach_required",
+        "A manufactured-home Fannie Mae appraisal requires the Cost Approach. HomeNode must provide native UAD Section 25 before this assignment can be completed or exported.",
+      ));
+    }
   }
 
   if (section === "subject") {
@@ -1252,6 +1351,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const influences = entities.filter((entity) => entity.entity_type === "site_influence");
     const bodiesOfWater = entities.filter((entity) => entity.entity_type === "site_body_of_water");
     const waterfrontFeatures = entities.filter((entity) => entity.entity_type === "site_waterfront_feature");
+    const views = entities.filter((entity) => entity.entity_type === "site_view");
     const influenceIds = new Set(influences.map((entity) => entity.id));
     const bodyIds = new Set(bodiesOfWater.map((entity) => entity.id));
     const siteField = (key) => UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
@@ -1344,6 +1444,24 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     if (privateWaterAccessExists && !assets.some((asset) => isVerifiedSiteAsset(asset, "WaterFrontage"))) {
       errors.push(validationError(siteField("site_influence:1500.0075"), null, "site_water_frontage_photo_required", "Upload and verify a Water Frontage photo when the subject has private water access."));
     }
+    if (!assets.some((asset) => isVerifiedSiteAsset(asset, "PropertyAccess"))) {
+      errors.push(validationError(siteField("site_access:1500.0055"), null, "site_property_access_photo_required", "Upload and verify the required Property Access street-scene photo."));
+    }
+    if (
+      rootLookup("site_mixed_use:1500.0034") === true
+      && !assets.some((asset) => isVerifiedSiteAsset(asset, "NonResidentialUse"))
+    ) {
+      errors.push(validationError(siteField("site_mixed_use:1500.0034"), null, "site_non_residential_use_photo_required", "Upload and verify a Non-Residential Use photo when the subject has a non-residential use."));
+    }
+    for (const view of views) {
+      const impact = valueLookup(merged, view.id)("site_view:1500.0184");
+      if (
+        ["Adverse", "Beneficial"].includes(impact)
+        && !assets.some((asset) => isVerifiedSiteAsset(asset, "View", view.id))
+      ) {
+        errors.push(validationError(siteField("site_view:1500.0184"), view.id, "site_view_photo_required", "Upload and verify a photo for every view that affects value or marketability."));
+      }
+    }
   }
 
   if (section === "disaster_mitigation") {
@@ -1397,6 +1515,29 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     }
     if (sketchExists === false && reportAssets.length > 0) {
       errors.push(validationError(field, null, "sketch_asset_conflict", "Remove the saved sketch or floor plan images, or change the provided answer to Yes."));
+    }
+    const valuationMethod = rootLookup("assignment:1000.0158");
+    const measurementStandard = rootLookup("sketch:3300.0007");
+    const attachment = rootLookup("subject:0100.0020");
+    const ansiApplicableDesign = entities.some((entity) => (
+      entity.entity_type === "dwelling"
+      && ["RowhouseTownhouse", "SemiDetached", "Other"].includes(
+        valueLookup(merged, entity.id)("dwelling:0300.0032"),
+      )
+    ));
+    if (
+      sketchExists === true
+      && ["TraditionalAppraisal", "HybridAppraisal"].includes(valuationMethod)
+      && (attachment === "Detached" || ansiApplicableDesign)
+      && measurementStandard === "AmericanMeasurementStandard"
+    ) {
+      const standardField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "sketch:3300.0007");
+      errors.push(validationError(
+        standardField,
+        null,
+        "ansi_measurement_standard_required",
+        "Use ANSI Z765-2021 for an eligible one-unit attached or detached dwelling, or select Other and explain the controlling legal or regulatory standard in Sketch Commentary.",
+      ));
     }
   }
 
@@ -1486,6 +1627,9 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
           errors.push(validationError(field, dwelling.id, "manufactured_home_data_conflict", "Remove the saved Manufactured Home records and exhibits before changing Construction Method from Manufactured."));
         }
       }
+    }
+    if (dwellings.length && !assets.some((asset) => isVerifiedDwellingExteriorAsset(asset, "DwellingRear"))) {
+      errors.push(validationError(baseField, null, "dwelling_rear_photo_required", "Upload and verify the required rear photo of the subject dwelling."));
     }
   }
 
@@ -2697,13 +2841,58 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
         ));
       }
     }
-    if (included === true && !comparables.length) {
+    const settledComparables = comparables.filter((comparable) => (
+      valueLookup(merged, comparable.id)(UAD_SALES_COMPARISON_FIELD_KEYS.listingStatus) === "SettledSale"
+    ));
+    if (included === true && settledComparables.length < 3) {
       errors.push(validationError(
         salesField(UAD_SALES_COMPARISON_FIELD_KEYS.included),
         null,
-        "sales_comparable_required",
-        "Add at least one sales comparable when the Sales Comparison Approach is developed.",
+        "minimum_three_closed_sales_required",
+        "Fannie Mae requires at least three closed sales comparables when the Sales Comparison Approach is developed.",
       ));
+    }
+    if (
+      included === true
+      && !assets.some((asset) => isVerifiedSalesComparisonAsset(asset, "PropertyPhoto", null))
+    ) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.included),
+        null,
+        "sales_subject_property_photo_required",
+        "Upload and verify the required subject Property Photo for the Sales Comparison Approach.",
+      ));
+    }
+    if (
+      included === true
+      && !assets.some((asset) => isVerifiedSalesComparisonAsset(asset, "SalesComparableMap", null))
+    ) {
+      errors.push(validationError(
+        salesField(UAD_SALES_COMPARISON_FIELD_KEYS.included),
+        null,
+        "sales_comparable_map_required",
+        "Upload and verify the required Sales Comparison Map when the Sales Comparison Approach is developed.",
+      ));
+    }
+    if (included === true) {
+      const indicatedValue = finiteNumber(rootLookup(UAD_SALES_COMPARISON_FIELD_KEYS.indicatedValue));
+      const adjustedPrices = comparables
+        .map((comparable) => finiteNumber(
+          valueLookup(merged, comparable.id)(UAD_SALES_COMPARISON_FIELD_KEYS.adjustedPrice),
+        ))
+        .filter((amount) => amount !== null);
+      if (
+        indicatedValue !== null
+        && adjustedPrices.length
+        && (indicatedValue < Math.min(...adjustedPrices) || indicatedValue > Math.max(...adjustedPrices))
+      ) {
+        errors.push(validationError(
+          salesField(UAD_SALES_COMPARISON_FIELD_KEYS.indicatedValue),
+          null,
+          "sales_indicated_value_outside_adjusted_range",
+          "The Sales Comparison Approach indicated value must fall within the range of the comparables' adjusted prices.",
+        ));
+      }
     }
     if (included === false && comparables.length) {
       errors.push(validationError(
@@ -4781,6 +4970,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
     const baseField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit:0700.0140");
     const identifiers = new Set();
     const amount = (value) => Number(value?.amount ?? 0);
+    const newConstruction = valueLookup(merged)("subject:0300.0010") === true;
     const orphanedChildren = entities.filter((entity) => (
       childTypes.has(entity.entity_type) && !unitIds.has(entity.parent_entity_id)
     ));
@@ -4803,6 +4993,39 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
       const rooms = entities.filter((entity) => entity.entity_type === "unit_room" && entity.parent_entity_id === unit.id);
       const features = entities.filter((entity) => entity.entity_type === "unit_interior_feature" && entity.parent_entity_id === unit.id);
       const defects = entities.filter((entity) => entity.entity_type === "unit_interior_defect" && entity.parent_entity_id === unit.id);
+
+      if (newConstruction) {
+        for (const [key, label] of [
+          ["unit:0700.0117", "Overall bathroom update status"],
+          ["unit:0700.0122", "Overall flooring update status"],
+        ]) {
+          if (lookup(key) !== "FullyUpdated") {
+            const updateField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === key);
+            errors.push(validationError(
+              updateField,
+              unit.id,
+              "new_construction_fully_updated_required",
+              `${label} must be Fully Updated for new construction.`,
+            ));
+          }
+        }
+        for (const room of rooms) {
+          const roomLookup = valueLookup(merged, room.id);
+          const roomType = roomLookup("unit_room:0700.0035");
+          if (
+            ["Kitchen", "FullBathroom", "HalfBathroom"].includes(roomType)
+            && roomLookup("unit_room:0700.0036") !== "FullyUpdated"
+          ) {
+            const updateField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "unit_room:0700.0036");
+            errors.push(validationError(
+              updateField,
+              room.id,
+              "new_construction_room_fully_updated_required",
+              `${roomType} update status must be Fully Updated for new construction.`,
+            ));
+          }
+        }
+      }
 
       const unitIdentifier = String(lookup("unit:0700.0114") || "").trim();
       if ((units.length > 1 || lookup("unit:0700.0089") === true) && !unitIdentifier) {

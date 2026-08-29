@@ -31,6 +31,7 @@ test("enforces the official Section 7 conditional requirements", () => {
   assert.equal(uadFieldIsRequired(commentary, (key) => values.get(key)), false);
   values.set("sketch:3300.0007", "Other");
   assert.equal(uadFieldIsRequired(otherStandard, (key) => values.get(key)), true);
+  assert.equal(uadFieldIsRequired(commentary, (key) => values.get(key)), true);
   values.set("sketch:3300.0002", false);
   assert.equal(uadFieldIsRequired(commentary, (key) => values.get(key)), true);
 

@@ -13,7 +13,10 @@ import {
   uadFieldIsRequired,
   validateUadSectionValues,
 } from "../src/modules/uad/fieldCatalog.js";
-import { isVerifiedDwellingFrontAsset } from "../src/modules/uad/dwellingExteriorCatalog.js";
+import {
+  isVerifiedDwellingExteriorAsset,
+  isVerifiedDwellingFrontAsset,
+} from "../src/modules/uad/dwellingExteriorCatalog.js";
 
 test("adds official URAR Section 8 after Sketch", () => {
   const sections = getUadEditorSections();
@@ -65,6 +68,7 @@ test("recognizes only verified, dwelling-linked UAD front photos", () => {
   };
   assert.equal(isVerifiedDwellingFrontAsset(asset, dwellingId), true);
   assert.equal(isVerifiedDwellingFrontAsset({ ...asset, caption_type: "DwellingRear" }, dwellingId), false);
+  assert.equal(isVerifiedDwellingExteriorAsset({ ...asset, caption_type: "DwellingRear" }, "DwellingRear", dwellingId), true);
   assert.equal(isVerifiedDwellingFrontAsset({ ...asset, entity_id: null }, dwellingId), false);
   assert.equal(isVerifiedDwellingFrontAsset({ ...asset, content_type: "application/pdf" }, dwellingId), false);
 });

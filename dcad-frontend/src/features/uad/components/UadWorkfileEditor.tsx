@@ -31,9 +31,10 @@ const AUTOSAVE_IDLE_MS = 10_000;
 const AUTOSAVE_MAX_WAIT_MS = 55_000;
 
 const SITE_CAPTIONS = [
-  "PropertyAccess", "PropertyPhoto", "SiteInfluence", "View", "SiteCharacteristic",
-  "PropertyBoundaries", "Encroachment", "WaterFrontage", "SiteExhibit",
+  "PropertyAccess", "PropertyPhoto", "SiteInfluence", "SiteCharacteristic",
+  "PropertyBoundaries", "Encroachment", "WaterFrontage", "NonResidentialUse", "SiteExhibit",
 ];
+const SITE_VIEW_CAPTIONS = ["View"];
 const DISASTER_MITIGATION_CAPTIONS = ["DisasterMitigationExhibit"];
 const ENERGY_GREEN_CAPTIONS = ["EnergyEfficientAndGreenFeaturesExhibit"];
 const SKETCH_REPORT_CAPTIONS = ["SubjectPropertyImprovementSketch", "FloorPlan"];
@@ -72,8 +73,9 @@ const PROJECT_AMENITY_CAPTIONS = ["ProjectAmenity"];
 const SUBJECT_LISTING_CAPTIONS = ["SubjectListingExhibit"];
 const SALES_CONTRACT_CAPTIONS = ["SalesContractExhibit"];
 const PRIOR_TRANSFER_CAPTIONS = ["PriorSaleAndTransferHistoryExhibit"];
+const SALES_SUBJECT_PHOTO_CAPTIONS = ["PropertyPhoto"];
 const SALES_COMPARABLE_PHOTO_CAPTIONS = ["PropertyPhoto"];
-const SALES_COMPARISON_EXHIBIT_CAPTIONS = ["SalesComparisonApproachExhibit"];
+const SALES_COMPARISON_EXHIBIT_CAPTIONS = ["SalesComparableMap", "SalesComparisonApproachExhibit"];
 const RECONCILIATION_EXHIBIT_CAPTIONS = ["ReconciliationExhibit"];
 const SUBJECT_AMENITY_REDISPLAY = [
   { category: "OutdoorAccessories", label: "Outdoor accessories", context: "amenity_outdoor_accessories", typeUid: "0200.0007", countUid: "0200.0004", reportFieldId: "22.12.01" },
@@ -377,6 +379,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
   const unitInteriorFeatures = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_feature") || [];
   const unitInteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "unit_interior_defect") || [];
   const siteDefects = editor?.entities.filter((entity) => entity.entity_type === "site_defect") || [];
+  const siteViews = editor?.entities.filter((entity) => entity.entity_type === "site_view") || [];
   const dwellingExteriorDefects = editor?.entities.filter((entity) => entity.entity_type === "dwelling_exterior_defect") || [];
   const outbuildings = editor?.entities.filter((entity) => entity.entity_type === "outbuilding") || [];
   const outbuildingRooms = editor?.entities.filter((entity) => entity.entity_type === "outbuilding_room") || [];
@@ -1316,8 +1319,28 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             );
           })}
           {activeSection === "site" && (
-            <UadAssetPanel captionTypes={SITE_CAPTIONS} sectionNumber={4} title="Site photos, exhibits, and supporting files" workfileId={workfileId} />
+            <UadAssetPanel
+              captionTypes={SITE_CAPTIONS}
+              description="The Property Access street scene is always required. Add a Non-Residential Use photo for mixed-use property and Water Frontage evidence for private water access. Other site exhibits remain optional unless the reported facts make them necessary."
+              sectionNumber={4}
+              title="Site photos, exhibits, and supporting files"
+              workfileId={workfileId}
+            />
           )}
+          {activeSection === "site" && siteViews.map((view) => (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SITE_VIEW_CAPTIONS}
+              description="A verified photo is required when this view has a beneficial or adverse effect on value or marketability. Neutral-view photos may be included when useful."
+              emptyMessage="No verified image attached to this view."
+              entityId={view.id}
+              key={`site-view-${view.id}`}
+              sectionNumber={4}
+              title={`${view.label || `View ${view.ordinal}`} photo`}
+              visibleCaptionTypes={SITE_VIEW_CAPTIONS}
+              workfileId={workfileId}
+            />
+          ))}
           {activeSection === "disaster_mitigation" && disasterSectionDisplays && (
             <UadAssetPanel captionTypes={DISASTER_MITIGATION_CAPTIONS} sectionNumber={5} title="Disaster mitigation exhibits" workfileId={workfileId} />
           )}
@@ -1353,7 +1376,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             <UadAssetPanel
               accept={SKETCH_IMAGE_ACCEPT}
               captionTypes={DWELLING_EXTERIOR_CAPTIONS}
-              description="The front photo is required. Rear, noncontinuous-area, and other exterior images may be added as applicable. Files use the same private R2 upload contract planned for the HomeNode mobile capture app."
+              description="A front photo is required for every dwelling, and one verified rear photo is required for the subject. Noncontinuous-area and other exterior images may be added as applicable. Files use the same private R2 upload contract as the HomeNode mobile capture app."
               emptyMessage="No verified dwelling exterior images uploaded yet."
               entityId={dwelling.id}
               key={dwelling.id}
@@ -1625,9 +1648,22 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           {activeSection === "sales_comparison" && (
             <UadAssetPanel
               accept={SKETCH_IMAGE_ACCEPT}
+              captionTypes={SALES_SUBJECT_PHOTO_CAPTIONS}
+              description="A verified subject Property Photo is required and remains distinct from the Dwelling Front, Property Access street scene, and comparable photos."
+              emptyMessage="No verified subject property photo uploaded yet."
+              sectionNumber={22}
+              title="Subject property photo"
+              uploadEnabled={salesComparisonIncluded === true}
+              visibleCaptionTypes={SALES_SUBJECT_PHOTO_CAPTIONS}
+              workfileId={workfileId}
+            />
+          )}
+          {activeSection === "sales_comparison" && (
+            <UadAssetPanel
+              accept={SKETCH_IMAGE_ACCEPT}
               captionTypes={SALES_COMPARISON_EXHIBIT_CAPTIONS}
-              description="Upload optional photographs, maps, search support, or other images relevant to the Sales Comparison Approach. General exhibits stay at workfile level; comparable property photos attach to the individual comparable above."
-              emptyMessage="No optional sales-comparison exhibits uploaded."
+              description="The Sales Comparable Map is required whenever this approach is developed. Search support and other Sales Comparison Approach exhibits are optional. General exhibits stay at workfile level; comparable property photos attach to the individual comparable above."
+              emptyMessage="No Sales Comparable Map or optional sales-comparison exhibits uploaded."
               sectionNumber={22}
               title="Sales Comparison Approach exhibits"
               uploadEnabled={salesComparisonIncluded === true}

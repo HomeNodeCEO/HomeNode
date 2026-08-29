@@ -778,7 +778,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         </div>
       </header>
 
-      <div className="lg:grid lg:grid-cols-[24%_74%] lg:items-start lg:justify-between">
+      <div className="lg:grid lg:grid-cols-[20%_78%] lg:items-start lg:justify-between">
         <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 lg:grid-cols-1 lg:border-b-0 lg:border-r" aria-label="UAD workfile sections">
           {editor.sections.filter((item) => item.applicable !== false).map((item) => {
             const completion = editor.completion[item.key];
@@ -797,7 +797,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                 <div className="grid w-full grid-cols-[5rem_minmax(0,1fr)] items-start gap-x-2 gap-y-4 text-left text-sm">
                   <span className="whitespace-nowrap font-semibold text-slate-950">Section {item.officialSectionNumber}</span>
                   <span className="font-semibold text-slate-950">{item.title}</span>
-                  <span className="col-span-2 justify-self-end whitespace-nowrap text-right font-semibold text-black">{completion.completed} of {completion.required} required · {completion.percent}%</span>
+                  <span className="col-span-2 justify-self-start whitespace-nowrap text-left font-semibold text-black">{completion.completed} of {completion.required} required · {completion.percent}%</span>
                 </div>
               </button>
             );

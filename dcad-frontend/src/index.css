@@ -148,6 +148,15 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
 .hn-app-header :where(h1, h2, h3, p, span, strong, small) { color: inherit !important; }
 .hn-app-header .hn-eyebrow { color: #e6ca8e !important; }
 
+.hn-home-logo {
+  display: block;
+  width: min(100%, 390px);
+  height: auto;
+  margin: 0 0 0.75rem;
+  object-fit: contain;
+  object-position: left center;
+}
+
 .hn-eyebrow {
   color: var(--hn-gold-ink) !important;
   font-weight: 700;

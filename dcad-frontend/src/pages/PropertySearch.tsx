@@ -215,6 +215,11 @@ export default function PropertySearchPage() {
   return (
     <div className="hn-app-shell" style={{ padding: 16, display: "grid", gap: 12 }}>
       <header className="hn-app-header rounded-2xl px-5 py-4">
+        <img
+          className="hn-home-logo"
+          src="/branding/homenode-logo.png"
+          alt="HomeNode"
+        />
         <div className="hn-eyebrow text-xs">HomeNode workspace</div>
         <h1 style={{ margin: "4px 0 0" }}>Property Search</h1>
       </header>

@@ -265,8 +265,23 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   transition: background 160ms ease, border-color 160ms ease;
 }
 
+@keyframes hn-custom-gradient-flow {
+  from { background-position: 100% 50%; }
+  to { background-position: 0% 50%; }
+}
+
 .hn-custom-section-header:hover {
-  background: var(--hn-violet-soft);
+  border-left-color: var(--hn-gold);
+  background-image: linear-gradient(
+    90deg,
+    var(--hn-gold-soft) 0%,
+    var(--hn-violet-soft) 25%,
+    var(--hn-gold-soft) 50%,
+    var(--hn-violet-soft) 75%,
+    var(--hn-gold-soft) 100%
+  );
+  background-size: 200% 100%;
+  animation: hn-custom-gradient-flow 2.2s linear infinite;
 }
 
 .hn-custom-section-header-active {
@@ -312,6 +327,13 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   box-shadow: none !important;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .hn-custom-section-header:hover {
+    background: linear-gradient(100deg, var(--hn-gold-soft), var(--hn-violet-soft) 72%);
+    animation: none;
+  }
+}
+
 @media print {
   html, body, #root, .hn-app-shell {
     background: #fff !important;
@@ -330,6 +352,7 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
     background: #fff !important;
     color: #000 !important;
     box-shadow: none !important;
+    animation: none !important;
   }
 }
 

@@ -73,3 +73,13 @@ test("dark purple headers and actions keep white text in every interaction state
     assert.doesNotMatch(source, /className="btn btn-primary/);
   }
 });
+
+test("Custom Appraisal section headers animate their gradient only on hover", () => {
+  const css = read("../../dcad-frontend/src/index.css");
+
+  assert.match(css, /@keyframes hn-custom-gradient-flow/);
+  assert.match(css, /\.hn-custom-section-header:hover[\s\S]*background-size: 200% 100%/);
+  assert.match(css, /\.hn-custom-section-header:hover[\s\S]*animation: hn-custom-gradient-flow 2\.2s linear infinite/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none/);
+  assert.match(css, /@media print[\s\S]*animation: none !important/);
+});

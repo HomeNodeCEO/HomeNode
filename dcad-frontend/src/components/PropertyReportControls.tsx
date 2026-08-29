@@ -21,7 +21,7 @@ export function CheckboxChoice({
       disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer'
     } ${
       checked
-        ? 'border-blue-400 bg-blue-50 text-blue-900'
+        ? 'hn-custom-selection text-violet-950'
         : 'border-slate-200 bg-white text-slate-700'
     }`}>
       <input
@@ -62,17 +62,20 @@ export function SummarySection({
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   return (
-    <section className={`rounded-2xl border border-slate-200 bg-slate-50/70 ${
-      compact ? 'p-3 sm:p-4' : 'p-4 sm:p-5'
-    } ${className}`}>
-      <div className={`${compact ? 'mb-3' : 'mb-4'} flex items-start justify-between gap-3`}>
+    <section
+      className={`hn-custom-section ${expanded ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
+      data-section-expanded={expanded ? 'true' : 'false'}
+    >
+      <div className={`hn-custom-section-header ${expanded ? 'hn-custom-section-header-active' : ''} flex items-start justify-between gap-3 ${
+        compact ? 'px-3 py-3 sm:px-4' : 'px-4 py-4 sm:px-5'
+      }`}>
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-800">
+            <h2 className="hn-custom-section-title text-sm font-semibold uppercase tracking-[0.12em]">
               {title}
             </h2>
             {manuallyVerified ? (
-              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal text-blue-800">
+              <span className="hn-custom-verified rounded-full px-2 py-0.5 text-[11px] font-semibold normal-case tracking-normal">
                 Manually verified
               </span>
             ) : null}
@@ -84,7 +87,7 @@ export function SummarySection({
             <button
               type="button"
               onClick={onEdit}
-              className="btn btn-sm normal-case border-slate-300 bg-white text-slate-800 hover:border-blue-400 hover:bg-blue-50"
+              className="hn-action-secondary btn btn-sm normal-case"
             >
               Edit
             </button>
@@ -94,14 +97,18 @@ export function SummarySection({
               type="button"
               aria-expanded={expanded}
               onClick={() => setExpanded((current) => !current)}
-              className="btn btn-sm normal-case rounded-lg border-slate-950 bg-slate-950 text-white hover:border-black hover:bg-black"
+              className={expanded
+                ? 'hn-action-gold btn btn-sm normal-case rounded-lg'
+                : 'hn-action-secondary btn btn-sm normal-case rounded-lg'}
             >
               {expanded ? 'Collapse' : 'Expand'}
             </button>
           ) : null}
         </div>
       </div>
-      {!collapsible || expanded ? children : null}
+      {!collapsible || expanded ? (
+        <div className={compact ? 'p-3 sm:p-4' : 'p-4 sm:p-5'}>{children}</div>
+      ) : null}
     </section>
   );
 }

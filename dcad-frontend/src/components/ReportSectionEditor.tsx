@@ -167,7 +167,7 @@ export default function ReportSectionEditor({
   ) => (
     <label className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium ${
       checked
-        ? "border-blue-400 bg-blue-50 text-blue-900"
+        ? "hn-custom-selection text-violet-950"
         : "border-slate-200 bg-white text-slate-700"
     }`}>
       <input
@@ -471,15 +471,15 @@ export default function ReportSectionEditor({
 
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-slate-950/60 p-3 sm:p-6">
-      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+      <div className="hn-workspace-surface flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border">
+        <div className="hn-app-header flex items-start justify-between gap-4 border-b px-5 py-4">
           <div>
-            <h2 className="text-lg font-bold text-slate-950">Edit {section.title}</h2>
-            <p className="mt-1 text-xs text-slate-600">
+            <h2 className="text-lg font-bold text-white">Edit {section.title}</h2>
+            <p className="mt-1 text-xs text-violet-100">
               Saved values override the report display and are retained with revision history.
             </p>
           </div>
-          <button type="button" onClick={onCancel} className="btn btn-ghost btn-sm" disabled={saving}>
+          <button type="button" onClick={onCancel} className="hn-action-secondary btn btn-ghost btn-sm" disabled={saving}>
             Close
           </button>
         </div>
@@ -488,14 +488,14 @@ export default function ReportSectionEditor({
             <div key={key}>{renderValue(value, [key], key)}</div>
           ))}
         </div>
-        <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
-          <button type="button" onClick={onCancel} className="btn btn-ghost normal-case" disabled={saving}>
+        <div className="hn-subtle-panel flex justify-end gap-2 border-t px-5 py-4">
+          <button type="button" onClick={onCancel} className="hn-action-secondary btn btn-ghost normal-case" disabled={saving}>
             Cancel
           </button>
           <button
             type="button"
             onClick={() => onSave(draft)}
-            className="btn normal-case border-blue-600 bg-blue-600 text-white hover:bg-blue-700"
+            className="hn-action-primary btn normal-case"
             disabled={saving || assignmentErrors.length > 0}
           >
             {saving ? "Saving…" : "Save Changes"}

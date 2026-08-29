@@ -212,12 +212,110 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
 .hn-brand-link { color: var(--hn-violet) !important; }
 .hn-brand-link:hover { color: var(--hn-violet-hover) !important; }
 
+/* Custom Appraisal uses the same executive-tech visual language as UAD while
+ * retaining its own stacked report workflow. Open/selected work areas share
+ * the gold-to-lavender gradient used by the UAD section navigator. */
+.hn-custom-report {
+  border-color: var(--hn-border) !important;
+  background: var(--hn-surface) !important;
+  box-shadow: 0 22px 60px rgba(36, 20, 63, 0.13) !important;
+}
+
+.hn-custom-report-toolbar {
+  border-color: rgba(198, 161, 91, 0.42) !important;
+  background:
+    radial-gradient(circle at 92% 0%, rgba(198, 161, 91, 0.2), transparent 20rem),
+    linear-gradient(118deg, var(--hn-midnight), var(--hn-deep-purple)) !important;
+  color: #fff !important;
+}
+
+.hn-custom-section {
+  overflow: hidden;
+  border-color: var(--hn-border) !important;
+  background: var(--hn-surface) !important;
+  box-shadow: 0 8px 24px rgba(36, 20, 63, 0.07);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.hn-custom-section-active {
+  border-color: rgba(109, 40, 217, 0.32) !important;
+  box-shadow: 0 12px 30px rgba(36, 20, 63, 0.1);
+}
+
+.hn-custom-section-header {
+  width: 100%;
+  border-top: 0 !important;
+  border-right: 0 !important;
+  border-bottom: 0 !important;
+  border-left: 4px solid transparent;
+  border-radius: 0 !important;
+  background: var(--hn-surface-muted);
+  color: var(--hn-text) !important;
+  box-shadow: none !important;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.hn-custom-section-header:hover {
+  background: var(--hn-violet-soft);
+}
+
+.hn-custom-section-header-active {
+  border-left-color: var(--hn-gold);
+  background: linear-gradient(100deg, var(--hn-gold-soft), var(--hn-violet-soft) 72%);
+}
+
+.hn-custom-history[open] > summary {
+  border-left-color: var(--hn-gold) !important;
+  background: linear-gradient(100deg, var(--hn-gold-soft), var(--hn-violet-soft) 72%);
+}
+
+.hn-custom-section-title { color: var(--hn-deep-purple) !important; }
+
+.hn-custom-selection {
+  border-color: var(--hn-gold) !important;
+  background: linear-gradient(100deg, var(--hn-gold-soft), var(--hn-violet-soft)) !important;
+  box-shadow: 0 5px 16px rgba(109, 40, 217, 0.09);
+}
+
+.hn-custom-verified {
+  border: 1px solid rgba(109, 40, 217, 0.16);
+  background: rgba(109, 40, 217, 0.09) !important;
+  color: var(--hn-violet-hover) !important;
+}
+
+.hn-custom-approach-link {
+  border-color: var(--hn-border) !important;
+  background: var(--hn-surface) !important;
+  color: var(--hn-deep-purple) !important;
+  box-shadow: none !important;
+}
+
+.hn-custom-approach-link:hover:not([aria-disabled="true"]) {
+  border-color: var(--hn-gold) !important;
+  background: linear-gradient(100deg, var(--hn-gold-soft), var(--hn-violet-soft)) !important;
+}
+
+.hn-custom-approach-link[aria-disabled="true"] {
+  border-color: #d8d3df !important;
+  background: #e9e6ee !important;
+  color: #625b6d !important;
+  box-shadow: none !important;
+}
+
 @media print {
   html, body, #root, .hn-app-shell {
     background: #fff !important;
     color: #000 !important;
   }
   .hn-workspace-surface, .hn-app-header {
+    border-color: #aaa !important;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+  .hn-custom-report, .hn-custom-report-toolbar, .hn-custom-section,
+  .hn-custom-section-active, .hn-custom-section-header,
+  .hn-custom-section-header-active, .hn-custom-selection {
     border-color: #aaa !important;
     background: #fff !important;
     color: #000 !important;

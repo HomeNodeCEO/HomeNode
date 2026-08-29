@@ -59,6 +59,7 @@ import {
   SummaryField,
   SummarySection,
 } from "@/components/PropertyReportControls";
+import { hasSnapshotValue, mergeNonBlankSnapshot } from "@/lib/reportSnapshotMerge";
 
 const AssignmentDocumentCenter = memo(
   lazy(() => import("@/components/AssignmentDocumentCenter")),
@@ -422,7 +423,7 @@ function AddressHero({
   } = useZoningEvidence({
     accountId,
     assignmentFileId: activeAssignmentFile?.id || null,
-    enabled: Boolean(detail),
+    enabled: Boolean(detail) && assignmentFilesLoaded,
     getEditorKey: editorKeyForSave,
     onCredentialRejected: forgetEditorCredential,
   });
@@ -565,27 +566,23 @@ function AddressHero({
   const assignmentHousingProfile = assignmentPropertyCharacteristics?.housing_profile;
   const assignmentInspectionDetails = assignmentPropertyCharacteristics?.inspection_details;
   const improvement: DcadMainImprovement | undefined = detail?.main_improvement || assignmentMainImprovement
-    ? {
-        ...(detail?.main_improvement || {}),
-        ...(assignmentMainImprovement && typeof assignmentMainImprovement === "object" && !Array.isArray(assignmentMainImprovement)
-          ? assignmentMainImprovement
-          : {}),
-      }
+    ? mergeNonBlankSnapshot(
+        detail?.main_improvement || {},
+        assignmentMainImprovement,
+      )
     : undefined;
   const housing: DcadHousingProfile | undefined = detail?.housing_profile || assignmentHousingProfile
-    ? {
-        ...(detail?.housing_profile || {}),
-        ...(assignmentHousingProfile && typeof assignmentHousingProfile === "object" && !Array.isArray(assignmentHousingProfile)
-          ? assignmentHousingProfile
-          : {}),
-      }
+    ? mergeNonBlankSnapshot(
+        detail?.housing_profile || {},
+        assignmentHousingProfile,
+      )
     : undefined;
   const inspectionDetails = assignmentInspectionDetails && typeof assignmentInspectionDetails === "object" && !Array.isArray(assignmentInspectionDetails)
     ? assignmentInspectionDetails as Record<string, unknown>
     : {};
   const landRows = detail?.land_detail || [];
   const assignmentAdditionalImprovements = assignmentPropertyCharacteristics?.additional_improvements;
-  const additionalImprovements = Array.isArray(assignmentAdditionalImprovements)
+  const additionalImprovements = hasSnapshotValue(assignmentAdditionalImprovements)
     ? assignmentAdditionalImprovements as DcadImprovementRow[]
     : detail?.additional_improvements || [];
   const mobileInspectionPhotos = activeAssignmentFile?.mobile_inspection_photos || [];

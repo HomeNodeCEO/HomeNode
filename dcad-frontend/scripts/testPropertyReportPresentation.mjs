@@ -15,6 +15,42 @@ import {
   parseNumber,
   sellerComparisonSummary,
 } from '../src/lib/propertyReportPresentation.ts';
+import { mergeNonBlankSnapshot } from '../src/lib/reportSnapshotMerge.ts';
+
+test('legacy blank report snapshots cannot erase repaired CAD values', () => {
+  const merged = mergeNonBlankSnapshot(
+    {
+      owner_name: 'CURRENT OWNER',
+      mailing_address: '1402 AARON PL',
+      parties: [{ owner_name: 'CURRENT OWNER', ownership_percent: 100 }],
+      building: { building_class: 'CLASS 17', gla: 1840 },
+    },
+    {
+      owner_name: '',
+      mailing_address: '   ',
+      parties: [],
+      building: { building_class: '', gla: null },
+    },
+  );
+
+  assert.equal(merged.owner_name, 'CURRENT OWNER');
+  assert.equal(merged.mailing_address, '1402 AARON PL');
+  assert.equal(merged.parties.length, 1);
+  assert.equal(merged.building.building_class, 'CLASS 17');
+  assert.equal(merged.building.gla, 1840);
+});
+
+test('nonblank assignment values still override source values', () => {
+  const merged = mergeNonBlankSnapshot(
+    { building_class: 'CLASS 17', stories: 1, has_pool: true },
+    { building_class: 'APPRAISER CLASS', stories: 0, has_pool: false },
+  );
+  assert.deepEqual(merged, {
+    building_class: 'APPRAISER CLASS',
+    stories: 0,
+    has_pool: false,
+  });
+});
 
 test('report values retain their established formatting', () => {
   assert.equal(displayValue(''), 'Not reported');

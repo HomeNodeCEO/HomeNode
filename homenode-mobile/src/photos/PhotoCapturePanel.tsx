@@ -21,6 +21,7 @@ import {
 } from "./capture";
 import {
   CUSTOM_PHOTO_CATEGORIES,
+  photoSyncErrorMessage,
   remainingPhotoCapacity,
   UAD_PHOTO_CATEGORIES,
 } from "./model";
@@ -33,13 +34,7 @@ function photoError(reason: unknown) {
     return "HomeNode could not repair encrypted offline storage. Close and reopen HomeNode, and do not delete the app.";
   }
   const code = reason instanceof Error ? reason.message : "mobile_photo_failed";
-  const messages: Record<string, string> = {
-    mobile_camera_permission_required: "Camera access is required to take appraisal photos.",
-    mobile_library_permission_required: "Photo-library access is required to import photos.",
-    empty_mobile_photo_file: "An empty photo was skipped.",
-    mobile_photo_limit_conflict: "This inspection already has 100 active photos.",
-  };
-  return messages[code] || code.replaceAll("_", " ");
+  return photoSyncErrorMessage(code);
 }
 
 function Action({ title, onPress, disabled = false, secondary = false }: {
@@ -97,6 +92,9 @@ function PhotoCard({
             {photo.state.replaceAll("_", " ")}
           </Text>
         </View>
+        {photo.state === "failed" && photo.errorCode ? (
+          <Text style={styles.photoError}>{photoSyncErrorMessage(photo.errorCode)}</Text>
+        ) : null}
         <TextInput
           maxLength={200}
           onChangeText={onCaption}
@@ -263,6 +261,20 @@ export function PhotoCapturePanel({
     await load();
   };
 
+  const retryFailed = async () => {
+    try {
+      setError(null);
+      await store.makeFailedPhotosImmediatelyRetryable(ownerUserId, sessionId);
+      await syncPhotosNow();
+      // A scheduled sync may already have been finishing when the appraiser
+      // tapped Retry. A second idempotent pass guarantees the reset row is read.
+      await syncPhotosNow();
+      await load();
+    } catch (reason) {
+      setError(photoError(reason));
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.rowBetween}>
@@ -299,7 +311,7 @@ export function PhotoCapturePanel({
       </Text>
       {error || photoSync.error ? <Text style={styles.error}>{error || photoError(new Error(photoSync.error || ""))}</Text> : null}
       {online && (photoSync.summary.pending || photoSync.summary.failed) ? (
-        <Action title="Retry photo sync" secondary disabled={photoSync.syncing} onPress={() => void syncPhotosNow().then(load)} />
+        <Action title="Retry photo sync" secondary disabled={photoSync.syncing} onPress={() => void retryFailed()} />
       ) : null}
 
       <View style={styles.list}>{activePhotos.map((photo) => (
@@ -345,6 +357,7 @@ const styles = StyleSheet.create({
   preview: { aspectRatio: 4 / 3, backgroundColor: "#edf0ee", width: "100%" },
   photoBody: { gap: 9, padding: 12 },
   photoTitle: { color: "#183f31", flex: 1, fontSize: 16, fontWeight: "800" },
+  photoError: { backgroundColor: "#fff0ef", borderRadius: 8, color: "#9e2c25", fontSize: 12, lineHeight: 18, padding: 9 },
   state: { backgroundColor: "#e8f1ed", borderRadius: 12, color: "#1d5a43", fontSize: 10, fontWeight: "800", overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4 },
   stateFailed: { backgroundColor: "#fff0ef", color: "#9e2c25" },
   caption: { backgroundColor: "#f7f8f7", borderColor: "#d8dfda", borderRadius: 8, borderWidth: 1, minHeight: 43, paddingHorizontal: 10 },

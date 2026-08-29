@@ -794,11 +794,11 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                 onClick={() => void handleSectionChange(item.key)}
                 type="button"
               >
-                <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-start gap-2 text-sm font-semibold text-slate-950">
-                  <span className="whitespace-nowrap">Section {item.officialSectionNumber}</span>
-                  <span>{item.title}</span>
+                <div className="grid grid-cols-[5rem_minmax(0,1fr)] items-start gap-x-2 gap-y-1 text-sm">
+                  <span className="whitespace-nowrap font-semibold text-slate-950">Section {item.officialSectionNumber}</span>
+                  <span className="font-semibold text-slate-950">{item.title}</span>
+                  <span className="col-start-2 font-semibold text-black">{completion.completed} of {completion.required} required · {completion.percent}%</span>
                 </div>
-                <div className="mt-1 pl-[5.5rem] text-sm font-semibold text-black">{completion.completed} of {completion.required} required · {completion.percent}%</div>
               </button>
             );
           })}

@@ -138,12 +138,17 @@ export const UAD_DWELLING_EXTERIOR_IMAGE_CONTENT_TYPES = Object.freeze([
   "image/webp",
 ]);
 
-export function isVerifiedDwellingFrontAsset(asset, dwellingId = null) {
+export function isVerifiedDwellingExteriorAsset(asset, captionType = null, dwellingId = null) {
   return asset?.section_number === 8
     && asset?.status === "verified"
-    && asset?.caption_type === "DwellingFront"
+    && UAD_DWELLING_EXTERIOR_CAPTION_TYPES.includes(asset?.caption_type)
+    && (!captionType || asset?.caption_type === captionType)
     && (!dwellingId || asset?.entity_id === dwellingId)
     && UAD_DWELLING_EXTERIOR_IMAGE_CONTENT_TYPES.includes(String(asset?.content_type || "").toLowerCase());
+}
+
+export function isVerifiedDwellingFrontAsset(asset, dwellingId = null) {
+  return isVerifiedDwellingExteriorAsset(asset, "DwellingFront", dwellingId);
 }
 
 export const UAD_DWELLING_EXTERIOR_FIELDS = [

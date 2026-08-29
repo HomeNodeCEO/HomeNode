@@ -132,7 +132,7 @@ test("uses official Section 22 general-information enumerations and conditional 
   assert.equal(uadFieldIsRequired(salePrice, (key) => key.endsWith("1800.0075") ? "SettledSale" : true), true);
 });
 
-test("accepts a complete settled comparable with a source and verified property photo", () => {
+test("accepts a complete comparable record while enforcing the minimum three-sale policy set", () => {
   const comparable = { id: "048540df-2f90-43d3-b574-1c8705675b8d", entity_type: "sales_comparable", parent_entity_id: null, ordinal: 1, data: {} };
   const source = { id: "dc64e88d-e329-4b57-ad42-a1e426fd739c", entity_type: "sales_comparable_data_source", parent_entity_id: comparable.id, ordinal: 1, data: {} };
   const hazard = { id: "52eaeb42-71ae-42bd-9b25-a8d7439e238a", entity_type: "sales_comparable_site_hazard", parent_entity_id: comparable.id, ordinal: 1, data: {} };
@@ -214,14 +214,31 @@ test("accepts a complete settled comparable with a source and verified property 
     value(source.id, "sales_comparable_data_source", "0700.0125", "MLS"),
     value(source.id, "sales_comparable_data_source", "1800.0347", "NTREIS-123456"),
   ];
-  const assets = [{
-    section_number: 22,
-    entity_id: comparable.id,
-    caption_type: "PropertyPhoto",
-    content_type: "image/jpeg",
-    status: "verified",
-  }];
-  assert.deepEqual(validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view, dwelling, method, heating, unit, accessibility, kitchen, flooring, walls, vehicleStorage], assets), []);
+  const assets = [
+    {
+      section_number: 22,
+      entity_id: comparable.id,
+      caption_type: "PropertyPhoto",
+      content_type: "image/jpeg",
+      status: "verified",
+    },
+    {
+      section_number: 22,
+      entity_id: null,
+      caption_type: "PropertyPhoto",
+      content_type: "image/jpeg",
+      status: "verified",
+    },
+    {
+      section_number: 22,
+      entity_id: null,
+      caption_type: "SalesComparableMap",
+      content_type: "image/png",
+      status: "verified",
+    },
+  ];
+  const errors = validateCompleteSection("sales_comparison", [], values, [comparable, source, hazard, influence, view, dwelling, method, heating, unit, accessibility, kitchen, flooring, walls, vehicleStorage], assets);
+  assert.deepEqual(errors.map((error) => error.code), ["minimum_three_closed_sales_required"]);
 });
 
 test("validates reconciliation and additional properties analyzed not used", () => {

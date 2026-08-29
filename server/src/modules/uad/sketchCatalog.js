@@ -70,7 +70,8 @@ export const UAD_SKETCH_FIELDS = [
     label: "Sketch commentary",
     dataType: "text",
     maxLength: 5000,
-    requiredWhen: sketchNotProvided,
+    requiredWhen: { any: [sketchNotProvided, otherMeasurementStandard] },
+    guidance: "When another measurement standard is required by law or regulation, identify it and explain how it was applied.",
   },
 ];
 

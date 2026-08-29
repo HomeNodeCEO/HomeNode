@@ -6,6 +6,9 @@ rewrite, or roll back Custom Appraisal or Property Tax records.
 Security verification and destructive-test isolation are defined in
 `docs/UAD_SECURITY_TESTING.md` and `docs/UAD_RED_TEAM_ENVIRONMENT.md`. Active
 adversarial testing is not authorized against this production runbook's target.
+The current official-specification comparison, compliance-by-design controls,
+and deliberately unsupported scopes are recorded in
+`docs/UAD_SPEC_REFRESH_AUDIT_2026-08-29.md`.
 
 ## Readiness definition
 
@@ -71,7 +74,8 @@ or unverified external provider as production-ready.
    ```
 
 10. Exercise the SFR fixture in the browser and mobile app: save a field,
-    upload and verify the missing comparable photo, run local validation,
+    upload and verify the required subject photos, three closed comparable
+    photos, and sales-comparison map; run local validation,
     review the PDF, generate XML, sign through OIDC, and generate the delivery
     package. Confirm a new revision makes older artifacts non-current.
 

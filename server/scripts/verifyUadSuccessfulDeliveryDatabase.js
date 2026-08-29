@@ -377,7 +377,10 @@ async function seedAsset(pool, objects, workfileId, entityId, sectionNumber, cap
 
 async function seedRequiredAssets(pool, objects, workfileId) {
   await seedAsset(pool, objects, workfileId, null, 4, "WaterFrontage", 1);
+  await seedAsset(pool, objects, workfileId, null, 4, "PropertyAccess", 2);
   await seedAsset(pool, objects, workfileId, null, 7, "SubjectPropertyImprovementSketch", 1, "sketch");
+  await seedAsset(pool, objects, workfileId, null, 22, "PropertyPhoto", 3);
+  await seedAsset(pool, objects, workfileId, null, 22, "SalesComparableMap", 4);
   const result = await pool.query(
     `SELECT entity.id, entity.entity_type,
             value.value #>> '{}' AS subtype
@@ -398,7 +401,9 @@ async function seedRequiredAssets(pool, objects, workfileId) {
   let ordinal = 10;
   for (const entity of result.rows) {
     const assets = [];
-    if (entity.entity_type === "dwelling") assets.push([8, "DwellingFront"]);
+    if (entity.entity_type === "dwelling") {
+      assets.push([8, "DwellingFront"], [8, "DwellingRear"]);
+    }
     if (entity.entity_type === "outbuilding") assets.push([12, "OutbuildingFront"], [12, "OutbuildingInterior"]);
     if (entity.entity_type === "outbuilding_room") assets.push([12, "OutbuildingRoom"]);
     if (entity.entity_type === "vehicle_storage") assets.push([13, "VehicleStorage"]);

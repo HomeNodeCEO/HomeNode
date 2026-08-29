@@ -6,7 +6,7 @@ const privateWaterAccess = condition("site_influence:1500.0075", true);
 
 export const UAD_SITE_CAPTION_TYPES = Object.freeze([
   "PropertyAccess", "PropertyPhoto", "SiteInfluence", "View", "SiteCharacteristic",
-  "PropertyBoundaries", "Encroachment", "WaterFrontage", "SiteExhibit",
+  "PropertyBoundaries", "Encroachment", "WaterFrontage", "NonResidentialUse", "SiteExhibit",
 ]);
 
 export const UAD_SITE_IMAGE_CONTENT_TYPES = Object.freeze([
@@ -223,10 +223,11 @@ export const UAD_SITE_FIELDS = [
   { section: "site", entityType: "site_defect", group: "Site defects", contextKey: "site_defect", uid: "3900.0128", reportFieldId: "4.104", label: "Required action", dataType: "enum", required: true, options: ["Completion", "Inspection", "None", "Repair"] },
 ];
 
-export function isVerifiedSiteAsset(asset, captionType = null) {
+export function isVerifiedSiteAsset(asset, captionType = null, entityId = undefined) {
   return asset?.section_number === 4
     && asset?.status === "verified"
     && UAD_SITE_CAPTION_TYPES.includes(asset?.caption_type)
     && (!captionType || asset?.caption_type === captionType)
+    && (entityId === undefined || asset?.entity_id === entityId)
     && UAD_SITE_IMAGE_CONTENT_TYPES.includes(String(asset?.content_type || "").toLowerCase());
 }

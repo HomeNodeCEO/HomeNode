@@ -22,6 +22,7 @@ import { UAD_VEHICLE_STORAGE_TYPES } from "./vehicleStorageCatalog.js";
 
 export const UAD_SALES_COMPARISON_CAPTION_TYPES = Object.freeze([
   "PropertyPhoto",
+  "SalesComparableMap",
   "SalesComparisonApproachExhibit",
 ]);
 

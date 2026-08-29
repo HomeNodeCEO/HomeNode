@@ -66,17 +66,44 @@ function readStoredZipEntries(buffer) {
 export async function verifyUadSuccessfulDelivery({ outputDirectory = null } = {}) {
   const editor = uadSalesRichEditorFixture();
   const signer = uadNativePdfSignerFixture();
+  const subjectDwelling = editor.entities.find((entity) => entity.entity_type === "dwelling");
   const assets = [
     syntheticDeliveryAsset({
       id: "10000000-0000-4000-8000-000000000001",
+      entityId: subjectDwelling?.id || null,
       sectionNumber: 8,
       captionType: "DwellingFront",
       fileName: "subject-front.png",
     }),
+    syntheticDeliveryAsset({
+      id: "10000000-0000-4000-8000-000000000002",
+      entityId: subjectDwelling?.id || null,
+      sectionNumber: 8,
+      captionType: "DwellingRear",
+      fileName: "subject-rear.png",
+    }),
+    syntheticDeliveryAsset({
+      id: "10000000-0000-4000-8000-000000000003",
+      sectionNumber: 4,
+      captionType: "PropertyAccess",
+      fileName: "subject-street-scene.png",
+    }),
+    syntheticDeliveryAsset({
+      id: "10000000-0000-4000-8000-000000000004",
+      sectionNumber: 22,
+      captionType: "PropertyPhoto",
+      fileName: "subject-property.png",
+    }),
+    syntheticDeliveryAsset({
+      id: "10000000-0000-4000-8000-000000000005",
+      sectionNumber: 22,
+      captionType: "SalesComparableMap",
+      fileName: "sales-comparable-map.png",
+    }),
     ...editor.entities
       .filter((entity) => entity.entity_type === "sales_comparable")
       .map((entity, index) => syntheticDeliveryAsset({
-        id: `10000000-0000-4000-8000-${String(index + 2).padStart(12, "0")}`,
+        id: `10000000-0000-4000-8000-${String(index + 6).padStart(12, "0")}`,
         entityId: entity.id,
         sectionNumber: 22,
         captionType: "PropertyPhoto",

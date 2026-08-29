@@ -21,7 +21,7 @@ test("the UAD workspace uses a naturally scrolling aligned left section navigato
   assert.match(editor, /grid-cols-\[5rem_minmax\(0,1fr\)\]/);
   assert.match(editor, /w-full px-3 py-3\.5 text-left/);
   assert.match(editor, /grid w-full grid-cols-\[5rem_minmax\(0,1fr\)\]/);
-  assert.match(editor, /gap-x-2 gap-y-2/);
+  assert.match(editor, /gap-x-2 gap-y-4/);
   assert.match(editor, /col-span-2 justify-self-end whitespace-nowrap text-right font-semibold text-black/);
   assert.doesNotMatch(editor, /pl-\[5\.5rem\]/);
 });

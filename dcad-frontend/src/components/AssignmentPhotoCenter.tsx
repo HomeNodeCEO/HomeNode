@@ -9,6 +9,9 @@ import {
   type AssignmentPhotoUploadRequest,
 } from '@/lib/api';
 
+const LIVE_REFRESH_MS = 5_000;
+const VIEW_URL_REFRESH_MS = 4 * 60_000;
+
 const CATEGORIES = [
   'Front', 'Rear', 'Street', 'Kitchen', 'Living area', 'Bedroom', 'Bathroom',
   'Garage', 'Attic', 'Mechanical systems', 'Site/view', 'Defect', 'Repair item',
@@ -16,6 +19,12 @@ const CATEGORIES = [
 ];
 const ALLOWED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_BYTES = 50 * 1024 * 1024;
+
+function photoVersionSignature(photos: AssignmentPhoto[]) {
+  return photos
+    .map((photo) => [photo.id, photo.revision, photo.status, photo.verified_at || ''].join(':'))
+    .join('|');
+}
 
 async function displayDerivative(file: File) {
   const bitmap = await createImageBitmap(file);
@@ -78,13 +87,17 @@ async function prepareUpload(file: File, category: string, caption: string) {
 export default function AssignmentPhotoCenter({
   accountId,
   assignmentFileId,
+  assignmentFileNumber,
   getEditorKey,
+  onPhotosChanged,
   readOnly = false,
   className = '',
 }: {
   accountId: string;
   assignmentFileId?: number | null;
+  assignmentFileNumber?: string | null;
   getEditorKey: () => string;
+  onPhotosChanged?: (photos: AssignmentPhoto[]) => void;
   readOnly?: boolean;
   className?: string;
 }) {
@@ -94,25 +107,74 @@ export default function AssignmentPhotoCenter({
   const [caption, setCaption] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const credentialRef = useRef('');
+  const loadInFlight = useRef(false);
+  const loadGeneration = useRef(0);
+  const photoSignatureRef = useRef<string | null>(null);
+  const viewUrlsRefreshedAt = useRef(0);
 
-  const load = useCallback(async () => {
-    if (!accountId || !assignmentFileId) return;
-    const editorKey = getEditorKey();
+  const load = useCallback(async (background = false) => {
+    if (!accountId || !assignmentFileId || loadInFlight.current) return;
+    const generation = loadGeneration.current;
+    const editorKey = credentialRef.current || (background ? '' : getEditorKey());
     if (!editorKey) return;
-    setBusy(true);
+    credentialRef.current = editorKey;
+    loadInFlight.current = true;
+    if (!background) setBusy(true);
     try {
       const result = await getAssignmentPhotos(accountId, assignmentFileId, editorKey);
-      setPhotos(result.photos);
-      setMessage('');
+      if (generation !== loadGeneration.current) return;
+      const nextSignature = photoVersionSignature(result.photos);
+      const changed = photoSignatureRef.current === null || nextSignature !== photoSignatureRef.current;
+      const refreshViewUrls = Date.now() - viewUrlsRefreshedAt.current >= VIEW_URL_REFRESH_MS;
+      if (changed || refreshViewUrls) {
+        photoSignatureRef.current = nextSignature;
+        viewUrlsRefreshedAt.current = Date.now();
+        setPhotos(result.photos);
+      }
+      if (changed) onPhotosChanged?.(result.photos);
+      setLastCheckedAt(new Date());
+      if (!background) setMessage('');
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Photo evidence could not be loaded.');
+      if (generation === loadGeneration.current && !background) {
+        setMessage(error instanceof Error ? error.message : 'Photo evidence could not be loaded.');
+      }
     } finally {
-      setBusy(false);
+      if (generation === loadGeneration.current) {
+        loadInFlight.current = false;
+        if (!background) setBusy(false);
+      }
     }
-  }, [accountId, assignmentFileId, getEditorKey]);
+  }, [accountId, assignmentFileId, getEditorKey, onPhotosChanged]);
 
-  useEffect(() => { if (open) void load(); }, [open, load]);
+  useEffect(() => {
+    loadGeneration.current += 1;
+    loadInFlight.current = false;
+    credentialRef.current = '';
+    photoSignatureRef.current = null;
+    viewUrlsRefreshedAt.current = 0;
+    setPhotos([]);
+    setLastCheckedAt(null);
+    setMessage('');
+  }, [accountId, assignmentFileId]);
+
+  useEffect(() => {
+    if (!accountId || !assignmentFileId) return;
+    void load();
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void load(true);
+    };
+    const interval = window.setInterval(refreshWhenVisible, LIVE_REFRESH_MS);
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [accountId, assignmentFileId, load]);
 
   const upload = async (files: FileList | null) => {
     if (!files?.length || !assignmentFileId) return;
@@ -177,9 +239,16 @@ export default function AssignmentPhotoCenter({
       <button type="button" className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 px-5 py-4 text-left`} onClick={() => setOpen((value) => !value)}>
         <span>
           <span className="hn-custom-section-title block text-sm font-semibold uppercase tracking-[0.16em]">Appraisal Photo Evidence</span>
-          <span className="mt-1 block text-xs text-slate-500">Shared mobile and desktop photos saved to this appraisal file</span>
+          <span className="mt-1 block text-xs text-slate-500">
+            {assignmentFileNumber ? `File ${assignmentFileNumber} · ` : ''}Shared mobile and desktop photos saved to this appraisal file
+          </span>
         </span>
-        <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>{open ? 'Collapse' : 'Manage Photos'}</span>
+        <span className="flex items-center gap-2">
+          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-800">
+            Live · {photos.length} photo{photos.length === 1 ? '' : 's'}
+          </span>
+          <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>{open ? 'Collapse' : 'Manage Photos'}</span>
+        </span>
       </button>
       {open ? (
         <div className="border-t border-slate-200 p-5">
@@ -187,6 +256,15 @@ export default function AssignmentPhotoCenter({
             <p className="text-sm text-amber-700">Create or open an appraisal file before adding photos.</p>
           ) : (
             <>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                <span>
+                  Watching file {assignmentFileNumber || assignmentFileId} for verified mobile photos.
+                  {lastCheckedAt ? ` Last checked ${lastCheckedAt.toLocaleTimeString()}.` : ''}
+                </span>
+                <button type="button" className="hn-action-secondary rounded-lg px-3 py-1.5 font-semibold" disabled={busy} onClick={() => void load()}>
+                  Refresh now
+                </button>
+              </div>
               {!readOnly ? (
                 <div className="grid gap-3 rounded-xl bg-slate-50 p-3 md:grid-cols-[180px_1fr_auto] md:items-end">
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">

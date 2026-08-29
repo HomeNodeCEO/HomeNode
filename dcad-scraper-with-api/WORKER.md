@@ -39,6 +39,11 @@ both processes and stops the service if either process exits unexpectedly.
     separate verified owner-recovery queue. One owner repair runs per 25 normal
     accounts by default. The queue records success only after the refreshed
     current owner name passes the completeness check.
+12. A field-level audit separates improved, vacant, and indeterminate parcels.
+    Incomplete improved parcels use a dedicated repair queue, so these repairs
+    do not alter or wait behind the county campaign. Vacant parcels never enter
+    the improved-property queue. One field repair runs per five normal accounts
+    by default.
 
 The residential target table—not `core.accounts.county`—controls selection.
 
@@ -56,6 +61,8 @@ python tools/backfill_owner_names.py
 python tools/backfill_owner_names.py --apply
 python tools/queue_owner_rescrapes.py
 python tools/queue_owner_rescrapes.py --apply
+python tools/audit_dcad_field_completeness.py
+python tools/audit_dcad_field_completeness.py --apply
 ```
 
 The requeue tool performs the one-time historical scan outside worker startup.
@@ -72,6 +79,7 @@ Relevant optional worker settings are:
 - `SCRAPE_MARKET_VALUE_RECHECK_DAYS` (default `7`)
 - `SCRAPE_MARKET_VALUE_RECHECK_EVERY_ACCOUNTS` (default `100`)
 - `SCRAPE_OWNER_RECOVERY_EVERY_ACCOUNTS` (default `25`)
+- `SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS` (default `5`)
 
 ## Property-search metadata
 
@@ -189,6 +197,11 @@ ORDER BY market_value_status;
 
 SELECT status, count(*)
 FROM app.dcad_owner_recovery_queue
+GROUP BY status
+ORDER BY status;
+
+SELECT status, count(*)
+FROM app.dcad_field_repair_queue
 GROUP BY status
 ORDER BY status;
 ```

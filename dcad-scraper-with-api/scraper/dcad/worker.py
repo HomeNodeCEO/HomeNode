@@ -59,6 +59,7 @@ class WorkerConfig:
     market_value_recheck_days: int
     market_value_recheck_every_accounts: int
     owner_recovery_every_accounts: int
+    field_repair_every_accounts: int
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -99,6 +100,9 @@ class WorkerConfig:
             owner_recovery_every_accounts=max(
                 1, int(os.getenv("SCRAPE_OWNER_RECOVERY_EVERY_ACCOUNTS", "25"))
             ),
+            field_repair_every_accounts=max(
+                1, int(os.getenv("SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS", "5"))
+            ),
         )
 
 
@@ -134,6 +138,10 @@ def _owner_recovery_table(config: WorkerConfig) -> str:
     return f'"{config.state_schema}"."dcad_owner_recovery_queue"'
 
 
+def _field_repair_table(config: WorkerConfig) -> str:
+    return f'"{config.state_schema}"."dcad_field_repair_queue"'
+
+
 def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
     state = _state_table(config)
     ddl = f"""
@@ -163,6 +171,7 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
             "011_dcad_data_quality_recovery.sql",
             "012_dcad_market_value_rechecks.sql",
             "016_dcad_owner_recovery_queue.sql",
+            "024_dcad_field_repair_queue.sql",
         ):
             migration = migrations / migration_name
             conn.execute(text(migration.read_text(encoding="utf-8")))
@@ -821,6 +830,122 @@ def release_owner_recovery_claim(
         )
 
 
+def claim_next_field_repair(
+    engine: Engine,
+    config: WorkerConfig,
+    worker_id: str,
+) -> Optional[tuple[str, int]]:
+    queue = _field_repair_table(config)
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                f"""
+                WITH candidate AS (
+                    SELECT q.account_id
+                    FROM {queue} q
+                    WHERE q.status IN ('pending', 'retry')
+                      AND q.next_attempt_at <= now()
+                      AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now())
+                    ORDER BY q.next_attempt_at, q.account_id
+                    FOR UPDATE OF q SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE {queue} q
+                SET status = 'leased',
+                    last_attempt_at = now(),
+                    lease_expires_at = now() + make_interval(mins => :lease_minutes),
+                    worker_id = :worker_id,
+                    updated_at = now()
+                FROM candidate c
+                WHERE q.account_id = c.account_id
+                RETURNING q.account_id, q.attempts
+                """
+            ),
+            {
+                "lease_minutes": config.lease_minutes,
+                "worker_id": worker_id,
+            },
+        ).mappings().first()
+    if row is None:
+        return None
+    return str(row["account_id"]), int(row["attempts"])
+
+
+def mark_field_repair_success(
+    engine: Engine, config: WorkerConfig, account_id: str
+) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_field_repair_table(config)}
+                SET status = 'succeeded',
+                    attempts = 0,
+                    last_success_at = now(),
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = NULL,
+                    updated_at = now()
+                WHERE account_id = :account_id
+                """
+            ),
+            {"account_id": account_id},
+        )
+
+
+def mark_field_repair_failure(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    prior_attempts: int,
+    error: BaseException,
+) -> int:
+    delay = retry_delay_seconds(config, prior_attempts)
+    message = f"{error.__class__.__name__}: {error}"[:2000]
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_field_repair_table(config)}
+                SET status = 'retry',
+                    attempts = attempts + 1,
+                    next_attempt_at = now() + make_interval(secs => :delay_seconds),
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = :last_error,
+                    updated_at = now()
+                WHERE account_id = :account_id
+                """
+            ),
+            {
+                "account_id": account_id,
+                "delay_seconds": delay,
+                "last_error": message,
+            },
+        )
+    return delay
+
+
+def release_field_repair_claim(
+    engine: Engine, config: WorkerConfig, account_id: str
+) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {_field_repair_table(config)}
+                SET status = 'pending',
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    next_attempt_at = now(),
+                    updated_at = now()
+                WHERE account_id = :account_id
+                """
+            ),
+            {"account_id": account_id},
+        )
+
+
 def enqueue_address_recovery(
     engine: Engine,
     config: WorkerConfig,
@@ -1426,6 +1551,19 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
                 """
             )
         ).mappings().one()
+        field_repair_quality = conn.execute(
+            text(
+                f"""
+                SELECT count(*) FILTER (
+                           WHERE status IN ('pending', 'retry', 'leased')
+                       ) AS field_repair_pending,
+                       count(*) FILTER (
+                           WHERE status = 'succeeded'
+                       ) AS field_repair_succeeded
+                FROM {_field_repair_table(config)}
+                """
+            )
+        ).mappings().one()
 
     result = dict(row)
     result["loaded"] = True
@@ -1437,6 +1575,7 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
         **dict(quality),
         **dict(market_value_quality),
         **dict(owner_quality),
+        **dict(field_repair_quality),
     }
     return result
 
@@ -1688,6 +1827,36 @@ def process_owner_recovery_safely(
     log.info("Owner recovery succeeded account_id=%s", account_id)
 
 
+def process_field_repair_safely(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    prior_attempts: int,
+) -> None:
+    if _stop_requested:
+        release_field_repair_claim(engine, config, account_id)
+        return
+
+    try:
+        assessment = run_for_account(account_id)
+    except Exception as error:
+        delay = mark_field_repair_failure(
+            engine, config, account_id, prior_attempts, error
+        )
+        log.error(
+            "Field repair failed account_id=%s retry_in_seconds=%d error=%s",
+            account_id,
+            delay,
+            error,
+            exc_info=True,
+        )
+        return
+
+    record_market_value_assessment(engine, config, account_id, assessment)
+    mark_field_repair_success(engine, config, account_id)
+    log.info("Field repair succeeded account_id=%s", account_id)
+
+
 def run_worker(config: WorkerConfig, once: bool = False) -> int:
     if not os.getenv("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL is not set")
@@ -1720,7 +1889,21 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
     processed_since_owner_recovery = (
         0 if once else config.owner_recovery_every_accounts
     )
+    processed_since_field_repair = (
+        0 if once else config.field_repair_every_accounts
+    )
     while not _stop_requested:
+        if (
+            not once
+            and processed_since_field_repair >= config.field_repair_every_accounts
+        ):
+            field_claim = claim_next_field_repair(engine, config, worker_id)
+            if field_claim is not None:
+                process_field_repair_safely(engine, config, *field_claim)
+                processed_since_field_repair = 0
+                _sleep(config.delay_seconds)
+                continue
+
         if (
             not once
             and processed_since_owner_recovery
@@ -1759,6 +1942,13 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
 
         claim = claim_next_account(engine, config, worker_id)
         if claim is None:
+            field_claim = claim_next_field_repair(engine, config, worker_id)
+            if field_claim is not None:
+                process_field_repair_safely(engine, config, *field_claim)
+                if once:
+                    return 0
+                _sleep(config.delay_seconds)
+                continue
             owner_claim = claim_next_owner_recovery(engine, config, worker_id)
             if owner_claim is not None:
                 process_owner_recovery_safely(engine, config, *owner_claim)
@@ -1855,6 +2045,7 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
         processed_since_recovery += 1
         processed_since_market_value += 1
         processed_since_owner_recovery += 1
+        processed_since_field_repair += 1
 
         if once:
             break

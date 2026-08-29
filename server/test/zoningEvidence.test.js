@@ -70,6 +70,26 @@ test("live official zoning lookup maps Duncanville's current GIS attributes", as
   assert.equal(requestedUrl.searchParams.get("outFields"), "FID,NEW_ZONING");
   assert.equal(requestedUrl.searchParams.get("geometryType"), "esriGeometryPoint");
   assert.equal(result.zoning_code, "SF-10");
+  assert.equal(result.zoning_description, "Single-Family Residential District (SF-10)");
   assert.equal(result.source_record_id, "15");
   assert.equal(result.lookup_mode, "official_gis_live");
+});
+
+test("live Duncanville zoning lookup classifies numbered planned developments", async () => {
+  const jurisdiction = DALLAS_COUNTY_ZONING_JURISDICTIONS.find(
+    (entry) => entry.city === "Duncanville",
+  );
+  const result = await fetchOfficialZoningAtPoint(jurisdiction, {
+    latitude: 32.65,
+    longitude: -96.9,
+    fetchImpl: async () => ({
+      ok: true,
+      async json() {
+        return { features: [{ attributes: { FID: 16, NEW_ZONING: "PD-12" } }] };
+      },
+    }),
+  });
+
+  assert.equal(result.zoning_code, "PD-12");
+  assert.equal(result.zoning_description, "Planned Development District");
 });

@@ -29,6 +29,7 @@ import {
 import { usePhotoSync } from "./sync";
 import type { SelectedSketchRoom } from "../sketch/SketchEditorPanel";
 import { isUnreadableSqliteDatabaseError } from "../offline/databaseRecovery";
+import { COLORS } from "../theme";
 
 function photoError(reason: unknown) {
   if (isUnreadableSqliteDatabaseError(reason)) {
@@ -344,7 +345,7 @@ export function PhotoCapturePanel({
         <Action title="Take photo" disabled={busy || remaining < 1} onPress={() => void takePhoto()} />
         <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || remaining < 1} onPress={() => void importPhotos()} />
       </View>
-      {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color="#1d5a43" /><Text style={styles.help}>{busy ? "Preparing originals and display copies…" : "Uploading and verifying…"}</Text></View> : null}
+      {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color={COLORS.violet} /><Text style={styles.help}>{busy ? "Preparing originals and display copies…" : "Uploading and verifying…"}</Text></View> : null}
       <Text style={styles.syncLine}>
         {online ? "Online" : "Offline"} · {photoSync.summary.pending} pending · {photoSync.summary.failed} failed · {photoSync.summary.synchronized} verified
       </Text>
@@ -378,42 +379,42 @@ export function PhotoCapturePanel({
 
 const styles = StyleSheet.create({
   container: { gap: 12, marginTop: 24 },
-  eyebrow: { color: "#5d786d", fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
-  title: { color: "#183f31", fontSize: 25, fontWeight: "800" },
-  count: { backgroundColor: "#e8f1ed", borderRadius: 20, color: "#1d5a43", fontWeight: "800", paddingHorizontal: 12, paddingVertical: 7 },
-  help: { color: "#617069", fontSize: 13, lineHeight: 19 },
-  label: { color: "#33443d", fontSize: 13, fontWeight: "700", marginTop: 5 },
+  eyebrow: { color: COLORS.goldInk, fontSize: 11, fontWeight: "800", letterSpacing: 1.2 },
+  title: { color: COLORS.deepPurple, fontSize: 25, fontWeight: "800" },
+  count: { backgroundColor: COLORS.violetSoft, borderColor: COLORS.gold, borderRadius: 20, borderWidth: 1, color: COLORS.violet, fontWeight: "800", paddingHorizontal: 12, paddingVertical: 7 },
+  help: { color: COLORS.muted, fontSize: 13, lineHeight: 19 },
+  label: { color: COLORS.textPurple, fontSize: 13, fontWeight: "700", marginTop: 5 },
   choices: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
-  choice: { backgroundColor: "#f2f4f2", borderColor: "#d8dfda", borderRadius: 18, borderWidth: 1, paddingHorizontal: 11, paddingVertical: 8 },
-  choiceSelected: { backgroundColor: "#1d5a43", borderColor: "#1d5a43" },
-  choiceText: { color: "#3f4d47", fontSize: 12, fontWeight: "600" },
-  choiceSelectedText: { color: "white" },
+  choice: { backgroundColor: COLORS.surface, borderColor: COLORS.borderStrong, borderRadius: 18, borderWidth: 1, paddingHorizontal: 11, paddingVertical: 8 },
+  choiceSelected: { backgroundColor: COLORS.violet, borderColor: COLORS.violet },
+  choiceText: { color: COLORS.textPurple, fontSize: 12, fontWeight: "600" },
+  choiceSelectedText: { color: COLORS.white },
   actions: { gap: 8 },
-  action: { alignItems: "center", backgroundColor: "#1d5a43", borderRadius: 11, minHeight: 48, justifyContent: "center", paddingHorizontal: 14 },
-  actionSecondary: { backgroundColor: "white", borderColor: "#1d5a43", borderWidth: 1 },
-  actionText: { color: "white", fontSize: 14, fontWeight: "800" },
-  actionSecondaryText: { color: "#1d5a43" },
+  action: { alignItems: "center", backgroundColor: COLORS.violet, borderRadius: 11, minHeight: 48, justifyContent: "center", paddingHorizontal: 14 },
+  actionSecondary: { backgroundColor: COLORS.surface, borderColor: COLORS.gold, borderWidth: 1 },
+  actionText: { color: COLORS.white, fontSize: 14, fontWeight: "800" },
+  actionSecondaryText: { color: COLORS.deepPurple },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.8 },
   progress: { alignItems: "center", flexDirection: "row", gap: 8 },
-  syncLine: { color: "#3f5f52", fontSize: 12, fontWeight: "700" },
-  error: { backgroundColor: "#fff0ef", borderRadius: 8, color: "#9e2c25", padding: 10 },
+  syncLine: { color: COLORS.success, fontSize: 12, fontWeight: "700" },
+  error: { backgroundColor: COLORS.dangerSoft, borderRadius: 8, color: COLORS.danger, padding: 10 },
   list: { gap: 12 },
-  photoCard: { backgroundColor: "white", borderColor: "#dce4df", borderRadius: 13, borderWidth: 1, overflow: "hidden" },
-  preview: { aspectRatio: 4 / 3, backgroundColor: "#edf0ee", width: "100%" },
+  photoCard: { backgroundColor: COLORS.surface, borderColor: COLORS.border, borderRadius: 13, borderWidth: 1, overflow: "hidden" },
+  preview: { aspectRatio: 4 / 3, backgroundColor: COLORS.surfaceMuted, width: "100%" },
   previewUnavailable: { alignItems: "center", justifyContent: "center" },
-  previewUnavailableText: { color: "#6b7772", fontSize: 12, fontWeight: "700" },
+  previewUnavailableText: { color: COLORS.muted, fontSize: 12, fontWeight: "700" },
   photoBody: { gap: 9, padding: 12 },
-  photoTitle: { color: "#183f31", flex: 1, fontSize: 16, fontWeight: "800" },
-  photoError: { backgroundColor: "#fff0ef", borderRadius: 8, color: "#9e2c25", fontSize: 12, lineHeight: 18, padding: 9 },
-  state: { backgroundColor: "#e8f1ed", borderRadius: 12, color: "#1d5a43", fontSize: 10, fontWeight: "800", overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4 },
-  stateFailed: { backgroundColor: "#fff0ef", color: "#9e2c25" },
-  caption: { backgroundColor: "#f7f8f7", borderColor: "#d8dfda", borderRadius: 8, borderWidth: 1, minHeight: 43, paddingHorizontal: 10 },
+  photoTitle: { color: COLORS.deepPurple, flex: 1, fontSize: 16, fontWeight: "800" },
+  photoError: { backgroundColor: COLORS.dangerSoft, borderRadius: 8, color: COLORS.danger, fontSize: 12, lineHeight: 18, padding: 9 },
+  state: { backgroundColor: COLORS.violetSoft, borderRadius: 12, color: COLORS.violet, fontSize: 10, fontWeight: "800", overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4 },
+  stateFailed: { backgroundColor: COLORS.dangerSoft, color: COLORS.danger },
+  caption: { backgroundColor: COLORS.surfaceMuted, borderColor: COLORS.border, borderRadius: 8, borderWidth: 1, minHeight: 43, paddingHorizontal: 10 },
   row: { flexDirection: "row", gap: 20 },
   rowBetween: { alignItems: "center", flexDirection: "row", justifyContent: "space-between" },
-  link: { color: "#1d5a43", fontSize: 13, fontWeight: "800" },
-  removeLink: { color: "#9e2c25", fontSize: 13, fontWeight: "800" },
-  retention: { color: "#6b7772", fontSize: 11 },
-  cleanLink: { color: "#6b7772", fontSize: 12, fontWeight: "700", textDecorationLine: "underline" },
-  retentionNote: { backgroundColor: "#f2f6f4", borderRadius: 9, color: "#52635c", fontSize: 11, lineHeight: 17, padding: 10 },
+  link: { color: COLORS.violet, fontSize: 13, fontWeight: "800" },
+  removeLink: { color: COLORS.danger, fontSize: 13, fontWeight: "800" },
+  retention: { color: COLORS.muted, fontSize: 11 },
+  cleanLink: { color: COLORS.muted, fontSize: 12, fontWeight: "700", textDecorationLine: "underline" },
+  retentionNote: { backgroundColor: COLORS.goldSoft, borderRadius: 9, color: COLORS.goldInk, fontSize: 11, lineHeight: 17, padding: 10 },
 });

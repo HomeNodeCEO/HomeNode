@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import type { LocalInspectionCompletionReadiness } from "./model";
 import type { OfflineStore } from "../offline/store";
+import { COLORS } from "../theme";
 
 type Props = {
   api: MobileApi;
@@ -199,23 +200,23 @@ export function InspectionCompletionPanel({
 }
 
 const styles = StyleSheet.create({
-  panel: { backgroundColor: "#ffffff", borderColor: "#b9cec2", borderWidth: 1, borderRadius: 16, padding: 18, marginTop: 28 },
-  eyebrow: { color: "#547166", fontSize: 11, fontWeight: "800", letterSpacing: 1.4 },
-  title: { color: "#17251f", fontSize: 22, fontWeight: "800", marginTop: 5 },
-  body: { color: "#52675e", fontSize: 14, lineHeight: 21, marginTop: 8 },
-  group: { borderTopColor: "#e1e8e4", borderTopWidth: 1, marginTop: 16, paddingTop: 12, gap: 8 },
-  groupTitle: { color: "#17251f", fontSize: 15, fontWeight: "800", marginBottom: 2 },
+  panel: { backgroundColor: COLORS.surface, borderColor: COLORS.border, borderWidth: 1, borderRadius: 16, padding: 18, marginTop: 28 },
+  eyebrow: { color: COLORS.goldInk, fontSize: 11, fontWeight: "800", letterSpacing: 1.4 },
+  title: { color: COLORS.deepPurple, fontSize: 22, fontWeight: "800", marginTop: 5 },
+  body: { color: COLORS.muted, fontSize: 14, lineHeight: 21, marginTop: 8 },
+  group: { borderTopColor: COLORS.divider, borderTopWidth: 1, marginTop: 16, paddingTop: 12, gap: 8 },
+  groupTitle: { color: COLORS.deepPurple, fontSize: 15, fontWeight: "800", marginBottom: 2 },
   checkRow: { flexDirection: "row", alignItems: "center", gap: 10 },
   checkMark: { minWidth: 52, textAlign: "center", paddingHorizontal: 7, paddingVertical: 4, borderRadius: 12, overflow: "hidden", fontSize: 11, fontWeight: "800" },
-  passed: { color: "#24543f", backgroundColor: "#deece5" },
-  blocked: { color: "#805f19", backgroundColor: "#fff2ce" },
-  checkLabel: { color: "#42574e", flex: 1, fontSize: 14, lineHeight: 19 },
-  warning: { color: "#805f19", backgroundColor: "#fff2ce", padding: 10, borderRadius: 10, marginTop: 14 },
-  error: { color: "#9d302a", backgroundColor: "#fbe8e5", padding: 10, borderRadius: 10, marginTop: 12 },
-  button: { backgroundColor: "#1d5a43", borderRadius: 12, paddingVertical: 13, paddingHorizontal: 16, alignItems: "center", marginTop: 10 },
-  secondaryButton: { backgroundColor: "#e0ece5", borderColor: "#a9c2b5", borderWidth: 1 },
-  buttonText: { color: "#ffffff", fontSize: 15, fontWeight: "800" },
-  secondaryButtonText: { color: "#1d5a43" },
+  passed: { color: COLORS.success, backgroundColor: COLORS.successSoft },
+  blocked: { color: COLORS.warning, backgroundColor: COLORS.warningSoft },
+  checkLabel: { color: COLORS.textPurple, flex: 1, fontSize: 14, lineHeight: 19 },
+  warning: { color: COLORS.warning, backgroundColor: COLORS.warningSoft, padding: 10, borderRadius: 10, marginTop: 14 },
+  error: { color: COLORS.danger, backgroundColor: COLORS.dangerSoft, padding: 10, borderRadius: 10, marginTop: 12 },
+  button: { backgroundColor: COLORS.violet, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 16, alignItems: "center", marginTop: 10 },
+  secondaryButton: { backgroundColor: COLORS.surface, borderColor: COLORS.gold, borderWidth: 1 },
+  buttonText: { color: COLORS.white, fontSize: 15, fontWeight: "800" },
+  secondaryButtonText: { color: COLORS.deepPurple },
   disabled: { opacity: 0.45 },
   pressed: { opacity: 0.82 },
 });

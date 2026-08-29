@@ -19,7 +19,8 @@ test("the UAD workspace uses a naturally scrolling aligned left section navigato
   assert.doesNotMatch(editor, /mt-6 overflow-hidden rounded-2xl/);
   assert.match(editor, /aria-current=\{active \? "step" : undefined\}/);
   assert.match(editor, /grid-cols-\[5rem_minmax\(0,1fr\)\]/);
-  assert.match(editor, /text-sm font-semibold text-black/);
+  assert.match(editor, /col-start-2 font-semibold text-black/);
+  assert.doesNotMatch(editor, /pl-\[5\.5rem\]/);
 });
 
 test("the subject workfile chooser is collapsed and the status tiles are compact", () => {

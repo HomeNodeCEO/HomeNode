@@ -93,6 +93,11 @@ import {
 } from "./services/censusZipProfile.js";
 import { loadBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
+  isNeighborhoodProfileBusyError,
+  neighborhoodProfileRequestKey,
+  runNeighborhoodProfileOperation,
+} from "./services/neighborhoodProfileExecution.js";
+import {
   buildNeighborhoodLandUseAnalysis,
   neighborhoodLandUseErrorStatus,
 } from "./services/neighborhoodLandUse.js";
@@ -5692,32 +5697,49 @@ app.post("/api/sales/qualitative-analysis", (req, res) => {
  * and a reviewable north/east/south/west road summary for the drawn boundary.
  */
 app.post("/api/sales/neighborhood-profile", async (req, res) => {
-  const customGeometry = req.body?.custom_geometry || null;
+  const request = {
+    subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+    asOfDate: String(req.body?.as_of || "").trim(),
+    periodMonths: req.body?.period_months ?? 24,
+    customGeometry: req.body?.custom_geometry || null,
+    marketContextOverride: req.body?.context_override || null,
+  };
   try {
-    const market = await buildMarketConditionsAnalyses(pool, {
-      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
-      areaKeys: ["custom", "city"],
-      asOfDate: String(req.body?.as_of || "").trim(),
-      periodMonths: req.body?.period_months ?? 24,
-      customGeometry,
-      marketContextOverride: req.body?.context_override || null,
-      accountIdAllowed: legacyAccountIdAllowed,
-    });
-    let boundaryStreets = null;
-    let boundaryStreetWarning = null;
-    try {
-      boundaryStreets = await loadBoundaryStreetNames(pool, customGeometry);
-    } catch (error) {
-      boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
-      console.warn("/api/sales/neighborhood-profile street lookup failed", error);
-    }
-    res.json({
-      ...market,
-      boundary_streets: boundaryStreets,
-      boundary_street_warning: boundaryStreetWarning,
-    });
+    const response = await runNeighborhoodProfileOperation(
+      neighborhoodProfileRequestKey(request),
+      async () => {
+        const market = await buildMarketConditionsAnalyses(pool, {
+          subjectAccountId: request.subjectAccountId,
+          areaKeys: ["custom", "city"],
+          asOfDate: request.asOfDate,
+          periodMonths: request.periodMonths,
+          customGeometry: request.customGeometry,
+          marketContextOverride: request.marketContextOverride,
+          accountIdAllowed: legacyAccountIdAllowed,
+        });
+        let boundaryStreets = null;
+        let boundaryStreetWarning = null;
+        try {
+          boundaryStreets = await loadBoundaryStreetNames(pool, request.customGeometry);
+        } catch (error) {
+          boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
+          console.warn("/api/sales/neighborhood-profile street lookup failed", error);
+        }
+        return {
+          ...market,
+          boundary_streets: boundaryStreets,
+          boundary_street_warning: boundaryStreetWarning,
+        };
+      },
+    );
+    res.json(response);
   } catch (error) {
     const message = error?.message || "neighborhood_profile_failed";
+    if (isNeighborhoodProfileBusyError(message)) {
+      res.set("Retry-After", "10");
+      res.status(503).json({ error: "neighborhood_profile_busy" });
+      return;
+    }
     console.error("/api/sales/neighborhood-profile failed", error);
     res.status(marketConditionsErrorStatus(message)).json({
       error: message,

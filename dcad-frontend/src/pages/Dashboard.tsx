@@ -5,7 +5,7 @@ import CustomerSection from "@/components/dashboard/CustomerSection";
 
 export default function Dashboard() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+    <div className="hn-app-shell">
       <div className="max-w-7xl mx-auto p-6 space-y-8">
         {/* Header */}
         <div className="text-center space-y-2">

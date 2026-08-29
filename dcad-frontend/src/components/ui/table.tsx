@@ -4,7 +4,7 @@ export function Table({ children }:{ children: React.ReactNode }) {
   return <table className="w-full border-collapse">{children}</table>;
 }
 export function TableHeader({ children }:{ children: React.ReactNode }) {
-  return <thead className="bg-slate-50">{children}</thead>;
+  return <thead className="bg-violet-50">{children}</thead>;
 }
 export function TableBody({ children }:{ children: React.ReactNode }) {
   return <tbody>{children}</tbody>;

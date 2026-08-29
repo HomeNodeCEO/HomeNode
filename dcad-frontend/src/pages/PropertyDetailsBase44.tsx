@@ -168,7 +168,7 @@ export default function PropertyDetailsBase44() {
   };
 
   return (
-    <div className="bg-slate-50 min-h-screen p-4 sm:p-6 lg:p-8">
+    <div className="hn-app-shell p-4 sm:p-6 lg:p-8">
       <div className="max-w-5xl mx-auto space-y-6">
         {/* Top bar */}
         <div className="flex items-center justify-between">

@@ -213,11 +213,15 @@ export default function PropertySearchPage() {
   }, [q, city]);
 
   return (
-    <div style={{ padding: 16, display: "grid", gap: 12 }}>
-      <h1 style={{ margin: 0 }}>Property Search</h1>
+    <div className="hn-app-shell" style={{ padding: 16, display: "grid", gap: 12 }}>
+      <header className="hn-app-header rounded-2xl px-5 py-4">
+        <div className="hn-eyebrow text-xs">HomeNode workspace</div>
+        <h1 style={{ margin: "4px 0 0" }}>Property Search</h1>
+      </header>
 
       {/* Query + Filters */}
       <form
+        className="hn-workspace-surface rounded-2xl border p-4"
         onSubmit={submitSearch}
         style={{
           display: "flex",
@@ -307,17 +311,18 @@ export default function PropertySearchPage() {
                   event.preventDefault();
                   openReportChooser(r);
                 }}
+                className="hn-workspace-surface"
                 style={{
                   width: "100%",
                   textAlign: "left",
                   textDecoration: "none",
                   color: "inherit",
-                  border: "1px solid #e5e7eb",
+                  border: "1px solid var(--hn-border)",
                   borderRadius: 12,
                   padding: 12,
                   display: "grid",
                   gap: 6,
-                  background: "white",
+                  background: "var(--hn-surface)",
                   cursor: "pointer",
                 }}
               >
@@ -386,7 +391,7 @@ export default function PropertySearchPage() {
                 <div style={{ fontSize: 12, opacity: 0.6 }}>
                   Market Value: {mvDisplay}
                 </div>
-                <div style={{ marginTop: 4, fontSize: 12, fontWeight: 600, color: "#1d4ed8" }}>
+                <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, color: "var(--hn-violet)" }}>
                   Choose report type
                 </div>
               </a>
@@ -415,12 +420,12 @@ export default function PropertySearchPage() {
           border-radius: 8px;
           outline: none;
         }
-        .input:focus { border-color: #6366f1; box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+        .input:focus { border-color: var(--hn-violet); box-shadow: 0 0 0 3px var(--hn-focus); }
         .btn {
           padding: 10px 14px;
           border-radius: 10px;
-          border: 1px solid #111827;
-          background: #111827;
+          border: 1px solid var(--hn-violet);
+          background: var(--hn-violet);
           color: white;
           cursor: pointer;
         }

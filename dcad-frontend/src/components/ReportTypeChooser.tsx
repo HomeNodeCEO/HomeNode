@@ -24,9 +24,9 @@ const REPORT_OPTIONS: Array<{
   description: string;
   accent: string;
 }> = [
-  { type: "custom-appraisal", workflow: "custom_appraisal", title: "Custom Appraisal", description: "Open or create a custom appraisal assignment.", accent: "border-blue-200 bg-blue-50 hover:border-blue-400 hover:bg-blue-100" },
-  { type: "uad-3.6", workflow: "uad_3_6", title: "UAD 3.6", description: "Open or create a structured UAD 3.6 assignment.", accent: "border-emerald-200 bg-emerald-50 hover:border-emerald-400 hover:bg-emerald-100" },
-  { type: "property-tax-protest", workflow: "property_tax_protest", title: "Property Tax Protest", description: "Open or create a property-tax protest assignment.", accent: "border-amber-200 bg-amber-50 hover:border-amber-400 hover:bg-amber-100" },
+  { type: "custom-appraisal", workflow: "custom_appraisal", title: "Custom Appraisal", description: "Open or create a custom appraisal assignment.", accent: "border-violet-200 bg-violet-50 hover:border-violet-500 hover:bg-violet-100" },
+  { type: "uad-3.6", workflow: "uad_3_6", title: "UAD 3.6", description: "Open or create a structured UAD 3.6 assignment.", accent: "border-violet-300 bg-purple-50 hover:border-violet-600 hover:bg-purple-100" },
+  { type: "property-tax-protest", workflow: "property_tax_protest", title: "Property Tax Protest", description: "Open or create a property-tax protest assignment.", accent: "border-amber-300 bg-amber-50 hover:border-amber-500 hover:bg-amber-100" },
 ];
 
 function displayDate(value: string) {
@@ -104,10 +104,10 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-4" role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}>
-      <section aria-labelledby="report-type-title" aria-modal="true" className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl" role="dialog">
+      <section aria-labelledby="report-type-title" aria-modal="true" className="hn-workspace-surface max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border p-5" role="dialog">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">{option ? "Assignment file" : "New or existing report"}</div>
+            <div className="hn-eyebrow text-xs tracking-[0.16em]">{option ? "Assignment file" : "New or existing report"}</div>
             <h2 id="report-type-title" className="mt-1 text-2xl font-semibold text-slate-950">{option ? option.title : "Choose a report type"}</h2>
             <p className="mt-2 text-sm font-medium text-slate-800">{subject.address}</p>
             <p className="mt-0.5 text-xs text-slate-500">Account {subject.accountId}</p>
@@ -126,7 +126,7 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
           </div>
         ) : (
           <div className="mt-5 space-y-4">
-            <button className="text-sm font-semibold text-blue-700 hover:text-blue-900" onClick={() => { setSelectedType(null); setFiles([]); setError(""); }} type="button">← Change report type</button>
+            <button className="hn-action-secondary text-sm font-semibold" onClick={() => { setSelectedType(null); setFiles([]); setError(""); }} type="button">← Change report type</button>
 
             {loading ? (
               <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">Loading assignment files…</p>
@@ -135,12 +135,12 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
                 <h3 className="text-sm font-semibold text-slate-950">Continue an existing file</h3>
                 <div className="mt-2 grid gap-2">
                   {files.map((file) => (
-                    <a className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 no-underline transition ${file.target_id ? "hover:border-blue-400 hover:bg-blue-50" : "pointer-events-none opacity-60"}`} href={file.target_id ? reportDestination(option.type, subject, file.target_id) : undefined} key={file.id}>
+                    <a className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 no-underline transition ${file.target_id ? "hover:border-violet-400 hover:bg-violet-50" : "pointer-events-none opacity-60"}`} href={file.target_id ? reportDestination(option.type, subject, file.target_id) : undefined} key={file.id}>
                       <span>
                         <span className="block font-semibold text-slate-950">File {file.file_number}</span>
                         <span className="mt-0.5 block text-xs text-slate-500">Last updated {displayDate(file.updated_at)}</span>
                       </span>
-                      <span className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white">{file.is_current ? "Continue current file" : "Open previous file"}</span>
+                      <span className="rounded-full bg-violet-800 px-3 py-1.5 text-xs font-semibold text-white">{file.is_current ? "Continue current file" : "Open previous file"}</span>
                     </a>
                   ))}
                 </div>
@@ -160,7 +160,7 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
                   </select>
                 </label>
               )}
-              <button className="mt-3 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50" disabled={!organizationId || creating} onClick={() => { void startNewAssignment(); }} type="button">
+              <button className="hn-action-primary mt-3 rounded-xl px-5 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50" disabled={!organizationId || creating} onClick={() => { void startNewAssignment(); }} type="button">
                 {creating ? "Creating assignment…" : "Start New Assignment"}
               </button>
               {!writableOrganizations.length && <p className="mt-2 text-xs font-medium text-amber-800">Your account does not have permission to create this report type.</p>}

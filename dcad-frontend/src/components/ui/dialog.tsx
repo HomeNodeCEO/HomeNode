@@ -24,7 +24,7 @@ export function Dialog({
 
 export function DialogContent({ className = "", children }:{ className?: string; children: ReactNode }) {
   return (
-    <div className={`relative z-10 w-[95vw] max-w-4xl rounded-2xl bg-white shadow-xl ${className}`}>
+    <div className={`hn-workspace-surface relative z-10 w-[95vw] max-w-4xl rounded-2xl border bg-white shadow-xl ${className}`}>
       {children}
     </div>
   );

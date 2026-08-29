@@ -110,8 +110,8 @@ export default function IncomeApproach() {
     }
   };
 
-  if (loading) return <main className="min-h-screen bg-slate-100 p-8 text-slate-700">Loading Income Approach...</main>;
-  if (!detail || !draft) return <main className="min-h-screen bg-slate-100 p-8 text-red-700">{message || 'Property not found.'}</main>;
+  if (loading) return <main className="hn-app-shell p-8 text-slate-700">Loading Income Approach...</main>;
+  if (!detail || !draft) return <main className="hn-app-shell p-8 text-red-700">{message || 'Property not found.'}</main>;
 
   const account = detail.account;
   const setRental = (index: number, changes: Partial<IncomeRentalComparable>) => update({
@@ -140,7 +140,7 @@ export default function IncomeApproach() {
   });
 
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-6 text-slate-900 sm:px-8">
+    <main className="hn-app-shell px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
         <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">

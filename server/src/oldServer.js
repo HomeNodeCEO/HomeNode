@@ -216,6 +216,7 @@ import {
 import { replicateAppraisalFile } from "./services/appraisalReplication.js";
 import { loadSharedAppraisalCompletion } from "./services/appraisalCompletionAdapter.js";
 import {
+  authenticatedApiRateLimitKey,
   createCorsMiddleware,
   createHttpSecurityConfiguration,
   jsonErrorHandler,
@@ -276,7 +277,7 @@ const loadDcadScraperStatus = redTeamIsolation.external_status_enabled
 app.use(requestPerformance.middleware);
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));
-app.use(rateLimit({
+const globalApiRateLimiter = rateLimit({
   windowMs: httpSecurity.apiRateLimitWindowMs,
   limit: httpSecurity.apiRateLimitMax,
   // UAD and mobile own stricter limiters and response contracts inside their
@@ -286,13 +287,15 @@ app.use(rateLimit({
   standardHeaders: "draft-8",
   legacyHeaders: false,
   keyGenerator: (req) => {
+    const authenticatedKey = authenticatedApiRateLimitKey(req);
+    if (authenticatedKey) return authenticatedKey;
     const forwarded = httpSecurity.rateLimitClientIpHeader
       ? String(req.get(httpSecurity.rateLimitClientIpHeader) || "").trim()
       : "";
     return ipKeyGenerator(isIP(forwarded) ? forwarded : req.ip);
   },
   handler: (_req, res) => res.status(429).json({ error: "api_rate_limit_exceeded" }),
-}));
+});
 
 const signupRateLimiter = rateLimit({
   windowMs: httpSecurity.signupRateLimitWindowMs,
@@ -398,6 +401,10 @@ const authenticateApplicationUser = createMobileAuthenticator({
   verifier: mobileOidcVerifier,
 });
 app.use("/api", createOptionalApplicationAuthenticator(authenticateApplicationUser));
+// Browser report pages load several independent analyses in parallel. Mount
+// the broad limiter after authentication so each signed-in user receives an
+// independent counter instead of competing for a shared proxy/public-IP key.
+app.use(globalApiRateLimiter);
 app.use("/api/auth", createWebAuthRouter({ pool, verifier: webOidcVerifier }));
 
 app.get("/api/auth/me", (req, res) => {

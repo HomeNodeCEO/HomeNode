@@ -40,27 +40,55 @@ async function fetchWithApplicationAuthentication(
   return fetch(input, { ...init, credentials: 'include', headers });
 }
 
-export async function fetchJSON<T = any>(input: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), init?.timeoutMs ?? 25000);
+type FetchJSONOptions = RequestInit & {
+  timeoutMs?: number;
+  retryTransient?: boolean;
+};
 
-  try {
-    const res = await fetchWithApplicationAuthentication(input, { ...init, signal: controller.signal });
-    const ct = res.headers.get('content-type') || '';
-    const isJson = ct.includes('application/json');
+function transientRetryDelay(response?: Response) {
+  const retryAfter = Number(response?.headers.get('retry-after'));
+  return Number.isFinite(retryAfter) && retryAfter > 0
+    ? Math.min(retryAfter * 1000, 3000)
+    : 500;
+}
 
-    if (!res.ok) {
-      const body = isJson ? await res.json().catch(() => ({})) : await res.text().catch(() => '');
-      const msg = (body && (body.error || body.message)) || `HTTP ${res.status}`;
-      throw new Error(msg);
+export async function fetchJSON<T = any>(input: string, init?: FetchJSONOptions): Promise<T> {
+  const { timeoutMs = 25000, retryTransient = false, ...requestInit } = init || {};
+  const attempts = retryTransient ? 2 : 1;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetchWithApplicationAuthentication(input, {
+        ...requestInit,
+        signal: controller.signal,
+      });
+      const ct = res.headers.get('content-type') || '';
+      const isJson = ct.includes('application/json');
+
+      if (!res.ok) {
+        if (res.status === 429 && attempt + 1 < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, transientRetryDelay(res)));
+          continue;
+        }
+        const body = isJson ? await res.json().catch(() => ({})) : await res.text().catch(() => '');
+        const msg = (body && (body.error || body.message)) || `HTTP ${res.status}`;
+        throw new Error(msg);
+      }
+      return (isJson ? res.json() : (res.text() as any)) as Promise<T>;
+    } catch (err: any) {
+      if (err?.name === 'AbortError') throw new Error('Request timed out');
+      if (retryTransient && err instanceof TypeError && attempt + 1 < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, transientRetryDelay()));
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
-    return (isJson ? res.json() : (res.text() as any)) as Promise<T>;
-  } catch (err: any) {
-    if (err?.name === 'AbortError') throw new Error('Request timed out');
-    throw err;
-  } finally {
-    clearTimeout(timeout);
   }
+  throw new Error('Request failed');
 }
 
 /** ---------------- Types returned by your API ---------------- */
@@ -3154,7 +3182,10 @@ export async function getSalesReconciliationQueue(
   offset = 0,
 ): Promise<SalesReconciliationQueueResponse> {
   const url = makeUrl('/api/sales/reconciliation-queue', { limit, offset });
-  return fetchJSON<SalesReconciliationQueueResponse>(url, { timeoutMs: 90000 });
+  return fetchJSON<SalesReconciliationQueueResponse>(url, {
+    timeoutMs: 90000,
+    retryTransient: true,
+  });
 }
 
 /** Save a verified sale-to-account link and upsert the canonical sale. */
@@ -3394,6 +3425,7 @@ export async function runNeighborhoodLandUseAnalysis(
         custom_geometry: customGeometry,
       }),
       timeoutMs: 180000,
+      retryTransient: true,
     },
   );
 }

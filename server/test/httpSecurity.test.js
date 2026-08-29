@@ -4,6 +4,7 @@ import test from "node:test";
 import express from "express";
 
 import {
+  authenticatedApiRateLimitKey,
   createCorsMiddleware,
   createHttpSecurityConfiguration,
   jsonErrorHandler,
@@ -113,6 +114,15 @@ test("global rate limiting leaves UAD and mobile policy headers to their routers
 
   const disabled = createHttpSecurityConfiguration({ NODE_ENV: "test" });
   assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/properties/search" }, disabled), true);
+});
+
+test("authenticated API rate limiting isolates signed-in users", () => {
+  assert.equal(authenticatedApiRateLimitKey({}), null);
+  assert.equal(authenticatedApiRateLimitKey({ mobileAuth: {} }), null);
+  assert.equal(
+    authenticatedApiRateLimitKey({ mobileAuth: { userId: " user-123 " } }),
+    "user:user-123",
+  );
 });
 
 test("CORS policy permits same-origin and allowlisted origins while rejecting others", () => {

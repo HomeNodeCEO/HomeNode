@@ -133,6 +133,11 @@ export function shouldSkipGlobalApiRateLimit(req, configuration) {
     || path.startsWith("/api/mobile/");
 }
 
+export function authenticatedApiRateLimitKey(req) {
+  const userId = String(req?.mobileAuth?.userId || "").trim();
+  return userId ? `user:${userId}` : null;
+}
+
 function appendVary(res, value) {
   const existing = String(res.getHeader("vary") || "")
     .split(",")

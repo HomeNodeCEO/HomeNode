@@ -6,6 +6,7 @@ import {
 } from "./neighborhoodLandUse.js";
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
 import {
+  officialZoningClassification,
   officialZoningClassificationDescription,
   selectOfficialZoningSources,
 } from "./propertyZoningSources.js";
@@ -355,8 +356,11 @@ export function normalizeOfficialZoningFeature(feature, runId, source) {
   if (!sourceRecordId || !geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) {
     return null;
   }
-  const zoningCode = firstText(attributes, source.zoningCodeFields);
+  const rawZoningCode = firstText(attributes, source.zoningCodeFields);
+  const classification = officialZoningClassification(source, rawZoningCode);
+  const zoningCode = classification.zoningCode;
   const zoningDescription = firstText(attributes, source.descriptionFields)
+    || classification.zoningDescription
     || officialZoningClassificationDescription(source, zoningCode);
   const normalized = {
     provider_key: source.providerKey,

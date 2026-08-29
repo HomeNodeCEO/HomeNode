@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   DALLAS_COUNTY_ZONING_JURISDICTIONS,
   OFFICIAL_ZONING_SOURCES,
+  officialZoningClassification,
   officialZoningClassificationDescription,
 } from "./propertyZoningSources.js";
 import {
@@ -85,7 +86,9 @@ export async function fetchOfficialZoningAtPoint(jurisdiction, {
     const feature = payload?.features?.[0];
     if (!feature) continue;
     const attributes = feature.attributes || feature.properties || {};
-    const zoningCode = firstSourceText(attributes, source.zoningCodeFields);
+    const rawZoningCode = firstSourceText(attributes, source.zoningCodeFields);
+    const classification = officialZoningClassification(source, rawZoningCode);
+    const zoningCode = classification.zoningCode;
     if (!zoningCode) continue;
     const rawSourceId = firstSourceText(attributes, source.sourceIdFields)
       || cleanText(feature.id, 500)
@@ -93,6 +96,7 @@ export async function fetchOfficialZoningAtPoint(jurisdiction, {
     return {
       zoning_code: zoningCode,
       zoning_description: firstSourceText(attributes, source.descriptionFields)
+        || classification.zoningDescription
         || officialZoningClassificationDescription(source, zoningCode),
       provider_key: source.providerKey,
       source_record_id: querySource.recordPrefix
@@ -377,9 +381,18 @@ export async function getPropertyZoningEvidence(pool, {
   await ensureZoningEvidenceSchema(pool);
   const { rows: accountRows } = await pool.query(
     `SELECT account.account_id, account.address, account.city, account.county,
-            location.latitude, location.longitude
+            COALESCE(location.latitude, ST_Y(ST_PointOnSurface(parcel.geom))) AS latitude,
+            COALESCE(location.longitude, ST_X(ST_PointOnSurface(parcel.geom))) AS longitude
      FROM core.accounts account
      LEFT JOIN core.account_locations location ON location.account_id = account.account_id
+     LEFT JOIN LATERAL (
+       SELECT dcad.geom
+       FROM gis.dcad_parcels dcad
+       WHERE dcad.account_id = account.account_id
+         AND dcad.geom IS NOT NULL
+       ORDER BY dcad.object_id
+       LIMIT 1
+     ) parcel ON true
      WHERE account.account_id = $1`,
     [accountId],
   );
@@ -396,7 +409,12 @@ export async function getPropertyZoningEvidence(pool, {
       verification: null,
     };
   }
-  const [{ rows: documentRows }, { rows: verificationRows }, { rows: automaticRows }] = await Promise.all([
+  const [
+    { rows: documentRows },
+    { rows: verificationRows },
+    { rows: automaticRows },
+    { rows: cadZoningRows },
+  ] = await Promise.all([
     pool.query(
       `SELECT id, provider_key, document_key, title, official_url, content_type,
               checksum_sha256, file_size_bytes, page_count, extraction_status,
@@ -429,18 +447,28 @@ export async function getPropertyZoningEvidence(pool, {
        LIMIT 1`,
       [accountId, jurisdiction.providerKey],
     ),
+    pool.query(
+      `SELECT zoning
+       FROM core.land_detail
+       WHERE account_id = $1
+         AND NULLIF(BTRIM(zoning), '') IS NOT NULL
+       ORDER BY tax_year DESC, line_number
+       LIMIT 1`,
+      [accountId],
+    ),
   ]);
   let automaticResult = automaticRows[0] || null;
-  if (automaticResult && !automaticResult.zoning_description) {
+  if (automaticResult) {
     const source = OFFICIAL_ZONING_SOURCES.find(
       (entry) => entry.providerKey === automaticResult.provider_key,
     );
+    const classification = officialZoningClassification(source, automaticResult.zoning_code);
     automaticResult = {
       ...automaticResult,
-      zoning_description: officialZoningClassificationDescription(
-        source,
-        automaticResult.zoning_code,
-      ),
+      zoning_code: classification.zoningCode || automaticResult.zoning_code,
+      zoning_description: automaticResult.zoning_description
+        || classification.zoningDescription
+        || officialZoningClassificationDescription(source, automaticResult.zoning_code),
     };
   }
   let liveLookupError = null;
@@ -454,6 +482,20 @@ export async function getPropertyZoningEvidence(pool, {
       liveLookupError = cleanText(error?.message || error, 500);
     }
   }
+  const source = OFFICIAL_ZONING_SOURCES.find(
+    (entry) => entry.providerKey === jurisdiction.providerKey,
+  );
+  const cadClassification = officialZoningClassification(source, cadZoningRows[0]?.zoning);
+  const suggestedResult = automaticResult || (cadClassification.zoningCode ? {
+    zoning_code: cadClassification.zoningCode,
+    zoning_description: cadClassification.zoningDescription,
+    provider_key: "dcad_land_detail",
+    source_record_id: null,
+    source_attributes: { raw_zoning: cadZoningRows[0]?.zoning },
+    source_updated_at: null,
+    synced_at: null,
+    lookup_mode: "cad_review_suggestion",
+  } : null);
   const verification = publicVerification(verificationRows[0]);
   const reviewRequired = !verification && !automaticResult;
   return {
@@ -476,6 +518,7 @@ export async function getPropertyZoningEvidence(pool, {
         : "The city does not expose a verified queryable zoning polygon. Confirm the map or contact the city before relying on the result.",
     documents: documentRows.map(publicDocument),
     automatic_result: automaticResult,
+    suggested_result: suggestedResult,
     verification,
   };
 }

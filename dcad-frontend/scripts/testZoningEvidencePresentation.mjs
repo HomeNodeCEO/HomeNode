@@ -38,3 +38,26 @@ test("official PDF and automatic zoning hydrate an unverified draft", () => {
   assert.equal(draft.zoningCode, "PD");
   assert.equal(draft.reviewer, "Keep reviewer");
 });
+
+test("review-required zoning prefills the best suggestion and official contact phones", () => {
+  const draft = zoningDraftFromEvidence({
+    documents: [],
+    automatic_result: null,
+    suggested_result: {
+      zoning_code: "PD",
+      zoning_description: "Planned Development District",
+    },
+    verification: null,
+    jurisdiction: {
+      contact: {
+        department: "Planning and Zoning / Permit & Inspection Services",
+        planningPhone: "972-707-3878 / 972-707-3876",
+        buildingPhone: "972-780-5000",
+      },
+    },
+  }, EMPTY_ZONING_EVIDENCE_DRAFT);
+  assert.equal(draft.zoningCode, "PD");
+  assert.equal(draft.zoningDescription, "Planned Development District");
+  assert.match(draft.confirmationReference, /Planning & Zoning: 972-707-3878/);
+  assert.match(draft.confirmationReference, /Building Inspections: 972-780-5000/);
+});

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   createAssignmentPhotoUpload,
+  getAssignmentFiles,
   getAssignmentPhotoVersion,
   getAssignmentPhotos,
   removeAssignmentPhoto,
@@ -12,6 +13,7 @@ import {
 
 const LIVE_REFRESH_MS = 5_000;
 const VIEW_URL_REFRESH_MS = 4 * 60_000;
+const PHOTO_FEED_RETRY_DELAY_MS = 30_000;
 
 const CATEGORIES = [
   'Front', 'Rear', 'Street', 'Kitchen', 'Living area', 'Bedroom', 'Bathroom',
@@ -109,13 +111,49 @@ export default function AssignmentPhotoCenter({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
+  const [failedPreviewUrls, setFailedPreviewUrls] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement | null>(null);
   const credentialRef = useRef('');
   const loadInFlight = useRef(false);
   const versionCheckInFlight = useRef(false);
   const loadGeneration = useRef(0);
+  const photosRef = useRef<AssignmentPhoto[]>([]);
   const photoSignatureRef = useRef<string | null>(null);
   const viewUrlsRefreshedAt = useRef(0);
+  const photoFeedRetryAtRef = useRef(0);
+  const versionRecoveryAtRef = useRef(0);
+  const previewRecoveryAtRef = useRef(new Map<string, number>());
+
+  const loadAssignmentFileFallback = useCallback(async (): Promise<AssignmentPhoto[]> => {
+    const response = await getAssignmentFiles(accountId, assignmentFileId);
+    const assignment = response.files.find((file) => file.id === assignmentFileId);
+    if (!assignment) throw new Error('assignment_photo_file_not_found');
+    const verifiedFilePhotos = (assignment.mobile_inspection_photos || []).map((photo): AssignmentPhoto => ({
+      id: photo.id,
+      client_photo_id: photo.client_photo_id || photo.id,
+      origin_channel: photo.origin_channel || 'mobile',
+      category: photo.category,
+      room_ref: photo.room_ref,
+      room_label: photo.room_label,
+      caption: photo.caption,
+      position: photo.position,
+      captured_at: photo.captured_at || null,
+      status: 'verified',
+      revision: photo.revision || 1,
+      verified_at: photo.verified_at,
+      retention_until: photo.retention_until,
+      required_retention_years: photo.required_retention_years,
+      view_url: photo.view_url || null,
+      view_url_expires_in_seconds: photo.view_url_expires_in_seconds || null,
+      objects: [],
+    }));
+    const verifiedIds = new Set(verifiedFilePhotos.map((photo) => photo.id));
+    const pendingPhotos = photosRef.current.filter((photo) => (
+      photo.status !== 'verified' && !verifiedIds.has(photo.id)
+    ));
+    return [...pendingPhotos, ...verifiedFilePhotos]
+      .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+  }, [accountId, assignmentFileId]);
 
   const load = useCallback(async (background = false) => {
     if (!accountId || !assignmentFileId || loadInFlight.current) return;
@@ -126,17 +164,36 @@ export default function AssignmentPhotoCenter({
     loadInFlight.current = true;
     if (!background) setBusy(true);
     try {
-      const result = await getAssignmentPhotos(accountId, assignmentFileId, editorKey);
+      let nextPhotos: AssignmentPhoto[];
+      let nextVersion: string | null = null;
+      if (background && Date.now() < photoFeedRetryAtRef.current) {
+        nextPhotos = await loadAssignmentFileFallback();
+      } else {
+        try {
+          const result = await getAssignmentPhotos(accountId, assignmentFileId, editorKey);
+          nextPhotos = result.photos;
+          nextVersion = result.version;
+          photoFeedRetryAtRef.current = 0;
+        } catch (photoFeedError) {
+          photoFeedRetryAtRef.current = Date.now() + PHOTO_FEED_RETRY_DELAY_MS;
+          try {
+            nextPhotos = await loadAssignmentFileFallback();
+          } catch {
+            throw photoFeedError;
+          }
+        }
+      }
       if (generation !== loadGeneration.current) return;
-      const nextSignature = result.version || photoVersionSignature(result.photos);
+      const nextSignature = nextVersion || photoVersionSignature(nextPhotos);
       const changed = photoSignatureRef.current === null || nextSignature !== photoSignatureRef.current;
       const refreshViewUrls = Date.now() - viewUrlsRefreshedAt.current >= VIEW_URL_REFRESH_MS;
       if (changed || refreshViewUrls) {
         photoSignatureRef.current = nextSignature;
         viewUrlsRefreshedAt.current = Date.now();
-        setPhotos(result.photos);
+        photosRef.current = nextPhotos;
+        setPhotos(nextPhotos);
       }
-      if (changed) onPhotosChanged?.(result.photos);
+      if (changed) onPhotosChanged?.(nextPhotos);
       setLastCheckedAt(new Date());
       if (!background) setMessage('');
     } catch (error) {
@@ -149,7 +206,7 @@ export default function AssignmentPhotoCenter({
         if (!background) setBusy(false);
       }
     }
-  }, [accountId, assignmentFileId, getEditorKey, onPhotosChanged]);
+  }, [accountId, assignmentFileId, getEditorKey, loadAssignmentFileFallback, onPhotosChanged]);
 
   const checkForUpdates = useCallback(async () => {
     if (!accountId || !assignmentFileId || loadInFlight.current || versionCheckInFlight.current) return;
@@ -160,26 +217,64 @@ export default function AssignmentPhotoCenter({
     try {
       const result = await getAssignmentPhotoVersion(accountId, assignmentFileId, editorKey);
       if (generation !== loadGeneration.current) return;
+      versionRecoveryAtRef.current = 0;
       const changed = photoSignatureRef.current === null || result.version !== photoSignatureRef.current;
       const refreshViewUrls = Date.now() - viewUrlsRefreshedAt.current >= VIEW_URL_REFRESH_MS;
       if (changed || refreshViewUrls) await load(true);
       else setLastCheckedAt(new Date());
     } catch {
-      // Background synchronization is best-effort. Keep the current evidence
-      // visible and try again on the next short polling interval.
+      // Keep the cheap change-token request as the ordinary five-second path.
+      // If it is unavailable, recover through the active appraisal-file route
+      // at most once per backoff window instead of reloading full photo data on
+      // every interval.
+      if (generation === loadGeneration.current && Date.now() >= versionRecoveryAtRef.current) {
+        versionRecoveryAtRef.current = Date.now() + PHOTO_FEED_RETRY_DELAY_MS;
+        await load(true);
+      }
     } finally {
       if (generation === loadGeneration.current) versionCheckInFlight.current = false;
     }
   }, [accountId, assignmentFileId, load]);
 
+  const refreshNow = useCallback(() => {
+    viewUrlsRefreshedAt.current = 0;
+    photoFeedRetryAtRef.current = 0;
+    void load();
+  }, [load]);
+
+  const recoverPhotoPreview = useCallback((photo: AssignmentPhoto) => {
+    if (!photo.view_url) return;
+    setFailedPreviewUrls((current) => ({ ...current, [photo.id]: photo.view_url as string }));
+    const now = Date.now();
+    if (now < (previewRecoveryAtRef.current.get(photo.id) || 0)) return;
+    previewRecoveryAtRef.current.set(photo.id, now + PHOTO_FEED_RETRY_DELAY_MS);
+    viewUrlsRefreshedAt.current = 0;
+    void load(true);
+  }, [load]);
+
+  const confirmPhotoPreview = useCallback((photoId: string) => {
+    previewRecoveryAtRef.current.delete(photoId);
+    setFailedPreviewUrls((current) => {
+      if (!(photoId in current)) return current;
+      const next = { ...current };
+      delete next[photoId];
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     loadGeneration.current += 1;
     loadInFlight.current = false;
     versionCheckInFlight.current = false;
+    photosRef.current = [];
     credentialRef.current = '';
     photoSignatureRef.current = null;
     viewUrlsRefreshedAt.current = 0;
+    photoFeedRetryAtRef.current = 0;
+    versionRecoveryAtRef.current = 0;
+    previewRecoveryAtRef.current.clear();
     setPhotos([]);
+    setFailedPreviewUrls({});
     setLastCheckedAt(null);
     setMessage('');
   }, [accountId, assignmentFileId]);
@@ -285,7 +380,7 @@ export default function AssignmentPhotoCenter({
                   Watching file {assignmentFileNumber || assignmentFileId} for verified mobile photos.
                   {lastCheckedAt ? ` Last checked ${lastCheckedAt.toLocaleTimeString()}.` : ''}
                 </span>
-                <button type="button" className="hn-action-secondary rounded-lg px-3 py-1.5 font-semibold" disabled={busy} onClick={() => void load()}>
+                <button type="button" className="hn-action-secondary rounded-lg px-3 py-1.5 font-semibold" disabled={busy} onClick={refreshNow}>
                   Refresh now
                 </button>
               </div>
@@ -314,7 +409,20 @@ export default function AssignmentPhotoCenter({
                 <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   {photos.map((photo) => (
                     <article key={photo.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-                      {photo.view_url ? <img src={photo.view_url} alt={photo.caption || photo.category} className="h-36 w-full object-cover" /> : <div className="grid h-36 place-items-center bg-slate-100 text-xs text-slate-500">Upload pending verification</div>}
+                      {photo.view_url && failedPreviewUrls[photo.id] !== photo.view_url ? (
+                        <img
+                          key={`${photo.id}:${photo.view_url}`}
+                          src={photo.view_url}
+                          alt={photo.caption || photo.category}
+                          className="h-36 w-full object-cover"
+                          onLoad={() => confirmPhotoPreview(photo.id)}
+                          onError={() => recoverPhotoPreview(photo)}
+                        />
+                      ) : (
+                        <div className="grid h-36 place-items-center bg-slate-100 px-3 text-center text-xs text-slate-500">
+                          {photo.view_url ? 'Refreshing secure preview…' : 'Upload pending verification'}
+                        </div>
+                      )}
                       <div className="p-3">
                         <div className="flex items-start justify-between gap-2">
                           <div><p className="text-sm font-semibold text-slate-900">{photo.caption || photo.category}</p><p className="text-xs text-slate-500">{photo.category}</p></div>

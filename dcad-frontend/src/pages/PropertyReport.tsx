@@ -595,14 +595,21 @@ function AddressHero({
       .filter((photo) => photo.origin_channel === 'mobile' && photo.status === 'verified' && photo.verified_at)
       .map((photo) => ({
         id: photo.id,
+        client_photo_id: photo.client_photo_id,
+        origin_channel: photo.origin_channel,
         category: photo.category,
         room_ref: photo.room_ref,
         room_label: photo.room_label,
         caption: photo.caption,
         position: photo.position,
+        captured_at: photo.captured_at,
+        status: 'verified' as const,
+        revision: photo.revision,
         verified_at: photo.verified_at as string,
         retention_until: photo.retention_until || '',
         required_retention_years: photo.required_retention_years,
+        view_url: photo.view_url,
+        view_url_expires_in_seconds: photo.view_url_expires_in_seconds,
       }));
     const mergePhotos = (file: AppraisalAssignmentFile): AppraisalAssignmentFile => ({
       ...file,

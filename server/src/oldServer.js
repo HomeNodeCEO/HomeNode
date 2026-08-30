@@ -1503,8 +1503,15 @@ app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
 app.get("/api/accounts/:id/assignment-files", async (req, res) => {
   if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
   const requestedId = String(req.params.id || "").trim();
+  const requestedAssignmentFileValue = String(req.query.assignment_file_id || "").trim();
+  const requestedAssignmentFileId = requestedAssignmentFileValue
+    ? normalizeAssignmentFileId(requestedAssignmentFileValue)
+    : null;
   if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
     return res.status(400).json({ error: "invalid_account_id" });
+  }
+  if (requestedAssignmentFileValue && !requestedAssignmentFileId) {
+    return res.status(400).json({ error: "invalid_assignment_file_id" });
   }
   try {
     await Promise.all([
@@ -1537,9 +1544,12 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
           [canonicalId],
         ),
     ]);
-    const rows = applicationAuthenticationRequired && req.mobileAuth
+    const authorizedRows = applicationAuthenticationRequired && req.mobileAuth
       ? queriedRows.filter((row) => decideAssignmentAccess(req.mobileAuth, row, "read"))
       : queriedRows;
+    const rows = requestedAssignmentFileId
+      ? authorizedRows.filter((row) => Number(row.id) === requestedAssignmentFileId)
+      : authorizedRows;
     const assignmentIds = rows.map((row) => Number(row.id));
     let sectionRows = [];
     let mobilePhotoRows = [];
@@ -1557,11 +1567,21 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
           ).then((result) => result.rows),
           pool.query(
             `SELECT report_file.custom_assignment_file_id AS assignment_file_id,
-                    photo.id, photo.category, photo.room_ref, photo.room_label,
-                    photo.caption, photo.position, photo.verified_at,
-                    photo.retention_until, photo.required_retention_years
+                    photo.id, photo.client_photo_id, photo.origin_channel,
+                    photo.category, photo.room_ref, photo.room_label,
+                    photo.caption, photo.position, photo.captured_at,
+                    photo.status, photo.revision, photo.verified_at,
+                    photo.retention_until, photo.required_retention_years,
+                    view_object.object_key AS view_object_key
                FROM app.report_files report_file
                JOIN app.inspection_photos photo ON photo.report_file_id = report_file.id
+               LEFT JOIN LATERAL (
+                 SELECT object_key
+                   FROM app.inspection_photo_objects
+                  WHERE photo_id = photo.id AND status = 'verified'
+                  ORDER BY CASE variant WHEN 'display' THEN 0 ELSE 1 END, id
+                  LIMIT 1
+               ) view_object ON true
               WHERE report_file.custom_assignment_file_id = ANY($1::bigint[])
                 AND photo.status = 'verified'
               ORDER BY report_file.custom_assignment_file_id, photo.position, photo.created_at, photo.id`,
@@ -1584,6 +1604,24 @@ app.get("/api/accounts/:id/assignment-files", async (req, res) => {
         if (error?.code !== "42P01") throw error;
       }
     }
+    mobilePhotoRows = mobilePhotoRows.map((photo) => {
+      let view = null;
+      if (photo.view_object_key && sharedObjectStorage?.configured) {
+        try {
+          view = sharedObjectStorage.createDownloadUrl({
+            objectKey: photo.view_object_key,
+            expiresInSeconds: 300,
+          });
+        } catch {
+          view = null;
+        }
+      }
+      return {
+        ...photo,
+        view_url: view?.url || null,
+        view_url_expires_in_seconds: view?.expires_in_seconds || null,
+      };
+    });
     const detailIndex = indexAssignmentFileDetails({
       sectionRows,
       mobilePhotoRows,

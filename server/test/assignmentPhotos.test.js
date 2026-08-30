@@ -112,7 +112,12 @@ test("desktop photo center watches the exact active file for mobile changes", ()
     path.resolve(directory, "../../dcad-frontend/src/pages/PropertyReport.tsx"),
     "utf8",
   );
+  const api = fs.readFileSync(
+    path.resolve(directory, "../../dcad-frontend/src/lib/api.ts"),
+    "utf8",
+  );
   assert.match(center, /const LIVE_REFRESH_MS = 5_000/);
+  assert.match(center, /const PHOTO_FEED_RETRY_DELAY_MS = 30_000/);
   assert.match(center, /if \(!accountId \|\| !assignmentFileId\) return;\s+void load\(\)/);
   assert.doesNotMatch(center, /\[accountId, assignmentFileId, load, open\]/);
   assert.match(center, /document\.addEventListener\('visibilitychange', refreshWhenVisible\)/);
@@ -120,8 +125,34 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(center, /photoVersionSignature/);
   assert.match(center, /getAssignmentPhotoVersion/);
   assert.match(center, /void checkForUpdates\(\)/);
+  assert.match(center, /versionRecoveryAtRef/);
+  assert.match(center, /Date\.now\(\) \+ PHOTO_FEED_RETRY_DELAY_MS/);
+  assert.match(center, /const refreshNow = useCallback/);
+  assert.match(center, /viewUrlsRefreshedAt\.current = 0/);
+  assert.match(center, /onError=\{\(\) => recoverPhotoPreview\(photo\)\}/);
+  assert.match(center, /Refreshing secure preview/);
   assert.match(center, /generation !== loadGeneration\.current/);
+  assert.match(center, /getAssignmentFiles\(accountId, assignmentFileId\)/);
+  assert.match(center, /loadAssignmentFileFallback/);
+  assert.match(api, /getAssignmentPhotos[\s\S]*retryTransient: true/);
   assert.match(center, /Refresh now/);
+  assert.match(report, /view_url: photo\.view_url/);
   assert.match(report, /assignmentFileNumber=\{activeAssignmentFile\?\.file_number \|\| null\}/);
   assert.match(report, /onPhotosChanged=\{handleAssignmentPhotosChanged\}/);
+});
+
+test("assignment file refresh includes signed mobile photo previews", () => {
+  const server = fs.readFileSync(
+    path.resolve(directory, "../src/oldServer.js"),
+    "utf8",
+  );
+  const details = fs.readFileSync(
+    path.resolve(directory, "../src/services/assignmentFileDetails.js"),
+    "utf8",
+  );
+  assert.match(server, /LEFT JOIN LATERAL \(\s+SELECT object_key/);
+  assert.match(server, /sharedObjectStorage\.createDownloadUrl/);
+  assert.match(server, /req\.query\.assignment_file_id/);
+  assert.match(details, /view_url: photo\.view_url \|\| null/);
+  assert.match(details, /view_url_expires_in_seconds/);
 });

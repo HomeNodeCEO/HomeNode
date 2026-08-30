@@ -35,14 +35,23 @@ export function indexAssignmentFileDetails({
     }
     photos.push({
       id: photo.id,
+      client_photo_id: photo.client_photo_id || photo.id,
+      origin_channel: photo.origin_channel || "mobile",
       category: photo.category,
       room_ref: photo.room_ref,
       room_label: photo.room_label,
       caption: photo.caption,
       position: Number(photo.position),
+      captured_at: photo.captured_at || null,
+      status: photo.status || "verified",
+      revision: Number(photo.revision || 1),
       verified_at: photo.verified_at,
       retention_until: photo.retention_until,
       required_retention_years: Number(photo.required_retention_years),
+      view_url: photo.view_url || null,
+      view_url_expires_in_seconds: photo.view_url_expires_in_seconds == null
+        ? null
+        : Number(photo.view_url_expires_in_seconds),
     });
   }
 

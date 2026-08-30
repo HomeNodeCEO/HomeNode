@@ -499,14 +499,21 @@ export interface AppraisalAssignmentFile {
   } | null;
   mobile_inspection_photos?: Array<{
     id: string;
+    client_photo_id: string;
+    origin_channel: 'mobile' | 'desktop';
     category: string;
     room_ref: string | null;
     room_label: string | null;
     caption: string | null;
     position: number;
+    captured_at: string | null;
+    status: 'verified';
+    revision: number;
     verified_at: string;
     retention_until: string;
     required_retention_years: number;
+    view_url: string | null;
+    view_url_expires_in_seconds: number | null;
   }>;
 }
 
@@ -2515,7 +2522,10 @@ export async function getAssignmentPhotos(
 ): Promise<{ workfile_status: string; version: string; photos: AssignmentPhoto[] }> {
   return fetchJSON(makeUrl(
     `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos`,
-  ), { headers: { 'x-homenode-editor-key': editorKey } });
+  ), {
+    headers: { 'x-homenode-editor-key': editorKey },
+    retryTransient: true,
+  });
 }
 
 export async function getAssignmentPhotoVersion(
@@ -2900,10 +2910,15 @@ export async function updatePropertyReportSections(
 }
 
 /** Load the immutable assignment-file log and the latest values available to inherit. */
-export async function getAssignmentFiles(accountId: string): Promise<AssignmentFilesResponse> {
+export async function getAssignmentFiles(
+  accountId: string,
+  assignmentFileId?: number | null,
+): Promise<AssignmentFilesResponse> {
   const id = (accountId || '').trim();
   return fetchJSON<AssignmentFilesResponse>(
-    makeUrl(`/api/accounts/${encodeURIComponent(id)}/assignment-files`),
+    makeUrl(`/api/accounts/${encodeURIComponent(id)}/assignment-files`, {
+      assignment_file_id: assignmentFileId || undefined,
+    }),
   );
 }
 

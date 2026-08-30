@@ -6,8 +6,10 @@
     "version": "0.2.0",
     "orientation": "portrait",
     "scheme": "homenode",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
+      "icon": "./assets/icon.png",
       "supportsTablet": true,
       "bundleIdentifier": "com.homenode.appraiser",
       "config": {
@@ -17,7 +19,8 @@
     "android": {
       "package": "com.homenode.appraiser",
       "adaptiveIcon": {
-        "backgroundColor": "#24143f"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#241f1b"
       }
     },
     "extra": {

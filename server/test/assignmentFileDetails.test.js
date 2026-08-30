@@ -10,7 +10,7 @@ test("indexes assignment details in source order with the existing response shap
       { assignment_file_id: 1, section_key: "sales", section_value: { b: 2 }, revision: 4, last_applied_session_id: null, updated_at: "yesterday" },
     ],
     mobilePhotoRows: [
-      { assignment_file_id: 2, id: "p1", category: "Front", room_ref: null, room_label: null, caption: "first", position: "1", verified_at: "v1", retention_until: "r1", required_retention_years: "5" },
+      { assignment_file_id: 2, id: "p1", client_photo_id: "client-p1", origin_channel: "mobile", category: "Front", room_ref: null, room_label: null, caption: "first", position: "1", captured_at: "c1", status: "verified", revision: "3", verified_at: "v1", retention_until: "r1", required_retention_years: "5", view_url: "https://photos.example/p1", view_url_expires_in_seconds: "300" },
       { assignment_file_id: 2, id: "p2", category: "Rear", room_ref: null, room_label: null, caption: "second", position: 2, verified_at: "v2", retention_until: "r2", required_retention_years: 5 },
     ],
     mobileSketchRows: [
@@ -28,6 +28,10 @@ test("indexes assignment details in source order with the existing response shap
   });
   assert.deepEqual(indexed.photosByFile.get(2).map((photo) => photo.id), ["p1", "p2"]);
   assert.equal(indexed.photosByFile.get(2)[0].required_retention_years, 5);
+  assert.equal(indexed.photosByFile.get(2)[0].revision, 3);
+  assert.equal(indexed.photosByFile.get(2)[0].view_url, "https://photos.example/p1");
+  assert.equal(indexed.photosByFile.get(2)[0].view_url_expires_in_seconds, 300);
+  assert.equal(indexed.photosByFile.get(2)[1].origin_channel, "mobile");
   assert.equal(indexed.sketchesByFile.get(2).revision, 7);
   assert.equal(indexed.sectionsByFile.has(3), false);
 });

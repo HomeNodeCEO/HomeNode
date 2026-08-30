@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   createAssignmentPhotoUpload,
+  getAssignmentPhotoVersion,
   getAssignmentPhotos,
   removeAssignmentPhoto,
   verifyAssignmentPhotoUpload,
@@ -111,6 +112,7 @@ export default function AssignmentPhotoCenter({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const credentialRef = useRef('');
   const loadInFlight = useRef(false);
+  const versionCheckInFlight = useRef(false);
   const loadGeneration = useRef(0);
   const photoSignatureRef = useRef<string | null>(null);
   const viewUrlsRefreshedAt = useRef(0);
@@ -126,7 +128,7 @@ export default function AssignmentPhotoCenter({
     try {
       const result = await getAssignmentPhotos(accountId, assignmentFileId, editorKey);
       if (generation !== loadGeneration.current) return;
-      const nextSignature = photoVersionSignature(result.photos);
+      const nextSignature = result.version || photoVersionSignature(result.photos);
       const changed = photoSignatureRef.current === null || nextSignature !== photoSignatureRef.current;
       const refreshViewUrls = Date.now() - viewUrlsRefreshedAt.current >= VIEW_URL_REFRESH_MS;
       if (changed || refreshViewUrls) {
@@ -149,9 +151,31 @@ export default function AssignmentPhotoCenter({
     }
   }, [accountId, assignmentFileId, getEditorKey, onPhotosChanged]);
 
+  const checkForUpdates = useCallback(async () => {
+    if (!accountId || !assignmentFileId || loadInFlight.current || versionCheckInFlight.current) return;
+    const editorKey = credentialRef.current;
+    if (!editorKey) return;
+    const generation = loadGeneration.current;
+    versionCheckInFlight.current = true;
+    try {
+      const result = await getAssignmentPhotoVersion(accountId, assignmentFileId, editorKey);
+      if (generation !== loadGeneration.current) return;
+      const changed = photoSignatureRef.current === null || result.version !== photoSignatureRef.current;
+      const refreshViewUrls = Date.now() - viewUrlsRefreshedAt.current >= VIEW_URL_REFRESH_MS;
+      if (changed || refreshViewUrls) await load(true);
+      else setLastCheckedAt(new Date());
+    } catch {
+      // Background synchronization is best-effort. Keep the current evidence
+      // visible and try again on the next short polling interval.
+    } finally {
+      if (generation === loadGeneration.current) versionCheckInFlight.current = false;
+    }
+  }, [accountId, assignmentFileId, load]);
+
   useEffect(() => {
     loadGeneration.current += 1;
     loadInFlight.current = false;
+    versionCheckInFlight.current = false;
     credentialRef.current = '';
     photoSignatureRef.current = null;
     viewUrlsRefreshedAt.current = 0;
@@ -164,7 +188,7 @@ export default function AssignmentPhotoCenter({
     if (!accountId || !assignmentFileId) return;
     void load();
     const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') void load(true);
+      if (document.visibilityState === 'visible') void checkForUpdates();
     };
     const interval = window.setInterval(refreshWhenVisible, LIVE_REFRESH_MS);
     window.addEventListener('focus', refreshWhenVisible);
@@ -174,7 +198,7 @@ export default function AssignmentPhotoCenter({
       window.removeEventListener('focus', refreshWhenVisible);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
-  }, [accountId, assignmentFileId, load]);
+  }, [accountId, assignmentFileId, checkForUpdates, load]);
 
   const upload = async (files: FileList | null) => {
     if (!files?.length || !assignmentFileId) return;

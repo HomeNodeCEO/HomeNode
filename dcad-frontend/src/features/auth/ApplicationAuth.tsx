@@ -46,6 +46,7 @@ type AuthState = {
   configured: boolean;
   required: boolean;
   session: Session | null;
+  bootstrapError: string | null;
   readiness: AuthReadiness | null;
   readinessError: string | null;
   signIn: () => void;
@@ -58,11 +59,24 @@ const API_BASE = String(
 ).replace(/\/+$/, '');
 const authUrl = (path: string) => `${API_BASE}${path}`;
 
+async function fetchAuthBootstrap(path: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await fetch(authUrl(path), { credentials: 'include' });
+    if ((response.status === 429 || response.status >= 500) && attempt === 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      continue;
+    }
+    return response;
+  }
+  throw new Error('authentication_status_unavailable');
+}
+
 export function ApplicationAuthProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [configured, setConfigured] = useState(false);
   const [required, setRequired] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<AuthReadiness | null>(null);
   const [readinessError, setReadinessError] = useState<string | null>(null);
 
@@ -70,15 +84,14 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
     let active = true;
     void (async () => {
       try {
-        const statusResponse = await fetch(authUrl('/api/auth/status'), { credentials: 'include' });
-        const status = statusResponse.ok
-          ? await statusResponse.json()
-          : { configured: false, required: false };
+        const statusResponse = await fetchAuthBootstrap('/api/auth/status');
+        if (!statusResponse.ok) throw new Error('authentication_status_unavailable');
+        const status = await statusResponse.json();
         if (!active) return;
         setConfigured(Boolean(status.configured));
         setRequired(Boolean(status.configured && status.required));
         if (status.configured) {
-          const sessionResponse = await fetch(authUrl('/api/auth/me'), { credentials: 'include' });
+          const sessionResponse = await fetchAuthBootstrap('/api/auth/me');
           if (sessionResponse.ok) {
             const body = await sessionResponse.json();
             const nextSession = (body.session || null) as Session | null;
@@ -94,10 +107,10 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
                 setReadinessError('auth_readiness_unavailable');
               }
             }
-          }
+          } else if (sessionResponse.status !== 401) throw new Error('authentication_status_unavailable');
         }
       } catch {
-        if (active) setReadinessError('authentication_status_unavailable');
+        if (active) setBootstrapError('authentication_status_unavailable');
       } finally {
         if (active) setReady(true);
       }
@@ -115,6 +128,7 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
     configured,
     required,
     session,
+    bootstrapError,
     readiness,
     readinessError,
     signIn: () => { window.location.assign(authUrl('/api/auth/login')); },
@@ -127,7 +141,7 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
         setReadinessError(null);
       }
     },
-  }), [configured, readiness, readinessError, ready, required, session]);
+  }), [bootstrapError, configured, readiness, readinessError, ready, required, session]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -256,6 +270,26 @@ export function ApplicationAuthGate({ children }: { children: React.ReactNode })
   const auth = useApplicationAuth();
   if (!auth.ready) {
     return <div className="route-loading">Loading HomeNode…</div>;
+  }
+  if (auth.bootstrapError) {
+    return (
+      <main className="hn-app-shell grid place-items-center px-6">
+        <section className="hn-workspace-surface w-full max-w-md overflow-hidden rounded-3xl border p-8">
+          <p className="hn-eyebrow text-xs tracking-[0.22em]">HomeNode</p>
+          <h1 className="mt-3 text-2xl font-semibold text-slate-950">Secure workspace temporarily unavailable</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            HomeNode could not verify this browser session. Your appraisal data is unchanged; retry the connection.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="hn-action-primary mt-7 w-full rounded-xl px-5 py-3 font-semibold transition"
+          >
+            Retry connection
+          </button>
+        </section>
+      </main>
+    );
   }
   // Preserve the existing editor-key workflow until production WorkOS values
   // and the first organization administrator have been provisioned.

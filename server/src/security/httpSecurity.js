@@ -130,7 +130,12 @@ export function shouldSkipGlobalApiRateLimit(req, configuration) {
   return path === "/api/uad"
     || path.startsWith("/api/uad/")
     || path === "/api/mobile"
-    || path.startsWith("/api/mobile/");
+    || path.startsWith("/api/mobile/")
+    // These two read-only bootstrap checks decide whether the browser can
+    // render the application at all. A busy unrelated API route must never
+    // make an authenticated workspace look signed out or unconfigured.
+    || path === "/api/auth/status"
+    || path === "/api/auth/me";
 }
 
 export function authenticatedApiRateLimitKey(req) {

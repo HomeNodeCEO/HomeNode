@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildAssignmentPhotoVersion,
   buildAssignmentPhotoObjectKey,
   normalizeAssignmentPhotoUpload,
 } from "../src/services/assignmentPhotos.js";
@@ -66,6 +67,20 @@ test("builds a file-scoped private photo object key", () => {
   }), "organizations/unassigned/report-files/report-1/photos/photo-1/original/object-1/Front-View.JPG");
 });
 
+test("builds a stable photo change token that reacts to mobile updates", () => {
+  const rows = [{
+    id: "10000000-0000-4000-8000-000000000001",
+    position: 1,
+    revision: 1,
+    status: "pending_upload",
+    updated_at: "2026-08-20T12:00:00.000Z",
+  }];
+  const initial = buildAssignmentPhotoVersion(rows);
+  assert.equal(buildAssignmentPhotoVersion(rows), initial);
+  assert.notEqual(buildAssignmentPhotoVersion([{ ...rows[0], revision: 2, status: "verified" }]), initial);
+  assert.notEqual(buildAssignmentPhotoVersion([]), initial);
+});
+
 test("desktop photo migration preserves mobile rows while enabling file-scoped desktop evidence", () => {
   const source = fs.readFileSync(
     path.resolve(directory, "../migrations/20260921_desktop_report_photos.sql"),
@@ -103,6 +118,8 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(center, /document\.addEventListener\('visibilitychange', refreshWhenVisible\)/);
   assert.match(center, /window\.addEventListener\('focus', refreshWhenVisible\)/);
   assert.match(center, /photoVersionSignature/);
+  assert.match(center, /getAssignmentPhotoVersion/);
+  assert.match(center, /void checkForUpdates\(\)/);
   assert.match(center, /generation !== loadGeneration\.current/);
   assert.match(center, /Refresh now/);
   assert.match(report, /assignmentFileNumber=\{activeAssignmentFile\?\.file_number \|\| null\}/);

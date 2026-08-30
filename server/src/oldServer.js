@@ -172,6 +172,7 @@ import {
 import { createDocumentOcrProvider } from "./services/documentOcr.js";
 import {
   createAssignmentPhotoUpload,
+  getAssignmentPhotoVersion,
   listAssignmentPhotos,
   removeAssignmentPhoto,
   verifyAssignmentPhoto,
@@ -6213,6 +6214,22 @@ app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos", async (re
     return res.json({ ok: true, account_id: accountId, ...result });
   } catch (error) {
     const message = error?.message || "assignment_photos_lookup_failed";
+    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+  }
+});
+
+/** Cheap change token for near-real-time mobile-to-desktop photo synchronization. */
+app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos/version", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
+  try {
+    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
+    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
+    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
+    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
+    const result = await getAssignmentPhotoVersion(pool, { accountId, assignmentFileId });
+    return res.set("cache-control", "no-store").json({ ok: true, account_id: accountId, ...result });
+  } catch (error) {
+    const message = error?.message || "assignment_photo_version_lookup_failed";
     return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
   }
 });

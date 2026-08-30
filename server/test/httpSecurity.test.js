@@ -99,18 +99,22 @@ test("Render rate limiting uses Cloudflare's single-address client header", () =
   );
 });
 
-test("global rate limiting leaves UAD and mobile policy headers to their routers", () => {
+test("global rate limiting leaves router policies and auth bootstrap checks independent", () => {
   const enabled = createHttpSecurityConfiguration({ NODE_ENV: "production" });
   for (const path of [
     "/api/uad",
     "/api/uad/capabilities",
     "/api/mobile",
     "/api/mobile/assignments",
+    "/api/auth/status",
+    "/api/auth/me",
   ]) {
     assert.equal(shouldSkipGlobalApiRateLimit({ path }, enabled), true, path);
   }
   assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/properties/search" }, enabled), false);
   assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/uad-legacy" }, enabled), false);
+  assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/auth/login" }, enabled), false);
+  assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/auth/callback" }, enabled), false);
 
   const disabled = createHttpSecurityConfiguration({ NODE_ENV: "test" });
   assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/properties/search" }, disabled), true);

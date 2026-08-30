@@ -2512,10 +2512,25 @@ export async function getAssignmentPhotos(
   accountId: string,
   assignmentFileId: number,
   editorKey: string,
-): Promise<{ workfile_status: string; photos: AssignmentPhoto[] }> {
+): Promise<{ workfile_status: string; version: string; photos: AssignmentPhoto[] }> {
   return fetchJSON(makeUrl(
     `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos`,
   ), { headers: { 'x-homenode-editor-key': editorKey } });
+}
+
+export async function getAssignmentPhotoVersion(
+  accountId: string,
+  assignmentFileId: number,
+  editorKey: string,
+): Promise<{ workfile_status: string; version: string; photo_count: number }> {
+  return fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos/version`,
+  ), {
+    headers: { 'x-homenode-editor-key': editorKey },
+    cache: 'no-store',
+    timeoutMs: 10_000,
+    retryTransient: true,
+  });
 }
 
 export async function createAssignmentPhotoUpload(

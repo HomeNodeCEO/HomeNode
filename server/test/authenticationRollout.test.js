@@ -146,6 +146,14 @@ test("mandatory unified authentication fails closed across the legacy API surfac
   assert.match(server.slice(legacyGate, accountRead), /authentication_required/);
 });
 
+test("browser authentication bootstrap fails visibly instead of exposing an empty application", () => {
+  const frontend = read("../../dcad-frontend/src/features/auth/ApplicationAuth.tsx");
+  assert.match(frontend, /if \(!statusResponse\.ok\) throw new Error\('authentication_status_unavailable'\)/);
+  assert.match(frontend, /sessionResponse\.status !== 401/);
+  assert.match(frontend, /if \(auth\.bootstrapError\)/);
+  assert.match(frontend, /Your appraisal data is unchanged; retry the connection/);
+});
+
 test("legacy property editors accept the authenticated workflow identity before editor-key fallback", () => {
   const server = read("../src/oldServer.js");
   const housingStart = server.indexOf('app.patch("/api/accounts/:id/housing-profile"');

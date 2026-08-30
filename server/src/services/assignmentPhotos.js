@@ -150,6 +150,17 @@ function photoPayload(storage, row, objects) {
   };
 }
 
+export function buildAssignmentPhotoVersion(rows = []) {
+  const photos = rows.map((row) => ({
+    id: String(row.id || ""),
+    position: Number(row.position || 0),
+    revision: Number(row.revision || 0),
+    status: String(row.status || ""),
+    updatedAt: row.updated_at == null ? null : new Date(row.updated_at).toISOString(),
+  }));
+  return `v1:${photos.length}:${sha256(canonicalJson(photos)).slice(0, 24)}`;
+}
+
 function uploadPayload(storage, object) {
   const upload = storage.createUploadUrl({ objectKey: object.object_key, contentType: object.content_type });
   return {
@@ -191,7 +202,34 @@ export async function listAssignmentPhotos(pool, storage, { accountId, assignmen
       row,
       objectsByPhoto.get(row.id) || [],
     ));
-    return { report_file_id: report.id, workfile_status: report.workfile_status, photos };
+    return {
+      report_file_id: report.id,
+      workfile_status: report.workfile_status,
+      version: buildAssignmentPhotoVersion(rows),
+      photos,
+    };
+  } finally {
+    client.release();
+  }
+}
+
+export async function getAssignmentPhotoVersion(pool, { accountId, assignmentFileId }) {
+  const client = await pool.connect();
+  try {
+    const report = await assignmentReport(client, accountId, assignmentFileId);
+    const { rows } = await client.query(
+      `SELECT id, position, revision, status, updated_at
+         FROM app.inspection_photos
+        WHERE report_file_id = $1 AND status NOT IN ('excluded', 'deleted')
+        ORDER BY position, created_at, id`,
+      [report.id],
+    );
+    return {
+      report_file_id: report.id,
+      workfile_status: report.workfile_status,
+      version: buildAssignmentPhotoVersion(rows),
+      photo_count: rows.length,
+    };
   } finally {
     client.release();
   }

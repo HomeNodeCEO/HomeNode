@@ -92,24 +92,14 @@ async function requestItems(query: string, city: string, limit = 25): Promise<Se
     return api.toSearchItems(rows);
   } catch (e) {
     console.error("[requestItems] helper call failed:", e);
+    // An exact Dallas account remains directly navigable during a transient
+    // search outage. Do not immediately repeat the same failed API call: that
+    // amplified rate-limit incidents and delayed recovery on the home screen.
+    if (/^\d{17}$/.test(query)) {
+      return [{ id: query, title: query, subtitle: query }];
+    }
+    throw e;
   }
-
-  // If it's an exact 17-digit account id, retain direct navigation during a
-  // transient search-service failure.
-  if (/^\d{17}$/.test(query)) {
-    return [{ id: query, title: query, subtitle: query }];
-  }
-  // Final fallback: DB search route that supports address or exact account_id
-  const url = api.makeUrl('/api/search', { q: query, limit });
-  let res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Search HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  if (typeof (api as any).toSearchItems === "function") {
-    return (api as any).toSearchItems(data);
-  }
-  return localToItems(data);
 }
 
 export default function PropertySearchPage() {

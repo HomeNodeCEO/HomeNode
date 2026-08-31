@@ -2,6 +2,7 @@
 // Postgres-backed API client (no scraper)
 
 import { isAuthenticatedSessionEditorCredential } from '@/lib/editorCredential';
+import { createTimedRequestCache } from '@/lib/timedRequestCache';
 
 type Json = Record<string, any>;
 
@@ -1895,7 +1896,8 @@ export async function getAccountPhotos(accountId: string): Promise<AccountPhotos
   return fetchJSON<AccountPhotosResponse>(url);
 }
 
-export interface NeighborhoodProfileResponse extends MarketConditionsResponse {
+export interface NeighborhoodProfileResponse extends Omit<MarketConditionsResponse, 'analyses'> {
+  analyses: Array<Omit<MarketConditionsAnalysis, 'series' | 'map_sales'>>;
   boundary_streets: {
     street_names: string[];
     cardinal_boundaries: Record<'north' | 'east' | 'south' | 'west', {
@@ -3434,25 +3436,30 @@ export async function runMarketConditionsAnalysis(
   });
 }
 
+const neighborhoodProfileCache = createTimedRequestCache<NeighborhoodProfileResponse>(5 * 60_000);
+
 /** Refresh the saved custom neighborhood, citywide comparison, and boundary street candidates. */
 export async function getNeighborhoodProfile(
   request: Omit<MarketConditionsRequest, 'areaKeys'>,
+  { force = false }: { force?: boolean } = {},
 ): Promise<NeighborhoodProfileResponse> {
   const url = makeUrl('/api/sales/neighborhood-profile');
-  return fetchJSON<NeighborhoodProfileResponse>(url, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      subject_account_id: request.subjectAccountId.trim(),
-      as_of: request.asOf,
-      period_months: request.periodMonths,
-      custom_geometry: request.customGeometry || null,
-      context_override: request.contextOverride || null,
-    }),
-    timeoutMs: 120000,
-  });
+  const payload = {
+    subject_account_id: request.subjectAccountId.trim(),
+    as_of: request.asOf,
+    period_months: request.periodMonths,
+    custom_geometry: request.customGeometry || null,
+    context_override: request.contextOverride || null,
+  };
+  const cacheKey = JSON.stringify(payload);
+  return neighborhoodProfileCache.load(cacheKey, () => fetchJSON<NeighborhoodProfileResponse>(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ...payload, force_refresh: force }),
+      timeoutMs: 120000,
+    }), { force });
 }
 
 /** Calculate present land use from every official DCAD parcel in the saved custom boundary. */

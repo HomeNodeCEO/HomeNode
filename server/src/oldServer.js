@@ -93,6 +93,7 @@ import {
 } from "./services/censusZipProfile.js";
 import { loadBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
+  compactNeighborhoodProfileResponse,
   isNeighborhoodProfileBusyError,
   neighborhoodProfileRequestKey,
   runNeighborhoodProfileOperation,
@@ -190,6 +191,7 @@ import { getNeighborhoodEngineReadiness } from "./services/neighborhoodEngineRea
 import {
   createRequestPerformanceMonitor,
   environmentFlag,
+  normalizePerformancePath,
 } from "./util/requestPerformance.js";
 import { createUadRouter, uadBodyParserErrorHandler } from "./modules/uad/router.js";
 import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
@@ -300,7 +302,14 @@ const globalApiRateLimiter = rateLimit({
       : "";
     return ipKeyGenerator(isIP(forwarded) ? forwarded : req.ip);
   },
-  handler: (_req, res) => res.status(429).json({ error: "api_rate_limit_exceeded" }),
+  handler: (req, res) => {
+    console.warn("[security] api rate limit exceeded", {
+      method: String(req.method || "GET").toUpperCase(),
+      path: normalizePerformancePath(req.path || req.originalUrl),
+      authenticated: Boolean(authenticatedApiRateLimitKey(req)),
+    });
+    res.status(429).json({ error: "api_rate_limit_exceeded" });
+  },
 });
 
 const signupRateLimiter = rateLimit({
@@ -5742,6 +5751,7 @@ app.post("/api/sales/neighborhood-profile", async (req, res) => {
     periodMonths: req.body?.period_months ?? 24,
     customGeometry: req.body?.custom_geometry || null,
     marketContextOverride: req.body?.context_override || null,
+    forceRefresh: req.body?.force_refresh === true,
   };
   try {
     const response = await runNeighborhoodProfileOperation(
@@ -5764,12 +5774,13 @@ app.post("/api/sales/neighborhood-profile", async (req, res) => {
           boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
           console.warn("/api/sales/neighborhood-profile street lookup failed", error);
         }
-        return {
+        return compactNeighborhoodProfileResponse({
           ...market,
           boundary_streets: boundaryStreets,
           boundary_street_warning: boundaryStreetWarning,
-        };
+        });
       },
+      { allowCached: !request.forceRefresh },
     );
     res.json(response);
   } catch (error) {

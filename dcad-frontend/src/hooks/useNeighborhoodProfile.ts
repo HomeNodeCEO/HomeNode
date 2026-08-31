@@ -89,7 +89,7 @@ export function useNeighborhoodProfile({
     }
   }, [inputSignature]);
 
-  const refreshProfile = useCallback(async () => {
+  const refreshProfile = useCallback(async (force = false) => {
     const geometry = assignmentDraft.neighborhood_boundary_geometry ||
       customMarketStudy?.market.custom_geometry;
     if (!accountId || !geometry || loadingRef.current) {
@@ -109,13 +109,16 @@ export function useNeighborhoodProfile({
     setProfileLoading(true);
     setProfileMessage("Refreshing market-area ranges, city averages, and boundary streets...");
     try {
-      const profile = await getNeighborhoodProfile({
-        subjectAccountId: accountId,
-        asOf: profileAsOf,
-        periodMonths: profilePeriodMonths,
-        customGeometry: geometry,
-        contextOverride: profileContextOverride,
-      });
+      const profile = await getNeighborhoodProfile(
+        {
+          subjectAccountId: accountId,
+          asOf: profileAsOf,
+          periodMonths: profilePeriodMonths,
+          customGeometry: geometry,
+          contextOverride: profileContextOverride,
+        },
+        { force },
+      );
       if (requestGeneration.current !== generation) return;
       const customStudy = profile.analyses.find((analysis) => analysis.market.key === "custom");
       const cityStudy = profile.analyses.find((analysis) => analysis.market.key === "city");
@@ -211,7 +214,7 @@ export function useNeighborhoodProfile({
     const signature = profileSignature(accountId, profileVersion, geometry);
     if (attemptedSignature.current === signature) return;
     attemptedSignature.current = signature;
-    void refreshProfile();
+    void refreshProfile(false);
   }, [accountId, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_geometry, assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_sale_count, assignmentFilesLoaded, assignmentFilesLoading, customMarketStudy, marketConditionsDraft, refreshProfile, retryNonce, sectionReady]);
 
   useEffect(() => () => {
@@ -224,7 +227,7 @@ export function useNeighborhoodProfile({
     profileMessage,
     boundarySuggestions,
     setBoundarySuggestions,
-    refreshProfile,
+    refreshProfile: () => refreshProfile(true),
     resetProfileTracking,
   };
 }

@@ -279,8 +279,15 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   to { background-position: 0% 50%; }
 }
 
+@property --hn-evidence-reviewer-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
 @keyframes hn-evidence-reviewer-orbit {
-  to { transform: rotate(1turn); }
+  from { --hn-evidence-reviewer-angle: 0deg; }
+  to { --hn-evidence-reviewer-angle: -360deg; }
 }
 
 .hn-evidence-reviewer-frame {
@@ -289,17 +296,21 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   isolation: isolate;
   overflow: hidden;
   border: 2px solid transparent;
-  background: rgba(255, 255, 255, 0.99);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.99), rgba(250, 247, 255, 0.99));
   box-shadow: 0 8px 22px rgba(72, 35, 112, 0.12);
   transition: box-shadow 160ms ease;
 }
 
 .hn-evidence-reviewer-frame::before {
   position: absolute;
-  z-index: -2;
-  inset: -150%;
+  z-index: 1;
+  inset: 0;
+  padding: 2px;
+  border-radius: inherit;
+  pointer-events: none;
   content: "";
   background: conic-gradient(
+    from var(--hn-evidence-reviewer-angle),
     var(--hn-gold) 0deg,
     var(--hn-deep-purple) 72deg,
     #94a3b8 144deg,
@@ -308,38 +319,25 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
     var(--hn-gold) 360deg
   );
   animation: hn-evidence-reviewer-orbit 4.8s linear infinite;
-  transform-origin: center;
   transition: filter 160ms ease;
-}
-
-.hn-evidence-reviewer-frame::after {
-  position: absolute;
-  z-index: -1;
-  inset: 2px;
-  border-radius: calc(0.75rem - 2px);
-  content: "";
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.99), rgba(250, 247, 255, 0.99));
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
 }
 
 .hn-evidence-reviewer-frame:hover::before {
-  animation-duration: 2.4s;
-  filter: brightness(0.82) saturate(1.25);
+  filter: brightness(1.32) saturate(1.35);
 }
 
 .hn-evidence-reviewer-frame:focus-within {
   box-shadow:
     0 0 0 3px rgba(198, 161, 91, 0.2),
     0 10px 28px rgba(72, 35, 112, 0.2);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hn-evidence-reviewer-frame::before {
-    animation-duration: 12s;
-  }
-
-  .hn-evidence-reviewer-frame:hover::before {
-    animation-duration: 6s;
-  }
 }
 
 .hn-document-delete,

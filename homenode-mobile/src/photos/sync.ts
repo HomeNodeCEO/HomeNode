@@ -5,9 +5,11 @@ import { AppState } from "react-native";
 
 import { ApiError, type MobileApi, type PresignedPhotoUpload } from "../api/client";
 import { OfflineStore, type LocalPhotoDraft, type PhotoQueueSummary } from "../offline/store";
+import { runWithConcurrency } from "../offline/concurrency";
 import { deletePreparedPhotoFiles } from "./capture";
 
 const EMPTY_SUMMARY: PhotoQueueSummary = { total: 0, pending: 0, synchronized: 0, failed: 0 };
+export const PHOTO_SYNC_CONCURRENCY = 3;
 
 async function uploadObject(photo: LocalPhotoDraft, upload: PresignedPhotoUpload) {
   const object = photo.objects.find((item) => item.variant === upload.variant);
@@ -94,7 +96,7 @@ async function synchronizePhoto(store: OfflineStore, api: MobileApi, ownerUserId
 export async function synchronizeDuePhotos(store: OfflineStore, api: MobileApi, ownerUserId: string) {
   await store.ensureReady();
   const due = await store.duePhotoDrafts(ownerUserId);
-  for (const photo of due) {
+  await runWithConcurrency(due, PHOTO_SYNC_CONCURRENCY, async (photo) => {
     try {
       await synchronizePhoto(store, api, ownerUserId, photo);
     } catch (reason) {
@@ -103,7 +105,7 @@ export async function synchronizeDuePhotos(store: OfflineStore, api: MobileApi, 
         : reason instanceof Error ? reason.message : "mobile_photo_sync_failed";
       await store.recordPhotoFailure(ownerUserId, photo, code);
     }
-  }
+  });
 }
 
 export function usePhotoSync(

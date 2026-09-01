@@ -54,17 +54,25 @@ test("one desktop measured-sketch editor is wired to all three report workflows"
 
 test("every report file exposes a safe mobile-sync sketch workspace", () => {
   const custom = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
+  const customEvidence = read("../../dcad-frontend/src/components/AssignmentPhotoCenter.tsx");
   const protest = read("../../dcad-frontend/src/components/PropertyTaxWorkfileReview.tsx");
+  const uadApi = read("../../dcad-frontend/src/features/uad/api.ts");
   const uadAssets = read("../../dcad-frontend/src/features/uad/components/UadAssetPanel.tsx");
   const uadSketch = read("../../dcad-frontend/src/features/uad/components/UadSketchEditor.tsx");
 
   assert.match(custom, /<SketchWorkspaceEmptyState/);
   assert.match(protest, /<SketchWorkspaceEmptyState/);
   assert.match(uadSketch, /<SketchWorkspaceEmptyState/);
-  assert.match(custom, /setInterval\(refreshWhenVisible, 30_000\)/);
-  assert.match(protest, /setInterval\(refreshWhenVisible, 30_000\)/);
-  assert.match(uadAssets, /setInterval\(refreshWhenVisible, 30_000\)/);
-  assert.match(uadSketch, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.match(custom, /onSketchChanged={refreshMobileSketchEvidence}/);
+  assert.match(customEvidence, /getAssignmentEvidenceVersion/);
+  assert.match(customEvidence, /const LIVE_REFRESH_MS = 5_000/);
+  assert.match(protest, /const EVIDENCE_REFRESH_MS = 5_000/);
+  assert.match(uadApi, /const UAD_MOBILE_EVIDENCE_REFRESH_MS = 5_000/);
+  assert.match(uadAssets, /subscribeToUadMobileEvidenceVersion/);
+  assert.doesNotMatch(custom, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.doesNotMatch(protest, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.doesNotMatch(uadAssets, /setInterval\(refreshWhenVisible, 30_000\)/);
+  assert.doesNotMatch(uadSketch, /setInterval/);
   assert.match(uadAssets, /refreshToken={sketchEditorRefresh}/);
 });
 

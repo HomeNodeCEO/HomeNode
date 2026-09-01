@@ -173,6 +173,7 @@ import {
 import { createDocumentOcrProvider } from "./services/documentOcr.js";
 import {
   createAssignmentPhotoUpload,
+  getAssignmentEvidenceVersion,
   getAssignmentPhotoVersion,
   listAssignmentPhotos,
   removeAssignmentPhoto,
@@ -214,6 +215,7 @@ import {
 } from "./modules/mobile/desktopSketches.js";
 import { renderSketchPdf, renderSketchSvg } from "./modules/mobile/sketchArtifacts.js";
 import {
+  getDesktopPropertyTaxEvidenceVersion,
   getDesktopPropertyTaxFile,
   saveDesktopPropertyTaxFile,
 } from "./modules/mobile/desktopPropertyTax.js";
@@ -2004,6 +2006,47 @@ app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
     }
     console.error("property tax protest load failed", error);
     return res.status(500).json({ error: "property_tax_protest_load_failed" });
+  }
+});
+
+/** Lightweight verified-photo and committed-sketch token for one protest file. */
+app.get("/api/accounts/:id/property-tax-protest/:fileId/evidence/version", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "property_tax_protest", "read")) return;
+  const requestedId = String(req.params.id || "").trim();
+  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
+    return res.status(400).json({ error: "invalid_account_id" });
+  }
+  try {
+    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
+    const organizationIds = applicationAuthenticationRequired && req.mobileAuth
+      ? (req.mobileAuth.organizations || [])
+        .filter((organization) => hasApplicationPermission(
+          req.mobileAuth,
+          "property_tax_protest",
+          "read",
+          organization.organizationId,
+        ))
+        .map((organization) => organization.organizationId)
+      : null;
+    const file = await getDesktopPropertyTaxEvidenceVersion(
+      pool,
+      canonicalId,
+      req.params.fileId,
+      { organizationIds },
+    );
+    if (!file) return res.status(404).json({ error: "property_tax_protest_file_not_found" });
+    if (
+      applicationAuthenticationRequired
+      && req.mobileAuth
+      && !decideAssignmentAccess(req.mobileAuth, file, "read")
+    ) return res.status(403).json({ error: "property_tax_protest_access_denied" });
+    return res.set("cache-control", "no-store").json({ account_id: canonicalId, file });
+  } catch (error) {
+    if (String(error?.message || "").startsWith("invalid_")) {
+      return res.status(400).json({ error: error.message });
+    }
+    console.error("property tax protest evidence version failed", error);
+    return res.status(500).json({ error: "property_tax_protest_evidence_version_failed" });
   }
 });
 
@@ -6279,6 +6322,22 @@ app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos/version", a
     return res.set("cache-control", "no-store").json({ ok: true, account_id: accountId, ...result });
   } catch (error) {
     const message = error?.message || "assignment_photo_version_lookup_failed";
+    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+  }
+});
+
+/** Lightweight verified photo + committed sketch token for one active appraisal file. */
+app.get("/api/accounts/:id/assignment-files/:assignmentFileId/evidence/version", async (req, res) => {
+  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
+  try {
+    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
+    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
+    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
+    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
+    const result = await getAssignmentEvidenceVersion(pool, { accountId, assignmentFileId });
+    return res.set("cache-control", "no-store").json({ ok: true, account_id: accountId, ...result });
+  } catch (error) {
+    const message = error?.message || "assignment_evidence_version_lookup_failed";
     return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
   }
 });

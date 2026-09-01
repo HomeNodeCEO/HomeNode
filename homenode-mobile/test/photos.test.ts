@@ -12,6 +12,7 @@ import {
   safePhotoFileName,
   UAD_PHOTO_CATEGORIES,
 } from "../src/photos/model";
+import { runWithConcurrency } from "../src/offline/concurrency";
 
 test("photo capacity is bounded to 100 active inspection photos", () => {
   assert.equal(remainingPhotoCapacity(0), 100);
@@ -69,4 +70,19 @@ test("turns cloud photo failures into actionable field messages", () => {
     photoSyncErrorMessage("mobile_photo_upload_transport_failed:Network request failed"),
     /iPhone could not transfer/,
   );
+});
+
+test("photo queue work is bounded while allowing independent uploads to overlap", async () => {
+  let active = 0;
+  let maximumActive = 0;
+  const completed: number[] = [];
+  await runWithConcurrency([1, 2, 3, 4, 5, 6, 7], 3, async (value) => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    completed.push(value);
+    active -= 1;
+  });
+  assert.equal(maximumActive, 3);
+  assert.deepEqual(completed.sort((left, right) => left - right), [1, 2, 3, 4, 5, 6, 7]);
 });

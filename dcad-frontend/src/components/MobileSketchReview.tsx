@@ -93,14 +93,26 @@ export default function MobileSketchReview({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [loadedRevision, setLoadedRevision] = useState(sketch.revision);
+  const [loadedSummary, setLoadedSummary] = useState(sketch.summary);
+  const [pendingSketch, setPendingSketch] = useState<Sketch | null>(null);
 
   useEffect(() => {
+    if (sketch.revision === loadedRevision) return;
+    if (dirty) {
+      setPendingSketch(sketch);
+      setMessage(`Mobile sketch revision ${sketch.revision} is available. Your unsaved desktop edits are preserved.`);
+      return;
+    }
     setDraft(clone(sketch.document));
     setSelectedAreaId((current) => sketch.document.areas.some((area) => area.id === current)
       ? current
       : sketch.document.areas[0]?.id || "");
+    setLoadedRevision(sketch.revision);
+    setLoadedSummary(sketch.summary);
+    setPendingSketch(null);
     setDirty(false);
-  }, [sketch]);
+  }, [dirty, loadedRevision, sketch]);
 
   const selectedArea = draft?.areas.find((area) => area.id === selectedAreaId);
   const selectedRooms = useMemo(
@@ -171,7 +183,11 @@ export default function MobileSketchReview({
     setSaving(true);
     setMessage("");
     try {
-      const saved = await saveDraft(draft, sketch.revision);
+      const saved = await saveDraft(draft, loadedRevision);
+      setDraft(clone(saved.document));
+      setLoadedRevision(saved.revision);
+      setLoadedSummary(saved.summary);
+      setPendingSketch(null);
       onSaved(saved);
       setDirty(false);
       setMessage("Sketch revision " + saved.revision + " saved.");
@@ -186,13 +202,24 @@ export default function MobileSketchReview({
     }
   };
 
+  const loadPendingRevision = () => {
+    if (!pendingSketch) return;
+    setDraft(clone(pendingSketch.document));
+    setSelectedAreaId(pendingSketch.document.areas[0]?.id || "");
+    setLoadedRevision(pendingSketch.revision);
+    setLoadedSummary(pendingSketch.summary);
+    setPendingSketch(null);
+    setDirty(false);
+    setMessage(`Loaded mobile sketch revision ${pendingSketch.revision}.`);
+  };
+
   return (
     <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-sm font-semibold text-slate-900">{editorTitle}</div>
           <div className="mt-1 text-xs text-slate-600">
-            Revision {sketch.revision} - {draft.measurement_standard === "ansi_z765_2021" ? "ANSI Z765-2021" : "Alternate standard"}
+            Revision {loadedRevision} - {draft.measurement_standard === "ansi_z765_2021" ? "ANSI Z765-2021" : "Alternate standard"}
           </div>
           <div className="mt-1 text-xs text-slate-500">{subtitle}</div>
         </div>
@@ -205,9 +232,18 @@ export default function MobileSketchReview({
         </div>
       </div>
 
+      {pendingSketch ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <span>Revision {pendingSketch.revision} arrived from the field. Unsaved desktop edits have not been replaced.</span>
+          <button className="rounded-md border border-amber-500 bg-white px-3 py-1.5 font-semibold" onClick={loadPendingRevision} type="button">
+            Discard edits and load revision {pendingSketch.revision}
+          </button>
+        </div>
+      ) : null}
+
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <div className="rounded-lg bg-slate-50 p-3">Above grade<div className="mt-1 text-base font-semibold">{sketch.summary.above_grade_finished_sqft.toLocaleString()} sf</div></div>
-        <div className="rounded-lg bg-slate-50 p-3">Below grade<div className="mt-1 text-base font-semibold">{sketch.summary.below_grade_finished_sqft.toLocaleString()} sf</div></div>
+        <div className="rounded-lg bg-slate-50 p-3">Above grade<div className="mt-1 text-base font-semibold">{loadedSummary.above_grade_finished_sqft.toLocaleString()} sf</div></div>
+        <div className="rounded-lg bg-slate-50 p-3">Below grade<div className="mt-1 text-base font-semibold">{loadedSummary.below_grade_finished_sqft.toLocaleString()} sf</div></div>
         <div className="rounded-lg bg-slate-50 p-3">Areas<div className="mt-1 text-base font-semibold">{draft.areas.length}</div></div>
         <div className="rounded-lg bg-slate-50 p-3">Rooms<div className="mt-1 text-base font-semibold">{draft.rooms.length}</div></div>
       </div>

@@ -123,7 +123,9 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(center, /document\.addEventListener\('visibilitychange', refreshWhenVisible\)/);
   assert.match(center, /window\.addEventListener\('focus', refreshWhenVisible\)/);
   assert.match(center, /photoVersionSignature/);
-  assert.match(center, /getAssignmentPhotoVersion/);
+  assert.match(center, /getAssignmentEvidenceVersion/);
+  assert.doesNotMatch(center, /getAssignmentPhotoVersion/);
+  assert.match(center, /onSketchChanged/);
   assert.match(center, /void checkForUpdates\(\)/);
   assert.match(center, /versionRecoveryAtRef/);
   assert.match(center, /Date\.now\(\) \+ PHOTO_FEED_RETRY_DELAY_MS/);

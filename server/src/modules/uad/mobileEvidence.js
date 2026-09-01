@@ -3,6 +3,7 @@ import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { renderSketchPng } from "../mobile/sketchPng.js";
 import { normalizeManualSketchDocument } from "../mobile/sketches.js";
+import { getReportEvidenceVersion } from "../../services/reportEvidenceVersion.js";
 
 const CATEGORY_SECTIONS = Object.freeze({
   front: [8],
@@ -115,6 +116,7 @@ function sketchCandidate(row) {
 export async function listUadMobileEvidence(pool, storage, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const reportFile = await reportFileForWorkfile(pool, workfileId);
+  const evidenceVersion = await getReportEvidenceVersion(pool, reportFile.id);
   const photos = await pool.query(
     `SELECT photo.*, object.variant, object.object_key, object.original_file_name,
             object.content_type, object.expected_byte_size, object.byte_size,
@@ -165,8 +167,18 @@ export async function listUadMobileEvidence(pool, storage, workfileIdValue) {
   );
   return {
     report_file_id: reportFile.id,
+    ...evidenceVersion,
     photos: photos.rows.map((row) => photoCandidate(storage, row)),
     sketch: sketchCandidate(sketch.rows[0]),
+  };
+}
+
+export async function getUadMobileEvidenceVersion(pool, workfileIdValue) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  const reportFile = await reportFileForWorkfile(pool, workfileId);
+  return {
+    report_file_id: reportFile.id,
+    ...await getReportEvidenceVersion(pool, reportFile.id),
   };
 }
 

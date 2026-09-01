@@ -2,6 +2,7 @@ import { normalizeAccountId, normalizeUuid } from "./reportFiles.js";
 import { canonicalJson } from "./sync.js";
 import { normalizePropertyTaxWorkfileData } from "./targetFields.js";
 import { activeRooms, sketchResponse } from "./sketches.js";
+import { getReportEvidenceVersion } from "../../services/reportEvidenceVersion.js";
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -69,6 +70,9 @@ export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValu
   const fileId = fileIdValue ? normalizeUuid(fileIdValue, "invalid_property_tax_protest_file_id") : null;
   const row = await selectFile(pool, accountId, fileId, { organizationIds });
   if (!row) return null;
+  // Capture the lightweight token before the full evidence. A concurrent commit
+  // can make the payload newer than this token, but never older without detection.
+  const evidenceVersion = await getReportEvidenceVersion(pool, row.report_file_id);
   const [photos, sketch] = await Promise.all([
     pool.query(
       `SELECT photo.id, photo.category, photo.room_label, photo.caption,
@@ -87,6 +91,7 @@ export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValu
     ),
   ]);
   return response(row, {
+    ...evidenceVersion,
     photos: {
       verified_count: photos.rows.length,
       items: photos.rows.map((item) => ({ ...item, position: Number(item.position) })),
@@ -95,6 +100,23 @@ export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValu
       ? sketchResponse(sketch.rows[0], await activeRooms(pool, sketch.rows[0].id))
       : null,
   });
+}
+
+export async function getDesktopPropertyTaxEvidenceVersion(pool, accountIdValue, fileIdValue, {
+  organizationIds = null,
+} = {}) {
+  const accountId = normalizeAccountId(accountIdValue);
+  const fileId = normalizeUuid(fileIdValue, "invalid_property_tax_protest_file_id");
+  const row = await selectFile(pool, accountId, fileId, { organizationIds });
+  if (!row) return null;
+  return {
+    report_file_id: row.report_file_id,
+    tax_protest_file_id: row.tax_protest_file_id,
+    organization_id: row.organization_id,
+    assigned_appraiser_user_id: row.assigned_appraiser_user_id || null,
+    account_id: row.account_id,
+    ...await getReportEvidenceVersion(pool, row.report_file_id),
+  };
 }
 
 export async function saveDesktopPropertyTaxFile(pool, accountIdValue, fileIdValue, input = {}) {

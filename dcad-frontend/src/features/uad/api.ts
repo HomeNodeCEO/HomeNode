@@ -3,10 +3,39 @@ import { makeUrl } from "@/lib/api";
 import { withUadAuthorization } from "./auth";
 
 export const UAD_WORKFILE_MUTATED_EVENT = "homenode:uad-workfile-mutated";
-const uadMobileEvidenceCache = new Map<string, { expiresAt: number; request: Promise<UadMobileEvidence> }>();
+const uadMobileEvidenceCache = new Map<string, {
+  expiresAt: number;
+  evidenceVersion: string | null;
+  request: Promise<UadMobileEvidence>;
+}>();
+const uadMobileEvidenceVersionCache = new Map<string, {
+  expiresAt: number;
+  request: Promise<UadMobileEvidenceVersion>;
+}>();
+const UAD_MOBILE_EVIDENCE_REFRESH_MS = 5_000;
+const UAD_MOBILE_EVIDENCE_RETRY_MS = 30_000;
+type UadMobileEvidenceVersionListener = (evidenceVersion: string) => void | Promise<void>;
+type UadMobileEvidenceWatcher = {
+  listeners: Set<UadMobileEvidenceVersionListener>;
+  currentVersion: string | null;
+  inFlight: boolean;
+  retryAt: number;
+  interval: number;
+  check: () => Promise<void>;
+  refreshWhenVisible: () => void;
+};
+const uadMobileEvidenceWatchers = new Map<string, UadMobileEvidenceWatcher>();
 
 function announceUadWorkfileMutation(workfileId: string) {
   window.dispatchEvent(new CustomEvent(UAD_WORKFILE_MUTATED_EVENT, { detail: { workfileId } }));
+}
+
+function invalidateUadMobileEvidenceWatcher(workfileId: string) {
+  const watcher = uadMobileEvidenceWatchers.get(workfileId);
+  if (!watcher) return;
+  watcher.currentVersion = null;
+  watcher.retryAt = 0;
+  void watcher.check();
 }
 
 async function uadFetchJSON<T = unknown>(input: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
@@ -361,9 +390,17 @@ export interface UadMobileSketchEvidence {
 
 export interface UadMobileEvidence {
   report_file_id: string;
+  evidence_version: string;
+  photo_version: string;
+  verified_photo_count: number;
+  sketch_revision: number | null;
+  sketch_review_status: "draft" | "appraiser_confirmed" | null;
+  sketch_updated_at: string | null;
   photos: UadMobilePhotoEvidence[];
   sketch: UadMobileSketchEvidence | null;
 }
+
+export type UadMobileEvidenceVersion = Omit<UadMobileEvidence, "photos" | "sketch">;
 
 export async function createUadEntity(
   workfileId: string,
@@ -432,15 +469,100 @@ export async function uploadUadAsset(
   return verified.asset;
 }
 
-export async function listUadMobileEvidence(workfileId: string): Promise<UadMobileEvidence> {
+export async function listUadMobileEvidence(
+  workfileId: string,
+  expectedEvidenceVersion: string | null = null,
+): Promise<UadMobileEvidence> {
   const cached = uadMobileEvidenceCache.get(workfileId);
-  if (cached && cached.expiresAt > Date.now()) return cached.request;
+  if (cached && (
+    (expectedEvidenceVersion && cached.evidenceVersion === expectedEvidenceVersion)
+    || (!expectedEvidenceVersion && cached.expiresAt > Date.now())
+  )) return cached.request;
   const request = uadFetchJSON<UadMobileEvidence>(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/mobile-evidence`),
   );
-  uadMobileEvidenceCache.set(workfileId, { expiresAt: Date.now() + 10_000, request });
+  const entry = {
+    expiresAt: Date.now() + 10_000,
+    evidenceVersion: expectedEvidenceVersion,
+    request,
+  };
+  uadMobileEvidenceCache.set(workfileId, entry);
+  request.then((evidence) => {
+    if (uadMobileEvidenceCache.get(workfileId) === entry) entry.evidenceVersion = evidence.evidence_version;
+  }).catch(() => undefined);
   request.catch(() => uadMobileEvidenceCache.delete(workfileId));
   return request;
+}
+
+export async function getUadMobileEvidenceVersion(workfileId: string): Promise<UadMobileEvidenceVersion> {
+  const cached = uadMobileEvidenceVersionCache.get(workfileId);
+  if (cached && cached.expiresAt > Date.now()) return cached.request;
+  const request = uadFetchJSON<UadMobileEvidenceVersion>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/mobile-evidence/version`),
+    { cache: "no-store", timeoutMs: 10_000 },
+  );
+  uadMobileEvidenceVersionCache.set(workfileId, { expiresAt: Date.now() + 4_000, request });
+  request.catch(() => uadMobileEvidenceVersionCache.delete(workfileId));
+  return request;
+}
+
+/** One visibility-aware change-token watcher is shared by every open exhibit panel. */
+export function subscribeToUadMobileEvidenceVersion(
+  workfileId: string,
+  listener: UadMobileEvidenceVersionListener,
+) {
+  let watcher = uadMobileEvidenceWatchers.get(workfileId);
+  if (!watcher) {
+    const created: UadMobileEvidenceWatcher = {
+      listeners: new Set(),
+      currentVersion: null,
+      inFlight: false,
+      retryAt: 0,
+      interval: 0,
+      check: async () => undefined,
+      refreshWhenVisible: () => undefined,
+    };
+    created.check = async () => {
+      if (document.visibilityState !== "visible" || created.inFlight || Date.now() < created.retryAt) return;
+      created.inFlight = true;
+      try {
+        const version = await getUadMobileEvidenceVersion(workfileId);
+        if (created.currentVersion !== version.evidence_version) {
+          const refreshed = await Promise.allSettled(
+            Array.from(created.listeners, (notify) => Promise.resolve(notify(version.evidence_version))),
+          );
+          if (refreshed.some((result) => result.status === "rejected")) {
+            created.retryAt = Date.now() + UAD_MOBILE_EVIDENCE_RETRY_MS;
+            return;
+          }
+          created.currentVersion = version.evidence_version;
+        }
+        created.retryAt = 0;
+      } catch {
+        created.retryAt = Date.now() + UAD_MOBILE_EVIDENCE_RETRY_MS;
+      } finally {
+        created.inFlight = false;
+      }
+    };
+    created.refreshWhenVisible = () => void created.check();
+    created.interval = window.setInterval(created.refreshWhenVisible, UAD_MOBILE_EVIDENCE_REFRESH_MS);
+    window.addEventListener("focus", created.refreshWhenVisible);
+    document.addEventListener("visibilitychange", created.refreshWhenVisible);
+    uadMobileEvidenceWatchers.set(workfileId, created);
+    watcher = created;
+    void created.check();
+  }
+  watcher.listeners.add(listener);
+  return () => {
+    const active = uadMobileEvidenceWatchers.get(workfileId);
+    if (!active) return;
+    active.listeners.delete(listener);
+    if (active.listeners.size) return;
+    window.clearInterval(active.interval);
+    window.removeEventListener("focus", active.refreshWhenVisible);
+    document.removeEventListener("visibilitychange", active.refreshWhenVisible);
+    uadMobileEvidenceWatchers.delete(workfileId);
+  };
 }
 
 export async function importUadMobilePhoto(
@@ -457,6 +579,8 @@ export async function importUadMobilePhoto(
     },
   );
   uadMobileEvidenceCache.delete(workfileId);
+  uadMobileEvidenceVersionCache.delete(workfileId);
+  invalidateUadMobileEvidenceWatcher(workfileId);
   announceUadWorkfileMutation(workfileId);
   return result;
 }
@@ -475,6 +599,8 @@ export async function importUadMobileSketch(
     },
   );
   uadMobileEvidenceCache.delete(workfileId);
+  uadMobileEvidenceVersionCache.delete(workfileId);
+  invalidateUadMobileEvidenceWatcher(workfileId);
   announceUadWorkfileMutation(workfileId);
   return result;
 }
@@ -484,6 +610,9 @@ export async function deleteUadAsset(workfileId: string, assetId: string): Promi
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/assets/${encodeURIComponent(assetId)}`),
     { method: "DELETE" },
   );
+  uadMobileEvidenceCache.delete(workfileId);
+  uadMobileEvidenceVersionCache.delete(workfileId);
+  invalidateUadMobileEvidenceWatcher(workfileId);
   announceUadWorkfileMutation(workfileId);
 }
 

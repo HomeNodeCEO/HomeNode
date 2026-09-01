@@ -96,6 +96,7 @@ export default function AssignmentPhotoCenter({
   sketchRevision = null,
   onSketchChanged,
   readOnly = false,
+  compact = false,
   className = '',
 }: {
   accountId: string;
@@ -106,6 +107,7 @@ export default function AssignmentPhotoCenter({
   sketchRevision?: number | null;
   onSketchChanged?: (revision: number | null) => void;
   readOnly?: boolean;
+  compact?: boolean;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -203,7 +205,7 @@ export default function AssignmentPhotoCenter({
         photosRef.current = nextPhotos;
         setPhotos(nextPhotos);
       }
-      if (changed) onPhotosChanged?.(nextPhotos);
+      if (changed || refreshViewUrls) onPhotosChanged?.(nextPhotos);
       setLastCheckedAt(new Date());
       if (!background) setMessage('');
     } catch (error) {
@@ -374,14 +376,14 @@ export default function AssignmentPhotoCenter({
 
   return (
     <section
-      className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
+      className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} ${compact ? 'border-x-0 border-b border-t-0' : 'rounded-2xl border'} ${className}`}
       data-section-expanded={open ? 'true' : 'false'}
     >
-      <button type="button" className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 px-5 py-4 text-left`} onClick={() => setOpen((value) => !value)}>
+      <button type="button" className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 ${compact ? 'px-4 py-3' : 'px-5 py-4'} text-left`} onClick={() => setOpen((value) => !value)}>
         <span>
-          <span className="hn-custom-section-title block text-sm font-semibold uppercase tracking-[0.16em]">Appraisal Photo Evidence</span>
+          <span className="hn-custom-section-title block text-sm font-semibold uppercase tracking-[0.16em]">{compact ? 'Subject Photos' : 'Appraisal Photo Evidence'}</span>
           <span className="mt-1 block text-xs text-slate-500">
-            {assignmentFileNumber ? `File ${assignmentFileNumber} · ` : ''}Shared mobile and desktop photos saved to this appraisal file
+            {assignmentFileNumber ? `File ${assignmentFileNumber} · ` : ''}{compact ? 'Add, review, or remove photos shown in the carousel' : 'Shared mobile and desktop photos saved to this appraisal file'}
           </span>
         </span>
         <span className="flex items-center gap-2">

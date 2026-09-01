@@ -7,8 +7,10 @@ import { finalReconciliationReadinessErrors } from "./finalReconciliation.js";
 
 const PAGE = Object.freeze({ width: 612, height: 792, margin: 42 });
 const CONTENT_WIDTH = PAGE.width - (PAGE.margin * 2);
-const REPORT_VERSION = 1;
-const REPORT_PAGE_COUNT = 9;
+const REPORT_VERSION = 2;
+const BASE_REPORT_PAGE_COUNT = 9;
+const PHOTOS_PER_APPENDIX_PAGE = 4;
+const MAX_REPORT_PHOTOS = 100;
 const MAX_MEDIA_BYTES = 8 * 1024 * 1024;
 const REPORT_ENGINE = "HomeNode Custom Appraisal Report Engine";
 const artifactSchemaReadyByPool = new WeakMap();
@@ -535,7 +537,75 @@ async function reportImages(client, snapshot, property) {
   return Object.fromEntries(mediaRows.map((row, index) => [row.account_id, buffers[index]]).filter(([, buffer]) => buffer));
 }
 
-function reportMeta(snapshot, property, checksum) {
+async function mapWithConcurrency(values, concurrency, handler) {
+  const output = new Array(values.length);
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      output[index] = await handler(values[index], index);
+    }
+  }));
+  return output;
+}
+
+async function assignmentReportPhotos(client, objectStorage, { accountId, assignmentFileId }) {
+  const rows = await optionalRows(
+    client,
+    "app.inspection_photos",
+    `SELECT photo.id, photo.origin_channel, photo.category, photo.room_label,
+            photo.caption, photo.position, photo.captured_at,
+            object.object_key, object.content_type
+       FROM app.report_files report_file
+       JOIN app.inspection_photos photo ON photo.report_file_id = report_file.id
+       LEFT JOIN LATERAL (
+         SELECT photo_object.object_key, photo_object.content_type
+           FROM app.inspection_photo_objects photo_object
+          WHERE photo_object.photo_id = photo.id
+            AND photo_object.status = 'verified'
+            AND photo_object.content_type IN ('image/jpeg', 'image/png')
+          ORDER BY CASE photo_object.variant WHEN 'display' THEN 0 ELSE 1 END,
+                   photo_object.id
+          LIMIT 1
+       ) object ON true
+      WHERE report_file.custom_assignment_file_id = $1
+        AND report_file.account_id = $2
+        AND photo.status = 'verified'
+      ORDER BY photo.position, photo.created_at, photo.id
+      LIMIT ${MAX_REPORT_PHOTOS}`,
+    [assignmentFileId, accountId],
+  );
+  return mapWithConcurrency(rows, 3, async (row, index) => {
+    let buffer = null;
+    if (row.object_key && objectStorage?.configured) {
+      try {
+        const object = await objectStorage.getObject({
+          objectKey: row.object_key,
+          maxBytes: MAX_MEDIA_BYTES,
+        });
+        buffer = object.body;
+      } catch {
+        // Keep the photo and its label in the appendix even when its binary is unavailable.
+      }
+    }
+    return {
+      id: row.id,
+      label: cleanText(row.room_label || row.caption || row.category, `Subject photo ${index + 1}`),
+      category: cleanText(row.category, "Subject photo"),
+      caption: cleanText(row.caption, ""),
+      origin: row.origin_channel === "mobile" ? "Mobile inspection" : "Desktop upload",
+      capturedAt: row.captured_at || null,
+      buffer,
+    };
+  });
+}
+
+function reportPageCount(assignmentPhotos = []) {
+  return BASE_REPORT_PAGE_COUNT + Math.ceil(assignmentPhotos.length / PHOTOS_PER_APPENDIX_PAGE);
+}
+
+function reportMeta(snapshot, property, checksum, pageCount = BASE_REPORT_PAGE_COUNT) {
   const account = property.account || {};
   const assignment = assignmentRecord(snapshot, property);
   return {
@@ -546,6 +616,7 @@ function reportMeta(snapshot, property, checksum) {
     signedBy: snapshot.signed_by || null,
     signedAt: snapshot.signed_at || null,
     checksum: checksum || snapshot.checksum_sha256 || null,
+    pageCount,
   };
 }
 
@@ -557,7 +628,7 @@ function pageHeader(doc, meta, title, page) {
     .text(meta.status, 440, 30, { width: 130, align: "right" });
   doc.font("Helvetica").fontSize(7).fillColor("#64748b")
     .text(meta.address, 390, 43, { width: 180, align: "right", ellipsis: true })
-    .text(`Page ${page} of ${REPORT_PAGE_COUNT}`, 440, 55, { width: 130, align: "right" });
+    .text(`Page ${page} of ${meta.pageCount}`, 440, 55, { width: 130, align: "right" });
   doc.moveTo(PAGE.margin, 70).lineTo(PAGE.width - PAGE.margin, 70).lineWidth(1.5).strokeColor("#0f766e").stroke();
 }
 
@@ -724,7 +795,7 @@ function reportCoordinates(property, sales) {
   return points;
 }
 
-function renderPropertyPage(doc, meta, snapshot, property, images) {
+function renderPropertyPage(doc, meta, snapshot, property, images, assignmentPhotos = []) {
   addPage(doc, meta, "Property Report", 1);
   const account = property.account || {};
   const details = assignmentDetails(snapshot, property);
@@ -735,7 +806,17 @@ function renderPropertyPage(doc, meta, snapshot, property, images) {
     .text(`Parcel: ${meta.accountId}`, 56, 174, { width: 315 })
     .text(`Neighborhood: ${cleanText(account.neighborhood_code)}`, 56, 189, { width: 315 })
     .text(`Prepared For: ${cleanText(details.lender_client_name)}`, 56, 204, { width: 315 });
-  drawImageOrPlaceholder(doc, images[meta.accountId], 392, 101, 158, 112, "Property photo unavailable");
+  const frontPhoto = assignmentPhotos.find((photo) => /front/i.test(photo.category))
+    || assignmentPhotos[0];
+  drawImageOrPlaceholder(
+    doc,
+    frontPhoto?.buffer || images[meta.accountId],
+    392,
+    101,
+    158,
+    112,
+    "Property photo unavailable",
+  );
   let y = sectionTitle(doc, "Subject Identification", 251);
   y = factsGrid(doc, [
     { label: "File Number", value: meta.fileNumber },
@@ -1134,9 +1215,54 @@ function renderReconciliationPage(doc, meta, snapshot, property) {
   });
 }
 
-export async function renderCustomAppraisalReportPdf({ snapshot, property, images = {}, checksum = null }) {
+function renderPhotoAppendixPages(doc, meta, assignmentPhotos = []) {
+  const pageWidth = (CONTENT_WIDTH - 12) / 2;
+  const rowHeight = 314;
+  const imageHeight = 220;
+  assignmentPhotos.forEach((photo, index) => {
+    const pageOffset = Math.floor(index / PHOTOS_PER_APPENDIX_PAGE);
+    const pageIndex = index % PHOTOS_PER_APPENDIX_PAGE;
+    if (pageIndex === 0) {
+      addPage(doc, meta, "Subject Photo Appendix", BASE_REPORT_PAGE_COUNT + pageOffset + 1);
+    }
+    const column = pageIndex % 2;
+    const row = Math.floor(pageIndex / 2);
+    const x = PAGE.margin + (column * (pageWidth + 12));
+    const y = 88 + (row * rowHeight);
+    drawImageOrPlaceholder(doc, photo.buffer, x, y, pageWidth, imageHeight, "Secure photo unavailable");
+    doc.font("Helvetica-Bold").fontSize(9).fillColor("#0f172a")
+      .text(`${index + 1}. ${cleanText(photo.label, `Subject photo ${index + 1}`)}`, x, y + imageHeight + 9, {
+        width: pageWidth,
+        height: 26,
+        ellipsis: true,
+      });
+    const details = [
+      photo.category && photo.category !== photo.label ? photo.category : null,
+      photo.caption && photo.caption !== photo.label ? photo.caption : null,
+      photo.origin,
+      photo.capturedAt ? dateText(photo.capturedAt) : null,
+    ].filter(Boolean).join(" | ");
+    doc.font("Helvetica").fontSize(7.5).fillColor("#64748b")
+      .text(cleanText(details, "Verified appraisal-file photo"), x, y + imageHeight + 37, {
+        width: pageWidth,
+        height: 34,
+        ellipsis: true,
+        lineGap: 1.5,
+      });
+  });
+}
+
+export async function renderCustomAppraisalReportPdf({
+  snapshot,
+  property,
+  images = {},
+  assignmentPhotos = [],
+  checksum = null,
+}) {
   if (!snapshot || !property?.account) throw new Error("invalid_custom_appraisal_report_payload");
-  const meta = reportMeta(snapshot, property, checksum);
+  const normalizedPhotos = assignmentPhotos.slice(0, MAX_REPORT_PHOTOS);
+  const pageCount = reportPageCount(normalizedPhotos);
+  const meta = reportMeta(snapshot, property, checksum, pageCount);
   const timestampValue = snapshot.signed_at || property.captured_at || "2000-01-01T00:00:00.000Z";
   const timestamp = new Date(timestampValue);
   const safeTimestamp = Number.isNaN(timestamp.valueOf()) ? new Date("2000-01-01T00:00:00.000Z") : timestamp;
@@ -1147,7 +1273,7 @@ export async function renderCustomAppraisalReportPdf({ snapshot, property, image
       Title: `${meta.fileNumber} Appraisal Report`,
       Author: REPORT_ENGINE,
       Subject: `${meta.address} Custom Appraisal`,
-      Keywords: "appraisal, workfile, sales comparison, market conditions",
+      Keywords: "appraisal, workfile, sales comparison, market conditions, subject photos",
       CreationDate: safeTimestamp,
       ModDate: safeTimestamp,
     },
@@ -1158,7 +1284,7 @@ export async function renderCustomAppraisalReportPdf({ snapshot, property, image
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
   });
-  renderPropertyPage(doc, meta, snapshot, property, images);
+  renderPropertyPage(doc, meta, snapshot, property, images, normalizedPhotos);
   renderCharacteristicsPage(doc, meta, property);
   renderNeighborhoodPage(doc, meta, snapshot, property);
   renderMarketPage(doc, meta, snapshot);
@@ -1167,6 +1293,7 @@ export async function renderCustomAppraisalReportPdf({ snapshot, property, image
   approachPage(doc, meta, snapshot, property, "income", 7);
   approachPage(doc, meta, snapshot, property, "cost", 8);
   renderReconciliationPage(doc, meta, snapshot, property);
+  renderPhotoAppendixPages(doc, meta, normalizedPhotos);
   doc.end();
   return complete;
 }
@@ -1177,15 +1304,25 @@ export async function buildCustomAppraisalReportPdf(client, {
   snapshot,
   workfileChecksum = null,
   includeExternalImages = true,
+  objectStorage = null,
 }) {
   const property = snapshot?.evidence?.property_report_data || await loadCustomAppraisalPropertySnapshot(client, { accountId, assignmentFileId });
-  const images = includeExternalImages ? await reportImages(client, snapshot, property).catch(() => ({})) : {};
-  const content = await renderCustomAppraisalReportPdf({ snapshot, property, images, checksum: workfileChecksum });
+  const [images, assignmentPhotos] = await Promise.all([
+    includeExternalImages ? reportImages(client, snapshot, property).catch(() => ({})) : {},
+    assignmentReportPhotos(client, objectStorage, { accountId, assignmentFileId }),
+  ]);
+  const content = await renderCustomAppraisalReportPdf({
+    snapshot,
+    property,
+    images,
+    assignmentPhotos,
+    checksum: workfileChecksum,
+  });
   return {
     content,
     content_sha256: createHash("sha256").update(content).digest("hex"),
     canonical_file_name: canonicalPdfFileName(snapshot),
-    page_count: REPORT_PAGE_COUNT,
+    page_count: reportPageCount(assignmentPhotos),
     report_version: REPORT_VERSION,
     generated_by: REPORT_ENGINE,
   };
@@ -1197,6 +1334,7 @@ export async function ensureSignedCustomAppraisalReportArtifact(pool, {
   snapshot,
   signedSnapshotId,
   workfileChecksum,
+  objectStorage = null,
 }) {
   await ensureCustomAppraisalReportArtifactSchema(pool);
   const existing = await pool.query(
@@ -1211,6 +1349,7 @@ export async function ensureSignedCustomAppraisalReportArtifact(pool, {
     assignmentFileId,
     snapshot,
     workfileChecksum,
+    objectStorage,
   });
   const inserted = await pool.query(
     `INSERT INTO app.custom_appraisal_report_artifacts (
@@ -1231,6 +1370,7 @@ export async function getCustomAppraisalReportPdf(pool, {
   accountId,
   assignmentFileId,
   download,
+  objectStorage = null,
 }) {
   await ensureCustomAppraisalReportArtifactSchema(pool);
   if (download.immutable) {
@@ -1246,6 +1386,7 @@ export async function getCustomAppraisalReportPdf(pool, {
       snapshot: signed.rows[0].snapshot,
       signedSnapshotId: signed.rows[0].id,
       workfileChecksum: signed.rows[0].checksum_sha256,
+      objectStorage,
     });
     return { ...artifact, immutable: true };
   }
@@ -1261,8 +1402,9 @@ export async function getCustomAppraisalReportPdf(pool, {
     assignmentFileId,
     snapshot: draftSnapshot,
     includeExternalImages: true,
+    objectStorage,
   });
   return { ...report, byte_size: report.content.length, generated_at: new Date().toISOString(), immutable: false };
 }
 
-export const CUSTOM_APPRAISAL_REPORT_PAGE_COUNT = REPORT_PAGE_COUNT;
+export const CUSTOM_APPRAISAL_REPORT_PAGE_COUNT = BASE_REPORT_PAGE_COUNT;

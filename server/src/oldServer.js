@@ -2604,6 +2604,7 @@ app.get("/api/accounts/:id/assignment-files/:fileId/workfile/report.pdf", async 
       accountId: canonicalId,
       assignmentFileId,
       download,
+      objectStorage: sharedObjectStorage,
     });
     const fileName = String(report.canonical_file_name).replace(/[\r\n"]/g, "_");
     res.set({
@@ -2700,6 +2701,7 @@ app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req,
       signedUserAgent: req.get("user-agent"),
       signingSecret: process.env.APP_SIGNING_SECRET,
       acknowledgedWarningCodes: req.body?.acknowledged_warning_codes,
+      objectStorage: sharedObjectStorage,
     });
     return res.json({ ok: true, account_id: canonicalId, workfile });
   } catch (error) {

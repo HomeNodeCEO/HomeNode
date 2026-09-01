@@ -141,6 +141,11 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(report, /view_url: photo\.view_url/);
   assert.match(report, /assignmentFileNumber=\{activeAssignmentFile\?\.file_number \|\| null\}/);
   assert.match(report, /onPhotosChanged=\{handleAssignmentPhotosChanged\}/);
+  assert.match(report, /const subjectPhotos = useMemo<SubjectCarouselPhoto\[]>/);
+  assert.match(report, /activeSubjectPhoto\.label/);
+  assert.match(report, /compact/);
+  assert.doesNotMatch(report, /className="order-6"[\s\S]{0,160}onPhotosChanged=\{handleAssignmentPhotosChanged\}/);
+  assert.match(center, /if \(changed \|\| refreshViewUrls\) onPhotosChanged\?\.\(nextPhotos\)/);
 });
 
 test("assignment file refresh includes signed mobile photo previews", () => {

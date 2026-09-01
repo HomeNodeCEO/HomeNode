@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildCustomAppraisalReportPdf,
   CUSTOM_APPRAISAL_REPORT_PAGE_COUNT,
   customAppraisalReportFileName,
   customAppraisalReportReadiness,
@@ -23,6 +24,75 @@ test("fixed-layout appraisal PDF is valid, named, and contains nine Letter pages
   const pageObjects = content.toString("latin1").match(/\/Type \/Page\b/g) || [];
   assert.equal(pageObjects.length, CUSTOM_APPRAISAL_REPORT_PAGE_COUNT);
   assert.equal(customAppraisalReportFileName(snapshot), "fas-2026-00125-125.appraisal-report.pdf");
+});
+
+test("verified subject photos are retained in labeled appendix pages", async () => {
+  const { snapshot, property } = customAppraisalReportFixture();
+  const pixel = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const assignmentPhotos = Array.from({ length: 5 }, (_, index) => ({
+    id: `photo-${index + 1}`,
+    label: index === 0 ? "Dwelling Front" : `Interior ${index}`,
+    category: index === 0 ? "Front" : "Living area",
+    caption: index === 0 ? "Subject front elevation" : `Interior photo ${index}`,
+    origin: "Mobile inspection",
+    capturedAt: "2026-08-30T15:00:00.000Z",
+    buffer: pixel,
+  }));
+  const content = await renderCustomAppraisalReportPdf({
+    snapshot,
+    property,
+    assignmentPhotos,
+    checksum: "b".repeat(64),
+  });
+  const pageObjects = content.toString("latin1").match(/\/Type \/Page\b/g) || [];
+  assert.equal(pageObjects.length, CUSTOM_APPRAISAL_REPORT_PAGE_COUNT + 2);
+});
+
+test("report builder downloads verified assignment photos from private storage", async () => {
+  const { snapshot } = customAppraisalReportFixture();
+  const pixel = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  const photoRows = Array.from({ length: 5 }, (_, index) => ({
+    id: `photo-${index + 1}`,
+    origin_channel: "mobile",
+    category: index === 0 ? "Front" : "Living area",
+    room_label: index === 0 ? null : `Room ${index}`,
+    caption: null,
+    position: index + 1,
+    captured_at: "2026-08-30T15:00:00.000Z",
+    object_key: `reports/photo-${index + 1}.png`,
+    content_type: "image/png",
+  }));
+  const client = {
+    async query(sql) {
+      return String(sql).includes("to_regclass")
+        ? { rows: [{ name: "app.inspection_photos" }] }
+        : { rows: photoRows };
+    },
+  };
+  const downloads = [];
+  const objectStorage = {
+    configured: true,
+    async getObject({ objectKey }) {
+      downloads.push(objectKey);
+      return { body: pixel };
+    },
+  };
+  const report = await buildCustomAppraisalReportPdf(client, {
+    accountId: "125",
+    assignmentFileId: 25,
+    snapshot,
+    includeExternalImages: false,
+    objectStorage,
+  });
+  assert.equal(report.page_count, CUSTOM_APPRAISAL_REPORT_PAGE_COUNT + 2);
+  assert.equal(report.report_version, 2);
+  assert.deepEqual(downloads, photoRows.map((photo) => photo.object_key));
 });
 
 test("signing readiness reports material E&O omissions", () => {

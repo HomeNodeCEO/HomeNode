@@ -599,6 +599,7 @@ export async function signCustomAppraisalWorkfile(pool, {
   signedUserAgent: signedUserAgentValue = null,
   signingSecret: signingSecretValue = null,
   acknowledgedWarningCodes: acknowledgedWarningCodesValue,
+  objectStorage = null,
 }) {
   const signedBy = String(signedByValue || "HomeNode editor").trim().slice(0, 200);
   if (!signedBy) throw new Error("invalid_custom_appraisal_signer");
@@ -742,6 +743,7 @@ export async function signCustomAppraisalWorkfile(pool, {
       snapshot,
       signedSnapshotId: signedResult.rows[0].id,
       workfileChecksum: checksum,
+      objectStorage,
     });
     await client.query("COMMIT");
     const reportPdf = {

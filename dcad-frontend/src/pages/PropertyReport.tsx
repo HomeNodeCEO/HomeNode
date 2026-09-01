@@ -84,6 +84,13 @@ function LazyReportContent({ label, className = "" }: { label: string; className
     </div>
   );
 }
+
+interface SubjectCarouselPhoto {
+  id: string;
+  url: string;
+  label: string;
+  detail: string;
+}
 import {
   displayValue,
   formatBaths,
@@ -291,6 +298,7 @@ function AddressHero({
     onCredentialRejected: forgetEditorCredential,
   });
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [assignmentPhotos, setAssignmentPhotos] = useState<AssignmentPhoto[]>([]);
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDetails>(() =>
     assignmentDraftFromDetail(),
   );
@@ -432,7 +440,7 @@ function AddressHero({
     getEditorKey: editorKeyForSave,
     onCredentialRejected: forgetEditorCredential,
   });
-  const photos = useMemo(
+  const propertyPhotos = useMemo(
     () => (detail?.photos || []).filter((photo) => Boolean(photo?.trim())),
     [detail?.photos],
   );
@@ -474,10 +482,6 @@ function AddressHero({
     enabled: detailLoaded,
   });
 
-
-  useEffect(() => {
-    if (photoIndex >= photos.length) setPhotoIndex(0);
-  }, [photoIndex, photos.length]);
 
   useEffect(() => {
     if (unemploymentHydrationAccount.current !== (accountId || "")) {
@@ -603,10 +607,61 @@ function AddressHero({
   const additionalImprovements = hasSnapshotValue(assignmentAdditionalImprovements)
     ? assignmentAdditionalImprovements as DcadImprovementRow[]
     : detail?.additional_improvements || [];
-  const mobileInspectionPhotos = activeAssignmentFile?.mobile_inspection_photos || [];
+  const mobileInspectionPhotos = useMemo(
+    () => activeAssignmentFile?.mobile_inspection_photos || [],
+    [activeAssignmentFile?.mobile_inspection_photos],
+  );
   const mobileInspectionSketch = activeAssignmentFile?.mobile_inspection_sketch || null;
   const activeAssignmentFileId = activeAssignmentFile?.id || null;
+  const subjectPhotos = useMemo<SubjectCarouselPhoto[]>(() => {
+    const verifiedPhotos = assignmentPhotos.length
+      ? assignmentPhotos.filter((photo) => photo.status === "verified")
+      : mobileInspectionPhotos;
+    const seenUrls = new Set<string>();
+    const result: SubjectCarouselPhoto[] = [];
+    verifiedPhotos.forEach((photo, index) => {
+      const url = photo.view_url?.trim();
+      if (!url || seenUrls.has(url)) return;
+      seenUrls.add(url);
+      const label = photo.room_label?.trim() || photo.caption?.trim() || photo.category?.trim()
+        || `Inspection photo ${index + 1}`;
+      const details = [
+        photo.category?.trim() && photo.category.trim() !== label ? photo.category.trim() : "",
+        photo.caption?.trim() && photo.caption.trim() !== label ? photo.caption.trim() : "",
+        photo.origin_channel === "mobile" ? "Mobile inspection" : "Desktop upload",
+      ].filter(Boolean);
+      result.push({
+        id: `inspection-${photo.id}`,
+        url,
+        label,
+        detail: details.join(" · "),
+      });
+    });
+    propertyPhotos.forEach((url, index) => {
+      if (seenUrls.has(url)) return;
+      seenUrls.add(url);
+      result.push({
+        id: `property-${index}-${url}`,
+        url,
+        label: `Property photo ${index + 1}`,
+        detail: "Property record",
+      });
+    });
+    return result;
+  }, [assignmentPhotos, mobileInspectionPhotos, propertyPhotos]);
+  const activeSubjectPhoto = subjectPhotos[photoIndex] || null;
+
+  useEffect(() => {
+    setAssignmentPhotos([]);
+    setPhotoIndex(0);
+  }, [activeAssignmentFileId]);
+
+  useEffect(() => {
+    if (photoIndex >= subjectPhotos.length) setPhotoIndex(0);
+  }, [photoIndex, subjectPhotos.length]);
+
   const handleAssignmentPhotosChanged = useCallback((photos: AssignmentPhoto[]) => {
+    setAssignmentPhotos(photos);
     if (!activeAssignmentFileId) return;
     const verifiedMobilePhotos = photos
       .filter((photo) => photo.origin_channel === 'mobile' && photo.status === 'verified' && photo.verified_at)
@@ -1475,11 +1530,11 @@ function AddressHero({
         }`
     : "/PropertyTaxProtest";
 
-  const canSlide = photos.length > 1;
+  const canSlide = subjectPhotos.length > 1;
   const showPreviousPhoto = () =>
-    setPhotoIndex((current) => (current - 1 + photos.length) % photos.length);
+    setPhotoIndex((current) => (current - 1 + subjectPhotos.length) % subjectPhotos.length);
   const showNextPhoto = () =>
-    setPhotoIndex((current) => (current + 1) % photos.length);
+    setPhotoIndex((current) => (current + 1) % subjectPhotos.length);
 
   return (
     <div
@@ -1650,10 +1705,11 @@ function AddressHero({
       ) : null}
 
       <figure className="relative h-64 bg-slate-100 sm:h-72">
-        {photos.length ? (
+        {activeSubjectPhoto ? (
           <img
-            src={photos[photoIndex]}
-            alt={`${address} property`}
+            key={activeSubjectPhoto.id}
+            src={activeSubjectPhoto.url}
+            alt={`${activeSubjectPhoto.label} at ${address}`}
             className="h-full w-full select-none object-cover"
             draggable={false}
           />
@@ -1693,22 +1749,36 @@ function AddressHero({
             >
               <span aria-hidden="true">›</span>
             </button>
-            <div className="absolute bottom-3 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 rounded-full bg-black/40 px-3 py-2">
-              {photos.map((_, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  onClick={() => setPhotoIndex(index)}
-                  aria-label={`Go to image ${index + 1}`}
-                  className={`h-2.5 w-2.5 rounded-full border border-white ${
-                    index === photoIndex ? "bg-white" : "bg-white/40"
-                  }`}
-                />
-              ))}
-            </div>
           </>
         ) : null}
+        {activeSubjectPhoto ? (
+          <figcaption className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/65 to-transparent px-4 pb-3 pt-10 text-white">
+            <div className="flex items-end justify-between gap-4">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold">{activeSubjectPhoto.label}</p>
+                <p className="truncate text-xs text-white/80">{activeSubjectPhoto.detail}</p>
+              </div>
+              <span className="shrink-0 rounded-full bg-black/45 px-2.5 py-1 text-xs font-semibold">
+                {photoIndex + 1} / {subjectPhotos.length}
+              </span>
+            </div>
+          </figcaption>
+        ) : null}
       </figure>
+
+      <Suspense fallback={<LazyReportContent label="photos" />}>
+        <AssignmentPhotoCenter
+          accountId={accountId || ""}
+          assignmentFileId={activeAssignmentFile?.id || null}
+          assignmentFileNumber={activeAssignmentFile?.file_number || null}
+          getEditorKey={editorKeyForSave}
+          onPhotosChanged={handleAssignmentPhotosChanged}
+          sketchRevision={mobileInspectionSketch?.revision || null}
+          onSketchChanged={refreshMobileSketchEvidence}
+          readOnly={activeAssignmentFile?.workfile?.status === "signed"}
+          compact
+        />
+      </Suspense>
 
       <div className="card-body bg-white p-4 sm:p-6" style={{ backgroundColor: "#ffffff" }}>
         <header className="grid gap-5 border-b border-slate-200 pb-5 lg:grid-cols-3 lg:items-start">
@@ -2395,20 +2465,6 @@ function AddressHero({
               subjectAddress={documentReviewSubjectAddress}
               getEditorKey={editorKeyForSave}
               onApplyConfirmedCandidate={applyConfirmedDocumentCandidate}
-              className="order-6"
-            />
-          </Suspense>
-
-          <Suspense fallback={<LazyReportContent label="photos" className="order-6" />}>
-            <AssignmentPhotoCenter
-              accountId={accountId || ""}
-              assignmentFileId={activeAssignmentFile?.id || null}
-              assignmentFileNumber={activeAssignmentFile?.file_number || null}
-              getEditorKey={editorKeyForSave}
-              onPhotosChanged={handleAssignmentPhotosChanged}
-              sketchRevision={mobileInspectionSketch?.revision || null}
-              onSketchChanged={refreshMobileSketchEvidence}
-              readOnly={activeAssignmentFile?.workfile?.status === "signed"}
               className="order-6"
             />
           </Suspense>

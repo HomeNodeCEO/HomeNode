@@ -415,6 +415,8 @@ function sketchError(reason: unknown) {
     invalid_garage_cutout_bounds: "Keep the closed garage cutout inside or on the walls of its main exterior area.",
     invalid_sketch_deduction_bounds: "The garage cutout must remain inside its main exterior area.",
     network_request_failed: "The sketch is saved on this device and will synchronize when service returns.",
+    request_timeout: "The sketch is saved on this device and will retry after the service responds again.",
+    authentication_temporarily_unavailable: "The sketch is saved on this device while secure sign-in recovers.",
   };
   return messages[code] || code.replaceAll("_", " ");
 }
@@ -425,6 +427,8 @@ export function SketchEditorPanel({
   ownerUserId,
   sessionId,
   online,
+  onSync,
+  coordinatorSyncing,
   selectedRoomId,
   onSelectRoom,
 }: {
@@ -433,6 +437,8 @@ export function SketchEditorPanel({
   ownerUserId: string;
   sessionId: string;
   online: boolean;
+  onSync: () => Promise<void>;
+  coordinatorSyncing: boolean;
   selectedRoomId: string | null;
   onSelectRoom: (room: SelectedSketchRoom | null) => void;
 }) {
@@ -447,7 +453,7 @@ export function SketchEditorPanel({
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const sketchSync = useSketchSync(store, api, ownerUserId, sessionId, online);
+  const sketchSync = useSketchSync(store, ownerUserId, sessionId, online, onSync);
   const selectedArea = (draft.areas.find((area) => area.id === selectedAreaId) || draft.areas[0])!;
   const areaRooms = draft.rooms.filter((room) => room.areaId === selectedArea.id);
   const calculation = calculateSketchOutline(selectedArea.vertices);
@@ -478,6 +484,9 @@ export function SketchEditorPanel({
   }, [api, dirty, online, ownerUserId, sessionId, store]);
 
   useEffect(() => { void initialize(); }, [initialize]);
+  useEffect(() => {
+    if (!coordinatorSyncing) void sketchSync.refresh();
+  }, [coordinatorSyncing, sketchSync.refresh]);
   useEffect(() => {
     if (!dirty && sketchSync.draft) {
       setClientSketchId(sketchSync.draft.clientSketchId);

@@ -1,6 +1,11 @@
 import type { MobileConfig } from "../config";
 import type { WorkflowType } from "../domain/workflows";
 import type { FieldState, JsonValue, SyncOperationRequest } from "../offline/model";
+import {
+  MOBILE_API_REQUEST_TIMEOUT_MS,
+  RequestTimeoutError,
+  runWithRequestTimeout,
+} from "../offline/requestTimeout";
 import type { ManualSketchApiDocument } from "../sketch/model";
 
 export type Organization = {
@@ -495,16 +500,22 @@ export class MobileApi {
     const token = await this.getAccessToken();
     let response: Response;
     try {
-      response = await fetch(`${this.config.apiBaseUrl}${path}`, {
-        ...init,
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${token}`,
-          ...(init.body ? { "content-type": "application/json" } : {}),
-          ...init.headers,
-        },
-      });
-    } catch {
+      response = await runWithRequestTimeout(
+        MOBILE_API_REQUEST_TIMEOUT_MS,
+        (signal) => fetch(`${this.config.apiBaseUrl}${path}`, {
+          ...init,
+          signal,
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${token}`,
+            ...(init.body ? { "content-type": "application/json" } : {}),
+            ...init.headers,
+          },
+        }),
+        init.signal,
+      );
+    } catch (reason) {
+      if (reason instanceof RequestTimeoutError) throw new ApiError(0, "request_timeout");
       throw new ApiError(0, "network_request_failed");
     }
     const payload = await response.json().catch(() => ({})) as { error?: string; details?: unknown };

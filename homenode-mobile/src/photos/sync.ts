@@ -1,11 +1,16 @@
 import { fetch as expoFetch } from "expo/fetch";
 import { File } from "expo-file-system";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
 
 import { ApiError, type MobileApi, type PresignedPhotoUpload } from "../api/client";
 import { OfflineStore, type LocalPhotoDraft, type PhotoQueueSummary } from "../offline/store";
 import { runWithConcurrency } from "../offline/concurrency";
+import {
+  MOBILE_PHOTO_UPLOAD_TIMEOUT_MS,
+  RequestTimeoutError,
+  runWithRequestTimeout,
+} from "../offline/requestTimeout";
+import { emptySyncLaneResult, recordSyncFailure } from "../offline/syncPolicy";
 import { deletePreparedPhotoFiles } from "./capture";
 
 const EMPTY_SUMMARY: PhotoQueueSummary = { total: 0, pending: 0, synchronized: 0, failed: 0 };
@@ -20,12 +25,17 @@ async function uploadObject(photo: LocalPhotoDraft, upload: PresignedPhotoUpload
   }
   let response: Response;
   try {
-    response = await expoFetch(upload.url, {
-      method: "PUT",
-      headers: upload.headers,
-      body: file,
-    });
+    response = await runWithRequestTimeout(
+      MOBILE_PHOTO_UPLOAD_TIMEOUT_MS,
+      (signal) => expoFetch(upload.url, {
+        method: "PUT",
+        headers: upload.headers,
+        body: file,
+        signal,
+      }),
+    );
   } catch (reason) {
+    if (reason instanceof RequestTimeoutError) throw new Error("mobile_photo_upload_timeout");
     const detail = (reason instanceof Error ? reason.message : "unknown")
       .replace(/[\u0000-\u001f\u007f]+/g, " ")
       .replace(/\s+/g, " ")
@@ -96,24 +106,30 @@ async function synchronizePhoto(store: OfflineStore, api: MobileApi, ownerUserId
 export async function synchronizeDuePhotos(store: OfflineStore, api: MobileApi, ownerUserId: string) {
   await store.ensureReady();
   const due = await store.duePhotoDrafts(ownerUserId);
+  const result = emptySyncLaneResult();
   await runWithConcurrency(due, PHOTO_SYNC_CONCURRENCY, async (photo) => {
+    result.attempted += 1;
     try {
       await synchronizePhoto(store, api, ownerUserId, photo);
+      result.succeeded += 1;
     } catch (reason) {
+      recordSyncFailure(result, reason);
       const code = reason instanceof ApiError
         ? reason.code
         : reason instanceof Error ? reason.message : "mobile_photo_sync_failed";
       await store.recordPhotoFailure(ownerUserId, photo, code);
     }
   });
+  return result;
 }
 
 export function usePhotoSync(
   store: OfflineStore,
-  api: MobileApi,
   ownerUserId: string,
   sessionId: string,
   online: boolean,
+  synchronize: () => Promise<void>,
+  retrySynchronize: () => Promise<void>,
 ) {
   const [summary, setSummary] = useState<PhotoQueueSummary>(EMPTY_SUMMARY);
   const [syncing, setSyncing] = useState(false);
@@ -124,11 +140,11 @@ export function usePhotoSync(
     setSummary(await store.photoQueueSummary(ownerUserId, sessionId));
   }, [ownerUserId, sessionId, store]);
 
-  const syncNow = useCallback(async () => {
+  const runSync = useCallback(async (operation: () => Promise<void>) => {
     if (!online) return;
     while (active.current) await active.current;
     setSyncing(true);
-    const task = synchronizeDuePhotos(store, api, ownerUserId);
+    const task = operation();
     active.current = task;
     try {
       await task;
@@ -144,24 +160,14 @@ export function usePhotoSync(
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "mobile_photo_database_unavailable");
     }
-  }, [api, online, ownerUserId, refresh, store]);
+  }, [online, refresh]);
+
+  const syncNow = useCallback(() => runSync(synchronize), [runSync, synchronize]);
+  const retryNow = useCallback(() => runSync(retrySynchronize), [retrySynchronize, runSync]);
 
   useEffect(() => { void refresh().catch((reason) => {
     setError(reason instanceof Error ? reason.message : "mobile_photo_database_unavailable");
   }); }, [refresh]);
-  useEffect(() => { if (online) void syncNow(); }, [online, syncNow]);
-  useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active" && online) {
-        void store.ensureReady().then(syncNow).catch((reason) => {
-          setError(reason instanceof Error ? reason.message : "mobile_photo_database_unavailable");
-        });
-      }
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, [online, syncNow]);
 
-  return { error, refresh, summary, syncing, syncNow };
+  return { error, refresh, retryNow, summary, syncing, syncNow };
 }

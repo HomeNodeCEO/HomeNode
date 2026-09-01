@@ -2595,6 +2595,28 @@ export async function createAssignmentPhotoUpload(
   });
 }
 
+export async function uploadAssignmentPhotoObjectViaApi(
+  accountId: string,
+  assignmentFileId: number,
+  photoId: string,
+  objectId: string,
+  content: Blob,
+  editorKey: string,
+): Promise<void> {
+  await fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}`
+      + `/photos/${encodeURIComponent(photoId)}/objects/${encodeURIComponent(objectId)}/content`,
+  ), {
+    method: 'PUT',
+    headers: {
+      'content-type': content.type || 'application/octet-stream',
+      'x-homenode-editor-key': editorKey,
+    },
+    body: content,
+    timeoutMs: 120_000,
+  });
+}
+
 export async function verifyAssignmentPhotoUpload(
   accountId: string,
   assignmentFileId: number,

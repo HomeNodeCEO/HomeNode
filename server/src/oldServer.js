@@ -180,6 +180,7 @@ import {
   getAssignmentPhotoVersion,
   listAssignmentPhotos,
   removeAssignmentPhoto,
+  uploadAssignmentPhotoObject,
   verifyAssignmentPhoto,
 } from "./services/assignmentPhotos.js";
 import {
@@ -6292,7 +6293,7 @@ function requireWorkflowAccess(req, res, workflow, permission) {
 
 function assignmentPhotoErrorStatus(message) {
   if (message === "assignment_photo_file_not_found" || message === "assignment_photo_not_found"
-      || message === "account_not_found") return 404;
+      || message === "assignment_photo_object_not_found" || message === "account_not_found") return 404;
   if (message === "custom_appraisal_workfile_signed" || message === "assignment_photo_limit_conflict"
       || message === "assignment_photo_id_conflict") return 409;
   if (message === "assignment_photo_storage_not_configured") return 503;
@@ -6367,6 +6368,36 @@ app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/upload-req
     return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
   }
 });
+
+/** Authenticated same-origin fallback when a browser cannot PUT directly to private R2. */
+app.put(
+  "/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId/objects/:objectId/content",
+  express.raw({
+    type: ["image/avif", "image/bmp", "image/jpeg", "image/png", "image/tiff", "image/webp"],
+    limit: "50mb",
+  }),
+  async (req, res) => {
+    if (!requireEditor(req, res)) return;
+    try {
+      const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
+      const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
+      if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
+      if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
+      const uploaded = await uploadAssignmentPhotoObject(pool, sharedObjectStorage, {
+        accountId,
+        assignmentFileId,
+        photoId: req.params.photoId,
+        objectId: req.params.objectId,
+        contentType: req.get("content-type"),
+        content: req.body,
+      });
+      return res.json({ ok: true, uploaded });
+    } catch (error) {
+      const message = error?.message || "assignment_photo_object_upload_failed";
+      return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+    }
+  },
+);
 
 /** Verify uploaded object sizes/types before the photo becomes report evidence. */
 app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId/verify", async (req, res) => {

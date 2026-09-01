@@ -6,6 +6,7 @@ import {
   normalizeDocumentType,
 } from "./documentIntelligence.js";
 import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
+import { validateAssignmentDetails } from "../util/reportManualValues.js";
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
@@ -144,6 +145,135 @@ function publicCandidateReview(row) {
     reviewer: row.reviewer,
     reviewed_at: row.reviewed_at,
   };
+}
+
+const DOCUMENT_ASSIGNMENT_TYPES = new Set([
+  "purchase_transaction",
+  "refinance",
+  "heloc",
+  "rtl",
+  "rehab",
+  "bridge_loan",
+  "new_construction",
+  "dscr",
+]);
+
+const DOCUMENT_ASSIGNMENT_FIELDS = Object.freeze({
+  lender_client_name: "lender_client_name",
+  lender_client_address: "lender_client_address",
+  contract_price: "contract_price",
+  contract_date: "contract_date",
+  loan_amount: "loan_amount",
+  down_payment: "down_payment",
+  earnest_money: "earnest_money",
+  seller_concessions: "seller_concessions",
+  seller_name: "contract_seller_names",
+});
+
+function confirmedCandidateValue(candidate) {
+  return cleanText(
+    candidate?.confirmed_value ?? candidate?.normalized_value ?? candidate?.raw_value,
+    4_000,
+  );
+}
+
+/**
+ * Convert appraiser-confirmed document evidence into the canonical assignment
+ * fields. This is intentionally independent from React so desktop reloads,
+ * report PDFs, and every other consumer see the same reviewed values.
+ */
+export function assignmentDetailsFromConfirmedDocument(
+  currentDetails = {},
+  candidates = [],
+  documentType = "other",
+) {
+  const next = currentDetails && typeof currentDetails === "object" && !Array.isArray(currentDetails)
+    ? { ...currentDetails }
+    : {};
+  let changed = false;
+  for (const candidate of candidates) {
+    if (candidate?.review_status !== "confirmed") continue;
+    const value = confirmedCandidateValue(candidate);
+    if (!value) continue;
+    if (candidate.field_key === "assignment_type") {
+      const assignmentType = value.toLowerCase();
+      if (!DOCUMENT_ASSIGNMENT_TYPES.has(assignmentType)) continue;
+      const currentTypes = Array.isArray(next.assignment_types) ? next.assignment_types : [];
+      const assignmentTypes = documentType === "engagement_letter"
+        ? [assignmentType]
+        : [...new Set([...currentTypes, assignmentType])];
+      if (JSON.stringify(currentTypes) !== JSON.stringify(assignmentTypes)) {
+        next.assignment_types = assignmentTypes;
+        changed = true;
+      }
+      if (documentType === "purchase_contract" && next.subject_under_contract !== true) {
+        next.subject_under_contract = true;
+        changed = true;
+      }
+      continue;
+    }
+    const assignmentField = DOCUMENT_ASSIGNMENT_FIELDS[candidate.field_key];
+    if (!assignmentField || next[assignmentField] === value) continue;
+    next[assignmentField] = value;
+    changed = true;
+    if (documentType === "purchase_contract") {
+      const currentTypes = Array.isArray(next.assignment_types) ? next.assignment_types : [];
+      if (!currentTypes.includes("purchase_transaction")) {
+        next.assignment_types = [...currentTypes, "purchase_transaction"];
+      }
+      next.subject_under_contract = true;
+    }
+  }
+  return { changed, assignmentDetails: next };
+}
+
+async function persistConfirmedDocumentCandidates(client, {
+  sourceDocument,
+  candidates,
+  reviewerName,
+}) {
+  const assignmentFileId = positiveInteger(sourceDocument?.assignment_file_id);
+  if (!assignmentFileId) return { applied: false, reason: "document_not_assignment_scoped" };
+  const { rows } = await client.query(
+    `SELECT assignment_file.id, assignment_file.account_id, assignment_file.file_number,
+            assignment_file.assignment_details, assignment_file.revision,
+            workfile.status AS workfile_status
+       FROM app.assignment_files assignment_file
+       LEFT JOIN app.custom_appraisal_workfiles workfile
+         ON workfile.assignment_file_id = assignment_file.id
+      WHERE assignment_file.id = $1 AND assignment_file.account_id = $2
+      FOR UPDATE OF assignment_file`,
+    [assignmentFileId, sourceDocument.account_id],
+  );
+  const assignmentFile = rows[0];
+  if (!assignmentFile) return { applied: false, reason: "assignment_file_not_found" };
+  if (assignmentFile.workfile_status === "signed") {
+    return { applied: false, reason: "custom_appraisal_workfile_signed" };
+  }
+  const merged = assignmentDetailsFromConfirmedDocument(
+    assignmentFile.assignment_details,
+    candidates,
+    sourceDocument.document_type,
+  );
+  if (!merged.changed) {
+    return { applied: false, reason: "assignment_fields_unchanged", revision: Number(assignmentFile.revision) };
+  }
+  validateAssignmentDetails(merged.assignmentDetails);
+  const revision = Number(assignmentFile.revision) + 1;
+  await client.query(
+    `UPDATE app.assignment_files
+        SET assignment_details = $1::jsonb, reviewer = $2, revision = $3, updated_at = now()
+      WHERE id = $4`,
+    [JSON.stringify(merged.assignmentDetails), reviewerName, revision, assignmentFileId],
+  );
+  await client.query(
+    `INSERT INTO app.assignment_file_history (
+       assignment_file_id, account_id, file_number, assignment_details, reviewer, revision
+     ) VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+    [assignmentFileId, assignmentFile.account_id, assignmentFile.file_number,
+      JSON.stringify(merged.assignmentDetails), reviewerName, revision],
+  );
+  return { applied: true, revision, assignment_details: merged.assignmentDetails };
 }
 
 function publicDocument(row, candidates = undefined) {
@@ -1037,6 +1167,12 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const { rows: documentRows } = await client.query(
+      `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
+      [document],
+    );
+    const sourceDocument = documentRows[0];
+    if (!sourceDocument) throw new Error("document_not_found");
     const { rows } = await client.query(
       `UPDATE app.assignment_document_field_candidates
        SET review_status = $3,
@@ -1082,8 +1218,18 @@ export async function reviewAssignmentDocumentCandidate(pool, {
         [document],
       );
     }
+    const assignmentApplication = status === "confirmed"
+      ? await persistConfirmedDocumentCandidates(client, {
+          sourceDocument,
+          candidates: [rows[0]],
+          reviewerName,
+        })
+      : { applied: false, reason: "candidate_rejected" };
     await client.query("COMMIT");
-    return publicCandidate(rows[0]);
+    return {
+      ...publicCandidate(rows[0]),
+      assignment_application: assignmentApplication,
+    };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -1202,6 +1348,13 @@ export async function confirmAssignmentDocumentCandidates(pool, {
       suppliedValues,
       reviewerName,
     });
+    const confirmedById = new Map(candidateRows.map((candidate) => [Number(candidate.id), candidate]));
+    for (const candidate of confirmedCandidates) confirmedById.set(Number(candidate.id), candidate);
+    const assignmentApplication = await persistConfirmedDocumentCandidates(client, {
+      sourceDocument,
+      candidates: [...confirmedById.values()],
+      reviewerName,
+    });
     await client.query(
       `UPDATE app.assignment_documents
        SET processing_status = CASE
@@ -1223,7 +1376,11 @@ export async function confirmAssignmentDocumentCandidates(pool, {
       [document],
     );
     await client.query("COMMIT");
-    return { document_id: document, confirmed_candidates: confirmedCandidates };
+    return {
+      document_id: document,
+      confirmed_candidates: confirmedCandidates,
+      assignment_application: assignmentApplication,
+    };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -1279,6 +1436,13 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
       suppliedValues,
       reviewerName,
     });
+    const confirmedById = new Map(candidateRows.map((candidate) => [Number(candidate.id), candidate]));
+    for (const candidate of confirmedCandidates) confirmedById.set(Number(candidate.id), candidate);
+    const assignmentApplication = await persistConfirmedDocumentCandidates(client, {
+      sourceDocument,
+      candidates: [...confirmedById.values()],
+      reviewerName,
+    });
     const acknowledgedAt = new Date().toISOString();
     const confirmedCandidateIds = [
       ...candidateRows
@@ -1329,6 +1493,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
       document_id: document,
       confirmed_candidates: confirmedCandidates,
       subject_address_override: extractionSummary.subject_address_override,
+      assignment_application: assignmentApplication,
     };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});

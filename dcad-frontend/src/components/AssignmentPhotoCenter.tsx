@@ -6,6 +6,7 @@ import {
   getAssignmentFiles,
   getAssignmentPhotos,
   removeAssignmentPhoto,
+  uploadAssignmentPhotoObjectViaApi,
   verifyAssignmentPhotoUpload,
   type AssignmentPhoto,
   type AssignmentPhotoUploadRequest,
@@ -336,12 +337,26 @@ export default function AssignmentPhotoCenter({
         );
         for (const uploadRequest of registered.uploads) {
           const body = prepared.files[uploadRequest.variant];
-          const response = await fetch(uploadRequest.url, {
-            method: uploadRequest.method,
-            headers: uploadRequest.headers,
-            body,
-          });
-          if (!response.ok) throw new Error(`Photo upload failed (${response.status}).`);
+          try {
+            const response = await fetch(uploadRequest.url, {
+              method: uploadRequest.method,
+              headers: uploadRequest.headers,
+              body,
+            });
+            if (!response.ok) throw new Error(`Direct photo upload failed (${response.status}).`);
+          } catch {
+            // Private object storage may reject browser PUTs when its CORS policy
+            // is unavailable. Preserve the same registered object and send it
+            // through HomeNode's authenticated API instead of losing the photo.
+            await uploadAssignmentPhotoObjectViaApi(
+              accountId,
+              assignmentFileId,
+              registered.photo.id,
+              uploadRequest.object_id,
+              body,
+              editorKey,
+            );
+          }
         }
         await verifyAssignmentPhotoUpload(accountId, assignmentFileId, registered.photo.id, editorKey);
       }

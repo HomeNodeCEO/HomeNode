@@ -591,7 +591,7 @@ async function assignmentReportPhotos(client, objectStorage, { accountId, assign
     }
     return {
       id: row.id,
-      label: cleanText(row.room_label || row.caption || row.category, `Subject photo ${index + 1}`),
+      label: cleanText(row.caption || row.room_label || row.category, `Subject photo ${index + 1}`),
       category: cleanText(row.category, "Subject photo"),
       caption: cleanText(row.caption, ""),
       origin: row.origin_channel === "mobile" ? "Mobile inspection" : "Desktop upload",

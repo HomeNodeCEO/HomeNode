@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import {
   buildAssignmentPhotoVersion,
   buildAssignmentPhotoObjectKey,
+  normalizeAssignmentPhotoMetadata,
   normalizeAssignmentPhotoUpload,
   uploadAssignmentPhotoObject,
+  updateAssignmentPhotoMetadata,
 } from "../src/services/assignmentPhotos.js";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -55,6 +57,27 @@ test("requires an original and rejects an unsafe display content type", () => {
       byte_size: 100,
     }],
   }), /invalid_assignment_photo_display_content_type/);
+});
+
+test("normalizes appraiser photo labels with optimistic revision protection", () => {
+  assert.deepEqual(normalizeAssignmentPhotoMetadata({
+    base_revision: 3,
+    category: "Rear",
+    caption: "Subject rear elevation",
+  }), {
+    baseRevision: 3,
+    category: "Rear",
+    caption: "Subject rear elevation",
+  });
+  assert.equal(normalizeAssignmentPhotoMetadata({
+    base_revision: 3,
+    category: "Rear",
+    caption: "",
+  }).caption, "Rear");
+  assert.throws(() => normalizeAssignmentPhotoMetadata({
+    base_revision: 0,
+    category: "Rear",
+  }), /invalid_assignment_photo_revision/);
 });
 
 test("builds a file-scoped private photo object key", () => {
@@ -130,6 +153,62 @@ test("same-application photo fallback uploads only the registered file-scoped ob
   assert.equal(writes.length, 1);
 });
 
+test("appraiser label edits are file-scoped, revision-checked, and audited", async () => {
+  const queries = [];
+  const original = {
+    id: "30000000-0000-4000-8000-000000000001",
+    client_photo_id: "30000000-0000-4000-8000-000000000002",
+    inspection_session_id: null,
+    origin_channel: "desktop",
+    category: "Front",
+    category_source: "manual",
+    room_ref: null,
+    room_label: null,
+    caption: "Subject front",
+    position: 1,
+    captured_at: null,
+    status: "verified",
+    revision: 4,
+    verified_at: "2026-09-01T12:00:00.000Z",
+    retention_until: "2031-09-01T12:00:00.000Z",
+    required_retention_years: 5,
+  };
+  const client = {
+    async query(sql, values = []) {
+      queries.push({ sql, values });
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+      }
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql)) return { rows: [original] };
+      if (/UPDATE app\.inspection_photos/.test(sql)) {
+        return { rows: [{ ...original, category: "Rear", caption: "Subject rear elevation", revision: 5 }] };
+      }
+      if (/UPDATE app\.report_files/.test(sql)) return { rows: [{ registry_revision: 9 }] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [] };
+      if (/INSERT INTO app\.(inspection_photo_events|report_file_events)/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const result = await updateAssignmentPhotoMetadata({ async connect() { return client; } }, {
+    configured: false,
+  }, {
+    accountId: "26355500170360000",
+    assignmentFileId: 4,
+    photoId: original.id,
+    input: { base_revision: 4, category: "Rear", caption: "Subject rear elevation" },
+  });
+  assert.equal(result.category, "Rear");
+  assert.equal(result.caption, "Subject rear elevation");
+  assert.equal(result.revision, 5);
+  assert.ok(queries.some(({ sql }) => /category_source = CASE/.test(sql)));
+  assert.ok(queries.some(({ sql }) => /photo\.metadata_updated/.test(sql)));
+  assert.ok(queries.some(({ sql }) => /desktop_photo\.metadata_updated/.test(sql)));
+  assert.deepEqual(queries.find(({ sql }) => /WHERE id = \$1 AND report_file_id = \$2/.test(sql)).values,
+    [original.id, "report-1"]);
+});
+
 test("desktop photo migration preserves mobile rows while enabling file-scoped desktop evidence", () => {
   const source = fs.readFileSync(
     path.resolve(directory, "../migrations/20260921_desktop_report_photos.sql"),
@@ -165,6 +244,10 @@ test("desktop photo center watches the exact active file for mobile changes", ()
     path.resolve(directory, "../../dcad-frontend/src/lib/api.ts"),
     "utf8",
   );
+  const server = fs.readFileSync(
+    path.resolve(directory, "../src/oldServer.js"),
+    "utf8",
+  );
   assert.match(center, /const LIVE_REFRESH_MS = 5_000/);
   assert.match(center, /const PHOTO_FEED_RETRY_DELAY_MS = 30_000/);
   assert.match(center, /if \(!accountId \|\| !assignmentFileId\) return;\s+void load\(\)/);
@@ -190,6 +273,16 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(center, /loadAssignmentFileFallback/);
   assert.match(api, /getAssignmentPhotos[\s\S]*retryTransient: true/);
   assert.match(center, /Refresh now/);
+  assert.match(center, /const PHOTO_CAROUSEL_SIZE = 4/);
+  assert.match(center, /visiblePhotos\.map/);
+  assert.doesNotMatch(center, /photos\.map\(\(photo\)/);
+  assert.match(center, /Previous four photos/);
+  assert.match(center, /Next four photos/);
+  assert.match(center, /Edit label/);
+  assert.match(center, /updateAssignmentPhotoMetadata/);
+  assert.match(api, /export async function updateAssignmentPhotoMetadata/);
+  assert.match(server, /app\.patch\("\/api\/accounts\/:id\/assignment-files\/:assignmentFileId\/photos\/:photoId"/);
+  assert.match(report, /photo\.caption\?\.trim\(\) \|\| photo\.room_label/);
   assert.match(report, /view_url: photo\.view_url/);
   assert.match(report, /assignmentFileNumber=\{activeAssignmentFile\?\.file_number \|\| null\}/);
   assert.match(report, /onPhotosChanged=\{handleAssignmentPhotosChanged\}/);
@@ -203,6 +296,15 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(report, /event\.key === "ArrowLeft"/);
   assert.doesNotMatch(report, /className="order-6"[\s\S]{0,160}onPhotosChanged=\{handleAssignmentPhotosChanged\}/);
   assert.match(center, /if \(changed \|\| refreshViewUrls\) onPhotosChanged\?\.\(nextPhotos\)/);
+});
+
+test("custom appraisal PDF gives an appraiser-edited caption label priority", () => {
+  const pdf = fs.readFileSync(
+    path.resolve(directory, "../src/services/customAppraisalReportPdf.js"),
+    "utf8",
+  );
+  assert.match(pdf, /row\.caption \|\| row\.room_label \|\| row\.category/);
+  assert.match(pdf, /Subject Photo Appendix/);
 });
 
 test("assignment file refresh includes signed mobile photo previews", () => {

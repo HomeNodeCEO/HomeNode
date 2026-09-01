@@ -2633,6 +2633,23 @@ export async function verifyAssignmentPhotoUpload(
   return response.photo;
 }
 
+export async function updateAssignmentPhotoMetadata(
+  accountId: string,
+  assignmentFileId: number,
+  photoId: string,
+  input: { base_revision: number; category: string; caption: string },
+  editorKey: string,
+): Promise<AssignmentPhoto> {
+  const response = await fetchJSON<{ ok: true; photo: AssignmentPhoto }>(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos/${encodeURIComponent(photoId)}`,
+  ), {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
+    body: JSON.stringify(input),
+  });
+  return response.photo;
+}
+
 export async function removeAssignmentPhoto(
   accountId: string,
   assignmentFileId: number,

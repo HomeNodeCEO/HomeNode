@@ -35,7 +35,7 @@ function assignmentReason(value) {
   return null;
 }
 
-function structuredPartyName(value, role) {
+export function uadDocumentPartyNameValues(value, role) {
   const name = cleanText(value, 300);
   if (!name) return null;
   const business = /\b(?:bank|company|co\.?|corp(?:oration)?\.?|inc(?:orporated)?\.?|llc|l\.l\.c\.|llp|lp|ltd\.?|trust|association|holdings?)\b/i.test(name);
@@ -167,7 +167,7 @@ export async function applyConfirmedUadDocumentCandidate(
     if (!reason) throw new Error("uad_document_assignment_reason_requires_manual_entry");
     values = [{ uid: "1000.0034", context_key: "assignment", value: reason }];
   } else if (["buyer_name", "seller_name"].includes(candidate.field_key)) {
-    values = structuredPartyName(value, candidate.field_key === "buyer_name" ? "borrower" : "seller");
+    values = uadDocumentPartyNameValues(value, candidate.field_key === "buyer_name" ? "borrower" : "seller");
     if (!values) throw new Error("uad_document_party_name_requires_manual_entry");
   } else if (["lender_client_name", "lender_client_address"].includes(candidate.field_key)) {
     const address = candidate.field_key === "lender_client_address" ? parseUadClientAddress(value) : null;

@@ -320,7 +320,10 @@ export async function createUadWorkfile(
 }
 
 export async function getUadEditor(workfileId: string): Promise<UadEditorResponse> {
-  return uadFetchJSON<UadEditorResponse>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/editor`));
+  return uadFetchJSON<UadEditorResponse>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/editor`),
+    { cache: "no-store" },
+  );
 }
 
 export interface UadSectionSaveResult {

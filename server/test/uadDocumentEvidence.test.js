@@ -4,6 +4,7 @@ import test from "node:test";
 import { UAD_MIGRATION_NAMES } from "../src/database/uadMigrations.js";
 import {
   parseUadClientAddress,
+  uadDocumentPartyNameValues,
   uadDocumentCandidateIsApplicable,
 } from "../src/modules/uad/documentEvidence.js";
 import { validateCompleteSection } from "../src/modules/uad/editor.js";
@@ -31,6 +32,17 @@ test("UAD client address parsing requires the official structured address compon
     },
   );
   assert.equal(parseUadClientAddress("100 North Tryon Street"), null);
+});
+
+test("confirmed borrower evidence populates the official borrower role and name fields", () => {
+  assert.deepEqual(
+    uadDocumentPartyNameValues("Jordan Freeman", "borrower"),
+    [
+      { uid: "1000.0103", context_key: "borrower", value: "Borrower" },
+      { uid: "1000.0101", context_key: "borrower", value: "Jordan" },
+      { uid: "1000.0102", context_key: "borrower", value: "Freeman" },
+    ],
+  );
 });
 
 test("UAD Assignment Information requires at least one complete client party", () => {
@@ -82,4 +94,17 @@ test("the UAD workspace places the collapsed document loader before the active e
   assert.match(source, /<AssignmentDocumentCenter/);
   assert.match(source, /uadWorkfileId=\{activeWorkfileId\}/);
   assert.ok(source.indexOf("<AssignmentDocumentCenter") < source.indexOf("<UadWorkfileEditor"));
+});
+
+test("the UAD editor bypasses browser caches after document evidence changes", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(
+    new URL("../../dcad-frontend/src/features/uad/api.ts", import.meta.url),
+    "utf8",
+  );
+  const getEditor = source.slice(
+    source.indexOf("export async function getUadEditor"),
+    source.indexOf("export interface UadSectionSaveResult"),
+  );
+  assert.match(getEditor, /cache:\s*["']no-store["']/);
 });

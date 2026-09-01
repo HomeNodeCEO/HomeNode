@@ -50,6 +50,8 @@ test("the UAD document migration links private evidence to canonical report file
     "utf8",
   );
   assert.match(migration, /uad_workfile_id uuid/);
+  assert.match(migration, /uad_entities_entity_type_check/);
+  assert.match(migration, /'assignment_contact'/);
   assert.match(migration, /report_file_id uuid/);
   assert.match(migration, /assignment_documents_workflow_checksum_uidx/);
   assert.match(migration, /DROP INDEX IF EXISTS app\.assignment_documents_scope_checksum_uidx/);

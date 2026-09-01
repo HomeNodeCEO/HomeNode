@@ -104,6 +104,7 @@ import {
   OCCUPANCY_OPTIONS,
   assignmentDraftFromDetail,
   assignmentTypesFromConfirmedDocument,
+  subjectUnderContractFromConfirmedDocument,
   assignmentValidationErrors,
   cloneEditorValue,
 } from "@/lib/propertyReportAssignment";
@@ -964,9 +965,11 @@ function AddressHero({
             value,
             documentType,
           ),
-          subject_under_contract: value === "purchase_transaction"
-            ? true
-            : current.subject_under_contract,
+          subject_under_contract: subjectUnderContractFromConfirmedDocument(
+            current.subject_under_contract,
+            value,
+            documentType,
+          ),
         };
       });
       setAssignmentDirty(true);

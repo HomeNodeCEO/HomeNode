@@ -49,14 +49,19 @@ function assignmentReason(value) {
 
 function subjectListingStatus(value) {
   const source = cleanText(value, 100).toLowerCase().replace(/[^a-z]+/g, " ").trim();
-  if (["active", "act", "available", "coming soon"].includes(source)) return "Active";
-  if (["pending", "pend", "under contract", "contingent", "option pending", "active option contract"].includes(source)) {
+  if ([
+    "p", "pend", "pnd", "pending", "cont", "contingent", "uc", "under contract",
+    "aoc", "active option", "active option contract", "active contingent",
+    "active under contract", "option pending", "pending continue to show",
+    "pending taking backups",
+  ].includes(source)) {
     return "Pending";
   }
   if ([
-    "offmarket", "off market", "closed", "sold", "expired", "withdrawn", "cancelled",
-    "canceled", "temporarily off market", "tom",
+    "s", "sld", "sold", "cls", "closed", "offmarket", "off market", "exp", "expired",
+    "wdn", "withdrawn", "can", "cancelled", "canceled", "temporarily off market", "tom",
   ].includes(source)) return "OffMarket";
+  if (["a", "act", "active", "available", "cs", "coming soon"].includes(source)) return "Active";
   return null;
 }
 

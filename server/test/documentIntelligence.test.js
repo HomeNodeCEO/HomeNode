@@ -27,6 +27,10 @@ test("document classification recognizes the appraisal document families", () =>
   assert.equal(classifyDocument({ pages: ["APPRAISAL ENGAGEMENT LETTER Scope of Work"] }), "engagement_letter");
   assert.equal(classifyDocument({ pages: ["MULTIPLE LISTING SERVICE MLS # 21062330"] }), "mls_sheet");
   assert.equal(classifyDocument({ pages: ["Official Zoning Map Zoning Districts"] }), "zoning_map");
+  assert.equal(
+    classifyDocument({ pages: ["NTREIS Full Report MLS No 21062330 ST P DOM 14 OLP $525,000 LP $510,000"] }),
+    "mls_sheet",
+  );
 });
 
 test("labeled fields retain the verbatim source text and normalized money", () => {
@@ -112,6 +116,61 @@ test("an active MLS listing derives a reviewable end date from LD and DOM when n
   assert.equal(endDate?.normalized_value, "2026-08-29");
   assert.equal(endDate?.extraction_method, "mls_list_date_dom_derivation");
   assert.match(endDate?.evidence_excerpt || "", /Derived from/);
+});
+
+test("MLS abbreviations populate listing status and DOM from common NTREIS layouts", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "mls_sheet",
+    pages: ["MLS #: 21069998 | Lst Status: A | LD: 08/20/2026 | DOM/CDOM: 10/14 | OLP: $600,000 | LP: $589,000"],
+  });
+  const values = Object.fromEntries(candidates.map((candidate) => [
+    candidate.field_key,
+    candidate.normalized_value,
+  ]));
+
+  assert.equal(values.listing_status, "Active");
+  assert.equal(values.days_on_market, "10");
+});
+
+test("MLS contract dates become Section 19 end dates only for Pending or Sold listings", () => {
+  const pending = buildDocumentFieldCandidates({
+    documentType: "mls_sheet",
+    pages: ["MLS # 21070001 | Status P | LD 08/20/2026 | Contract Date 08/27/2026 | DOM 8 | LP $589,000"],
+  });
+  const active = buildDocumentFieldCandidates({
+    documentType: "mls_sheet",
+    pages: ["MLS # 21070002 | Status ACT | LD 08/20/2026 | CD 08/27/2026 | DOM 5 | LP $589,000"],
+  });
+  const sold = buildDocumentFieldCandidates({
+    documentType: "mls_sheet",
+    pages: ["MLS # 21070003 | Status SLD | LD 08/01/2026 | Contract Date 08/21/2026 | Closed Date 08/31/2026 | DOM 21 | LP $589,000"],
+  });
+
+  assert.equal(pending.find((candidate) => candidate.field_key === "listing_status")?.normalized_value, "Pending");
+  assert.equal(pending.find((candidate) => candidate.field_key === "listing_end_date")?.normalized_value, "2026-08-27");
+  assert.equal(
+    pending.find((candidate) => candidate.field_key === "listing_end_date")?.extraction_method,
+    "mls_contract_date_as_listing_end_date",
+  );
+  assert.equal(active.find((candidate) => candidate.field_key === "listing_end_date")?.normalized_value, "2026-08-24");
+  assert.equal(active.find((candidate) => candidate.field_key === "listing_end_date")?.extraction_method, "mls_list_date_dom_derivation");
+  assert.equal(sold.find((candidate) => candidate.field_key === "listing_status")?.normalized_value, "OffMarket");
+  assert.equal(sold.find((candidate) => candidate.field_key === "listing_end_date")?.normalized_value, "2026-08-21");
+  assert.equal(pending.some((candidate) => candidate.field_key === "contract_date"), false);
+  assert.equal(active.some((candidate) => candidate.field_key === "contract_date"), false);
+  assert.equal(sold.some((candidate) => candidate.field_key === "contract_date"), false);
+});
+
+test("auto-classified MLS shorthand does not expose a separate contract-date confirmation", () => {
+  const pages = ["NTREIS Full Report | MLS No 21070004 | ST P | LD 08/20/2026 | Contract Date 08/27/2026 | DOM 8 | OLP $600,000 | LP $589,000"];
+  const documentType = classifyDocument({ pages });
+  const candidates = buildDocumentFieldCandidates({ documentType, pages });
+
+  assert.equal(documentType, "mls_sheet");
+  assert.equal(candidates.find((candidate) => candidate.field_key === "listing_status")?.normalized_value, "Pending");
+  assert.equal(candidates.find((candidate) => candidate.field_key === "days_on_market")?.normalized_value, "8");
+  assert.equal(candidates.find((candidate) => candidate.field_key === "listing_end_date")?.normalized_value, "2026-08-27");
+  assert.equal(candidates.some((candidate) => candidate.field_key === "contract_date"), false);
 });
 
 test("engagement letters separate duplicated lender columns and retain the assignment address", () => {

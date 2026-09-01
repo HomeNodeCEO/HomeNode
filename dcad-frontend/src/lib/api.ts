@@ -2747,6 +2747,22 @@ export async function getAssignmentDocumentContent(
   return response.blob();
 }
 
+export async function deleteAssignmentDocument(
+  documentId: number,
+  editorKey: string,
+): Promise<{ document_id: number; deleted: true; storage_deleted: boolean }> {
+  const response = await fetchJSON<{
+    ok: true;
+    document_id: number;
+    deleted: true;
+    storage_deleted: boolean;
+  }>(
+    makeUrl(`/api/documents/${documentId}`),
+    { method: 'DELETE', headers: { 'x-homenode-editor-key': editorKey } },
+  );
+  return response;
+}
+
 export async function uploadAssignmentDocument(
   accountId: string,
   file: File,

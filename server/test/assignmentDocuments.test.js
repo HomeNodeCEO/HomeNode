@@ -7,6 +7,7 @@ import {
   buildAssignmentDocumentObjectKey,
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
+  deleteAssignmentDocument,
   loadAssignmentDocumentContent,
   retainedAssignmentDocumentReview,
 } from "../src/services/assignmentDocuments.js";
@@ -123,6 +124,83 @@ test("private document reads fail closed when downloaded bytes do not match the 
     loadAssignmentDocumentContent(pool, 42, { storage }),
     /storage_checksum_mismatch/,
   );
+});
+
+test("deleting a private assignment document removes its R2 object before cascading the database row", async () => {
+  const events = [];
+  const client = {
+    async query(sql) {
+      events.push(sql);
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+      if (/SELECT id, storage_provider, object_key/.test(sql)) {
+        return { rows: [{ id: 42, storage_provider: "r2", object_key: "documents/42.pdf" }] };
+      }
+      if (/DELETE FROM app\.assignment_documents/.test(sql)) return { rows: [{ id: 42 }] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {
+      events.push("RELEASE");
+    },
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() {
+      return client;
+    },
+  };
+  const storage = {
+    configured: true,
+    async deleteObject({ objectKey }) {
+      events.push(`DELETE_OBJECT ${objectKey}`);
+    },
+  };
+  assert.deepEqual(await deleteAssignmentDocument(pool, storage, 42), {
+    document_id: 42,
+    deleted: true,
+    storage_deleted: true,
+  });
+  assert.ok(events.indexOf("DELETE_OBJECT documents/42.pdf") < events.findIndex((event) => (
+    /DELETE FROM app\.assignment_documents/.test(event)
+  )));
+  assert.ok(events.includes("COMMIT"));
+});
+
+test("a private document remains in the database when object deletion fails", async () => {
+  const events = [];
+  const client = {
+    async query(sql) {
+      events.push(sql);
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      if (/SELECT id, storage_provider, object_key/.test(sql)) {
+        return { rows: [{ id: 43, storage_provider: "r2", object_key: "documents/43.pdf" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() {
+      return client;
+    },
+  };
+  await assert.rejects(
+    deleteAssignmentDocument(pool, {
+      configured: true,
+      async deleteObject() {
+        throw new Error("object_delete_failed");
+      },
+    }, 43),
+    /object_delete_failed/,
+  );
+  assert.ok(events.includes("ROLLBACK"));
+  assert.equal(events.some((event) => /DELETE FROM app\.assignment_documents/.test(event)), false);
 });
 
 test("document extraction retries use bounded exponential backoff", () => {

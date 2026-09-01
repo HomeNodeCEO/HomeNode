@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   confirmAssignmentDocumentDespiteSubjectMismatch,
+  deleteAssignmentDocument,
   getAssignmentDocument,
   getAssignmentDocumentContent,
   getAssignmentDocuments,
@@ -272,6 +273,33 @@ export default function AssignmentDocumentCenter({
     }
   };
 
+  const deleteFromFile = async () => {
+    if (!selectedDocument) return;
+    const confirmed = window.confirm(
+      `Permanently delete "${selectedDocument.title}" from this appraisal file?\n\n`
+        + 'The PDF, extracted fields, and review history will be removed from HomeNode and cannot be recovered.',
+    );
+    if (!confirmed) return;
+    const editorKey = getEditorKey();
+    if (!editorKey) return;
+    const deletedId = selectedDocument.id;
+    const deletedTitle = selectedDocument.title;
+    setLoading(true);
+    setMessage('');
+    try {
+      await deleteAssignmentDocument(deletedId, editorKey);
+      setDocuments((current) => current.filter((document) => document.id !== deletedId));
+      setSelectedDocument(null);
+      setCandidateValues({});
+      setViewerUrl('');
+      setMessage(`"${deletedTitle}" was permanently deleted from this appraisal file.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The document could not be deleted.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const applyConfirmedDocumentFields = (document: AssignmentDocument) => {
     const applications = confirmedDocumentFieldApplications(document.candidates);
     applications.forEach(({ fieldKey, value }) => {
@@ -406,6 +434,14 @@ export default function AssignmentDocumentCenter({
                       </button>
                     ) : null}
                   </div>
+                  <button
+                    type="button"
+                    className="btn btn-error btn-sm w-full normal-case rounded-lg text-white"
+                    onClick={() => void deleteFromFile()}
+                    disabled={loading}
+                  >
+                    Delete From File
+                  </button>
                   {selectedDocument.document_type === 'engagement_letter' ? (
                     documentSubjectCandidate ? (
                       <div

@@ -164,6 +164,7 @@ import {
 import {
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
+  deleteAssignmentDocument,
   ensureAssignmentDocumentsSchema,
   getAssignmentDocument,
   listAssignmentDocuments,
@@ -6530,6 +6531,27 @@ app.get("/api/documents/:id/content", async (req, res) => {
   } catch (error) {
     console.error("assignment document stream failed", error);
     return res.status(500).json({ error: "assignment_document_stream_failed" });
+  }
+});
+
+/** Permanently remove an assignment PDF and its extracted evidence from private storage. */
+app.delete("/api/documents/:id", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
+    const result = await deleteAssignmentDocument(pool, sharedObjectStorage, req.params.id);
+    res.set("cache-control", "no-store");
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    const message = error?.message || "assignment_document_delete_failed";
+    if (message === "document_not_found") return res.status(404).json({ error: message });
+    if (message === "invalid_document_id") return res.status(400).json({ error: message });
+    if (message === "assignment_document_storage_not_configured") {
+      return res.status(503).json({ error: message });
+    }
+    console.error("assignment document delete failed", error);
+    return res.status(500).json({ error: "assignment_document_delete_failed" });
   }
 });
 

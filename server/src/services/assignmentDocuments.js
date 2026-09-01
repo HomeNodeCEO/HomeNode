@@ -900,6 +900,50 @@ export async function getAssignmentDocument(pool, documentId, {
   };
 }
 
+export async function deleteAssignmentDocument(pool, storage, documentId) {
+  await ensureAssignmentDocumentsSchema(pool);
+  const id = positiveInteger(documentId);
+  if (!id) throw new Error("invalid_document_id");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT id, storage_provider, object_key
+       FROM app.assignment_documents
+       WHERE id = $1
+       FOR UPDATE`,
+      [id],
+    );
+    const document = rows[0];
+    if (!document) throw new Error("document_not_found");
+    const storedInR2 = document.storage_provider === "r2" && Boolean(document.object_key);
+    if (storedInR2) {
+      if (!storage?.configured || typeof storage.deleteObject !== "function") {
+        throw new Error("assignment_document_storage_not_configured");
+      }
+      await storage.deleteObject({ objectKey: document.object_key });
+    }
+    const deleted = await client.query(
+      `DELETE FROM app.assignment_documents
+       WHERE id = $1
+       RETURNING id`,
+      [id],
+    );
+    if (!deleted.rows.length) throw new Error("document_not_found");
+    await client.query("COMMIT");
+    return {
+      document_id: id,
+      deleted: true,
+      storage_deleted: storedInR2,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function reviewAssignmentDocumentCandidate(pool, {
   documentId,
   candidateId,

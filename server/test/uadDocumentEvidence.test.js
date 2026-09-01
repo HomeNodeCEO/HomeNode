@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { UAD_MIGRATION_NAMES } from "../src/database/uadMigrations.js";
 import {
   parseUadClientAddress,
   uadDocumentCandidateIsApplicable,
@@ -49,6 +50,7 @@ test("the UAD document migration links private evidence to canonical report file
     new URL("../migrations/20261002_uad_document_evidence.sql", import.meta.url),
     "utf8",
   );
+  assert.ok(UAD_MIGRATION_NAMES.includes("20261002_uad_document_evidence.sql"));
   assert.match(migration, /uad_workfile_id uuid/);
   assert.match(migration, /uad_entities_entity_type_check/);
   assert.match(migration, /'assignment_contact'/);

@@ -286,11 +286,12 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           replaceDirtyKeys(remaining);
           setConflictKeys(new Set());
           const savedAt = new Date().toISOString();
+          const savedTime = new Date(savedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
           setLastAutosavedAt(savedAt);
           setAutosaveState(remaining.size ? "pending" : "saved");
           setSavedMessage(remaining.size
-            ? `Revision ${latest.workfile.current_revision} is protected; newer edits are queued.`
-            : `Changes autosaved in revision ${latest.workfile.current_revision}.`);
+            ? `Changes saved at ${savedTime}; newer edits are queued.`
+            : `Changes saved at ${savedTime}.`);
         }
         firstDirtyAtRef.current = remaining.size ? Date.now() : null;
         return true;
@@ -543,7 +544,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     firstDirtyAtRef.current = nextDirty.size ? Date.now() : null;
     setAutosaveState(nextDirty.size ? "pending" : "idle");
     setSavedMessage(keepLocal
-      ? "Your local values will be saved as the next revision."
+      ? "Your local values are queued to save."
       : "The newer server values were restored for the conflicting fields.");
   }
 
@@ -639,7 +640,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
       setAutosaveState("idle");
       setConflictKeys(new Set());
       setSavedMessage(result.changed_field_count
-        ? `${section.title} saved in revision ${result.current_revision} and added to the workfile audit history.`
+        ? `${section.title} saved and added to the workfile audit history.`
         : `${section.title} reviewed; its saved values were already current.`);
     } catch (reason) {
       setError(
@@ -1736,7 +1737,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
                 : dirty
                   ? "Changes queued for autosave within one minute"
                   : lastAutosavedAt
-                    ? `All changes protected · ${new Date(lastAutosavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`
+                    ? `All changes saved · ${new Date(lastAutosavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                     : "All displayed changes saved"}
           </div>
           <button className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving || autosaveState === "conflict"} onClick={() => void handleSave()} type="button">

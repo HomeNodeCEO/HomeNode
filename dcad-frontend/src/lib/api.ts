@@ -2684,6 +2684,15 @@ export interface AssignmentDocument {
     error?: string;
     processing_attempts?: number;
     automatic_retry_exhausted?: boolean;
+    subject_address_override?: {
+      acknowledged?: boolean;
+      reviewer?: string;
+      acknowledged_at?: string;
+      reason?: string;
+      document_subject_address?: string;
+      report_subject_address?: string;
+      confirmed_candidate_ids?: number[];
+    };
   };
   source_kind: 'upload' | 'official_url' | 'zoning_cache';
   source_url: string | null;
@@ -2776,6 +2785,30 @@ export async function reprocessAssignmentDocument(
   const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
     makeUrl(`/api/documents/${documentId}/reprocess`),
     { method: 'POST', headers: { 'x-homenode-editor-key': editorKey }, timeoutMs: 120000 },
+  );
+  return response.document;
+}
+
+export async function confirmAssignmentDocumentDespiteSubjectMismatch(
+  documentId: number,
+  input: {
+    reviewer: string;
+    reportSubjectAddress: string;
+    candidateValues?: Record<number, string>;
+  },
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/documents/${documentId}/subject-address-override`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
+      body: JSON.stringify({
+        reviewer: input.reviewer,
+        report_subject_address: input.reportSubjectAddress,
+        candidate_values: input.candidateValues || {},
+      }),
+    },
   );
   return response.document;
 }

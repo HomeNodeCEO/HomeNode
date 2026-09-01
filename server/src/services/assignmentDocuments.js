@@ -973,6 +973,136 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   }
 }
 
+export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
+  documentId,
+  reviewer,
+  reportSubjectAddress,
+  candidateValues = {},
+} = {}) {
+  await ensureAssignmentDocumentsSchema(pool);
+  const document = positiveInteger(documentId);
+  if (!document) throw new Error("invalid_document_id");
+  const reviewerName = cleanText(reviewer, 200);
+  if (!reviewerName) throw new Error("document_reviewer_required");
+  const reportAddress = cleanText(reportSubjectAddress, 1_000);
+  if (!reportAddress) throw new Error("report_subject_address_required");
+  const suppliedValues = candidateValues && typeof candidateValues === "object"
+    ? candidateValues
+    : {};
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: documentRows } = await client.query(
+      `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
+      [document],
+    );
+    const sourceDocument = documentRows[0];
+    if (!sourceDocument) throw new Error("document_not_found");
+    if (sourceDocument.document_type !== "engagement_letter") {
+      throw new Error("engagement_letter_required");
+    }
+    const { rows: candidateRows } = await client.query(
+      `SELECT * FROM app.assignment_document_field_candidates
+       WHERE document_id = $1
+       ORDER BY page_number NULLS LAST, confidence DESC NULLS LAST, id
+       FOR UPDATE`,
+      [document],
+    );
+    const subjectAddressCandidate = candidateRows.find((candidate) => (
+      candidate.field_key === "subject_property_address"
+    ));
+    if (!subjectAddressCandidate) {
+      throw new Error("document_subject_address_candidate_required");
+    }
+    const confirmedCandidates = [];
+    for (const candidate of candidateRows) {
+      if (candidate.review_status !== "suggested") continue;
+      const suppliedValue = cleanText(suppliedValues[String(candidate.id)], 4_000);
+      const confirmedValue = suppliedValue
+        || cleanText(candidate.normalized_value, 4_000)
+        || candidate.raw_value;
+      const { rows } = await client.query(
+        `UPDATE app.assignment_document_field_candidates
+         SET review_status = 'confirmed',
+             confirmed_value = $3,
+             reviewer = $4,
+             reviewed_at = now(),
+             updated_at = now()
+         WHERE id = $2 AND document_id = $1 AND review_status = 'suggested'
+         RETURNING *`,
+        [document, candidate.id, confirmedValue, reviewerName],
+      );
+      if (!rows[0]) continue;
+      confirmedCandidates.push(publicCandidate(rows[0]));
+      await client.query(
+        `INSERT INTO app.assignment_document_candidate_reviews (
+           document_id, candidate_id, field_key, raw_value, normalized_value,
+           review_status, confirmed_value, reviewer, reviewed_at
+         ) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $7, now())`,
+        [
+          document,
+          candidate.id,
+          candidate.field_key,
+          candidate.raw_value,
+          candidate.normalized_value,
+          confirmedValue,
+          reviewerName,
+        ],
+      );
+    }
+    const acknowledgedAt = new Date().toISOString();
+    const extractionSummary = {
+      ...(sourceDocument.extraction_summary || {}),
+      subject_address_override: {
+        acknowledged: true,
+        reviewer: reviewerName,
+        acknowledged_at: acknowledgedAt,
+        reason: "Appraiser confirmed this engagement letter belongs to the open assignment despite the address comparison.",
+        document_subject_address: cleanText(
+          subjectAddressCandidate.confirmed_value
+            || subjectAddressCandidate.normalized_value
+            || subjectAddressCandidate.raw_value,
+          1_000,
+        ),
+        report_subject_address: reportAddress,
+        confirmed_candidate_ids: confirmedCandidates.map((candidate) => candidate.id),
+      },
+    };
+    await client.query(
+      `UPDATE app.assignment_documents
+       SET processing_status = CASE
+             WHEN EXISTS (
+               SELECT 1 FROM app.assignment_document_field_candidates
+               WHERE document_id = $1 AND review_status = 'suggested'
+             ) THEN processing_status
+             ELSE 'reviewed'
+           END,
+           extraction_summary = $2::jsonb,
+           reviewed_at = CASE
+             WHEN EXISTS (
+               SELECT 1 FROM app.assignment_document_field_candidates
+               WHERE document_id = $1 AND review_status = 'suggested'
+             ) THEN reviewed_at
+             ELSE now()
+           END,
+           updated_at = now()
+       WHERE id = $1`,
+      [document, JSON.stringify(extractionSummary)],
+    );
+    await client.query("COMMIT");
+    return {
+      document_id: document,
+      confirmed_candidates: confirmedCandidates,
+      subject_address_override: extractionSummary.subject_address_override,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getAssignmentDocumentZoningSuggestion(pool, {
   documentId,
   zoningCode,

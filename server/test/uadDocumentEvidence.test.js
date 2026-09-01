@@ -6,6 +6,7 @@ import {
   parseUadClientAddress,
   uadDocumentPartyNameValues,
   uadDocumentCandidateIsApplicable,
+  uadMlsListingValues,
 } from "../src/modules/uad/documentEvidence.js";
 import { validateCompleteSection } from "../src/modules/uad/editor.js";
 import { getUadEditorSections } from "../src/modules/uad/fieldCatalog.js";
@@ -14,6 +15,8 @@ test("UAD document evidence accepts only fields with reviewed canonical mappings
   for (const field of [
     "assignment_type", "buyer_name", "seller_name", "lender_client_name",
     "lender_client_address", "contract_price", "contract_date",
+    "listing_status", "mls_number", "list_date", "listing_end_date",
+    "days_on_market", "original_list_price", "list_price",
   ]) {
     assert.equal(uadDocumentCandidateIsApplicable(field), true, field);
   }
@@ -32,6 +35,42 @@ test("UAD client address parsing requires the official structured address compon
     },
   );
   assert.equal(parseUadClientAddress("100 North Tryon Street"), null);
+});
+
+test("confirmed MLS evidence maps to one canonical Section 19 listing", () => {
+  const entityId = "11111111-1111-4111-8111-111111111111";
+  const fixed = [
+    { uid: "0900.0004", context_key: "subject_listing_summary", value: true },
+    { uid: "0900.0015", context_key: "subject_listing", entity_id: entityId, value: "MLS" },
+  ];
+  assert.deepEqual(uadMlsListingValues("listing_status", "Closed", entityId), [
+    ...fixed,
+    { uid: "0900.0013", context_key: "subject_listing", entity_id: entityId, value: "OffMarket" },
+  ]);
+  assert.deepEqual(uadMlsListingValues("mls_number", "21062330", entityId), [
+    ...fixed,
+    { uid: "0900.0011", context_key: "subject_listing", entity_id: entityId, value: "21062330" },
+  ]);
+  assert.deepEqual(uadMlsListingValues("list_date", "2026-08-01", entityId), [
+    ...fixed,
+    { uid: "0900.0012", context_key: "subject_listing", entity_id: entityId, value: "2026-08-01" },
+  ]);
+  assert.deepEqual(uadMlsListingValues("listing_end_date", "2026-08-31", entityId), [
+    ...fixed,
+    { uid: "0900.0010", context_key: "subject_listing", entity_id: entityId, value: "2026-08-31" },
+  ]);
+  assert.deepEqual(uadMlsListingValues("days_on_market", "31", entityId), [
+    ...fixed,
+    { uid: "0900.0007", context_key: "subject_listing", entity_id: entityId, value: 31 },
+  ]);
+  assert.deepEqual(uadMlsListingValues("original_list_price", "$525,000", entityId), [
+    ...fixed,
+    { uid: "0900.0009", context_key: "subject_listing", entity_id: entityId, value: 525000 },
+  ]);
+  assert.deepEqual(uadMlsListingValues("list_price", "$510,000", entityId), [
+    ...fixed,
+    { uid: "0900.0008", context_key: "subject_listing", entity_id: entityId, value: 510000 },
+  ]);
 });
 
 test("confirmed borrower evidence populates the official borrower role and name fields", () => {
@@ -93,6 +132,8 @@ test("the UAD workspace places the collapsed document loader before the active e
   );
   assert.match(source, /<AssignmentDocumentCenter/);
   assert.match(source, /uadWorkfileId=\{activeWorkfileId\}/);
+  assert.match(source, /setEditorInitialSection\(result\.section \|\| "assignment"\)/);
+  assert.match(source, /initialSection=\{editorInitialSection\}/);
   assert.ok(source.indexOf("<AssignmentDocumentCenter") < source.indexOf("<UadWorkfileEditor"));
 });
 

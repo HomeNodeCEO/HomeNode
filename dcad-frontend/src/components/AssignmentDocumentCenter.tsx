@@ -58,11 +58,21 @@ const FIELD_LABELS: Record<string, string> = {
   lender_client_address: 'Lender / Client Address',
   subject_property_address: 'Assignment Property Address',
   mls_number: 'MLS Number',
-  list_price: 'List Price',
-  list_date: 'List Date',
+  listing_status: 'Listing Status',
+  list_price: 'Current / Final List Price (LP)',
+  original_list_price: 'Starting List Price (OLP)',
+  list_date: 'Listing Start Date (LD)',
+  listing_end_date: 'Listing End / Close Date',
+  days_on_market: 'Days on Market (DOM)',
   financing_type: 'Financing Type',
   assignment_type: 'Assignment Type',
 };
+
+function uadSectionLabel(section: UadDocumentApplicationResult['section']) {
+  if (section === 'subject_listing_information') return 'Subject Listing Information (Section 19)';
+  if (section === 'sales_contract') return 'Sales Contract';
+  return 'Assignment Information';
+}
 
 function statusStyle(status: AssignmentDocument['processing_status']) {
   if (status === 'reviewed') return 'bg-emerald-100 text-emerald-800';
@@ -304,7 +314,7 @@ export default function AssignmentDocumentCenter({
           const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
           onUadApplied?.(result);
           setMessage(result.applied
-            ? `Candidate confirmed and applied to UAD ${result.section === 'sales_contract' ? 'Sales Contract' : 'Assignment Information'}.`
+            ? `Candidate confirmed and applied to UAD ${uadSectionLabel(result.section)}.`
             : 'Candidate confirmed with its source page retained. This evidence has no direct UAD form mapping.');
         } else {
           onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, selectedDocument.document_type);
@@ -747,7 +757,7 @@ export default function AssignmentDocumentCenter({
                               try {
                                 const result = await applyConfirmedCandidateToUad(candidate);
                                 setMessage(result?.applied
-                                  ? `Confirmed evidence applied to UAD ${result.section === 'sales_contract' ? 'Sales Contract' : 'Assignment Information'}.`
+                                  ? `Confirmed evidence applied to UAD ${uadSectionLabel(result.section)}.`
                                   : 'This evidence is retained for review but has no direct UAD form mapping.');
                               } catch (error) {
                                 setMessage(error instanceof Error ? error.message : 'The confirmed evidence could not be applied to UAD.');

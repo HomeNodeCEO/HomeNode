@@ -76,6 +76,38 @@ function normalizedAssignmentType(value) {
   return null;
 }
 
+function normalizedInteger(value, maximum = 9_999) {
+  const match = String(value || "").match(/\b(\d{1,6})\b/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= maximum
+    ? String(parsed)
+    : null;
+}
+
+function normalizedListingStatus(value) {
+  const source = cleanText(value, 100).toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  if (!source) return null;
+  if (/\b(?:active|act|available|coming soon)\b/.test(source)) return "Active";
+  if (/\b(?:pending|pend|under contract|contingent|option pending|active option contract)\b/.test(source)) {
+    return "Pending";
+  }
+  if (/\b(?:closed|sold|expired|withdrawn|cancelled|canceled|off market|temporarily off market|tom)\b/.test(source)) {
+    return "OffMarket";
+  }
+  return null;
+}
+
+function isoDateFromExposure(startDate, daysOnMarket) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || ""))) return null;
+  const days = Number(daysOnMarket);
+  if (!Number.isSafeInteger(days) || days < 0 || days > 9_999) return null;
+  const instant = new Date(`${startDate}T00:00:00.000Z`);
+  if (Number.isNaN(instant.getTime())) return null;
+  instant.setUTCDate(instant.getUTCDate() + Math.max(0, days - 1));
+  return instant.toISOString().slice(0, 10);
+}
+
 function pageLines(pages) {
   return pages.flatMap((text, pageIndex) => cleanText(text, 500_000)
     .split("\n")
@@ -85,6 +117,137 @@ function pageLines(pages) {
       line: line.trim(),
     }))
     .filter((entry) => entry.line));
+}
+
+function firstMlsLabeledCandidate(entries, {
+  fieldKey,
+  labelSource,
+  valueSource,
+  confidence = 0.94,
+  normalize = (value) => value,
+  reject = () => false,
+}) {
+  const inlinePattern = new RegExp(
+    `(?:^|[\\s|])(${labelSource})\\s*(?:[:=#-]\\s*)?(${valueSource})`,
+    "ig",
+  );
+  const labelOnlyPattern = new RegExp(`^(?:${labelSource})\\s*(?:[:=#-])?\\s*$`, "i");
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    for (const inline of entry.line.matchAll(inlinePattern)) {
+      if (reject(entry, inline)) continue;
+      const rawValue = cleanText(inline[2], 2_000);
+      const normalizedValue = normalize(rawValue);
+      if (rawValue && normalizedValue != null && normalizedValue !== "") {
+        return {
+          field_key: fieldKey,
+          raw_value: rawValue,
+          normalized_value: String(normalizedValue),
+          page_number: entry.pageNumber,
+          confidence,
+          evidence_excerpt: entry.line.slice(0, 2_000),
+          extraction_method: "mls_labeled_text",
+        };
+      }
+    }
+    if (!labelOnlyPattern.test(entry.line)) continue;
+    const nextEntry = entries[index + 1];
+    if (!nextEntry || nextEntry.pageNumber !== entry.pageNumber) continue;
+    const rawValue = cleanText(nextEntry.line.match(new RegExp(`^(${valueSource})`, "i"))?.[1], 2_000);
+    const normalizedValue = normalize(rawValue);
+    if (!rawValue || normalizedValue == null || normalizedValue === "") continue;
+    return {
+      field_key: fieldKey,
+      raw_value: rawValue,
+      normalized_value: String(normalizedValue),
+      page_number: entry.pageNumber,
+      confidence,
+      evidence_excerpt: `${entry.line} ${nextEntry.line}`.slice(0, 2_000),
+      extraction_method: "mls_labeled_text",
+    };
+  }
+  return null;
+}
+
+function buildMlsSheetCandidates(entries) {
+  const money = "\\$?\\s*[0-9][0-9,]*(?:\\.\\d{1,2})?";
+  const date = "(?:\\d{1,2}[/-]\\d{1,2}[/-](?:\\d{4}|\\d{2})|[A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4})";
+  const status = [
+    "ACTIVE OPTION CONTRACT", "TEMPORARILY OFF MARKET", "OPTION PENDING", "UNDER CONTRACT",
+    "COMING SOON", "OFF MARKET", "CONTINGENT", "AVAILABLE", "WITHDRAWN", "CANCELLED",
+    "CANCELED", "EXPIRED", "PENDING", "CLOSED", "ACTIVE", "SOLD", "PEND", "ACT", "TOM",
+  ].join("|");
+  const candidates = [
+    firstMlsLabeledCandidate(entries, {
+      fieldKey: "listing_status",
+      labelSource: "(?:MLS\\s+STATUS|LISTING\\s+STATUS|STATUS|ST)",
+      valueSource: `(?:${status})`,
+      normalize: normalizedListingStatus,
+    }),
+    firstMlsLabeledCandidate(entries, {
+      fieldKey: "mls_number",
+      labelSource: "(?:MLS\\s*(?:#|NO\\.?|NUMBER|ID)|LISTING\\s*(?:#|NO\\.?|NUMBER|ID))",
+      valueSource: "[A-Z0-9][A-Z0-9-]{2,44}",
+    }),
+    firstMlsLabeledCandidate(entries, {
+      fieldKey: "list_date",
+      labelSource: "(?:ORIGINAL\\s+LIST(?:ING)?\\s+DATE|LIST(?:ING)?\\s+DATE|LD)",
+      valueSource: date,
+      normalize: normalizedDate,
+    }),
+    firstMlsLabeledCandidate(entries, {
+      fieldKey: "days_on_market",
+      labelSource: "(?:DAYS\\s+ON\\s+MARKET|DOM)",
+      valueSource: "\\d{1,4}",
+      normalize: normalizedInteger,
+    }),
+    firstMlsLabeledCandidate(entries, {
+      fieldKey: "original_list_price",
+      labelSource: "(?:ORIGINAL\\s+LIST\\s+PRICE|OLP)",
+      valueSource: money,
+      normalize: normalizedMoney,
+    }),
+    firstMlsLabeledCandidate(entries, {
+      fieldKey: "list_price",
+      labelSource: "(?:CURRENT\\s+LIST\\s+PRICE|FINAL\\s+LIST\\s+PRICE|LIST\\s+PRICE|LP)",
+      valueSource: money,
+      normalize: normalizedMoney,
+      reject: (entry, match) => /original\s*$/i.test(entry.line.slice(0, match.index)),
+    }),
+  ].filter(Boolean);
+
+  const closedDate = firstMlsLabeledCandidate(entries, {
+    fieldKey: "listing_end_date",
+    labelSource: "(?:CLOSE(?:D|ING)?\\s+DATE|SOLD\\s+DATE|CD)",
+    valueSource: date,
+    normalize: normalizedDate,
+  });
+  const mostRecentDate = closedDate || firstMlsLabeledCandidate(entries, {
+    fieldKey: "listing_end_date",
+    labelSource: "(?:MOST\\s+RECENT\\s+LIST\\s+DATE|LAST\\s+LIST\\s+DATE|STATUS\\s+DATE|LAST\\s+UPDATE(?:D)?\\s+DATE|END\\s+DATE)",
+    valueSource: date,
+    normalize: normalizedDate,
+    confidence: 0.9,
+  });
+  if (mostRecentDate) {
+    candidates.splice(3, 0, mostRecentDate);
+  } else {
+    const start = candidates.find((candidate) => candidate.field_key === "list_date");
+    const dom = candidates.find((candidate) => candidate.field_key === "days_on_market");
+    const derivedEndDate = isoDateFromExposure(start?.normalized_value, dom?.normalized_value);
+    if (derivedEndDate) {
+      candidates.splice(3, 0, {
+        field_key: "listing_end_date",
+        raw_value: derivedEndDate,
+        normalized_value: derivedEndDate,
+        page_number: start.page_number,
+        confidence: 0.8,
+        evidence_excerpt: `Derived from ${start.evidence_excerpt} and ${dom.evidence_excerpt}`.slice(0, 2_000),
+        extraction_method: "mls_list_date_dom_derivation",
+      });
+    }
+  }
+  return candidates;
 }
 
 function firstLabeledCandidate(entries, {
@@ -286,7 +449,9 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
   const entries = pageLines(pages);
   const specializedCandidates = documentType === "engagement_letter"
     ? buildEngagementLetterCandidates(entries)
-    : [];
+    : documentType === "mls_sheet"
+      ? buildMlsSheetCandidates(entries)
+      : [];
   const specializedFields = new Set(specializedCandidates.map((candidate) => candidate.field_key));
   const definitions = [
     {
@@ -386,8 +551,8 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
       "lender_client_name", "lender_client_address", "subject_property_address", "assignment_type",
     ]),
     mls_sheet: new Set([
-      "mls_number", "list_price", "list_date", "contract_date", "closing_date",
-      "financing_type", "seller_concessions",
+      "listing_status", "mls_number", "list_price", "list_date", "listing_end_date",
+      "days_on_market", "original_list_price", "financing_type", "seller_concessions",
     ]),
   }[documentType] || null;
   const candidates = definitions

@@ -180,6 +180,21 @@ test("an engagement address override is audited and confirms visible suggestions
   const queries = [];
   const candidateRows = [
     {
+      id: 500,
+      document_id: 44,
+      field_key: "assignment_type",
+      raw_value: "Purchase",
+      normalized_value: "purchase_transaction",
+      page_number: 1,
+      confidence: 0.99,
+      evidence_excerpt: "Loan Purpose: Purchase",
+      extraction_method: "labeled_text",
+      review_status: "confirmed",
+      confirmed_value: "purchase_transaction",
+      reviewer: "Jordan Freeman",
+      reviewed_at: "2026-09-01T16:00:00.000Z",
+    },
+    {
       id: 501,
       document_id: 44,
       field_key: "lender_client_name",
@@ -219,7 +234,7 @@ test("an engagement address override is audited and confirms visible suggestions
           rows: [{
             id: 44,
             document_type: "engagement_letter",
-            extraction_summary: { candidate_count: 2 },
+            extraction_summary: { candidate_count: 3 },
           }],
         };
       }
@@ -270,10 +285,10 @@ test("an engagement address override is audited and confirms visible suggestions
     result.subject_address_override.report_subject_address,
     "1909 SNOWMASS LN, GARLAND, TX 75044",
   );
-  assert.deepEqual(result.subject_address_override.confirmed_candidate_ids, [501, 502]);
+  assert.deepEqual(result.subject_address_override.confirmed_candidate_ids, [500, 501, 502]);
   const documentUpdate = queries.find(({ sql }) => /SET processing_status = CASE/.test(sql));
   const summary = JSON.parse(documentUpdate.values[1]);
-  assert.equal(summary.candidate_count, 2);
+  assert.equal(summary.candidate_count, 3);
   assert.equal(summary.subject_address_override.acknowledged, true);
   assert.equal(queries.filter(({ sql }) => /INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)).length, 2);
 });

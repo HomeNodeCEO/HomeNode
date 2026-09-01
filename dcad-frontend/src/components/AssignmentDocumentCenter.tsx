@@ -12,7 +12,10 @@ import {
   type AssignmentDocumentCandidate,
   type AssignmentDocumentType,
 } from '@/lib/api';
-import { documentSubjectAddressComparison } from '@/lib/propertyReportPresentation';
+import {
+  confirmedDocumentFieldApplications,
+  documentSubjectAddressComparison,
+} from '@/lib/propertyReportPresentation';
 
 const DOCUMENT_TYPE_OPTIONS: Array<[AssignmentDocumentType, string]> = [
   ['zoning_map', 'Zoning Map'],
@@ -269,6 +272,14 @@ export default function AssignmentDocumentCenter({
     }
   };
 
+  const applyConfirmedDocumentFields = (document: AssignmentDocument) => {
+    const applications = confirmedDocumentFieldApplications(document.candidates);
+    applications.forEach(({ fieldKey, value }) => {
+      onApplyConfirmedCandidate?.(fieldKey, value, document.document_type);
+    });
+    return applications.length;
+  };
+
   const uploadAnyway = async () => {
     if (!selectedDocument) return;
     if (!reviewer.trim()) {
@@ -277,9 +288,6 @@ export default function AssignmentDocumentCenter({
     }
     const editorKey = getEditorKey();
     if (!editorKey) return;
-    const suggestedCandidates = (selectedDocument.candidates || []).filter((candidate) => (
-      candidate.id && candidate.review_status === 'suggested'
-    ));
     setLoading(true);
     setMessage('');
     try {
@@ -288,17 +296,7 @@ export default function AssignmentDocumentCenter({
         reportSubjectAddress: subjectAddress,
         candidateValues,
       }, editorKey);
-      const confirmedById = new Map(
-        (document.candidates || []).map((candidate) => [candidate.id, candidate]),
-      );
-      suggestedCandidates.forEach((candidate) => {
-        const confirmedCandidate = confirmedById.get(candidate.id);
-        const confirmedValue = confirmedCandidate?.confirmed_value
-          || candidateValues[candidate.id as number]
-          || candidate.normalized_value
-          || candidate.raw_value;
-        onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, document.document_type);
-      });
+      applyConfirmedDocumentFields(document);
       setSelectedDocument(document);
       setCandidateValues(Object.fromEntries(
         (document.candidates || [])
@@ -445,12 +443,27 @@ export default function AssignmentDocumentCenter({
                             <p className="mt-1">This records the reviewer acknowledgment, confirms the visible suggestions, and keeps the mismatch in the audit record.</p>
                           </>
                         ) : subjectAddressMismatch && subjectAddressOverride?.acknowledged ? (
-                          <p>
-                            Override acknowledged by <strong>{subjectAddressOverride.reviewer || 'the appraiser'}</strong>
-                            {subjectAddressOverride.acknowledged_at
-                              ? ` on ${new Date(subjectAddressOverride.acknowledged_at).toLocaleString()}`
-                              : ''}. The source PDF and CAD subject address were not changed.
-                          </p>
+                          <>
+                            <p>
+                              Override acknowledged by <strong>{subjectAddressOverride.reviewer || 'the appraiser'}</strong>
+                              {subjectAddressOverride.acknowledged_at
+                                ? ` on ${new Date(subjectAddressOverride.acknowledged_at).toLocaleString()}`
+                                : ''}. The source PDF and CAD subject address were not changed.
+                            </p>
+                            <button
+                              type="button"
+                              className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg"
+                              onClick={() => {
+                                const applied = applyConfirmedDocumentFields(selectedDocument);
+                                setMessage(applied
+                                  ? 'Confirmed engagement fields were reapplied to the current assignment draft; save Assignment Details to retain them.'
+                                  : 'This document has no confirmed fields to apply.');
+                              }}
+                              disabled={loading}
+                            >
+                              Apply Confirmed Fields
+                            </button>
+                          </>
                         ) : null}
                       </div>
                     ) : (

@@ -1051,6 +1051,12 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
       );
     }
     const acknowledgedAt = new Date().toISOString();
+    const confirmedCandidateIds = [
+      ...candidateRows
+        .filter((candidate) => candidate.review_status === "confirmed")
+        .map((candidate) => Number(candidate.id)),
+      ...confirmedCandidates.map((candidate) => candidate.id),
+    ];
     const extractionSummary = {
       ...(sourceDocument.extraction_summary || {}),
       subject_address_override: {
@@ -1065,7 +1071,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
           1_000,
         ),
         report_subject_address: reportAddress,
-        confirmed_candidate_ids: confirmedCandidates.map((candidate) => candidate.id),
+        confirmed_candidate_ids: [...new Set(confirmedCandidateIds)],
       },
     };
     await client.query(

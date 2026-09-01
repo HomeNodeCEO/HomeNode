@@ -33,6 +33,48 @@ async function seedValue(fixture, entityId, context, uid, reportFieldId, value) 
   );
 }
 
+async function seedAssignmentClient(fixture) {
+  const id = deterministicUuid(`${fixture.namespace}:entity:${fixture.workfileId}:assignment-contact-1`);
+  const inserted = await fixture.pool.query(
+    `INSERT INTO appraisal.uad_entities (
+       id, workfile_id, parent_entity_id, entity_type, entity_identifier,
+       ordinal, label, data, created_at, updated_at
+     ) VALUES (
+       $1, $2, NULL, 'assignment_contact', 'assignment-contact-1',
+       1, 'Lender / client', '{"synthetic":true}'::jsonb,
+       $3::timestamptz, $3::timestamptz
+     ) ON CONFLICT (workfile_id, entity_type, entity_identifier) DO UPDATE SET
+       ordinal = EXCLUDED.ordinal,
+       label = EXCLUDED.label,
+       data = EXCLUDED.data,
+       updated_at = EXCLUDED.updated_at
+     RETURNING id`,
+    [id, fixture.workfileId, fixture.observedAt],
+  );
+  const entityId = inserted.rows[0].id;
+  const values = [
+    ["assignment_client_primary_role", "2400.0018", "2.010", "Client"],
+    ["assignment_client_type_role", "2400.0017", "2.011", "Lender"],
+    ["assignment_client_name", "2400.0013", "2.012", "Synthetic National Bank"],
+    ["assignment_client_address", "2400.0001", "2.013", "100 Test Lender Way"],
+    ["assignment_client_address", "2400.0002", "2.013", "Garland"],
+    ["assignment_client_address", "2400.0004", "2.013", "TX"],
+    ["assignment_client_address", "2400.0003", "2.013", "75044"],
+  ];
+  for (const [context, uid, reportFieldId, value] of values) {
+    await seedValue(fixture, entityId, context, uid, reportFieldId, value);
+  }
+  return entityId;
+}
+
+export async function seedSyntheticUadAssignmentClient(pool, workfileId, {
+  namespace = "synthetic-uad-delivery",
+  observedAt = "2026-08-21T12:00:00.000Z",
+  sourceReference = "synthetic_successful_delivery",
+} = {}) {
+  return seedAssignmentClient({ namespace, observedAt, pool, sourceReference, workfileId });
+}
+
 async function seedCompletionValues(fixture) {
   const rootValues = [
     ["assignment", "1000.0034", "2.000", "Purchase"],
@@ -324,6 +366,7 @@ export async function seedSalesRichUadDatabaseFixture(pool, workfileId, {
       WHERE workfile_id = $1`,
     [workfileId, sourceReference, observedAt],
   );
+  await seedAssignmentClient(fixture);
   await seedCompletionValues(fixture);
   const comparableCount = await seedSalesComparables(fixture);
   return { comparable_count: comparableCount, source_reference: sourceReference };

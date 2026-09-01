@@ -4,7 +4,10 @@ import pg from "pg";
 import { normalizeOidcIssuer } from "../src/modules/mobile/auth.js";
 import { saveUadSection } from "../src/modules/uad/editor.js";
 import { createUadWorkfile } from "../src/modules/uad/workfiles.js";
-import { seedSalesRichUadDatabaseFixture } from "./lib/uadSalesRichDatabaseFixture.js";
+import {
+  seedSalesRichUadDatabaseFixture,
+  seedSyntheticUadAssignmentClient,
+} from "./lib/uadSalesRichDatabaseFixture.js";
 import { seedSyntheticUadWorkfileFixture } from "./lib/uadSyntheticWorkfileFixture.js";
 import {
   assertRedTeamDatabaseName,
@@ -225,6 +228,10 @@ async function ensureWorkfile(accountId, fileNumber, organizationId, appraiserId
 }
 
 async function ensureRedTeamAssignmentBaseline(workfileId) {
+  await seedSyntheticUadAssignmentClient(pool, workfileId, {
+    namespace: "uad-redteam-assignment-baseline",
+    sourceReference: "synthetic_redteam_assignment_baseline",
+  });
   const workfile = await pool.query(
     "SELECT current_revision FROM appraisal.uad_workfiles WHERE id = $1",
     [workfileId],

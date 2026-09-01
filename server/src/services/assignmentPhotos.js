@@ -80,6 +80,18 @@ export function normalizeAssignmentPhotoUpload(input = {}) {
   return Object.freeze({ ...normalized, requestSha256: sha256(canonicalJson(normalized)) });
 }
 
+export function normalizeAssignmentPhotoMetadata(input = {}) {
+  const baseRevision = Number(input.base_revision);
+  if (!Number.isInteger(baseRevision) || baseRevision < 1) {
+    throw new Error("invalid_assignment_photo_revision");
+  }
+  const category = boundedText(input.category, "invalid_assignment_photo_category", 80);
+  const caption = input.caption == null || String(input.caption).trim() === ""
+    ? category
+    : boundedText(input.caption, "invalid_assignment_photo_caption", 200);
+  return Object.freeze({ baseRevision, category, caption });
+}
+
 export function buildAssignmentPhotoObjectKey({ organizationId, reportFileId, photoId, objectId, variant, fileName }) {
   return [
     "organizations", organizationId || "unassigned", "report-files", reportFileId,
@@ -530,6 +542,83 @@ export async function removeAssignmentPhoto(pool, { accountId, assignmentFileId,
     );
     await client.query("COMMIT");
     return { disposition: retained ? "excluded_retained" : "placeholder_deleted" };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updateAssignmentPhotoMetadata(pool, storage, {
+  accountId,
+  assignmentFileId,
+  photoId: value,
+  input = {},
+}) {
+  const photoId = normalizeUuid(value, "invalid_assignment_photo_id");
+  const normalized = normalizeAssignmentPhotoMetadata(input);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const report = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
+    if (report.workfile_status === "signed") throw new Error("custom_appraisal_workfile_signed");
+    const locked = await client.query(
+      `SELECT * FROM app.inspection_photos
+        WHERE id = $1 AND report_file_id = $2 AND status NOT IN ('excluded', 'deleted')
+        FOR UPDATE`,
+      [photoId, report.id],
+    );
+    if (!locked.rows.length) throw new Error("assignment_photo_not_found");
+    const photo = locked.rows[0];
+    if (Number(photo.revision) !== normalized.baseRevision) {
+      throw new Error("assignment_photo_revision_conflict");
+    }
+    const categoryChanged = String(photo.category || "") !== normalized.category;
+    const captionChanged = String(photo.caption || "") !== normalized.caption;
+    if (!categoryChanged && !captionChanged) {
+      const objects = await photoObjects(client, photoId);
+      await client.query("COMMIT");
+      return photoPayload(storage, photo, objects);
+    }
+    const updated = await client.query(
+      `UPDATE app.inspection_photos
+          SET category = $2,
+              category_source = CASE WHEN category IS DISTINCT FROM $2 THEN 'manual' ELSE category_source END,
+              room_ref = CASE WHEN category IS DISTINCT FROM $2 THEN NULL ELSE room_ref END,
+              room_label = CASE WHEN category IS DISTINCT FROM $2 THEN NULL ELSE room_label END,
+              caption = $3, caption_source = 'manual',
+              revision = revision + 1, updated_at = now()
+        WHERE id = $1 RETURNING *`,
+      [photoId, normalized.category, normalized.caption],
+    );
+    const changedFields = [
+      categoryChanged ? "category" : null,
+      captionChanged ? "caption" : null,
+    ].filter(Boolean);
+    await client.query(
+      `INSERT INTO app.inspection_photo_events (
+         photo_id, inspection_session_id, event_type, prior_revision, next_revision, metadata
+       ) VALUES ($1, $2, 'photo.metadata_updated', $3, $4, $5::jsonb)`,
+      [photoId, photo.inspection_session_id || null, normalized.baseRevision,
+        normalized.baseRevision + 1, JSON.stringify({ origin: "custom_appraisal", changed_fields: changedFields })],
+    );
+    const registry = await client.query(
+      `UPDATE app.report_files SET registry_revision = registry_revision + 1, updated_at = now()
+        WHERE id = $1 RETURNING registry_revision`,
+      [report.id],
+    );
+    await client.query(
+      `INSERT INTO app.report_file_events (
+         report_file_id, event_type, prior_registry_revision, next_registry_revision,
+         changed_fields, metadata
+       ) VALUES ($1, 'desktop_photo.metadata_updated', $2, $3, ARRAY['inspection_photos'], $4::jsonb)`,
+      [report.id, Number(registry.rows[0].registry_revision) - 1,
+        Number(registry.rows[0].registry_revision), JSON.stringify({ photo_id: photoId, changed_fields: changedFields })],
+    );
+    const objects = await photoObjects(client, photoId);
+    await client.query("COMMIT");
+    return photoPayload(storage, updated.rows[0], objects);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

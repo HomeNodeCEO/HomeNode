@@ -685,7 +685,7 @@ function AddressHero({
       const url = photo.view_url?.trim();
       if (!url || seenUrls.has(url)) return;
       seenUrls.add(url);
-      const label = photo.room_label?.trim() || photo.caption?.trim() || photo.category?.trim()
+      const label = photo.caption?.trim() || photo.room_label?.trim() || photo.category?.trim()
         || `Inspection photo ${index + 1}`;
       const details = [
         photo.category?.trim() && photo.category.trim() !== label ? photo.category.trim() : "",

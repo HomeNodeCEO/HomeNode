@@ -7,6 +7,7 @@ import {
   getAssignmentPhotos,
   removeAssignmentPhoto,
   uploadAssignmentPhotoObjectViaApi,
+  updateAssignmentPhotoMetadata,
   verifyAssignmentPhotoUpload,
   type AssignmentPhoto,
   type AssignmentPhotoUploadRequest,
@@ -15,6 +16,7 @@ import {
 const LIVE_REFRESH_MS = 5_000;
 const VIEW_URL_REFRESH_MS = 4 * 60_000;
 const PHOTO_FEED_RETRY_DELAY_MS = 30_000;
+const PHOTO_CAROUSEL_SIZE = 4;
 
 const CATEGORIES = [
   'Front', 'Rear', 'Street', 'Kitchen', 'Living area', 'Bedroom', 'Bathroom',
@@ -115,6 +117,10 @@ export default function AssignmentPhotoCenter({
   const [photos, setPhotos] = useState<AssignmentPhoto[]>([]);
   const [category, setCategory] = useState(CATEGORIES[0]);
   const [caption, setCaption] = useState('');
+  const [photoPage, setPhotoPage] = useState(0);
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
+  const [editCategory, setEditCategory] = useState(CATEGORIES[0]);
+  const [editLabel, setEditLabel] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
@@ -295,10 +301,24 @@ export default function AssignmentPhotoCenter({
     versionRecoveryAtRef.current = 0;
     previewRecoveryAtRef.current.clear();
     setPhotos([]);
+    setPhotoPage(0);
+    setEditingPhotoId(null);
+    setEditCategory(CATEGORIES[0]);
+    setEditLabel('');
     setFailedPreviewUrls({});
     setLastCheckedAt(null);
     setMessage('');
   }, [accountId, assignmentFileId]);
+
+  const photoPageCount = Math.max(1, Math.ceil(photos.length / PHOTO_CAROUSEL_SIZE));
+  const visiblePhotos = photos.slice(
+    photoPage * PHOTO_CAROUSEL_SIZE,
+    (photoPage + 1) * PHOTO_CAROUSEL_SIZE,
+  );
+
+  useEffect(() => {
+    setPhotoPage((current) => Math.min(current, photoPageCount - 1));
+  }, [photoPageCount]);
 
   useEffect(() => {
     sketchRevisionRef.current = sketchRevision;
@@ -389,6 +409,41 @@ export default function AssignmentPhotoCenter({
     }
   };
 
+  const beginEditing = (photo: AssignmentPhoto) => {
+    setEditingPhotoId(photo.id);
+    setEditCategory(photo.category);
+    setEditLabel(photo.caption?.trim() || photo.room_label?.trim() || photo.category);
+    setMessage('');
+  };
+
+  const cancelEditing = () => {
+    setEditingPhotoId(null);
+    setEditCategory(CATEGORIES[0]);
+    setEditLabel('');
+  };
+
+  const savePhotoMetadata = async (photo: AssignmentPhoto) => {
+    if (!assignmentFileId) return;
+    const editorKey = getEditorKey();
+    if (!editorKey) return;
+    setBusy(true);
+    setMessage('');
+    try {
+      await updateAssignmentPhotoMetadata(accountId, assignmentFileId, photo.id, {
+        base_revision: photo.revision,
+        category: editCategory,
+        caption: editLabel,
+      }, editorKey);
+      cancelEditing();
+      await load();
+      setMessage('Photo label and category were saved to the carousel and report PDF.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Photo label could not be saved.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <section
       className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} ${compact ? 'border-x-0 border-b border-t-0' : 'rounded-2xl border'} ${className}`}
@@ -445,8 +500,37 @@ export default function AssignmentPhotoCenter({
               )}
               {message ? <p className="mt-3 text-sm text-slate-700">{message}</p> : null}
               {photos.length ? (
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {photos.map((photo) => (
+                <div className="mt-4" aria-label="Photo review carousel">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-slate-600" aria-live="polite">
+                      Showing {(photoPage * PHOTO_CAROUSEL_SIZE) + 1}–{Math.min((photoPage + 1) * PHOTO_CAROUSEL_SIZE, photos.length)} of {photos.length} photos
+                    </p>
+                    {photoPageCount > 1 ? (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          className="hn-action-secondary rounded-lg px-3 py-1.5 text-xs font-semibold"
+                          disabled={busy}
+                          aria-label="Previous four photos"
+                          onClick={() => setPhotoPage((current) => (current - 1 + photoPageCount) % photoPageCount)}
+                        >
+                          ‹ Previous
+                        </button>
+                        <span className="text-xs font-semibold text-slate-600">{photoPage + 1} / {photoPageCount}</span>
+                        <button
+                          type="button"
+                          className="hn-action-secondary rounded-lg px-3 py-1.5 text-xs font-semibold"
+                          disabled={busy}
+                          aria-label="Next four photos"
+                          onClick={() => setPhotoPage((current) => (current + 1) % photoPageCount)}
+                        >
+                          Next ›
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  {visiblePhotos.map((photo) => (
                     <article key={photo.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
                       {photo.view_url && failedPreviewUrls[photo.id] !== photo.view_url ? (
                         <img
@@ -463,15 +547,51 @@ export default function AssignmentPhotoCenter({
                         </div>
                       )}
                       <div className="p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div><p className="text-sm font-semibold text-slate-900">{photo.caption || photo.category}</p><p className="text-xs text-slate-500">{photo.category}</p></div>
-                          <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase text-slate-600">{photo.origin_channel}</span>
-                        </div>
+                        {editingPhotoId === photo.id ? (
+                          <div className="space-y-2 rounded-lg bg-slate-50 p-2">
+                            <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                              Category
+                              <select
+                                className="select select-bordered select-sm mt-1 w-full bg-white"
+                                value={editCategory}
+                                onChange={(event) => setEditCategory(event.target.value)}
+                              >
+                                {!CATEGORIES.includes(editCategory) ? <option>{editCategory}</option> : null}
+                                {CATEGORIES.map((value) => <option key={value}>{value}</option>)}
+                              </select>
+                            </label>
+                            <label className="block text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                              Photo label
+                              <input
+                                className="input input-bordered input-sm mt-1 w-full bg-white"
+                                maxLength={200}
+                                value={editLabel}
+                                onChange={(event) => setEditLabel(event.target.value)}
+                                placeholder={editCategory}
+                              />
+                            </label>
+                            <div className="flex flex-wrap gap-2">
+                              <button type="button" className="hn-action-primary rounded-lg px-3 py-1.5 text-xs font-semibold" disabled={busy} onClick={() => void savePhotoMetadata(photo)}>Save label</button>
+                              <button type="button" className="hn-action-secondary rounded-lg px-3 py-1.5 text-xs font-semibold" disabled={busy} onClick={cancelEditing}>Cancel</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-start justify-between gap-2">
+                            <div><p className="text-sm font-semibold text-slate-900">{photo.caption || photo.room_label || photo.category}</p><p className="text-xs text-slate-500">{photo.category}</p></div>
+                            <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-semibold uppercase text-slate-600">{photo.origin_channel}</span>
+                          </div>
+                        )}
                         {photo.retention_until ? <p className="mt-2 text-[11px] text-slate-500">Retained through {new Date(photo.retention_until).toLocaleDateString()}</p> : null}
-                        {!readOnly && photo.origin_channel === 'desktop' ? <button type="button" className="mt-2 text-xs font-semibold text-rose-700" disabled={busy} onClick={() => void remove(photo)}>Remove from report</button> : null}
+                        {!readOnly && editingPhotoId !== photo.id ? (
+                          <div className="mt-2 flex flex-wrap gap-3">
+                            <button type="button" className="text-xs font-semibold text-violet-700" disabled={busy} onClick={() => beginEditing(photo)}>Edit label</button>
+                            {photo.origin_channel === 'desktop' ? <button type="button" className="text-xs font-semibold text-rose-700" disabled={busy} onClick={() => void remove(photo)}>Remove from report</button> : null}
+                          </div>
+                        ) : null}
                       </div>
                     </article>
                   ))}
+                  </div>
                 </div>
               ) : !busy ? <p className="mt-4 text-sm text-slate-500">No verified mobile or desktop photos are attached to this file yet.</p> : null}
             </>

@@ -1005,12 +1005,23 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
 
   if (section === "assignment") {
     const rootLookup = valueLookup(merged);
+    const clientRoleField = UAD_PHASE_ONE_FIELDS.find(
+      (candidate) => candidate.key === "assignment_client_primary_role:2400.0018",
+    );
     const valuationMethodField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "assignment:1000.0158");
     const exteriorInspectionField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "appraiser_inspection:2400.0081");
     const interiorInspectionField = UAD_PHASE_ONE_FIELDS.find((candidate) => candidate.key === "appraiser_inspection:2400.0082");
     const valuationMethod = rootLookup("assignment:1000.0158");
     const exteriorInspection = rootLookup("appraiser_inspection:2400.0081");
     const interiorInspection = rootLookup("appraiser_inspection:2400.0082");
+    if (!entities.some((entity) => entity.entity_type === "assignment_contact")) {
+      errors.push(validationError(
+        clientRoleField,
+        null,
+        "client_party_required",
+        "Add at least one lender/client contact. UAD requires a PARTY with PartyRoleType Client.",
+      ));
+    }
     if (valuationMethod === "ExteriorAppraisal") {
       errors.push(validationError(
         valuationMethodField,
@@ -5224,7 +5235,14 @@ export function normalizeUadSaveReason(value) {
   return reason;
 }
 
-export async function saveUadSection(pool, workfileIdValue, section, input = {}, actorUserId = null) {
+export async function saveUadSection(
+  pool,
+  workfileIdValue,
+  section,
+  input = {},
+  actorUserId = null,
+  trustedSource = {},
+) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const expectedRevision = normalizeUadExpectedRevision(input.expected_revision);
   const saveReason = normalizeUadSaveReason(input.save_reason);
@@ -5315,6 +5333,14 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {},
     }
 
     const existingByKey = new Map(existingRows.map((row) => [valueKey(row), row]));
+    const trustedSourceType = String(trustedSource.sourceType || "").trim();
+    const trustedSourceReference = String(trustedSource.sourceReference || "").trim().slice(0, 1_000);
+    if (trustedSourceType && ![
+      "homenode", "public_record", "mls", "document", "measurement",
+      "calculated", "appraiser", "imported",
+    ].includes(trustedSourceType)) {
+      throw new Error("invalid_uad_trusted_source_type");
+    }
     const changed = [];
     for (const { field, value, entityId } of normalized) {
       const key = fieldValueKey(field, entityId);
@@ -5324,7 +5350,9 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {},
       const isOverride = Boolean(!calculated && previous && previous.source_type !== "appraiser" && changedFromPrevious);
       const sourceType = calculated
         ? "calculated"
-        : previous && !changedFromPrevious ? previous.source_type : "appraiser";
+        : previous && !changedFromPrevious
+          ? previous.source_type
+          : trustedSourceType || "appraiser";
       const sourceReference = calculated
         ? section === "reconciliation"
           ? "uad.reconciliation_repair_total"
@@ -5333,8 +5361,13 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {},
             : "uad.sales_comparison_summary"
         : previous && !changedFromPrevious
           ? previous.source_reference
-          : saveReason === "autosave" ? "uad_workspace.autosave" : "uad_workspace.section_save";
-      const overrideReason = isOverride ? "Appraiser edited a HomeNode-prefilled value." : null;
+          : trustedSourceReference
+            || (saveReason === "autosave" ? "uad_workspace.autosave" : "uad_workspace.section_save");
+      const overrideReason = isOverride
+        ? trustedSourceType === "document"
+          ? "Appraiser-confirmed document evidence replaced the prior value."
+          : "Appraiser edited a HomeNode-prefilled value."
+        : null;
       const id = previous?.id || randomUUID();
 
       if (previous && !changedFromPrevious && previous.is_appraiser_confirmed) continue;
@@ -5406,7 +5439,8 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {},
         revisionNumber,
         locked.rows[0].specification_release_key,
         JSON.stringify(revisionDocument),
-        saveReason === "autosave" ? `Autosaved ${section} draft` : `Saved ${section} information`,
+        String(trustedSource.changeSummary || "").trim().slice(0, 500)
+          || (saveReason === "autosave" ? `Autosaved ${section} draft` : `Saved ${section} information`),
         actorUserId,
       ],
     );
@@ -5425,6 +5459,8 @@ export async function saveUadSection(pool, workfileIdValue, section, input = {},
           submitted_field_count: normalized.length,
           changed_field_count: changed.length,
           save_reason: saveReason,
+          ...(trustedSourceType ? { source_type: trustedSourceType } : {}),
+          ...(trustedSourceReference ? { source_reference: trustedSourceReference } : {}),
         }),
         actorUserId,
       ],

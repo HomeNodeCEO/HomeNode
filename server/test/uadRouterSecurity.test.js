@@ -188,6 +188,20 @@ test("completed or unknown delivery attempts return a conflict without exposing 
   });
 });
 
+test("private UAD PDF uploads pass the bounded binary parser but still require authentication", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/documents`, {
+      method: "POST",
+      headers: { "content-type": "application/pdf" },
+      body: Buffer.from("%PDF-synthetic-document"),
+    });
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "invalid_access_token" });
+    assert.equal(pool.accessQueries.length, 0);
+  });
+});
+
 test("rate limiting keeps one client bucket across rotating proxy addresses", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

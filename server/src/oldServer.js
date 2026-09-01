@@ -394,6 +394,7 @@ app.use("/api/uad", createUadRouter({
   storage: uadObjectStorage,
   verifier: mobileOidcVerifier,
   compliance: uadComplianceRegistry,
+  documentOcrProvider,
   enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
   authenticationRequired: httpSecurity.authenticationRequired,
   security: httpSecurity,

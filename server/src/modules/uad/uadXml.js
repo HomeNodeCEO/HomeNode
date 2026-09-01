@@ -37,6 +37,16 @@ const ENTITY_ANCHOR_OVERRIDES = Object.freeze({
   project_utility: Object.freeze(["ASSOCIATION_CHARGE_INCLUDES_UTILITY"]),
 });
 const SCHEMA_CHILD_ORDER = Object.freeze({
+  ADDRESS: Object.freeze([
+    "AddressLineText",
+    "AddressUnitDesignatorType",
+    "AddressUnitIdentifier",
+    "CityName",
+    "CountyName",
+    "PostalCode",
+    "StateCode",
+    "EXTENSION",
+  ]),
   AMENITY: Object.freeze(["AMENITY_DETAIL", "IMAGES", "SWIMMING_POOL_FEATURES", "EXTENSION"]),
   ASSOCIATION_CHARGE: Object.freeze([
     "ASSOCIATION_CHARGE_DETAIL",
@@ -55,6 +65,7 @@ const SCHEMA_CHILD_ORDER = Object.freeze({
     "UNIT_VIEWS",
     "EXTENSION",
   ]),
+  PARTY: Object.freeze(["INDIVIDUAL", "LEGAL_ENTITY", "ADDRESSES", "ROLES", "EXTENSION"]),
 });
 
 export const UAD_XML_GENERATOR_VERSION = "homenode-uad-mismo-v5";

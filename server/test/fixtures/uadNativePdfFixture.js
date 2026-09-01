@@ -3,6 +3,7 @@ import { getUadEditorSections } from "../../src/modules/uad/fieldCatalog.js";
 const RELEASE_KEY = "uad-3.6-2026-08-13-h1.5";
 
 export function uadNativePdfEditorFixture() {
+  const assignmentContactId = "10000000-0000-4000-8000-000000000001";
   return {
     workfile: {
       id: "00000000-0000-4000-8000-000000000001",
@@ -13,12 +14,30 @@ export function uadNativePdfEditorFixture() {
       updated_at: "2026-08-21T12:00:00.000Z",
     },
     sections: getUadEditorSections().map((section) => ({ ...section, applicable: true })),
-    entities: [],
+    entities: [
+      {
+        id: assignmentContactId,
+        workfile_id: "00000000-0000-4000-8000-000000000001",
+        parent_entity_id: null,
+        entity_type: "assignment_contact",
+        entity_identifier: "assignment-contact-1",
+        ordinal: 1,
+        label: "Lender / client",
+        data: { synthetic: true },
+      },
+    ],
     values: [
       { entity_id: null, context_key: "subject_address", uid: "0100.0007", value: "1909 Snowmass Ln, Garland, TX 75044", is_appraiser_confirmed: true },
       { entity_id: null, context_key: "assignment", uid: "1000.0034", value: "Purchase", is_appraiser_confirmed: true },
       { entity_id: null, context_key: "assignment", uid: "1000.0158", value: "TraditionalAppraisal", is_appraiser_confirmed: true },
       { entity_id: null, context_key: "assignment", uid: "1000.0043", value: false, is_appraiser_confirmed: true },
+      { entity_id: assignmentContactId, context_key: "assignment_client_primary_role", uid: "2400.0018", value: "Client", is_appraiser_confirmed: true },
+      { entity_id: assignmentContactId, context_key: "assignment_client_type_role", uid: "2400.0017", value: "Lender", is_appraiser_confirmed: true },
+      { entity_id: assignmentContactId, context_key: "assignment_client_name", uid: "2400.0013", value: "Synthetic National Bank", is_appraiser_confirmed: true },
+      { entity_id: assignmentContactId, context_key: "assignment_client_address", uid: "2400.0001", value: "100 Test Lender Way", is_appraiser_confirmed: true },
+      { entity_id: assignmentContactId, context_key: "assignment_client_address", uid: "2400.0002", value: "Garland", is_appraiser_confirmed: true },
+      { entity_id: assignmentContactId, context_key: "assignment_client_address", uid: "2400.0004", value: "TX", is_appraiser_confirmed: true },
+      { entity_id: assignmentContactId, context_key: "assignment_client_address", uid: "2400.0003", value: "75044", is_appraiser_confirmed: true },
       { entity_id: null, context_key: "subject", uid: "1600.0007", value: "Q4", is_appraiser_confirmed: true },
       { entity_id: null, context_key: "subject", uid: "1600.0006", value: "C4", is_appraiser_confirmed: true },
       { entity_id: null, context_key: "sales_contract", uid: "0600.0008", value: 489000, is_appraiser_confirmed: true },
@@ -89,7 +108,7 @@ export function uadSalesRichEditorFixture() {
       ],
     },
   ];
-  editor.entities = comparables.map((comparable) => ({
+  editor.entities.push(...comparables.map((comparable) => ({
     id: comparable.id,
     workfile_id: editor.workfile.id,
     parent_entity_id: null,
@@ -98,7 +117,7 @@ export function uadSalesRichEditorFixture() {
     ordinal: comparable.ordinal,
     label: `Sales Comparable ${comparable.ordinal}`,
     data: {},
-  }));
+  })));
   editor.values.push(
     { entity_id: null, context_key: "cost_approach_exclusion", uid: "1300.0002", value: ["NotNecessaryForCredibleResults"], is_appraiser_confirmed: true },
     { entity_id: null, context_key: "income_approach_exclusion", uid: "1300.0004", value: ["NotNecessaryForCredibleResults"], is_appraiser_confirmed: true },

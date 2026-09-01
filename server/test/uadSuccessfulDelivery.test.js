@@ -53,8 +53,9 @@ test("rejects a delivery fixture when sales, adjustments, or reconciliation are 
 
 test("rejects inconsistent adjusted-price calculations", () => {
   const editor = uadSalesRichEditorFixture();
+  const comparable = editor.entities.find((entity) => entity.entity_type === "sales_comparable");
   const adjustedPrice = editor.values.find((value) => (
-    value.entity_id === editor.entities[0].id
+    value.entity_id === comparable.id
     && value.context_key === "sales_comparable_summary"
     && value.uid === "1800.0309"
   ));

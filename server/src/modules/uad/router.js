@@ -13,6 +13,7 @@ import { applyUadCompletionSuggestions } from "./completionApply.js";
 import { getUadCertificationReadiness, signUadWorkfile } from "./certifications.js";
 import { getUadComplianceStatus, runUadCompliance } from "./uadComplianceService.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
+import { applyConfirmedUadDocumentCandidate } from "./documentEvidence.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { generateUadXmlArtifact, getLatestUadXmlArtifact } from "./uadArtifacts.js";
 import { generateUadPdfArtifact, getLatestUadPdfArtifact } from "./uadPdfArtifacts.js";
@@ -51,6 +52,18 @@ import {
   createUadWorkfileAuthorizer,
   verifyUadAssigneeMembership,
 } from "./access.js";
+import {
+  confirmAssignmentDocumentDespiteSubjectMismatch,
+  createAssignmentDocument,
+  deleteAssignmentDocument,
+  ensureAssignmentDocumentsSchema,
+  getAssignmentDocument,
+  listAssignmentDocuments,
+  loadAssignmentDocumentContent,
+  MAX_ASSIGNMENT_DOCUMENT_BYTES,
+  processAssignmentDocument,
+  reviewAssignmentDocumentCandidate,
+} from "../../services/assignmentDocuments.js";
 
 function errorStatus(error) {
   const message = String(error?.message || "");
@@ -112,6 +125,9 @@ function errorStatus(error) {
   )) return 400;
   if (message.startsWith("delivery_")) return 422;
   if (message.startsWith("uad_completion_")) return 400;
+  if (message.startsWith("uad_document_") && message.endsWith("_requires_manual_entry")) return 422;
+  if (message === "uad_document_candidate_confirmation_required") return 409;
+  if (message.startsWith("document_") || message.startsWith("assignment_document_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
   if (["uad_parent_entity_required", "uad_entity_minimum_required"].includes(message)) return 400;
@@ -160,6 +176,7 @@ export function createUadRouter({
   storage,
   verifier,
   compliance = { enabled: false, providers: {} },
+  documentOcrProvider = null,
   enabled = false,
   authenticationRequired = false,
   security = {},
@@ -188,7 +205,10 @@ export function createUadRouter({
     const hasBody = contentType
       || Number(req.get("content-length") || 0) > 0
       || Boolean(req.get("transfer-encoding"));
-    if (hasBody && !req.is("application/json")) {
+    const documentUpload = req.method === "POST"
+      && /\/workfiles\/[^/]+\/documents$/.test(req.path)
+      && (req.is("application/pdf") || req.is("application/octet-stream"));
+    if (hasBody && !req.is("application/json") && !documentUpload) {
       return res.status(415).json({ error: "unsupported_media_type" });
     }
     return next();
@@ -435,6 +455,184 @@ export function createUadRouter({
       res.status(201).json(await generateUadSubmissionPackage(pool, storage, req.params.workfileId));
     } catch (error) {
       sendError(res, error);
+    }
+  });
+
+  async function uadDocumentScope(workfileId) {
+    await ensureAssignmentDocumentsSchema(pool);
+    const { rows } = await pool.query(
+      `SELECT workfile.id AS uad_workfile_id, workfile.account_id, workfile.organization_id,
+              report_file.id AS report_file_id
+         FROM appraisal.uad_workfiles workfile
+         LEFT JOIN app.report_files report_file ON report_file.uad_workfile_id = workfile.id
+        WHERE workfile.id = $1`,
+      [workfileId],
+    );
+    if (!rows[0]) throw new Error("uad_workfile_not_found");
+    return rows[0];
+  }
+
+  async function requireUadDocument(workfileId, documentId) {
+    const { rows } = await pool.query(
+      `SELECT id FROM app.assignment_documents
+        WHERE id = $1 AND uad_workfile_id = $2`,
+      [documentId, workfileId],
+    );
+    if (!rows[0]) throw new Error("document_not_found");
+  }
+
+  router.get("/workfiles/:workfileId/documents", async (req, res) => {
+    try {
+      const scope = await uadDocumentScope(req.params.workfileId);
+      const documents = await listAssignmentDocuments(pool, {
+        accountId: scope.account_id,
+        uadWorkfileId: scope.uad_workfile_id,
+        includePropertyEvidence: false,
+      });
+      return res.json({ documents });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post(
+    "/workfiles/:workfileId/documents",
+    express.raw({
+      type: ["application/pdf", "application/octet-stream"],
+      limit: MAX_ASSIGNMENT_DOCUMENT_BYTES,
+    }),
+    async (req, res) => {
+      try {
+        const scope = await uadDocumentScope(req.params.workfileId);
+        const decodeHeader = (name, fallback = "") => {
+          const source = String(req.get(name) || fallback).trim();
+          try { return decodeURIComponent(source); } catch { return source; }
+        };
+        const document = await createAssignmentDocument(pool, {
+          organizationId: scope.organization_id,
+          accountId: scope.account_id,
+          uadWorkfileId: scope.uad_workfile_id,
+          reportFileId: scope.report_file_id,
+          documentType: decodeHeader("x-document-type", "other"),
+          title: decodeHeader("x-document-title", "document.pdf"),
+          fileName: decodeHeader("x-document-file-name", "document.pdf"),
+          contentType: req.get("content-type"),
+          content: req.body,
+          uploadedBy: decodeHeader("x-document-uploaded-by"),
+          storage,
+        });
+        if (document.processing_status === "uploaded") {
+          void processAssignmentDocument(pool, document.id, {
+            storage,
+            ocrProvider: documentOcrProvider,
+          }).catch((error) => {
+            if (error?.message !== "document_processing_in_progress") {
+              console.warn("[uad documents] background extraction failed", error?.message || error);
+            }
+          });
+        }
+        return res.status(201).json({ document });
+      } catch (error) {
+        return sendError(res, error);
+      }
+    },
+  );
+
+  router.get("/workfiles/:workfileId/documents/:documentId", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      const document = await getAssignmentDocument(pool, req.params.documentId);
+      return res.json({ document });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.delete("/workfiles/:workfileId/documents/:documentId", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      return res.json(await deleteAssignmentDocument(pool, storage, req.params.documentId));
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/documents/:documentId/content", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      const document = await loadAssignmentDocumentContent(pool, req.params.documentId, { storage });
+      if (!document) throw new Error("document_not_found");
+      const fileName = String(document.file_name || `document-${document.id}.pdf`).replace(/[\r\n"]/g, "_");
+      res.set({
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `inline; filename="${fileName}"`,
+        ETag: `"${document.checksum_sha256}"`,
+        "Cache-Control": "private, max-age=86400, immutable",
+        "X-Content-Type-Options": "nosniff",
+      });
+      return res.send(document.content);
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/documents/:documentId/reprocess", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      const document = await processAssignmentDocument(pool, req.params.documentId, {
+        force: true,
+        storage,
+        ocrProvider: documentOcrProvider,
+      });
+      return res.json({ document });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/documents/:documentId/subject-address-override", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      await confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
+        documentId: req.params.documentId,
+        reviewer: req.body?.reviewer,
+        reportSubjectAddress: req.body?.report_subject_address,
+        candidateValues: req.body?.candidate_values,
+      });
+      return res.json({ document: await getAssignmentDocument(pool, req.params.documentId) });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.patch("/workfiles/:workfileId/documents/:documentId/candidates/:candidateId", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      const candidate = await reviewAssignmentDocumentCandidate(pool, {
+        documentId: req.params.documentId,
+        candidateId: req.params.candidateId,
+        reviewStatus: req.body?.review_status,
+        confirmedValue: req.body?.confirmed_value,
+        reviewer: req.body?.reviewer,
+      });
+      return res.json({ candidate });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/documents/:documentId/candidates/:candidateId/apply", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      return res.json(await applyConfirmedUadDocumentCandidate(
+        pool,
+        req.params.workfileId,
+        req.params.documentId,
+        req.params.candidateId,
+        req.mobileAuth?.userId || null,
+      ));
+    } catch (error) {
+      return sendError(res, error);
     }
   });
 

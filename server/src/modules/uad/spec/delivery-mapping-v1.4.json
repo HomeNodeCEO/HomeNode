@@ -104,6 +104,9 @@
     "ZONING_ILLEGAL_REASON"
   ],
   "entity_anchor_elements": {
+    "assignment_contact": [
+      "PARTY"
+    ],
     "additional_requested_conditional_valuation": [
       "ADDITIONAL_REQUESTED_CONDITIONAL_VALUATION"
     ],
@@ -358,6 +361,94 @@
     ]
   },
   "fields": {
+    "2400.0001": {
+      "sort": 2871,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ADDRESSES", "ADDRESS"],
+      "element": "AddressLineText",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, client company address, FID 2.013."
+    },
+    "2400.0002": {
+      "sort": 2872,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ADDRESSES", "ADDRESS"],
+      "element": "CityName",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, client company address, FID 2.013."
+    },
+    "2400.0003": {
+      "sort": 2874,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ADDRESSES", "ADDRESS"],
+      "element": "PostalCode",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, client company address, FID 2.013."
+    },
+    "2400.0004": {
+      "sort": 2873,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ADDRESSES", "ADDRESS"],
+      "element": "StateCode",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, client company address, FID 2.013."
+    },
+    "2400.0013": {
+      "sort": 2881,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "LEGAL_ENTITY", "LEGAL_ENTITY_DETAIL"],
+      "element": "FullName",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, client company name, FID 2.012."
+    },
+    "2400.0017": {
+      "sort": 2902,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ROLES", "ROLE", "ROLE_DETAIL"],
+      "element": "PartyRoleType",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Enumerated",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, type of client, FID 2.011."
+    },
+    "2400.0018": {
+      "sort": 2901,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ROLES", "ROLE", "ROLE_DETAIL"],
+      "element": "PartyRoleType",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Enumerated",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, client role, FID 2.010."
+    },
+    "2400.0077": {
+      "sort": 2903,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ROLES", "ROLE", "ROLE_DETAIL"],
+      "element": "PartyRoleTypeOtherDescription",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "String",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, other client role description, FID 2.011."
+    },
     "0100.0007": {
       "sort": 109,
       "path": [
@@ -9992,6 +10083,28 @@
       "sales_comparable": false,
       "implementation_notes": null
     },
+    "1000.0021": {
+      "sort": 3082,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ROLES", "ROLE", "ROLE_DETAIL"],
+      "element": "PartyRoleType",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Enumerated",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, individual seller role, FID 2.002."
+    },
+    "1000.0116": {
+      "sort": 3104,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ROLES", "ROLE", "ROLE_DETAIL"],
+      "element": "PartyRoleType",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Enumerated",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, legal-entity seller role, FID 2.002."
+    },
     "1000.0018": {
       "sort": 3083,
       "path": [
@@ -10415,6 +10528,28 @@
       "subject_property": false,
       "sales_comparable": false,
       "implementation_notes": null
+    },
+    "1000.0103": {
+      "sort": 3041,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ROLES", "ROLE", "ROLE_DETAIL"],
+      "element": "PartyRoleType",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Enumerated",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, individual borrower role, FID 2.001."
+    },
+    "1000.0105": {
+      "sort": 3063,
+      "path": ["MESSAGE", "DOCUMENT_SETS", "DOCUMENT_SET", "DOCUMENTS", "DOCUMENT", "DEAL_SETS", "DEAL_SET", "DEALS", "DEAL", "SERVICES", "SERVICE", "PARTIES", "PARTY", "ROLES", "ROLE", "ROLE_DETAIL"],
+      "element": "PartyRoleType",
+      "attribute": null,
+      "attribute_enumerations": [],
+      "format_type": "Enumerated",
+      "subject_property": false,
+      "sales_comparable": false,
+      "implementation_notes": "Appendix B-1 v1.4, legal-entity borrower role, FID 2.001."
     },
     "1000.0101": {
       "sort": 3042,

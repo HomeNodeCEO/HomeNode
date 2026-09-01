@@ -2664,6 +2664,8 @@ export interface AssignmentDocument {
   id: number;
   account_id: string;
   assignment_file_id: number | null;
+  uad_workfile_id?: string | null;
+  report_file_id?: string | null;
   document_type: AssignmentDocumentType;
   title: string;
   file_name: string;

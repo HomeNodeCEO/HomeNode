@@ -47,10 +47,10 @@ test("locked delivery mapping covers every HomeNode UAD unique ID", () => {
     subschema_version: "1.3",
     mismo_reference_model_identifier: "3.6.0366",
     source_sha256: "10f470ed53ee6f70404aad850f3f3c15aaee9489f654535ee0a3e5d1a8adee29",
-    mapped_unique_ids: 845,
+    mapped_unique_ids: 857,
     mapped_system_unique_ids: 12,
-    mapped_total_unique_ids: 857,
-    mapped_entity_types: 87,
+    mapped_total_unique_ids: 869,
+    mapped_entity_types: 88,
   });
 });
 
@@ -79,6 +79,55 @@ test("MISMO XML generation is deterministic and preserves subject/comparable ide
   assert.match(first.xml, /<DocumentFormIssuingEntityVersionIdentifier>September 2024<\/DocumentFormIssuingEntityVersionIdentifier>/);
   assert.equal(first.system_value_count, 12);
   assert.equal(first.pdf_file_name, "UAD-STAGING-SFR-0001.pdf");
+});
+
+test("MISMO XML keeps a lender/client in one PARTY with both required roles", () => {
+  const editor = editorFixture();
+  const contactId = "00000000-0000-4000-8000-000000000010";
+  editor.entities.push({
+    id: contactId,
+    parent_entity_id: null,
+    entity_type: "assignment_contact",
+    entity_identifier: "assignment-contact-1",
+    ordinal: 1,
+  });
+  editor.values.push(
+    { entity_id: contactId, context_key: "assignment_client_primary_role", uid: "2400.0018", value: "Client" },
+    { entity_id: contactId, context_key: "assignment_client_type_role", uid: "2400.0017", value: "Lender" },
+    { entity_id: contactId, context_key: "assignment_client_name", uid: "2400.0013", value: "Example National Bank" },
+    { entity_id: contactId, context_key: "assignment_client_address", uid: "2400.0001", value: "100 Main Street" },
+    { entity_id: contactId, context_key: "assignment_client_address", uid: "2400.0002", value: "Dallas" },
+    { entity_id: contactId, context_key: "assignment_client_address", uid: "2400.0004", value: "TX" },
+    { entity_id: contactId, context_key: "assignment_client_address", uid: "2400.0003", value: "75201" },
+  );
+
+  const generated = buildUadMismoXml(editor);
+  const party = generated.xml.match(/<PARTY>[\s\S]*?<FullName>Example National Bank<\/FullName>[\s\S]*?<\/PARTY>/)?.[0] || "";
+  assert.match(party, /<AddressLineText>100 Main Street<\/AddressLineText>/);
+  assert.match(party, /<CityName>Dallas<\/CityName>/);
+  assert.match(party, /<StateCode>TX<\/StateCode>/);
+  assert.match(party, /<PostalCode>75201<\/PostalCode>/);
+  assert.match(party, /<PartyRoleType>Client<\/PartyRoleType>/);
+  assert.match(party, /<PartyRoleType>Lender<\/PartyRoleType>/);
+  assert.equal((party.match(/<PARTY>/g) || []).length, 1);
+});
+
+test("MISMO XML keeps imported borrower and seller role/name data in their respective parties", () => {
+  const editor = editorFixture();
+  editor.values.push(
+    { entity_id: null, context_key: "borrower", uid: "1000.0103", value: "Borrower" },
+    { entity_id: null, context_key: "borrower", uid: "1000.0101", value: "Jordan" },
+    { entity_id: null, context_key: "borrower", uid: "1000.0102", value: "Freeman" },
+    { entity_id: null, context_key: "seller", uid: "1000.0116", value: "PropertySeller" },
+    { entity_id: null, context_key: "seller", uid: "1000.0020", value: "Example Seller LLC" },
+  );
+
+  const generated = buildUadMismoXml(editor);
+  const borrower = generated.xml.match(/<PARTY>[\s\S]*?<FirstName>Jordan<\/FirstName>[\s\S]*?<\/PARTY>/)?.[0] || "";
+  const seller = generated.xml.match(/<PARTY>[\s\S]*?<FullName>Example Seller LLC<\/FullName>[\s\S]*?<\/PARTY>/)?.[0] || "";
+  assert.match(borrower, /<LastName>Freeman<\/LastName>/);
+  assert.match(borrower, /<PartyRoleType>Borrower<\/PartyRoleType>/);
+  assert.match(seller, /<PartyRoleType>PropertySeller<\/PartyRoleType>/);
 });
 
 test("MISMO XML generation references deterministic external delivery images", async () => {

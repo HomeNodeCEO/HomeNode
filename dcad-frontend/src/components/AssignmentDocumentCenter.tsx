@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  confirmAssignmentDocumentDespiteSubjectMismatch,
   getAssignmentDocument,
   getAssignmentDocumentContent,
   getAssignmentDocuments,
@@ -122,7 +123,9 @@ export default function AssignmentDocumentCenter({
       || documentSubjectCandidate?.raw_value,
     subjectAddress,
   ), [documentSubjectCandidate, subjectAddress]);
-  const confirmationBlocked = subjectAddressComparison.matches === false;
+  const subjectAddressOverride = selectedDocument?.extraction_summary?.subject_address_override;
+  const subjectAddressMismatch = subjectAddressComparison.matches === false;
+  const confirmationBlocked = subjectAddressMismatch && !subjectAddressOverride?.acknowledged;
 
   const loadDocuments = useCallback(async () => {
     if (!accountId) return;
@@ -266,6 +269,51 @@ export default function AssignmentDocumentCenter({
     }
   };
 
+  const uploadAnyway = async () => {
+    if (!selectedDocument) return;
+    if (!reviewer.trim()) {
+      setMessage('Enter the appraiser or reviewer name before overriding the address warning.');
+      return;
+    }
+    const editorKey = getEditorKey();
+    if (!editorKey) return;
+    const suggestedCandidates = (selectedDocument.candidates || []).filter((candidate) => (
+      candidate.id && candidate.review_status === 'suggested'
+    ));
+    setLoading(true);
+    setMessage('');
+    try {
+      const document = await confirmAssignmentDocumentDespiteSubjectMismatch(selectedDocument.id, {
+        reviewer: reviewer.trim(),
+        reportSubjectAddress: subjectAddress,
+        candidateValues,
+      }, editorKey);
+      const confirmedById = new Map(
+        (document.candidates || []).map((candidate) => [candidate.id, candidate]),
+      );
+      suggestedCandidates.forEach((candidate) => {
+        const confirmedCandidate = confirmedById.get(candidate.id);
+        const confirmedValue = confirmedCandidate?.confirmed_value
+          || candidateValues[candidate.id as number]
+          || candidate.normalized_value
+          || candidate.raw_value;
+        onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, document.document_type);
+      });
+      setSelectedDocument(document);
+      setCandidateValues(Object.fromEntries(
+        (document.candidates || [])
+          .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
+          .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
+      ));
+      await loadDocuments();
+      setMessage('Override recorded. Extracted assignment fields were added to the current draft; save Assignment Details to retain them.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The address override could not be saved.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <section
       className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
@@ -363,16 +411,18 @@ export default function AssignmentDocumentCenter({
                   {selectedDocument.document_type === 'engagement_letter' ? (
                     documentSubjectCandidate ? (
                       <div
-                        role={confirmationBlocked ? 'alert' : undefined}
-                        className={`rounded-lg border p-3 text-xs leading-5 ${confirmationBlocked
+                        role={subjectAddressMismatch ? 'alert' : undefined}
+                        className={`rounded-lg border p-3 text-xs leading-5 ${subjectAddressMismatch
                           ? 'border-rose-300 bg-rose-50 text-rose-900'
                           : subjectAddressComparison.matches === true
                             ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
                             : 'border-amber-200 bg-amber-50 text-amber-900'}`}
                       >
                         <strong>
-                          {confirmationBlocked
-                            ? 'Assignment address mismatch'
+                          {subjectAddressMismatch
+                            ? subjectAddressOverride?.acknowledged
+                              ? 'Assignment address mismatch — override recorded'
+                              : 'Assignment address mismatch'
                             : subjectAddressComparison.matches === true
                               ? 'Assignment address verified'
                               : 'Verify the open report subject address'}
@@ -382,7 +432,25 @@ export default function AssignmentDocumentCenter({
                           {' '}The open report is <strong>{subjectAddressComparison.reportAddress || 'missing its subject address'}</strong>.
                         </p>
                         {confirmationBlocked ? (
-                          <p>Confirming extracted fields is disabled so information from the wrong assignment cannot populate this file.</p>
+                          <>
+                            <p>Confirming extracted fields is disabled so information from the wrong assignment cannot populate this file.</p>
+                            <button
+                              type="button"
+                              className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg"
+                              onClick={() => void uploadAnyway()}
+                              disabled={loading}
+                            >
+                              {loading ? 'Recording Override...' : 'Upload Anyway'}
+                            </button>
+                            <p className="mt-1">This records the reviewer acknowledgment, confirms the visible suggestions, and keeps the mismatch in the audit record.</p>
+                          </>
+                        ) : subjectAddressMismatch && subjectAddressOverride?.acknowledged ? (
+                          <p>
+                            Override acknowledged by <strong>{subjectAddressOverride.reviewer || 'the appraiser'}</strong>
+                            {subjectAddressOverride.acknowledged_at
+                              ? ` on ${new Date(subjectAddressOverride.acknowledged_at).toLocaleString()}`
+                              : ''}. The source PDF and CAD subject address were not changed.
+                          </p>
                         ) : null}
                       </div>
                     ) : (

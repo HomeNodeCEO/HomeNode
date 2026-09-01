@@ -162,6 +162,7 @@ import {
   savePropertyZoningVerification,
 } from "./services/zoningEvidence.js";
 import {
+  confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
   ensureAssignmentDocumentsSchema,
   getAssignmentDocument,
@@ -6553,6 +6554,33 @@ app.post("/api/documents/:id/reprocess", async (req, res) => {
       "document_not_processable",
     ]);
     return res.status(message === "document_not_found" ? 404 : clientErrors.has(message) ? 409 : 500).json({ error: message });
+  }
+});
+
+/** Record an appraiser mismatch override and confirm the visible engagement suggestions in one audit event. */
+app.post("/api/documents/:id/subject-address-override", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
+    const result = await confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
+      documentId: req.params.id,
+      reviewer: req.body?.reviewer,
+      reportSubjectAddress: req.body?.report_subject_address,
+      candidateValues: req.body?.candidate_values,
+    });
+    const document = await getAssignmentDocument(pool, result.document_id);
+    return res.json({ ok: true, document, override: result.subject_address_override });
+  } catch (error) {
+    const message = error?.message || "document_subject_address_override_failed";
+    const clientErrors = new Set([
+      "invalid_document_id",
+      "document_reviewer_required",
+      "report_subject_address_required",
+      "engagement_letter_required",
+      "document_subject_address_candidate_required",
+    ]);
+    return res.status(message === "document_not_found" ? 404 : clientErrors.has(message) ? 400 : 500).json({ error: message });
   }
 });
 

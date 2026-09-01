@@ -5,6 +5,7 @@ import {
   assignmentDocumentCandidateReviewKey,
   assignmentDocumentRetryDelayMs,
   buildAssignmentDocumentObjectKey,
+  confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
   loadAssignmentDocumentContent,
   retainedAssignmentDocumentReview,
@@ -173,4 +174,106 @@ test("reprocessing retains an exact appraiser review but not a changed extractio
     }).review_status,
     "suggested",
   );
+});
+
+test("an engagement address override is audited and confirms visible suggestions", async () => {
+  const queries = [];
+  const candidateRows = [
+    {
+      id: 501,
+      document_id: 44,
+      field_key: "lender_client_name",
+      raw_value: "Bank of America",
+      normalized_value: "Bank of America",
+      page_number: 1,
+      confidence: 0.99,
+      evidence_excerpt: "Client: Bank of America",
+      extraction_method: "labeled_text",
+      review_status: "suggested",
+      confirmed_value: null,
+      reviewer: null,
+      reviewed_at: null,
+    },
+    {
+      id: 502,
+      document_id: 44,
+      field_key: "subject_property_address",
+      raw_value: "513 HARDY DR, Garland, TX 75041-3536",
+      normalized_value: "513 HARDY DR, Garland, TX 75041-3536",
+      page_number: 2,
+      confidence: 0.99,
+      evidence_excerpt: "Property Address: 513 HARDY DR",
+      extraction_method: "labeled_text",
+      review_status: "suggested",
+      confirmed_value: null,
+      reviewer: null,
+      reviewed_at: null,
+    },
+  ];
+  const client = {
+    async query(sql, values = []) {
+      queries.push({ sql, values });
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+      if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+        return {
+          rows: [{
+            id: 44,
+            document_type: "engagement_letter",
+            extraction_summary: { candidate_count: 2 },
+          }],
+        };
+      }
+      if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) {
+        return { rows: candidateRows };
+      }
+      if (/UPDATE app\.assignment_document_field_candidates/.test(sql)) {
+        const candidate = candidateRows.find((row) => row.id === values[1]);
+        return {
+          rows: [{
+            ...candidate,
+            review_status: "confirmed",
+            confirmed_value: values[2],
+            reviewer: values[3],
+          }],
+        };
+      }
+      if (/INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)) return { rows: [] };
+      if (/UPDATE app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() {
+      return client;
+    },
+  };
+  const result = await confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
+    documentId: 44,
+    reviewer: "Jordan Freeman",
+    reportSubjectAddress: "1909 SNOWMASS LN, GARLAND, TX 75044",
+    candidateValues: { 501: "Bank of America" },
+  });
+  assert.equal(result.document_id, 44);
+  assert.equal(result.confirmed_candidates.length, 2);
+  assert.equal(result.subject_address_override.acknowledged, true);
+  assert.equal(result.subject_address_override.reviewer, "Jordan Freeman");
+  assert.equal(
+    result.subject_address_override.document_subject_address,
+    "513 HARDY DR, Garland, TX 75041-3536",
+  );
+  assert.equal(
+    result.subject_address_override.report_subject_address,
+    "1909 SNOWMASS LN, GARLAND, TX 75044",
+  );
+  assert.deepEqual(result.subject_address_override.confirmed_candidate_ids, [501, 502]);
+  const documentUpdate = queries.find(({ sql }) => /SET processing_status = CASE/.test(sql));
+  const summary = JSON.parse(documentUpdate.values[1]);
+  assert.equal(summary.candidate_count, 2);
+  assert.equal(summary.subject_address_override.acknowledged, true);
+  assert.equal(queries.filter(({ sql }) => /INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)).length, 2);
 });

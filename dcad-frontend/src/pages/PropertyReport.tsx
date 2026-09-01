@@ -307,6 +307,7 @@ function AddressHero({
   );
   const marketWorkfileRevisionRef = useRef(0);
   const marketWorkfileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const marketWorkfileSaveErrorRef = useRef<string | null>(null);
   const [workfileStatusMessage, setWorkfileStatusMessage] = useState("");
   const [sketchEvidenceRefreshing, setSketchEvidenceRefreshing] = useState(false);
   const sketchEvidenceRefreshInFlight = useRef(false);
@@ -365,6 +366,7 @@ function AddressHero({
     isCancelled: () => boolean,
   ) => {
     if (!accountId) return;
+    marketWorkfileSaveErrorRef.current = null;
     hydrateAssignmentDraft(selectedFile.assignment_details);
     try {
       const workfileResult = await loadCustomAppraisalWorkfile(accountId, selectedFile.id);
@@ -485,6 +487,7 @@ function AddressHero({
     setAssignmentSaveMessage("");
     resetProfileTracking();
     marketWorkfileRevisionRef.current = 0;
+    marketWorkfileSaveErrorRef.current = null;
     setWorkfileStatusMessage("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
@@ -846,6 +849,7 @@ function AddressHero({
     if (accountId && activeAssignmentFile) {
       const editorKey = editorKeyForSave();
       if (editorKey) {
+        marketWorkfileSaveErrorRef.current = null;
         setWorkfileStatusMessage(`Saving market study to ${activeAssignmentFile.file_number}...`);
         marketWorkfileSaveQueueRef.current = marketWorkfileSaveQueueRef.current
           .catch(() => undefined)
@@ -865,17 +869,19 @@ function AddressHero({
               editorKey,
             );
             marketWorkfileRevisionRef.current = response.section.revision;
+            marketWorkfileSaveErrorRef.current = null;
             setWorkfileStatusMessage(
               `Market study saved to ${activeAssignmentFile.workfile?.canonical_file_name || activeAssignmentFile.file_number}.`,
             );
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
-            setWorkfileStatusMessage(
+            const saveError =
               /custom_appraisal_workfile_signed/i.test(message)
                 ? "This appraisal is signed and locked. Start another file to change its market study."
-                : `Market study save needs attention: ${message}`,
-            );
+                : `Market study save needs attention: ${message}`;
+            marketWorkfileSaveErrorRef.current = saveError;
+            setWorkfileStatusMessage(saveError);
           });
       }
     }
@@ -1096,18 +1102,22 @@ function AddressHero({
     importCustomMarketArea,
   ]);
 
-  const saveAssignmentDetails = async () => {
-    const validationErrors = assignmentValidationErrors(assignmentDraft);
-    if (validationErrors.length) {
-      setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
-      return;
+  const saveAssignmentDetails = async ({
+    requireCompletion = true,
+  }: { requireCompletion?: boolean } = {}): Promise<boolean> => {
+    if (requireCompletion) {
+      const validationErrors = assignmentValidationErrors(assignmentDraft);
+      if (validationErrors.length) {
+        setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
+        return false;
+      }
     }
     if (!accountId || !activeAssignmentFile) {
       setAssignmentSaveMessage("Enter a file number and choose Save New File first.");
-      return;
+      return false;
     }
     const editorKey = editorKeyForSave();
-    if (!editorKey) return;
+    if (!editorKey) return false;
     setSavingAssignmentFile(true);
     try {
       const response = await updateAssignmentFile(
@@ -1130,7 +1140,10 @@ function AddressHero({
         file.id === updatedFile.id ? updatedFile : file
       ));
       setAssignmentDirty(false);
-      setAssignmentSaveMessage(`Saved to file ${response.assignment_file.file_number}.`);
+      const savedTime = new Date(response.assignment_file.updated_at || Date.now())
+        .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      setAssignmentSaveMessage(`Changes saved to file ${response.assignment_file.file_number} at ${savedTime}.`);
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : "The assignment file could not be saved.";
       if (/401|invalid_editor_key/i.test(message)) {
@@ -1141,23 +1154,55 @@ function AddressHero({
           ? "This file changed elsewhere. Reload the report before saving again."
           : message,
       );
+      return false;
     } finally {
       setSavingAssignmentFile(false);
     }
   };
 
-  const saveAssignmentFromSection = async () => {
+  const saveAssignmentFromSection = async (): Promise<boolean> => {
     const validationErrors = assignmentValidationErrors(assignmentDraft);
     if (validationErrors.length) {
       setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
-      return;
+      return false;
     }
+    if (!activeAssignmentFile) {
+      setAssignmentSaveMessage("Choose or start an assignment file before saving.");
+      setAssignmentChooserOpen(true);
+      return false;
+    }
+    return saveAssignmentDetails();
+  };
+
+  const saveCustomAppraisalNow = async () => {
+    if (savingAssignmentFile) return;
     if (!activeAssignmentFile) {
       setAssignmentSaveMessage("Choose or start an assignment file before saving.");
       setAssignmentChooserOpen(true);
       return;
     }
-    await saveAssignmentDetails();
+    if (activeAssignmentFile.workfile?.status === "signed") {
+      setAssignmentSaveMessage("This signed appraisal is locked. Start another file to make changes.");
+      return;
+    }
+    setAssignmentSaveMessage("Saving all current changes…");
+    await marketWorkfileSaveQueueRef.current;
+    const marketSaveError = marketWorkfileSaveErrorRef.current;
+    if (assignmentDirty) {
+      // A top-level Save protects a valid draft even when the appraiser has
+      // not completed every field required for final section review.
+      const assignmentSaved = await saveAssignmentDetails({ requireCompletion: false });
+      if (assignmentSaved && marketSaveError) {
+        setAssignmentSaveMessage(`Shared report changes were saved, but ${marketSaveError}`);
+      }
+      return;
+    }
+    if (marketSaveError) {
+      setAssignmentSaveMessage(marketSaveError);
+      return;
+    }
+    const confirmedAt = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    setAssignmentSaveMessage(`All current changes are saved at ${confirmedAt}.`);
   };
 
   const analyzeCurrentPropertyContext = () => runPropertyContextAnalysis({
@@ -1444,6 +1489,15 @@ function AddressHero({
             </span>
           ) : null}
           <button
+            aria-label="Save current Custom Appraisal changes now"
+            type="button"
+            className="hn-action-primary btn btn-sm normal-case rounded-lg shadow-sm"
+            onClick={() => void saveCustomAppraisalNow()}
+            disabled={assignmentFilesLoading || savingAssignmentFile || activeAssignmentFile?.workfile?.status === "signed"}
+          >
+            {savingAssignmentFile ? "Saving…" : assignmentDirty ? "Save changes" : "Save"}
+          </button>
+          <button
             type="button"
             className="hn-action-gold btn btn-outline btn-sm normal-case rounded-lg shadow-sm"
             onClick={() => setAssignmentChooserOpen(true)}
@@ -1456,7 +1510,7 @@ function AddressHero({
           className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-violet-100"
           aria-live="polite"
         >
-          {workfileStatusMessage || "\u00a0"}
+          {assignmentSaveMessage || workfileStatusMessage || "\u00a0"}
         </p>
 
         <details className={`mt-3 rounded-xl border px-3 py-2 ${

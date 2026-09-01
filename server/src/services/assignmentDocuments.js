@@ -51,6 +51,7 @@ export function buildAssignmentDocumentObjectKey({
   organizationId = null,
   accountId,
   assignmentFileId = null,
+  uadWorkfileId = null,
   checksumSha256,
   fileName,
 } = {}) {
@@ -61,6 +62,10 @@ export function buildAssignmentDocumentObjectKey({
     .replace(/[^a-f0-9]/gi, "")
     .toLowerCase()
     .slice(0, 64) || "unverified";
+  if (uadWorkfileId) {
+    return `organizations/${organization}/uad-3.6/accounts/${account}`
+      + `/workfiles/${sanitizeUadFileName(uadWorkfileId)}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
+  }
   return `organizations/${organization}/custom-appraisal/accounts/${account}`
     + `/assignment-files/${assignment}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
 }
@@ -146,6 +151,8 @@ function publicDocument(row, candidates = undefined) {
     id: Number(row.id),
     account_id: row.account_id,
     assignment_file_id: row.assignment_file_id == null ? null : Number(row.assignment_file_id),
+    uad_workfile_id: row.uad_workfile_id || null,
+    report_file_id: row.report_file_id || null,
     document_type: row.document_type,
     title: row.title,
     file_name: row.file_name,
@@ -230,6 +237,10 @@ export async function ensureAssignmentDocumentsSchema(pool) {
       ADD COLUMN IF NOT EXISTS next_processing_at timestamptz;
     ALTER TABLE app.assignment_documents
       ADD COLUMN IF NOT EXISTS last_processing_error text;
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS uad_workfile_id uuid;
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS report_file_id uuid;
     ALTER TABLE app.assignment_documents ALTER COLUMN content DROP NOT NULL;
     ALTER TABLE app.assignment_documents
       ADD COLUMN IF NOT EXISTS storage_provider text NOT NULL DEFAULT 'postgres';
@@ -280,12 +291,19 @@ export async function ensureAssignmentDocumentsSchema(pool) {
       END IF;
     END
     $$;
-    CREATE UNIQUE INDEX IF NOT EXISTS assignment_documents_scope_checksum_uidx
+    DROP INDEX IF EXISTS app.assignment_documents_scope_checksum_uidx;
+    CREATE UNIQUE INDEX IF NOT EXISTS assignment_documents_workflow_checksum_uidx
       ON app.assignment_documents (
-        account_id, COALESCE(assignment_file_id, 0), checksum_sha256
+        account_id,
+        COALESCE(assignment_file_id, 0),
+        COALESCE(uad_workfile_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        checksum_sha256
       );
     CREATE INDEX IF NOT EXISTS assignment_documents_account_idx
       ON app.assignment_documents (account_id, assignment_file_id, uploaded_at DESC);
+    CREATE INDEX IF NOT EXISTS assignment_documents_uad_workfile_idx
+      ON app.assignment_documents (uad_workfile_id, uploaded_at DESC)
+      WHERE uad_workfile_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS assignment_documents_processing_idx
       ON app.assignment_documents (processing_status, uploaded_at)
       WHERE processing_status IN ('uploaded', 'processing', 'extraction_failed');
@@ -349,6 +367,8 @@ export async function createAssignmentDocument(pool, {
   organizationId = null,
   accountId,
   assignmentFileId = null,
+  uadWorkfileId = null,
+  reportFileId = null,
   documentType = "other",
   title,
   fileName,
@@ -386,6 +406,7 @@ export async function createAssignmentDocument(pool, {
         organizationId,
         accountId,
         assignmentFileId,
+        uadWorkfileId,
         checksumSha256: checksum,
         fileName: safeFileName,
       });
@@ -414,16 +435,20 @@ export async function createAssignmentDocument(pool, {
   }
   const { rows } = await pool.query(
     `INSERT INTO app.assignment_documents (
-       account_id, assignment_file_id, document_type, title, file_name,
+       account_id, assignment_file_id, uad_workfile_id, report_file_id,
+       document_type, title, file_name,
        content_type, content, checksum_sha256, file_size_bytes, uploaded_by,
        storage_provider, storage_status, storage_bucket, object_key,
        storage_etag, storage_content_type, storage_verified_at, storage_last_error
      ) VALUES (
-       $1, $2, $3, $4, $5, 'application/pdf', $6, $7, $8, $9,
-       $10, $11, $12, $13, $14, $15, $16, $17
+       $1, $2, $3, $4, $5, $6, $7, 'application/pdf', $8, $9, $10, $11,
+       $12, $13, $14, $15, $16, $17, $18, $19
      )
      ON CONFLICT (
-       account_id, (COALESCE(assignment_file_id, 0)), checksum_sha256
+       account_id,
+       (COALESCE(assignment_file_id, 0)),
+       (COALESCE(uad_workfile_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+       checksum_sha256
      ) DO UPDATE SET
        title = EXCLUDED.title,
        file_name = EXCLUDED.file_name,
@@ -464,6 +489,8 @@ export async function createAssignmentDocument(pool, {
     [
       accountId,
       positiveInteger(assignmentFileId),
+      uadWorkfileId || null,
+      reportFileId || null,
       normalizedType,
       safeTitle,
       safeFileName,
@@ -859,9 +886,31 @@ export async function processPendingAssignmentDocuments(pool, {
 export async function listAssignmentDocuments(pool, {
   accountId,
   assignmentFileId = null,
+  uadWorkfileId = null,
   includePropertyEvidence = true,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
+  if (uadWorkfileId) {
+    const { rows } = await pool.query(
+      `SELECT document.*,
+              COUNT(candidate.id)::integer AS candidate_count,
+              COUNT(candidate.id) FILTER (WHERE candidate.review_status = 'suggested')::integer
+                AS suggested_candidate_count
+       FROM app.assignment_documents document
+       LEFT JOIN app.assignment_document_field_candidates candidate
+         ON candidate.document_id = document.id
+       WHERE document.account_id = $1
+         AND document.uad_workfile_id = $2
+       GROUP BY document.id
+       ORDER BY document.uploaded_at DESC`,
+      [accountId, uadWorkfileId],
+    );
+    return rows.map((row) => ({
+      ...publicDocument(row),
+      candidate_count: Number(row.candidate_count || 0),
+      suggested_candidate_count: Number(row.suggested_candidate_count || 0),
+    }));
+  }
   const { rows } = await pool.query(
     `SELECT document.*,
             COUNT(candidate.id)::integer AS candidate_count,

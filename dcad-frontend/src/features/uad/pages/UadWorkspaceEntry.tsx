@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
+import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
 
 import {
   createUadWorkfile,
@@ -33,6 +34,7 @@ export default function UadWorkspaceEntry() {
   const [capabilities, setCapabilities] = useState<UadCapabilities | null>(null);
   const [workfiles, setWorkfiles] = useState<UadWorkfile[]>([]);
   const [activeWorkfileId, setActiveWorkfileId] = useState<string | null>(null);
+  const [editorRefreshToken, setEditorRefreshToken] = useState(0);
   const displayedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId) || workfiles[0];
   const displayedPropertyType = displayedWorkfile?.property_type || capabilities?.initial_property_type;
 
@@ -209,9 +211,31 @@ export default function UadWorkspaceEntry() {
           </details>
         )}
 
+        {activeWorkfileId ? (
+          <AssignmentDocumentCenter
+            accountId={accountId}
+            className="mt-4"
+            onUadApplied={(result) => {
+              if (!result.applied) return;
+              setWorkfiles((current) => current.map((workfile) => (
+                workfile.id === activeWorkfileId
+                  ? {
+                      ...workfile,
+                      current_revision: result.current_revision || workfile.current_revision,
+                      updated_at: new Date().toISOString(),
+                    }
+                  : workfile
+              )));
+              setEditorRefreshToken((current) => current + 1);
+            }}
+            subjectAddress={address}
+            uadWorkfileId={activeWorkfileId}
+          />
+        ) : null}
+
         {activeWorkfileId && (
           <UadWorkfileEditor
-            key={activeWorkfileId}
+            key={`${activeWorkfileId}:${editorRefreshToken}`}
             onClose={() => setActiveWorkfileId(null)}
             workfileId={activeWorkfileId}
           />

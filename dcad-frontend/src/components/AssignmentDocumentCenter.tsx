@@ -18,6 +18,18 @@ import {
   confirmedDocumentFieldApplications,
   documentSubjectAddressComparison,
 } from '@/lib/propertyReportPresentation';
+import {
+  applyUadDocumentCandidate,
+  confirmUadDocumentDespiteSubjectMismatch,
+  deleteUadDocument,
+  getUadDocument,
+  getUadDocumentContent,
+  listUadDocuments,
+  reprocessUadDocument,
+  reviewUadDocumentCandidate,
+  uploadUadDocument,
+  type UadDocumentApplicationResult,
+} from '@/features/uad/api';
 
 const DOCUMENT_TYPE_OPTIONS: Array<[AssignmentDocumentType, string]> = [
   ['zoning_map', 'Zoning Map'],
@@ -28,6 +40,7 @@ const DOCUMENT_TYPE_OPTIONS: Array<[AssignmentDocumentType, string]> = [
   ['map', 'Other Map'],
   ['other', 'Other Appraisal Document'],
 ];
+const EMPTY_EDITOR_KEY = () => '';
 
 const FIELD_LABELS: Record<string, string> = {
   zoning_code: 'Zoning Code',
@@ -87,24 +100,29 @@ function processingDetail(document: AssignmentDocument) {
 interface AssignmentDocumentCenterProps {
   accountId: string;
   assignmentFileId?: number | null;
+  uadWorkfileId?: string | null;
   subjectAddress?: string;
-  getEditorKey: () => string;
+  getEditorKey?: () => string;
   onApplyConfirmedCandidate?: (
     fieldKey: string,
     value: string,
     documentType: AssignmentDocumentType,
   ) => void;
+  onUadApplied?: (result: UadDocumentApplicationResult) => void;
   className?: string;
 }
 
 export default function AssignmentDocumentCenter({
   accountId,
   assignmentFileId = null,
+  uadWorkfileId = null,
   subjectAddress = '',
-  getEditorKey,
+  getEditorKey = EMPTY_EDITOR_KEY,
   onApplyConfirmedCandidate,
+  onUadApplied,
   className = '',
 }: AssignmentDocumentCenterProps) {
+  const isUad = Boolean(uadWorkfileId);
   const [open, setOpen] = useState(false);
   const [documents, setDocuments] = useState<AssignmentDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<AssignmentDocument | null>(null);
@@ -156,8 +174,10 @@ export default function AssignmentDocumentCenter({
     setMessage('');
     try {
       const editorKey = getEditorKey();
-      if (!editorKey) return;
-      const loaded = await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
+      if (!isUad && !editorKey) return;
+      const loaded = isUad && uadWorkfileId
+        ? await listUadDocuments(uadWorkfileId)
+        : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
       setDocuments(loaded);
       if (selectedDocument) {
         const matching = loaded.find((document) => document.id === selectedDocument.id);
@@ -168,17 +188,21 @@ export default function AssignmentDocumentCenter({
     } finally {
       setLoading(false);
     }
-  }, [accountId, assignmentFileId, getEditorKey, selectedDocument]);
+  }, [accountId, assignmentFileId, getEditorKey, isUad, selectedDocument?.id, uadWorkfileId]);
 
   const loadDocument = useCallback(async (documentId: number) => {
     setLoading(true);
     setMessage('');
     try {
       const editorKey = getEditorKey();
-      if (!editorKey) return;
+      if (!isUad && !editorKey) return;
       const [document, content] = await Promise.all([
-        getAssignmentDocument(documentId, editorKey),
-        getAssignmentDocumentContent(documentId, editorKey),
+        isUad && uadWorkfileId
+          ? getUadDocument(uadWorkfileId, documentId)
+          : getAssignmentDocument(documentId, editorKey),
+        isUad && uadWorkfileId
+          ? getUadDocumentContent(uadWorkfileId, documentId)
+          : getAssignmentDocumentContent(documentId, editorKey),
       ]);
       setSelectedDocument(document);
       setViewerUrl(URL.createObjectURL(content));
@@ -192,7 +216,7 @@ export default function AssignmentDocumentCenter({
     } finally {
       setLoading(false);
     }
-  }, [getEditorKey]);
+  }, [getEditorKey, isUad, uadWorkfileId]);
 
   useEffect(() => {
     if (open) void loadDocuments();
@@ -218,16 +242,21 @@ export default function AssignmentDocumentCenter({
       return;
     }
     const editorKey = getEditorKey();
-    if (!editorKey) return;
+    if (!isUad && !editorKey) return;
     setLoading(true);
     setMessage('');
     try {
-      const document = await uploadAssignmentDocument(accountId, selectedFile, {
-        assignmentFileId,
+      const metadata = {
         documentType,
         title: documentTitle || selectedFile.name,
         uploadedBy: reviewer,
-      }, editorKey);
+      };
+      const document = isUad && uadWorkfileId
+        ? await uploadUadDocument(uadWorkfileId, selectedFile, metadata)
+        : await uploadAssignmentDocument(accountId, selectedFile, {
+            ...metadata,
+            assignmentFileId,
+          }, editorKey);
       setSelectedFile(null);
       setDocumentTitle('');
       await loadDocuments();
@@ -250,24 +279,44 @@ export default function AssignmentDocumentCenter({
       return;
     }
     const editorKey = getEditorKey();
-    if (!editorKey) return;
+    if (!isUad && !editorKey) return;
     setLoading(true);
     setMessage('');
     try {
       const confirmedValue = candidateValues[candidate.id] || candidate.raw_value;
-      await reviewAssignmentDocumentCandidate(selectedDocument.id, candidate.id, {
+      const reviewInput = {
         reviewStatus,
         confirmedValue,
         reviewer: reviewer.trim(),
-      }, editorKey);
+      } as const;
+      if (isUad && uadWorkfileId) {
+        await reviewUadDocumentCandidate(
+          uadWorkfileId,
+          selectedDocument.id,
+          candidate.id,
+          reviewInput,
+        );
+      } else {
+        await reviewAssignmentDocumentCandidate(selectedDocument.id, candidate.id, reviewInput, editorKey);
+      }
       if (reviewStatus === 'confirmed') {
-        onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, selectedDocument.document_type);
+        if (isUad && uadWorkfileId) {
+          const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
+          onUadApplied?.(result);
+          setMessage(result.applied
+            ? `Candidate confirmed and applied to UAD ${result.section === 'sales_contract' ? 'Sales Contract' : 'Assignment Information'}.`
+            : 'Candidate confirmed with its source page retained. This evidence has no direct UAD form mapping.');
+        } else {
+          onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, selectedDocument.document_type);
+        }
       }
       await loadDocument(selectedDocument.id);
       await loadDocuments();
-      setMessage(reviewStatus === 'confirmed'
-        ? 'Candidate confirmed with its exact source page retained.'
-        : 'Candidate rejected; the source PDF remains unchanged.');
+      if (reviewStatus === 'rejected') {
+        setMessage('Candidate rejected; the source PDF remains unchanged.');
+      } else if (!isUad) {
+        setMessage('Candidate confirmed with its exact source page retained.');
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The review could not be saved.');
     } finally {
@@ -278,10 +327,12 @@ export default function AssignmentDocumentCenter({
   const reprocess = async () => {
     if (!selectedDocument) return;
     const editorKey = getEditorKey();
-    if (!editorKey) return;
+    if (!isUad && !editorKey) return;
     setLoading(true);
     try {
-      const document = await reprocessAssignmentDocument(selectedDocument.id, editorKey);
+      const document = isUad && uadWorkfileId
+        ? await reprocessUadDocument(uadWorkfileId, selectedDocument.id)
+        : await reprocessAssignmentDocument(selectedDocument.id, editorKey);
       setSelectedDocument(document);
       await loadDocuments();
       setMessage('Extraction completed with the current document rules.');
@@ -300,13 +351,17 @@ export default function AssignmentDocumentCenter({
     );
     if (!confirmed) return;
     const editorKey = getEditorKey();
-    if (!editorKey) return;
+    if (!isUad && !editorKey) return;
     const deletedId = selectedDocument.id;
     const deletedTitle = selectedDocument.title;
     setLoading(true);
     setMessage('');
     try {
-      await deleteAssignmentDocument(deletedId, editorKey);
+      if (isUad && uadWorkfileId) {
+        await deleteUadDocument(uadWorkfileId, deletedId);
+      } else {
+        await deleteAssignmentDocument(deletedId, editorKey);
+      }
       setDocuments((current) => current.filter((document) => document.id !== deletedId));
       setSelectedDocument(null);
       setCandidateValues({});
@@ -327,6 +382,13 @@ export default function AssignmentDocumentCenter({
     return applications.length;
   };
 
+  const applyConfirmedCandidateToUad = async (candidate: AssignmentDocumentCandidate) => {
+    if (!uadWorkfileId || !selectedDocument || !candidate.id) return null;
+    const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
+    onUadApplied?.(result);
+    return result;
+  };
+
   const approveAllSuggestedFields = async () => {
     if (!selectedDocument || !suggestedCandidates.length) return;
     if (!reviewer.trim()) {
@@ -338,10 +400,35 @@ export default function AssignmentDocumentCenter({
       return;
     }
     const editorKey = getEditorKey();
-    if (!editorKey) return;
+    if (!isUad && !editorKey) return;
     setLoading(true);
     setMessage('');
     try {
+      if (isUad && uadWorkfileId) {
+        let applied = 0;
+        for (const candidate of suggestedCandidates) {
+          if (!candidate.id) continue;
+          await reviewUadDocumentCandidate(
+            uadWorkfileId,
+            selectedDocument.id,
+            candidate.id,
+            {
+              reviewStatus: 'confirmed',
+              confirmedValue: candidateValues[candidate.id] || candidate.raw_value,
+              reviewer: reviewer.trim(),
+            },
+          );
+          const result = await applyConfirmedCandidateToUad(candidate);
+          if (result?.applied) applied += 1;
+        }
+        await loadDocument(selectedDocument.id);
+        await loadDocuments();
+        setMessage(
+          `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved`
+            + `${applied ? ` and ${applied} supported value${applied === 1 ? '' : 's'} applied to the canonical UAD workfile` : ''}.`,
+        );
+        return;
+      }
       const document = await confirmAllAssignmentDocumentCandidates(selectedDocument.id, {
         reviewer: reviewer.trim(),
         reportSubjectAddress: subjectAddress,
@@ -376,16 +463,35 @@ export default function AssignmentDocumentCenter({
       return;
     }
     const editorKey = getEditorKey();
-    if (!editorKey) return;
+    if (!isUad && !editorKey) return;
     setLoading(true);
     setMessage('');
     try {
-      const document = await confirmAssignmentDocumentDespiteSubjectMismatch(selectedDocument.id, {
+      const overrideInput = {
         reviewer: reviewer.trim(),
         reportSubjectAddress: subjectAddress,
         candidateValues,
-      }, editorKey);
-      applyConfirmedDocumentFields(document);
+      };
+      const document = isUad && uadWorkfileId
+        ? await confirmUadDocumentDespiteSubjectMismatch(
+            uadWorkfileId,
+            selectedDocument.id,
+            overrideInput,
+          )
+        : await confirmAssignmentDocumentDespiteSubjectMismatch(
+            selectedDocument.id,
+            overrideInput,
+            editorKey,
+          );
+      if (isUad) {
+        for (const candidate of document.candidates || []) {
+          if (candidate.review_status === 'confirmed' && candidate.id) {
+            await applyConfirmedCandidateToUad(candidate);
+          }
+        }
+      } else {
+        applyConfirmedDocumentFields(document);
+      }
       setSelectedDocument(document);
       setCandidateValues(Object.fromEntries(
         (document.candidates || [])
@@ -393,7 +499,9 @@ export default function AssignmentDocumentCenter({
           .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
       ));
       await loadDocuments();
-      setMessage('Override recorded. Extracted assignment fields were added to the current draft; save Assignment Details to retain them.');
+      setMessage(isUad
+        ? 'Override recorded. Supported, appraiser-confirmed evidence was applied to the canonical UAD workfile.'
+        : 'Override recorded. Extracted assignment fields were added to the current draft; save Assignment Details to retain them.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The address override could not be saved.');
     } finally {
@@ -416,7 +524,9 @@ export default function AssignmentDocumentCenter({
             Document Evidence Center
           </span>
           <span className="mt-1 block text-xs text-slate-500">
-            Zoning records, contracts, engagement letters, MLS sheets, maps, and other assignment PDFs
+            {isUad
+              ? 'Private PDFs with page-cited suggestions that require appraiser confirmation before UAD fields change'
+              : 'Zoning records, contracts, engagement letters, MLS sheets, maps, and other assignment PDFs'}
           </span>
         </span>
         <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>
@@ -449,7 +559,7 @@ export default function AssignmentDocumentCenter({
           <div className="mt-4 grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-slate-900">Property File Documents</h4>
+                <h4 className="text-sm font-semibold text-slate-900">{isUad ? 'UAD Workfile Documents' : 'Property File Documents'}</h4>
                 <button type="button" className="text-xs font-semibold text-blue-700 hover:underline" onClick={() => void loadDocuments()} disabled={loading}>Refresh</button>
               </div>
               {documents.length ? documents.map((document) => (
@@ -550,12 +660,24 @@ export default function AssignmentDocumentCenter({
                             <button
                               type="button"
                               className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg"
-                              onClick={() => {
+                              onClick={() => void (async () => {
+                                if (isUad) {
+                                  let applied = 0;
+                                  for (const candidate of selectedDocument.candidates || []) {
+                                    if (candidate.review_status !== 'confirmed' || !candidate.id) continue;
+                                    const result = await applyConfirmedCandidateToUad(candidate);
+                                    if (result?.applied) applied += 1;
+                                  }
+                                  setMessage(applied
+                                    ? `Reapplied ${applied} confirmed suggestion${applied === 1 ? '' : 's'} to the canonical UAD workfile.`
+                                    : 'This document has no confirmed fields with a direct UAD mapping.');
+                                  return;
+                                }
                                 const applied = applyConfirmedDocumentFields(selectedDocument);
                                 setMessage(applied
                                   ? 'Confirmed engagement fields were reapplied to the current assignment draft; save Assignment Details to retain them.'
                                   : 'This document has no confirmed fields to apply.');
-                              }}
+                              })()}
                               disabled={loading}
                             >
                               Apply Confirmed Fields
@@ -612,6 +734,29 @@ export default function AssignmentDocumentCenter({
                             </button>
                             <button type="button" className="hn-action-secondary btn btn-outline btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'rejected')} disabled={loading}>Reject</button>
                           </div>
+                        ) : null}
+                        {isUad && candidate.review_status === 'confirmed' && candidate.id ? (
+                          <button
+                            type="button"
+                            className="hn-action-secondary btn btn-outline btn-xs mt-2 w-full normal-case rounded-lg"
+                            onClick={() => void (async () => {
+                              setLoading(true);
+                              setMessage('');
+                              try {
+                                const result = await applyConfirmedCandidateToUad(candidate);
+                                setMessage(result?.applied
+                                  ? `Confirmed evidence applied to UAD ${result.section === 'sales_contract' ? 'Sales Contract' : 'Assignment Information'}.`
+                                  : 'This evidence is retained for review but has no direct UAD form mapping.');
+                              } catch (error) {
+                                setMessage(error instanceof Error ? error.message : 'The confirmed evidence could not be applied to UAD.');
+                              } finally {
+                                setLoading(false);
+                              }
+                            })()}
+                            disabled={loading}
+                          >
+                            Apply to UAD 3.6
+                          </button>
                         ) : null}
                       </div>
                     )) : !(selectedDocument.candidates || []).length ? (

@@ -1,4 +1,9 @@
-import { makeUrl } from "@/lib/api";
+import {
+  makeUrl,
+  type AssignmentDocument,
+  type AssignmentDocumentCandidate,
+  type AssignmentDocumentType,
+} from "@/lib/api";
 
 import { withUadAuthorization } from "./auth";
 
@@ -344,6 +349,156 @@ export async function saveUadSection(
     }),
   });
   announceUadWorkfileMutation(workfileId);
+  return result;
+}
+
+export async function listUadDocuments(workfileId: string): Promise<AssignmentDocument[]> {
+  const response = await uadFetchJSON<{ documents: AssignmentDocument[] }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents`),
+  );
+  return response.documents;
+}
+
+export async function getUadDocument(
+  workfileId: string,
+  documentId: number,
+): Promise<AssignmentDocument> {
+  const response = await uadFetchJSON<{ document: AssignmentDocument }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}`),
+  );
+  return response.document;
+}
+
+export async function getUadDocumentContent(workfileId: string, documentId: number): Promise<Blob> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 60_000);
+  try {
+    const authorizedInit = await withUadAuthorization();
+    const response = await fetch(
+      makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/content`),
+      { credentials: "include", ...authorizedInit, signal: controller.signal },
+    );
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body?.error || `HTTP ${response.status}`);
+    }
+    return response.blob();
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+export async function deleteUadDocument(
+  workfileId: string,
+  documentId: number,
+): Promise<{ document_id: number; deleted: true; storage_deleted: boolean }> {
+  return uadFetchJSON<{ document_id: number; deleted: true; storage_deleted: boolean }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}`),
+    { method: "DELETE" },
+  );
+}
+
+export async function uploadUadDocument(
+  workfileId: string,
+  file: File,
+  metadata: { documentType: AssignmentDocumentType; title?: string; uploadedBy?: string },
+): Promise<AssignmentDocument> {
+  const response = await uadFetchJSON<{ document: AssignmentDocument }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents`),
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/pdf",
+        "x-document-type": encodeURIComponent(metadata.documentType),
+        "x-document-title": encodeURIComponent(metadata.title || file.name),
+        "x-document-file-name": encodeURIComponent(file.name),
+        "x-document-uploaded-by": encodeURIComponent(metadata.uploadedBy || ""),
+      },
+      body: file,
+      timeoutMs: 120_000,
+    },
+  );
+  return response.document;
+}
+
+export async function reprocessUadDocument(
+  workfileId: string,
+  documentId: number,
+): Promise<AssignmentDocument> {
+  const response = await uadFetchJSON<{ document: AssignmentDocument }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/reprocess`),
+    { method: "POST", timeoutMs: 120_000 },
+  );
+  return response.document;
+}
+
+export async function confirmUadDocumentDespiteSubjectMismatch(
+  workfileId: string,
+  documentId: number,
+  input: { reviewer: string; reportSubjectAddress: string; candidateValues?: Record<number, string> },
+): Promise<AssignmentDocument> {
+  const response = await uadFetchJSON<{ document: AssignmentDocument }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/subject-address-override`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        reviewer: input.reviewer,
+        report_subject_address: input.reportSubjectAddress,
+        candidate_values: input.candidateValues || {},
+      }),
+    },
+  );
+  return response.document;
+}
+
+export async function reviewUadDocumentCandidate(
+  workfileId: string,
+  documentId: number,
+  candidateId: number,
+  input: { reviewStatus: "confirmed" | "rejected"; confirmedValue?: string; reviewer: string },
+): Promise<AssignmentDocumentCandidate> {
+  const response = await uadFetchJSON<{ candidate: AssignmentDocumentCandidate }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/candidates/${candidateId}`),
+    {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        review_status: input.reviewStatus,
+        confirmed_value: input.confirmedValue || "",
+        reviewer: input.reviewer,
+      }),
+    },
+  );
+  return response.candidate;
+}
+
+export interface UadDocumentApplicationResult {
+  applied: boolean;
+  reason?: string;
+  field_key: string;
+  section?: UadSectionKey;
+  source_reference?: string;
+  current_revision?: number;
+  changed_field_count?: number;
+  applied_fields?: Array<{
+    uid: string;
+    context_key: string;
+    entity_id: string | null;
+    value: UadFieldValue;
+  }>;
+}
+
+export async function applyUadDocumentCandidate(
+  workfileId: string,
+  documentId: number,
+  candidateId: number,
+): Promise<UadDocumentApplicationResult> {
+  const result = await uadFetchJSON<UadDocumentApplicationResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/candidates/${candidateId}/apply`),
+    { method: "POST" },
+  );
+  if (result.applied) announceUadWorkfileMutation(workfileId);
   return result;
 }
 

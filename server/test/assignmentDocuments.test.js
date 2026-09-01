@@ -24,6 +24,16 @@ test("assignment document object keys are assignment-scoped and content-addresse
     }),
     `organizations/10000000-0000-4000-8000-000000000001/custom-appraisal/accounts/26272500060150000/assignment-files/91/documents/${"a".repeat(64)}/Purchase-Contract-Final.pdf`,
   );
+  assert.equal(
+    buildAssignmentDocumentObjectKey({
+      organizationId: "10000000-0000-4000-8000-000000000001",
+      accountId: "26272500060150000",
+      uadWorkfileId: "20000000-0000-4000-8000-000000000002",
+      checksumSha256: "B".repeat(64),
+      fileName: "Engagement Letter.pdf",
+    }),
+    `organizations/10000000-0000-4000-8000-000000000001/uad-3.6/accounts/26272500060150000/workfiles/20000000-0000-4000-8000-000000000002/documents/${"b".repeat(64)}/Engagement-Letter.pdf`,
+  );
 });
 
 test("a verified private upload stores metadata without duplicating PDF bytes in PostgreSQL", async () => {
@@ -38,20 +48,22 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
           id: 41,
           account_id: values[0],
           assignment_file_id: values[1],
-          document_type: values[2],
-          title: values[3],
-          file_name: values[4],
+          uad_workfile_id: values[2],
+          report_file_id: values[3],
+          document_type: values[4],
+          title: values[5],
+          file_name: values[6],
           content_type: "application/pdf",
-          content: values[5],
-          checksum_sha256: values[6],
-          file_size_bytes: values[7],
-          storage_provider: values[9],
-          storage_status: values[10],
-          storage_bucket: values[11],
-          object_key: values[12],
-          storage_etag: values[13],
-          storage_content_type: values[14],
-          storage_verified_at: values[15],
+          content: values[7],
+          checksum_sha256: values[8],
+          file_size_bytes: values[9],
+          storage_provider: values[11],
+          storage_status: values[12],
+          storage_bucket: values[13],
+          object_key: values[14],
+          storage_etag: values[15],
+          storage_content_type: values[16],
+          storage_verified_at: values[17],
           processing_status: "uploaded",
           extraction_summary: {},
         }],
@@ -73,8 +85,8 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
     content: pdf,
     storage,
   });
-  assert.equal(insertValues[5], null);
-  assert.equal(insertValues[9], "r2");
+  assert.equal(insertValues[7], null);
+  assert.equal(insertValues[11], "r2");
   assert.equal(result.storage_provider, "r2");
   assert.ok(result.storage_verified_at instanceof Date);
 });

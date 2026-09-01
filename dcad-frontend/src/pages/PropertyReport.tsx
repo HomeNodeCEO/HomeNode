@@ -1925,15 +1925,27 @@ function AddressHero({
             {...sectionEditProps("report.subject_identification")}
             className="order-1"
           >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <SummaryField label="Parcel / Account Number" value={displayValue(accountId)} />
-              <SummaryField label="County" value={county} />
-              <SummaryField label="Subdivision" value={subdivision} />
-              <div className="hidden lg:block" aria-hidden="true" />
-              <SummaryField label="Zoning Classification" value={primaryZoningDisplay} />
-              <SummaryField label="Latest Deed Transfer" value={formatDate(deedTransferDate)} />
+            <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2 lg:grid-cols-12">
+              <SummaryField
+                label="Parcel / Account Number"
+                value={displayValue(accountId)}
+                className="lg:col-span-3"
+              />
+              <SummaryField label="County" value={county} className="lg:col-span-2" />
+              <SummaryField label="Subdivision" value={subdivision} className="lg:col-span-4" />
+              <SummaryField
+                label="Zoning Classification"
+                value={primaryZoningDisplay}
+                className="lg:col-span-3"
+              />
+              <SummaryField
+                label="Latest Deed Transfer"
+                value={formatDate(deedTransferDate)}
+                className="lg:col-span-3"
+              />
               <SummaryField
                 label={ownerParties.length > 1 ? "Owner Names" : "Owner Name"}
+                className="lg:col-span-7"
                 value={
                   ownerParties.length ? (
                     <div className="space-y-1.5">
@@ -1948,6 +1960,7 @@ function AddressHero({
               />
               <SummaryField
                 label="Ownership Percentage"
+                className="lg:col-span-2"
                 value={
                   ownerParties.length ? (
                     <div className="space-y-1.5">
@@ -1968,10 +1981,11 @@ function AddressHero({
               <SummaryField
                 label="Legal Description"
                 value={<span className="whitespace-pre-line">{legalDescription}</span>}
-                className="sm:col-span-2 lg:col-span-3"
+                className="sm:col-span-2 lg:col-span-5"
               />
               <SummaryField
                 label="Census Tract"
+                className="sm:col-span-2 lg:col-span-3"
                 value={
                   <div>
                     <span>{formatCensusTract(detail?.property_location?.census_tract)}</span>

@@ -25,6 +25,7 @@ import UadSubmissionPackagePanel from "./UadSubmissionPackagePanel";
 interface Props {
   workfileId: string;
   onClose: () => void;
+  initialSection?: UadSectionKey;
 }
 
 const inputClass = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-violet-700 focus:ring-2 focus:ring-violet-100";
@@ -137,9 +138,9 @@ function evaluateCondition(condition: UadCondition | undefined, lookup: (key: st
   return true;
 }
 
-export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
+export default function UadWorkfileEditor({ workfileId, onClose, initialSection = "assignment" }: Props) {
   const [editor, setEditor] = useState<UadEditorResponse | null>(null);
-  const [activeSection, setActiveSection] = useState<UadSectionKey>("assignment");
+  const [activeSection, setActiveSection] = useState<UadSectionKey>(initialSection);
   const [draft, setDraft] = useState<Record<string, UadFieldValue>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

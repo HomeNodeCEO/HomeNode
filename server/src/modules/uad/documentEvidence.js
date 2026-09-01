@@ -10,6 +10,18 @@ const SUPPORTED_DOCUMENT_FIELDS = new Set([
   "lender_client_address",
   "contract_price",
   "contract_date",
+  "listing_status",
+  "mls_number",
+  "list_date",
+  "listing_end_date",
+  "days_on_market",
+  "original_list_price",
+  "list_price",
+]);
+
+const MLS_DOCUMENT_FIELDS = new Set([
+  "listing_status", "mls_number", "list_date", "listing_end_date",
+  "days_on_market", "original_list_price", "list_price",
 ]);
 
 function positiveInteger(value) {
@@ -32,6 +44,70 @@ function assignmentReason(value) {
   if (["refinance", "refi"].includes(normalized)) return "Refinance";
   if (["heloc", "home_equity", "home_equity_line"].includes(normalized)) return "HomeEquity";
   if (["construction", "new_construction", "construction_loan"].includes(normalized)) return "Construction";
+  return null;
+}
+
+function subjectListingStatus(value) {
+  const source = cleanText(value, 100).toLowerCase().replace(/[^a-z]+/g, " ").trim();
+  if (["active", "act", "available", "coming soon"].includes(source)) return "Active";
+  if (["pending", "pend", "under contract", "contingent", "option pending", "active option contract"].includes(source)) {
+    return "Pending";
+  }
+  if ([
+    "offmarket", "off market", "closed", "sold", "expired", "withdrawn", "cancelled",
+    "canceled", "temporarily off market", "tom",
+  ].includes(source)) return "OffMarket";
+  return null;
+}
+
+function uadDocumentCurrency(value) {
+  const amount = Number(cleanText(value, 100).replace(/[$,]/g, ""));
+  return Number.isFinite(amount) && amount >= 0 && amount <= 999_999_999.99 ? amount : null;
+}
+
+export function uadMlsListingValues(fieldKeyValue, value, entityId) {
+  const fieldKey = cleanText(fieldKeyValue, 100);
+  const listingEntityId = cleanText(entityId, 100);
+  if (!MLS_DOCUMENT_FIELDS.has(fieldKey) || !listingEntityId) return null;
+  const fixedValues = [
+    { uid: "0900.0004", context_key: "subject_listing_summary", value: true },
+    { uid: "0900.0015", context_key: "subject_listing", entity_id: listingEntityId, value: "MLS" },
+  ];
+  if (fieldKey === "listing_status") {
+    const status = subjectListingStatus(value);
+    return status
+      ? [...fixedValues, { uid: "0900.0013", context_key: "subject_listing", entity_id: listingEntityId, value: status }]
+      : null;
+  }
+  if (fieldKey === "mls_number") {
+    const identifier = cleanText(value, 45);
+    return identifier
+      ? [...fixedValues, { uid: "0900.0011", context_key: "subject_listing", entity_id: listingEntityId, value: identifier }]
+      : null;
+  }
+  if (fieldKey === "list_date") {
+    return /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? [...fixedValues, { uid: "0900.0012", context_key: "subject_listing", entity_id: listingEntityId, value }]
+      : null;
+  }
+  if (fieldKey === "listing_end_date") {
+    return /^\d{4}-\d{2}-\d{2}$/.test(value)
+      ? [...fixedValues, { uid: "0900.0010", context_key: "subject_listing", entity_id: listingEntityId, value }]
+      : null;
+  }
+  if (fieldKey === "days_on_market") {
+    const count = Number(value);
+    return Number.isSafeInteger(count) && count >= 0 && count <= 9_999
+      ? [...fixedValues, { uid: "0900.0007", context_key: "subject_listing", entity_id: listingEntityId, value: count }]
+      : null;
+  }
+  if (["original_list_price", "list_price"].includes(fieldKey)) {
+    const amount = uadDocumentCurrency(value);
+    const uid = fieldKey === "original_list_price" ? "0900.0009" : "0900.0008";
+    return amount == null
+      ? null
+      : [...fixedValues, { uid, context_key: "subject_listing", entity_id: listingEntityId, value: amount }];
+  }
   return null;
 }
 
@@ -121,6 +197,65 @@ async function findOrCreateClientContact(pool, workfileId, documentId, actorUser
   }
 }
 
+async function findOrCreateSubjectListing(pool, workfileId, documentId, actorUserId) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`uad-document-subject-listing:${workfileId}:${documentId}`],
+    );
+    const repeated = await client.query(
+      `SELECT id
+         FROM appraisal.uad_entities
+        WHERE workfile_id = $1
+          AND entity_type = 'subject_listing'
+          AND data->>'source_document_id' = $2
+        ORDER BY ordinal, id
+        LIMIT 1
+        FOR UPDATE`,
+      [workfileId, String(documentId)],
+    );
+    if (repeated.rows[0]) {
+      await client.query("COMMIT");
+      return repeated.rows[0].id;
+    }
+    const entity = await createUadEntityWithClient(client, workfileId, {
+      entity_type: "subject_listing",
+      label: "MLS listing",
+      data: {
+        source: "assignment_document",
+        source_document_id: String(documentId),
+        listing_source: "MLS",
+      },
+    }, { actorUserId });
+    await client.query("COMMIT");
+    return entity.id;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function totalSubjectListingDom(pool, workfileId, entityId, currentValue) {
+  const { rows } = await pool.query(
+    `SELECT entity_id, value
+       FROM appraisal.uad_field_values
+      WHERE workfile_id = $1
+        AND field_context = 'subject_listing'
+        AND uad_uid = '0900.0007'`,
+    [workfileId],
+  );
+  const values = new Map(rows.map((row) => [String(row.entity_id), Number(row.value)]));
+  values.set(String(entityId), Number(currentValue));
+  const counts = [...values.values()];
+  if (counts.some((count) => !Number.isSafeInteger(count) || count < 0 || count > 9_999)) return null;
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  return total <= 9_999 ? total : null;
+}
+
 function clientRoleValues(entityId) {
   return [
     { uid: "2400.0018", context_key: "assignment_client_primary_role", entity_id: entityId, value: "Client" },
@@ -144,7 +279,8 @@ export async function applyConfirmedUadDocumentCandidate(
   const candidateId = positiveInteger(candidateIdValue);
   if (!documentId || !candidateId) throw new Error("invalid_document_candidate");
   const { rows } = await pool.query(
-    `SELECT candidate.*, document.uad_workfile_id, document.checksum_sha256
+    `SELECT candidate.*, document.uad_workfile_id, document.checksum_sha256,
+            document.document_type
        FROM app.assignment_document_field_candidates candidate
        JOIN app.assignment_documents document ON document.id = candidate.document_id
       WHERE candidate.id = $2
@@ -162,7 +298,27 @@ export async function applyConfirmedUadDocumentCandidate(
   const value = cleanText(candidate.confirmed_value || candidate.normalized_value || candidate.raw_value);
   let section = "assignment";
   let values = [];
-  if (candidate.field_key === "assignment_type") {
+  if (MLS_DOCUMENT_FIELDS.has(candidate.field_key)) {
+    if (candidate.document_type !== "mls_sheet") {
+      return { applied: false, reason: "mls_document_required", field_key: candidate.field_key };
+    }
+    section = "subject_listing_information";
+    if (!uadMlsListingValues(
+      candidate.field_key,
+      value,
+      "00000000-0000-4000-8000-000000000000",
+    )) {
+      throw new Error("uad_document_subject_listing_value_requires_manual_entry");
+    }
+    const entityId = await findOrCreateSubjectListing(pool, workfileId, documentId, actorUserId);
+    values = uadMlsListingValues(candidate.field_key, value, entityId);
+    if (candidate.field_key === "days_on_market") {
+      const total = await totalSubjectListingDom(pool, workfileId, entityId, Number(value));
+      if (total != null) {
+        values.push({ uid: "0900.0003", context_key: "subject_listing_summary", value: total });
+      }
+    }
+  } else if (candidate.field_key === "assignment_type") {
     const reason = assignmentReason(value);
     if (!reason) throw new Error("uad_document_assignment_reason_requires_manual_entry");
     values = [{ uid: "1000.0034", context_key: "assignment", value: reason }];

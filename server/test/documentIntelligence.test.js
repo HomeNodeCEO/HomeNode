@@ -76,6 +76,44 @@ test("dates and assignment purpose are normalized for the appraisal form", () =>
   );
 });
 
+test("MLS sheets extract the Section 19 status, dates, DOM, OLP, LP, and listing ID", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "mls_sheet",
+    pages: [[
+      "NORTH TEXAS MULTIPLE LISTING SERVICE",
+      "MLS #: 21062330 Status: Closed",
+      "LD: 08/01/2026 CD: 08/31/2026 DOM: 31",
+      "OLP: $525,000 LP: $510,000",
+    ].join("\n")],
+  });
+  const values = Object.fromEntries(candidates.map((candidate) => [
+    candidate.field_key,
+    candidate.normalized_value,
+  ]));
+  assert.deepEqual(values, {
+    listing_status: "OffMarket",
+    mls_number: "21062330",
+    list_date: "2026-08-01",
+    listing_end_date: "2026-08-31",
+    days_on_market: "31",
+    original_list_price: "525000.00",
+    list_price: "510000.00",
+  });
+  assert.ok(candidates.every((candidate) => candidate.page_number === 1));
+  assert.equal(candidates.find((candidate) => candidate.field_key === "list_price")?.raw_value, "$510,000");
+});
+
+test("an active MLS listing derives a reviewable end date from LD and DOM when no end date is printed", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "mls_sheet",
+    pages: ["MLS No. 21069999 | ST Active | LD 08/20/2026 | DOM 10 | OLP $600,000 | LP $589,000"],
+  });
+  const endDate = candidates.find((candidate) => candidate.field_key === "listing_end_date");
+  assert.equal(endDate?.normalized_value, "2026-08-29");
+  assert.equal(endDate?.extraction_method, "mls_list_date_dom_derivation");
+  assert.match(endDate?.evidence_excerpt || "", /Derived from/);
+});
+
 test("engagement letters separate duplicated lender columns and retain the assignment address", () => {
   const candidates = buildDocumentFieldCandidates({
     documentType: "engagement_letter",

@@ -11,6 +11,7 @@ import {
   listUadWorkfiles,
   type UadCapabilities,
   type UadPropertyType,
+  type UadSectionKey,
   type UadWorkfile,
 } from "../api";
 import UadWorkfileEditor from "../components/UadWorkfileEditor";
@@ -35,6 +36,7 @@ export default function UadWorkspaceEntry() {
   const [workfiles, setWorkfiles] = useState<UadWorkfile[]>([]);
   const [activeWorkfileId, setActiveWorkfileId] = useState<string | null>(null);
   const [editorRefreshToken, setEditorRefreshToken] = useState(0);
+  const [editorInitialSection, setEditorInitialSection] = useState<UadSectionKey>("assignment");
   const displayedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId) || workfiles[0];
   const displayedPropertyType = displayedWorkfile?.property_type || capabilities?.initial_property_type;
 
@@ -86,6 +88,7 @@ export default function UadWorkspaceEntry() {
         assignment_purpose: "Mortgage finance appraisal",
       });
       setWorkfiles((current) => [workfile, ...current.filter((item) => item.id !== workfile.id)]);
+      setEditorInitialSection("assignment");
       setActiveWorkfileId(workfile.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "The UAD workfile could not be created.");
@@ -200,7 +203,10 @@ export default function UadWorkspaceEntry() {
                   </div>
                   <button
                     className="hn-action-secondary mt-3 rounded-lg border px-3 py-2 text-sm font-semibold"
-                    onClick={() => setActiveWorkfileId(workfile.id)}
+                    onClick={() => {
+                      setEditorInitialSection("assignment");
+                      setActiveWorkfileId(workfile.id);
+                    }}
                     type="button"
                   >
                     {activeWorkfileId === workfile.id ? "Editor open" : "Open Assignment & Subject"}
@@ -226,6 +232,7 @@ export default function UadWorkspaceEntry() {
                     }
                   : workfile
               )));
+              setEditorInitialSection(result.section || "assignment");
               setEditorRefreshToken((current) => current + 1);
             }}
             subjectAddress={address}
@@ -235,6 +242,7 @@ export default function UadWorkspaceEntry() {
 
         {activeWorkfileId && (
           <UadWorkfileEditor
+            initialSection={editorInitialSection}
             key={`${activeWorkfileId}:${editorRefreshToken}`}
             onClose={() => setActiveWorkfileId(null)}
             workfileId={activeWorkfileId}

@@ -341,7 +341,7 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
               ? "Another session changed fields that are also edited here. Your values are preserved; choose which version to keep before autosaving."
               : message === "uad_section_stale_revision"
                 ? "The workfile changed in another session. Your edits were preserved and rebased for another autosave attempt."
-                : `Autosave could not complete: ${message}`);
+              : `Autosave could not complete: ${message}`);
           }
         } catch {
           if (mountedRef.current) {
@@ -671,6 +671,21 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
     }
   }
 
+  async function handleSaveNow() {
+    if (saving || autosaveState === "conflict") return;
+    setError(null);
+    if (dirtyKeysRef.current.size) {
+      // The explicit control flushes the same incomplete-safe draft path as
+      // autosave. Formal section review remains a separate action below.
+      await persistAutosave();
+      return;
+    }
+    const confirmedAt = new Date().toISOString();
+    setLastAutosavedAt(confirmedAt);
+    setAutosaveState("saved");
+    setSavedMessage(`All changes are saved at ${new Date(confirmedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`);
+  }
+
   async function handleSectionChange(nextSection: UadSectionKey) {
     if (nextSection === activeSection || saving) return;
     if (dirtyKeysRef.current.size && !(await persistAutosave())) return;
@@ -794,7 +809,18 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             <h2 className="mt-1 text-xl font-semibold">{editor.workfile.file_number}</h2>
             <p className="mt-1 text-xs text-slate-300">Revision {editor.workfile.current_revision} · UAD 3.6 · {editor.workfile.specification_release_key}</p>
           </div>
-          <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseEditor()} type="button">Close editor</button>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              aria-label="Save all pending UAD changes now"
+              className="hn-action-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={saving || autosaveState === "conflict"}
+              onClick={() => void handleSaveNow()}
+              type="button"
+            >
+              {saving ? "Saving…" : dirty ? "Save changes" : "Save"}
+            </button>
+            <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseEditor()} type="button">Close editor</button>
+          </div>
         </div>
       </header>
 

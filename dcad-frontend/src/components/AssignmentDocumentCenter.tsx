@@ -586,7 +586,9 @@ export default function AssignmentDocumentCenter({
             <div className="min-w-0 space-y-3 xl:col-span-2">
               <label className="hn-evidence-reviewer-frame block rounded-xl p-3">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Appraiser / Reviewer</span>
-                <input className="input input-bordered input-sm mt-1 w-full bg-white" value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Required to confirm suggestions" />
+                <span className="hn-evidence-reviewer-input-ring">
+                  <input className="hn-evidence-reviewer-input input input-sm w-full bg-white" value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Required to confirm suggestions" />
+                </span>
               </label>
               {selectedDocument ? (
                 <>

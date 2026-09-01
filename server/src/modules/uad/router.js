@@ -25,6 +25,7 @@ import { createCachedUadReadinessLoader } from "./uadOperationalReadiness.js";
 import { getUadSharedData } from "./sharedData.js";
 import {
   editUadSketch,
+  getUadMobileEvidenceVersion,
   importUadMobilePhoto,
   importUadMobileSketch,
   listUadMobileEvidence,
@@ -637,6 +638,14 @@ export function createUadRouter({
   router.get("/workfiles/:workfileId/mobile-evidence", async (req, res) => {
     try {
       res.json(await listUadMobileEvidence(pool, storage, req.params.workfileId));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get("/workfiles/:workfileId/mobile-evidence/version", async (req, res) => {
+    try {
+      res.json(await getUadMobileEvidenceVersion(pool, req.params.workfileId));
     } catch (error) {
       sendError(res, error);
     }

@@ -6,6 +6,7 @@ import {
   importUadMobileSketch,
   listUadAssets,
   listUadMobileEvidence,
+  subscribeToUadMobileEvidenceVersion,
   uploadUadAsset,
   type UadAsset,
   type UadMobilePhotoEvidence,
@@ -14,7 +15,6 @@ import {
 import UadSketchEditor from "./UadSketchEditor";
 
 const DEFAULT_ACCEPT = "image/avif,image/bmp,image/gif,image/jpeg,image/png,image/tiff,image/webp,image/heic,image/heif,application/pdf,application/json";
-
 function displayOption(value: string) {
   return value.replace(/([a-z])([A-Z])/g, "$1 $2");
 }
@@ -56,6 +56,18 @@ export default function UadAssetPanel({
   const [error, setError] = useState<string | null>(null);
   const [sketchEditorRefresh, setSketchEditorRefresh] = useState(0);
 
+  const applyMobileEvidence = useCallback((evidence: Awaited<ReturnType<typeof listUadMobileEvidence>> | null) => {
+    setMobilePhotos((evidence?.photos || []).filter((photo) => (
+      !photo.imported_asset
+      && sectionNumber !== 7
+      && (
+        photo.recommended_sections.includes(sectionNumber)
+        || (!photo.recommended_sections.length && [4, 8, 10, 12, 13, 14].includes(sectionNumber))
+      )
+    )));
+    setMobileSketch(evidence?.sketch || null);
+  }, [sectionNumber]);
+
   const load = useCallback(async () => {
     try {
       const [allAssets, evidence] = await Promise.all([
@@ -67,34 +79,20 @@ export default function UadAssetPanel({
         && (!entityId || asset.entity_id === entityId)
         && (!visibleCaptionTypes || visibleCaptionTypes.includes(asset.caption_type || ""))
       )));
-      setMobilePhotos((evidence?.photos || []).filter((photo) => (
-        !photo.imported_asset
-        && sectionNumber !== 7
-        && (
-          photo.recommended_sections.includes(sectionNumber)
-          || (!photo.recommended_sections.length && [4, 8, 10, 12, 13, 14].includes(sectionNumber))
-        )
-      )));
-      setMobileSketch(evidence?.sketch || null);
+      applyMobileEvidence(evidence);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : `${title} files could not be loaded.`);
     }
-  }, [entityId, sectionNumber, title, visibleCaptionTypes, workfileId]);
+  }, [applyMobileEvidence, entityId, sectionNumber, title, visibleCaptionTypes, workfileId]);
+
+  const refreshMobileEvidence = useCallback(async (expectedVersion: string) => {
+    const evidence = await listUadMobileEvidence(workfileId, expectedVersion);
+    applyMobileEvidence(evidence);
+  }, [applyMobileEvidence, workfileId]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { setCaptionType(captionTypes[0]); }, [captionTypes]);
-  useEffect(() => {
-    if (sectionNumber !== 7) return;
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    const interval = window.setInterval(refreshWhenVisible, 30_000);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [load, sectionNumber]);
+  useEffect(() => subscribeToUadMobileEvidenceVersion(workfileId, refreshMobileEvidence), [refreshMobileEvidence, workfileId]);
 
   async function handleUpload() {
     if (!file || uploading) return;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getPropertyTaxProtestFile,
+  getPropertyTaxEvidenceVersion,
   updatePropertyTaxInspectionSketch,
   updatePropertyTaxProtestFile,
   type PropertyTaxProtestFile,
@@ -20,6 +21,8 @@ type FieldSpec = {
 
 const CONDITION_OPTIONS = ['C1', 'C2-C1', 'C2', 'C3-C2', 'C3', 'C4-C3', 'C4', 'C5-C4', 'C5', 'C6-C5', 'C6'];
 const QUALITY_OPTIONS = ['Q1', 'Q2-Q1', 'Q2', 'Q3-Q2', 'Q3', 'Q4-Q3', 'Q4', 'Q5-Q4', 'Q5', 'Q6-Q5', 'Q6'];
+const EVIDENCE_REFRESH_MS = 5_000;
+const EVIDENCE_RETRY_DELAY_MS = 30_000;
 
 const FIELDS: FieldSpec[] = [
   { path: ['subject', 'condition_rating'], label: 'Overall condition rating', group: 'Subject', kind: 'select', options: CONDITION_OPTIONS },
@@ -92,6 +95,9 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
   const [saving, setSaving] = useState(false);
   const [sketchRefreshing, setSketchRefreshing] = useState(false);
   const sketchRefreshInFlight = useRef(false);
+  const evidenceCheckInFlight = useRef(false);
+  const evidenceVersionRef = useRef<string | null>(null);
+  const evidenceRetryAtRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -103,6 +109,7 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
     setError(null);
     try {
       const result = await getPropertyTaxProtestFile(accountId, fileId || undefined);
+      evidenceVersionRef.current = result?.evidence_version || null;
       setFile(result);
       setValues(result ? buildValues(result) : {});
     } catch (loadError: unknown) {
@@ -126,11 +133,18 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
     try {
       const refreshed = await getPropertyTaxProtestFile(accountId, activeFileId);
       if (!refreshed) return;
+      evidenceVersionRef.current = refreshed.evidence_version || evidenceVersionRef.current;
       setFile((current) => current?.tax_protest_file_id === refreshed.tax_protest_file_id
         ? {
             ...current,
             sketch: refreshed.sketch,
             photos: refreshed.photos,
+            evidence_version: refreshed.evidence_version,
+            photo_version: refreshed.photo_version,
+            verified_photo_count: refreshed.verified_photo_count,
+            sketch_revision: refreshed.sketch_revision,
+            sketch_review_status: refreshed.sketch_review_status,
+            sketch_updated_at: refreshed.sketch_updated_at,
             registry_revision: refreshed.registry_revision,
             updated_at: refreshed.updated_at,
           }
@@ -144,17 +158,34 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
   }, [accountId, activeFileId]);
 
   useEffect(() => {
-    if (!activeFileId || file?.sketch) return;
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') void refreshSketchEvidence();
+    if (!activeFileId) return;
+    const checkForUpdates = async () => {
+      if (document.visibilityState !== 'visible' || evidenceCheckInFlight.current
+          || Date.now() < evidenceRetryAtRef.current) return;
+      evidenceCheckInFlight.current = true;
+      try {
+        const version = await getPropertyTaxEvidenceVersion(accountId, activeFileId);
+        evidenceRetryAtRef.current = 0;
+        if (evidenceVersionRef.current !== version.evidence_version) {
+          evidenceVersionRef.current = version.evidence_version;
+          await refreshSketchEvidence();
+        }
+      } catch {
+        evidenceRetryAtRef.current = Date.now() + EVIDENCE_RETRY_DELAY_MS;
+      } finally {
+        evidenceCheckInFlight.current = false;
+      }
     };
-    const interval = window.setInterval(refreshWhenVisible, 30_000);
+    const refreshWhenVisible = () => void checkForUpdates();
+    const interval = window.setInterval(refreshWhenVisible, EVIDENCE_REFRESH_MS);
+    window.addEventListener('focus', refreshWhenVisible);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       window.clearInterval(interval);
+      window.removeEventListener('focus', refreshWhenVisible);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
-  }, [activeFileId, file?.sketch, refreshSketchEvidence]);
+  }, [accountId, activeFileId, refreshSketchEvidence]);
 
   const save = async () => {
     if (!file) return;
@@ -296,7 +327,7 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
           ) : (
             <SketchWorkspaceEmptyState
               title="Property Tax Protest measured sketch"
-              subtitle={`No measured sketch is synchronized to ${file.file_number} yet. This area checks for accepted mobile evidence every 30 seconds while the page is visible.`}
+              subtitle={`No measured sketch is synchronized to ${file.file_number} yet. Verified photos and committed sketches share one lightweight live evidence check while the page is visible.`}
               onRefresh={refreshSketchEvidence}
               refreshing={sketchRefreshing}
             />

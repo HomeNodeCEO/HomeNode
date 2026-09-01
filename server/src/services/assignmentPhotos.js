@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
 import { normalizeUuid } from "../modules/mobile/reportFiles.js";
 import { canonicalJson } from "../modules/mobile/sync.js";
+import { getReportEvidenceVersion } from "./reportEvidenceVersion.js";
 
 export const ASSIGNMENT_PHOTO_CATEGORIES = Object.freeze([
   "Front", "Rear", "Street", "Kitchen", "Living area", "Bedroom",
@@ -177,6 +178,9 @@ export async function listAssignmentPhotos(pool, storage, { accountId, assignmen
   const client = await pool.connect();
   try {
     const report = await assignmentReport(client, accountId, assignmentFileId);
+    // Read the token first. If evidence changes while the full payload is assembled,
+    // the next lightweight check observes a newer token and reloads safely.
+    const evidenceVersion = await getReportEvidenceVersion(client, report.id);
     const { rows } = await client.query(
       `SELECT * FROM app.inspection_photos
         WHERE report_file_id = $1 AND status NOT IN ('excluded', 'deleted')
@@ -206,6 +210,7 @@ export async function listAssignmentPhotos(pool, storage, { accountId, assignmen
       report_file_id: report.id,
       workfile_status: report.workfile_status,
       version: buildAssignmentPhotoVersion(rows),
+      ...evidenceVersion,
       photos,
     };
   } finally {
@@ -229,6 +234,20 @@ export async function getAssignmentPhotoVersion(pool, { accountId, assignmentFil
       workfile_status: report.workfile_status,
       version: buildAssignmentPhotoVersion(rows),
       photo_count: rows.length,
+    };
+  } finally {
+    client.release();
+  }
+}
+
+export async function getAssignmentEvidenceVersion(pool, { accountId, assignmentFileId }) {
+  const client = await pool.connect();
+  try {
+    const report = await assignmentReport(client, accountId, assignmentFileId);
+    return {
+      report_file_id: report.id,
+      workfile_status: report.workfile_status,
+      ...await getReportEvidenceVersion(client, report.id),
     };
   } finally {
     client.release();

@@ -46,19 +46,6 @@ export default function UadSketchEditor({ workfileId, onSaved, refreshToken = 0 
 
   useEffect(() => { void load(); }, [load, refreshToken]);
 
-  useEffect(() => {
-    if (canonical) return;
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    const interval = window.setInterval(refreshWhenVisible, 30_000);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [canonical, load]);
-
   const editable = useMemo(() => canonical ? asEditable(canonical) : null, [canonical]);
   if (!canonical || !editable) return (
     <>
@@ -67,7 +54,7 @@ export default function UadSketchEditor({ workfileId, onSaved, refreshToken = 0 
       ) : null}
       <SketchWorkspaceEmptyState
         title="UAD 3.6 measured sketch"
-        subtitle="No canonical measured sketch is attached to this UAD file yet. Confirm and import the mobile sketch above; this workspace checks for newly accepted evidence every 30 seconds while the page is visible."
+        subtitle="No canonical measured sketch is attached to this UAD file yet. Confirm and explicitly import incoming mobile evidence above; live evidence checks never alter the canonical UAD revision."
         onRefresh={load}
         refreshing={loading}
       />

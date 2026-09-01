@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   createAssignmentPhotoUpload,
+  getAssignmentEvidenceVersion,
   getAssignmentFiles,
-  getAssignmentPhotoVersion,
   getAssignmentPhotos,
   removeAssignmentPhoto,
   verifyAssignmentPhotoUpload,
@@ -93,6 +93,8 @@ export default function AssignmentPhotoCenter({
   assignmentFileNumber,
   getEditorKey,
   onPhotosChanged,
+  sketchRevision = null,
+  onSketchChanged,
   readOnly = false,
   className = '',
 }: {
@@ -101,6 +103,8 @@ export default function AssignmentPhotoCenter({
   assignmentFileNumber?: string | null;
   getEditorKey: () => string;
   onPhotosChanged?: (photos: AssignmentPhoto[]) => void;
+  sketchRevision?: number | null;
+  onSketchChanged?: (revision: number | null) => void;
   readOnly?: boolean;
   className?: string;
 }) {
@@ -119,6 +123,8 @@ export default function AssignmentPhotoCenter({
   const loadGeneration = useRef(0);
   const photosRef = useRef<AssignmentPhoto[]>([]);
   const photoSignatureRef = useRef<string | null>(null);
+  const evidencePhotoVersionRef = useRef<string | null>(null);
+  const sketchRevisionRef = useRef<number | null>(null);
   const viewUrlsRefreshedAt = useRef(0);
   const photoFeedRetryAtRef = useRef(0);
   const versionRecoveryAtRef = useRef(0);
@@ -173,6 +179,10 @@ export default function AssignmentPhotoCenter({
           const result = await getAssignmentPhotos(accountId, assignmentFileId, editorKey);
           nextPhotos = result.photos;
           nextVersion = result.version;
+          const sketchChanged = result.sketch_revision !== sketchRevisionRef.current;
+          evidencePhotoVersionRef.current = result.photo_version;
+          sketchRevisionRef.current = result.sketch_revision;
+          if (sketchChanged) onSketchChanged?.(result.sketch_revision);
           photoFeedRetryAtRef.current = 0;
         } catch (photoFeedError) {
           photoFeedRetryAtRef.current = Date.now() + PHOTO_FEED_RETRY_DELAY_MS;
@@ -206,7 +216,7 @@ export default function AssignmentPhotoCenter({
         if (!background) setBusy(false);
       }
     }
-  }, [accountId, assignmentFileId, getEditorKey, loadAssignmentFileFallback, onPhotosChanged]);
+  }, [accountId, assignmentFileId, getEditorKey, loadAssignmentFileFallback, onPhotosChanged, onSketchChanged]);
 
   const checkForUpdates = useCallback(async () => {
     if (!accountId || !assignmentFileId || loadInFlight.current || versionCheckInFlight.current) return;
@@ -215,12 +225,18 @@ export default function AssignmentPhotoCenter({
     const generation = loadGeneration.current;
     versionCheckInFlight.current = true;
     try {
-      const result = await getAssignmentPhotoVersion(accountId, assignmentFileId, editorKey);
+      const result = await getAssignmentEvidenceVersion(accountId, assignmentFileId, editorKey);
       if (generation !== loadGeneration.current) return;
       versionRecoveryAtRef.current = 0;
-      const changed = photoSignatureRef.current === null || result.version !== photoSignatureRef.current;
+      const photoChanged = evidencePhotoVersionRef.current === null
+        ? result.verified_photo_count !== photosRef.current.filter((photo) => photo.status === 'verified').length
+        : result.photo_version !== evidencePhotoVersionRef.current;
+      const sketchChanged = result.sketch_revision !== sketchRevisionRef.current;
+      evidencePhotoVersionRef.current = result.photo_version;
+      sketchRevisionRef.current = result.sketch_revision;
+      if (sketchChanged) onSketchChanged?.(result.sketch_revision);
       const refreshViewUrls = Date.now() - viewUrlsRefreshedAt.current >= VIEW_URL_REFRESH_MS;
-      if (changed || refreshViewUrls) await load(true);
+      if (photoChanged || refreshViewUrls) await load(true);
       else setLastCheckedAt(new Date());
     } catch {
       // Keep the cheap change-token request as the ordinary five-second path.
@@ -234,7 +250,7 @@ export default function AssignmentPhotoCenter({
     } finally {
       if (generation === loadGeneration.current) versionCheckInFlight.current = false;
     }
-  }, [accountId, assignmentFileId, load]);
+  }, [accountId, assignmentFileId, load, onSketchChanged]);
 
   const refreshNow = useCallback(() => {
     viewUrlsRefreshedAt.current = 0;
@@ -269,6 +285,8 @@ export default function AssignmentPhotoCenter({
     photosRef.current = [];
     credentialRef.current = '';
     photoSignatureRef.current = null;
+    evidencePhotoVersionRef.current = null;
+    sketchRevisionRef.current = null;
     viewUrlsRefreshedAt.current = 0;
     photoFeedRetryAtRef.current = 0;
     versionRecoveryAtRef.current = 0;
@@ -278,6 +296,10 @@ export default function AssignmentPhotoCenter({
     setLastCheckedAt(null);
     setMessage('');
   }, [accountId, assignmentFileId]);
+
+  useEffect(() => {
+    sketchRevisionRef.current = sketchRevision;
+  }, [sketchRevision]);
 
   useEffect(() => {
     if (!accountId || !assignmentFileId) return;

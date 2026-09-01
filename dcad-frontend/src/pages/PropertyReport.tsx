@@ -661,18 +661,6 @@ function AddressHero({
     }
   }, [accountId, activeAssignmentFileId, setActiveAssignmentFile, setAssignmentFiles]);
 
-  useEffect(() => {
-    if (!activeAssignmentFileId || mobileInspectionSketch) return;
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refreshMobileSketchEvidence();
-    };
-    const interval = window.setInterval(refreshWhenVisible, 30_000);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [activeAssignmentFileId, mobileInspectionSketch, refreshMobileSketchEvidence]);
   const salesHistory = detail?.sales_history || [];
   const propertyActivityHistory = detail?.property_activity_history || salesHistory;
   const values = detail?.value_summary;
@@ -2353,6 +2341,8 @@ function AddressHero({
               assignmentFileNumber={activeAssignmentFile?.file_number || null}
               getEditorKey={editorKeyForSave}
               onPhotosChanged={handleAssignmentPhotosChanged}
+              sketchRevision={mobileInspectionSketch?.revision || null}
+              onSketchChanged={refreshMobileSketchEvidence}
               readOnly={activeAssignmentFile?.workfile?.status === "signed"}
               className="order-6"
             />
@@ -2576,7 +2566,7 @@ function AddressHero({
                 ) : (
                   <SketchWorkspaceEmptyState
                     title="Custom Appraisal measured sketch"
-                    subtitle={`No measured sketch is synchronized to ${activeAssignmentFile.file_number} yet. This area checks for accepted mobile evidence every 30 seconds while the page is visible.`}
+                    subtitle={`No measured sketch is synchronized to ${activeAssignmentFile.file_number} yet. This area shares the lightweight live evidence check used by photos while the page is visible.`}
                     onRefresh={refreshMobileSketchEvidence}
                     refreshing={sketchEvidenceRefreshing}
                   />

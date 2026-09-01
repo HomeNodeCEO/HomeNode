@@ -2521,11 +2521,46 @@ export async function getAssignmentPhotos(
   accountId: string,
   assignmentFileId: number,
   editorKey: string,
-): Promise<{ workfile_status: string; version: string; photos: AssignmentPhoto[] }> {
+): Promise<{
+  workfile_status: string;
+  version: string;
+  evidence_version: string;
+  photo_version: string;
+  sketch_revision: number | null;
+  photos: AssignmentPhoto[];
+}> {
   return fetchJSON(makeUrl(
     `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/photos`,
   ), {
     headers: { 'x-homenode-editor-key': editorKey },
+    retryTransient: true,
+  });
+}
+
+export interface EvidenceVersion {
+  evidence_version: string;
+  photo_version: string;
+  verified_photo_count: number;
+  sketch_revision: number | null;
+  sketch_review_status: 'draft' | 'appraiser_confirmed' | null;
+  sketch_updated_at: string | null;
+}
+
+export interface AssignmentEvidenceVersion extends EvidenceVersion {
+  workfile_status: string;
+}
+
+export async function getAssignmentEvidenceVersion(
+  accountId: string,
+  assignmentFileId: number,
+  editorKey: string,
+): Promise<AssignmentEvidenceVersion> {
+  return fetchJSON(makeUrl(
+    `/api/accounts/${encodeURIComponent(accountId.trim())}/assignment-files/${assignmentFileId}/evidence/version`,
+  ), {
+    headers: { 'x-homenode-editor-key': editorKey },
+    cache: 'no-store',
+    timeoutMs: 10_000,
     retryTransient: true,
   });
 }
@@ -3845,6 +3880,12 @@ export interface PropertyTaxProtestFile {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  evidence_version?: string;
+  photo_version?: string;
+  verified_photo_count?: number;
+  sketch_revision?: number | null;
+  sketch_review_status?: 'draft' | 'appraiser_confirmed' | null;
+  sketch_updated_at?: string | null;
   photos: {
     verified_count: number;
     items: Array<{
@@ -3957,6 +3998,19 @@ export async function getPropertyTaxProtestFile(
   const params = fileId ? `?file_id=${encodeURIComponent(fileId)}` : '';
   const response = await fetchJSON<{ account_id: string; file: PropertyTaxProtestFile | null }>(
     makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest${params}`),
+  );
+  return response.file;
+}
+
+export async function getPropertyTaxEvidenceVersion(
+  accountId: string,
+  fileId: string,
+): Promise<EvidenceVersion> {
+  const response = await fetchJSON<{ account_id: string; file: EvidenceVersion }>(
+    makeUrl(
+      `/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/evidence/version`,
+    ),
+    { cache: 'no-store', timeoutMs: 10_000, retryTransient: true },
   );
   return response.file;
 }

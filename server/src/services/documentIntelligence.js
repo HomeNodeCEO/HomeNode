@@ -85,16 +85,21 @@ function normalizedInteger(value, maximum = 9_999) {
     : null;
 }
 
-function normalizedListingStatus(value) {
+function mlsListingLifecycle(value) {
   const source = cleanText(value, 100).toLowerCase().replace(/[^a-z]+/g, " ").trim();
   if (!source) return null;
-  if (/\b(?:active|act|available|coming soon)\b/.test(source)) return "Active";
-  if (/\b(?:pending|pend|under contract|contingent|option pending|active option contract)\b/.test(source)) {
-    return "Pending";
-  }
-  if (/\b(?:closed|sold|expired|withdrawn|cancelled|canceled|off market|temporarily off market|tom)\b/.test(source)) {
-    return "OffMarket";
-  }
+  if (/^(?:p|pend|pnd|pending|cont|contingent|uc|under contract|aoc|active option|active option contract|active contingent|active under contract|option pending|pending continue to show|pending taking backups)$/.test(source)) return "pending";
+  if (/^(?:s|sld|sold|cls|closed)$/.test(source)) return "sold";
+  if (/^(?:tom|temporarily off market|off market|exp|expired|wdn|withdrawn|can|cancelled|canceled)$/.test(source)) return "offmarket";
+  if (/^(?:a|act|active|available|cs|coming soon)$/.test(source)) return "active";
+  return null;
+}
+
+function normalizedListingStatus(value) {
+  const lifecycle = mlsListingLifecycle(value);
+  if (lifecycle === "active") return "Active";
+  if (lifecycle === "pending") return "Pending";
+  if (["sold", "offmarket"].includes(lifecycle)) return "OffMarket";
   return null;
 }
 
@@ -173,14 +178,17 @@ function buildMlsSheetCandidates(entries) {
   const money = "\\$?\\s*[0-9][0-9,]*(?:\\.\\d{1,2})?";
   const date = "(?:\\d{1,2}[/-]\\d{1,2}[/-](?:\\d{4}|\\d{2})|[A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4})";
   const status = [
-    "ACTIVE OPTION CONTRACT", "TEMPORARILY OFF MARKET", "OPTION PENDING", "UNDER CONTRACT",
-    "COMING SOON", "OFF MARKET", "CONTINGENT", "AVAILABLE", "WITHDRAWN", "CANCELLED",
-    "CANCELED", "EXPIRED", "PENDING", "CLOSED", "ACTIVE", "SOLD", "PEND", "ACT", "TOM",
+    "PENDING CONTINUE TO SHOW", "PENDING TAKING BACKUPS", "ACTIVE OPTION CONTRACT",
+    "ACTIVE UNDER CONTRACT", "ACTIVE CONTINGENT", "TEMPORARILY OFF MARKET",
+    "OPTION PENDING", "ACTIVE OPTION", "UNDER CONTRACT", "COMING SOON", "OFF MARKET",
+    "CONTINGENT", "AVAILABLE", "WITHDRAWN", "CANCELLED", "CANCELED", "EXPIRED",
+    "PENDING", "CLOSED", "ACTIVE", "SOLD", "AOC", "CONT", "PEND", "PND", "ACT",
+    "TOM", "EXP", "WDN", "CAN", "CLS", "SLD", "UC", "CS", "A", "P", "S",
   ].join("|");
   const candidates = [
     firstMlsLabeledCandidate(entries, {
       fieldKey: "listing_status",
-      labelSource: "(?:MLS\\s+STATUS|LISTING\\s+STATUS|STATUS|ST)",
+      labelSource: "(?:(?:CURRENT|MLS|LIST(?:ING)?|LSTG|LST|PROPERTY)\\s+)?STATUS(?:\\s+CODE)?|(?:MLS\\s+)?ST|STAT",
       valueSource: `(?:${status})`,
       normalize: normalizedListingStatus,
     }),
@@ -197,7 +205,7 @@ function buildMlsSheetCandidates(entries) {
     }),
     firstMlsLabeledCandidate(entries, {
       fieldKey: "days_on_market",
-      labelSource: "(?:DAYS\\s+ON\\s+MARKET|DOM)",
+      labelSource: "(?:DAYS\\s+ON\\s+MARKET|DOM)(?:\\s*[/&]\\s*CDOM)?",
       valueSource: "\\d{1,4}",
       normalize: normalizedInteger,
     }),
@@ -216,22 +224,40 @@ function buildMlsSheetCandidates(entries) {
     }),
   ].filter(Boolean);
 
-  const closedDate = firstMlsLabeledCandidate(entries, {
+  const listingStatus = candidates.find((candidate) => candidate.field_key === "listing_status");
+  const lifecycle = mlsListingLifecycle(listingStatus?.raw_value || listingStatus?.normalized_value);
+  const contractDate = firstMlsLabeledCandidate(entries, {
     fieldKey: "listing_end_date",
-    labelSource: "(?:CLOSE(?:D|ING)?\\s+DATE|SOLD\\s+DATE|CD)",
+    labelSource: "(?:CONTRACT(?:ED)?\\s+(?:DATE|DT)|CTD|CD)",
     valueSource: date,
     normalize: normalizedDate,
   });
-  const mostRecentDate = closedDate || firstMlsLabeledCandidate(entries, {
+  const soldDate = firstMlsLabeledCandidate(entries, {
+    fieldKey: "listing_end_date",
+    labelSource: "(?:CLOSE(?:D|ING)?\\s+(?:DATE|DT)|SOLD\\s+(?:DATE|DT)|SD)",
+    valueSource: date,
+    normalize: normalizedDate,
+  });
+  const explicitEndDate = firstMlsLabeledCandidate(entries, {
     fieldKey: "listing_end_date",
     labelSource: "(?:MOST\\s+RECENT\\s+LIST\\s+DATE|LAST\\s+LIST\\s+DATE|STATUS\\s+DATE|LAST\\s+UPDATE(?:D)?\\s+DATE|END\\s+DATE)",
     valueSource: date,
     normalize: normalizedDate,
     confidence: 0.9,
   });
-  if (mostRecentDate) {
-    candidates.splice(3, 0, mostRecentDate);
-  } else {
+  const conditionalContractDate = ["pending", "sold"].includes(lifecycle) && contractDate
+    ? {
+        ...contractDate,
+        evidence_excerpt: `Used as Listing End Date because the MLS status is ${lifecycle === "sold" ? "Sold" : "Pending"}. ${contractDate.evidence_excerpt}`.slice(0, 2_000),
+        extraction_method: "mls_contract_date_as_listing_end_date",
+      }
+    : null;
+  const endDate = conditionalContractDate
+    || (lifecycle === "sold" ? soldDate : null)
+    || explicitEndDate;
+  if (endDate) {
+    candidates.splice(3, 0, endDate);
+  } else if (lifecycle === "active") {
     const start = candidates.find((candidate) => candidate.field_key === "list_date");
     const dom = candidates.find((candidate) => candidate.field_key === "days_on_market");
     const derivedEndDate = isoDateFromExposure(start?.normalized_value, dom?.normalized_value);
@@ -410,7 +436,13 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   if (/engagement\s+letter|appraisal\s+assignment|scope\s+of\s+work/.test(sample)) {
     return "engagement_letter";
   }
-  if (/multiple\s+listing\s+service|\bmls\s*(?:#|number|no\.)|days\s+on\s+market/.test(sample)) {
+  const explicitMlsIdentity = /multiple\s+listing\s+service|\bmls\s*(?:#|number\b|no\.?)/.test(sample);
+  const mlsSignals = [
+    /\b(?:dom|days\s+on\s+market)\b/.test(sample),
+    /\bolp\b/.test(sample),
+    /\b(?:ld|list(?:ing)?\s+date)\b/.test(sample),
+  ].filter(Boolean).length;
+  if (explicitMlsIdentity || /\bmls(?:[-_\s]+)(?:sheet|listing|report)\b/.test(sample) || mlsSignals >= 2) {
     return "mls_sheet";
   }
   return "other";

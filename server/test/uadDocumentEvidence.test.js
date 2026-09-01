@@ -47,6 +47,18 @@ test("confirmed MLS evidence maps to one canonical Section 19 listing", () => {
     ...fixed,
     { uid: "0900.0013", context_key: "subject_listing", entity_id: entityId, value: "OffMarket" },
   ]);
+  assert.deepEqual(uadMlsListingValues("listing_status", "P", entityId), [
+    ...fixed,
+    { uid: "0900.0013", context_key: "subject_listing", entity_id: entityId, value: "Pending" },
+  ]);
+  assert.deepEqual(uadMlsListingValues("listing_status", "AOC", entityId), [
+    ...fixed,
+    { uid: "0900.0013", context_key: "subject_listing", entity_id: entityId, value: "Pending" },
+  ]);
+  assert.deepEqual(uadMlsListingValues("listing_status", "SLD", entityId), [
+    ...fixed,
+    { uid: "0900.0013", context_key: "subject_listing", entity_id: entityId, value: "OffMarket" },
+  ]);
   assert.deepEqual(uadMlsListingValues("mls_number", "21062330", entityId), [
     ...fixed,
     { uid: "0900.0011", context_key: "subject_listing", entity_id: entityId, value: "21062330" },

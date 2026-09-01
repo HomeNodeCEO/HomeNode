@@ -57,7 +57,11 @@ function reportFileResponse(row) {
     registry_revision: Number(row.registry_revision),
     ready_for_inspection: Boolean(row.organization_id),
     created_at: row.created_at,
-    updated_at: row.updated_at,
+    // The registry tracks cross-workflow changes (mobile sync, photos, and
+    // sketches), while each canonical target tracks its desktop editor. The
+    // chooser needs the newest of those clocks so a successful editor save is
+    // visible even when it does not increment the shared registry revision.
+    updated_at: row.activity_updated_at ?? row.updated_at,
   };
 }
 
@@ -91,13 +95,28 @@ export async function listReportFiles(pool, auth, {
   const boundedRecentDays = Math.max(1, Math.min(365, Number(recentDays) || RECENT_FILE_DAYS));
   const { rows } = await pool.query(
     `SELECT report_file.*, account.address, account.city, account.postal_code,
+            GREATEST(
+              report_file.updated_at,
+              custom_assignment.updated_at,
+              custom_workfile.updated_at,
+              uad_workfile.updated_at,
+              tax_protest.updated_at
+            ) AS activity_updated_at,
             report_file.created_at >= now() - ($4::integer * interval '1 day') AS is_recent
        FROM app.report_files report_file
        JOIN core.accounts account ON account.account_id = report_file.account_id
+       LEFT JOIN app.assignment_files custom_assignment
+         ON custom_assignment.id = report_file.custom_assignment_file_id
+       LEFT JOIN app.custom_appraisal_workfiles custom_workfile
+         ON custom_workfile.assignment_file_id = report_file.custom_assignment_file_id
+       LEFT JOIN appraisal.uad_workfiles uad_workfile
+         ON uad_workfile.id = report_file.uad_workfile_id
+       LEFT JOIN app.tax_protest_files tax_protest
+         ON tax_protest.id = report_file.tax_protest_file_id
       WHERE report_file.account_id = $1
         AND ($2::text IS NULL OR report_file.workflow_type = $2)
         AND report_file.organization_id = ANY($3::uuid[])
-      ORDER BY report_file.is_current DESC, report_file.updated_at DESC, report_file.id`,
+      ORDER BY report_file.is_current DESC, activity_updated_at DESC, report_file.id`,
     [accountId, workflowType, organizationIds, boundedRecentDays],
   );
   const files = rows.map((row) => ({ ...reportFileResponse(row), is_recent: Boolean(row.is_recent) }));

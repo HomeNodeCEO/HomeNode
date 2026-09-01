@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   getAssignmentDocument,
@@ -11,6 +11,7 @@ import {
   type AssignmentDocumentCandidate,
   type AssignmentDocumentType,
 } from '@/lib/api';
+import { documentSubjectAddressComparison } from '@/lib/propertyReportPresentation';
 
 const DOCUMENT_TYPE_OPTIONS: Array<[AssignmentDocumentType, string]> = [
   ['zoning_map', 'Zoning Map'],
@@ -36,6 +37,7 @@ const FIELD_LABELS: Record<string, string> = {
   buyer_name: 'Buyer / Borrower',
   lender_client_name: 'Lender / Client',
   lender_client_address: 'Lender / Client Address',
+  subject_property_address: 'Assignment Property Address',
   mls_number: 'MLS Number',
   list_price: 'List Price',
   list_date: 'List Date',
@@ -79,6 +81,7 @@ function processingDetail(document: AssignmentDocument) {
 interface AssignmentDocumentCenterProps {
   accountId: string;
   assignmentFileId?: number | null;
+  subjectAddress?: string;
   getEditorKey: () => string;
   onApplyConfirmedCandidate?: (
     fieldKey: string,
@@ -91,6 +94,7 @@ interface AssignmentDocumentCenterProps {
 export default function AssignmentDocumentCenter({
   accountId,
   assignmentFileId = null,
+  subjectAddress = '',
   getEditorKey,
   onApplyConfirmedCandidate,
   className = '',
@@ -106,6 +110,19 @@ export default function AssignmentDocumentCenter({
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const documentSubjectCandidate = useMemo(
+    () => selectedDocument?.candidates?.find((candidate) => (
+      candidate.field_key === 'subject_property_address'
+    )) || null,
+    [selectedDocument],
+  );
+  const subjectAddressComparison = useMemo(() => documentSubjectAddressComparison(
+    documentSubjectCandidate?.confirmed_value
+      || documentSubjectCandidate?.normalized_value
+      || documentSubjectCandidate?.raw_value,
+    subjectAddress,
+  ), [documentSubjectCandidate, subjectAddress]);
+  const confirmationBlocked = subjectAddressComparison.matches === false;
 
   const loadDocuments = useCallback(async () => {
     if (!accountId) return;
@@ -335,10 +352,46 @@ export default function AssignmentDocumentCenter({
                     {selectedDocument.last_processing_error ? (
                       <p className="mt-1 break-words">Last error: {selectedDocument.last_processing_error}</p>
                     ) : null}
-                    {['ocr_required', 'extraction_failed'].includes(selectedDocument.processing_status) ? (
-                      <button type="button" className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg" onClick={() => void reprocess()} disabled={loading}>Retry Extraction</button>
+                    {!['uploaded', 'processing'].includes(selectedDocument.processing_status) ? (
+                      <button type="button" className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg" onClick={() => void reprocess()} disabled={loading}>
+                        {['ocr_required', 'extraction_failed'].includes(selectedDocument.processing_status)
+                          ? 'Retry Extraction'
+                          : 'Re-run Extraction'}
+                      </button>
                     ) : null}
                   </div>
+                  {selectedDocument.document_type === 'engagement_letter' ? (
+                    documentSubjectCandidate ? (
+                      <div
+                        role={confirmationBlocked ? 'alert' : undefined}
+                        className={`rounded-lg border p-3 text-xs leading-5 ${confirmationBlocked
+                          ? 'border-rose-300 bg-rose-50 text-rose-900'
+                          : subjectAddressComparison.matches === true
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                            : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+                      >
+                        <strong>
+                          {confirmationBlocked
+                            ? 'Assignment address mismatch'
+                            : subjectAddressComparison.matches === true
+                              ? 'Assignment address verified'
+                              : 'Verify the open report subject address'}
+                        </strong>
+                        <p>
+                          The engagement letter identifies <strong>{subjectAddressComparison.documentAddress}</strong>.
+                          {' '}The open report is <strong>{subjectAddressComparison.reportAddress || 'missing its subject address'}</strong>.
+                        </p>
+                        {confirmationBlocked ? (
+                          <p>Confirming extracted fields is disabled so information from the wrong assignment cannot populate this file.</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                        <strong>Verify the assignment address manually.</strong>
+                        <p>HomeNode did not find a labeled subject property address in this engagement letter.</p>
+                      </div>
+                    )
+                  ) : null}
                   <div className="space-y-3">
                     {(selectedDocument.candidates || []).length ? selectedDocument.candidates?.map((candidate) => (
                       <div key={candidate.id || `${candidate.field_key}-${candidate.page_number}`} className="rounded-lg border border-slate-200 bg-white p-3">
@@ -355,7 +408,15 @@ export default function AssignmentDocumentCenter({
                         <p className="mt-2 rounded bg-slate-50 p-2 text-[11px] leading-4 text-slate-600">{candidate.evidence_excerpt || candidate.raw_value}</p>
                         {candidate.review_status === 'suggested' && candidate.id ? (
                           <div className="mt-2 flex gap-2">
-                            <button type="button" className="hn-action-primary btn btn-primary btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'confirmed')} disabled={loading}>Confirm</button>
+                            <button
+                              type="button"
+                              className="hn-action-primary btn btn-primary btn-xs flex-1 normal-case rounded-lg"
+                              onClick={() => void reviewCandidate(candidate, 'confirmed')}
+                              disabled={loading || confirmationBlocked}
+                              title={confirmationBlocked ? 'Resolve the engagement-letter subject mismatch before confirming fields.' : undefined}
+                            >
+                              Confirm
+                            </button>
                             <button type="button" className="hn-action-secondary btn btn-outline btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'rejected')} disabled={loading}>Reject</button>
                           </div>
                         ) : null}

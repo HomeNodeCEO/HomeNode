@@ -122,6 +122,113 @@ function firstLabeledCandidate(entries, {
   return null;
 }
 
+function normalizedPostalAddress(value) {
+  const source = cleanText(value, 2_000).replace(/\s+/g, " ");
+  if (!source) return null;
+  return source.replace(/\b(\d{5})(\d{4})\b/g, "$1-$2");
+}
+
+function labeledPartyValues(line) {
+  const source = cleanText(line, 2_000);
+  const pattern = /(?:^|\s)(client|lender|prepared\s+for)\s*[:#-]\s*/gi;
+  const matches = [...source.matchAll(pattern)];
+  return matches.map((match, index) => ({
+    label: String(match[1] || "").toLowerCase().replace(/\s+/g, "_"),
+    value: cleanText(source.slice(
+      Number(match.index || 0) + match[0].length,
+      matches[index + 1]?.index ?? source.length,
+    ), 2_000),
+  })).filter((entry) => entry.value);
+}
+
+function valueBeforeRepeatedAddressLabel(value) {
+  return cleanText(value, 2_000)
+    .replace(/\s+(?:(?:client|lender)\s+)?address\s*[:#-].*$/i, "")
+    .trim();
+}
+
+function addressCandidateFromEntries(entries, {
+  fieldKey,
+  labels,
+  startIndex = 0,
+  endIndex = entries.length,
+  confidence = 0.94,
+}) {
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const entry = entries[index];
+    const label = labels.find((candidate) => candidate.test(entry.line));
+    if (!label) continue;
+    const match = entry.line.match(label);
+    const street = valueBeforeRepeatedAddressLabel(match?.[1] || "");
+    if (!street) continue;
+    const nextEntry = entries[index + 1];
+    const continuation = nextEntry?.pageNumber === entry.pageNumber
+      ? valueBeforeRepeatedAddressLabel(nextEntry.line)
+      : "";
+    const continuationLooksLabeled = /^[A-Za-z][A-Za-z /().'&-]{0,50}:/.test(continuation);
+    const rawValue = [street, continuation && !continuationLooksLabeled ? continuation : ""]
+      .filter(Boolean)
+      .join(", ");
+    return {
+      field_key: fieldKey,
+      raw_value: rawValue,
+      normalized_value: normalizedPostalAddress(rawValue),
+      page_number: entry.pageNumber,
+      confidence,
+      evidence_excerpt: [entry.line, continuation && !continuationLooksLabeled ? nextEntry.line : ""]
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 2_000),
+      extraction_method: "labeled_multiline_address",
+    };
+  }
+  return null;
+}
+
+function buildEngagementLetterCandidates(entries) {
+  const candidates = [];
+  const serviceProviderIndex = entries.findIndex((entry) => (
+    /service\s+provider\s+information/i.test(entry.line)
+  ));
+  const partySectionEnd = serviceProviderIndex >= 0 ? serviceProviderIndex : entries.length;
+  const partyIndex = entries.findIndex((entry, index) => (
+    index < partySectionEnd && /(?:^|\s)(?:client|lender|prepared\s+for)\s*[:#-]/i.test(entry.line)
+  ));
+  if (partyIndex >= 0) {
+    const partyEntry = entries[partyIndex];
+    const parties = labeledPartyValues(partyEntry.line);
+    const selectedParty = parties.find((entry) => entry.label === "client")
+      || parties.find((entry) => entry.label === "lender")
+      || parties[0];
+    if (selectedParty?.value) {
+      candidates.push({
+        field_key: "lender_client_name",
+        raw_value: selectedParty.value,
+        normalized_value: selectedParty.value,
+        page_number: partyEntry.pageNumber,
+        confidence: 0.96,
+        evidence_excerpt: partyEntry.line.slice(0, 2_000),
+        extraction_method: "engagement_party_labels",
+      });
+    }
+    const clientAddress = addressCandidateFromEntries(entries, {
+      fieldKey: "lender_client_address",
+      labels: [/^(?:(?:client|lender)\s+)?address\s*[:#-]\s*(.+)$/i],
+      startIndex: partyIndex + 1,
+      endIndex: partySectionEnd,
+      confidence: 0.96,
+    });
+    if (clientAddress) candidates.push(clientAddress);
+  }
+  const subjectAddress = addressCandidateFromEntries(entries, {
+    fieldKey: "subject_property_address",
+    labels: [/^(?:property|subject)\s+address\s*[:#-]\s*(.+)$/i],
+    confidence: 0.98,
+  });
+  if (subjectAddress) candidates.push(subjectAddress);
+  return candidates;
+}
+
 export function normalizeDocumentType(value) {
   const normalized = String(value || "other").trim().toLowerCase();
   if (!DOCUMENT_TYPE_SET.has(normalized)) throw new Error("invalid_document_type");
@@ -177,6 +284,10 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
 
 export function buildDocumentFieldCandidates({ documentType, pages }) {
   const entries = pageLines(pages);
+  const specializedCandidates = documentType === "engagement_letter"
+    ? buildEngagementLetterCandidates(entries)
+    : [];
+  const specializedFields = new Set(specializedCandidates.map((candidate) => candidate.field_key));
   const definitions = [
     {
       fieldKey: "zoning_code",
@@ -271,16 +382,22 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
       "down_payment", "earnest_money", "seller_concessions", "seller_name",
       "buyer_name", "financing_type",
     ]),
-    engagement_letter: new Set(["lender_client_name", "lender_client_address", "assignment_type"]),
+    engagement_letter: new Set([
+      "lender_client_name", "lender_client_address", "subject_property_address", "assignment_type",
+    ]),
     mls_sheet: new Set([
       "mls_number", "list_price", "list_date", "contract_date", "closing_date",
       "financing_type", "seller_concessions",
     ]),
   }[documentType] || null;
   const candidates = definitions
-    .filter((definition) => !allowedFields || allowedFields.has(definition.fieldKey))
+    .filter((definition) => (
+      (!allowedFields || allowedFields.has(definition.fieldKey))
+      && !specializedFields.has(definition.fieldKey)
+    ))
     .map((definition) => firstLabeledCandidate(entries, definition))
     .filter(Boolean);
+  candidates.unshift(...specializedCandidates);
 
   if (documentType === "purchase_contract" && !candidates.some((candidate) => candidate.field_key === "assignment_type")) {
     const purchaseEvidence = entries.find((entry) => (

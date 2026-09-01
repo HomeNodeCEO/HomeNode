@@ -76,6 +76,47 @@ test("dates and assignment purpose are normalized for the appraisal form", () =>
   );
 });
 
+test("engagement letters separate duplicated lender columns and retain the assignment address", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "engagement_letter",
+    pages: [
+      [
+        "ENGAGEMENT LETTER",
+        "Client: Bank of America Lender: Bank of America",
+        "Address: 100 North Tryon Street",
+        "CHARLOTTE, NC 28255 Address: 100 North Tryon Street",
+        "CHARLOTTE, NC 28255",
+        "SERVICE PROVIDER INFORMATION",
+        "Service Provider: Jordan Freeman",
+        "Address: 1909 Snowmass Ln",
+        "GARLAND, TX 75044",
+      ].join("\n"),
+      [
+        "Property Address: 513 HARDY DR",
+        "Garland, TX 750413536",
+        "Loan Purpose: Purchase",
+      ].join("\n"),
+    ],
+  });
+
+  assert.equal(
+    candidates.find((candidate) => candidate.field_key === "lender_client_name")?.normalized_value,
+    "Bank of America",
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.field_key === "lender_client_address")?.normalized_value,
+    "100 North Tryon Street, CHARLOTTE, NC 28255",
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.field_key === "subject_property_address")?.normalized_value,
+    "513 HARDY DR, Garland, TX 75041-3536",
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.field_key === "assignment_type")?.normalized_value,
+    "purchase_transaction",
+  );
+});
+
 test("zoning description suggestion uses the exact official line associated with the code", () => {
   const suggestion = findZoningDescriptionInPages([
     "Legend\nSF-7 - Single-Family Residential-7 (minimum 7,000 square foot lots)\nC-1 - Commercial",

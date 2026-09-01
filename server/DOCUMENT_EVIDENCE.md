@@ -35,6 +35,11 @@ prefill the exact matching description from the official page. GIS attributes
 retain their original source record and attribute object alongside the
 normalized zoning code/description.
 
+Engagement-letter extraction keeps client/lender columns separate, captures the
+labeled client address, and records the engagement's subject property address as
+page-cited evidence. The Property Report compares that address with the open
+assignment and disables candidate confirmation when the street addresses differ.
+
 ## Scheduled maintenance
 
 Pending, interrupted, or failed extractions can be retried outside the web

@@ -607,7 +607,7 @@ export default function AssignmentDocumentCenter({
                   </div>
                   <button
                     type="button"
-                    className="btn btn-error btn-sm w-full normal-case rounded-lg text-white"
+                    className="hn-document-delete btn btn-sm w-full normal-case rounded-lg"
                     onClick={() => void deleteFromFile()}
                     disabled={loading}
                   >

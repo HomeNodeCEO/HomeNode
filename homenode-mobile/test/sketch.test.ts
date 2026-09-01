@@ -14,6 +14,7 @@ import {
   modelToCanvas,
   nearestPointOnSketchWall,
   normalizeSketchBearing,
+  resizeSketchWall,
   sketchClosureTargets,
   sketchReadyForConfirmation,
   sketchRoomRef,
@@ -38,6 +39,69 @@ test("builds and closes a measured rectangular outline", () => {
   assert.equal(calculation.reportedAreaSqft, 1200);
   assert.equal(calculation.perimeterFeet, 140);
   assert.deepEqual(calculation.centroid, { x: 20, y: 15 });
+});
+
+test("resizes a closed wall while preserving connected square corners and closure", () => {
+  const vertices = [
+    { x: 0, y: 0 },
+    { x: 25, y: 0 },
+    { x: 25, y: -15 },
+    { x: 0, y: -15 },
+    { x: 0, y: 0 },
+  ];
+  const resized = resizeSketchWall(vertices, 0, 30);
+  assert.deepEqual(resized, [
+    { x: 0, y: 0 },
+    { x: 30, y: 0 },
+    { x: 30, y: -15 },
+    { x: 0, y: -15 },
+    { x: 0, y: 0 },
+  ]);
+  assert.equal(calculateSketchOutline(resized).reportedAreaSqft, 450);
+});
+
+test("resizes any closed wall and keeps the duplicated closing point synchronized", () => {
+  const vertices = [
+    { x: 0, y: 0 },
+    { x: 25, y: 0 },
+    { x: 25, y: -15 },
+    { x: 0, y: -15 },
+    { x: 0, y: 0 },
+  ];
+  const resized = resizeSketchWall(vertices, 3, 20);
+  assert.deepEqual(resized, [
+    { x: 0, y: 5 },
+    { x: 25, y: 5 },
+    { x: 25, y: -15 },
+    { x: 0, y: -15 },
+    { x: 0, y: 5 },
+  ]);
+  assert.equal(calculateSketchOutline(resized).reportedAreaSqft, 500);
+});
+
+test("resizes an open wall by translating its downstream measured walls", () => {
+  const resized = resizeSketchWall([
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+    { x: 10, y: -8 },
+  ], 0, 14);
+  assert.deepEqual(resized, [
+    { x: 0, y: 0 },
+    { x: 14, y: 0 },
+    { x: 14, y: -8 },
+  ]);
+});
+
+test("rejects a closed wall resize that collapses the opposite wall", () => {
+  const vertices = [
+    { x: 0, y: 0 },
+    { x: 25, y: 0 },
+    { x: 25, y: -15 },
+    { x: 20, y: -15 },
+    { x: 20, y: 0 },
+    { x: 0, y: 0 },
+  ];
+  assert.throws(() => resizeSketchWall(vertices, 0, 20), /invalid_sketch_wall_resize/);
 });
 
 test("projects a closing corner and closes a 10 by 10 outline from tappable targets", () => {

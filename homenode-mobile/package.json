@@ -37,7 +37,11 @@
   "expo": {
     "install": {
       "exclude": [
-        "expo"
+        "expo",
+        "expo-auth-session",
+        "expo-image-manipulator",
+        "expo-image-picker",
+        "expo-secure-store"
       ]
     }
   },

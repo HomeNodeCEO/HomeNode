@@ -234,6 +234,65 @@ export function appendMeasuredWall(vertices: SketchPoint[], distanceFeet: number
   return vertices.length ? [...vertices, next] : [start, next];
 }
 
+export function resizeSketchWall(vertices: SketchPoint[], segmentIndex: number, lengthFeet: number): SketchPoint[] {
+  if (!Number.isFinite(lengthFeet) || lengthFeet < 0.1 || lengthFeet > 10_000) {
+    throw new Error("invalid_sketch_wall_length");
+  }
+  if (!Number.isInteger(segmentIndex) || segmentIndex < 0 || segmentIndex >= vertices.length - 1) {
+    throw new Error("invalid_sketch_wall_segment");
+  }
+  const start = vertices[segmentIndex]!;
+  const end = vertices[segmentIndex + 1]!;
+  const currentLength = distance(start, end);
+  if (currentLength < 0.1) throw new Error("invalid_sketch_wall_segment");
+  const unit = {
+    x: (end.x - start.x) / currentLength,
+    y: (end.y - start.y) / currentLength,
+  };
+  const movement = {
+    x: (lengthFeet - currentLength) * unit.x,
+    y: (lengthFeet - currentLength) * unit.y,
+  };
+  if (Math.hypot(movement.x, movement.y) < 0.0005) return vertices.map((point) => ({ ...point }));
+
+  const calculation = calculateSketchOutline(vertices);
+  if (!calculation.closed) {
+    return vertices.map((point, index) => index > segmentIndex
+      ? { x: rounded(point.x + movement.x), y: rounded(point.y + movement.y) }
+      : { ...point });
+  }
+
+  const uniqueVertices = vertices.slice(0, -1).map((point) => ({ ...point }));
+  const movedVertexIndexes = new Set<number>();
+  let currentVertexIndex = (segmentIndex + 1) % uniqueVertices.length;
+  for (let visited = 0; visited < uniqueVertices.length; visited += 1) {
+    movedVertexIndexes.add(currentVertexIndex);
+    const nextVertexIndex = (currentVertexIndex + 1) % uniqueVertices.length;
+    const current = uniqueVertices[currentVertexIndex]!;
+    const next = uniqueVertices[nextVertexIndex]!;
+    const followingVector = { x: next.x - current.x, y: next.y - current.y };
+    const parallelProjection = (followingVector.x * unit.x) + (followingVector.y * unit.y);
+    if (Math.abs(parallelProjection) > 0.001) break;
+    currentVertexIndex = nextVertexIndex;
+  }
+  for (const index of movedVertexIndexes) {
+    const point = uniqueVertices[index]!;
+    uniqueVertices[index] = {
+      x: rounded(point.x + movement.x),
+      y: rounded(point.y + movement.y),
+    };
+  }
+  const resized = [...uniqueVertices, { ...uniqueVertices[0]! }];
+  const resizedCalculation = calculateSketchOutline(resized);
+  if (!resizedCalculation.ready || resizedCalculation.selfIntersecting) {
+    throw new Error("invalid_sketch_wall_resize");
+  }
+  if (resized.some((point, index) => index > 0 && distance(resized[index - 1]!, point) < 0.1)) {
+    throw new Error("invalid_sketch_wall_resize");
+  }
+  return resized;
+}
+
 export function normalizeSketchBearing(value: number) {
   if (!Number.isFinite(value)) return 0;
   const normalized = ((value % 360) + 360) % 360;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, type MobileApi } from "../api/client";
 import { type LocalSketchDraft, OfflineStore } from "../offline/store";
+import { emptySyncLaneResult, recordSyncFailure } from "../offline/syncPolicy";
 import { toSketchApiDocument } from "./model";
 
 export async function synchronizeDueSketches(
@@ -11,7 +12,9 @@ export async function synchronizeDueSketches(
   sessionId?: string,
 ) {
   const drafts = await store.dueSketchDrafts(ownerUserId, sessionId);
+  const result = emptySyncLaneResult();
   for (const draft of drafts) {
+    result.attempted += 1;
     await store.markSketchSynchronizing(ownerUserId, draft.sessionId);
     try {
       const response = await api.saveInspectionSketch(draft.sessionId, {
@@ -21,6 +24,7 @@ export async function synchronizeDueSketches(
         sketch: toSketchApiDocument(draft.draft),
       });
       await store.applyServerSketch(ownerUserId, draft.sessionId, response.sketch);
+      result.succeeded += 1;
     } catch (reason) {
       const code = reason instanceof ApiError
         ? reason.code
@@ -30,23 +34,26 @@ export async function synchronizeDueSketches(
           const current = await api.inspectionSketch(draft.sessionId);
           if (current.sketch) {
             await store.markSketchConflict(ownerUserId, draft.sessionId, current.sketch);
+            result.permanentFailures += 1;
             continue;
           }
         } catch {
           // Preserve the original conflict when the follow-up read is unavailable.
         }
       }
+      recordSyncFailure(result, reason);
       await store.recordSketchFailure(ownerUserId, draft, code);
     }
   }
+  return result;
 }
 
 export function useSketchSync(
   store: OfflineStore,
-  api: MobileApi,
   ownerUserId: string,
   sessionId: string,
   online: boolean,
+  synchronize: () => Promise<void>,
 ) {
   const [draft, setDraft] = useState<LocalSketchDraft | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -60,17 +67,16 @@ export function useSketchSync(
     if (!online) return;
     if (!active.current) {
       setSyncing(true);
-      active.current = synchronizeDueSketches(store, api, ownerUserId, sessionId).finally(() => {
+      active.current = synchronize().finally(() => {
         active.current = null;
         setSyncing(false);
       });
     }
     await active.current;
     await refresh();
-  }, [api, online, ownerUserId, refresh, sessionId, store]);
+  }, [online, refresh, synchronize]);
 
   useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => { if (online) void syncNow(); }, [online, syncNow]);
 
   return { draft, refresh, syncing, syncNow };
 }

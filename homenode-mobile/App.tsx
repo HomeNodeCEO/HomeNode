@@ -48,6 +48,8 @@ function friendlyError(reason: unknown) {
     mobile_inspection_disabled: "The mobile API is not enabled in this environment.",
     session_expired: "Your session expired. Please sign in again.",
     network_request_failed: "The HomeNode API could not be reached.",
+    request_timeout: "The HomeNode service took too long to respond. Your saved work will retry automatically.",
+    authentication_temporarily_unavailable: "Secure sign-in is temporarily unavailable. Cached inspections remain available and synchronization will retry.",
     offline_inspection_not_found: "This inspection is not available on this device.",
   };
   return messages[code] || code.replaceAll("_", " ");
@@ -390,6 +392,7 @@ function InspectionScreen({
   globalSummary,
   onRefreshQueue,
   onSync,
+  onRetrySync,
   onBack,
   onCompleted,
 }: {
@@ -404,6 +407,7 @@ function InspectionScreen({
   globalSummary: QueueSummary;
   onRefreshQueue: () => Promise<void>;
   onSync: () => Promise<void>;
+  onRetrySync: () => Promise<void>;
   onBack: () => void;
   onCompleted: (session: InspectionSession) => Promise<void>;
 }) {
@@ -551,6 +555,8 @@ function InspectionScreen({
             ownerUserId={ownerUserId}
             sessionId={session.id}
             online={online}
+            onSync={onSync}
+            coordinatorSyncing={syncing}
             selectedRoomId={selectedSketchRoom?.id || null}
             onSelectRoom={setSelectedSketchRoom}
           />
@@ -567,7 +573,7 @@ function InspectionScreen({
             value={comments}
           />
           <Button title={saving ? "Saving…" : "Save offline draft"} disabled={saving} onPress={() => void save()} />
-          {online && summary.pending ? <Button title={syncing ? "Synchronizing…" : "Sync now"} disabled={syncing} secondary onPress={() => void onSync()} /> : null}
+          {online && summary.pending ? <Button title={syncing ? "Synchronizing…" : "Sync now"} disabled={syncing} secondary onPress={() => void onRetrySync()} /> : null}
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {conflicts.length ? <View style={styles.list}>
             <Text style={styles.sectionTitle}>Review conflicts</Text>
@@ -587,12 +593,14 @@ function InspectionScreen({
 
         <View style={[styles.tabPanel, selectedTab !== "photos" && styles.tabPanelHidden]}>
           <PhotoCapturePanel
-            api={api}
             store={store}
             ownerUserId={ownerUserId}
             sessionId={session.id}
             workflowType={file.workflow_type}
             online={online}
+            onSync={onSync}
+            onRetrySync={onRetrySync}
+            coordinatorSyncing={syncing}
             selectedSketchRoom={selectedSketchRoom}
           />
         </View>
@@ -705,6 +713,11 @@ function SignedInApp({ config }: { config: MobileConfig }) {
     await reloadCached();
   }, [offlineSync.syncNow, reloadCached]);
 
+  const retryAndReload = useCallback(async () => {
+    await offlineSync.retryNow();
+    await reloadCached();
+  }, [offlineSync.retryNow, reloadCached]);
+
   const inspectionCompleted = useCallback(async (nextSession: InspectionSession) => {
     setInspection((current) => current ? { ...current, session: nextSession } : current);
     await reloadCached();
@@ -724,6 +737,7 @@ function SignedInApp({ config }: { config: MobileConfig }) {
     globalSummary={offlineSync.summary}
     onRefreshQueue={offlineSync.refresh}
     onSync={syncAndReload}
+    onRetrySync={retryAndReload}
     onCompleted={inspectionCompleted}
     onBack={() => setInspection(null)}
   />;

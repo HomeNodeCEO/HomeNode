@@ -6,6 +6,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import type { MobileConfig } from "../config";
 import { clearActiveOfflineUser } from "../offline/store";
+import { isDefinitiveRefreshFailure } from "./policy";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -164,7 +165,7 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
   const getAccessToken = useCallback(async () => {
     if (!session) throw new Error("authentication_required");
     if (isFresh(session)) return session.accessToken;
-    if (!session.refreshToken || !discovery) {
+    if (!session.refreshToken) {
       await clearStoredSession();
       setSession(null);
       throw new Error("session_expired");
@@ -172,26 +173,35 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
     if (!refreshPromise.current) {
       refreshPromise.current = (async () => {
         try {
+          let currentDiscovery = discovery;
+          if (!currentDiscovery) {
+            currentDiscovery = await AuthSession.fetchDiscoveryAsync(config.oidcIssuer);
+            setDiscovery(currentDiscovery);
+          }
           const refreshed = await AuthSession.refreshAsync({
             clientId: config.clientId,
             refreshToken: session.refreshToken,
             scopes: ["openid", "profile", "email", "offline_access"],
-          }, discovery);
+          }, currentDiscovery);
           const next = tokenSession(refreshed, session.refreshToken);
           await storeSession(next);
           setSession(next);
           return next;
         } catch (reason) {
-          await clearStoredSession();
-          setSession(null);
-          throw reason;
+          if (isDefinitiveRefreshFailure(reason)) {
+            await clearStoredSession();
+            setSession(null);
+            throw new Error("session_expired");
+          }
+          if (reason instanceof Error && reason.message === "session_expired") throw reason;
+          throw new Error("authentication_temporarily_unavailable");
         } finally {
           refreshPromise.current = null;
         }
       })();
     }
     return (await refreshPromise.current).accessToken;
-  }, [config.clientId, discovery, session]);
+  }, [config.clientId, config.oidcIssuer, discovery, session]);
 
   const signIn = useCallback(async () => {
     if (!request || !discovery) throw new Error("sign_in_not_ready");

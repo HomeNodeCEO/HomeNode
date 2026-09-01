@@ -162,6 +162,9 @@ export function photoSyncErrorMessage(value: string | null | undefined) {
     mobile_photo_verification_failed: "Cloud storage received the photo, but verification could not be completed.",
     invalid_mobile_photo_upload: "The uploaded photo did not match its expected size or file type.",
     network_request_failed: "HomeNode could not reach the cloud service.",
+    request_timeout: "The HomeNode service took too long to respond. The photo remains on this device for automatic retry.",
+    mobile_photo_upload_timeout: "The cloud upload took too long. The photo remains on this device for automatic retry.",
+    authentication_temporarily_unavailable: "Secure sign-in is temporarily unavailable. The photo remains on this device for automatic retry.",
   };
   return messages[code] || code.replaceAll("_", " ");
 }

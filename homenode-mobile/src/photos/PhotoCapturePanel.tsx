@@ -9,7 +9,6 @@ import {
   View,
 } from "react-native";
 
-import type { MobileApi } from "../api/client";
 import type { WorkflowType } from "../domain/workflows";
 import { OfflineStore, type LocalPhotoDraft } from "../offline/store";
 import {
@@ -140,20 +139,24 @@ function PhotoCard({
 }
 
 export function PhotoCapturePanel({
-  api,
   store,
   ownerUserId,
   sessionId,
   workflowType,
   online,
+  onSync,
+  onRetrySync,
+  coordinatorSyncing,
   selectedSketchRoom,
 }: {
-  api: MobileApi;
   store: OfflineStore;
   ownerUserId: string;
   sessionId: string;
   workflowType: WorkflowType;
   online: boolean;
+  onSync: () => Promise<void>;
+  onRetrySync: () => Promise<void>;
+  coordinatorSyncing: boolean;
   selectedSketchRoom: SelectedSketchRoom | null;
 }) {
   const [photos, setPhotos] = useState<LocalPhotoDraft[]>([]);
@@ -164,8 +167,8 @@ export function PhotoCapturePanel({
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const captureCategories = workflowType === "uad_3_6" ? UAD_PHOTO_CATEGORIES : CUSTOM_PHOTO_CATEGORIES;
-  const photoSync = usePhotoSync(store, api, ownerUserId, sessionId, online);
-  const { refresh: refreshPhotoSummary, syncNow: syncPhotosNow } = photoSync;
+  const photoSync = usePhotoSync(store, ownerUserId, sessionId, online, onSync, onRetrySync);
+  const { refresh: refreshPhotoSummary, retryNow: retryPhotosNow, syncNow: syncPhotosNow } = photoSync;
   const activePhotos = photos.filter((photo) => isPhotoVisible(photo.state, photo.removeOperationId));
   const remaining = remainingPhotoCapacity(activePhotos.length);
 
@@ -180,8 +183,8 @@ export function PhotoCapturePanel({
   }, [ownerUserId, refreshPhotoSummary, sessionId, store]);
 
   useEffect(() => {
-    void load().catch((reason) => setError(photoError(reason)));
-  }, [load, photoSync.summary.failed, photoSync.summary.pending, photoSync.summary.synchronized]);
+    if (!coordinatorSyncing) void load().catch((reason) => setError(photoError(reason)));
+  }, [coordinatorSyncing, load, photoSync.summary.failed, photoSync.summary.pending, photoSync.summary.synchronized]);
 
   useEffect(() => {
     if (selectedSketchRoom) setUseSketchRoom(true);
@@ -306,7 +309,7 @@ export function PhotoCapturePanel({
     try {
       setError(null);
       await store.makeFailedPhotosImmediatelyRetryable(ownerUserId, sessionId);
-      await syncPhotosNow();
+      await retryPhotosNow();
       await load();
     } catch (reason) {
       setError(photoError(reason));

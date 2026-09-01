@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
@@ -26,6 +26,7 @@ const PROPERTY_TYPE_LABELS: Record<UadPropertyType, string> = {
 
 export default function UadWorkspaceEntry() {
   const { accountId = "" } = useParams();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const requestedWorkfileId = searchParams.get("workfileId");
   const [address, setAddress] = useState("");
@@ -244,7 +245,7 @@ export default function UadWorkspaceEntry() {
           <UadWorkfileEditor
             initialSection={editorInitialSection}
             key={`${activeWorkfileId}:${editorRefreshToken}`}
-            onClose={() => setActiveWorkfileId(null)}
+            onClose={() => navigate("/")}
             workfileId={activeWorkfileId}
           />
         )}

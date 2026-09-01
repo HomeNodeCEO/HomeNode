@@ -693,7 +693,7 @@ export default function UadWorkfileEditor({ workfileId, onClose, initialSection 
     setActiveSection(nextSection);
   }
 
-  async function handleCloseEditor() {
+  async function handleCloseReport() {
     if (saving) return;
     if (dirtyKeysRef.current.size && !(await persistAutosave())) return;
     onClose();
@@ -820,7 +820,7 @@ export default function UadWorkfileEditor({ workfileId, onClose, initialSection 
             >
               {saving ? "Saving…" : dirty ? "Save changes" : "Save"}
             </button>
-            <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseEditor()} type="button">Close editor</button>
+            <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseReport()} type="button">← Close Report</button>
           </div>
         </div>
       </header>

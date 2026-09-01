@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  assignmentDetailsFromConfirmedDocument,
   assignmentDocumentCandidateReviewKey,
   assignmentDocumentRetryDelayMs,
   buildAssignmentDocumentObjectKey,
@@ -12,6 +13,42 @@ import {
   loadAssignmentDocumentContent,
   retainedAssignmentDocumentReview,
 } from "../src/services/assignmentDocuments.js";
+
+test("confirmed engagement evidence replaces a stale assignment type and persists client fields", () => {
+  const result = assignmentDetailsFromConfirmedDocument({
+    assignment_types: ["heloc"],
+    lender_client_name: "",
+    lender_client_address: "",
+    occupancy: "owner",
+  }, [
+    { field_key: "lender_client_name", review_status: "confirmed", confirmed_value: "Bank of America" },
+    { field_key: "lender_client_address", review_status: "confirmed", confirmed_value: "100 North Tryon Street, Charlotte, NC 28255" },
+    { field_key: "assignment_type", review_status: "confirmed", confirmed_value: "purchase_transaction" },
+    { field_key: "subject_property_address", review_status: "confirmed", confirmed_value: "513 Hardy Dr" },
+  ], "engagement_letter");
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.assignmentDetails.assignment_types, ["purchase_transaction"]);
+  assert.equal(result.assignmentDetails.lender_client_name, "Bank of America");
+  assert.equal(
+    result.assignmentDetails.lender_client_address,
+    "100 North Tryon Street, Charlotte, NC 28255",
+  );
+  assert.equal(result.assignmentDetails.occupancy, "owner");
+});
+
+test("confirmed purchase-contract evidence marks the subject under contract without erasing other types", () => {
+  const result = assignmentDetailsFromConfirmedDocument({
+    assignment_types: ["rehab"],
+    subject_under_contract: false,
+  }, [
+    { field_key: "contract_price", review_status: "confirmed", confirmed_value: "425000" },
+    { field_key: "seller_name", review_status: "confirmed", confirmed_value: "Example Seller" },
+  ], "purchase_contract");
+  assert.deepEqual(result.assignmentDetails.assignment_types, ["rehab", "purchase_transaction"]);
+  assert.equal(result.assignmentDetails.subject_under_contract, true);
+  assert.equal(result.assignmentDetails.contract_price, "425000");
+  assert.equal(result.assignmentDetails.contract_seller_names, "Example Seller");
+});
 
 test("assignment document object keys are assignment-scoped and content-addressed", () => {
   assert.equal(
@@ -463,6 +500,73 @@ test("approve all confirms every pending field in one audited transaction", asyn
   assert.equal(result.confirmed_candidates[1].confirmed_value, "Bank of America");
   assert.equal(queries.filter(({ sql }) => /INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)).length, 2);
   assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 1);
+});
+
+test("approving assignment-scoped engagement evidence updates the exact file and audit history", async () => {
+  const queries = [];
+  const candidate = {
+    id: 610,
+    document_id: 47,
+    field_key: "lender_client_name",
+    raw_value: "Bank of America",
+    normalized_value: "Bank of America",
+    page_number: 1,
+    confidence: 0.99,
+    review_status: "suggested",
+  };
+  const client = {
+    async query(sql, values = []) {
+      queries.push({ sql, values });
+      if (["BEGIN", "COMMIT"].includes(sql)) return { rows: [] };
+      if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+        return { rows: [{
+          id: 47,
+          account_id: "26355500170360000",
+          assignment_file_id: 91,
+          document_type: "engagement_letter",
+          extraction_summary: {},
+        }] };
+      }
+      if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) return { rows: [candidate] };
+      if (/UPDATE app\.assignment_document_field_candidates/.test(sql)) {
+        return { rows: [{ ...candidate, review_status: "confirmed", confirmed_value: values[2] }] };
+      }
+      if (/INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)) return { rows: [] };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{
+          id: 91,
+          account_id: "26355500170360000",
+          file_number: "2026-239-01",
+          assignment_details: { assignment_types: ["purchase_transaction"] },
+          revision: 4,
+          workfile_status: "draft",
+        }] };
+      }
+      if (/UPDATE app\.assignment_files/.test(sql)) return { rows: [] };
+      if (/INSERT INTO app\.assignment_file_history/.test(sql)) return { rows: [] };
+      if (/UPDATE app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  const result = await confirmAssignmentDocumentCandidates(pool, {
+    documentId: 47,
+    reviewer: "Jordan Freeman",
+    reportSubjectAddress: "513 Hardy Dr, Garland, TX 75041",
+  });
+  assert.equal(result.assignment_application.applied, true);
+  assert.equal(result.assignment_application.revision, 5);
+  const update = queries.find(({ sql }) => /UPDATE app\.assignment_files/.test(sql));
+  assert.equal(JSON.parse(update.values[0]).lender_client_name, "Bank of America");
+  assert.equal(update.values[2], 5);
+  assert.equal(queries.filter(({ sql }) => /INSERT INTO app\.assignment_file_history/.test(sql)).length, 1);
 });
 
 test("approve all refuses an unacknowledged engagement-address mismatch", async () => {

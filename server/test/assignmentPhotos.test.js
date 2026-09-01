@@ -8,6 +8,7 @@ import {
   buildAssignmentPhotoVersion,
   buildAssignmentPhotoObjectKey,
   normalizeAssignmentPhotoUpload,
+  uploadAssignmentPhotoObject,
 } from "../src/services/assignmentPhotos.js";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -81,6 +82,54 @@ test("builds a stable photo change token that reacts to mobile updates", () => {
   assert.notEqual(buildAssignmentPhotoVersion([]), initial);
 });
 
+test("same-application photo fallback uploads only the registered file-scoped object", async () => {
+  const content = Buffer.from("verified-photo-bytes");
+  const writes = [];
+  const pool = {
+    async query(sql, values = []) {
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+      }
+      if (/FROM app\.inspection_photo_objects photo_object/.test(sql)) {
+        return { rows: [{
+          id: "20000000-0000-4000-8000-000000000003",
+          photo_id: "20000000-0000-4000-8000-000000000002",
+          variant: "original",
+          object_key: "private/photo.jpg",
+          content_type: "image/jpeg",
+          expected_byte_size: content.length,
+        }] };
+      }
+      if (/UPDATE app\.inspection_photo_objects/.test(sql)) {
+        writes.push(values);
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const stored = [];
+  const result = await uploadAssignmentPhotoObject(pool, {
+    configured: true,
+    bucket: "private",
+    async putObject(input) {
+      stored.push(input);
+      return { etag: "verified" };
+    },
+  }, {
+    accountId: "26355500170360000",
+    assignmentFileId: 91,
+    photoId: "20000000-0000-4000-8000-000000000002",
+    objectId: "20000000-0000-4000-8000-000000000003",
+    contentType: "image/jpeg",
+    content,
+  });
+  assert.equal(result.uploaded, true);
+  assert.equal(result.byte_size, content.length);
+  assert.equal(stored[0].objectKey, "private/photo.jpg");
+  assert.equal(stored[0].body, content);
+  assert.equal(writes.length, 1);
+});
+
 test("desktop photo migration preserves mobile rows while enabling file-scoped desktop evidence", () => {
   const source = fs.readFileSync(
     path.resolve(directory, "../migrations/20260921_desktop_report_photos.sql"),
@@ -135,6 +184,9 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(center, /Refreshing secure preview/);
   assert.match(center, /generation !== loadGeneration\.current/);
   assert.match(center, /getAssignmentFiles\(accountId, assignmentFileId\)/);
+  assert.match(center, /uploadAssignmentPhotoObjectViaApi/);
+  assert.match(center, /Direct photo upload failed/);
+  assert.match(api, /photos\/\$\{encodeURIComponent\(photoId\)\}\/objects/);
   assert.match(center, /loadAssignmentFileFallback/);
   assert.match(api, /getAssignmentPhotos[\s\S]*retryTransient: true/);
   assert.match(center, /Refresh now/);

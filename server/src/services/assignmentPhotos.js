@@ -342,6 +342,67 @@ export async function createAssignmentPhotoUpload(pool, storage, { accountId, as
   }
 }
 
+/**
+ * Same-origin fallback for browsers that cannot reach a private R2 presigned
+ * URL because the bucket CORS policy is missing or temporarily unavailable.
+ * The object must already belong to the exact authorized appraisal file and
+ * the byte count/content type must match the registered upload request.
+ */
+export async function uploadAssignmentPhotoObject(pool, storage, {
+  accountId,
+  assignmentFileId,
+  photoId: photoValue,
+  objectId: objectValue,
+  contentType: suppliedContentType,
+  content,
+}) {
+  ensureStorage(storage);
+  const photoId = normalizeUuid(photoValue, "invalid_assignment_photo_id");
+  const objectId = normalizeUuid(objectValue, "invalid_assignment_photo_object_id");
+  const contentBuffer = Buffer.isBuffer(content) ? content : null;
+  if (!contentBuffer) {
+    throw new Error("invalid_assignment_photo_upload_body");
+  }
+  const byteSize = Buffer.byteLength(contentBuffer);
+  if (byteSize < 1 || byteSize > MAX_PHOTO_BYTES) throw new Error("invalid_assignment_photo_upload_body");
+  const report = await assignmentReport(pool, accountId, assignmentFileId);
+  if (report.workfile_status === "signed") throw new Error("custom_appraisal_workfile_signed");
+  const { rows } = await pool.query(
+    `SELECT photo_object.*
+       FROM app.inspection_photo_objects photo_object
+       JOIN app.inspection_photos photo ON photo.id = photo_object.photo_id
+      WHERE photo_object.id = $1
+        AND photo.id = $2
+        AND photo.report_file_id = $3
+        AND photo.status NOT IN ('excluded', 'deleted')`,
+    [objectId, photoId, report.id],
+  );
+  const object = rows[0];
+  if (!object) throw new Error("assignment_photo_object_not_found");
+  const contentType = String(suppliedContentType || "").split(";", 1)[0].trim().toLowerCase();
+  if (contentType !== object.content_type || byteSize !== Number(object.expected_byte_size)) {
+    throw new Error("invalid_assignment_photo_upload");
+  }
+  const uploaded = await storage.putObject({
+    objectKey: object.object_key,
+    contentType: object.content_type,
+    body: contentBuffer,
+  });
+  await pool.query(
+    `UPDATE app.inspection_photo_objects
+        SET storage_etag = $2, uploaded_at = COALESCE(uploaded_at, now()), updated_at = now()
+      WHERE id = $1 AND photo_id = $3`,
+    [object.id, uploaded?.etag || null, photoId],
+  );
+  return {
+    object_id: object.id,
+    photo_id: photoId,
+    variant: object.variant,
+    byte_size: byteSize,
+    uploaded: true,
+  };
+}
+
 export async function verifyAssignmentPhoto(pool, storage, { accountId, assignmentFileId, photoId: value }) {
   ensureStorage(storage);
   const photoId = normalizeUuid(value, "invalid_assignment_photo_id");

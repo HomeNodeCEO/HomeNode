@@ -17,6 +17,7 @@
     "test:comparable-presentation": "node --experimental-strip-types scripts/testComparableSalesPresentation.mjs",
     "test:property-report-presentation": "node --experimental-strip-types scripts/testPropertyReportPresentation.mjs",
     "test:property-report-assignment": "node --experimental-strip-types scripts/testPropertyReportAssignment.mjs",
+    "test:custom-appraisal-autosave": "node --experimental-strip-types scripts/testCustomAppraisalAutosave.mjs",
     "test:assignment-file-selection": "node --experimental-strip-types scripts/testAssignmentFileSelection.mjs",
     "test:report-file-workflow": "node scripts/testReportFileWorkflow.mjs",
     "test:timed-request-cache": "node --experimental-strip-types scripts/testTimedRequestCache.mjs",

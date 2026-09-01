@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import {
+  editorCredentialForRequest,
   forgetEditorCredential,
   requestEditorCredential,
 } from "@/lib/editorCredential";
@@ -61,6 +62,13 @@ import {
   SummarySection,
 } from "@/components/PropertyReportControls";
 import { hasSnapshotValue, mergeNonBlankSnapshot } from "@/lib/reportSnapshotMerge";
+import {
+  CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
+  CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS,
+  customAppraisalDraftsMatch,
+  reconcileCustomAppraisalDraft,
+  type CustomAppraisalAutosaveState,
+} from "@/lib/customAppraisalAutosave";
 
 const AssignmentDocumentCenter = memo(
   lazy(() => import("@/components/AssignmentDocumentCenter")),
@@ -305,7 +313,25 @@ function AddressHero({
   const [assignmentDirty, setAssignmentDirty] = useState(false);
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
   const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
+  const [assignmentAutosaveState, setAssignmentAutosaveState] =
+    useState<CustomAppraisalAutosaveState>("idle");
+  const [lastAssignmentSavedAt, setLastAssignmentSavedAt] = useState<string | null>(null);
+  const [assignmentConflictKeys, setAssignmentConflictKeys] = useState<string[]>([]);
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
+  const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
+  const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
+  const assignmentDirtyRef = useRef(false);
+  const activeAssignmentFileRef = useRef<AppraisalAssignmentFile | null>(null);
+  const assignmentFirstDirtyAtRef = useRef<number | null>(null);
+  const assignmentSaveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const saveAssignmentDetailsRef = useRef<(
+    options?: {
+      requireCompletion?: boolean;
+      saveReason?: "manual_save" | "autosave";
+      promptForCredential?: boolean;
+      allowConflictRetry?: boolean;
+    },
+  ) => Promise<boolean>>(async () => false);
   const unemploymentLookupSucceeded = useRef(false);
   const unemploymentHydrationAccount = useRef("");
   const [neighborhoodSectionReady, setNeighborhoodSectionReady] = useState(false);
@@ -331,9 +357,13 @@ function AddressHero({
     setStatusMessage: setWorkfileStatusMessage,
   });
   const hydrateAssignmentDraft = useCallback((value: AssignmentDetails) => {
-    const next = assignmentDraftFromDetail(value);
+    const serverDraft = assignmentDraftFromDetail(value);
     setAssignmentDraft((current) => {
-      if (!unemploymentLookupSucceeded.current) return next;
+      if (!unemploymentLookupSucceeded.current) {
+        assignmentDraftRef.current = serverDraft;
+        assignmentSavedDraftRef.current = cloneEditorValue(serverDraft);
+        return serverDraft;
+      }
       const zipComparison = hasValue(current.neighborhood_unemployment_pct) ? {
         neighborhood_unemployment_pct: current.neighborhood_unemployment_pct,
         neighborhood_unemployment_zip: current.neighborhood_unemployment_zip,
@@ -352,7 +382,10 @@ function AddressHero({
         neighborhood_city_unemployment_variable:
           current.neighborhood_city_unemployment_variable,
       } : {};
-      return { ...next, ...zipComparison, ...cityComparison };
+      const hydrated = { ...serverDraft, ...zipComparison, ...cityComparison };
+      assignmentDraftRef.current = hydrated;
+      assignmentSavedDraftRef.current = cloneEditorValue(hydrated);
+      return hydrated;
     });
   }, []);
   const {
@@ -378,6 +411,12 @@ function AddressHero({
     if (!accountId) return;
     marketWorkfileSaveErrorRef.current = null;
     hydrateAssignmentDraft(selectedFile.assignment_details);
+    assignmentDirtyRef.current = false;
+    assignmentFirstDirtyAtRef.current = null;
+    setAssignmentDirty(false);
+    setAssignmentAutosaveState("idle");
+    setAssignmentConflictKeys([]);
+    setLastAssignmentSavedAt(selectedFile.updated_at || null);
     try {
       const workfileResult = await loadCustomAppraisalWorkfile(accountId, selectedFile.id);
       if (isCancelled()) return;
@@ -422,6 +461,19 @@ function AddressHero({
     requestedAssignmentFileId,
     onSelectedFile: handleSelectedAssignmentFile,
   });
+
+  useEffect(() => {
+    assignmentDraftRef.current = assignmentDraft;
+  }, [assignmentDraft]);
+
+  useEffect(() => {
+    assignmentDirtyRef.current = assignmentDirty;
+    if (!assignmentDirty) assignmentFirstDirtyAtRef.current = null;
+  }, [assignmentDirty]);
+
+  useEffect(() => {
+    activeAssignmentFileRef.current = activeAssignmentFile;
+  }, [activeAssignmentFile]);
   const {
     zoningEvidence,
     zoningEvidenceOpen,
@@ -489,8 +541,13 @@ function AddressHero({
       unemploymentLookupSucceeded.current = false;
     }
     hydrateAssignmentDraft(assignmentDraftFromDetail());
+    assignmentDirtyRef.current = false;
+    assignmentFirstDirtyAtRef.current = null;
     setAssignmentDirty(false);
     setAssignmentSaveMessage("");
+    setAssignmentAutosaveState("idle");
+    setAssignmentConflictKeys([]);
+    setLastAssignmentSavedAt(null);
     resetProfileTracking();
     marketWorkfileRevisionRef.current = 0;
     marketWorkfileSaveErrorRef.current = null;
@@ -1163,65 +1220,267 @@ function AddressHero({
     importCustomMarketArea,
   ]);
 
-  const saveAssignmentDetails = async ({
-    requireCompletion = true,
-  }: { requireCompletion?: boolean } = {}): Promise<boolean> => {
-    if (requireCompletion) {
-      const validationErrors = assignmentValidationErrors(assignmentDraft);
-      if (validationErrors.length) {
-        setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
+  const saveAssignmentDetails = (options: {
+    requireCompletion?: boolean;
+    saveReason?: "manual_save" | "autosave";
+    promptForCredential?: boolean;
+    allowConflictRetry?: boolean;
+  } = {}): Promise<boolean> => {
+    if (assignmentSaveInFlightRef.current) return assignmentSaveInFlightRef.current;
+    const {
+      requireCompletion = true,
+      saveReason = "manual_save",
+      promptForCredential = saveReason === "manual_save",
+      allowConflictRetry = true,
+    } = options;
+
+    const task = (async () => {
+      const draftSnapshot = cloneEditorValue(assignmentDraftRef.current);
+      const fileAtStart = activeAssignmentFileRef.current;
+      if (requireCompletion) {
+        const validationErrors = assignmentValidationErrors(draftSnapshot);
+        if (validationErrors.length) {
+          setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
+          return false;
+        }
+      }
+      if (!accountId || !fileAtStart) {
+        setAssignmentSaveMessage("Enter a file number and choose Save New File first.");
         return false;
       }
-    }
-    if (!accountId || !activeAssignmentFile) {
-      setAssignmentSaveMessage("Enter a file number and choose Save New File first.");
-      return false;
-    }
-    const editorKey = editorKeyForSave();
-    if (!editorKey) return false;
-    setSavingAssignmentFile(true);
-    try {
-      const response = await updateAssignmentFile(
-        accountId,
-        activeAssignmentFile.id,
-        {
-          assignment_details: cloneEditorValue(assignmentDraft),
-          expected_revision: activeAssignmentFile.revision,
-        },
-        editorKey,
-      );
-      const updatedFile = {
-        ...response.assignment_file,
-        custom_appraisal_sections: activeAssignmentFile.custom_appraisal_sections,
-        mobile_inspection_sketch: activeAssignmentFile.mobile_inspection_sketch,
-        mobile_inspection_photos: activeAssignmentFile.mobile_inspection_photos,
-      };
-      setActiveAssignmentFile(updatedFile);
-      setAssignmentFiles((current) => current.map((file) =>
-        file.id === updatedFile.id ? updatedFile : file
-      ));
-      setAssignmentDirty(false);
-      const savedTime = new Date(response.assignment_file.updated_at || Date.now())
-        .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      setAssignmentSaveMessage(`Changes saved to file ${response.assignment_file.file_number} at ${savedTime}.`);
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "The assignment file could not be saved.";
-      if (/401|invalid_editor_key/i.test(message)) {
-        forgetEditorCredential();
+      const editorKey = promptForCredential ? editorKeyForSave() : editorCredentialForRequest();
+      if (!editorKey) {
+        if (saveReason === "autosave") {
+          setAssignmentAutosaveState("error");
+          setAssignmentSaveMessage(
+            "Autosave is paused until you sign in or provide an editor credential.",
+          );
+        }
+        return false;
       }
-      setAssignmentSaveMessage(
-        message === "assignment_file_revision_conflict"
-          ? "This file changed elsewhere. Reload the report before saving again."
-          : message,
-      );
-      return false;
-    } finally {
-      setSavingAssignmentFile(false);
+
+      setSavingAssignmentFile(true);
+      setAssignmentAutosaveState("saving");
+      if (saveReason === "autosave") setAssignmentSaveMessage("Protecting changes in PostgreSQL…");
+      try {
+        const response = await updateAssignmentFile(
+          accountId,
+          fileAtStart.id,
+          {
+            assignment_details: draftSnapshot,
+            expected_revision: fileAtStart.revision,
+            reviewer: saveReason === "autosave"
+              ? "HomeNode Custom Appraisal autosave"
+              : "HomeNode Custom Appraisal manual save",
+          },
+          editorKey,
+        );
+        const updatedFile: AppraisalAssignmentFile = {
+          ...response.assignment_file,
+          custom_appraisal_sections: fileAtStart.custom_appraisal_sections,
+          mobile_inspection_sketch: fileAtStart.mobile_inspection_sketch,
+          mobile_inspection_photos: fileAtStart.mobile_inspection_photos,
+        };
+        activeAssignmentFileRef.current = updatedFile;
+        assignmentSavedDraftRef.current = cloneEditorValue(draftSnapshot);
+        setActiveAssignmentFile(updatedFile);
+        setAssignmentFiles((current) => current.map((file) =>
+          file.id === updatedFile.id ? updatedFile : file
+        ));
+        const newerEditsRemain = !customAppraisalDraftsMatch(
+          assignmentDraftRef.current,
+          draftSnapshot,
+        );
+        assignmentDirtyRef.current = newerEditsRemain;
+        assignmentFirstDirtyAtRef.current = newerEditsRemain ? Date.now() : null;
+        setAssignmentDirty(newerEditsRemain);
+        setAssignmentConflictKeys([]);
+        const savedAt = response.assignment_file.updated_at || new Date().toISOString();
+        setLastAssignmentSavedAt(savedAt);
+        setAssignmentAutosaveState(newerEditsRemain ? "pending" : "saved");
+        const savedTime = new Date(savedAt)
+          .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        setAssignmentSaveMessage(
+          newerEditsRemain
+            ? `Changes saved to file ${response.assignment_file.file_number} at ${savedTime}; newer edits are queued.`
+            : `All changes saved to file ${response.assignment_file.file_number} at ${savedTime}.`,
+        );
+        return true;
+      } catch (error) {
+        const message = error instanceof Error
+          ? error.message
+          : "The assignment file could not be saved.";
+        if (/401|invalid_editor_key/i.test(message)) forgetEditorCredential();
+        if (message === "assignment_file_revision_conflict" && allowConflictRetry) {
+          try {
+            const latestResponse = await getAssignmentFiles(accountId);
+            const latestFile = latestResponse.files.find((file) => file.id === fileAtStart.id);
+            if (latestFile) {
+              const remoteDraft = assignmentDraftFromDetail(latestFile.assignment_details);
+              const reconciliation = reconcileCustomAppraisalDraft(
+                assignmentSavedDraftRef.current,
+                assignmentDraftRef.current,
+                remoteDraft,
+              );
+              const rebasedDraft = cloneEditorValue(reconciliation.rebased);
+              const refreshedFile: AppraisalAssignmentFile = {
+                ...latestFile,
+                custom_appraisal_sections:
+                  latestFile.custom_appraisal_sections || fileAtStart.custom_appraisal_sections,
+                mobile_inspection_sketch:
+                  latestFile.mobile_inspection_sketch || fileAtStart.mobile_inspection_sketch,
+                mobile_inspection_photos:
+                  latestFile.mobile_inspection_photos || fileAtStart.mobile_inspection_photos,
+              };
+              activeAssignmentFileRef.current = refreshedFile;
+              assignmentSavedDraftRef.current = cloneEditorValue(remoteDraft);
+              assignmentDraftRef.current = rebasedDraft;
+              assignmentDirtyRef.current = reconciliation.localChangedKeys.length > 0;
+              setActiveAssignmentFile(refreshedFile);
+              setAssignmentFiles((current) => current.map((file) =>
+                file.id === refreshedFile.id ? refreshedFile : file
+              ));
+              setAssignmentDraft(rebasedDraft);
+              setAssignmentDirty(reconciliation.localChangedKeys.length > 0);
+              setAssignmentConflictKeys(reconciliation.conflictKeys);
+              if (reconciliation.conflictKeys.length) {
+                setAssignmentAutosaveState("conflict");
+                setAssignmentSaveMessage(
+                  "Another session changed the same report fields. Your edits are preserved; choose which values to keep.",
+                );
+              } else if (reconciliation.localChangedKeys.length) {
+                setAssignmentAutosaveState("pending");
+                setAssignmentSaveMessage(
+                  "The file changed elsewhere. Your nonconflicting edits were preserved and rebased for autosave.",
+                );
+                window.setTimeout(() => {
+                  void saveAssignmentDetailsRef.current({
+                    requireCompletion: false,
+                    saveReason,
+                    promptForCredential: false,
+                    allowConflictRetry: false,
+                  });
+                }, 0);
+              } else {
+                setAssignmentAutosaveState("saved");
+                setAssignmentSaveMessage("The newer saved file is already current.");
+              }
+              return reconciliation.localChangedKeys.length === 0;
+            }
+          } catch {
+            // Fall through to the actionable conflict message below.
+          }
+        }
+        setAssignmentAutosaveState("error");
+        setAssignmentSaveMessage(
+          message === "assignment_file_revision_conflict"
+            ? "This file changed elsewhere and the latest revision could not be reconciled yet. Your edits remain on screen and autosave will retry."
+            : message,
+        );
+        return false;
+      } finally {
+        setSavingAssignmentFile(false);
+      }
+    })();
+
+    assignmentSaveInFlightRef.current = task;
+    void task.finally(() => {
+      if (assignmentSaveInFlightRef.current === task) assignmentSaveInFlightRef.current = null;
+    });
+    return task;
+  };
+  saveAssignmentDetailsRef.current = saveAssignmentDetails;
+
+  const resolveAssignmentAutosaveConflict = (keepLocalValues: boolean) => {
+    if (!assignmentConflictKeys.length) return;
+    if (keepLocalValues) {
+      setAssignmentConflictKeys([]);
+      setAssignmentAutosaveState("pending");
+      setAssignmentSaveMessage("Keeping your values and saving them over the latest file revision…");
+      window.setTimeout(() => {
+        void saveAssignmentDetailsRef.current({
+          requireCompletion: false,
+          saveReason: "manual_save",
+          promptForCredential: true,
+          allowConflictRetry: false,
+        });
+      }, 0);
+      return;
     }
+
+    const remoteDraft = assignmentSavedDraftRef.current;
+    const nextDraft = cloneEditorValue(assignmentDraftRef.current) as AssignmentDetails;
+    const nextRecord = nextDraft as Record<string, unknown>;
+    const remoteRecord = remoteDraft as Record<string, unknown>;
+    for (const key of assignmentConflictKeys) nextRecord[key] = remoteRecord[key];
+    assignmentDraftRef.current = nextDraft;
+    const stillDirty = !customAppraisalDraftsMatch(nextDraft, remoteDraft);
+    assignmentDirtyRef.current = stillDirty;
+    setAssignmentDraft(nextDraft);
+    setAssignmentDirty(stillDirty);
+    setAssignmentConflictKeys([]);
+    setAssignmentAutosaveState(stillDirty ? "pending" : "saved");
+    setAssignmentSaveMessage(
+      stillDirty
+        ? "Using the newer values for conflicting fields; your other edits remain queued."
+        : "Using the newer saved file values. All displayed changes are current.",
+    );
   };
 
+  useEffect(() => {
+    if (
+      !assignmentDirty ||
+      savingAssignmentFile ||
+      assignmentAutosaveState === "conflict" ||
+      !activeAssignmentFile ||
+      activeAssignmentFile.workfile?.status === "signed"
+    ) return undefined;
+    assignmentFirstDirtyAtRef.current ||= Date.now();
+    const elapsed = Date.now() - assignmentFirstDirtyAtRef.current;
+    const delay = Math.min(
+      CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
+      Math.max(0, CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS - elapsed),
+    );
+    setAssignmentAutosaveState((current) => current === "saving" ? current : "pending");
+    const timer = window.setTimeout(() => {
+      void saveAssignmentDetailsRef.current({
+        requireCompletion: false,
+        saveReason: "autosave",
+        promptForCredential: false,
+      });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeAssignmentFile,
+    assignmentAutosaveState,
+    assignmentDirty,
+    assignmentDraft,
+    savingAssignmentFile,
+  ]);
+
+  useEffect(() => {
+    const flushWhenHidden = () => {
+      if (
+        document.visibilityState === "hidden" &&
+        assignmentDirtyRef.current &&
+        assignmentAutosaveState !== "conflict"
+      ) {
+        void saveAssignmentDetailsRef.current({
+          requireCompletion: false,
+          saveReason: "autosave",
+          promptForCredential: false,
+        });
+      }
+    };
+    document.addEventListener("visibilitychange", flushWhenHidden);
+    return () => document.removeEventListener("visibilitychange", flushWhenHidden);
+  }, [assignmentAutosaveState]);
+
   const saveAssignmentFromSection = async (): Promise<boolean> => {
+    if (assignmentAutosaveState === "conflict") {
+      setAssignmentSaveMessage("Resolve the concurrent-edit choice before saving this section.");
+      return false;
+    }
     const validationErrors = assignmentValidationErrors(assignmentDraft);
     if (validationErrors.length) {
       setAssignmentSaveMessage(`Resolve before saving: ${validationErrors.join(" ")}`);
@@ -1236,23 +1495,33 @@ function AddressHero({
   };
 
   const saveCustomAppraisalNow = async () => {
-    if (savingAssignmentFile) return;
-    if (!activeAssignmentFile) {
+    if (assignmentAutosaveState === "conflict") {
+      setAssignmentSaveMessage(
+        "Resolve the concurrent-edit choice before saving the complete appraisal.",
+      );
+      return;
+    }
+    const currentFile = activeAssignmentFileRef.current;
+    if (!currentFile) {
       setAssignmentSaveMessage("Choose or start an assignment file before saving.");
       setAssignmentChooserOpen(true);
       return;
     }
-    if (activeAssignmentFile.workfile?.status === "signed") {
+    if (currentFile.workfile?.status === "signed") {
       setAssignmentSaveMessage("This signed appraisal is locked. Start another file to make changes.");
       return;
     }
     setAssignmentSaveMessage("Saving all current changes…");
     await marketWorkfileSaveQueueRef.current;
     const marketSaveError = marketWorkfileSaveErrorRef.current;
-    if (assignmentDirty) {
+    if (assignmentDirtyRef.current) {
       // A top-level Save protects a valid draft even when the appraiser has
       // not completed every field required for final section review.
-      const assignmentSaved = await saveAssignmentDetails({ requireCompletion: false });
+      const assignmentSaved = await saveAssignmentDetailsRef.current({
+        requireCompletion: false,
+        saveReason: "manual_save",
+        promptForCredential: true,
+      });
       if (assignmentSaved && marketSaveError) {
         setAssignmentSaveMessage(`Shared report changes were saved, but ${marketSaveError}`);
       }
@@ -1313,12 +1582,20 @@ function AddressHero({
         mobile_inspection_sketch: activeAssignmentFile.mobile_inspection_sketch,
         mobile_inspection_photos: activeAssignmentFile.mobile_inspection_photos,
       };
-      setAssignmentDraft(assignmentDraftFromDetail(updatedFile.assignment_details));
+      const savedDraft = assignmentDraftFromDetail(updatedFile.assignment_details);
+      assignmentDraftRef.current = savedDraft;
+      assignmentSavedDraftRef.current = cloneEditorValue(savedDraft);
+      assignmentDirtyRef.current = false;
+      activeAssignmentFileRef.current = updatedFile;
+      setAssignmentDraft(savedDraft);
       setActiveAssignmentFile(updatedFile);
       setAssignmentFiles((current) => current.map((file) =>
         file.id === updatedFile.id ? updatedFile : file
       ));
       setAssignmentDirty(false);
+      setAssignmentConflictKeys([]);
+      setAssignmentAutosaveState("saved");
+      setLastAssignmentSavedAt(updatedFile.updated_at || new Date().toISOString());
       setAssignmentSaveMessage(
         `Recorded lender/client revision request ${nextRevisionCount} for file ${response.assignment_file.file_number}.`,
       );
@@ -1488,6 +1765,27 @@ function AddressHero({
   );
   const assignmentSaveDisabled = Boolean(
     assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
+      assignmentAutosaveState === "conflict" ||
+      activeAssignmentFile?.workfile?.status === "signed",
+  );
+  const customAppraisalSaveStatus = assignmentAutosaveState === "saving"
+    ? "Protecting changes in PostgreSQL…"
+    : assignmentAutosaveState === "conflict"
+      ? "Autosave paused for a concurrent-edit decision"
+      : assignmentDirty
+        ? "Changes queued for autosave within one minute"
+        : lastAssignmentSavedAt
+          ? `All changes saved · ${new Date(lastAssignmentSavedAt).toLocaleTimeString([], {
+              hour: "numeric",
+              minute: "2-digit",
+            })}`
+          : activeAssignmentFile
+            ? "All displayed changes saved"
+            : "Choose or start an assignment file to enable saving";
+  const saveEverythingDisabled = Boolean(
+    assignmentFilesLoading ||
+      savingAssignmentFile ||
+      assignmentAutosaveState === "conflict" ||
       activeAssignmentFile?.workfile?.status === "signed",
   );
   const priorAssignmentFiles = activeAssignmentFile
@@ -1554,9 +1852,9 @@ function AddressHero({
             type="button"
             className="hn-action-primary btn btn-sm normal-case rounded-lg shadow-sm"
             onClick={() => void saveCustomAppraisalNow()}
-            disabled={assignmentFilesLoading || savingAssignmentFile || activeAssignmentFile?.workfile?.status === "signed"}
+            disabled={saveEverythingDisabled}
           >
-            {savingAssignmentFile ? "Saving…" : assignmentDirty ? "Save changes" : "Save"}
+            {savingAssignmentFile ? "Saving Everything…" : "Save Everything"}
           </button>
           <button
             type="button"
@@ -1571,8 +1869,36 @@ function AddressHero({
           className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-violet-100"
           aria-live="polite"
         >
-          {assignmentSaveMessage || workfileStatusMessage || "\u00a0"}
+          {assignmentSaveMessage || customAppraisalSaveStatus || workfileStatusMessage || "\u00a0"}
         </p>
+
+        {assignmentAutosaveState === "conflict" ? (
+          <div className="mt-3 flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-sm font-semibold">Concurrent edits need your decision</div>
+              <p className="mt-1 text-xs leading-5">
+                Another session changed {assignmentConflictKeys.length} of the same report
+                {assignmentConflictKeys.length === 1 ? " field" : " fields"}. Your entries remain on screen.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="hn-action-primary btn btn-sm normal-case rounded-lg"
+                onClick={() => resolveAssignmentAutosaveConflict(true)}
+              >
+                Keep My Values
+              </button>
+              <button
+                type="button"
+                className="hn-action-secondary btn btn-sm normal-case rounded-lg"
+                onClick={() => resolveAssignmentAutosaveConflict(false)}
+              >
+                Use Newer Saved Values
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <details className={`mt-3 rounded-xl border px-3 py-2 ${
           hasPriorAssignmentFiles
@@ -3125,6 +3451,23 @@ function AddressHero({
           >
             {neighborhoodBoundaryErrors.length ? "PDF Setup Required" : "Full Appraisal PDF"}
           </a>
+        </div>
+
+        <div className="sticky bottom-3 z-30 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
+          <div>
+            <div className="text-xs font-semibold text-slate-800">Custom Appraisal file protection</div>
+            <div className="mt-0.5 text-xs text-slate-600" aria-live="polite">
+              {customAppraisalSaveStatus}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="hn-action-primary btn normal-case rounded-lg px-5 shadow-sm"
+            onClick={() => void saveCustomAppraisalNow()}
+            disabled={saveEverythingDisabled}
+          >
+            {savingAssignmentFile ? "Saving Everything…" : "Save Everything"}
+          </button>
         </div>
       </div>
       {editingSection ? (

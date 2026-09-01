@@ -144,6 +144,11 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(report, /const subjectPhotos = useMemo<SubjectCarouselPhoto\[]>/);
   assert.match(report, /activeSubjectPhoto\.label/);
   assert.match(report, /compact/);
+  assert.match(report, /createPortal/);
+  assert.match(report, /role="dialog"/);
+  assert.match(report, /className="max-h-full max-w-full select-none object-contain"/);
+  assert.match(report, /event\.key === "Escape"/);
+  assert.match(report, /event\.key === "ArrowLeft"/);
   assert.doesNotMatch(report, /className="order-6"[\s\S]{0,160}onPhotosChanged=\{handleAssignmentPhotosChanged\}/);
   assert.match(center, /if \(changed \|\| refreshViewUrls\) onPhotosChanged\?\.\(nextPhotos\)/);
 });

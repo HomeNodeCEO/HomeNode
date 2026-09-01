@@ -1,4 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useLocation, useParams } from "react-router-dom";
 import {
   editorCredentialForRequest,
@@ -306,7 +307,11 @@ function AddressHero({
     onCredentialRejected: forgetEditorCredential,
   });
   const [photoIndex, setPhotoIndex] = useState(0);
+  const [photoModalOpen, setPhotoModalOpen] = useState(false);
   const [assignmentPhotos, setAssignmentPhotos] = useState<AssignmentPhoto[]>([]);
+  const photoModalTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const photoModalCloseButtonRef = useRef<HTMLButtonElement | null>(null);
+  const photoModalPanelRef = useRef<HTMLDivElement | null>(null);
   const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDetails>(() =>
     assignmentDraftFromDetail(),
   );
@@ -711,6 +716,7 @@ function AddressHero({
   useEffect(() => {
     setAssignmentPhotos([]);
     setPhotoIndex(0);
+    setPhotoModalOpen(false);
   }, [activeAssignmentFileId]);
 
   useEffect(() => {
@@ -1825,10 +1831,56 @@ function AddressHero({
     : "/PropertyTaxProtest";
 
   const canSlide = subjectPhotos.length > 1;
-  const showPreviousPhoto = () =>
+  const showPreviousPhoto = useCallback(() => {
+    if (!subjectPhotos.length) return;
     setPhotoIndex((current) => (current - 1 + subjectPhotos.length) % subjectPhotos.length);
-  const showNextPhoto = () =>
+  }, [subjectPhotos.length]);
+  const showNextPhoto = useCallback(() => {
+    if (!subjectPhotos.length) return;
     setPhotoIndex((current) => (current + 1) % subjectPhotos.length);
+  }, [subjectPhotos.length]);
+  const closePhotoModal = useCallback(() => {
+    setPhotoModalOpen(false);
+    window.requestAnimationFrame(() => photoModalTriggerRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (!photoModalOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    photoModalCloseButtonRef.current?.focus();
+    const handleModalKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Tab") {
+        const focusable = Array.from(
+          photoModalPanelRef.current?.querySelectorAll<HTMLElement>("button:not([disabled])") || [],
+        );
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!first || !last) return;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        closePhotoModal();
+      } else if (event.key === "ArrowLeft" && canSlide) {
+        event.preventDefault();
+        showPreviousPhoto();
+      } else if (event.key === "ArrowRight" && canSlide) {
+        event.preventDefault();
+        showNextPhoto();
+      }
+    };
+    window.addEventListener("keydown", handleModalKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", handleModalKeyDown);
+    };
+  }, [canSlide, closePhotoModal, photoModalOpen, showNextPhoto, showPreviousPhoto]);
 
   return (
     <div
@@ -2028,13 +2080,25 @@ function AddressHero({
 
       <figure className="relative h-64 bg-slate-100 sm:h-72">
         {activeSubjectPhoto ? (
-          <img
-            key={activeSubjectPhoto.id}
-            src={activeSubjectPhoto.url}
-            alt={`${activeSubjectPhoto.label} at ${address}`}
-            className="h-full w-full select-none object-cover"
-            draggable={false}
-          />
+          <button
+            ref={photoModalTriggerRef}
+            type="button"
+            className="group h-full w-full cursor-zoom-in text-left focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-amber-400"
+            aria-label={`View ${activeSubjectPhoto.label} full size`}
+            title="View full photo"
+            onClick={() => setPhotoModalOpen(true)}
+          >
+            <img
+              key={activeSubjectPhoto.id}
+              src={activeSubjectPhoto.url}
+              alt={`${activeSubjectPhoto.label} at ${address}`}
+              className="h-full w-full select-none object-cover"
+              draggable={false}
+            />
+            <span className="absolute right-3 top-3 z-10 rounded-full border border-white/60 bg-black/55 px-3 py-1.5 text-xs font-semibold text-white opacity-90 shadow transition group-hover:bg-black/75">
+              View full photo
+            </span>
+          </button>
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 text-slate-500">
             <svg
@@ -2074,7 +2138,7 @@ function AddressHero({
           </>
         ) : null}
         {activeSubjectPhoto ? (
-          <figcaption className="absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/65 to-transparent px-4 pb-3 pt-10 text-white">
+          <figcaption className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/85 via-black/65 to-transparent px-4 pb-3 pt-10 text-white">
             <div className="flex items-end justify-between gap-4">
               <div className="min-w-0">
                 <p className="truncate text-sm font-semibold">{activeSubjectPhoto.label}</p>
@@ -2087,6 +2151,77 @@ function AddressHero({
           </figcaption>
         ) : null}
       </figure>
+
+      {photoModalOpen && activeSubjectPhoto ? createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/95 p-3 backdrop-blur-sm sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="subject-photo-modal-title"
+          aria-describedby="subject-photo-modal-description"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) closePhotoModal();
+          }}
+        >
+          <div ref={photoModalPanelRef} className="flex h-[calc(100dvh-1.5rem)] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-slate-950 shadow-2xl sm:h-[calc(100dvh-3rem)]">
+            <header className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 px-4 py-3 text-white sm:px-5">
+              <div className="min-w-0">
+                <h2 id="subject-photo-modal-title" className="truncate text-base font-semibold sm:text-lg">
+                  {activeSubjectPhoto.label}
+                </h2>
+                <p id="subject-photo-modal-description" className="mt-0.5 truncate text-xs text-slate-300 sm:text-sm">
+                  {activeSubjectPhoto.detail}
+                </p>
+              </div>
+              <button
+                ref={photoModalCloseButtonRef}
+                type="button"
+                className="shrink-0 rounded-full border border-white/25 bg-white/10 px-3 py-2 text-sm font-semibold text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                onClick={closePhotoModal}
+                aria-label="Close full-size photo"
+              >
+                Close
+              </button>
+            </header>
+            <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black p-2 sm:p-4">
+              <img
+                key={`modal-${activeSubjectPhoto.id}`}
+                src={activeSubjectPhoto.url}
+                alt={`${activeSubjectPhoto.label} at ${address}`}
+                className="max-h-full max-w-full select-none object-contain"
+                draggable={false}
+              />
+              {canSlide ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={showPreviousPhoto}
+                    aria-label="Previous full-size photo"
+                    className="absolute left-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/65 text-2xl text-white shadow-lg hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 sm:left-4"
+                  >
+                    <span aria-hidden="true">‹</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={showNextPhoto}
+                    aria-label="Next full-size photo"
+                    className="absolute right-2 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full border border-white/30 bg-black/65 text-2xl text-white shadow-lg hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 sm:right-4"
+                  >
+                    <span aria-hidden="true">›</span>
+                  </button>
+                </>
+              ) : null}
+            </div>
+            <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-white/10 px-4 py-3 text-xs text-slate-300 sm:px-5 sm:text-sm">
+              <span className="truncate">{activeSubjectPhoto.detail}</span>
+              <span className="shrink-0 rounded-full bg-white/10 px-3 py-1 font-semibold text-white" aria-live="polite">
+                {photoIndex + 1} / {subjectPhotos.length}
+              </span>
+            </footer>
+          </div>
+        </div>,
+        document.body,
+      ) : null}
 
       <Suspense fallback={<LazyReportContent label="photos" />}>
         <AssignmentPhotoCenter

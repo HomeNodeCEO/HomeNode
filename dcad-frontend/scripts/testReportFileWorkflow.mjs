@@ -23,3 +23,12 @@ test("the Custom Appraisal header no longer asks for a manually entered file num
   assert.doesNotMatch(report, /placeholder="Enter assignment number"/);
   assert.match(report, /Choose or Start Another File/);
 });
+
+test("the Custom Appraisal uses the same protected autosave pattern as UAD", () => {
+  assert.match(report, /CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS/);
+  assert.match(report, /CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS/);
+  assert.match(report, /visibilitychange/);
+  assert.match(report, /Save Everything/);
+  assert.match(report, /Keep My Values/);
+  assert.match(report, /Use Newer Saved Values/);
+});

@@ -3090,6 +3090,7 @@ export async function updateAssignmentFile(
   input: {
     assignment_details: AssignmentDetailsPayload;
     expected_revision: number;
+    reviewer?: string;
   },
   editorKey: string,
 ): Promise<{ ok: true; assignment_file: AppraisalAssignmentFile }> {

@@ -52,3 +52,17 @@ test("completion, delivery, and active-section guidance start collapsed above th
   assert.ok(detailsEnd > listingGuidance, "the guidance should be inside the collapsed details element");
   assert.ok(formContent > detailsEnd, "the editable section content should remain outside the collapsed tools");
 });
+
+test("successful UAD autosaves apply the save response without reloading the full editor", () => {
+  const editor = read("../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx");
+  const successStart = editor.indexOf("let latestResult: UadSectionSaveResult | null = null");
+  const successEnd = editor.indexOf("} catch (reason)", successStart);
+  const successPath = editor.slice(successStart, successEnd);
+
+  assert.ok(successStart >= 0, "autosave should retain the latest section-save response");
+  assert.ok(successEnd > successStart, "autosave success path should be inspectable");
+  assert.match(successPath, /values: latestResult\.values/);
+  assert.match(successPath, /completion: latestResult\.completion/);
+  assert.doesNotMatch(successPath, /getUadEditor\(workfileId\)/);
+  assert.match(editor.slice(successEnd), /getUadEditor\(workfileId\)/, "conflict recovery should still reload authoritative state");
+});

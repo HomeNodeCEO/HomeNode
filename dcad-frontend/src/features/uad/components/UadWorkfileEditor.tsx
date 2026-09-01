@@ -11,6 +11,7 @@ import {
   type UadFieldDefinition,
   type UadFieldValue,
   type UadMeasurement,
+  type UadSectionSaveResult,
   type UadSectionKey,
 } from "../api";
 import UadAssetPanel from "./UadAssetPanel";
@@ -248,6 +249,8 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
         setError(null);
       }
       let revision = baseEditor.workfile.current_revision;
+      let latestResult: UadSectionSaveResult | null = null;
+      let changedFieldCount = 0;
       const savedKeys = new Set<string>();
       try {
         for (const candidateSection of baseEditor.sections) {
@@ -265,16 +268,30 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
             revision,
             { saveReason: "autosave" },
           );
+          latestResult = result;
           revision = result.current_revision;
+          changedFieldCount += result.changed_field_count;
           for (const value of values) savedKeys.add(value.key);
         }
 
-        const latest = await getUadEditor(workfileId);
+        if (!latestResult) throw new Error("uad_autosave_response_missing");
         const currentDraft = draftRef.current;
         const remaining = new Set(dirtyKeysRef.current);
         for (const key of savedKeys) {
           if (jsonEqual(currentDraft[key], draftSnapshot[key])) remaining.delete(key);
         }
+        const savedAt = new Date().toISOString();
+        const latest: UadEditorResponse = {
+          ...baseEditor,
+          workfile: {
+            ...baseEditor.workfile,
+            current_revision: revision,
+            status: changedFieldCount ? "draft" : baseEditor.workfile.status,
+            updated_at: changedFieldCount ? savedAt : baseEditor.workfile.updated_at,
+          },
+          values: latestResult.values,
+          completion: latestResult.completion,
+        };
         const mergedDraft = editorDraft(latest);
         for (const key of remaining) mergedDraft[key] = currentDraft[key];
 
@@ -285,7 +302,6 @@ export default function UadWorkfileEditor({ workfileId, onClose }: Props) {
           setDraft(mergedDraft);
           replaceDirtyKeys(remaining);
           setConflictKeys(new Set());
-          const savedAt = new Date().toISOString();
           const savedTime = new Date(savedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
           setLastAutosavedAt(savedAt);
           setAutosaveState(remaining.size ? "pending" : "saved");

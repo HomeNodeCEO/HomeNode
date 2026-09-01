@@ -289,14 +289,23 @@ export async function getUadEditor(workfileId: string): Promise<UadEditorRespons
   return uadFetchJSON<UadEditorResponse>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/editor`));
 }
 
+export interface UadSectionSaveResult {
+  current_revision: number;
+  save_reason: "manual_save" | "autosave";
+  saved_field_count: number;
+  changed_field_count: number;
+  values: UadSavedFieldValue[];
+  completion: Record<UadSectionKey, UadSectionCompletion>;
+}
+
 export async function saveUadSection(
   workfileId: string,
   section: UadSectionKey,
   values: Array<{ uid: string; context_key: string; entity_id?: string | null; value: UadFieldValue }>,
   expectedRevision: number,
   options: { saveReason?: "manual_save" | "autosave" } = {},
-): Promise<{ current_revision: number; save_reason: "manual_save" | "autosave"; changed_field_count: number }> {
-  const result = await uadFetchJSON<{ current_revision: number; save_reason: "manual_save" | "autosave"; changed_field_count: number }>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
+): Promise<UadSectionSaveResult> {
+  const result = await uadFetchJSON<UadSectionSaveResult>(makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/sections/${section}`), {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({

@@ -495,6 +495,18 @@ function AddressHero({
   const city = displayValue(detail?.property_location?.city);
   const state = displayValue(detail?.property_location?.state, "TX");
   const postalCode = displayValue(detail?.property_location?.postal_code);
+  const documentReviewStreetAddress = String(detail?.property_location?.address || "").trim();
+  const documentReviewSubjectAddress = documentReviewStreetAddress
+    ? [
+        documentReviewStreetAddress,
+        detail?.property_location?.city,
+        detail?.property_location?.state || "TX",
+        detail?.property_location?.postal_code,
+      ]
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+        .join(", ")
+    : "";
   const censusZip = String(detail?.property_location?.postal_code || "")
     .replace(/\D/g, "")
     .slice(0, 5);
@@ -2327,6 +2339,7 @@ function AddressHero({
             <AssignmentDocumentCenter
               accountId={accountId || ""}
               assignmentFileId={activeAssignmentFile?.id || null}
+              subjectAddress={documentReviewSubjectAddress}
               getEditorKey={editorKeyForSave}
               onApplyConfirmedCandidate={applyConfirmedDocumentCandidate}
               className="order-6"

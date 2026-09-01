@@ -159,6 +159,50 @@ export function sellerComparisonSummary(contractSeller: unknown, publicOwner: un
       };
 }
 
+function normalizedStreetAddress(value: unknown): string {
+  const street = String(value || '').split(',')[0].toUpperCase();
+  const suffixes: Record<string, string> = {
+    STREET: 'ST',
+    ROAD: 'RD',
+    DRIVE: 'DR',
+    LANE: 'LN',
+    COURT: 'CT',
+    BOULEVARD: 'BLVD',
+    AVENUE: 'AVE',
+    HIGHWAY: 'HWY',
+    PLACE: 'PL',
+    CIRCLE: 'CIR',
+    PARKWAY: 'PKWY',
+    TRAIL: 'TRL',
+    TERRACE: 'TER',
+  };
+  return street
+    .replace(/[^A-Z0-9#]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .map((token) => suffixes[token] || token)
+    .join(' ');
+}
+
+export function documentSubjectAddressComparison(
+  documentAddress: unknown,
+  reportAddress: unknown,
+): {
+  matches: boolean | null;
+  documentAddress: string;
+  reportAddress: string;
+} {
+  const documentLabel = String(documentAddress || '').trim();
+  const reportLabel = String(reportAddress || '').trim();
+  const documentStreet = normalizedStreetAddress(documentLabel);
+  const reportStreet = normalizedStreetAddress(reportLabel);
+  return {
+    matches: documentStreet && reportStreet ? documentStreet === reportStreet : null,
+    documentAddress: documentLabel,
+    reportAddress: reportLabel,
+  };
+}
+
 export function formatReportedBoolean(value: unknown): string {
   if (value === true) return 'Yes';
   if (value === false) return 'No';

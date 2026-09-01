@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   activityTypeLabel,
   displayValue,
+  documentSubjectAddressComparison,
   formatBaths,
   formatCensusTract,
   formatDate,
@@ -87,4 +88,20 @@ test('seller comparison is order-insensitive but still flags real differences', 
   assert.equal(mismatch.matches, false);
   assert.match(mismatch.summary, /Review and explain/);
   assert.equal(sellerComparisonSummary('', 'Jordan Freeman').matches, null);
+});
+
+test('engagement addresses tolerate suffix formatting but block a different subject', () => {
+  assert.equal(
+    documentSubjectAddressComparison(
+      '1909 Snowmass Lane, Garland, TX 75044',
+      '1909 SNOWMASS LN, GARLAND, TX 75044',
+    ).matches,
+    true,
+  );
+  const mismatch = documentSubjectAddressComparison(
+    '513 HARDY DR, Garland, TX 75041-3536',
+    '1909 SNOWMASS LN, Garland, TX 75044',
+  );
+  assert.equal(mismatch.matches, false);
+  assert.equal(mismatch.documentAddress, '513 HARDY DR, Garland, TX 75041-3536');
 });

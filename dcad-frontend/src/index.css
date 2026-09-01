@@ -279,6 +279,47 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   to { background-position: 0% 50%; }
 }
 
+@property --hn-evidence-reviewer-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes hn-evidence-reviewer-orbit {
+  to { --hn-evidence-reviewer-angle: 360deg; }
+}
+
+.hn-evidence-reviewer-frame {
+  --hn-evidence-reviewer-angle: 0deg;
+  border: 2px solid transparent;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.99), rgba(250, 247, 255, 0.99)) padding-box,
+    conic-gradient(
+      from var(--hn-evidence-reviewer-angle),
+      var(--hn-gold),
+      var(--hn-deep-purple),
+      var(--hn-violet),
+      var(--hn-gold),
+      var(--hn-deep-purple),
+      var(--hn-gold)
+    ) border-box;
+  box-shadow: 0 8px 22px rgba(72, 35, 112, 0.12);
+  animation: hn-evidence-reviewer-orbit 3.8s linear infinite;
+  transition: box-shadow 160ms ease;
+}
+
+.hn-evidence-reviewer-frame:focus-within {
+  box-shadow:
+    0 0 0 3px rgba(198, 161, 91, 0.2),
+    0 10px 28px rgba(72, 35, 112, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hn-evidence-reviewer-frame {
+    animation: none;
+  }
+}
+
 .hn-custom-section-header:hover {
   border-left-color: var(--hn-gold);
   background-image: linear-gradient(

@@ -44,23 +44,33 @@ test("UAD Assignment Information requires at least one complete client party", (
   ));
 });
 
-test("the UAD document migration links private evidence to canonical report files", async () => {
+test("the ordered migrations add official UAD fields before linking shared private evidence", async () => {
   const { readFile } = await import("node:fs/promises");
-  const migration = await readFile(
+  const uadMigration = await readFile(
     new URL("../migrations/20261002_uad_document_evidence.sql", import.meta.url),
     "utf8",
   );
+  const documentMigration = await readFile(
+    new URL("../migrations/20261002_assignment_document_uad_evidence.sql", import.meta.url),
+    "utf8",
+  );
+  const mobileManifest = await readFile(
+    new URL("../src/database/mobileMigrations.js", import.meta.url),
+    "utf8",
+  );
   assert.ok(UAD_MIGRATION_NAMES.includes("20261002_uad_document_evidence.sql"));
-  assert.match(migration, /uad_workfile_id uuid/);
-  assert.match(migration, /uad_entities_entity_type_check/);
-  assert.match(migration, /'assignment_contact'/);
-  assert.match(migration, /report_file_id uuid/);
-  assert.match(migration, /assignment_documents_workflow_checksum_uidx/);
-  assert.match(migration, /DROP INDEX IF EXISTS app\.assignment_documents_scope_checksum_uidx/);
-  assert.match(migration, /2400\.0013/);
-  assert.match(migration, /1000\.0103/);
-  assert.match(migration, /1000\.0116/);
-  assert.match(migration, /Appendix B-1 URAR Implementation Guide v1\.4/);
+  assert.match(mobileManifest, /20261002_assignment_document_uad_evidence\.sql/);
+  assert.match(uadMigration, /uad_entities_entity_type_check/);
+  assert.match(uadMigration, /'assignment_contact'/);
+  assert.match(uadMigration, /2400\.0013/);
+  assert.match(uadMigration, /1000\.0103/);
+  assert.match(uadMigration, /1000\.0116/);
+  assert.match(uadMigration, /Appendix B-1 URAR Implementation Guide v1\.4/);
+  assert.doesNotMatch(uadMigration, /app\.assignment_documents/);
+  assert.match(documentMigration, /uad_workfile_id uuid/);
+  assert.match(documentMigration, /report_file_id uuid/);
+  assert.match(documentMigration, /assignment_documents_workflow_checksum_uidx/);
+  assert.match(documentMigration, /DROP INDEX IF EXISTS app\.assignment_documents_scope_checksum_uidx/);
 });
 
 test("the UAD workspace places the collapsed document loader before the active editor", async () => {

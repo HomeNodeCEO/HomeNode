@@ -162,6 +162,7 @@ import {
   savePropertyZoningVerification,
 } from "./services/zoningEvidence.js";
 import {
+  confirmAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
   deleteAssignmentDocument,
@@ -6603,6 +6604,35 @@ app.post("/api/documents/:id/subject-address-override", async (req, res) => {
       "document_subject_address_candidate_required",
     ]);
     return res.status(message === "document_not_found" ? 404 : clientErrors.has(message) ? 400 : 500).json({ error: message });
+  }
+});
+
+/** Confirm every visible machine suggestion in one audited document review. */
+app.post("/api/documents/:id/confirm-all", async (req, res) => {
+  if (!requireEditor(req, res)) return;
+  try {
+    await ensureAssignmentDocumentsAvailable();
+    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
+    const result = await confirmAssignmentDocumentCandidates(pool, {
+      documentId: req.params.id,
+      reviewer: req.body?.reviewer,
+      reportSubjectAddress: req.body?.report_subject_address,
+      candidateValues: req.body?.candidate_values,
+    });
+    const document = await getAssignmentDocument(pool, result.document_id);
+    return res.json({ ok: true, document });
+  } catch (error) {
+    const message = error?.message || "document_candidates_confirm_all_failed";
+    const clientErrors = new Set([
+      "invalid_document_id",
+      "document_reviewer_required",
+      "report_subject_address_required",
+    ]);
+    if (message === "document_not_found") return res.status(404).json({ error: message });
+    if (message === "document_subject_address_mismatch") {
+      return res.status(409).json({ error: message });
+    }
+    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
   }
 });
 

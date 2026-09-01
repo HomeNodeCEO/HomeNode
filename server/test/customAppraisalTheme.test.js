@@ -42,6 +42,16 @@ test("the Custom Appraisal shell, evidence panels, and prior files use the share
   assert.match(history, /hn-custom-section-header/);
 });
 
+test("the document center supports compact bulk review and a full-page viewer", () => {
+  const documents = read("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx");
+
+  assert.match(documents, /Approve All \(\$\{suggestedCandidates\.length\}\)/);
+  assert.match(documents, /confirmAllAssignmentDocumentCandidates/);
+  assert.match(documents, /'Review complete'/);
+  assert.match(documents, /h-\[80vh\]/);
+  assert.match(documents, /xl:grid-cols-\[16rem_minmax\(0,1fr\)\]/);
+});
+
 test("the Custom Appraisal editor and print output retain legible themed surfaces", () => {
   const editor = read("../../dcad-frontend/src/components/ReportSectionEditor.tsx");
   const css = read("../../dcad-frontend/src/index.css");

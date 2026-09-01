@@ -2829,6 +2829,30 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(
   return response.document;
 }
 
+export async function confirmAllAssignmentDocumentCandidates(
+  documentId: number,
+  input: {
+    reviewer: string;
+    reportSubjectAddress?: string;
+    candidateValues?: Record<number, string>;
+  },
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/documents/${documentId}/confirm-all`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
+      body: JSON.stringify({
+        reviewer: input.reviewer,
+        report_subject_address: input.reportSubjectAddress || '',
+        candidate_values: input.candidateValues || {},
+      }),
+    },
+  );
+  return response.document;
+}
+
 export async function reviewAssignmentDocumentCandidate(
   documentId: number,
   candidateId: number,

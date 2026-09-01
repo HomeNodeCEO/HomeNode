@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  confirmAllAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
   deleteAssignmentDocument,
   getAssignmentDocument,
@@ -130,6 +131,24 @@ export default function AssignmentDocumentCenter({
   const subjectAddressOverride = selectedDocument?.extraction_summary?.subject_address_override;
   const subjectAddressMismatch = subjectAddressComparison.matches === false;
   const confirmationBlocked = subjectAddressMismatch && !subjectAddressOverride?.acknowledged;
+  const suggestedCandidates = useMemo(
+    () => (selectedDocument?.candidates || []).filter((candidate) => (
+      candidate.review_status === 'suggested'
+    )),
+    [selectedDocument],
+  );
+  const reviewedCandidates = useMemo(
+    () => (selectedDocument?.candidates || []).filter((candidate) => (
+      candidate.review_status !== 'suggested'
+    )),
+    [selectedDocument],
+  );
+  const confirmedCandidateCount = reviewedCandidates.filter((candidate) => (
+    candidate.review_status === 'confirmed'
+  )).length;
+  const rejectedCandidateCount = reviewedCandidates.filter((candidate) => (
+    candidate.review_status === 'rejected'
+  )).length;
 
   const loadDocuments = useCallback(async () => {
     if (!accountId) return;
@@ -149,7 +168,7 @@ export default function AssignmentDocumentCenter({
     } finally {
       setLoading(false);
     }
-  }, [accountId, assignmentFileId, getEditorKey, selectedDocument?.id]);
+  }, [accountId, assignmentFileId, getEditorKey, selectedDocument]);
 
   const loadDocument = useCallback(async (documentId: number) => {
     setLoading(true);
@@ -177,7 +196,7 @@ export default function AssignmentDocumentCenter({
 
   useEffect(() => {
     if (open) void loadDocuments();
-  }, [open, accountId, assignmentFileId]);
+  }, [open, loadDocuments]);
 
   useEffect(() => {
     if (!selectedDocument || !['uploaded', 'processing'].includes(selectedDocument.processing_status)) return;
@@ -308,6 +327,48 @@ export default function AssignmentDocumentCenter({
     return applications.length;
   };
 
+  const approveAllSuggestedFields = async () => {
+    if (!selectedDocument || !suggestedCandidates.length) return;
+    if (!reviewer.trim()) {
+      setMessage('Enter the appraiser or reviewer name before approving extracted fields.');
+      return;
+    }
+    if (confirmationBlocked) {
+      setMessage('Resolve the engagement-letter subject mismatch before approving extracted fields.');
+      return;
+    }
+    const editorKey = getEditorKey();
+    if (!editorKey) return;
+    setLoading(true);
+    setMessage('');
+    try {
+      const document = await confirmAllAssignmentDocumentCandidates(selectedDocument.id, {
+        reviewer: reviewer.trim(),
+        reportSubjectAddress: subjectAddress,
+        candidateValues,
+      }, editorKey);
+      const applied = applyConfirmedDocumentFields(document);
+      setSelectedDocument(document);
+      setCandidateValues(Object.fromEntries(
+        (document.candidates || [])
+          .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
+          .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
+      ));
+      await loadDocuments();
+      setMessage(
+        `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved`
+          + `${applied ? ' and added to the current draft' : ''}. Save Assignment Details to retain form changes.`,
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'The extracted fields could not be approved.';
+      setMessage(errorMessage === 'document_subject_address_mismatch'
+        ? 'The engagement-letter address differs from this report. Use Upload Anyway only after verifying the assignment.'
+        : errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const uploadAnyway = async () => {
     if (!selectedDocument) return;
     if (!reviewer.trim()) {
@@ -385,7 +446,7 @@ export default function AssignmentDocumentCenter({
             </button>
           </div>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-[18rem_minmax(0,1.35fr)_minmax(20rem,0.85fr)]">
+          <div className="mt-4 grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-semibold text-slate-900">Property File Documents</h4>
@@ -406,13 +467,13 @@ export default function AssignmentDocumentCenter({
 
             <div className="min-w-0">
               {selectedDocument ? (
-                <iframe title={selectedDocument.title} src={`/pdfjs-viewer.html?file=${encodeURIComponent(viewerUrl)}`} className="h-[38rem] w-full rounded-lg border border-slate-300 bg-slate-100" />
+                <iframe title={selectedDocument.title} src={`/pdfjs-viewer.html?file=${encodeURIComponent(viewerUrl)}`} className="h-[80vh] min-h-[52rem] max-h-[72rem] w-full rounded-lg border border-slate-300 bg-slate-100" />
               ) : (
                 <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-600">Select a document to view the immutable source PDF.</div>
               )}
             </div>
 
-            <div className="min-w-0 space-y-3">
+            <div className="min-w-0 space-y-3 xl:col-span-2">
               <label className="block">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Appraiser / Reviewer</span>
                 <input className="input input-bordered input-sm mt-1 w-full bg-white" value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Required to confirm suggestions" />
@@ -509,21 +570,36 @@ export default function AssignmentDocumentCenter({
                       </div>
                     )
                   ) : null}
-                  <div className="space-y-3">
-                    {(selectedDocument.candidates || []).length ? selectedDocument.candidates?.map((candidate) => (
+                  {suggestedCandidates.length ? (
+                    <div className="flex flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-xs leading-5 text-slate-700">
+                        <strong>{suggestedCandidates.length} field{suggestedCandidates.length === 1 ? '' : 's'} awaiting review</strong>
+                        <p>Approve every visible value at once, or review the individual suggestions below.</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg sm:min-w-40"
+                        onClick={() => void approveAllSuggestedFields()}
+                        disabled={loading || confirmationBlocked}
+                        title={confirmationBlocked ? 'Resolve the engagement-letter subject mismatch before approving fields.' : undefined}
+                      >
+                        {loading ? 'Approving...' : `Approve All (${suggestedCandidates.length})`}
+                      </button>
+                    </div>
+                  ) : null}
+                  <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
+                    {suggestedCandidates.length ? suggestedCandidates.map((candidate) => (
                       <div key={candidate.id || `${candidate.field_key}-${candidate.page_number}`} className="rounded-lg border border-slate-200 bg-white p-3">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <h5 className="text-xs font-semibold uppercase tracking-wide text-slate-700">{FIELD_LABELS[candidate.field_key] || candidate.field_key.replace(/_/g, ' ')}</h5>
                             <p className="mt-1 text-[11px] text-slate-500">Page {candidate.page_number || 'unknown'} · {candidate.confidence == null ? 'Unscored' : `${Math.round(candidate.confidence * 100)}% text match`}</p>
                           </div>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${candidate.review_status === 'confirmed' ? 'bg-emerald-100 text-emerald-800' : candidate.review_status === 'rejected' ? 'bg-slate-200 text-slate-700' : 'bg-amber-100 text-amber-800'}`}>
-                            {candidate.review_status || 'suggested'}
-                          </span>
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Suggested</span>
                         </div>
-                        <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))} disabled={candidate.review_status === 'rejected'} />
+                        <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))} />
                         <p className="mt-2 rounded bg-slate-50 p-2 text-[11px] leading-4 text-slate-600">{candidate.evidence_excerpt || candidate.raw_value}</p>
-                        {candidate.review_status === 'suggested' && candidate.id ? (
+                        {candidate.id ? (
                           <div className="mt-2 flex gap-2">
                             <button
                               type="button"
@@ -538,10 +614,33 @@ export default function AssignmentDocumentCenter({
                           </div>
                         ) : null}
                       </div>
-                    )) : (
+                    )) : !(selectedDocument.candidates || []).length ? (
                       <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-xs leading-5 text-slate-600">No labeled fields were found. Review the visible PDF directly; scanned or blurry pages remain appraiser-review items.</p>
-                    )}
+                    ) : null}
                   </div>
+                  {reviewedCandidates.length ? (
+                    <details className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                      <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
+                        {suggestedCandidates.length ? 'Reviewed fields' : 'Review complete'} · {confirmedCandidateCount} approved{rejectedCandidateCount ? ` · ${rejectedCandidateCount} rejected` : ''}
+                      </summary>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                        {reviewedCandidates.map((candidate) => (
+                          <div key={candidate.id || `${candidate.field_key}-${candidate.page_number}`} className="rounded-md border border-emerald-100 bg-white p-2 text-[11px] leading-4 text-slate-600">
+                            <div className="flex items-center justify-between gap-2">
+                              <strong className="text-slate-800">{FIELD_LABELS[candidate.field_key] || candidate.field_key.replace(/_/g, ' ')}</strong>
+                              <span className={candidate.review_status === 'confirmed' ? 'text-emerald-700' : 'text-slate-500'}>
+                                {candidate.review_status === 'confirmed' ? 'Approved' : 'Rejected'}
+                              </span>
+                            </div>
+                            {candidate.review_status === 'confirmed' ? (
+                              <p className="mt-1 break-words">{candidate.confirmed_value || candidate.normalized_value || candidate.raw_value}</p>
+                            ) : null}
+                            <p className="mt-1 text-slate-400">Page {candidate.page_number || 'unknown'}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ) : null}
                   {(selectedDocument.review_history || []).length ? (
                     <details className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                       <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-700">

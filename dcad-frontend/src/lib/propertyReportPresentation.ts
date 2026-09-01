@@ -203,6 +203,30 @@ export function documentSubjectAddressComparison(
   };
 }
 
+export interface ConfirmedDocumentFieldCandidate {
+  field_key: string;
+  review_status?: string | null;
+  confirmed_value?: string | null;
+  normalized_value?: string | null;
+  raw_value?: string | null;
+}
+
+export function confirmedDocumentFieldApplications(
+  candidates: ConfirmedDocumentFieldCandidate[] | null | undefined,
+): Array<{ fieldKey: string; value: string }> {
+  return (candidates || []).flatMap((candidate) => {
+    if (candidate.review_status !== 'confirmed') return [];
+    const value = String(
+      candidate.confirmed_value
+        || candidate.normalized_value
+        || candidate.raw_value
+        || '',
+    ).trim();
+    if (!candidate.field_key || !value) return [];
+    return [{ fieldKey: candidate.field_key, value }];
+  });
+}
+
 export function formatReportedBoolean(value: unknown): string {
   if (value === true) return 'Yes';
   if (value === false) return 'No';

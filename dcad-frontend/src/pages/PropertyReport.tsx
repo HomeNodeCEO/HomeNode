@@ -103,6 +103,7 @@ import {
   HOA_FREQUENCY_OPTIONS,
   OCCUPANCY_OPTIONS,
   assignmentDraftFromDetail,
+  assignmentTypesFromConfirmedDocument,
   assignmentValidationErrors,
   cloneEditorValue,
 } from "@/lib/propertyReportAssignment";
@@ -956,11 +957,13 @@ function AddressHero({
         return;
       }
       setAssignmentDraft((current) => {
-        const types = new Set(current.assignment_types || []);
-        types.add(value);
         return {
           ...current,
-          assignment_types: Array.from(types),
+          assignment_types: assignmentTypesFromConfirmedDocument(
+            current.assignment_types,
+            value,
+            documentType,
+          ),
           subject_under_contract: value === "purchase_transaction"
             ? true
             : current.subject_under_contract,

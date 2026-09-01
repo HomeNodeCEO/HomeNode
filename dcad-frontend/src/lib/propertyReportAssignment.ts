@@ -237,6 +237,15 @@ export const ASSIGNMENT_TYPE_OPTIONS = [
   ["other", "Other"],
 ] as const;
 
+export function assignmentTypesFromConfirmedDocument(
+  currentTypes: string[] | null | undefined,
+  confirmedType: string,
+  documentType: string,
+): string[] {
+  if (documentType === "engagement_letter") return [confirmedType];
+  return [...new Set([...(currentTypes || []), confirmedType])];
+}
+
 export function assignmentValidationErrors(
   assignment: AssignmentDetailsPayload,
 ): string[] {

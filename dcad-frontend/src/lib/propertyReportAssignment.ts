@@ -246,6 +246,17 @@ export function assignmentTypesFromConfirmedDocument(
   return [...new Set([...(currentTypes || []), confirmedType])];
 }
 
+export function subjectUnderContractFromConfirmedDocument(
+  currentValue: boolean | null | undefined,
+  confirmedType: string,
+  documentType: string,
+): boolean {
+  if (documentType === "purchase_contract" && confirmedType === "purchase_transaction") {
+    return true;
+  }
+  return Boolean(currentValue);
+}
+
 export function assignmentValidationErrors(
   assignment: AssignmentDetailsPayload,
 ): string[] {

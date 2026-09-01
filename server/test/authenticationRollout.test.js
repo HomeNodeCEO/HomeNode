@@ -77,6 +77,13 @@ test("assignment photos and documents require assignment-level access after acti
   assert.match(server, /requireCustomAssignmentAccess\(req, res, accountId, assignmentFileId, "write"\)/);
   assert.match(documents, /includePropertyEvidence/);
   assert.match(documents, /organizations\/\$\{organization\}\/custom-appraisal/);
+  const deleteStart = server.indexOf('app.delete("/api/documents/:id"');
+  const deleteEnd = server.indexOf("/** Retry text extraction", deleteStart);
+  assert.ok(deleteStart >= 0 && deleteEnd > deleteStart);
+  const deleteRoute = server.slice(deleteStart, deleteEnd);
+  assert.match(deleteRoute, /requireEditor\(req, res\)/);
+  assert.match(deleteRoute, /requireAssignmentDocumentAccess\(req, res, req\.params\.id, "write"\)/);
+  assert.match(deleteRoute, /deleteAssignmentDocument\(pool, sharedObjectStorage, req\.params\.id\)/);
 });
 
 test("custom appraisal signatures are identity-bound, authenticated, and append-only", () => {

@@ -2747,6 +2747,22 @@ export async function getAssignmentDocumentContent(
   return response.blob();
 }
 
+export async function deleteAssignmentDocument(
+  documentId: number,
+  editorKey: string,
+): Promise<{ document_id: number; deleted: true; storage_deleted: boolean }> {
+  const response = await fetchJSON<{
+    ok: true;
+    document_id: number;
+    deleted: true;
+    storage_deleted: boolean;
+  }>(
+    makeUrl(`/api/documents/${documentId}`),
+    { method: 'DELETE', headers: { 'x-homenode-editor-key': editorKey } },
+  );
+  return response;
+}
+
 export async function uploadAssignmentDocument(
   accountId: string,
   file: File,
@@ -2806,6 +2822,30 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(
       body: JSON.stringify({
         reviewer: input.reviewer,
         report_subject_address: input.reportSubjectAddress,
+        candidate_values: input.candidateValues || {},
+      }),
+    },
+  );
+  return response.document;
+}
+
+export async function confirmAllAssignmentDocumentCandidates(
+  documentId: number,
+  input: {
+    reviewer: string;
+    reportSubjectAddress?: string;
+    candidateValues?: Record<number, string>;
+  },
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/documents/${documentId}/confirm-all`),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
+      body: JSON.stringify({
+        reviewer: input.reviewer,
+        report_subject_address: input.reportSubjectAddress || '',
         candidate_values: input.candidateValues || {},
       }),
     },

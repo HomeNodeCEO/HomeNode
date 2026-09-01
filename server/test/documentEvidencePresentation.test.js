@@ -6,6 +6,7 @@ import {
 } from "../../dcad-frontend/src/lib/propertyReportPresentation.ts";
 import {
   assignmentTypesFromConfirmedDocument,
+  subjectUnderContractFromConfirmedDocument,
 } from "../../dcad-frontend/src/lib/propertyReportAssignment.ts";
 
 test("document imports reapply every confirmed field including a previously confirmed assignment type", () => {
@@ -54,5 +55,28 @@ test("an engagement letter replaces a stale assignment type while other evidence
       "purchase_contract",
     ),
     ["bridge_loan", "purchase_transaction"],
+  );
+});
+
+test("only a purchase contract confirms that the subject is under contract", () => {
+  assert.equal(
+    subjectUnderContractFromConfirmedDocument(
+      false,
+      "purchase_transaction",
+      "engagement_letter",
+    ),
+    false,
+  );
+  assert.equal(
+    subjectUnderContractFromConfirmedDocument(
+      false,
+      "purchase_transaction",
+      "purchase_contract",
+    ),
+    true,
+  );
+  assert.equal(
+    subjectUnderContractFromConfirmedDocument(true, "heloc", "engagement_letter"),
+    true,
   );
 });

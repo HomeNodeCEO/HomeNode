@@ -5,8 +5,10 @@ import {
   assignmentDocumentCandidateReviewKey,
   assignmentDocumentRetryDelayMs,
   buildAssignmentDocumentObjectKey,
+  confirmAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
+  deleteAssignmentDocument,
   loadAssignmentDocumentContent,
   retainedAssignmentDocumentReview,
 } from "../src/services/assignmentDocuments.js";
@@ -123,6 +125,83 @@ test("private document reads fail closed when downloaded bytes do not match the 
     loadAssignmentDocumentContent(pool, 42, { storage }),
     /storage_checksum_mismatch/,
   );
+});
+
+test("deleting a private assignment document removes its R2 object before cascading the database row", async () => {
+  const events = [];
+  const client = {
+    async query(sql) {
+      events.push(sql);
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+      if (/SELECT id, storage_provider, object_key/.test(sql)) {
+        return { rows: [{ id: 42, storage_provider: "r2", object_key: "documents/42.pdf" }] };
+      }
+      if (/DELETE FROM app\.assignment_documents/.test(sql)) return { rows: [{ id: 42 }] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {
+      events.push("RELEASE");
+    },
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() {
+      return client;
+    },
+  };
+  const storage = {
+    configured: true,
+    async deleteObject({ objectKey }) {
+      events.push(`DELETE_OBJECT ${objectKey}`);
+    },
+  };
+  assert.deepEqual(await deleteAssignmentDocument(pool, storage, 42), {
+    document_id: 42,
+    deleted: true,
+    storage_deleted: true,
+  });
+  assert.ok(events.indexOf("DELETE_OBJECT documents/42.pdf") < events.findIndex((event) => (
+    /DELETE FROM app\.assignment_documents/.test(event)
+  )));
+  assert.ok(events.includes("COMMIT"));
+});
+
+test("a private document remains in the database when object deletion fails", async () => {
+  const events = [];
+  const client = {
+    async query(sql) {
+      events.push(sql);
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      if (/SELECT id, storage_provider, object_key/.test(sql)) {
+        return { rows: [{ id: 43, storage_provider: "r2", object_key: "documents/43.pdf" }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() {
+      return client;
+    },
+  };
+  await assert.rejects(
+    deleteAssignmentDocument(pool, {
+      configured: true,
+      async deleteObject() {
+        throw new Error("object_delete_failed");
+      },
+    }, 43),
+    /object_delete_failed/,
+  );
+  assert.ok(events.includes("ROLLBACK"));
+  assert.equal(events.some((event) => /DELETE FROM app\.assignment_documents/.test(event)), false);
 });
 
 test("document extraction retries use bounded exponential backoff", () => {
@@ -291,4 +370,138 @@ test("an engagement address override is audited and confirms visible suggestions
   assert.equal(summary.candidate_count, 3);
   assert.equal(summary.subject_address_override.acknowledged, true);
   assert.equal(queries.filter(({ sql }) => /INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)).length, 2);
+});
+
+test("approve all confirms every pending field in one audited transaction", async () => {
+  const queries = [];
+  const candidateRows = [
+    {
+      id: 601,
+      document_id: 45,
+      field_key: "subject_property_address",
+      raw_value: "513 HARDY DR, GARLAND, TX 75041",
+      normalized_value: "513 HARDY DR, GARLAND, TX 75041",
+      page_number: 1,
+      confidence: 0.99,
+      review_status: "suggested",
+    },
+    {
+      id: 602,
+      document_id: 45,
+      field_key: "lender_client_name",
+      raw_value: "Bank of America Lender: Bank of America",
+      normalized_value: "Bank of America",
+      page_number: 1,
+      confidence: 0.98,
+      review_status: "suggested",
+    },
+  ];
+  const client = {
+    async query(sql, values = []) {
+      queries.push({ sql, values });
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+      if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+        return {
+          rows: [{
+            id: 45,
+            document_type: "engagement_letter",
+            extraction_summary: { candidate_count: 2 },
+          }],
+        };
+      }
+      if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) {
+        return { rows: candidateRows };
+      }
+      if (/UPDATE app\.assignment_document_field_candidates/.test(sql)) {
+        const candidate = candidateRows.find((row) => row.id === values[1]);
+        return {
+          rows: [{
+            ...candidate,
+            review_status: "confirmed",
+            confirmed_value: values[2],
+            reviewer: values[3],
+          }],
+        };
+      }
+      if (/INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)) return { rows: [] };
+      if (/UPDATE app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() {
+      return client;
+    },
+  };
+
+  const result = await confirmAssignmentDocumentCandidates(pool, {
+    documentId: 45,
+    reviewer: "Jordan Freeman",
+    reportSubjectAddress: "513 Hardy Drive, Garland, TX 75041",
+    candidateValues: { 602: "Bank of America" },
+  });
+
+  assert.equal(result.document_id, 45);
+  assert.equal(result.confirmed_candidates.length, 2);
+  assert.equal(result.confirmed_candidates[1].confirmed_value, "Bank of America");
+  assert.equal(queries.filter(({ sql }) => /INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)).length, 2);
+  assert.equal(queries.filter(({ sql }) => sql === "COMMIT").length, 1);
+});
+
+test("approve all refuses an unacknowledged engagement-address mismatch", async () => {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      queries.push(sql);
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+        return {
+          rows: [{
+            id: 46,
+            document_type: "engagement_letter",
+            extraction_summary: { candidate_count: 1 },
+          }],
+        };
+      }
+      if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) {
+        return {
+          rows: [{
+            id: 603,
+            document_id: 46,
+            field_key: "subject_property_address",
+            raw_value: "513 HARDY DR, GARLAND, TX 75041",
+            normalized_value: "513 HARDY DR, GARLAND, TX 75041",
+            review_status: "suggested",
+          }],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() {
+      return client;
+    },
+  };
+
+  await assert.rejects(
+    confirmAssignmentDocumentCandidates(pool, {
+      documentId: 46,
+      reviewer: "Jordan Freeman",
+      reportSubjectAddress: "1909 Snowmass Ln, Garland, TX 75044",
+    }),
+    /document_subject_address_mismatch/,
+  );
+  assert.equal(queries.filter((sql) => /UPDATE app\.assignment_document_field_candidates/.test(sql)).length, 0);
+  assert.equal(queries.filter((sql) => sql === "ROLLBACK").length, 1);
 });

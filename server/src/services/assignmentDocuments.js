@@ -21,6 +21,32 @@ function positiveInteger(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function normalizedDocumentStreetAddress(value) {
+  const suffixes = {
+    STREET: "ST",
+    ROAD: "RD",
+    DRIVE: "DR",
+    LANE: "LN",
+    COURT: "CT",
+    BOULEVARD: "BLVD",
+    AVENUE: "AVE",
+    HIGHWAY: "HWY",
+    PLACE: "PL",
+    CIRCLE: "CIR",
+    PARKWAY: "PKWY",
+    TRAIL: "TRL",
+    TERRACE: "TER",
+  };
+  return String(value || "")
+    .split(",")[0]
+    .toUpperCase()
+    .replace(/[^A-Z0-9#]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((token) => suffixes[token] || token)
+    .join(" ");
+}
+
 export function buildAssignmentDocumentObjectKey({
   organizationId = null,
   accountId,
@@ -900,6 +926,50 @@ export async function getAssignmentDocument(pool, documentId, {
   };
 }
 
+export async function deleteAssignmentDocument(pool, storage, documentId) {
+  await ensureAssignmentDocumentsSchema(pool);
+  const id = positiveInteger(documentId);
+  if (!id) throw new Error("invalid_document_id");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query(
+      `SELECT id, storage_provider, object_key
+       FROM app.assignment_documents
+       WHERE id = $1
+       FOR UPDATE`,
+      [id],
+    );
+    const document = rows[0];
+    if (!document) throw new Error("document_not_found");
+    const storedInR2 = document.storage_provider === "r2" && Boolean(document.object_key);
+    if (storedInR2) {
+      if (!storage?.configured || typeof storage.deleteObject !== "function") {
+        throw new Error("assignment_document_storage_not_configured");
+      }
+      await storage.deleteObject({ objectKey: document.object_key });
+    }
+    const deleted = await client.query(
+      `DELETE FROM app.assignment_documents
+       WHERE id = $1
+       RETURNING id`,
+      [id],
+    );
+    if (!deleted.rows.length) throw new Error("document_not_found");
+    await client.query("COMMIT");
+    return {
+      document_id: id,
+      deleted: true,
+      storage_deleted: storedInR2,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function reviewAssignmentDocumentCandidate(pool, {
   documentId,
   candidateId,
@@ -973,6 +1043,146 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   }
 }
 
+async function confirmSuggestedAssignmentDocumentCandidates(client, {
+  document,
+  candidateRows,
+  suppliedValues,
+  reviewerName,
+}) {
+  const confirmedCandidates = [];
+  for (const candidate of candidateRows) {
+    if (candidate.review_status !== "suggested") continue;
+    const confirmedValue = cleanText(suppliedValues[String(candidate.id)], 4_000)
+      || cleanText(candidate.normalized_value, 4_000)
+      || candidate.raw_value;
+    const { rows } = await client.query(
+      `UPDATE app.assignment_document_field_candidates
+       SET review_status = 'confirmed',
+           confirmed_value = $3,
+           reviewer = $4,
+           reviewed_at = now(),
+           updated_at = now()
+       WHERE id = $2 AND document_id = $1 AND review_status = 'suggested'
+       RETURNING *`,
+      [document, candidate.id, confirmedValue, reviewerName],
+    );
+    if (!rows[0]) continue;
+    confirmedCandidates.push(publicCandidate(rows[0]));
+    await client.query(
+      `INSERT INTO app.assignment_document_candidate_reviews (
+         document_id, candidate_id, field_key, raw_value, normalized_value,
+         review_status, confirmed_value, reviewer, reviewed_at
+       ) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $7, now())`,
+      [
+        document,
+        candidate.id,
+        candidate.field_key,
+        candidate.raw_value,
+        candidate.normalized_value,
+        confirmedValue,
+        reviewerName,
+      ],
+    );
+  }
+  return confirmedCandidates;
+}
+
+export async function confirmAssignmentDocumentCandidates(pool, {
+  documentId,
+  reviewer,
+  reportSubjectAddress,
+  candidateValues = {},
+} = {}) {
+  await ensureAssignmentDocumentsSchema(pool);
+  const document = positiveInteger(documentId);
+  if (!document) throw new Error("invalid_document_id");
+  const reviewerName = cleanText(reviewer, 200);
+  if (!reviewerName) throw new Error("document_reviewer_required");
+  const suppliedValues = candidateValues && typeof candidateValues === "object"
+    ? candidateValues
+    : {};
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const { rows: documentRows } = await client.query(
+      `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
+      [document],
+    );
+    const sourceDocument = documentRows[0];
+    if (!sourceDocument) throw new Error("document_not_found");
+    const { rows: candidateRows } = await client.query(
+      `SELECT * FROM app.assignment_document_field_candidates
+       WHERE document_id = $1
+       ORDER BY page_number NULLS LAST, confidence DESC NULLS LAST, id
+       FOR UPDATE`,
+      [document],
+    );
+
+    if (
+      sourceDocument.document_type === "engagement_letter" &&
+      !sourceDocument.extraction_summary?.subject_address_override?.acknowledged
+    ) {
+      const subjectAddressCandidate = candidateRows.find((candidate) => (
+        candidate.field_key === "subject_property_address"
+      ));
+      if (subjectAddressCandidate) {
+        const reportAddress = cleanText(reportSubjectAddress, 1_000);
+        if (!reportAddress) throw new Error("report_subject_address_required");
+        const candidateAddress = cleanText(
+          suppliedValues[String(subjectAddressCandidate.id)]
+            || subjectAddressCandidate.confirmed_value
+            || subjectAddressCandidate.normalized_value
+            || subjectAddressCandidate.raw_value,
+          1_000,
+        );
+        const normalizedCandidateAddress = normalizedDocumentStreetAddress(candidateAddress);
+        const normalizedReportAddress = normalizedDocumentStreetAddress(reportAddress);
+        if (
+          normalizedCandidateAddress &&
+          normalizedReportAddress &&
+          normalizedCandidateAddress !== normalizedReportAddress
+        ) {
+          throw new Error("document_subject_address_mismatch");
+        }
+      }
+    }
+
+    const confirmedCandidates = await confirmSuggestedAssignmentDocumentCandidates(client, {
+      document,
+      candidateRows,
+      suppliedValues,
+      reviewerName,
+    });
+    await client.query(
+      `UPDATE app.assignment_documents
+       SET processing_status = CASE
+             WHEN EXISTS (
+               SELECT 1 FROM app.assignment_document_field_candidates
+               WHERE document_id = $1 AND review_status = 'suggested'
+             ) THEN processing_status
+             ELSE 'reviewed'
+           END,
+           reviewed_at = CASE
+             WHEN EXISTS (
+               SELECT 1 FROM app.assignment_document_field_candidates
+               WHERE document_id = $1 AND review_status = 'suggested'
+             ) THEN reviewed_at
+             ELSE now()
+           END,
+           updated_at = now()
+       WHERE id = $1`,
+      [document],
+    );
+    await client.query("COMMIT");
+    return { document_id: document, confirmed_candidates: confirmedCandidates };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
   documentId,
   reviewer,
@@ -1014,42 +1224,12 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
     if (!subjectAddressCandidate) {
       throw new Error("document_subject_address_candidate_required");
     }
-    const confirmedCandidates = [];
-    for (const candidate of candidateRows) {
-      if (candidate.review_status !== "suggested") continue;
-      const suppliedValue = cleanText(suppliedValues[String(candidate.id)], 4_000);
-      const confirmedValue = suppliedValue
-        || cleanText(candidate.normalized_value, 4_000)
-        || candidate.raw_value;
-      const { rows } = await client.query(
-        `UPDATE app.assignment_document_field_candidates
-         SET review_status = 'confirmed',
-             confirmed_value = $3,
-             reviewer = $4,
-             reviewed_at = now(),
-             updated_at = now()
-         WHERE id = $2 AND document_id = $1 AND review_status = 'suggested'
-         RETURNING *`,
-        [document, candidate.id, confirmedValue, reviewerName],
-      );
-      if (!rows[0]) continue;
-      confirmedCandidates.push(publicCandidate(rows[0]));
-      await client.query(
-        `INSERT INTO app.assignment_document_candidate_reviews (
-           document_id, candidate_id, field_key, raw_value, normalized_value,
-           review_status, confirmed_value, reviewer, reviewed_at
-         ) VALUES ($1, $2, $3, $4, $5, 'confirmed', $6, $7, now())`,
-        [
-          document,
-          candidate.id,
-          candidate.field_key,
-          candidate.raw_value,
-          candidate.normalized_value,
-          confirmedValue,
-          reviewerName,
-        ],
-      );
-    }
+    const confirmedCandidates = await confirmSuggestedAssignmentDocumentCandidates(client, {
+      document,
+      candidateRows,
+      suppliedValues,
+      reviewerName,
+    });
     const acknowledgedAt = new Date().toISOString();
     const confirmedCandidateIds = [
       ...candidateRows

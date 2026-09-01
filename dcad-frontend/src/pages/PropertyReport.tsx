@@ -1517,11 +1517,7 @@ function AddressHero({
     if (assignmentDirtyRef.current) {
       // A top-level Save protects a valid draft even when the appraiser has
       // not completed every field required for final section review.
-      const assignmentSaved = await saveAssignmentDetailsRef.current({
-        requireCompletion: false,
-        saveReason: "manual_save",
-        promptForCredential: true,
-      });
+      const assignmentSaved = await saveAssignmentDetails({ requireCompletion: false });
       if (assignmentSaved && marketSaveError) {
         setAssignmentSaveMessage(`Shared report changes were saved, but ${marketSaveError}`);
       }
@@ -1869,7 +1865,7 @@ function AddressHero({
           className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-violet-100"
           aria-live="polite"
         >
-          {assignmentSaveMessage || customAppraisalSaveStatus || workfileStatusMessage || "\u00a0"}
+          {assignmentSaveMessage || workfileStatusMessage || customAppraisalSaveStatus || "\u00a0"}
         </p>
 
         {assignmentAutosaveState === "conflict" ? (

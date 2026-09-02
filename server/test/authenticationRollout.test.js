@@ -224,7 +224,7 @@ test("the legacy editor key is inert whenever mandatory authentication is active
     ["function requireEditor(req, res)", "app.use(createGeographyOperationsRouter(", true],
     ["async function requireCustomAssignmentAccess", "async function requireAssignmentDocumentAccess", false],
     ["async function requireAssignmentDocumentAccess", "function requireWorkflowAccess", false],
-    ["function requireWorkflowAccess", "function assignmentPhotoErrorStatus", true],
+    ["function requireWorkflowAccess", "app.use(createAssignmentPhotoRouter(", true],
   ];
   for (const [startMarker, endMarker, retainsPreActivationFallback] of helpers) {
     const start = server.indexOf(startMarker);
@@ -243,6 +243,6 @@ test("the legacy editor key is inert whenever mandatory authentication is active
   }
   assert.match(server.slice(
     server.indexOf("function requireWorkflowAccess"),
-    server.indexOf("function assignmentPhotoErrorStatus"),
+    server.indexOf("app.use(createAssignmentPhotoRouter("),
   ), /application_access_denied/);
 });

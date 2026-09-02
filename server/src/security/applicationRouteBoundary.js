@@ -71,6 +71,7 @@ export function mountApplicationRouteBoundary(app, {
     return res.json({ ok: true, session: buildSession(req.mobileAuth) });
   });
 
+  // codeql[js/missing-rate-limiting] The required injected limiter is the route's second argument.
   app.get("/api/auth/readiness", rateLimit, async (req, res) => {
     res.set("cache-control", "no-store");
     if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });

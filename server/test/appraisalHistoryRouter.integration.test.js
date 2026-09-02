@@ -390,9 +390,7 @@ test("appraisal-history composition and route position remain explicit", () => {
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const reportFiles = source.indexOf("app.use(createDesktopReportFilesRouter(");
   const history = source.indexOf("app.use(createAppraisalHistoryRouter(");
-  const sketches = source.indexOf(
-    'app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg"',
-  );
+  const sketches = source.indexOf("app.use(createDesktopAssignmentSketchRouter(");
   assert.ok(history > reportFiles);
   assert.ok(sketches > history);
   assert.equal(source.includes('app.get("/api/accounts/:id/appraisal-history"'), false);

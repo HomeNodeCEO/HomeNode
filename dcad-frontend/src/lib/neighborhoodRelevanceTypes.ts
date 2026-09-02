@@ -69,6 +69,7 @@ export interface NeighborhoodRelevanceAssessment {
     pocket_size: number;
     system_selected: boolean;
     primary_population: boolean;
+    recommended_population?: boolean;
     relevance_band: 'highest' | 'high' | 'relevant' | 'marginal' | 'low' | 'excluded' | 'insufficient_data';
     appraiser_override?: 'included' | 'removed' | null;
     same_subject_neighborhood: boolean;

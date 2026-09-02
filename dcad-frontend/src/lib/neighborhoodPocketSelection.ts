@@ -4,6 +4,25 @@ export type NeighborhoodRelevanceCandidate = NonNullable<
   NeighborhoodRelevanceAssessment['visualization']
 >[number];
 
+export type NeighborhoodPocketRecommendation = {
+  recommendedPocketIds: string[];
+  removedSystemPocketIds: string[];
+  baselinePocketCount: number;
+  recommendedPocketCount: number;
+  baselineReliabilityScore: number;
+  recommendedReliabilityScore: number;
+  reliabilityGain: number;
+  averageSimilarityScore: number | null;
+  propertyCoveragePercent: number;
+  saleCoveragePercent: number;
+  decisionScore: number;
+  containsSubjectSubdivision: boolean;
+  rationale: string;
+};
+
+const RECOMMENDED_AREA_MINIMUM_COVERAGE_PERCENT = 60;
+const RECOMMENDED_AREA_MINIMUM_GAIN = 0.25;
+
 type MetricSummary = {
   count: number;
   low: number | null;
@@ -164,6 +183,136 @@ export function applyPocketOverrides(
       relevant_statistics: relevantStatistics,
     },
     visualization,
+  };
+}
+
+function percentOf(value: number, total: number): number {
+  if (total <= 0) return 100;
+  return Math.min(100, value / total * 100);
+}
+
+function averageSimilarity(candidates: NeighborhoodRelevanceCandidate[]): number | null {
+  const scores = candidates
+    .filter((candidate) => candidate.primary_population)
+    .map((candidate) => Number(candidate.score))
+    .filter(Number.isFinite);
+  return scores.length
+    ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+    : null;
+}
+
+/**
+ * Recommends a reviewable subset of the already-qualified relevance pockets.
+ * The optimizer cannot remove the subject's recorded subdivision and cannot
+ * shrink either the parcel population or available-sale population below a
+ * majority-support floor. This prevents a deceptively perfect result produced
+ * by cherry-picking a tiny pocket while still allowing a materially dissimilar
+ * pocket to be removed when the reliability and similarity evidence improves.
+ */
+export function recommendPocketSelection(
+  assessment: NeighborhoodRelevanceAssessment,
+): NeighborhoodPocketRecommendation {
+  const visualization = assessment.visualization || [];
+  const systemPockets = summarizePockets(visualization)
+    .filter((pocket) => pocket.systemSelected);
+  const systemPocketIds = systemPockets.map((pocket) => pocket.id).sort();
+  const subjectPocketIds = new Set(systemPockets
+    .filter((pocket) => pocket.containsSubjectSubdivision)
+    .map((pocket) => pocket.id));
+  const baseline = applyPocketOverrides(assessment, [], []);
+  const baselineStatistics = baseline.summary.relevant_statistics ||
+    calculatePocketStatistics(baseline.visualization || []);
+
+  const evaluate = (selectedIds: Set<string>) => {
+    const removedIds = systemPocketIds.filter((id) => !selectedIds.has(id));
+    const effective = applyPocketOverrides(assessment, removedIds, []);
+    const statistics = effective.summary.relevant_statistics ||
+      calculatePocketStatistics(effective.visualization || []);
+    const propertyCoverage = percentOf(
+      statistics.included_property_count,
+      baselineStatistics.included_property_count,
+    );
+    const saleCoverage = percentOf(
+      statistics.included_sale_count,
+      baselineStatistics.included_sale_count,
+    );
+    const similarity = averageSimilarity(effective.visualization || []);
+    const representationScore = (propertyCoverage + saleCoverage) / 2;
+    const reliability = Number(statistics.reliability_score) || 0;
+    const decisionScore = reliability * 0.5 +
+      (similarity || 0) * 0.35 + representationScore * 0.15;
+    return {
+      decisionScore,
+      effective,
+      propertyCoverage,
+      reliability,
+      saleCoverage,
+      similarity,
+      statistics,
+    };
+  };
+
+  let selectedIds = new Set(systemPocketIds);
+  let current = evaluate(selectedIds);
+  const removalOrder = systemPockets
+    .filter((pocket) => !subjectPocketIds.has(pocket.id))
+    .map((pocket) => {
+      const trialIds = new Set(selectedIds);
+      trialIds.delete(pocket.id);
+      const trial = evaluate(trialIds);
+      return {
+        id: pocket.id,
+        initialGain: trial.decisionScore - current.decisionScore,
+        averageScore: pocket.averageScore || 0,
+      };
+    })
+    .sort((left, right) =>
+      right.initialGain - left.initialGain ||
+      left.averageScore - right.averageScore ||
+      left.id.localeCompare(right.id),
+    );
+
+  for (const pocket of removalOrder) {
+    const trialIds = new Set(selectedIds);
+    trialIds.delete(pocket.id);
+    const trial = evaluate(trialIds);
+    if (
+      trial.propertyCoverage < RECOMMENDED_AREA_MINIMUM_COVERAGE_PERCENT ||
+      trial.saleCoverage < RECOMMENDED_AREA_MINIMUM_COVERAGE_PERCENT ||
+      trial.decisionScore < current.decisionScore + RECOMMENDED_AREA_MINIMUM_GAIN
+    ) {
+      continue;
+    }
+    selectedIds = trialIds;
+    current = trial;
+  }
+
+  const recommendedPocketIds = [...selectedIds].sort();
+  const removedSystemPocketIds = systemPocketIds
+    .filter((id) => !selectedIds.has(id));
+  const baselineReliability = Number(baselineStatistics.reliability_score) || 0;
+  const recommendedReliability = current.reliability;
+  const propertyCoverage = rounded(current.propertyCoverage, 1) as number;
+  const saleCoverage = rounded(current.saleCoverage, 1) as number;
+  const rationale = recommendedPocketIds.length === systemPocketIds.length
+    ? `All ${systemPocketIds.length.toLocaleString()} qualified pockets are recommended because removing one did not improve reliability and similarity without weakening majority representation.`
+    : `The recommendation keeps ${recommendedPocketIds.length.toLocaleString()} of ${systemPocketIds.length.toLocaleString()} qualified pockets, ${propertyCoverage}% of the relevant parcel population, and ${saleCoverage}% of every available sale in those pockets. Subject-subdivision pockets are always preserved.`;
+
+  return {
+    recommendedPocketIds,
+    removedSystemPocketIds,
+    baselinePocketCount: systemPocketIds.length,
+    recommendedPocketCount: recommendedPocketIds.length,
+    baselineReliabilityScore: rounded(baselineReliability, 1) as number,
+    recommendedReliabilityScore: rounded(recommendedReliability, 1) as number,
+    reliabilityGain: rounded(recommendedReliability - baselineReliability, 1) as number,
+    averageSimilarityScore: rounded(current.similarity, 1),
+    propertyCoveragePercent: propertyCoverage,
+    saleCoveragePercent: saleCoverage,
+    decisionScore: rounded(current.decisionScore, 1) as number,
+    containsSubjectSubdivision: subjectPocketIds.size === 0 ||
+      [...subjectPocketIds].every((id) => selectedIds.has(id)),
+    rationale,
   };
 }
 

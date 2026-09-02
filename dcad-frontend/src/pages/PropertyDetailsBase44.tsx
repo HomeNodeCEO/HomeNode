@@ -7,6 +7,11 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  mapMergedToBase44Property,
+  propertyLoadErrorMessage,
+  type Base44Property,
+} from "@/features/propertyDetails/base44PropertyMapping";
+import {
   ArrowLeft, Upload, ChevronLeft, ChevronRight, ChevronDown,
   DollarSign, Landmark, TrendingDown, Building, MapPin,
   Home, BedDouble, Bath, Car, Zap, AlertTriangle, User,
@@ -16,141 +21,21 @@ import {
 } from "lucide-react";
 
 // Display helper: shows fallback until value exists
-function Bind({ value, fallback, format }: { value: any; fallback?: any; format?: (v: any) => any }) {
+function Bind({
+  value,
+  fallback,
+  format,
+}: {
+  value: React.ReactNode;
+  fallback?: React.ReactNode;
+  format?: (value: React.ReactNode) => React.ReactNode;
+}) {
   const has = value !== undefined && value !== null && value !== "";
   const out = has ? (format ? format(value) : value) : fallback;
   return <span>{out}</span>;
 }
 
-type Property = {
-  account_number?: string;
-  address?: string;
-  photos?: string[];
-
-  // values
-  market_value?: number | "";
-  appraised_value?: number | ""; // (often "capped" or taxable)
-  improvement_value?: number | "";
-  land_value?: number | "";
-  neighborhood_multiplier?: number | "";
-  county?: string;
-  neighborhood_code?: string;
-  subdivision?: string;
-
-  // details
-  square_footage?: number | "";
-  land_acreage?: number | "";
-  bedroom_count?: number | "";
-  bath_count?: number | ""; // stored as 2.5 => "2 Full, 5 Half" via formatter below
-  garage_bay_count?: number | "";
-  solar_panels?: boolean;
-  functional_obsolescence?: boolean;
-
-  // county details
-  classification?: string;
-  year_built?: number | "";
-  effective_year_built?: number | "";
-  last_inspection_year?: number | "";
-
-  // Optional report fields supplied by richer county sources.
-  tax_agent?: string | null;
-  owner_name?: string | null;
-  owner_mailing_address?: string | null;
-  owner_type?: string | null;
-  ownership_percent?: string | number | null;
-  deed_date?: string | null;
-  deed_type?: string | null;
-  purchase_price?: string | number | null;
-  grantor?: string | null;
-  homestead_display?: string | null;
-  ag_use_display?: string | null;
-  mineral_rights_display?: string | null;
-  legal_description?: string | null;
-  owner_notes?: string | null;
-  total_living_area?: string | number | null;
-  percent_complete?: string | number | null;
-  stories?: string | number | null;
-  stories_num?: string | number | null;
-  construction_type_display?: string | null;
-  construction_type?: string | null;
-  foundation_display?: string | null;
-  foundation_type?: string | null;
-  roof_type?: string | null;
-  roof_material?: string | null;
-  fence_type?: string | null;
-  exterior_material?: string | null;
-  basement_display?: string | null;
-  basement?: boolean | string | null;
-  heating_display?: string | null;
-  heating_type?: string | null;
-  cooling_display?: string | null;
-  air_conditioning?: string | null;
-  pool_display?: string | null;
-  pool?: boolean | null;
-
-  // protest history (optional)
-  protest_history?: Array<{ year: number; status: string; initial_value: number; final_value: number }>;
-};
-
-function toNum(v: any): number | "" {
-  if (v === null || v === undefined || v === "") return "";
-  const n = Number(String(v).replace(/[,$\s]/g, ""));
-  return Number.isFinite(n) ? n : "";
-}
-
-function mapMergedToProperty(detail: any, fallbackAccountNumber: string): Partial<Property> {
-  const account = detail?.account ?? detail ?? {};
-  const improvement = detail?.primary_improvements ?? detail ?? {};
-  const owner = detail?.owner_summary ?? detail?.owner ?? {};
-  const vs = detail?.value_summary ?? {};
-  const bathNum =
-    improvement?.bath_count ??
-    detail?.bath_count_num ??
-    (typeof detail?.bath_count_display === "number" ? detail?.bath_count_display : undefined);
-
-  return {
-    account_number: account?.account_id ?? fallbackAccountNumber,
-    address: account?.address ?? detail?.situs_address ?? detail?.address ?? "",
-    photos: detail?.photos ?? [],
-    market_value: toNum(vs.market_value ?? account?.latest_market_value ?? detail?.market_value),
-    appraised_value: toNum(vs.capped_value ?? account?.latest_capped_value ?? detail?.taxable_value ?? detail?.appraised_value),
-    improvement_value: toNum(vs.improvement_value ?? account?.latest_improvement_value),
-    land_value: toNum(vs.land_value ?? account?.latest_land_value),
-    neighborhood_multiplier: toNum(detail?.neighborhood?.multiplier ?? detail?.neighborhood_multiplier),
-    county: account?.county ?? detail?.county ?? detail?.county_name ?? "",
-    square_footage: toNum(improvement?.living_area_sqft ?? improvement?.total_living_area),
-    total_living_area: improvement?.total_living_area ?? improvement?.living_area_sqft ?? null,
-    land_acreage: toNum(detail?.land_acreage ?? detail?.land?.acreage),
-    bedroom_count: toNum(improvement?.bedroom_count),
-    bath_count: bathNum ?? "",
-    garage_bay_count: toNum(detail?.garage_bay_count),
-    solar_panels: !!detail?.solar_panels,
-    functional_obsolescence: !!detail?.functional_obsolescence,
-    classification: improvement?.building_class ?? detail?.classification,
-    year_built: toNum(improvement?.year_built),
-    effective_year_built: toNum(improvement?.effective_year_built),
-    last_inspection_year: toNum(detail?.last_inspection_year),
-    neighborhood_code: account?.neighborhood_code ?? detail?.neighborhood?.code,
-    subdivision: account?.subdivision ?? detail?.neighborhood?.subdivision,
-    owner_name: owner?.owner_name ?? null,
-    owner_mailing_address: owner?.mailing_address ?? null,
-    ownership_percent: detail?.owner_parties?.[0]?.ownership_pct ?? null,
-    legal_description: account?.legal_description ?? null,
-    percent_complete: improvement?.percent_complete ?? null,
-    stories: improvement?.stories ?? null,
-    construction_type: improvement?.construction_type ?? null,
-    foundation_type: improvement?.foundation ?? null,
-    roof_type: improvement?.roof_type ?? null,
-    roof_material: improvement?.roof_material ?? null,
-    fence_type: improvement?.fence_type ?? null,
-    exterior_material: improvement?.exterior_material ?? null,
-    basement: improvement?.basement ?? null,
-    heating_type: improvement?.heating ?? null,
-    air_conditioning: improvement?.air_conditioning ?? null,
-    pool: improvement?.pool ?? null,
-    protest_history: detail?.protest_history ?? [],
-  };
-}
+type Property = Base44Property;
 
 export default function PropertyDetailsBase44() {
   const { countyId, accountId } = useParams<{ countyId: string; accountId: string }>();
@@ -160,7 +45,7 @@ export default function PropertyDetailsBase44() {
     photos: [],
   });
   const [loading, setLoading] = useState(false);
-  const [raw, setRaw] = useState<any>(null);
+  const [raw, setRaw] = useState<unknown>(null);
   const hasAutoLoaded = useRef(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
@@ -170,11 +55,11 @@ export default function PropertyDetailsBase44() {
     try {
       const resp = await fetchProperty(Number(countyId), accountId);
       setRaw(resp);
-      const mapped = mapMergedToProperty(resp, accountId);
+      const mapped = mapMergedToBase44Property(resp, accountId);
       setProperty(prev => ({ ...prev, ...mapped }));
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message || "Load failed");
+    } catch (error: unknown) {
+      console.error(error);
+      alert(propertyLoadErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -206,9 +91,11 @@ export default function PropertyDetailsBase44() {
     }
   };
 
-  const formatBathCount = (count: any) => {
+  const formatBathCount = (count: React.ReactNode) => {
     if (count === undefined || count === null || count === "") return "N/A";
+    if (typeof count !== "string" && typeof count !== "number") return "N/A";
     const n = Number(count);
+    if (!Number.isFinite(n)) return "N/A";
     const full = Math.floor(n);
     const half = Math.round((n % 1) * 10);
     return half > 0 ? `${full} Full, ${half} Half` : `${full} Full`;
@@ -425,7 +312,7 @@ export default function PropertyDetailsBase44() {
               <Bind value={property.total_living_area} fallback="2,750" /> sq ft
             </KeyVal>
             <KeyVal icon={<Percent className="w-4 h-4 text-slate-500" />} label="Percent Complete">
-              <Bind value={property.percent_complete} fallback="100%" format={(v:any) => {
+              <Bind value={property.percent_complete} fallback="100%" format={(v) => {
                 const n = Number(v);
                 return Number.isFinite(n) ? `${n}%` : v;
               }} />
@@ -470,39 +357,39 @@ export default function PropertyDetailsBase44() {
               <Bind value={property.bath_count} fallback="2 full, 1 half" format={formatBathCount} />
             </KeyVal>
             <KeyVal icon={<UtensilsCrossed className="w-4 h-4 text-slate-500" />} label="Kitchens">
-              <Bind value={(property as any).kitchen_count} fallback="1" />
+              <Bind value={property.kitchen_count} fallback="1" />
             </KeyVal>
             <KeyVal icon={<Wine className="w-4 h-4 text-slate-500" />} label="Wet Bars">
-              <Bind value={(property as any).wet_bar_count} fallback="1" />
+              <Bind value={property.wet_bar_count} fallback="1" />
             </KeyVal>
             <KeyVal icon={<Flame className="w-4 h-4 text-slate-500" />} label="Fireplaces">
-              <Bind value={(property as any).fireplace_count} fallback="2" />
+              <Bind value={property.fireplace_count} fallback="2" />
             </KeyVal>
             <KeyVal icon={<Droplets className="w-4 h-4 text-slate-500" />} label="Sprinkler">
-              <Bind value={(property as any).sprinkler_display} fallback="Yes" />
+              <Bind value={property.sprinkler_display} fallback="Yes" />
             </KeyVal>
             <KeyVal icon={<DoorOpen className="w-4 h-4 text-slate-500" />} label="Deck/Porches">
-              <Bind value={(property as any).deck_porches_display} fallback="Covered Porch" />
+              <Bind value={property.deck_porches_display} fallback="Covered Porch" />
             </KeyVal>
             <KeyVal icon={<Sparkles className="w-4 h-4 text-slate-500" />} label="Spa">
-              <Bind value={(property as any).spa_display} fallback="No" />
+              <Bind value={property.spa_display} fallback="No" />
             </KeyVal>
             <KeyVal icon={<Waves className="w-4 h-4 text-slate-500" />} label="Pool">
-              <Bind value={property.pool_display || (property as any).pool} fallback="No" />
+              <Bind value={property.pool_display || (property.pool === true ? "Yes" : property.pool === false ? "No" : undefined)} fallback="No" />
             </KeyVal>
             <KeyVal icon={<Sun className="w-4 h-4 text-slate-500" />} label="Sauna">
-              <Bind value={(property as any).sauna_display} fallback="No" />
+              <Bind value={property.sauna_display} fallback="No" />
             </KeyVal>
             <KeyVal icon={<Car className="w-4 h-4 text-slate-500" />} label="Garage Bay Count">
               <Bind value={property.garage_bay_count} fallback="2" />
             </KeyVal>
             <KeyVal icon={<Zap className="w-4 h-4 text-slate-500" />} label="Solar Panels">
-              <Badge variant={(property.solar_panels ? "default" : "secondary") as any}>
+              <Badge variant={property.solar_panels ? "default" : "secondary"}>
                 {property.solar_panels ? "Yes" : "No"}
               </Badge>
             </KeyVal>
             <KeyVal icon={<AlertTriangle className="w-4 h-4 text-slate-500" />} label="Functional Obsolescence">
-              <Badge variant={(property.functional_obsolescence ? "destructive" : "secondary") as any}>
+              <Badge variant={property.functional_obsolescence ? "destructive" : "secondary"}>
                 {property.functional_obsolescence ? "Yes" : "No"}
               </Badge>
             </KeyVal>
@@ -522,7 +409,7 @@ export default function PropertyDetailsBase44() {
               <Bind value={property.neighborhood_code} fallback="1559463" />
             </KeyVal>
             <KeyVal icon={<Map className="w-4 h-4 text-slate-500" />} label="Subdivision">
-              <Bind value={(property as any).subdivision} fallback="Downtown Historic District" />
+              <Bind value={property.subdivision} fallback="Downtown Historic District" />
             </KeyVal>
           </div>
         </SectionCard>

@@ -258,10 +258,9 @@ import {
   buildAppraisalHistoryAccessScope,
 } from "./security/appraisalHistoryAccess.js";
 import {
-  createResilientHttpServer,
   createRuntimeResilienceConfiguration,
-  installGracefulShutdown,
 } from "./security/runtimeResilience.js";
+import { startApplicationHttpLifecycle } from "./application/httpLifecycle.js";
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
 import { mountApplicationRouteBoundary } from "./security/applicationRouteBoundary.js";
@@ -6783,16 +6782,12 @@ app.get("/api/sales/:sourceRecordId/photos", async (req, res) => {
 
 app.use(createPropertyCatalogRouter({ pool }));
 
-const port = parseInt(process.env.PORT || "4000", 10);
-app.use(jsonErrorHandler);
-const server = createResilientHttpServer(app, runtimeResilience);
-server.listen(port, () => console.log(`API listening on http://localhost:${port}`));
-gracefulShutdown = installGracefulShutdown({
-  server,
+const applicationHttpLifecycle = startApplicationHttpLifecycle({
+  app,
   pool,
-  graceMs: runtimeResilience.shutdownGraceMs,
-  onBegin: () => {
-    artifactRecoveryMonitor.dispose();
-    closeUadArtifactExecution();
-  },
+  runtimeResilience,
+  finalErrorHandler: jsonErrorHandler,
+  artifactRecoveryMonitor,
+  closeArtifactExecution: closeUadArtifactExecution,
 });
+gracefulShutdown = applicationHttpLifecycle.gracefulShutdown;

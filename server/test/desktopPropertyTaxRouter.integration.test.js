@@ -455,7 +455,7 @@ test("Property Tax desktop composition and route position remain explicit", () =
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const sketches = source.indexOf("app.use(createDesktopAssignmentSketchRouter(");
   const propertyTax = source.indexOf("app.use(createDesktopPropertyTaxRouter(");
-  const assignmentCreate = source.indexOf('app.post("/api/accounts/:id/assignment-files"');
+  const assignmentCreate = source.indexOf("app.use(createAssignmentFileMutationRouter(");
   assert.ok(propertyTax > sketches);
   assert.ok(assignmentCreate > propertyTax);
   assert.equal(source.includes('app.get("/api/accounts/:id/property-tax-protest"'), false);

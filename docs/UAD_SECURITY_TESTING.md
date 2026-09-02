@@ -97,8 +97,8 @@ GSE. File tests use bounded inert fixtures that demonstrate parser behavior.
 Every pull request runs the existing application suites plus:
 
 - CodeQL JavaScript/TypeScript and Python `security-extended` analysis;
-- dependency review for newly introduced High/Critical vulnerabilities;
-- `npm audit --audit-level=high` for server/web, `pnpm audit` for mobile, and
+- dependency review for newly introduced Moderate/High/Critical vulnerabilities;
+- `npm audit --audit-level=moderate` for server/web, `pnpm audit` for mobile, and
   `pip-audit` for both Python dependency manifests;
 - Python source compilation and scraper regression tests;
 - UAD authentication/authorization matrix tests;
@@ -179,7 +179,7 @@ applies a lockfile-bound pnpm patch that rejects undersized ISO BMFF boxes and
 non-advancing ICNS entries. The mobile regression suite runs the published
 malformed HEIF, ICNS, and JXL patterns in child processes with hard timeouts.
 CI ignores only these two identifiers after that compensating control; every
-other High/Critical finding still blocks the change. HomeNode does not run Metro
+other Moderate/High/Critical finding still blocks the change. HomeNode does not run Metro
 or `image-size` in the deployed API, and untrusted appraisal images must never
 be processed through the mobile build toolchain. Recheck the registry and Expo
 dependency graph by 2026-09-24 and remove both the patch and exception

@@ -932,10 +932,14 @@ function AddressHero({
           contract_seller_names: detail?.assignment_details?.contract_seller_names || "",
           contract_price: detail?.assignment_details?.contract_price || "",
           contract_date: detail?.assignment_details?.contract_date || "",
+          contract_closing_date: detail?.assignment_details?.contract_closing_date || "",
           loan_amount: detail?.assignment_details?.loan_amount || "",
           down_payment: detail?.assignment_details?.down_payment || "",
           earnest_money: detail?.assignment_details?.earnest_money || "",
           seller_concessions: detail?.assignment_details?.seller_concessions || "",
+          contract_property_condition:
+            detail?.assignment_details?.contract_property_condition || "",
+          contract_repairs: detail?.assignment_details?.contract_repairs || "",
           seller_matches_public_records:
             typeof detail?.assignment_details?.seller_matches_public_records === "boolean"
               ? detail.assignment_details.seller_matches_public_records
@@ -1101,11 +1105,14 @@ function AddressHero({
       lender_client_address: "lender_client_address",
       contract_price: "contract_price",
       contract_date: "contract_date",
+      closing_date: "contract_closing_date",
       loan_amount: "loan_amount",
       down_payment: "down_payment",
       earnest_money: "earnest_money",
       seller_concessions: "seller_concessions",
       seller_name: "contract_seller_names",
+      contract_property_condition: "contract_property_condition",
+      contract_repairs: "contract_repairs",
     };
     const assignmentField = assignmentFieldByCandidate[fieldKey];
     if (!assignmentField) {

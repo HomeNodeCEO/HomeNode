@@ -260,6 +260,9 @@ export function customAppraisalReportReadiness(snapshot, property = {}) {
     if (!validIsoDate(details.contract_date)) {
       addBlocker("contract_date_missing", "Enter a valid subject contract date.");
     }
+    if (!validIsoDate(details.contract_closing_date)) {
+      addBlocker("contract_closing_date_missing", "Enter a valid contract closing date.");
+    }
     if (typeof details.seller_matches_public_records !== "boolean") {
       addBlocker("contract_seller_match_missing", "Select Yes or No for whether the seller matches public records.");
     }

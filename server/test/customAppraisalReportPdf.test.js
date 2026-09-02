@@ -112,6 +112,7 @@ test("authoritative readiness enforces contract and neighborhood E&O rules", () 
   details.contract_arms_length = null;
   details.contract_price = "";
   details.contract_date = "";
+  details.contract_closing_date = "";
   details.seller_matches_public_records = false;
   details.seller_mismatch_explanation = "";
   details.subject_conforms_to_neighborhood = false;
@@ -122,6 +123,7 @@ test("authoritative readiness enforces contract and neighborhood E&O rules", () 
   assert.ok(readiness.blockers.some((item) => item.code === "contract_arms_length_missing"));
   assert.ok(readiness.blockers.some((item) => item.code === "contract_price_missing"));
   assert.ok(readiness.blockers.some((item) => item.code === "contract_date_missing"));
+  assert.ok(readiness.blockers.some((item) => item.code === "contract_closing_date_missing"));
   assert.ok(readiness.blockers.some((item) => item.code === "contract_seller_mismatch_unexplained"));
   assert.ok(readiness.blockers.some((item) => item.code === "subject_nonconformity_type_missing"));
   assert.ok(readiness.blockers.some((item) => item.code === "subject_nonconformity_unexplained"));

@@ -40,10 +40,13 @@ export function assignmentDraftFromDetail(value?: AssignmentDetails): Assignment
     contract_seller_names: value?.contract_seller_names || "",
     contract_price: value?.contract_price || "",
     contract_date: value?.contract_date || "",
+    contract_closing_date: value?.contract_closing_date || "",
     loan_amount: value?.loan_amount || "",
     down_payment: value?.down_payment || "",
     earnest_money: value?.earnest_money || "",
     seller_concessions: value?.seller_concessions || "",
+    contract_property_condition: value?.contract_property_condition || "",
+    contract_repairs: value?.contract_repairs || "",
     seller_matches_public_records:
       typeof value?.seller_matches_public_records === "boolean"
         ? value.seller_matches_public_records
@@ -304,6 +307,12 @@ export function assignmentValidationErrors(
     !/^\d{4}-\d{2}-\d{2}$/.test(String(assignment.contract_date || ""))
   ) {
     errors.push("Enter a valid subject contract date.");
+  }
+  if (
+    assignment.subject_under_contract &&
+    !/^\d{4}-\d{2}-\d{2}$/.test(String(assignment.contract_closing_date || ""))
+  ) {
+    errors.push("Enter a valid contract closing date.");
   }
   if (
     assignment.subject_under_contract &&

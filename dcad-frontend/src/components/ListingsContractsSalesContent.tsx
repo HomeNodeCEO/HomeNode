@@ -125,7 +125,9 @@ export default function ListingsContractsSalesContent({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Contract Analysis</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Assignment-specific contract terms and seller-to-public-record verification.</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              Assignment-specific contract terms and seller-to-public-record verification. Approved purchase-contract evidence opens and populates this section automatically.
+            </p>
           </div>
           <div className="min-w-[230px]">
             <CheckboxChoice
@@ -139,12 +141,11 @@ export default function ListingsContractsSalesContent({
 
         {!purchaseTransactionSelected ? (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
-            Select Purchase Transaction in Assignment Details before marking the subject under contract.
+            Select Purchase Transaction before marking this manually. An approved purchase contract will add Purchase Transaction automatically as an E&amp;O fallback.
           </div>
         ) : null}
 
-        {assignmentDraft.subject_under_contract ? (
-          <div className="mt-4 space-y-4">
+        <div className="mt-4 space-y-4">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <label className="block lg:col-span-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Contract Seller Name(s)</span>
@@ -163,6 +164,14 @@ export default function ListingsContractsSalesContent({
                   onChange={(event) => onAssignmentChange("contract_date", event.target.value)}
                 />
               </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Closing Date</span>
+                <input
+                  type="date" className="input input-bordered input-sm mt-1 w-full bg-white"
+                  value={String(assignmentDraft.contract_closing_date || "").slice(0, 10)}
+                  onChange={(event) => onAssignmentChange("contract_closing_date", event.target.value)}
+                />
+              </label>
               {CONTRACT_AMOUNT_FIELDS.map(([field, label]) => (
                 <label key={field} className="block">
                   <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">{label}</span>
@@ -174,6 +183,33 @@ export default function ListingsContractsSalesContent({
                   />
                 </label>
               ))}
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Property Condition Provision</span>
+                <select
+                  className="select select-bordered select-sm mt-1 w-full bg-white"
+                  value={assignmentDraft.contract_property_condition || ""}
+                  onChange={(event) => onAssignmentChange("contract_property_condition", event.target.value)}
+                >
+                  <option value="">Not reported</option>
+                  <option value="as_is">Buyer accepts the property As Is</option>
+                  <option value="seller_repairs">As Is subject to seller repairs / treatments</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Seller Repairs / Treatments</span>
+                <textarea
+                  maxLength={5000}
+                  className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
+                  value={assignmentDraft.contract_repairs || ""}
+                  onChange={(event) => onAssignmentChange("contract_repairs", event.target.value)}
+                  placeholder={assignmentDraft.contract_property_condition === "seller_repairs"
+                    ? "Summarize the specific contract repairs or treatments."
+                    : "No seller repair terms reported."}
+                />
+              </label>
             </div>
 
             <div className="grid gap-4 lg:grid-cols-2">
@@ -209,10 +245,7 @@ export default function ListingsContractsSalesContent({
                 />
               </label>
             ) : null}
-          </div>
-        ) : (
-          <p className="mt-3 text-sm text-slate-500">Contract terms remain hidden until Subject Under Contract is selected.</p>
-        )}
+        </div>
 
         {assignmentErrors.length ? (
           <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">

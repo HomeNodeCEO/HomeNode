@@ -33,6 +33,84 @@ test("document classification recognizes the appraisal document families", () =>
   );
 });
 
+test("purchase contracts outrank incidental zoning-ordinance language during classification", () => {
+  assert.equal(classifyDocument({
+    fileName: "Contract.pdf",
+    pages: [
+      "ONE TO FOUR FAMILY RESIDENTIAL CONTRACT (RESALE)",
+      "Title policy exclusions include existing building and zoning ordinances.",
+    ],
+  }), "purchase_contract");
+});
+
+test("TREC resale sections produce the complete Hardy contract analysis", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "purchase_contract",
+    pages: [
+      [
+        "1. PARTIES: The parties to this contract are Lorenzo Jr Loredo, Andi Li-Kay Thompson (Seller) and Zachary Thames (Buyer).",
+        "3. SALES PRICE:",
+        "A. Cash portion of Sales Price payable by Buyer at closing ....... $ 8,475.00",
+        "B. Sum of all financing described in the attached: Third Party Financing Addendum $ 274,025.00",
+        "C. Sales Price (Sum of A and B) ... $ 282,500.00",
+      ].join("\n"),
+      "5. EARNEST MONEY AND TERMINATION OPTION:\n(address): $ 2,600.00 as earnest money and $200.00 as the option fee.",
+      "",
+      "",
+      "X (1) Buyer accepts the Property As Is.\n(2) Buyer accepts the Property As Is provided Seller shall complete repairs.",
+      [
+        "9. CLOSING:",
+        "A. The closing of the sale will be on or before September 24 2026, or within 7 days.",
+        "12. SETTLEMENT AND OTHER EXPENSES:",
+        "(b) an amount not to exceed $ N/A to be applied to Buyer's Expenses.",
+      ].join("\n"),
+      "",
+      "",
+      "",
+      "EXECUTED the day of 08/25/26 MD, 20 (Effective Date).",
+    ],
+  });
+  const values = Object.fromEntries(candidates.map((candidate) => [
+    candidate.field_key,
+    candidate.normalized_value,
+  ]));
+  assert.deepEqual(values, {
+    down_payment: "8475.00",
+    loan_amount: "274025.00",
+    contract_price: "282500.00",
+    earnest_money: "2600.00",
+    closing_date: "2026-09-24",
+    contract_date: "2026-08-25",
+    seller_concessions: "0.00",
+    seller_name: "Lorenzo Jr Loredo, Andi Li-Kay Thompson",
+    buyer_name: "Zachary Thames",
+    contract_property_condition: "as_is",
+    assignment_type: "purchase_transaction",
+  });
+  assert.equal(candidates.find((candidate) => candidate.field_key === "contract_date")?.page_number, 10);
+  assert.equal(candidates.find((candidate) => candidate.field_key === "closing_date")?.page_number, 6);
+});
+
+test("a checked TREC seller-repair option extracts the specific repair narrative", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "purchase_contract",
+    pages: [[
+      "(1) Buyer accepts the Property As Is.",
+      "X (2) Buyer accepts the Property As Is provided Seller, at Seller's expense, shall complete the following specific repairs and treatments:",
+      "Replace the damaged roof shingles and repair the active plumbing leak.",
+      "(Do not insert general phrases that do not identify specific repairs and treatments.)",
+    ].join("\n")],
+  });
+  assert.equal(
+    candidates.find((candidate) => candidate.field_key === "contract_property_condition")?.normalized_value,
+    "seller_repairs",
+  );
+  assert.equal(
+    candidates.find((candidate) => candidate.field_key === "contract_repairs")?.normalized_value,
+    "Replace the damaged roof shingles and repair the active plumbing leak.",
+  );
+});
+
 test("labeled fields retain the verbatim source text and normalized money", () => {
   const candidates = buildDocumentFieldCandidates({
     documentType: "purchase_contract",

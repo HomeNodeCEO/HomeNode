@@ -9,6 +9,7 @@ export function customAppraisalReportFixture() {
     contract_seller_names: "PATTERSON GREGORY SCOTT & GINA R",
     contract_price: 315000,
     contract_date: "2026-08-12",
+    contract_closing_date: "2026-09-24",
     loan_amount: 250000,
     down_payment: 65000,
     earnest_money: 5000,

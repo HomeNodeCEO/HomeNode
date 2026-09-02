@@ -329,7 +329,7 @@ test("sales study composition preserves route positions and removes inline handl
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const grouped = source.indexOf('app.get("/api/sales/grouped-analysis"');
   const comparison = source.indexOf("app.use(createComparisonStudyRouter(");
-  const related = source.indexOf('app.get("/api/accounts/:id/related-parcels"');
+  const related = source.indexOf("app.use(createRelatedParcelsRouter(");
   const valuation = source.indexOf("app.use(createValuationStudyRouter(");
   const neighborhood = source.indexOf('app.post("/api/sales/neighborhood-profile"');
   assert.ok(comparison > grouped);

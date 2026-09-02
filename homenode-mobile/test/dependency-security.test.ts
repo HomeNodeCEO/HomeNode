@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
@@ -7,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repositoryRoot = path.resolve(mobileRoot, '..');
 const expoRequire = createRequire(require.resolve('expo/package.json'));
 const expoCliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json'));
 const metroRoot = path.dirname(expoCliRequire.resolve('metro/package.json'));
@@ -77,4 +79,22 @@ test('Expo xcode tooling resolves the patched uuid release', () => {
   const project = xcode.project('synthetic.pbxproj');
   project.hash = { project: { objects: {} } };
   assert.match(project.generateUuid(), /^[A-F0-9]{24}$/);
+});
+
+test('dependency security gates reject moderate or higher findings', () => {
+  const workflow = readFileSync(
+    path.join(repositoryRoot, '.github/workflows/dependency-security.yml'),
+    'utf8',
+  );
+
+  assert.match(workflow, /fail-on-severity:\s*moderate/);
+  assert.equal(
+    (workflow.match(/^\s*run:\s+npm audit --audit-level=moderate\s*$/gm) ?? []).length,
+    1,
+  );
+  assert.equal(
+    (workflow.match(/^\s*run:\s+pnpm audit --audit-level=moderate\s*$/gm) ?? []).length,
+    1,
+  );
+  assert.doesNotMatch(workflow, /audit-level=high|fail-on-severity:\s*high/);
 });

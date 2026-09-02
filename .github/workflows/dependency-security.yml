@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/dependency-review-action@v4
         with:
-          fail-on-severity: high
+          fail-on-severity: moderate
 
   npm-audit:
     runs-on: ubuntu-latest
@@ -38,8 +38,8 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ matrix.project }}/package-lock.json
       - run: npm ci
-      - name: Reject high or critical known vulnerabilities
-        run: npm audit --audit-level=high
+      - name: Reject moderate, high, or critical known vulnerabilities
+        run: npm audit --audit-level=moderate
 
   pnpm-audit:
     runs-on: ubuntu-latest
@@ -57,13 +57,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: homenode-mobile/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Reject high or critical known vulnerabilities
+      - name: Reject moderate, high, or critical known vulnerabilities
         # Expo/Metro resolves image-size only in its build toolchain. The two
         # exact advisories below have no published fixed version as of
         # 2026-08-24, so pnpm applies the reviewed patch pinned in the lockfile.
-        # Keep this list narrow; all other High/Critical findings remain
+        # Keep this list narrow; all other Moderate/High/Critical findings remain
         # blocking. See docs/UAD_SECURITY_TESTING.md.
-        run: pnpm audit --audit-level=high
+        run: pnpm audit --audit-level=moderate
 
   pip-audit:
     runs-on: ubuntu-latest

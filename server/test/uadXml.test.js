@@ -114,20 +114,33 @@ test("MISMO XML keeps a lender/client in one PARTY with both required roles", ()
 
 test("MISMO XML keeps imported borrower and seller role/name data in their respective parties", () => {
   const editor = editorFixture();
+  const firstSellerId = "00000000-0000-4000-8000-000000000011";
+  const secondSellerId = "00000000-0000-4000-8000-000000000012";
+  editor.entities.push(
+    { id: firstSellerId, parent_entity_id: null, entity_type: "assignment_seller", entity_identifier: "assignment-seller-1", ordinal: 1 },
+    { id: secondSellerId, parent_entity_id: null, entity_type: "assignment_seller", entity_identifier: "assignment-seller-2", ordinal: 2 },
+  );
   editor.values.push(
     { entity_id: null, context_key: "borrower", uid: "1000.0103", value: "Borrower" },
     { entity_id: null, context_key: "borrower", uid: "1000.0101", value: "Jordan" },
     { entity_id: null, context_key: "borrower", uid: "1000.0102", value: "Freeman" },
-    { entity_id: null, context_key: "seller", uid: "1000.0116", value: "PropertySeller" },
-    { entity_id: null, context_key: "seller", uid: "1000.0020", value: "Example Seller LLC" },
+    { entity_id: firstSellerId, context_key: "seller", uid: "1000.0021", value: "PropertySeller" },
+    { entity_id: firstSellerId, context_key: "seller", uid: "1000.0018", value: "Lorenzo" },
+    { entity_id: firstSellerId, context_key: "seller", uid: "1000.0019", value: "Loredo" },
+    { entity_id: secondSellerId, context_key: "seller", uid: "1000.0116", value: "PropertySeller" },
+    { entity_id: secondSellerId, context_key: "seller", uid: "1000.0020", value: "Example Seller LLC" },
   );
 
   const generated = buildUadMismoXml(editor);
   const borrower = generated.xml.match(/<PARTY>[\s\S]*?<FirstName>Jordan<\/FirstName>[\s\S]*?<\/PARTY>/)?.[0] || "";
-  const seller = generated.xml.match(/<PARTY>[\s\S]*?<FullName>Example Seller LLC<\/FullName>[\s\S]*?<\/PARTY>/)?.[0] || "";
+  const individualSeller = generated.xml.match(/<PARTY>[\s\S]*?<FirstName>Lorenzo<\/FirstName>[\s\S]*?<\/PARTY>/)?.[0] || "";
+  const legalSeller = generated.xml.match(/<PARTY>[\s\S]*?<FullName>Example Seller LLC<\/FullName>[\s\S]*?<\/PARTY>/)?.[0] || "";
   assert.match(borrower, /<LastName>Freeman<\/LastName>/);
   assert.match(borrower, /<PartyRoleType>Borrower<\/PartyRoleType>/);
-  assert.match(seller, /<PartyRoleType>PropertySeller<\/PartyRoleType>/);
+  assert.match(individualSeller, /<LastName>Loredo<\/LastName>/);
+  assert.match(individualSeller, /<PartyRoleType>PropertySeller<\/PartyRoleType>/);
+  assert.match(legalSeller, /<PartyRoleType>PropertySeller<\/PartyRoleType>/);
+  assert.equal((generated.xml.match(/<PartyRoleType>PropertySeller<\/PartyRoleType>/g) || []).length, 2);
 });
 
 test("MISMO XML generation references deterministic external delivery images", async () => {

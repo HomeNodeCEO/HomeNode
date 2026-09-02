@@ -31,6 +31,7 @@ import {
   listUadDocuments,
   reprocessUadDocument,
   reviewUadDocumentCandidate,
+  synchronizeUadPurchaseContract,
   uploadUadDocument,
   type UadDocumentApplicationResult,
 } from '@/features/uad/api';
@@ -450,6 +451,23 @@ export default function AssignmentDocumentCenter({
     const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
     onUadApplied?.(result);
     return result;
+  };
+
+  const synchronizeReviewedUadPurchaseContract = async () => {
+    if (!uadWorkfileId || !selectedDocument || selectedDocument.document_type !== 'purchase_contract') return;
+    setLoading(true);
+    setMessage('');
+    try {
+      const result = await synchronizeUadPurchaseContract(uadWorkfileId, selectedDocument.id);
+      onUadApplied?.(result);
+      setMessage(result.changed_field_count
+        ? `Approved contract information synchronized with UAD Sections 2 and 20 (${result.changed_field_count} updated field${result.changed_field_count === 1 ? '' : 's'}).`
+        : 'Approved contract information is already synchronized with UAD Sections 2 and 20.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The approved contract information could not be synchronized with UAD.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const approveAllSuggestedFields = async () => {
@@ -894,6 +912,19 @@ export default function AssignmentDocumentCenter({
                       </div>
                     </details>
                   ) : null}
+                  {isUad
+                    && selectedDocument.document_type === 'purchase_contract'
+                    && !suggestedCandidates.length
+                    && confirmedCandidateCount > 0 ? (
+                      <button
+                        type="button"
+                        className="hn-action-secondary btn btn-outline btn-sm w-full normal-case rounded-lg"
+                        onClick={() => void synchronizeReviewedUadPurchaseContract()}
+                        disabled={loading}
+                      >
+                        {loading ? 'Synchronizing...' : 'Sync Approved Contract to UAD 3.6'}
+                      </button>
+                    ) : null}
                   {(selectedDocument.review_history || []).length ? (
                     <details className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                       <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-700">

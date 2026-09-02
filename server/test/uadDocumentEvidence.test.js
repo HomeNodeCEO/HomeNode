@@ -8,6 +8,7 @@ import {
   uadPurchaseContractAssignmentValues,
   uadPurchaseContractValues,
   uadDocumentPartyNameValues,
+  uadDocumentSellerParties,
   uadDocumentCandidateIsApplicable,
   uadMlsListingValues,
 } from "../src/modules/uad/documentEvidence.js";
@@ -182,6 +183,64 @@ test("confirmed borrower evidence populates the official borrower role and name 
   );
 });
 
+test("confirmed contract sellers become separate official seller parties", () => {
+  assert.deepEqual(
+    uadDocumentSellerParties("Lorenzo Jr Loredo and Andi Li-Kay Thompson"),
+    [
+      {
+        name: "Lorenzo Jr Loredo",
+        values: [
+          { uid: "1000.0021", context_key: "seller", value: "PropertySeller" },
+          { uid: "1000.0018", context_key: "seller", value: "Lorenzo" },
+          { uid: "1000.0172", context_key: "seller", value: "Jr" },
+          { uid: "1000.0019", context_key: "seller", value: "Loredo" },
+        ],
+      },
+      {
+        name: "Andi Li-Kay Thompson",
+        values: [
+          { uid: "1000.0021", context_key: "seller", value: "PropertySeller" },
+          { uid: "1000.0018", context_key: "seller", value: "Andi" },
+          { uid: "1000.0172", context_key: "seller", value: "Li-Kay" },
+          { uid: "1000.0019", context_key: "seller", value: "Thompson" },
+        ],
+      },
+    ],
+  );
+  assert.equal(uadDocumentSellerParties("Lorenzo Jr Loredo, Andi Li-Kay Thompson")?.length, 2);
+  assert.deepEqual(uadDocumentSellerParties("Example Seller LLC"), [{
+    name: "Example Seller LLC",
+    values: [
+      { uid: "1000.0116", context_key: "seller", value: "PropertySeller" },
+      { uid: "1000.0020", context_key: "seller", value: "Example Seller LLC" },
+    ],
+  }]);
+  assert.equal(uadDocumentSellerParties("Alpha Homes LLC and Beta Holdings LLC")?.length, 2);
+  assert.deepEqual(uadDocumentSellerParties("Smith and Jones LLC"), [{
+    name: "Smith and Jones LLC",
+    values: [
+      { uid: "1000.0116", context_key: "seller", value: "PropertySeller" },
+      { uid: "1000.0020", context_key: "seller", value: "Smith and Jones LLC" },
+    ],
+  }]);
+  assert.deepEqual(uadDocumentSellerParties("Alpha Homes, LLC"), [{
+    name: "Alpha Homes, LLC",
+    values: [
+      { uid: "1000.0116", context_key: "seller", value: "PropertySeller" },
+      { uid: "1000.0020", context_key: "seller", value: "Alpha Homes, LLC" },
+    ],
+  }]);
+});
+
+test("UAD Assignment Information exposes sellers as repeatable parties", () => {
+  const assignment = getUadEditorSections().find((section) => section.key === "assignment");
+  const sellers = assignment.groups.find((group) => group.entityType === "assignment_seller");
+  assert.equal(sellers.minItems, 0);
+  assert.equal(sellers.maxItems, 20);
+  assert.ok(sellers.fields.some((field) => field.uid === "1000.0019"));
+  assert.ok(sellers.fields.every((field) => field.entityType === "assignment_seller"));
+});
+
 test("UAD Assignment Information requires at least one complete client party", () => {
   const assignment = getUadEditorSections().find((section) => section.key === "assignment");
   const clients = assignment.groups.find((group) => group.entityType === "assignment_contact");
@@ -208,6 +267,7 @@ test("the ordered migrations add official UAD fields before linking shared priva
     "utf8",
   );
   assert.ok(UAD_MIGRATION_NAMES.includes("20261002_uad_document_evidence.sql"));
+  assert.ok(UAD_MIGRATION_NAMES.includes("20261004_uad_assignment_sellers.sql"));
   assert.match(mobileManifest, /20261002_assignment_document_uad_evidence\.sql/);
   assert.match(uadMigration, /uad_entities_entity_type_check/);
   assert.match(uadMigration, /'assignment_contact'/);
@@ -288,6 +348,8 @@ test("UAD purchase contracts use one batch review request instead of per-field s
   assert.match(apiSource, /candidates\/confirm-all-purchase-contract/);
   assert.match(routerSource, /confirmAssignmentDocumentCandidates/);
   assert.match(routerSource, /synchronizeUadPurchaseContract/);
+  assert.match(centerSource, /Sync Approved Contract to UAD 3\.6/);
+  assert.match(centerSource, /synchronizeReviewedUadPurchaseContract/);
 });
 
 test("opening UAD contract evidence is read-only and remains usable when the PDF preview fails", async () => {

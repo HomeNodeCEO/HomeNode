@@ -50,6 +50,7 @@ const MIGRATIONS = Object.freeze([
   "20260927_uad_mobile_evidence.sql",
   "20260928_uad_sketch_editor.sql",
   "20261002_uad_document_evidence.sql",
+  "20261004_uad_assignment_sellers.sql",
 ]);
 export const UAD_MIGRATION_NAMES = MIGRATIONS;
 const ADVISORY_LOCK_KEY = 3_603_600_816;

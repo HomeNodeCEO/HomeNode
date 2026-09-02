@@ -28,6 +28,9 @@ const MARKET_INVENTORY_TYPES = Object.freeze({
   market_total_sales: Object.freeze({ value: "TotalSales", sort: 854 }),
 });
 const ENTITY_ANCHOR_OVERRIDES = Object.freeze({
+  // Section 2 can contain more than one contract seller. Keep every seller in
+  // its own repeatable MISMO PARTY while retaining the official seller UIDs.
+  assignment_seller: Object.freeze(["PARTY"]),
   // One subject-property amenity entity owns one AMENITY. Its category is a
   // grouping container, not the entity itself. Anchoring at AMENITY also lets
   // report images join the same required AMENITY_DETAIL branch.

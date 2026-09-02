@@ -199,7 +199,7 @@ test("enrichment read composition is explicit and inline routes are absent", () 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const ratings = source.indexOf("app.use(createAppraisalRatingsRouter(");
   const enrichment = source.indexOf("app.use(createEnrichmentReadRouter(");
-  const verifiedWrite = source.indexOf('app.patch("/api/accounts/:id/verified-attribute"');
+  const verifiedWrite = source.indexOf("app.use(createEnrichmentMutationRouter(");
   assert.ok(enrichment > ratings);
   assert.ok(verifiedWrite > enrichment);
   assert.equal(source.includes('app.get("/api/enrichment/status"'), false);

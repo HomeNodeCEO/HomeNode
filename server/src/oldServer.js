@@ -203,6 +203,7 @@ import { createOperationalRouter } from "./modules/operations/router.js";
 import { createSignupRouter } from "./modules/signup/router.js";
 import { createAppraisalRatingsRouter } from "./modules/appraisalRatings/router.js";
 import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
+import { createAccountPhotosRouter } from "./modules/accounts/photosRouter.js";
 import {
   createReportFile,
   listReportFiles,
@@ -812,84 +813,10 @@ app.use(createAccountDetailRouter({
   propertyEnrichmentReady,
   ensurePropertyContextAvailable,
 }));
-
-/**
- * GET /api/accounts/:id/photos
- * Returns the latest ordered MLS image gallery available for an account.
- * The source listing/sale record remains explicit so the UI never confuses
- * placeholder imagery with MLS evidence.
- */
-app.get("/api/accounts/:id/photos", async (req, res) => {
-  const id = String(req.params.id || "").trim();
-  if (!legacyAccountIdAllowed(id)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  try {
-    const { rows: sourceRows } = await pool.query(
-      `
-        SELECT
-          src.id AS source_record_id,
-          src.listing_key,
-          src.listing_id,
-          src.source_name,
-          src.record_type,
-          COALESCE(src.close_date, src.listing_contract_date) AS activity_date
-        FROM core.sales_source_records src
-        JOIN core.v_sales_media_summary media
-          ON media.source_record_id = src.id
-        WHERE src.primary_account_id = $1
-        ORDER BY
-          COALESCE(src.close_date, src.listing_contract_date) DESC NULLS LAST,
-          (src.record_type = 'listing') DESC,
-          src.updated_at DESC,
-          src.id DESC
-        LIMIT 1
-      `,
-      [id],
-    );
-    if (!sourceRows.length) {
-      return res.json({
-        account_id: id,
-        source_record_id: null,
-        listing_key: null,
-        listing_id: null,
-        source_name: null,
-        photos: [],
-      });
-    }
-    const source = sourceRows[0];
-    const { rows: photos } = await pool.query(
-      `
-        SELECT
-          id,
-          source_record_id,
-          media_url,
-          order_number,
-          preferred_photo_yn AS is_primary,
-          short_description AS caption,
-          mime_type,
-          permission,
-          modification_timestamp
-        FROM core.sales_source_media
-        WHERE source_record_id = $1
-          AND media_category = 'image'
-        ORDER BY
-          preferred_photo_yn DESC,
-          order_number NULLS LAST,
-          id
-      `,
-      [source.source_record_id],
-    );
-    res.json({
-      account_id: id,
-      ...source,
-      photos,
-    });
-  } catch (error) {
-    console.error("/api/accounts/:id/photos failed", error);
-    res.status(500).json({ error: "account_photos_failed" });
-  }
-});
+app.use(createAccountPhotosRouter({
+  pool,
+  accountIdAllowed: legacyAccountIdAllowed,
+}));
 
 /**
  * PATCH /api/accounts/:id/housing-profile

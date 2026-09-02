@@ -267,3 +267,20 @@ test("opening UAD contract evidence is read-only and remains usable when the PDF
   assert.doesNotMatch(loadDocumentSource, /synchronizeUadPurchaseContract/);
   assert.match(centerSource, /The contract details are available below/);
 });
+
+test("opening a legacy UAD purchase contract upgrades its stored extraction candidates once", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [routerSource, documentSource] = await Promise.all([
+    readFile(new URL("../src/modules/uad/router.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/services/assignmentDocuments.js", import.meta.url), "utf8"),
+  ]);
+  const documentRoute = routerSource.slice(
+    routerSource.indexOf('router.get("/workfiles/:workfileId/documents/:documentId"'),
+    routerSource.indexOf('router.delete("/workfiles/:workfileId/documents/:documentId"'),
+  );
+  assert.match(documentRoute, /assignmentDocumentNeedsExtractionUpgrade/);
+  assert.match(documentRoute, /processAssignmentDocument[\s\S]*force:\s*true/);
+  assert.match(documentSource, /extraction_schema_version:\s*DOCUMENT_EXTRACTION_SCHEMA_VERSION/);
+  assert.match(documentSource, /previousReviews/);
+  assert.match(documentSource, /retainedAssignmentDocumentReview\(previousReviews, candidate\)/);
+});

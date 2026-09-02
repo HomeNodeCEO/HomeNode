@@ -56,6 +56,7 @@ import {
   verifyUadAssigneeMembership,
 } from "./access.js";
 import {
+  assignmentDocumentNeedsExtractionUpgrade,
   confirmAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
@@ -555,7 +556,37 @@ export function createUadRouter({
   router.get("/workfiles/:workfileId/documents/:documentId", async (req, res) => {
     try {
       await requireUadDocument(req.params.workfileId, req.params.documentId);
-      const document = await getAssignmentDocument(pool, req.params.documentId);
+      let document = await getAssignmentDocument(pool, req.params.documentId);
+      if (assignmentDocumentNeedsExtractionUpgrade(document)) {
+        try {
+          document = await processAssignmentDocument(pool, req.params.documentId, {
+            force: true,
+            storage,
+            ocrProvider: documentOcrProvider,
+          });
+          try {
+            await synchronizeUadPurchaseContract(
+              pool,
+              req.params.workfileId,
+              req.params.documentId,
+              req.mobileAuth?.userId || null,
+            );
+          } catch (synchronizationError) {
+            console.warn(
+              "[uad documents] upgraded contract classification could not be synchronized",
+              synchronizationError?.message || synchronizationError,
+            );
+          }
+        } catch (extractionError) {
+          if (extractionError?.message !== "document_processing_in_progress") {
+            console.warn(
+              "[uad documents] legacy contract extraction upgrade failed",
+              extractionError?.message || extractionError,
+            );
+          }
+          document = await getAssignmentDocument(pool, req.params.documentId);
+        }
+      }
       return res.json({ document });
     } catch (error) {
       return sendError(res, error);

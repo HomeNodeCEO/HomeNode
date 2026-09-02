@@ -136,3 +136,62 @@ test("readiness fails closed with a stable code when security posture is unavail
   assert.deepEqual(degraded.body.warnings, ["security_posture_unavailable"]);
   assert.doesNotMatch(JSON.stringify(degraded.body), /secret diagnostic/);
 });
+
+test("readiness blocks while required startup initialization is pending", async () => {
+  const handlers = createRuntimeHealthHandlers({
+    pool: { async query() { return { rows: [{ ready: 1 }] }; } },
+    startupInitializationSnapshot: () => ({
+      required: {
+        ready: ["account_locations_schema"],
+        pending: ["assignment_files_schema"],
+        failed: [],
+      },
+      optional: { ready: [], pending: ["census_geography_schema"], failed: [] },
+    }),
+  });
+  const degraded = response();
+  await handlers.readiness({}, degraded);
+  assert.equal(degraded.statusCode, 503);
+  assert.deepEqual(degraded.body.blockers, ["required_initialization_pending"]);
+  assert.deepEqual(degraded.body.warnings, ["optional_initialization_pending"]);
+  assert.deepEqual(degraded.body.checks.initialization.required.pending, [
+    "assignment_files_schema",
+  ]);
+});
+
+test("readiness blocks required initialization failures without leaking errors", async () => {
+  const handlers = createRuntimeHealthHandlers({
+    pool: { async query() { return { rows: [{ ready: 1 }] }; } },
+    startupInitializationSnapshot: () => ({
+      status: "failed",
+      required: { ready: [], pending: [], failed: ["property_context_schema", "unsafe code"] },
+      optional: { ready: [], pending: [], failed: ["location_backfill_schema"] },
+      error: "postgresql://secret@sensitive/internal",
+    }),
+  });
+  const degraded = response();
+  await handlers.readiness({}, degraded);
+  assert.equal(degraded.statusCode, 503);
+  assert.deepEqual(degraded.body.blockers, ["required_initialization_failed"]);
+  assert.deepEqual(degraded.body.warnings, ["optional_initialization_failed"]);
+  assert.deepEqual(degraded.body.checks.initialization.required.failed, [
+    "property_context_schema",
+  ]);
+  assert.doesNotMatch(JSON.stringify(degraded.body), /postgres|secret|sensitive|unsafe/i);
+});
+
+test("optional initialization failures warn without rejecting traffic", async () => {
+  const handlers = createRuntimeHealthHandlers({
+    pool: { async query() { return { rows: [{ ready: 1 }] }; } },
+    startupInitializationSnapshot: () => ({
+      required: { ready: ["assignment_files_schema"], pending: [], failed: [] },
+      optional: { ready: [], pending: [], failed: ["census_geography_schema"] },
+    }),
+  });
+  const ready = response();
+  await handlers.readiness({}, ready);
+  assert.equal(ready.statusCode, 200);
+  assert.equal(ready.body.ok, true);
+  assert.deepEqual(ready.body.warnings, ["optional_initialization_failed"]);
+  assert.equal(ready.body.checks.initialization.status, "degraded");
+});

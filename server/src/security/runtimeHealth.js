@@ -35,6 +35,42 @@ function securitySnapshot(loadSnapshot) {
   }
 }
 
+function stableCodes(value) {
+  return Object.freeze([...new Set((Array.isArray(value) ? value : [])
+    .map((code) => String(code || ""))
+    .filter((code) => /^[a-z0-9_]{1,80}$/.test(code)))]);
+}
+
+function initializationSnapshot(loadSnapshot) {
+  try {
+    const value = loadSnapshot?.() || {};
+    const required = Object.freeze({
+      ready: stableCodes(value.required?.ready),
+      pending: stableCodes(value.required?.pending),
+      failed: stableCodes(value.required?.failed),
+    });
+    const optional = Object.freeze({
+      ready: stableCodes(value.optional?.ready),
+      pending: stableCodes(value.optional?.pending),
+      failed: stableCodes(value.optional?.failed),
+    });
+    const inferredStatus = required.failed.length > 0
+      ? "failed"
+      : required.pending.length > 0
+        ? "pending"
+        : optional.failed.length > 0 || optional.pending.length > 0
+          ? "degraded"
+          : "ready";
+    return Object.freeze({ status: inferredStatus, required, optional });
+  } catch {
+    return Object.freeze({
+      status: "unavailable",
+      required: Object.freeze({ ready: Object.freeze([]), pending: Object.freeze([]), failed: Object.freeze([]) }),
+      optional: Object.freeze({ ready: Object.freeze([]), pending: Object.freeze([]), failed: Object.freeze([]) }),
+    });
+  }
+}
+
 async function queryWithDeadline(pool, timeoutMs) {
   let timer = null;
   try {
@@ -57,6 +93,11 @@ export function createRuntimeHealthHandlers({
   isShuttingDown = () => false,
   artifactExecutorSnapshot = () => ({ ready: true, active: 0, queued: 0 }),
   securityPostureSnapshot = () => ({ status: "ready", mode: "enforced", warnings: [] }),
+  startupInitializationSnapshot = () => ({
+    status: "ready",
+    required: { ready: [], pending: [], failed: [] },
+    optional: { ready: [], pending: [], failed: [] },
+  }),
   memoryUsage = () => process.memoryUsage(),
   constrainedMemory = () => process.constrainedMemory?.(),
   environment = process.env,
@@ -111,6 +152,13 @@ export function createRuntimeHealthHandlers({
     if (artifacts?.ready === false) blockers.push("artifact_executor_unavailable");
     const security = securitySnapshot(securityPostureSnapshot);
     if (security.mode === "unavailable") blockers.push("security_posture_unavailable");
+    const initialization = initializationSnapshot(startupInitializationSnapshot);
+    if (initialization.status === "unavailable") blockers.push("initialization_state_unavailable");
+    if (initialization.required.pending.length > 0) blockers.push("required_initialization_pending");
+    if (initialization.required.failed.length > 0) blockers.push("required_initialization_failed");
+    const warnings = [...security.warnings];
+    if (initialization.optional.pending.length > 0) warnings.push("optional_initialization_pending");
+    if (initialization.optional.failed.length > 0) warnings.push("optional_initialization_failed");
     const memory = memorySnapshot(memoryUsage);
     if (maxRssMb > 0 && memory.rss_mb >= maxRssMb) blockers.push("memory_pressure");
     const ok = blockers.length === 0;
@@ -118,7 +166,7 @@ export function createRuntimeHealthHandlers({
       ok,
       status: ok ? "ready" : "degraded",
       blockers,
-      warnings: security.warnings,
+      warnings,
       checks: {
         database: {
           connected: databaseConnected,
@@ -132,6 +180,7 @@ export function createRuntimeHealthHandlers({
         },
         artifact_executor: artifacts,
         security,
+        initialization,
         memory: { ...memory, maximum_rss_mb: maxRssMb || null },
       },
     });

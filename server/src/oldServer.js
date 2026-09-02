@@ -263,6 +263,7 @@ import {
   installGracefulShutdown,
 } from "./security/runtimeResilience.js";
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
+import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
 import {
   normalizeSignupPayload,
   signupDeliveryStatus,
@@ -291,6 +292,7 @@ const legacyAccountIdAllowed = (value) => isLegacyAccountIdAllowed(value, {
   redTeamEnabled: redTeamIsolation.enabled,
 });
 const runtimeResilience = createRuntimeResilienceConfiguration();
+const startupInitialization = createStartupInitializationRegistry();
 app.disable("x-powered-by");
 if (httpSecurity.trustProxyHops > 0) app.set("trust proxy", httpSecurity.trustProxyHops);
 const pool = new pg.Pool({
@@ -378,6 +380,7 @@ const runtimeHealth = createRuntimeHealthHandlers({
   securityPostureSnapshot: () => applicationAuthenticationOperationalState(
     applicationAuthenticationPolicy,
   ),
+  startupInitializationSnapshot: () => startupInitialization.snapshot(),
 });
 const artifactRecoveryMonitor = startUadArtifactRecoveryMonitor(pool, {
   shouldRun: () => getUadArtifactExecutionSnapshot().active === 0,
@@ -491,16 +494,17 @@ async function ensureSignupsTable() {
       meta          jsonb
     );
   `;
-  try {
-    await pool.query(ddl);
-    console.log("[init] app.signups ensured");
-  } catch (e) {
-    console.warn("[init] ensureSignupsTable failed (continuing)", e?.message || e);
-  }
+  await pool.query(ddl);
 }
-void ensureSignupsTable();
+void startupInitialization
+  .track("signups_schema", ensureSignupsTable, { required: false })
+  .then(() => console.log("[init] app.signups ensured"))
+  .catch((error) => {
+    console.warn("[init] ensureSignupsTable failed (continuing)", error?.message || error);
+  });
 
-const accountLocationsReady = ensureAccountLocationsTable(pool)
+const accountLocationsReady = startupInitialization
+  .track("account_locations_schema", () => ensureAccountLocationsTable(pool))
   .then(() => console.log("[init] core.account_locations ensured"))
   .catch((error) => {
     console.warn(
@@ -509,7 +513,8 @@ const accountLocationsReady = ensureAccountLocationsTable(pool)
     );
   });
 
-const accountQualityReady = ensureAccountQualitySchema(pool)
+const accountQualityReady = startupInitialization
+  .track("account_quality_schema", () => ensureAccountQualitySchema(pool))
   .then(() => console.log("[init] DCAD account quality schema ensured"))
   .catch((error) => {
     console.warn(
@@ -518,7 +523,8 @@ const accountQualityReady = ensureAccountQualitySchema(pool)
     );
   });
 
-const appraisalRatingsReady = ensureAppraisalRatingsSchema(pool)
+const appraisalRatingsReady = startupInitialization
+  .track("appraisal_ratings_schema", () => ensureAppraisalRatingsSchema(pool))
   .then(() => console.log("[init] appraisal rating review schema ensured"))
   .catch((error) => {
     console.warn(
@@ -527,7 +533,8 @@ const appraisalRatingsReady = ensureAppraisalRatingsSchema(pool)
     );
   });
 
-const propertyEnrichmentReady = ensurePropertyEnrichmentSchema(pool)
+const propertyEnrichmentReady = startupInitialization
+  .track("property_enrichment_schema", () => ensurePropertyEnrichmentSchema(pool))
   .then(() => console.log("[init] non-Dallas property enrichment schema ensured"))
   .catch((error) => {
     console.warn(
@@ -537,7 +544,8 @@ const propertyEnrichmentReady = ensurePropertyEnrichmentSchema(pool)
   });
 
 let assignmentFilesSchemaReady = false;
-const assignmentFilesReady = ensureAssignmentFilesSchema(pool)
+const assignmentFilesReady = startupInitialization
+  .track("assignment_files_schema", () => ensureAssignmentFilesSchema(pool))
   .then(() => {
     assignmentFilesSchemaReady = true;
     console.log("[init] appraisal assignment file schema ensured");
@@ -558,8 +566,11 @@ async function ensureAssignmentFilesAvailable() {
 }
 
 let customAppraisalWorkfilesSchemaReady = false;
-const customAppraisalWorkfilesReady = assignmentFilesReady
-  .then(() => ensureCustomAppraisalWorkfileSchema(pool))
+const customAppraisalWorkfilesReady = startupInitialization
+  .track("custom_appraisal_workfiles_schema", async () => {
+    await assignmentFilesReady;
+    return ensureCustomAppraisalWorkfileSchema(pool);
+  })
   .then(() => {
     customAppraisalWorkfilesSchemaReady = true;
     console.log("[init] custom appraisal workfile schema ensured");
@@ -581,8 +592,11 @@ async function ensureCustomAppraisalWorkfilesAvailable() {
 }
 
 let assignmentDocumentsSchemaReady = false;
-const assignmentDocumentsReady = assignmentFilesReady
-  .then(() => ensureAssignmentDocumentsSchema(pool))
+const assignmentDocumentsReady = startupInitialization
+  .track("assignment_documents_schema", async () => {
+    await assignmentFilesReady;
+    return ensureAssignmentDocumentsSchema(pool);
+  })
   .then(() => {
     assignmentDocumentsSchemaReady = true;
     console.log("[init] assignment document evidence schema ensured");
@@ -603,11 +617,14 @@ async function ensureAssignmentDocumentsAvailable() {
 }
 
 let propertyContextSchemaReady = false;
-const propertyContextReady = Promise.all([
-  accountLocationsReady,
-  assignmentFilesReady,
-])
-  .then(() => ensurePropertyContextSchema(pool))
+const propertyContextReady = startupInitialization
+  .track("property_context_schema", async () => {
+    await Promise.all([
+      accountLocationsReady,
+      assignmentFilesReady,
+    ]);
+    return ensurePropertyContextSchema(pool);
+  })
   .then(() => {
     propertyContextSchemaReady = true;
     console.log("[init] offline property-context schema ensured");
@@ -728,7 +745,8 @@ function greatCircleDistanceMilesSql({
   )`;
 }
 
-const salesReconciliationReady = ensureSalesReconciliationSchema(pool)
+const salesReconciliationReady = startupInitialization
+  .track("sales_reconciliation_schema", () => ensureSalesReconciliationSchema(pool))
   .then(() => console.log("[init] sales reconciliation schema ensured"))
   .catch((error) => {
     console.warn(
@@ -741,11 +759,14 @@ let locationBackfillWorker = null;
 const locationBackfillInlineEnabled = environmentFlag(
   process.env.LOCATION_BACKFILL_ENABLED,
 );
-const locationBackfillReady = Promise.all([
-  accountLocationsReady,
-  salesReconciliationReady,
-])
-  .then(() => ensureLocationBackfillQueueSchema(pool))
+const locationBackfillReady = startupInitialization
+  .track("location_backfill_schema", async () => {
+    await Promise.all([
+      accountLocationsReady,
+      salesReconciliationReady,
+    ]);
+    return ensureLocationBackfillQueueSchema(pool);
+  }, { required: false })
   .then(() => {
     console.log("[init] location backfill queue ensured");
     if (locationBackfillInlineEnabled) {
@@ -775,8 +796,11 @@ let censusGeographyWorker = null;
 const censusGeographyInlineEnabled = environmentFlag(
   process.env.CENSUS_GEOGRAPHY_ENABLED,
 );
-const censusGeographyReady = accountLocationsReady
-  .then(() => ensureCensusGeographySchema(pool))
+const censusGeographyReady = startupInitialization
+  .track("census_geography_schema", async () => {
+    await accountLocationsReady;
+    return ensureCensusGeographySchema(pool);
+  }, { required: false })
   .then(() => {
     console.log("[init] census geography schema ensured");
     if (censusGeographyInlineEnabled) {

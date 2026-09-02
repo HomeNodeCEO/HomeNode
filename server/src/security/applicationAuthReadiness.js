@@ -62,7 +62,11 @@ const OWNERSHIP_SQL = `SELECT
   (SELECT count(*)::int
      FROM app.assignment_documents document
      LEFT JOIN app.assignment_files assignment ON assignment.id = document.assignment_file_id
-    WHERE document.assignment_file_id IS NULL OR assignment.organization_id IS NULL) AS documents_without_owned_assignment`;
+     LEFT JOIN appraisal.uad_workfiles workfile ON workfile.id = document.uad_workfile_id
+    WHERE (document.assignment_file_id IS NULL AND document.uad_workfile_id IS NULL)
+       OR (document.assignment_file_id IS NOT NULL AND assignment.organization_id IS NULL)
+       OR (document.uad_workfile_id IS NOT NULL AND workfile.organization_id IS NULL))
+    AS documents_without_owned_assignment`;
 
 const CONSISTENCY_SQL = `SELECT
   (SELECT count(*)::int

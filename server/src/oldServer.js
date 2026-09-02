@@ -152,6 +152,7 @@ import { createMarketValueHistoryRouter } from "./modules/accounts/marketValueHi
 import { createPropertySearchRouter } from "./modules/accounts/propertySearchRouter.js";
 import { createRelatedParcelsRouter } from "./modules/accounts/relatedParcelsRouter.js";
 import { createSalesListRouter } from "./modules/sales/salesListRouter.js";
+import { createSalesMediaRouter } from "./modules/sales/mediaRouter.js";
 import { createComparisonStudyRouter } from "./modules/sales/comparisonStudyRouter.js";
 import { createValuationStudyRouter } from "./modules/sales/valuationStudyRouter.js";
 import { createAccountPhotosRouter } from "./modules/accounts/photosRouter.js";
@@ -3195,58 +3196,7 @@ app.patch("/api/documents/:documentId/candidates/:candidateId", async (req, res)
   }
 });
 
-/**
- * GET /api/sales/:sourceRecordId/photos
- * Lazily loads an ordered gallery after the user opens a comparable image.
- */
-app.get("/api/sales/:sourceRecordId/photos", async (req, res) => {
-  const sourceRecordId = String(req.params.sourceRecordId || "").trim();
-  if (!/^[1-9][0-9]*$/.test(sourceRecordId)) {
-    return res.status(400).json({ error: "invalid_source_record_id" });
-  }
-  try {
-    const { rows: sourceRows } = await pool.query(
-      `
-        SELECT id AS source_record_id, listing_key, listing_id, source_name
-        FROM core.sales_source_records
-        WHERE id = $1
-      `,
-      [sourceRecordId],
-    );
-    if (!sourceRows.length) {
-      return res.status(404).json({ error: "sale_source_record_not_found" });
-    }
-    const { rows: photos } = await pool.query(
-      `
-        SELECT
-          id,
-          source_record_id,
-          media_url,
-          order_number,
-          preferred_photo_yn AS is_primary,
-          short_description AS caption,
-          mime_type,
-          permission,
-          modification_timestamp
-        FROM core.sales_source_media
-        WHERE source_record_id = $1
-          AND media_category = 'image'
-        ORDER BY
-          preferred_photo_yn DESC,
-          order_number NULLS LAST,
-          id
-      `,
-      [sourceRecordId],
-    );
-    res.json({
-      ...sourceRows[0],
-      photos,
-    });
-  } catch (error) {
-    console.error("/api/sales/:sourceRecordId/photos failed", error);
-    res.status(500).json({ error: "sale_photos_failed" });
-  }
-});
+app.use(createSalesMediaRouter({ pool }));
 
 app.use(createPropertyCatalogRouter({ pool }));
 

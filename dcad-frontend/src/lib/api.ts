@@ -3,10 +3,10 @@ import { createTimedRequestCache } from '@/lib/timedRequestCache';
 import type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
 export type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
 
-type Json = Record<string, any>;
+type Json = Record<string, unknown>;
 
 const BASE =
-  ((import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_API_BASE || '')
+  (import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || '')
     .toString()
     .replace(/\/+$/, ''); // '' means use relative paths (dev proxy)
 
@@ -49,7 +49,16 @@ function transientRetryDelay(response?: Response) {
     : 500;
 }
 
-export async function fetchJSON<T = any>(input: string, init?: FetchJSONOptions): Promise<T> {
+function responseErrorMessage(body: unknown, status: number): string {
+  if (body !== null && typeof body === 'object' && !Array.isArray(body)) {
+    const record = body as Record<string, unknown>;
+    const candidate = record.error ?? record.message;
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim().slice(0, 500);
+  }
+  return `HTTP ${status}`;
+}
+
+export async function fetchJSON<T = unknown>(input: string, init?: FetchJSONOptions): Promise<T> {
   const { timeoutMs = 25000, retryTransient = false, ...requestInit } = init || {};
   const attempts = retryTransient ? 2 : 1;
 
@@ -69,18 +78,20 @@ export async function fetchJSON<T = any>(input: string, init?: FetchJSONOptions)
           await new Promise((resolve) => setTimeout(resolve, transientRetryDelay(res)));
           continue;
         }
-        const body = isJson ? await res.json().catch(() => ({})) : await res.text().catch(() => '');
-        const msg = (body && (body.error || body.message)) || `HTTP ${res.status}`;
-        throw new Error(msg);
+        const body: unknown = isJson
+          ? await res.json().catch(() => ({}))
+          : await res.text().catch(() => '');
+        throw new Error(responseErrorMessage(body, res.status));
       }
-      return (isJson ? res.json() : (res.text() as any)) as Promise<T>;
-    } catch (err: any) {
-      if (err?.name === 'AbortError') throw new Error('Request timed out');
-      if (retryTransient && err instanceof TypeError && attempt + 1 < attempts) {
+      const body: unknown = isJson ? await res.json() : await res.text();
+      return body as T;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') throw new Error('Request timed out');
+      if (retryTransient && error instanceof TypeError && attempt + 1 < attempts) {
         await new Promise((resolve) => setTimeout(resolve, transientRetryDelay()));
         continue;
       }
-      throw err;
+      throw error;
     } finally {
       clearTimeout(timeout);
     }

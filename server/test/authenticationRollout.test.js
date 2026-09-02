@@ -199,7 +199,7 @@ test("legacy property editors accept the authenticated workflow identity before 
   const housingStart = server.indexOf("app.use(createHousingProfileRouter(");
   const housingEnd = server.indexOf("app.use(createReportManualValuesRouter(", housingStart);
   const zoningStart = server.indexOf("app.use(createZoningRouter(");
-  const zoningEnd = server.indexOf("async function requireCustomAssignmentAccess", zoningStart);
+  const zoningEnd = server.indexOf("app.use(createAssignmentPhotoRouter(", zoningStart);
   assert.ok(housingStart >= 0 && housingEnd > housingStart);
   assert.ok(zoningStart >= 0 && zoningEnd > zoningStart);
 
@@ -221,19 +221,24 @@ test("legacy property editors accept the authenticated workflow identity before 
 
 test("the legacy editor key is inert whenever mandatory authentication is active", () => {
   const server = read("../src/oldServer.js");
+  const guards = read("../src/security/applicationAccessGuards.js");
+  assert.match(
+    server,
+    /createApplicationAccessGuards\(\{[\s\S]*?authenticationRequired: applicationAuthenticationRequired/,
+  );
   const helpers = [
-    ["function requireEditor(req, res)", "app.use(createGeographyOperationsRouter(", true],
+    ["function requireEditor(req, res)", "async function requireCustomAssignmentAccess", true],
     ["async function requireCustomAssignmentAccess", "function requireWorkflowAccess", false],
-    ["function requireWorkflowAccess", "app.use(createAssignmentPhotoRouter(", true],
+    ["function requireWorkflowAccess", "return Object.freeze", true],
   ];
   for (const [startMarker, endMarker, retainsPreActivationFallback] of helpers) {
-    const start = server.indexOf(startMarker);
-    const end = server.indexOf(endMarker, start);
+    const start = guards.indexOf(startMarker);
+    const end = guards.indexOf(endMarker, start);
     assert.ok(start >= 0 && end > start, `missing authorization helper ${startMarker}`);
-    const helper = server.slice(start, end);
-    assert.match(helper, /applicationAuthenticationRequired/);
+    const helper = guards.slice(start, end);
+    assert.match(helper, /authenticationRequired/);
     if (retainsPreActivationFallback) {
-      const enforcementCheck = helper.indexOf("if (applicationAuthenticationRequired)");
+      const enforcementCheck = helper.indexOf("if (authenticationRequired)");
       const keyFallback = helper.indexOf("configuredEditorKey");
       assert.ok(enforcementCheck >= 0 && keyFallback > enforcementCheck,
         `${startMarker} may use the key only after mandatory enforcement is ruled out`);
@@ -241,8 +246,8 @@ test("the legacy editor key is inert whenever mandatory authentication is active
       assert.doesNotMatch(helper, /configuredEditorKey|x-homenode-editor-key/);
     }
   }
-  assert.match(server.slice(
-    server.indexOf("function requireWorkflowAccess"),
-    server.indexOf("app.use(createAssignmentPhotoRouter("),
+  assert.match(guards.slice(
+    guards.indexOf("function requireWorkflowAccess"),
+    guards.indexOf("return Object.freeze"),
   ), /application_access_denied/);
 });

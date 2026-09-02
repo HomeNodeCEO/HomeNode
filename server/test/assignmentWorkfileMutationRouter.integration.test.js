@@ -354,11 +354,11 @@ test("workfile mutation composition is explicit and inline handlers are absent",
   );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
+  const accessGuards = source.indexOf("createApplicationAccessGuards({");
   const reads = source.indexOf("app.use(createAssignmentWorkfileReadRouter(");
   const mutations = source.indexOf("app.use(createAssignmentWorkfileMutationRouter(");
-  const editorPolicy = source.indexOf("function requireEditor(req, res)");
+  assert.ok(reads > accessGuards);
   assert.ok(mutations > reads);
-  assert.ok(editorPolicy > mutations);
   assert.equal(source.includes("workfile/sections/:sectionKey"), false);
   assert.equal(source.includes("workfile/sign"), false);
 });

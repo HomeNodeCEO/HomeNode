@@ -337,7 +337,7 @@ test("manual-value composition and route position remain explicit", () => {
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const housingProfile = source.indexOf("app.use(createHousingProfileRouter(");
   const reportManualValues = source.indexOf("app.use(createReportManualValuesRouter(");
-  const assignmentFiles = source.indexOf('app.get("/api/accounts/:id/assignment-files"');
+  const assignmentFiles = source.indexOf("app.use(createAssignmentFileListRouter(");
   assert.ok(reportManualValues > housingProfile);
   assert.ok(assignmentFiles > reportManualValues);
 });

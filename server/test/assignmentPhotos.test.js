@@ -308,17 +308,17 @@ test("custom appraisal PDF gives an appraiser-edited caption label priority", ()
 });
 
 test("assignment file refresh includes signed mobile photo previews", () => {
-  const server = fs.readFileSync(
-    path.resolve(directory, "../src/oldServer.js"),
+  const assignmentList = fs.readFileSync(
+    path.resolve(directory, "../src/modules/assignmentFiles/listRouter.js"),
     "utf8",
   );
   const details = fs.readFileSync(
     path.resolve(directory, "../src/services/assignmentFileDetails.js"),
     "utf8",
   );
-  assert.match(server, /LEFT JOIN LATERAL \(\s+SELECT object_key/);
-  assert.match(server, /sharedObjectStorage\.createDownloadUrl/);
-  assert.match(server, /req\.query\.assignment_file_id/);
+  assert.match(assignmentList, /LEFT JOIN LATERAL \(\s+SELECT object_key/);
+  assert.match(assignmentList, /sharedObjectStorage\.createDownloadUrl/);
+  assert.match(assignmentList, /req\.query\.assignment_file_id/);
   assert.match(details, /view_url: photo\.view_url \|\| null/);
   assert.match(details, /view_url_expires_in_seconds/);
 });

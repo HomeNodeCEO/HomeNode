@@ -5,31 +5,11 @@ import SalesReconciliationQueue from "@/components/SalesReconciliationQueue";
 import ReportTypeChooser, {
   type ReportTypeChooserSubject,
 } from "@/components/ReportTypeChooser";
-
-// MOOLAH_ADD_MV_TYPE_AND_FMT
-type ApiSearchRow = {
-  account_id: string;
-  address?: string | null; // <- NEW: many endpoints return 'address' (core.accounts.address)
-  street_name?: string | null;
-  city?: string | null;
-  postal_code?: string | null;
-  search_match?: "exact_account" | "exact_address" | "address_prefix" | "same_street" | "city_prefix" | null;
-  owner?: string | null;
-  situs_address?: string | null;
-  latest_market_value?: number | string | null; // <- allow MV from backend if present
-  data_quality_status?: string | null;
-  data_quality_flags?: string[] | null;
-  canonical_account_id?: string | null;
-  requested_account_id?: string | null;
-  resolved_from_legacy?: boolean;
-};
-
-type SearchItem = {
-  id: string;
-  title: string;
-  subtitle?: string;
-  raw?: ApiSearchRow;
-};
+import {
+  normalizeSearchRows,
+  propertySearchErrorMessage,
+  type PropertySearchItem as SearchItem,
+} from "@/features/propertySearch/searchResults";
 
 // simple USD formatter for MV display
 const fmtUSD = new Intl.NumberFormat("en-US", {
@@ -38,29 +18,31 @@ const fmtUSD = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-/** Normalize any search response into rows */
-function normalizeRows(input: unknown): ApiSearchRow[] {
-  if (Array.isArray(input)) return input as ApiSearchRow[];
-  if (input && typeof input === "object") {
-    const obj = input as any;
-    if (Array.isArray(obj.results)) return obj.results as ApiSearchRow[];
-    if (Array.isArray(obj.rows)) return obj.rows as ApiSearchRow[];
-  }
-  return [];
-}
-
-/** Map rows to UI items (fallback if api.toSearchItems isn't available) */
+/** Map checked city-search rows to the established account-tile contract. */
 function localToItems(input: unknown): SearchItem[] {
-  const rows = normalizeRows(input);
+  const rows = normalizeSearchRows(input);
   return rows.map((r) => {
-    // Prefer canonical 'address' if backend returns it; fallback to 'situs_address', then owner/id
-    const addr = (r as any).address ?? r.situs_address ?? null;
-    const title = api.formatSearchTileAddress(addr, r.city);
-    const subtitle = r.owner ? `${r.owner} · ${r.account_id}` : r.account_id;
+    const accountRow: api.AccountRow = {
+      account_id: r.account_id,
+      address: r.address ?? r.situs_address ?? null,
+      street_name: r.street_name,
+      city: r.city,
+      postal_code: r.postal_code,
+      search_match: r.search_match,
+      county: null,
+      neighborhood_code: null,
+      subdivision: null,
+      legal_description: null,
+      latest_market_value: r.latest_market_value,
+      data_quality_status: r.data_quality_status,
+      data_quality_flags: r.data_quality_flags,
+      canonical_account_id: r.canonical_account_id,
+      requested_account_id: r.requested_account_id,
+      resolved_from_legacy: r.resolved_from_legacy,
+    };
+    const tile = api.toTile(accountRow);
     return {
-      id: r.account_id,
-      title,
-      subtitle,
+      ...tile,
       raw: r,
     };
   });
@@ -76,9 +58,6 @@ async function requestItems(query: string, city: string, limit = 25): Promise<Se
       limit,
     });
     const data = await api.fetchJSON<unknown>(url);
-    if (typeof (api as any).toSearchItems === "function") {
-      return (api as any).toSearchItems(data);
-    }
     return localToItems(data);
   }
 
@@ -139,9 +118,9 @@ export default function PropertySearchPage() {
           setErr('No results found');
         }
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (requestId === searchRequestRef.current) {
-        setErr(String(e?.message || e));
+        setErr(propertySearchErrorMessage(e));
       }
     } finally {
       if (requestId === searchRequestRef.current) {

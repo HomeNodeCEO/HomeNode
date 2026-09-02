@@ -232,7 +232,10 @@ test("the UAD workspace places the collapsed document loader before the active e
   assert.match(source, /uadWorkfileId=\{activeWorkfileId\}/);
   assert.match(source, /setEditorInitialSection\(result\.section \|\| "assignment"\)/);
   assert.match(source, /initialSection=\{editorInitialSection\}/);
-  assert.ok(source.indexOf("<AssignmentDocumentCenter") < source.indexOf("<UadWorkfileEditor"));
+  const documentCenterPosition = source.indexOf("<AssignmentDocumentCenter");
+  const renderedEditorPosition = source.search(/<UadWorkfileEditor\s*\r?\n/);
+  assert.ok(renderedEditorPosition >= 0, "the rendered UAD editor should be present");
+  assert.ok(documentCenterPosition < renderedEditorPosition);
 });
 
 test("the UAD editor bypasses browser caches after document evidence changes", async () => {

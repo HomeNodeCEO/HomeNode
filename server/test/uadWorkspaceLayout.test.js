@@ -67,16 +67,20 @@ test("successful UAD autosaves apply the save response without reloading the ful
   assert.match(editor.slice(successEnd), /getUadEditor\(workfileId\)/, "conflict recovery should still reload authoritative state");
 });
 
-test("the UAD close-report action saves pending changes before returning to property search", () => {
+test("the UAD header close-report action saves pending changes before returning to property search", () => {
   const entry = read("../../dcad-frontend/src/features/uad/pages/UadWorkspaceEntry.tsx");
   const editor = read("../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx");
-  const closeStart = editor.indexOf("async function handleCloseReport()");
-  const closeEnd = editor.indexOf("\n  }", closeStart);
+  const closeStart = editor.indexOf("const handleCloseReport = useCallback(async () => {");
+  const closeEnd = editor.indexOf("\n  }, [", closeStart);
   const closePath = editor.slice(closeStart, closeEnd);
 
   assert.ok(closeStart >= 0, "the UAD editor should expose a close-report handler");
   assert.match(closePath, /dirtyKeysRef\.current\.size && !\(await persistAutosave\(\)\)/);
   assert.match(closePath, /onClose\(\)/);
-  assert.match(editor, /← Close Report/);
+  assert.match(editor, /useImperativeHandle\(ref, \(\) => \(\{ closeReport: handleCloseReport \}\)/);
+  assert.doesNotMatch(editor, /← Close Report/);
+  assert.match(entry, /hn-app-header navbar shadow-sm/);
+  assert.match(entry, /← Close Report/);
+  assert.match(entry, /workfileEditorRef\.current\.closeReport\(\)/);
   assert.match(entry, /onClose=\{\(\) => navigate\("\/"\)\}/);
 });

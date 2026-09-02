@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
@@ -14,7 +14,7 @@ import {
   type UadSectionKey,
   type UadWorkfile,
 } from "../api";
-import UadWorkfileEditor from "../components/UadWorkfileEditor";
+import UadWorkfileEditor, { type UadWorkfileEditorHandle } from "../components/UadWorkfileEditor";
 
 const PROPERTY_TYPE_LABELS: Record<UadPropertyType, string> = {
   traditional_single_family: "Traditional single-family",
@@ -38,6 +38,7 @@ export default function UadWorkspaceEntry() {
   const [activeWorkfileId, setActiveWorkfileId] = useState<string | null>(null);
   const [editorRefreshToken, setEditorRefreshToken] = useState(0);
   const [editorInitialSection, setEditorInitialSection] = useState<UadSectionKey>("assignment");
+  const workfileEditorRef = useRef<UadWorkfileEditorHandle>(null);
   const displayedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId) || workfiles[0];
   const displayedPropertyType = displayedWorkfile?.property_type || capabilities?.initial_property_type;
 
@@ -98,13 +99,36 @@ export default function UadWorkspaceEntry() {
     }
   }
 
+  function handleCloseReport() {
+    if (workfileEditorRef.current) {
+      void workfileEditorRef.current.closeReport();
+      return;
+    }
+    navigate("/");
+  }
+
   return (
-    <main className="hn-app-shell px-4 py-8">
-      <section className="hn-workspace-surface mx-auto w-full max-w-none rounded-2xl border p-6">
-        <div className="hn-eyebrow text-xs tracking-[0.16em]">
-          UAD 3.6 appraisal
+    <div className="hn-app-shell">
+      <div className="hn-app-header navbar shadow-sm">
+        <div className="mx-auto w-full max-w-[1600px] px-4">
+          <div className="flex w-full items-center justify-between gap-4">
+            <div>
+              <span className="hn-eyebrow block text-[10px]">HomeNode</span>
+              <h1 className="text-xl font-semibold">UAD 3.6 Workspace</h1>
+            </div>
+            <button
+              className="hn-action-secondary btn btn-ghost btn-sm normal-case"
+              onClick={handleCloseReport}
+              type="button"
+            >
+              ← Close Report
+            </button>
+          </div>
         </div>
-        <h1 className="mt-2 text-3xl font-semibold">UAD 3.6 Workspace</h1>
+      </div>
+
+      <main className="px-4 py-8">
+      <section className="hn-workspace-surface mx-auto w-full max-w-none rounded-2xl border p-6">
         <p className="mt-3 text-sm text-slate-600">
           {loading
             ? "Loading the selected subject property…"
@@ -253,6 +277,7 @@ export default function UadWorkspaceEntry() {
             initialSection={editorInitialSection}
             key={`${activeWorkfileId}:${editorRefreshToken}`}
             onClose={() => navigate("/")}
+            ref={workfileEditorRef}
             workfileId={activeWorkfileId}
           />
         )}
@@ -268,6 +293,7 @@ export default function UadWorkspaceEntry() {
           </Link>
         </div>
       </section>
-    </main>
+      </main>
+    </div>
   );
 }

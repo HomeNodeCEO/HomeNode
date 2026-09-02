@@ -207,6 +207,12 @@ export function createRedTeamIsolationConfiguration(environment = process.env) {
   }
   if (!enabled(environment.UAD_SECURITY_STRICT)) failures.push("uad_security_strict");
   if (!enabled(environment.UAD_AUTHENTICATION_REQUIRED)) failures.push("authentication_required");
+  if (environment.APPLICATION_AUTHENTICATION_REQUIRED !== "true") {
+    failures.push("application_authentication_required");
+  }
+  if (environment.APPLICATION_AUTHENTICATION_BEARER_ONLY !== "true") {
+    failures.push("application_authentication_bearer_only_required");
+  }
   if (!enabled(environment.UAD_RATE_LIMIT_ENABLED)) failures.push("rate_limit_required");
   // The workspace switch must be explicit, but false is a valid fail-closed
   // red-team state. This lets the isolated service boot and expose only its

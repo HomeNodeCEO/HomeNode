@@ -1,5 +1,7 @@
 import { isAuthenticatedSessionEditorCredential } from '@/lib/editorCredential';
 import { createTimedRequestCache } from '@/lib/timedRequestCache';
+import type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
+export type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
 
 type Json = Record<string, any>;
 
@@ -348,6 +350,9 @@ export interface AssignmentDetailsPayload {
   neighborhood_relevance_excluded_count?: number | string;
   neighborhood_relevance_insufficient_data_count?: number | string;
   neighborhood_relevance_generated_at?: string;
+  neighborhood_relevance_removed_pocket_ids?: string[];
+  neighborhood_relevance_added_pocket_ids?: string[];
+  neighborhood_relevance_override_updated_at?: string;
   highest_best_use_conclusion?: string;
   highest_best_use_summary?: string;
   highest_best_use_zoning_compatible?: boolean | null;
@@ -2249,7 +2254,8 @@ export interface NeighborhoodBoundaryAssessment {
       boundary_generation_mode?:
         | 'traffic_backed_traced_road_polygon'
         | 'traffic_backed_cardinal_road_enclosure'
-        | 'parcel_discovery_shape_fallback';
+        | 'parcel_discovery_shape_fallback'
+        | 'radial_discovery_envelope';
       physical_characteristic_coverage_percent?: number;
     };
     roads?: {
@@ -2284,74 +2290,6 @@ export interface NeighborhoodBoundaryAssessment {
   confirmed_at: string | null;
   generated_at: string;
   updated_at: string;
-}
-
-export interface NeighborhoodRelevanceAssessment {
-  id: number;
-  account_id: string;
-  scope_key: string;
-  assignment_file_id: number | null;
-  boundary_assessment_id: number;
-  methodology_version: number;
-  input_signature: string;
-  summary: {
-    candidate_count: number;
-    included_count: number;
-    excluded_count: number;
-    insufficient_data_count: number;
-    low_relevance_excluded_count: number;
-    dissimilar_pocket_excluded_count: number;
-    classification_counts: Record<string, number>;
-    score_range: { minimum: number | null; maximum: number | null };
-    sale_history_months: number;
-    sale_prices_time_adjusted: false;
-    minimum_dissimilar_pocket_size: number;
-    primary_population_threshold: number;
-    primary_population_target_sale_count: number;
-    primary_population_sale_count: number;
-    primary_population_target_met: boolean;
-    relevant_statistics?: {
-      population_rule: 'adaptive_primary_relevance_population';
-      reviewable_property_count: number;
-      included_property_count: number;
-      included_sale_count: number;
-      sale_coverage_percent: number;
-      composite_cod: number | null;
-      reliability_score: number;
-      property_profile: Record<string, {
-        count: number; low: number | null; high: number | null; median: number | null;
-        average: number | null; cod: number | null; cv: number | null;
-      }>;
-      sales_profile: Record<string, {
-        count: number; low: number | null; high: number | null; median: number | null;
-        average: number | null; cod: number | null; cv: number | null;
-      }>;
-    };
-  };
-  distributions: Record<string, unknown>;
-  confidence: {
-    confidence?: 'high' | 'moderate' | 'limited';
-    counts?: Record<string, number>;
-    coverage?: Record<string, number>;
-    automatic_actions?: string[];
-    appraiser_review_required?: boolean;
-  };
-  source_state: Record<string, unknown>;
-  disclosure: string;
-  generated_at: string;
-  updated_at: string;
-  visualization?: Array<{
-    parcel_object_id: number;
-    account_id: string | null;
-    address: string | null;
-    score: number | null;
-    excluded: boolean;
-    classification: string;
-    cluster_id: string | null;
-    primary_population: boolean;
-    relevance_band: 'highest' | 'high' | 'relevant' | 'marginal' | 'low' | 'excluded' | 'insufficient_data';
-    point: { type: 'Point'; coordinates: [number, number] };
-  }>;
 }
 
 export interface ZoningEvidenceDocument {
@@ -3734,6 +3672,7 @@ export async function generateNeighborhoodBoundary(
   options: {
     assignmentFileId?: number | null;
     searchProfile?: string | null;
+    discoveryRadiusMiles?: number | null;
   } = {},
 ): Promise<NeighborhoodBoundaryAssessment> {
   const response = await fetchJSON<{
@@ -3746,6 +3685,7 @@ export async function generateNeighborhoodBoundary(
     body: JSON.stringify({
       assignment_file_id: options.assignmentFileId || null,
       search_profile: options.searchProfile || null,
+      discovery_radius_miles: options.discoveryRadiusMiles ?? null,
     }),
     timeoutMs: 120000,
   });

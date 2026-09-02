@@ -182,6 +182,14 @@ export function assignmentDraftFromDetail(value?: AssignmentDetails): Assignment
       value?.neighborhood_relevance_insufficient_data_count ?? "",
     neighborhood_relevance_generated_at:
       value?.neighborhood_relevance_generated_at || "",
+    neighborhood_relevance_removed_pocket_ids: cloneEditorValue(
+      value?.neighborhood_relevance_removed_pocket_ids || [],
+    ),
+    neighborhood_relevance_added_pocket_ids: cloneEditorValue(
+      value?.neighborhood_relevance_added_pocket_ids || [],
+    ),
+    neighborhood_relevance_override_updated_at:
+      value?.neighborhood_relevance_override_updated_at || "",
     highest_best_use_conclusion: value?.highest_best_use_conclusion || "",
     highest_best_use_summary: value?.highest_best_use_summary || "",
     highest_best_use_zoning_compatible:

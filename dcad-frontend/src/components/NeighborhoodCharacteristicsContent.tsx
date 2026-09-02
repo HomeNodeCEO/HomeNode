@@ -30,6 +30,10 @@ import {
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
 import type { MarketAreaOrigin } from "@/lib/marketAreaGeometry";
+import {
+  applyPocketOverrides,
+  summarizePockets,
+} from "@/lib/neighborhoodPocketSelection";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
 import { CheckboxChoice } from "@/components/PropertyReportControls";
 import {
@@ -83,7 +87,7 @@ type NeighborhoodRangeRowDefinition = {
   format: string;
 };
 
-const ROADWAY_BOUNDARY_METHODOLOGY_VERSION = 5;
+const DISCOVERY_ENVELOPE_METHODOLOGY_VERSION = 6;
 
 function NeighborhoodRangeGrid({
   rows,
@@ -218,6 +222,24 @@ export default function NeighborhoodCharacteristicsContent({
   const automaticRelevanceAttemptRef = useRef("");
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
+  const removedPocketIds = useMemo(
+    () => assignmentDraft.neighborhood_relevance_removed_pocket_ids || [],
+    [assignmentDraft.neighborhood_relevance_removed_pocket_ids],
+  );
+  const addedPocketIds = useMemo(
+    () => assignmentDraft.neighborhood_relevance_added_pocket_ids || [],
+    [assignmentDraft.neighborhood_relevance_added_pocket_ids],
+  );
+  const effectiveRelevanceAssessment = useMemo(() => relevanceAssessment
+    ? applyPocketOverrides(relevanceAssessment, removedPocketIds, addedPocketIds)
+    : null, [
+      relevanceAssessment,
+      removedPocketIds,
+      addedPocketIds,
+    ]);
+  const relevancePockets = useMemo(() => summarizePockets(
+    effectiveRelevanceAssessment?.visualization || [],
+  ), [effectiveRelevanceAssessment]);
   const zipUnemployment = parseNumber(assignmentDraft.neighborhood_unemployment_pct);
   const cityUnemployment = parseNumber(assignmentDraft.neighborhood_city_unemployment_pct);
   const unemploymentDifference = zipUnemployment !== null && cityUnemployment !== null
@@ -332,6 +354,8 @@ export default function NeighborhoodCharacteristicsContent({
     }
   };
   const applyPresentLandUse = (result: NeighborhoodLandUseAnalysisResponse) => {
+    const useBroadPropertyProfile = Boolean(result.property_profile) &&
+      !assignmentDraft.neighborhood_boundary_engine_assessment_id;
     const fieldByCategory = {
       one_unit: "neighborhood_land_use_one_unit_pct",
       two_to_four_unit: "neighborhood_land_use_two_to_four_unit_pct",
@@ -366,7 +390,7 @@ export default function NeighborhoodCharacteristicsContent({
     onAssignmentChange("neighborhood_land_use_review_count", result.review_required_count);
     onAssignmentChange("neighborhood_land_use_coverage_percent", result.coverage_percent);
     onAssignmentChange("neighborhood_land_use_confidence", result.confidence);
-    if (result.property_profile) {
+    if (result.property_profile && useBroadPropertyProfile) {
       onAssignmentChange("neighborhood_all_property_count", result.property_profile.property_count);
       onAssignmentChange("neighborhood_all_house_price_low", result.property_profile.house_price.low ?? "");
       onAssignmentChange("neighborhood_all_house_price_high", result.property_profile.house_price.high ?? "");
@@ -437,7 +461,7 @@ export default function NeighborhoodCharacteristicsContent({
           : result.processing_duration_ms > 0
             ? ` in ${(result.processing_duration_ms / 1000).toFixed(1)} seconds`
             : ""
-      }. Land-use percentages, ${result.property_profile ? "the all-property neighborhood profile, " : ""}${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.`,
+      }. Land-use percentages, ${useBroadPropertyProfile ? "the all-property neighborhood profile, " : ""}${result.built_up_label} built-up, location type, and highest-and-best-use screening were populated automatically.${result.property_profile && !useBroadPropertyProfile ? " The profile and sales ranges remain tied to the selected relevance pockets." : ""}`,
     );
   };
   const analyzePresentLandUseRef = useRef(analyzePresentLandUse);
@@ -511,7 +535,10 @@ export default function NeighborhoodCharacteristicsContent({
       .map(([side, street]) => `${side}: ${street}`)
       .join("; ");
     onAssignmentChange("neighborhood_boundary_geometry", result.boundary);
-    onAssignmentChange("neighborhood_boundary_label", "Automatically generated broad neighborhood");
+    onAssignmentChange(
+      "neighborhood_boundary_label",
+      `${result.discovery_radius_miles}-mile analytical discovery envelope`,
+    );
     onAssignmentChange(
       "neighborhood_boundary_source",
       `neighborhood_boundary_engine_v${result.methodology_version}`,
@@ -543,6 +570,9 @@ export default function NeighborhoodCharacteristicsContent({
     onAssignmentChange("neighborhood_relevance_excluded_count", "");
     onAssignmentChange("neighborhood_relevance_insufficient_data_count", "");
     onAssignmentChange("neighborhood_relevance_generated_at", "");
+    onAssignmentChange("neighborhood_relevance_removed_pocket_ids", []);
+    onAssignmentChange("neighborhood_relevance_added_pocket_ids", []);
+    onAssignmentChange("neighborhood_relevance_override_updated_at", "");
     setRelevanceAssessment(null);
     setRelevanceMessage("");
   }, [onAssignmentChange, onBoundarySuggestionsChange]);
@@ -563,13 +593,14 @@ export default function NeighborhoodCharacteristicsContent({
     )?.market.custom_geometry || null,
   };
 
-  const generateSuggestedBoundary = async () => {
+  const generateSuggestedBoundary = async (discoveryRadiusMiles?: number) => {
     if (!accountId || generatedBoundaryLoading) return;
     setGeneratedBoundaryLoading(true);
     setGeneratedBoundaryMessage("Generating a broad neighborhood from saved parcel, road, and zoning data...");
     try {
       const result = await runNeighborhoodBoundaryGeneration(accountId, {
         assignmentFileId: assignmentFileId || null,
+        discoveryRadiusMiles: discoveryRadiusMiles || null,
       });
       const discovery = result.evidence.discovery;
       const source = String(assignmentDraft.neighborhood_boundary_source || "").toLowerCase();
@@ -624,12 +655,11 @@ export default function NeighborhoodCharacteristicsContent({
           accountId,
           assignmentFileId || null,
         );
-        // Methodology v5 deliberately keeps the irregular parcel-discovery
-        // polygon when the road graph cannot form a credible traced enclosure.
-        // That is a valid result, not a reason to regenerate on every mount.
-        const needsRoadwayBoundaryUpgrade = Boolean(result) &&
-          Number(result?.methodology_version || 0) < ROADWAY_BOUNDARY_METHODOLOGY_VERSION;
-        if (needsRoadwayBoundaryUpgrade && !appraiserCleared) {
+        // Methodology v6 separates the simple-suburban three-mile analytical
+        // envelope from the appraiser's narrative road boundary.
+        const needsDiscoveryEnvelopeUpgrade = Boolean(result) &&
+          Number(result?.methodology_version || 0) < DISCOVERY_ENVELOPE_METHODOLOGY_VERSION;
+        if (needsDiscoveryEnvelopeUpgrade && !appraiserCleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,
           });
@@ -714,34 +744,70 @@ export default function NeighborhoodCharacteristicsContent({
     onAssignmentChange("neighborhood_boundary_streets_source", "");
     onAssignmentChange("neighborhood_boundary_streets_retrieved_at", "");
     onAssignmentChange("neighborhood_land_use_boundary_signature", "");
-    onAssignmentChange("neighborhood_boundary_engine_assessment_id", "");
-    onAssignmentChange("neighborhood_boundary_engine_assignment_file_id", "");
-    onAssignmentChange("neighborhood_boundary_engine_methodology_version", "");
-    onAssignmentChange("neighborhood_boundary_engine_confidence", "");
-    onAssignmentChange("neighborhood_boundary_engine_disclosure", "");
-    onAssignmentChange("neighborhood_boundary_engine_warnings", []);
-    onAssignmentChange("neighborhood_relevance_assessment_id", "");
-    onAssignmentChange("neighborhood_relevance_methodology_version", "");
-    onAssignmentChange("neighborhood_relevance_confidence", "");
-    onAssignmentChange("neighborhood_relevance_candidate_count", "");
-    onAssignmentChange("neighborhood_relevance_included_count", "");
-    onAssignmentChange("neighborhood_relevance_excluded_count", "");
-    onAssignmentChange("neighborhood_relevance_insufficient_data_count", "");
-    onAssignmentChange("neighborhood_relevance_generated_at", "");
-    onBoundarySuggestionsChange(null);
-    setRelevanceAssessment(null);
-    setRelevanceMessage("");
     setGeneratedBoundaryMessage(
       origin === "cleared"
-        ? "The automatic suggestion remains available, but the area will stay cleared until Reset to Suggested Area is selected."
-        : "Appraiser edit recorded in this assignment draft. Refresh Area Data to calculate road labels and neighborhood statistics for the revised polygon.",
+        ? "The narrative boundary was cleared. The saved analytical discovery envelope and relevance pockets remain available for review."
+        : "Appraiser narrative boundary recorded. The three-mile analytical discovery population remains intact; Refresh Area Data recalculates the descriptive area fields for the edited polygon.",
     );
   }, [
     applyGeneratedBoundary,
     generatedBoundary,
     onAssignmentChange,
-    onBoundarySuggestionsChange,
   ]);
+
+  const applyRelevantStatistics = useCallback((
+    assessment: NeighborhoodRelevanceAssessment,
+  ) => {
+    const relevant = assessment.summary.relevant_statistics;
+    const sales = relevant?.sales_profile;
+    const properties = relevant?.property_profile;
+    if (!relevant || !sales || !properties) return;
+    onAssignmentChange("neighborhood_sale_count", relevant.included_sale_count);
+    onAssignmentChange("neighborhood_all_property_count", relevant.included_property_count);
+    onAssignmentChange("neighborhood_house_price_low", sales.sale_price?.low ?? "");
+    onAssignmentChange("neighborhood_house_price_high", sales.sale_price?.high ?? "");
+    onAssignmentChange("neighborhood_house_price_predominant", sales.sale_price?.median ?? "");
+    onAssignmentChange("neighborhood_ppsf_low", sales.price_per_square_foot?.low ?? "");
+    onAssignmentChange("neighborhood_ppsf_high", sales.price_per_square_foot?.high ?? "");
+    onAssignmentChange("neighborhood_ppsf_predominant", sales.price_per_square_foot?.median ?? "");
+    onAssignmentChange("neighborhood_age_low", sales.age?.low ?? "");
+    onAssignmentChange("neighborhood_age_high", sales.age?.high ?? "");
+    onAssignmentChange("neighborhood_age_predominant", sales.age?.median ?? "");
+    onAssignmentChange("neighborhood_gla_low", sales.gla?.low ?? "");
+    onAssignmentChange("neighborhood_gla_high", sales.gla?.high ?? "");
+    onAssignmentChange("neighborhood_gla_predominant", sales.gla?.median ?? "");
+    onAssignmentChange("neighborhood_all_house_price_low", properties.market_value?.low ?? "");
+    onAssignmentChange("neighborhood_all_house_price_high", properties.market_value?.high ?? "");
+    onAssignmentChange(
+      "neighborhood_all_house_price_predominant",
+      properties.market_value?.median ?? "",
+    );
+    onAssignmentChange(
+      "neighborhood_all_ppsf_low",
+      properties.value_per_square_foot?.low ?? "",
+    );
+    onAssignmentChange(
+      "neighborhood_all_ppsf_high",
+      properties.value_per_square_foot?.high ?? "",
+    );
+    onAssignmentChange(
+      "neighborhood_all_ppsf_predominant",
+      properties.value_per_square_foot?.median ?? "",
+    );
+    onAssignmentChange("neighborhood_all_age_low", properties.age?.low ?? "");
+    onAssignmentChange("neighborhood_all_age_high", properties.age?.high ?? "");
+    onAssignmentChange("neighborhood_all_age_predominant", properties.age?.median ?? "");
+    onAssignmentChange("neighborhood_all_gla_low", properties.gla?.low ?? "");
+    onAssignmentChange("neighborhood_all_gla_high", properties.gla?.high ?? "");
+    onAssignmentChange("neighborhood_all_gla_predominant", properties.gla?.median ?? "");
+    onAssignmentChange("neighborhood_all_value_count", properties.market_value?.count ?? 0);
+    onAssignmentChange(
+      "neighborhood_all_ppsf_count",
+      properties.value_per_square_foot?.count ?? 0,
+    );
+    onAssignmentChange("neighborhood_all_age_count", properties.age?.count ?? 0);
+    onAssignmentChange("neighborhood_all_gla_count", properties.gla?.count ?? 0);
+  }, [onAssignmentChange]);
 
   const analyzeRelevantPropertyDataset = useCallback(async () => {
     if (!accountId || relevanceLoading) return;
@@ -756,7 +822,7 @@ export default function NeighborhoodCharacteristicsContent({
       assignmentDraft.neighborhood_boundary_engine_assignment_file_id,
     );
     setRelevanceLoading(true);
-    setRelevanceMessage("Scoring parcels for age, site size, proximity, and unadjusted sale-price relevance...");
+    setRelevanceMessage("Scoring parcels with GLA, age, and housing type as the primary subject-similarity factors...");
     try {
       const result = await runNeighborhoodRelevanceGeneration(accountId, {
         assignmentFileId: Number.isSafeInteger(boundaryAssignmentFileId) &&
@@ -776,36 +842,17 @@ export default function NeighborhoodCharacteristicsContent({
         result.summary.insufficient_data_count,
       );
       onAssignmentChange("neighborhood_relevance_generated_at", result.generated_at);
-      const relevant = result.summary.relevant_statistics;
-      const sales = relevant?.sales_profile;
-      const properties = relevant?.property_profile;
-      if (relevant && sales && properties) {
-        onAssignmentChange("neighborhood_sale_count", relevant.included_sale_count);
-        onAssignmentChange("neighborhood_all_property_count", relevant.included_property_count);
-        onAssignmentChange("neighborhood_house_price_low", sales.sale_price?.low ?? "");
-        onAssignmentChange("neighborhood_house_price_high", sales.sale_price?.high ?? "");
-        onAssignmentChange("neighborhood_house_price_predominant", sales.sale_price?.median ?? "");
-        onAssignmentChange("neighborhood_ppsf_low", sales.price_per_square_foot?.low ?? "");
-        onAssignmentChange("neighborhood_ppsf_high", sales.price_per_square_foot?.high ?? "");
-        onAssignmentChange("neighborhood_ppsf_predominant", sales.price_per_square_foot?.median ?? "");
-        onAssignmentChange("neighborhood_age_low", sales.age?.low ?? "");
-        onAssignmentChange("neighborhood_age_high", sales.age?.high ?? "");
-        onAssignmentChange("neighborhood_age_predominant", sales.age?.median ?? "");
-        onAssignmentChange("neighborhood_gla_low", sales.gla?.low ?? "");
-        onAssignmentChange("neighborhood_gla_high", sales.gla?.high ?? "");
-        onAssignmentChange("neighborhood_gla_predominant", sales.gla?.median ?? "");
-        onAssignmentChange("neighborhood_all_age_low", properties.age?.low ?? "");
-        onAssignmentChange("neighborhood_all_age_high", properties.age?.high ?? "");
-        onAssignmentChange("neighborhood_all_age_predominant", properties.age?.median ?? "");
-        onAssignmentChange("neighborhood_all_gla_low", properties.gla?.low ?? "");
-        onAssignmentChange("neighborhood_all_gla_high", properties.gla?.high ?? "");
-        onAssignmentChange("neighborhood_all_gla_predominant", properties.gla?.median ?? "");
-      }
+      const effectiveResult = applyPocketOverrides(
+        result,
+        assignmentDraft.neighborhood_relevance_removed_pocket_ids || [],
+        assignmentDraft.neighborhood_relevance_added_pocket_ids || [],
+      );
+      applyRelevantStatistics(effectiveResult);
       setRelevanceAssessment(result);
-      const primaryCount = result.summary.relevant_statistics?.included_property_count ??
+      const primaryCount = effectiveResult.summary.relevant_statistics?.included_property_count ??
         result.summary.included_count;
       setRelevanceMessage(
-        `${primaryCount.toLocaleString()} properties form the primary statistical population at a ${result.summary.primary_population_threshold}% relevance threshold. ${result.summary.included_count.toLocaleString()} properties remain reviewable on the map; ${result.summary.excluded_count.toLocaleString()} were excluded.`,
+        `${primaryCount.toLocaleString()} properties across every system-selected relevant pocket form the primary statistical population. All available sales in those pockets are included; ${result.summary.included_count.toLocaleString()} properties remain reviewable on the map.`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Relevant-property analysis failed.";
@@ -821,9 +868,61 @@ export default function NeighborhoodCharacteristicsContent({
     accountId,
     assignmentDraft.neighborhood_boundary_engine_assessment_id,
     assignmentDraft.neighborhood_boundary_engine_assignment_file_id,
+    assignmentDraft.neighborhood_relevance_added_pocket_ids,
+    assignmentDraft.neighborhood_relevance_removed_pocket_ids,
+    applyRelevantStatistics,
     onAssignmentChange,
     relevanceLoading,
   ]);
+
+  const setPocketIncluded = useCallback((
+    pocketId: string,
+    include: boolean,
+    systemSelected: boolean,
+  ) => {
+    if (!relevanceAssessment) return;
+    const removed = new Set(assignmentDraft.neighborhood_relevance_removed_pocket_ids || []);
+    const added = new Set(assignmentDraft.neighborhood_relevance_added_pocket_ids || []);
+    if (include) {
+      removed.delete(pocketId);
+      if (systemSelected) added.delete(pocketId);
+      else added.add(pocketId);
+    } else {
+      added.delete(pocketId);
+      if (systemSelected) removed.add(pocketId);
+      else removed.delete(pocketId);
+    }
+    const nextRemoved = [...removed].sort();
+    const nextAdded = [...added].sort();
+    onAssignmentChange("neighborhood_relevance_removed_pocket_ids", nextRemoved);
+    onAssignmentChange("neighborhood_relevance_added_pocket_ids", nextAdded);
+    onAssignmentChange("neighborhood_relevance_override_updated_at", new Date().toISOString());
+    const effective = applyPocketOverrides(relevanceAssessment, nextRemoved, nextAdded);
+    applyRelevantStatistics(effective);
+    const relevant = effective.summary.relevant_statistics;
+    setRelevanceMessage(
+      `${include ? "Included" : "Removed"} the selected analytical pocket. ` +
+      `${relevant?.included_property_count.toLocaleString() || 0} properties and ` +
+      `${relevant?.included_sale_count.toLocaleString() || 0} available sales now support the neighborhood statistics.`,
+    );
+  }, [
+    applyRelevantStatistics,
+    assignmentDraft.neighborhood_relevance_added_pocket_ids,
+    assignmentDraft.neighborhood_relevance_removed_pocket_ids,
+    onAssignmentChange,
+    relevanceAssessment,
+  ]);
+
+  const resetPocketOverrides = useCallback(() => {
+    if (!relevanceAssessment) return;
+    onAssignmentChange("neighborhood_relevance_removed_pocket_ids", []);
+    onAssignmentChange("neighborhood_relevance_added_pocket_ids", []);
+    onAssignmentChange("neighborhood_relevance_override_updated_at", new Date().toISOString());
+    applyRelevantStatistics(relevanceAssessment);
+    setRelevanceMessage(
+      "Appraiser pocket changes were reset. Every system-selected relevant pocket is included again.",
+    );
+  }, [applyRelevantStatistics, onAssignmentChange, relevanceAssessment]);
 
   useEffect(() => {
     const boundaryAssessmentId = Number(
@@ -1135,7 +1234,7 @@ export default function NeighborhoodCharacteristicsContent({
                 assignment={assignmentDraft}
               />
               <p className="mt-2 text-[10px] leading-4 text-slate-500">
-                Data coverage — value: {formatNumber(assignmentDraft.neighborhood_all_value_count)}; $/SF: {formatNumber(assignmentDraft.neighborhood_all_ppsf_count)}; age: {formatNumber(assignmentDraft.neighborhood_all_age_count)}; GLA: {formatNumber(assignmentDraft.neighborhood_all_gla_count)}. Loads automatically from the saved boundary; use Analyze Present Land Use to refresh.
+                Selected-pocket coverage — value: {formatNumber(assignmentDraft.neighborhood_all_value_count)}; $/SF: {formatNumber(assignmentDraft.neighborhood_all_ppsf_count)}; age: {formatNumber(assignmentDraft.neighborhood_all_age_count)}; GLA: {formatNumber(assignmentDraft.neighborhood_all_gla_count)}. Updates automatically when a relevance pocket is added or removed.
               </p>
             </div>
           </div>
@@ -1291,11 +1390,14 @@ export default function NeighborhoodCharacteristicsContent({
       }`}>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <h3 className="text-sm font-semibold text-slate-900">Neighborhood Boundaries</h3>
+            <h3 className="text-sm font-semibold text-slate-900">Neighborhood Study Area &amp; Boundaries</h3>
             <p className="mt-0.5 text-xs text-slate-600">
               {assignmentDraft.neighborhood_boundary_geometry
                 ? `${assignmentDraft.neighborhood_boundary_label || "Appraiser-defined market area"} · ${Math.max(boundaryRing.length - 1, 0)} boundary vertices`
                 : "The automatic neighborhood suggestion is loading; manual drawing remains available if needed."}
+            </p>
+            <p className="mt-0.5 max-w-3xl text-[10px] leading-4 text-slate-500">
+              The analytical envelope finds and scores the complete available parcel and sales population. The appraiser may separately redraw the broad narrative boundary without discarding the analytical pockets.
             </p>
             {assignmentDraft.neighborhood_boundary_saved_at ? (
               <p className="mt-0.5 text-[10px] text-slate-500">Market study saved {formatDate(assignmentDraft.neighborhood_boundary_saved_at)}</p>
@@ -1310,6 +1412,20 @@ export default function NeighborhoodCharacteristicsContent({
             >
               {generatedBoundaryLoading ? "Loading..." : "Regenerate Suggested Boundary"}
             </button>
+            {generatedBoundary?.search_profile === "suburban_simple" ? (
+              <button
+                type="button"
+                className="btn btn-outline btn-sm normal-case rounded-lg"
+                onClick={() => void generateSuggestedBoundary(
+                  generatedBoundary.discovery_radius_miles > 3 ? 3 : 5,
+                )}
+                disabled={!accountId || generatedBoundaryLoading}
+              >
+                {generatedBoundary.discovery_radius_miles > 3
+                  ? "Restore 3-Mile Discovery"
+                  : "Expand Discovery to 5 Miles"}
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-neutral btn-sm normal-case rounded-lg text-white"
@@ -1368,24 +1484,84 @@ export default function NeighborhoodCharacteristicsContent({
               : "border-amber-200 bg-amber-50 text-amber-950"
           }`}>
             <div className="font-medium">{relevanceMessage}</div>
-            {relevanceAssessment ? (
+            {effectiveRelevanceAssessment ? (
               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
-                <span>Confidence: <strong className="capitalize">{relevanceAssessment.confidence.confidence || "limited"}</strong></span>
-                <span>Low-score exclusions: <strong>{relevanceAssessment.summary.low_relevance_excluded_count}</strong></span>
-                <span>Dissimilar-pocket exclusions: <strong>{relevanceAssessment.summary.dissimilar_pocket_excluded_count}</strong></span>
-                {relevanceAssessment.summary.relevant_statistics ? (
+                <span>Confidence: <strong className="capitalize">{effectiveRelevanceAssessment.confidence.confidence || "limited"}</strong></span>
+                <span>Low-score exclusions: <strong>{effectiveRelevanceAssessment.summary.low_relevance_excluded_count}</strong></span>
+                <span>Dissimilar-pocket exclusions: <strong>{effectiveRelevanceAssessment.summary.dissimilar_pocket_excluded_count}</strong></span>
+                {effectiveRelevanceAssessment.summary.relevant_statistics ? (
                   <>
-                    <span>Relevant sales: <strong>{relevanceAssessment.summary.relevant_statistics.included_sale_count}</strong></span>
-                    <span>Primary cutoff: <strong>{relevanceAssessment.summary.primary_population_threshold}%</strong></span>
-                    <span>30-sale target: <strong>{relevanceAssessment.summary.primary_population_target_met ? "Met" : "Not met"}</strong></span>
-                    <span>Composite COD: <strong>{relevanceAssessment.summary.relevant_statistics.composite_cod ?? "Pending"}</strong></span>
-                    <span>Reliability: <strong>{relevanceAssessment.summary.relevant_statistics.reliability_score}/100</strong></span>
+                    <span>Relevant pockets: <strong>{effectiveRelevanceAssessment.summary.selected_pocket_count}</strong></span>
+                    <span>Relevant properties: <strong>{effectiveRelevanceAssessment.summary.relevant_statistics.included_property_count}</strong></span>
+                    <span>All available pocket sales: <strong>{effectiveRelevanceAssessment.summary.relevant_statistics.included_sale_count}</strong></span>
+                    <span>Fixed relevance floor: <strong>{effectiveRelevanceAssessment.summary.primary_population_threshold}%</strong></span>
+                    <span>Composite COD: <strong>{effectiveRelevanceAssessment.summary.relevant_statistics.composite_cod ?? "Pending"}</strong></span>
+                    <span>Reliability: <strong>{effectiveRelevanceAssessment.summary.relevant_statistics.reliability_score}/100</strong></span>
                   </>
                 ) : null}
                 <span>Sale prices time-adjusted: <strong>No</strong></span>
               </div>
             ) : null}
           </div>
+        ) : null}
+        {relevancePockets.length ? (
+          <details className="mt-2 rounded-lg border border-slate-200 bg-white" open>
+            <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-slate-800">
+              Review analytical pockets ({relevancePockets.filter((pocket) => pocket.currentlyIncluded).length} included of {relevancePockets.length})
+            </summary>
+            <div className="border-t border-slate-200 px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="max-w-3xl text-[11px] leading-4 text-slate-600">
+                  The engine includes every property and every available closed sale in the selected relevant pockets. Remove or add a pocket to recalculate the displayed medians, COD, and reliability immediately; the choice is saved with this appraisal file.
+                </p>
+                {(removedPocketIds.length || addedPocketIds.length) ? (
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-xs normal-case"
+                    onClick={resetPocketOverrides}
+                  >
+                    Reset Pocket Changes
+                  </button>
+                ) : null}
+              </div>
+              <div className="mt-2 grid max-h-56 gap-2 overflow-y-auto pr-1 md:grid-cols-2 xl:grid-cols-3">
+                {relevancePockets.map((pocket, index) => (
+                  <div
+                    key={pocket.id}
+                    className={`rounded-lg border px-2.5 py-2 ${pocket.currentlyIncluded
+                      ? "border-emerald-200 bg-emerald-50"
+                      : "border-slate-200 bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-900">
+                          Pocket {index + 1}{pocket.containsSubjectSubdivision ? " · Subject subdivision" : ""}
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-slate-600">
+                          {pocket.propertyCount.toLocaleString()} properties · {pocket.saleCount.toLocaleString()} sales · {pocket.averageScore ?? "—"}% avg. relevance
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`btn btn-xs normal-case rounded-lg ${pocket.currentlyIncluded
+                          ? "btn-outline"
+                          : "btn-neutral text-white"
+                        }`}
+                        onClick={() => setPocketIncluded(
+                          pocket.id,
+                          !pocket.currentlyIncluded,
+                          pocket.systemSelected,
+                        )}
+                      >
+                        {pocket.currentlyIncluded ? "Remove Pocket" : "Add Pocket"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </details>
         ) : null}
         <div className="mt-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Appraisal Boundary Summary</span>
@@ -1473,7 +1649,7 @@ export default function NeighborhoodCharacteristicsContent({
             initialCustomGeometry={assignmentDraft.neighborhood_boundary_geometry}
             initialCustomGeometrySource={assignmentDraft.neighborhood_boundary_source}
             suggestedCustomGeometry={generatedBoundary?.boundary || null}
-            relevanceVisualization={relevanceAssessment?.visualization || []}
+            relevanceVisualization={effectiveRelevanceAssessment?.visualization || []}
             onCustomGeometryChange={handleCustomGeometryChange}
             embedded
           />

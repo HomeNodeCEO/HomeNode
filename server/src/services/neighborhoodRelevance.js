@@ -1,10 +1,12 @@
-export const NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION = 4;
+export const NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION = 6;
 
 export const NEIGHBORHOOD_RELEVANCE_WEIGHTS = Object.freeze({
-  age: 0.45,
-  site_size: 0.20,
-  proximity: 0.30,
-  sale_price: 0.05,
+  gla: 0.40,
+  age: 0.30,
+  housing_type: 0.20,
+  site_size: 1 / 30,
+  proximity: 1 / 30,
+  sale_price: 1 / 30,
 });
 
 // Version 1 intentionally starts with a permissive cutoff. It is exported and
@@ -13,7 +15,7 @@ export const NEIGHBORHOOD_RELEVANCE_WEIGHTS = Object.freeze({
 export const NEIGHBORHOOD_RELEVANCE_EXCLUSION_THRESHOLD = 20;
 
 export const NEIGHBORHOOD_BOUNDARY_DISCLOSURE =
-  "Neighborhood boundaries describe the subject's broader geographic setting and are not treated as an automatic inclusion rule. Properties within the stated boundaries are independently screened for relevance using age, site size, proximity, and unadjusted sale-price similarity. Parcels sharing the subject's recorded subdivision or CAD neighborhood identity remain represented in the dataset and are labeled as protected neighborhood matches even when their physical characteristics differ. Dissimilar pockets outside that protected neighborhood may be excluded, while gross living area is retained as a secondary diagnostic with a wider tolerance. Roadway and zoning patterns support, but do not independently determine, the relevant market area.";
+  "Neighborhood boundaries describe the subject's broader geographic setting and are not treated as an automatic inclusion rule. Properties within the stated boundaries are independently screened with gross living area, age, and housing type as the primary relevance factors; site size, proximity, and unadjusted sale-price similarity provide secondary support. Parcels sharing the subject's recorded subdivision or CAD neighborhood identity remain represented in the dataset and are labeled as protected neighborhood matches even when their physical characteristics differ. Dissimilar pockets outside that protected neighborhood may be excluded. Roadway and zoning patterns support, but do not independently determine, the relevant market area.";
 
 const PRIMARY_DEVIATION_THRESHOLD = 1.5;
 const EXTREME_DEVIATION_THRESHOLD = 2.5;
@@ -128,16 +130,38 @@ function normalizedCandidate(candidate = {}) {
     gla_sqft: positiveNumber(
       candidate.gla_sqft ?? candidate.living_area_sqft ?? candidate.residential_area_sqft,
     ),
+    housing_type: String(
+      candidate.housing_type ?? candidate.land_use_category ?? "",
+    ).trim().toLowerCase() || null,
   };
+}
+
+function housingTypeSimilarity(candidateType, subjectType) {
+  const candidate = String(candidateType || "").trim().toLowerCase();
+  const subject = String(subjectType || "").trim().toLowerCase();
+  if (!candidate || !subject) {
+    return { score: null, exact_match: null, available: false };
+  }
+  const exactMatch = candidate === subject;
+  return { score: exactMatch ? 100 : 0, exact_match: exactMatch, available: true };
 }
 
 export function buildNeighborhoodRelevanceDistributions(subject = {}, candidates = []) {
   const normalized = candidates.map(normalizedCandidate);
   const subjectYearBuilt = positiveNumber(subject.year_built ?? subject.residential_year_built);
   const subjectSiteArea = positiveNumber(subject.site_area_sqft ?? subject.parcel_area_sqft);
+  const subjectGla = positiveNumber(
+    subject.gla_sqft ?? subject.living_area_sqft ?? subject.residential_area_sqft,
+  );
   const salePrices = normalized.map((candidate) => candidate.sale_price).filter(Boolean);
   const saleReference = positiveNumber(subject.reference_sale_price) ?? median(salePrices);
   return {
+    gla: summarizeDistribution(
+      normalized.map((candidate) => candidate.gla_sqft).filter(Boolean),
+      { minimumStandardDeviation: Math.max((subjectGla || median(
+        normalized.map((candidate) => candidate.gla_sqft).filter(Boolean),
+      ) || 0) * 0.15, 150) },
+    ),
     age: summarizeDistribution(
       normalized.map((candidate) => candidate.year_built).filter(Boolean),
       { minimumStandardDeviation: 5 },
@@ -153,8 +177,12 @@ export function buildNeighborhoodRelevanceDistributions(subject = {}, candidates
       { minimumStandardDeviation: Math.max((saleReference || 0) * 0.10, 25_000) },
     ),
     references: {
+      gla_sqft: subjectGla,
       year_built: subjectYearBuilt,
       site_area_sqft: subjectSiteArea,
+      housing_type: String(
+        subject.housing_type ?? subject.land_use_category ?? "",
+      ).trim().toLowerCase() || null,
       sale_price: saleReference,
       sale_price_source: positiveNumber(subject.reference_sale_price)
         ? "subject_reference"
@@ -173,10 +201,19 @@ export function scoreNeighborhoodCandidate({
 } = {}) {
   const normalized = normalizedCandidate(candidate);
   const factors = {
+    gla: standardDeviationSimilarity(
+      normalized.gla_sqft,
+      distributions?.references?.gla_sqft,
+      distributions?.gla,
+    ),
     age: standardDeviationSimilarity(
       normalized.year_built,
       distributions?.references?.year_built,
       distributions?.age,
+    ),
+    housing_type: housingTypeSimilarity(
+      normalized.housing_type,
+      distributions?.references?.housing_type,
     ),
     site_size: standardDeviationSimilarity(
       normalized.site_area_sqft,
@@ -200,7 +237,12 @@ export function scoreNeighborhoodCandidate({
       0,
     ) / availableWeight
     : null;
-  const primaryZScores = [factors.age.z_score, factors.site_size.z_score, factors.sale_price.z_score]
+  const primaryZScores = [
+    factors.gla.z_score,
+    factors.age.z_score,
+    factors.site_size.z_score,
+    factors.sale_price.z_score,
+  ]
     .filter((value) => value !== null);
   const deviationCount = primaryZScores.filter(
     (value) => value >= PRIMARY_DEVIATION_THRESHOLD,
@@ -237,7 +279,10 @@ export function scoreNeighborhoodCandidate({
     distance_miles: normalized.distance_miles,
     year_built: normalized.year_built,
     site_area_sqft: normalized.site_area_sqft,
+    gla_sqft: normalized.gla_sqft,
+    market_value: positiveNumber(candidate.market_value),
     sale_price: normalized.sale_price,
+    sales: Array.isArray(candidate.sales) ? candidate.sales : [],
     score: rounded(weightedScore, 1),
     available_weight_percent: rounded(availableWeight * 100, 0),
     factors: Object.fromEntries(Object.entries(factors).map(([key, result]) => [key, {
@@ -271,7 +316,8 @@ export function scoreNeighborhoodCandidate({
         subjectGla && normalized.gla_sqft
           ? rounded(((normalized.gla_sqft - subjectGla) / subjectGla) * 100, 1)
           : null,
-      contributes_to_score: false,
+      contributes_to_score: true,
+      weight_percent: NEIGHBORHOOD_RELEVANCE_WEIGHTS.gla * 100,
     },
   };
 }
@@ -285,13 +331,22 @@ export function assessNeighborhoodRelevanceConfidence({
   const total = normalized.length;
   const counts = {
     candidates: total,
+    gla: normalized.filter((candidate) => candidate.gla_sqft).length,
     year_built: normalized.filter((candidate) => candidate.year_built).length,
+    housing_type: normalized.filter((candidate) => candidate.housing_type).length,
     site_size: normalized.filter((candidate) => candidate.site_area_sqft).length,
     coordinates: normalized.filter((candidate) => candidate.distance_miles !== null).length,
-    sales: normalized.filter((candidate) => candidate.sale_price).length,
+    sales: normalized.reduce((count, candidate) => {
+      if (Array.isArray(candidate.sales) && candidate.sales.length) {
+        return count + candidate.sales.filter((sale) => positiveNumber(sale.sale_price)).length;
+      }
+      return count + (candidate.sale_price ? 1 : 0);
+    }, 0),
   };
   const coverage = {
+    gla_percent: coveragePercent(counts.gla, total),
     year_built_percent: coveragePercent(counts.year_built, total),
+    housing_type_percent: coveragePercent(counts.housing_type, total),
     site_size_percent: coveragePercent(counts.site_size, total),
     coordinate_percent: coveragePercent(counts.coordinates, total),
     sale_price_percent: coveragePercent(counts.sales, total),
@@ -302,7 +357,11 @@ export function assessNeighborhoodRelevanceConfidence({
   const insufficientScores = scoredCandidates.filter(
     (candidate) => candidate.statistical_classification === "insufficient_data",
   ).length;
-  const physicalCoverage = Math.min(coverage.year_built_percent, coverage.site_size_percent);
+  const physicalCoverage = Math.min(
+    coverage.gla_percent,
+    coverage.year_built_percent,
+    coverage.housing_type_percent,
+  );
   let confidence = "limited";
   if (
     total >= 50 && counts.sales >= 30 && physicalCoverage >= 80 &&

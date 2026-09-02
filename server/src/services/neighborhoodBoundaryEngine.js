@@ -9,7 +9,7 @@ import {
 } from "./propertyContextStore.js";
 import { NEIGHBORHOOD_BOUNDARY_DISCLOSURE } from "./neighborhoodRelevance.js";
 
-export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 5;
+export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 6;
 
 // TODO(neighborhood-boundary-validation): Test automated boundary suggestions on
 // representative properties in multiple Dallas County cities and urban,
@@ -23,6 +23,7 @@ export const NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION = 5;
 const METERS_PER_MILE = 1609.344;
 const MAX_BOUNDARY_POINTS = 2500;
 const MINIMUM_BOUNDARY_BUFFER_METERS = 120;
+const SIMPLE_SUBURBAN_DISCOVERY_RADIUS_MILES = 3;
 const schemaReadyByPool = new WeakMap();
 
 function finiteNumber(value) {
@@ -289,7 +290,13 @@ async function resolveSearchProfile(pool, accountId, assignmentFileId, requested
   if (requestedProfile !== undefined && requestedProfile !== null && requestedProfile !== "") {
     const explicit = resolveComparableSearchProfile(requestedProfile, { useDefault: false });
     if (!explicit) throw new Error("invalid_neighborhood_search_profile");
-    return { ...explicit, source: "requested" };
+    return {
+      ...explicit,
+      radiusMiles: explicit.key === "suburban_simple"
+        ? SIMPLE_SUBURBAN_DISCOVERY_RADIUS_MILES
+        : explicit.radiusMiles,
+      source: "requested",
+    };
   }
   const scopeKey = assessmentScopeKey(assignmentFileId);
   const { rows } = await pool.query(
@@ -309,11 +316,14 @@ async function resolveSearchProfile(pool, accountId, assignmentFileId, requested
     resolveComparableSearchProfile(null);
   return {
     ...inferred,
+    radiusMiles: inferred.key === "suburban_simple"
+      ? SIMPLE_SUBURBAN_DISCOVERY_RADIUS_MILES
+      : inferred.radiusMiles,
     source: assessment ? "property_complexity" : "default",
   };
 }
 
-async function buildBroadBoundary(pool, { accountId, radiusMiles }) {
+async function buildBroadBoundary(pool, { accountId, radiusMiles, radialDiscovery = false }) {
   const radiusMeters = radiusMiles * METERS_PER_MILE;
   const { rows } = await pool.query(
     `WITH subject AS MATERIALIZED (
@@ -370,6 +380,7 @@ async function buildBroadBoundary(pool, { accountId, radiusMiles }) {
      ), raw_boundary AS (
        SELECT
          CASE
+           WHEN $6::boolean THEN ST_Buffer(subject.center::geography, $2)::geometry
            WHEN COUNT(*) >= 4 THEN ST_Buffer(
              ST_ConcaveHull(ST_Collect(center), 0.82, false)::geography,
              GREATEST($4::double precision, LEAST($2::double precision * 0.08, 300))
@@ -432,6 +443,7 @@ async function buildBroadBoundary(pool, { accountId, radiusMiles }) {
       MAX_BOUNDARY_POINTS,
       MINIMUM_BOUNDARY_BUFFER_METERS,
       METERS_PER_MILE,
+      radialDiscovery,
     ],
   );
   const row = rows[0];
@@ -508,7 +520,15 @@ function evidenceCoverage(boundary) {
   return Math.min(yearCoverage, siteCoverage);
 }
 
-function generationWarnings({ boundary, roadEvidence, zoningEvidence, sourceHealth, roadwayBoundary }) {
+function generationWarnings({
+  boundary,
+  roadEvidence,
+  zoningEvidence,
+  sourceHealth,
+  roadwayBoundary,
+  radialDiscovery,
+  discoveryRadiusMiles,
+}) {
   const warnings = [];
   if (Number(boundary.candidate_count || 0) < 30) {
     warnings.push("Fewer than 30 similarly classified parcels were available inside the discovery radius.");
@@ -516,7 +536,11 @@ function generationWarnings({ boundary, roadEvidence, zoningEvidence, sourceHeal
   if (!roadEvidence?.street_names?.length) {
     warnings.push("No local road segments could be confidently assigned to the generated boundary.");
   }
-  if (!roadwayBoundary) {
+  if (radialDiscovery) {
+    warnings.push(
+      `The ${discoveryRadiusMiles}-mile shape is an analytical discovery envelope, not the appraiser's final narrative neighborhood boundary.`,
+    );
+  } else if (!roadwayBoundary) {
     warnings.push("Four enclosing traffic-backed roadway positions were not available; the parcel discovery shape requires appraiser review.");
   }
   if (!zoningEvidence?.subject?.zoning_code) {
@@ -578,6 +602,7 @@ export async function generateNeighborhoodBoundary(pool, {
   accountId,
   assignmentFileId = null,
   searchProfileKey = null,
+  discoveryRadiusMiles = null,
 } = {}) {
   const generationStartedAt = Date.now();
   const normalizedId = normalizedAccountId(accountId);
@@ -595,9 +620,22 @@ export async function generateNeighborhoodBoundary(pool, {
     parsedAssignmentId,
     searchProfileKey,
   );
+  const radiusWasProvided = discoveryRadiusMiles !== null &&
+    discoveryRadiusMiles !== undefined && discoveryRadiusMiles !== "";
+  const requestedRadius = !radiusWasProvided
+    ? null
+    : finiteNumber(discoveryRadiusMiles);
+  if (radiusWasProvided && (
+    requestedRadius === null || requestedRadius < 1 || requestedRadius > 10
+  )) {
+    throw new Error("invalid_neighborhood_discovery_radius");
+  }
+  if (requestedRadius !== null) profile.radiusMiles = requestedRadius;
+  const radialDiscovery = profile.key === "suburban_simple";
   const boundaryRow = await buildBroadBoundary(pool, {
     accountId: normalizedId,
     radiusMiles: profile.radiusMiles,
+    radialDiscovery,
   });
   const preliminaryBoundary = boundaryRow.boundary;
   let roadEvidence = null;
@@ -616,7 +654,13 @@ export async function generateNeighborhoodBoundary(pool, {
       warning: error?.message || "local_txdot_boundary_roads_unavailable",
     };
   }
-  const roadwayBoundary = buildRoadwayBoundary(roadEvidence, boundaryRow.subject_point);
+  // Simple-suburban analysis deliberately begins with an exact three-mile
+  // discovery envelope. Road evidence remains available for the narrative
+  // boundary, but it must not silently remove parcels from the analytical
+  // population before similarity pockets are calculated.
+  const roadwayBoundary = radialDiscovery
+    ? null
+    : buildRoadwayBoundary(roadEvidence, boundaryRow.subject_point);
   const boundary = roadwayBoundary || preliminaryBoundary;
   const [zoningEvidence, sourceHealth] = await Promise.all([
     loadZoningEvidence(pool, {
@@ -661,9 +705,11 @@ export async function generateNeighborhoodBoundary(pool, {
       boundary_area_square_miles: roadwayBoundary
         ? approximateBoundaryAreaSquareMiles(roadwayBoundary)
         : finiteNumber(boundaryRow.boundary_area_square_miles),
-      boundary_generation_mode: roadwayBoundary
-        ? "traffic_backed_traced_road_polygon"
-        : "parcel_discovery_shape_fallback",
+      boundary_generation_mode: radialDiscovery
+        ? "radial_discovery_envelope"
+        : roadwayBoundary
+          ? "traffic_backed_traced_road_polygon"
+          : "parcel_discovery_shape_fallback",
       physical_characteristic_coverage_percent: Math.round(physicalCoverage * 1000) / 10,
       year_built_count: Number(boundaryRow.year_built_count || 0),
       site_size_count: Number(boundaryRow.site_size_count || 0),
@@ -679,6 +725,8 @@ export async function generateNeighborhoodBoundary(pool, {
     zoningEvidence,
     sourceHealth,
     roadwayBoundary,
+    radialDiscovery,
+    discoveryRadiusMiles: profile.radiusMiles,
   });
   const signature = inputSignature({
     methodology_version: NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION,

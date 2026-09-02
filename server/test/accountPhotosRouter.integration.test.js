@@ -141,7 +141,7 @@ test("account photo composition and entrypoint position remain explicit", () => 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const accountDetail = source.indexOf("app.use(createAccountDetailRouter(");
   const accountPhotos = source.indexOf("app.use(createAccountPhotosRouter(");
-  const housingProfile = source.indexOf('app.patch("/api/accounts/:id/housing-profile"');
+  const housingProfile = source.indexOf("app.use(createHousingProfileRouter(");
   assert.ok(accountPhotos > accountDetail);
   assert.ok(housingProfile > accountPhotos);
 });

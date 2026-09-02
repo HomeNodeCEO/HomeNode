@@ -5,9 +5,9 @@ import { fileURLToPath, URL } from 'node:url'
 // Vite config with dev proxies and "@/..." alias → "<repo>/src"
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  // Dev proxy target: default to the DCAD API on 127.0.0.1:8000
+  // Dev proxy target: default to the Node API on 127.0.0.1:4000
   // You can override with VITE_PROXY_TARGET env var if needed.
-  const target = env.VITE_PROXY_TARGET || 'http://127.0.0.1:8000'
+  const target = env.VITE_PROXY_TARGET || 'http://127.0.0.1:4000'
 
   return {
     plugins: [react()],

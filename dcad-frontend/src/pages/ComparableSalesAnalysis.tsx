@@ -845,20 +845,34 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   }
 
   function downloadSummaryPdf() {
-    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Protest Summary</title>
-      <style>body{font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;line-height:1.4;padding:24px} h1{font-size:20px;margin:0 0 8px} .meta{color:#475569;font-size:12px;margin-bottom:16px;}</style>
-    </head><body>
-      <h1>Protest Summary</h1>
-      <div class="meta">Generated ${new Date().toLocaleString()}</div>
-      <div>${(summary || '').replace(/\r?\n/g,'<br/>')}</div>
-    </body></html>`;
-    const w = window.open('', '_blank');
-    if (!w) return;
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-    w.focus();
-    setTimeout(() => { try { w.print(); } catch {} }, 300);
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.opener = null;
+    const printableDocument = printWindow.document;
+    const style = printableDocument.createElement('style');
+    style.textContent = 'body{font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Helvetica,Arial;line-height:1.4;padding:24px}h1{font-size:20px;margin:0 0 8px}.meta{color:#475569;font-size:12px;margin-bottom:16px}';
+    const title = printableDocument.createElement('title');
+    title.textContent = 'Protest Summary';
+    printableDocument.head.replaceChildren(title, style);
+    const heading = printableDocument.createElement('h1');
+    heading.textContent = 'Protest Summary';
+    const meta = printableDocument.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = `Generated ${new Date().toLocaleString()}`;
+    const narrative = printableDocument.createElement('div');
+    (summary || '').split(/\r?\n/).forEach((line, index) => {
+      if (index > 0) narrative.append(printableDocument.createElement('br'));
+      narrative.append(printableDocument.createTextNode(line));
+    });
+    printableDocument.body.replaceChildren(heading, meta, narrative);
+    printWindow.focus();
+    setTimeout(() => {
+      try {
+        printWindow.print();
+      } catch {
+        // The generated summary remains available for copy if printing is blocked.
+      }
+    }, 300);
   }
 
   useEffect(() => {

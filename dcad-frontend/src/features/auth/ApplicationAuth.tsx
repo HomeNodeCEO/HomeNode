@@ -58,10 +58,34 @@ const API_BASE = String(
   (import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_API_BASE || '',
 ).replace(/\/+$/, '');
 const authUrl = (path: string) => `${API_BASE}${path}`;
+const AUTH_REQUEST_TIMEOUT_MS = 10_000;
+
+async function fetchAuthRequest(path: string, init: RequestInit = {}) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), AUTH_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(authUrl(path), {
+      ...init,
+      credentials: 'include',
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 async function fetchAuthBootstrap(path: string) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await fetch(authUrl(path), { credentials: 'include' });
+    let response: Response;
+    try {
+      response = await fetchAuthRequest(path);
+    } catch (error) {
+      if (attempt === 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, 750));
+        continue;
+      }
+      throw error;
+    }
     if ((response.status === 429 || response.status >= 500) && attempt === 0) {
       await new Promise((resolve) => window.setTimeout(resolve, 750));
       continue;
@@ -99,7 +123,7 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
             const canAuditReadiness = nextSession?.organizations.some((organization) =>
               organization.roles.some((role) => role === 'organization_admin' || role === 'homenode_admin'));
             if (canAuditReadiness) {
-              const readinessResponse = await fetch(authUrl('/api/auth/readiness'), { credentials: 'include' });
+              const readinessResponse = await fetchAuthRequest('/api/auth/readiness');
               if (readinessResponse.ok) {
                 const readinessBody = await readinessResponse.json();
                 if (active) setReadiness(readinessBody.readiness || null);
@@ -134,7 +158,7 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
     signIn: () => { window.location.assign(authUrl('/api/auth/login')); },
     signOut: async () => {
       try {
-        await fetch(authUrl('/api/auth/logout'), { method: 'POST', credentials: 'include' });
+        await fetchAuthRequest('/api/auth/logout', { method: 'POST' });
       } finally {
         setSession(null);
         setReadiness(null);

@@ -59,15 +59,31 @@ test("the session marker is never retained as a reusable shared secret", () => {
 test("JSON and binary API requests share cookie, token, and marker stripping", () => {
   const api = read("../src/lib/api.ts");
   const auth = read("../src/features/auth/ApplicationAuth.tsx");
+  const search = read("../src/pages/PropertySearch.tsx");
   assert.match(auth, /setApplicationSessionActive\(Boolean\(session\)\)/);
+  assert.match(auth, /AUTH_REQUEST_TIMEOUT_MS = 10_000/);
+  assert.match(auth, /signal: controller\.signal/);
   assert.match(api, /isAuthenticatedSessionEditorCredential/);
   assert.match(api, /headers\.delete\('x-homenode-editor-key'\)/);
   assert.match(api, /credentials: 'include'/);
+  assert.match(search, /await api\.fetchJSON<unknown>\(url\)/);
+  assert.doesNotMatch(search, /await fetch\(url\)/);
   assert.equal(
     (api.match(/fetchWithApplicationAuthentication\(/g) || []).length,
     5,
     "the shared helper plus JSON, document, workfile, and PDF calls must all use authenticated fetch",
   );
+});
+
+test("the application shell contains render recovery and safe printable summaries", () => {
+  const main = read("../src/main.tsx");
+  const boundary = read("../src/components/ApplicationErrorBoundary.tsx");
+  const comparable = read("../src/pages/ComparableSalesAnalysis.tsx");
+  assert.match(main, /<ApplicationErrorBoundary>/);
+  assert.match(boundary, /getDerivedStateFromError/);
+  assert.match(boundary, /Reload workspace/);
+  assert.doesNotMatch(comparable, /document\.write/);
+  assert.match(comparable, /createTextNode\(line\)/);
 });
 
 test("remaining reviewed-data saves use the authenticated session path", () => {

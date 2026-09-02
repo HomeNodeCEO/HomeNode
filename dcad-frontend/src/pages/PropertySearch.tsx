@@ -75,9 +75,7 @@ async function requestItems(query: string, city: string, limit = 25): Promise<Se
       city: cityFilter,
       limit,
     });
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Search HTTP ${response.status}`);
-    const data = await response.json();
+    const data = await api.fetchJSON<unknown>(url);
     if (typeof (api as any).toSearchItems === "function") {
       return (api as any).toSearchItems(data);
     }

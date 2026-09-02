@@ -52,6 +52,7 @@ jobs:
           cache-dependency-path: dcad-frontend/package-lock.json
       - run: npm ci
       - run: npm run build:checked
+      - run: npm test
 
   uad-migration:
     runs-on: ubuntu-latest

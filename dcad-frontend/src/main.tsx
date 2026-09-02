@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import './index.css';
 
+import ApplicationErrorBoundary from './components/ApplicationErrorBoundary';
 import { ApplicationAuthGate, ApplicationAuthProvider } from './features/auth/ApplicationAuth';
 
 const PropertySearch = lazy(() => import('./pages/PropertySearch'));
@@ -24,27 +25,29 @@ function LegacyDetailRedirect() {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ApplicationAuthProvider>
-      <ApplicationAuthGate>
-        <BrowserRouter>
-          <Suspense fallback={<div className="route-loading" role="status">Loading…</div>}>
-            <Routes>
-              <Route path="/" element={<PropertySearch />} />
-              <Route path="/property/:countyId/:accountId" element={<PropertyDetailsBase44 />} />
-              <Route path="/property/:accountId" element={<LegacyDetailRedirect />} />
-              <Route path="/report/:accountId" element={<PropertyReport />} />
-              <Route path="/ComparableSalesAnalysis" element={<ComparableSalesAnalysis />} />
-              <Route path="/AppraisalReport" element={<AppraisalReport />} />
-              <Route path="/CostApproach" element={<CostApproach />} />
-              <Route path="/IncomeApproach" element={<IncomeApproach />} />
-              <Route path="/FinalReconciliation" element={<FinalReconciliation />} />
-              <Route path="/PropertyTaxProtest" element={<PropertyTaxProtest />} />
-              <Route path="/uad-3.6/:accountId" element={<UadWorkspaceEntry />} />
-              <Route path="/signup" element={<SignUpForm />} />
-            </Routes>
-          </Suspense>
-        </BrowserRouter>
-      </ApplicationAuthGate>
-    </ApplicationAuthProvider>
+    <ApplicationErrorBoundary>
+      <ApplicationAuthProvider>
+        <ApplicationAuthGate>
+          <BrowserRouter>
+            <Suspense fallback={<div className="route-loading" role="status">Loading…</div>}>
+              <Routes>
+                <Route path="/" element={<PropertySearch />} />
+                <Route path="/property/:countyId/:accountId" element={<PropertyDetailsBase44 />} />
+                <Route path="/property/:accountId" element={<LegacyDetailRedirect />} />
+                <Route path="/report/:accountId" element={<PropertyReport />} />
+                <Route path="/ComparableSalesAnalysis" element={<ComparableSalesAnalysis />} />
+                <Route path="/AppraisalReport" element={<AppraisalReport />} />
+                <Route path="/CostApproach" element={<CostApproach />} />
+                <Route path="/IncomeApproach" element={<IncomeApproach />} />
+                <Route path="/FinalReconciliation" element={<FinalReconciliation />} />
+                <Route path="/PropertyTaxProtest" element={<PropertyTaxProtest />} />
+                <Route path="/uad-3.6/:accountId" element={<UadWorkspaceEntry />} />
+                <Route path="/signup" element={<SignUpForm />} />
+              </Routes>
+            </Suspense>
+          </BrowserRouter>
+        </ApplicationAuthGate>
+      </ApplicationAuthProvider>
+    </ApplicationErrorBoundary>
   </React.StrictMode>,
 );

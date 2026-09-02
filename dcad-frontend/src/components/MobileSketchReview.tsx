@@ -13,6 +13,7 @@ type Props = {
   sketch: Sketch;
   title?: string;
   subtitle?: string;
+  revisionSourceLabel?: string;
   artifactUrls?: { svg?: string; pdf?: string };
   saveDraft: (draft: Document, expectedRevision: number) => Promise<Sketch>;
   onSaved: (sketch: Sketch) => void;
@@ -84,6 +85,7 @@ export default function MobileSketchReview({
   sketch,
   title: editorTitle = "Measured sketch editor",
   subtitle = "Edit the synchronized sketch without changing the retained field source.",
+  revisionSourceLabel = "Mobile",
   artifactUrls,
   saveDraft,
   onSaved,
@@ -101,7 +103,7 @@ export default function MobileSketchReview({
     if (sketch.revision === loadedRevision) return;
     if (dirty) {
       setPendingSketch(sketch);
-      setMessage(`Mobile sketch revision ${sketch.revision} is available. Your unsaved desktop edits are preserved.`);
+      setMessage(`${revisionSourceLabel} sketch revision ${sketch.revision} is available. Your unsaved desktop edits are preserved.`);
       return;
     }
     setDraft(clone(sketch.document));
@@ -112,7 +114,7 @@ export default function MobileSketchReview({
     setLoadedSummary(sketch.summary);
     setPendingSketch(null);
     setDirty(false);
-  }, [dirty, loadedRevision, sketch]);
+  }, [dirty, loadedRevision, revisionSourceLabel, sketch]);
 
   const selectedArea = draft?.areas.find((area) => area.id === selectedAreaId);
   const selectedRooms = useMemo(
@@ -210,7 +212,7 @@ export default function MobileSketchReview({
     setLoadedSummary(pendingSketch.summary);
     setPendingSketch(null);
     setDirty(false);
-    setMessage(`Loaded mobile sketch revision ${pendingSketch.revision}.`);
+    setMessage(`Loaded ${revisionSourceLabel.toLowerCase()} sketch revision ${pendingSketch.revision}.`);
   };
 
   return (

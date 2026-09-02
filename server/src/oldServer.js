@@ -720,6 +720,9 @@ app.use(createDesktopPropertyTaxRouter({
   requireWorkflowAccess,
   requireEditor,
   authenticationRequired: applicationAuthenticationRequired,
+  ensureDocuments: ensureAssignmentDocumentsAvailable,
+  documentStorage: sharedObjectStorage,
+  documentOcrProvider,
 }));
 
 app.use(createAssignmentFileMutationRouter({

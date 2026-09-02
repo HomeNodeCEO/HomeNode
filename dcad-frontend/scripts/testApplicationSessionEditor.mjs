@@ -58,6 +58,7 @@ test("the session marker is never retained as a reusable shared secret", () => {
 
 test("JSON and binary API requests share cookie, token, and marker stripping", () => {
   const api = read("../src/lib/api.ts");
+  const propertyTaxApi = read("../src/lib/propertyTaxApi.ts");
   const auth = read("../src/features/auth/ApplicationAuth.tsx");
   const search = read("../src/pages/PropertySearch.tsx");
   assert.match(auth, /setApplicationSessionActive\(Boolean\(session\)\)/);
@@ -69,9 +70,10 @@ test("JSON and binary API requests share cookie, token, and marker stripping", (
   assert.match(search, /await api\.fetchJSON<unknown>\(url\)/);
   assert.doesNotMatch(search, /await fetch\(url\)/);
   assert.equal(
-    (api.match(/fetchWithApplicationAuthentication\(/g) || []).length,
-    5,
-    "the shared helper plus JSON, document, workfile, and PDF calls must all use authenticated fetch",
+    (api.match(/fetchWithApplicationAuthentication\(/g) || []).length
+      + (propertyTaxApi.match(/fetchWithApplicationAuthentication\(/g) || []).length,
+    6,
+    "the shared helper plus JSON, document, Property Tax evidence, workfile, and PDF calls must all use authenticated fetch",
   );
 });
 

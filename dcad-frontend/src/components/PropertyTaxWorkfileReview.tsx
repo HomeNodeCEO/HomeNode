@@ -1,22 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  getPropertyTaxProtestFile,
-  getPropertyTaxEvidenceVersion,
   updatePropertyTaxInspectionSketch,
-  updatePropertyTaxProtestFile,
   type PropertyTaxProtestFile,
 } from '@/lib/api';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import MobileSketchReview from '@/components/MobileSketchReview';
+import PropertyTaxComparableGrid from '@/components/PropertyTaxComparableGrid';
 import SketchWorkspaceEmptyState from '@/components/SketchWorkspaceEmptyState';
+import {
+  getPropertyTaxEvidenceVersion,
+  getPropertyTaxProtestFile,
+  updatePropertyTaxProtestFile,
+} from '@/lib/propertyTaxApi';
 
 type FieldSpec = {
   path: [string, string];
   label: string;
   group: string;
-  kind: 'text' | 'number' | 'select';
+  kind: 'text' | 'number' | 'date' | 'select';
   options?: string[];
   multiline?: boolean;
+};
+
+type PropertyTaxWorkfileReviewProps = {
+  accountId: string;
+  fileId?: string | null;
+  onFileChange?: (file: PropertyTaxProtestFile | null) => void;
 };
 
 const CONDITION_OPTIONS = ['C1', 'C2-C1', 'C2', 'C3-C2', 'C3', 'C4-C3', 'C4', 'C5-C4', 'C5', 'C6-C5', 'C6'];
@@ -24,12 +33,59 @@ const QUALITY_OPTIONS = ['Q1', 'Q2-Q1', 'Q2', 'Q3-Q2', 'Q3', 'Q4-Q3', 'Q4', 'Q5-
 const EVIDENCE_REFRESH_MS = 5_000;
 const EVIDENCE_RETRY_DELAY_MS = 30_000;
 
+const OPTION_LABELS: Record<string, string> = {
+  'tx-dallas-cad': 'Dallas Central Appraisal District (DCAD)',
+  single_family_residential: 'Single-family residential',
+  market_value: 'Market value',
+  unequal_appraisal: 'Unequal appraisal',
+  not_started: 'Not started',
+  prepared: 'Prepared',
+  filed: 'Filed',
+  scheduled: 'Scheduled',
+  settled: 'Settled',
+  complete: 'Complete',
+  sent: 'Sent',
+  received: 'Received',
+  ufile: 'DCAD uFile',
+  mail: 'Mail',
+  dropbox: 'DCAD drop box',
+  in_person: 'In person',
+  portal: 'District portal',
+  other_documented: 'Other documented delivery',
+  yes: 'Yes',
+  no: 'No',
+};
+
 const FIELDS: FieldSpec[] = [
+  { path: ['protest_case', 'district_code'], label: 'Appraisal district', group: 'Protest case & deadlines', kind: 'select', options: ['tx-dallas-cad'] },
+  { path: ['protest_case', 'property_use'], label: 'MVP property use', group: 'Protest case & deadlines', kind: 'select', options: ['single_family_residential'] },
+  { path: ['protest_case', 'notice_date'], label: 'Notice date', group: 'Protest case & deadlines', kind: 'date' },
+  { path: ['protest_case', 'protest_deadline'], label: 'Deadline printed on notice', group: 'Protest case & deadlines', kind: 'date' },
+  { path: ['protest_case', 'market_value_ground'], label: 'Market-value ground', group: 'Protest case & deadlines', kind: 'select', options: ['yes', 'no'] },
+  { path: ['protest_case', 'unequal_appraisal_ground'], label: 'Unequal-appraisal ground', group: 'Protest case & deadlines', kind: 'select', options: ['yes', 'no'] },
+  { path: ['protest_case', 'protest_status'], label: 'Protest status', group: 'Protest case & deadlines', kind: 'select', options: ['not_started', 'prepared', 'filed', 'scheduled', 'settled', 'complete'] },
+  { path: ['protest_case', 'filing_method'], label: 'Filing method', group: 'Protest case & deadlines', kind: 'select', options: ['ufile', 'mail', 'dropbox', 'in_person'] },
+  { path: ['protest_case', 'protest_filed_at'], label: 'Protest filed date', group: 'Protest case & deadlines', kind: 'date' },
+  { path: ['protest_case', 'filing_receipt_reference'], label: 'Filing receipt reference', group: 'Protest case & deadlines', kind: 'text' },
+  { path: ['protest_case', 'hearing_date'], label: 'ARB hearing date', group: 'Protest case & deadlines', kind: 'date' },
+  { path: ['protest_case', 'evidence_request_status'], label: '§41.461 evidence request', group: 'Protest case & deadlines', kind: 'select', options: ['not_started', 'prepared', 'sent', 'received'] },
+  { path: ['protest_case', 'evidence_request_sent_at'], label: 'Evidence request sent date', group: 'Protest case & deadlines', kind: 'date' },
+  { path: ['protest_case', 'evidence_request_method'], label: 'Evidence request delivery method', group: 'Protest case & deadlines', kind: 'select', options: ['mail', 'portal', 'in_person', 'other_documented'] },
+  { path: ['protest_case', 'evidence_request_proof_reference'], label: 'Evidence request proof reference', group: 'Protest case & deadlines', kind: 'text' },
+  { path: ['protest_case', 'district_evidence_received_at'], label: 'District evidence received date', group: 'Protest case & deadlines', kind: 'date' },
   { path: ['subject', 'condition_rating'], label: 'Overall condition rating', group: 'Subject', kind: 'select', options: CONDITION_OPTIONS },
   { path: ['subject', 'quality_rating'], label: 'Quality rating', group: 'Subject', kind: 'select', options: QUALITY_OPTIONS },
+  { path: ['subject', 'district_neighborhood_code'], label: 'DCAD neighborhood code', group: 'Subject', kind: 'text' },
+  { path: ['subject', 'district_building_class'], label: 'DCAD building class', group: 'Subject', kind: 'text' },
+  { path: ['subject', 'historic_district_name'], label: 'Historic district, if applicable', group: 'Subject', kind: 'text' },
   { path: ['subject', 'living_area_sqft'], label: 'Living area (sq ft)', group: 'Subject', kind: 'number' },
+  { path: ['subject', 'site_size_sqft'], label: 'Site size (sq ft)', group: 'Subject', kind: 'number' },
+  { path: ['subject', 'age_years'], label: 'Actual age (years)', group: 'Subject', kind: 'number' },
   { path: ['subject', 'bedroom_count'], label: 'Bedrooms', group: 'Subject', kind: 'number' },
   { path: ['subject', 'bath_count'], label: 'Total baths', group: 'Subject', kind: 'number' },
+  { path: ['subject', 'garage_spaces'], label: 'Garage spaces', group: 'Subject', kind: 'number' },
+  { path: ['subject', 'pool'], label: 'Pool', group: 'Subject', kind: 'select', options: ['yes', 'no'] },
+  { path: ['subject', 'solar_panels'], label: 'Solar panels', group: 'Subject', kind: 'select', options: ['yes', 'no'] },
   { path: ['subject', 'condition_notes'], label: 'Condition notes', group: 'Subject', kind: 'text', multiline: true },
   { path: ['condition', 'defects_deferred_maintenance'], label: 'Defects / deferred maintenance', group: 'Condition & repairs', kind: 'text', multiline: true },
   { path: ['condition', 'repair_cost_to_cure'], label: 'Repair cost to cure', group: 'Condition & repairs', kind: 'number' },
@@ -88,7 +144,11 @@ function formatDate(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accountId: string; fileId?: string | null }) {
+export default function PropertyTaxWorkfileReview({
+  accountId,
+  fileId,
+  onFileChange,
+}: PropertyTaxWorkfileReviewProps) {
   const [file, setFile] = useState<PropertyTaxProtestFile | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
@@ -103,6 +163,13 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
 
   const groups = useMemo(() => Array.from(new Set(FIELDS.map((field) => field.group))), []);
 
+  const acceptSavedFile = useCallback((current: PropertyTaxProtestFile) => {
+    evidenceVersionRef.current = current.evidence_version || evidenceVersionRef.current;
+    setFile(current);
+    setValues(buildValues(current));
+    onFileChange?.(current);
+  }, [onFileChange]);
+
   const load = async () => {
     if (!accountId) return;
     setLoading(true);
@@ -112,6 +179,7 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
       evidenceVersionRef.current = result?.evidence_version || null;
       setFile(result);
       setValues(result ? buildValues(result) : {});
+      onFileChange?.(result);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : 'The canonical protest file could not be loaded.');
     } finally {
@@ -210,8 +278,7 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
       );
       const refreshed = await getPropertyTaxProtestFile(accountId, saved.tax_protest_file_id);
       const current = refreshed || saved;
-      setFile(current);
-      setValues(buildValues(current));
+      acceptSavedFile(current);
       setNotice(`Saved revision ${current.revision}. Earlier revisions remain in the audit history.`);
     } catch (saveError: unknown) {
       const message = saveError instanceof Error ? saveError.message : 'The canonical protest file could not be saved.';
@@ -232,10 +299,10 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
     <section className="mt-4 rounded-2xl border border-blue-200 bg-blue-50/60 p-4 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Canonical mobile workfile</div>
-          <h2 className="mt-1 text-xl font-semibold">Accepted field evidence review</h2>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-700">Canonical Property Tax file</div>
+          <h2 className="mt-1 text-xl font-semibold">Desktop Property Tax workspace</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-700">
-            Only mobile changes explicitly accepted during review appear here. Saving creates a new revision and preserves the prior file history.
+            Review and save the subject, protest case, valuation, comparable sales, and evidence for this desktop Property Tax file. Every save creates a new revision and preserves the prior history.
           </p>
         </div>
         <button
@@ -253,7 +320,7 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
 
       {!loading && !file && !error && (
         <div className="mt-4 rounded-xl border border-dashed border-blue-300 bg-white p-4 text-sm text-slate-700">
-          No Property Tax Protest file exists for this property yet. Creating one from the mobile assignment picker will add it here without overwriting earlier appraisal files.
+          No Property Tax Protest file exists for this property yet. Create one from the report file chooser; it will remain separate from Custom Appraisal and UAD files.
         </div>
       )}
 
@@ -267,6 +334,12 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
             <Metric label="Sketch" value={file.sketch ? `Revision ${file.sketch.revision} · ${file.sketch.review_status}` : 'Not started'} />
           </div>
           <p className="mt-2 text-xs text-slate-500">Last updated {formatDate(file.updated_at)}</p>
+
+          <PropertyTaxComparableGrid
+            accountId={accountId}
+            file={file}
+            onFileSaved={acceptSavedFile}
+          />
 
           <div className="mt-5 space-y-4">
             {groups.map((group) => (
@@ -282,12 +355,12 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
                         {field.kind === 'select' ? (
                           <select className={controlClass} value={values[key] || ''} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))}>
                             <option value="">Not entered</option>
-                            {field.options?.map((option) => <option key={option} value={option}>{option}</option>)}
+                            {field.options?.map((option) => <option key={option} value={option}>{OPTION_LABELS[option] || option}</option>)}
                           </select>
                         ) : field.multiline ? (
                           <textarea className={controlClass} rows={4} value={values[key] || ''} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))} />
                         ) : (
-                          <input className={controlClass} type={field.kind === 'number' ? 'number' : 'text'} step="any" value={values[key] || ''} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))} />
+                          <input className={controlClass} type={field.kind === 'number' ? 'number' : field.kind === 'date' ? 'date' : 'text'} step={field.kind === 'number' ? 'any' : undefined} value={values[key] || ''} onChange={(event) => setValues((current) => ({ ...current, [key]: event.target.value }))} />
                         )}
                       </label>
                     );
@@ -299,7 +372,7 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
 
           {file.photos?.items?.length > 0 && (
             <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-              <h3 className="text-sm font-semibold text-slate-800">Verified mobile photo index</h3>
+              <h3 className="text-sm font-semibold text-slate-800">Property photo evidence</h3>
               <ul className="mt-2 grid gap-2 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-3">
                 {file.photos.items.map((photo) => (
                   <li key={photo.id} className="rounded-md bg-slate-50 px-3 py-2">
@@ -315,7 +388,8 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
             <MobileSketchReview
               sketch={file.sketch}
               title="Property Tax Protest measured sketch editor"
-              subtitle="Changes create a new audited inspection-sketch revision for this protest file only."
+              subtitle="Changes create a new audited sketch revision for this desktop Property Tax file only."
+              revisionSourceLabel="Property Tax"
               saveDraft={(draft) => updatePropertyTaxInspectionSketch(
                 accountId,
                 file.tax_protest_file_id,
@@ -327,9 +401,11 @@ export default function PropertyTaxWorkfileReview({ accountId, fileId }: { accou
           ) : (
             <SketchWorkspaceEmptyState
               title="Property Tax Protest measured sketch"
-              subtitle={`No measured sketch is synchronized to ${file.file_number} yet. Verified photos and committed sketches share one lightweight live evidence check while the page is visible.`}
+              subtitle={`No measured sketch is attached to ${file.file_number} yet. Photos and sketches will remain evidence scoped to this Property Tax file.`}
               onRefresh={refreshSketchEvidence}
               refreshing={sketchRefreshing}
+              refreshLabel="Check for attached sketch"
+              refreshingLabel="Checking for attached sketch…"
             />
           )}
 

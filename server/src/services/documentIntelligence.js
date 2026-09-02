@@ -6,6 +6,7 @@ export const DOCUMENT_TYPES = Object.freeze([
   "purchase_contract",
   "engagement_letter",
   "mls_sheet",
+  "district_evidence",
   "map",
   "other",
 ]);
@@ -709,6 +710,121 @@ function buildEngagementLetterCandidates(entries) {
   return candidates;
 }
 
+function districtComparableNumber(value) {
+  const match = String(value || "").match(/-?[0-9][0-9,]*(?:\.\d+)?/);
+  if (!match) return null;
+  const number = Number(match[0].replace(/,/g, ""));
+  return Number.isFinite(number) ? number : null;
+}
+
+function districtComparableBoolean(value) {
+  const normalized = cleanText(value, 100).toLowerCase();
+  if (["yes", "y", "true", "present", "pool"].includes(normalized)) return true;
+  if (["no", "n", "false", "none", "absent", "no pool"].includes(normalized)) return false;
+  return null;
+}
+
+function districtBlockValue(entries, patterns) {
+  for (const entry of entries) {
+    for (const pattern of patterns) {
+      const match = entry.line.match(pattern);
+      if (match?.[1]) return cleanText(match[1], 2_000);
+    }
+  }
+  return "";
+}
+
+/**
+ * Extract labeled comparable-sale blocks from appraisal-district evidence.
+ * District exports vary, so candidates remain page-cited review suggestions;
+ * the protest grid never treats them as verified until a reviewer confirms
+ * the row there.
+ */
+export function buildDistrictComparableCandidates(pages) {
+  const entries = pageLines(pages);
+  const headers = entries
+    .map((entry, index) => ({
+      ...entry,
+      index,
+      match: entry.line.match(/^(?:district\s+)?(?:comparable|comp)(?:arable)?(?:\s+sale)?\s*(?:#|no\.?\s*)?(\d+)\b\s*(?:[-:\u2013\u2014]\s*)?(.*)$/i),
+    }))
+    .filter((entry) => entry.match);
+
+  return headers.flatMap((header, headerIndex) => {
+    const nextHeaderIndex = headers[headerIndex + 1]?.index ?? entries.length;
+    const block = entries.slice(header.index, nextHeaderIndex);
+    const headerRemainder = cleanText(header.match?.[2], 500);
+    const labeledAddress = districtBlockValue(block, [
+      /^(?:property\s+)?address\s*[:#-]\s*(.+)$/i,
+      /^(?:situs|location)\s*[:#-]\s*(.+)$/i,
+    ]);
+    const address = labeledAddress || (/^\d{1,8}\s+\S+/.test(headerRemainder) ? headerRemainder : "");
+    const saleDateRaw = districtBlockValue(block, [
+      /^(?:sale|closing|transfer)\s+date\s*[:#-]\s*(.+)$/i,
+      /^date\s+of\s+sale\s*[:#-]\s*(.+)$/i,
+    ]);
+    const salePriceRaw = districtBlockValue(block, [
+      /^(?:verified\s+)?sale\s+price\s*[:#-]\s*(.+)$/i,
+      /^(?:consideration|price)\s*[:#-]\s*(.+)$/i,
+    ]);
+    const adjustedValueRaw = districtBlockValue(block, [
+      /^(?:district\s+)?adjusted\s+(?:sale\s+)?(?:price|value)\s*[:#-]\s*(.+)$/i,
+      /^indicated\s+value\s*[:#-]\s*(.+)$/i,
+    ]);
+    const saleDate = normalizedDate(saleDateRaw);
+    const salePrice = districtComparableNumber(salePriceRaw);
+    const adjustedValue = districtComparableNumber(adjustedValueRaw);
+    if (!address || (!salePrice && !adjustedValue)) return [];
+
+    const comparable = {
+      district_comparable_number: Number(header.match?.[1]),
+      address,
+      sale_date: saleDate,
+      sale_price: salePrice,
+      adjusted_value: adjustedValue,
+      account_id: districtBlockValue(block, [
+        /^(?:account|parcel)(?:\s+(?:number|no\.?|id))?\s*[:#-]\s*(.+)$/i,
+      ]) || null,
+      neighborhood_code: districtBlockValue(block, [
+        /^(?:neighborhood|nbhd)(?:\s+code)?\s*[:#-]\s*(.+)$/i,
+      ]) || null,
+      building_class: districtBlockValue(block, [
+        /^(?:building\s+)?class\s*[:#-]\s*(.+)$/i,
+      ]) || null,
+      living_area_sqft: districtComparableNumber(districtBlockValue(block, [
+        /^(?:living\s+area|gla|square\s+feet|sq\.?\s*ft\.?)\s*[:#-]\s*(.+)$/i,
+      ])),
+      site_size_sqft: districtComparableNumber(districtBlockValue(block, [
+        /^(?:site|lot)(?:\s+size|\s+area)?\s*[:#-]\s*(.+)$/i,
+      ])),
+      year_built: districtComparableNumber(districtBlockValue(block, [
+        /^(?:year\s+built|built)\s*[:#-]\s*(.+)$/i,
+      ])),
+      bedroom_count: districtComparableNumber(districtBlockValue(block, [
+        /^(?:bedrooms?|beds?)\s*[:#-]\s*(.+)$/i,
+      ])),
+      bath_count: districtComparableNumber(districtBlockValue(block, [
+        /^(?:bathrooms?|baths?)\s*[:#-]\s*(.+)$/i,
+      ])),
+      garage_spaces: districtComparableNumber(districtBlockValue(block, [
+        /^(?:garage|carport)(?:\s+spaces?)?\s*[:#-]\s*(.+)$/i,
+      ])),
+      pool: districtComparableBoolean(districtBlockValue(block, [
+        /^pool\s*[:#-]\s*(.+)$/i,
+      ])),
+    };
+    return [{
+      field_key: "district_comparable",
+      raw_value: block.map((entry) => entry.line).join("\n").slice(0, 4_000),
+      normalized_value: JSON.stringify(comparable),
+      page_number: header.pageNumber,
+      confidence: saleDate && salePrice ? 0.86 : 0.72,
+      evidence_excerpt: block.map((entry) => entry.line).join(" · ").slice(0, 2_000),
+      extraction_method: "district_comparable_labeled_block",
+    }];
+  });
+}
+
 export function normalizeDocumentType(value) {
   const normalized = String(value || "other").trim().toLowerCase();
   if (!DOCUMENT_TYPE_SET.has(normalized)) throw new Error("invalid_document_type");
@@ -724,6 +840,9 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   }
   if (/engagement\s+letter|appraisal\s+assignment|scope\s+of\s+work/.test(sample)) {
     return "engagement_letter";
+  }
+  if (/appraisal\s+district\s+evidence|arb\s+evidence|district\s+comparable\s+sales?/.test(sample)) {
+    return "district_evidence";
   }
   const explicitMlsIdentity = /multiple\s+listing\s+service|\bmls\s*(?:#|number\b|no\.?)/.test(sample);
   const mlsSignals = [
@@ -770,13 +889,18 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
 
 export function buildDocumentFieldCandidates({ documentType, pages }) {
   const entries = pageLines(pages);
+  const districtCandidates = documentType === "district_evidence"
+    ? buildDistrictComparableCandidates(pages)
+    : [];
   const specializedCandidates = documentType === "engagement_letter"
     ? buildEngagementLetterCandidates(entries)
-    : documentType === "purchase_contract"
-      ? buildPurchaseContractCandidates(pages)
-    : documentType === "mls_sheet"
-      ? buildMlsSheetCandidates(entries)
-      : [];
+    : documentType === "district_evidence"
+      ? districtCandidates
+      : documentType === "purchase_contract"
+        ? buildPurchaseContractCandidates(pages)
+        : documentType === "mls_sheet"
+          ? buildMlsSheetCandidates(entries)
+          : [];
   const specializedFields = new Set(specializedCandidates.map((candidate) => candidate.field_key));
   const definitions = [
     {
@@ -879,6 +1003,7 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
       "listing_status", "mls_number", "list_price", "list_date", "listing_end_date",
       "days_on_market", "original_list_price", "financing_type", "seller_concessions",
     ]),
+    district_evidence: new Set(["district_comparable"]),
   }[documentType] || null;
   const candidates = definitions
     .filter((definition) => (

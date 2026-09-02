@@ -24,11 +24,16 @@ mobile lifecycle and organization/appraiser boundary.
 
 ## File identity and version safety
 
-Each organization, workflow, and calendar year has an atomic sequence:
+Each organization and assignment date has one atomic sequence shared across the
+three workflow types. The workflow prefix makes the product immediately clear:
 
-- `HN-CA-2026-000001`
-- `HN-UAD-2026-000001`
-- `HN-PTP-2026-000001`
+- `CA-2026-245-01` for Custom Appraisal
+- `3.6-2026-245-02` for UAD 3.6
+- `PT-2026-245-03` for Property Tax Protest
+
+The numeric body remains the organization-wide `year-day-of-year-daily sequence`
+allocation. The product prefix classifies the canonical workflow without
+renumbering existing files.
 
 Creating a later report for the same property creates a new canonical file and
 links `previous_report_file_id`. The prior row remains available and becomes

@@ -6,8 +6,8 @@ export const MOBILE_WORKFLOW_TYPES = Object.freeze([
 
 const WORKFLOW_PREFIXES = Object.freeze({
   custom_appraisal: "CA",
-  uad_3_6: "UAD",
-  property_tax_protest: "PTP",
+  uad_3_6: "3.6",
+  property_tax_protest: "PT",
 });
 
 export function normalizeWorkflowType(value) {
@@ -24,14 +24,18 @@ export function normalizeCalendarYear(value = new Date().getUTCFullYear()) {
   return calendarYear;
 }
 
+export function reportFilePrefix(workflowType) {
+  return WORKFLOW_PREFIXES[normalizeWorkflowType(workflowType)];
+}
+
 export function formatReportFileNumber({ workflowType, calendarYear, sequenceNumber }) {
-  const workflow = normalizeWorkflowType(workflowType);
+  const prefix = reportFilePrefix(workflowType);
   const year = normalizeCalendarYear(calendarYear);
   const sequence = Number(sequenceNumber);
   if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 999_999_999) {
     throw new Error("invalid_sequence_number");
   }
-  return `HN-${WORKFLOW_PREFIXES[workflow]}-${year}-${String(sequence).padStart(6, "0")}`;
+  return `${prefix}-${year}-${String(sequence).padStart(6, "0")}`;
 }
 
 export function normalizeAssignmentDate(value = new Date(), { timeZone = "America/Chicago" } = {}) {
@@ -55,7 +59,8 @@ export function normalizeAssignmentDate(value = new Date(), { timeZone = "Americ
   return date;
 }
 
-export function formatDailyAssignmentFileNumber({ assignmentDate, sequenceNumber }) {
+export function formatDailyAssignmentFileNumber({ workflowType, assignmentDate, sequenceNumber }) {
+  const prefix = reportFilePrefix(workflowType);
   const date = normalizeAssignmentDate(assignmentDate);
   const sequence = Number(sequenceNumber);
   if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > 999_999_999) {
@@ -65,7 +70,7 @@ export function formatDailyAssignmentFileNumber({ assignmentDate, sequenceNumber
   const start = Date.UTC(year, 0, 1);
   const current = Date.parse(`${date}T00:00:00.000Z`);
   const dayOfYear = Math.floor((current - start) / 86_400_000) + 1;
-  return `${year}-${String(dayOfYear).padStart(3, "0")}-${String(sequence).padStart(2, "0")}`;
+  return `${prefix}-${year}-${String(dayOfYear).padStart(3, "0")}-${String(sequence).padStart(2, "0")}`;
 }
 
 export async function allocateReportFileNumber(client, {
@@ -93,6 +98,7 @@ export async function allocateReportFileNumber(client, {
     assignmentDate: date,
     sequenceNumber,
     fileNumber: formatDailyAssignmentFileNumber({
+      workflowType: workflow,
       assignmentDate: date,
       sequenceNumber,
     }),

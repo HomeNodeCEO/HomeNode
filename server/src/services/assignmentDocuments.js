@@ -101,6 +101,7 @@ export function buildAssignmentDocumentObjectKey({
   accountId,
   assignmentFileId = null,
   uadWorkfileId = null,
+  taxProtestFileId = null,
   checksumSha256,
   fileName,
 } = {}) {
@@ -114,6 +115,10 @@ export function buildAssignmentDocumentObjectKey({
   if (uadWorkfileId) {
     return `organizations/${organization}/uad-3.6/accounts/${account}`
       + `/workfiles/${sanitizeUadFileName(uadWorkfileId)}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
+  }
+  if (taxProtestFileId) {
+    return `organizations/${organization}/property-tax/accounts/${account}`
+      + `/protest-files/${sanitizeUadFileName(taxProtestFileId)}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
   }
   return `organizations/${organization}/custom-appraisal/accounts/${account}`
     + `/assignment-files/${assignment}/documents/${checksum}/${sanitizeUadFileName(fileName || "document.pdf")}`;
@@ -341,6 +346,7 @@ function publicDocument(row, candidates = undefined) {
     account_id: row.account_id,
     assignment_file_id: row.assignment_file_id == null ? null : Number(row.assignment_file_id),
     uad_workfile_id: row.uad_workfile_id || null,
+    tax_protest_file_id: row.tax_protest_file_id || null,
     report_file_id: row.report_file_id || null,
     document_type: row.document_type,
     title: row.title,
@@ -382,7 +388,7 @@ export async function ensureAssignmentDocumentsSchema(pool) {
       document_type text NOT NULL DEFAULT 'other'
         CHECK (document_type IN (
           'zoning_map', 'zoning_ordinance', 'purchase_contract',
-          'engagement_letter', 'mls_sheet', 'map', 'other'
+          'engagement_letter', 'mls_sheet', 'district_evidence', 'map', 'other'
         )),
       title text NOT NULL,
       file_name text NOT NULL,
@@ -430,6 +436,8 @@ export async function ensureAssignmentDocumentsSchema(pool) {
       ADD COLUMN IF NOT EXISTS uad_workfile_id uuid;
     ALTER TABLE app.assignment_documents
       ADD COLUMN IF NOT EXISTS report_file_id uuid;
+    ALTER TABLE app.assignment_documents
+      ADD COLUMN IF NOT EXISTS tax_protest_file_id uuid;
     ALTER TABLE app.assignment_documents ALTER COLUMN content DROP NOT NULL;
     ALTER TABLE app.assignment_documents
       ADD COLUMN IF NOT EXISTS storage_provider text NOT NULL DEFAULT 'postgres';
@@ -443,6 +451,36 @@ export async function ensureAssignmentDocumentsSchema(pool) {
     ALTER TABLE app.assignment_documents ADD COLUMN IF NOT EXISTS storage_last_error text;
     DO $$
     BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'assignment_documents_document_type_check'
+          AND conrelid = 'app.assignment_documents'::regclass
+          AND pg_get_constraintdef(oid) LIKE '%district_evidence%'
+      ) THEN
+        ALTER TABLE app.assignment_documents
+          DROP CONSTRAINT IF EXISTS assignment_documents_document_type_check;
+        ALTER TABLE app.assignment_documents
+          ADD CONSTRAINT assignment_documents_document_type_check
+          CHECK (document_type IN (
+            'zoning_map', 'zoning_ordinance', 'purchase_contract',
+            'engagement_letter', 'mls_sheet', 'district_evidence', 'map', 'other'
+          ));
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'assignment_documents_tax_protest_file_fk'
+          AND conrelid = 'app.assignment_documents'::regclass
+      ) THEN
+        ALTER TABLE app.assignment_documents
+          ADD CONSTRAINT assignment_documents_tax_protest_file_fk
+          FOREIGN KEY (tax_protest_file_id)
+          REFERENCES app.tax_protest_files(id) ON DELETE RESTRICT;
+      END IF;
+      ALTER TABLE app.assignment_documents
+        DROP CONSTRAINT IF EXISTS assignment_documents_single_workflow_check;
+      ALTER TABLE app.assignment_documents
+        ADD CONSTRAINT assignment_documents_single_workflow_check
+        CHECK (num_nonnulls(assignment_file_id, uad_workfile_id, tax_protest_file_id) <= 1);
       IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
         WHERE conname = 'assignment_documents_storage_provider_check'
@@ -481,11 +519,13 @@ export async function ensureAssignmentDocumentsSchema(pool) {
     END
     $$;
     DROP INDEX IF EXISTS app.assignment_documents_scope_checksum_uidx;
-    CREATE UNIQUE INDEX IF NOT EXISTS assignment_documents_workflow_checksum_uidx
+    DROP INDEX IF EXISTS app.assignment_documents_workflow_checksum_uidx;
+    CREATE UNIQUE INDEX IF NOT EXISTS assignment_documents_v2_workflow_checksum_uidx
       ON app.assignment_documents (
         account_id,
         COALESCE(assignment_file_id, 0),
         COALESCE(uad_workfile_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        COALESCE(tax_protest_file_id, '00000000-0000-0000-0000-000000000000'::uuid),
         checksum_sha256
       );
     CREATE INDEX IF NOT EXISTS assignment_documents_account_idx
@@ -493,6 +533,9 @@ export async function ensureAssignmentDocumentsSchema(pool) {
     CREATE INDEX IF NOT EXISTS assignment_documents_uad_workfile_idx
       ON app.assignment_documents (uad_workfile_id, uploaded_at DESC)
       WHERE uad_workfile_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS assignment_documents_tax_protest_file_idx
+      ON app.assignment_documents (tax_protest_file_id, uploaded_at DESC)
+      WHERE tax_protest_file_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS assignment_documents_processing_idx
       ON app.assignment_documents (processing_status, uploaded_at)
       WHERE processing_status IN ('uploaded', 'processing', 'extraction_failed');
@@ -557,6 +600,7 @@ export async function createAssignmentDocument(pool, {
   accountId,
   assignmentFileId = null,
   uadWorkfileId = null,
+  taxProtestFileId = null,
   reportFileId = null,
   documentType = "other",
   title,
@@ -596,6 +640,7 @@ export async function createAssignmentDocument(pool, {
         accountId,
         assignmentFileId,
         uadWorkfileId,
+        taxProtestFileId,
         checksumSha256: checksum,
         fileName: safeFileName,
       });
@@ -624,19 +669,20 @@ export async function createAssignmentDocument(pool, {
   }
   const { rows } = await pool.query(
     `INSERT INTO app.assignment_documents (
-       account_id, assignment_file_id, uad_workfile_id, report_file_id,
+       account_id, assignment_file_id, uad_workfile_id, tax_protest_file_id, report_file_id,
        document_type, title, file_name,
        content_type, content, checksum_sha256, file_size_bytes, uploaded_by,
        storage_provider, storage_status, storage_bucket, object_key,
        storage_etag, storage_content_type, storage_verified_at, storage_last_error
      ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7, 'application/pdf', $8, $9, $10, $11,
-       $12, $13, $14, $15, $16, $17, $18, $19
+       $1, $2, $3, $4, $5, $6, $7, $8, 'application/pdf', $9, $10, $11, $12,
+       $13, $14, $15, $16, $17, $18, $19, $20
      )
      ON CONFLICT (
        account_id,
        (COALESCE(assignment_file_id, 0)),
        (COALESCE(uad_workfile_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+       (COALESCE(tax_protest_file_id, '00000000-0000-0000-0000-000000000000'::uuid)),
        checksum_sha256
      ) DO UPDATE SET
        title = EXCLUDED.title,
@@ -679,6 +725,7 @@ export async function createAssignmentDocument(pool, {
       accountId,
       positiveInteger(assignmentFileId),
       uadWorkfileId || null,
+      taxProtestFileId || null,
       reportFileId || null,
       normalizedType,
       safeTitle,
@@ -749,9 +796,10 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
     const id = Number(candidate.id);
     try {
       const current = await pool.query(
-        `SELECT document.*, assignment.organization_id
+        `SELECT document.*, COALESCE(assignment.organization_id, report_file.organization_id) AS organization_id
            FROM app.assignment_documents document
            LEFT JOIN app.assignment_files assignment ON assignment.id = document.assignment_file_id
+           LEFT JOIN app.report_files report_file ON report_file.id = document.report_file_id
           WHERE document.id = $1
             AND document.storage_provider = 'postgres' AND document.content IS NOT NULL`,
         [id],
@@ -762,6 +810,8 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
         organizationId: document.organization_id,
         accountId: document.account_id,
         assignmentFileId: document.assignment_file_id,
+        uadWorkfileId: document.uad_workfile_id,
+        taxProtestFileId: document.tax_protest_file_id,
         checksumSha256: document.checksum_sha256,
         fileName: document.file_name,
       });
@@ -774,6 +824,7 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
       const verified = verifiedR2Object(inspected, {
         content: document.content,
         checksumSha256: document.checksum_sha256,
+        byteLength: Buffer.byteLength(document.content),
       });
       const { rowCount } = await pool.query(
         `UPDATE app.assignment_documents
@@ -1090,9 +1141,33 @@ export async function listAssignmentDocuments(pool, {
   accountId,
   assignmentFileId = null,
   uadWorkfileId = null,
+  taxProtestFileId = null,
+  reportFileId = null,
   includePropertyEvidence = true,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
+  if (taxProtestFileId) {
+    const { rows } = await pool.query(
+      `SELECT document.*,
+              COUNT(candidate.id)::integer AS candidate_count,
+              COUNT(candidate.id) FILTER (WHERE candidate.review_status = 'suggested')::integer
+                AS suggested_candidate_count
+       FROM app.assignment_documents document
+       LEFT JOIN app.assignment_document_field_candidates candidate
+         ON candidate.document_id = document.id
+       WHERE document.account_id = $1
+         AND document.tax_protest_file_id = $2
+         AND ($3::uuid IS NULL OR document.report_file_id = $3)
+       GROUP BY document.id
+       ORDER BY document.uploaded_at DESC`,
+      [accountId, taxProtestFileId, reportFileId],
+    );
+    return rows.map((row) => ({
+      ...publicDocument(row),
+      candidate_count: Number(row.candidate_count || 0),
+      suggested_candidate_count: Number(row.suggested_candidate_count || 0),
+    }));
+  }
   if (uadWorkfileId) {
     const { rows } = await pool.query(
       `SELECT document.*,
@@ -1123,6 +1198,8 @@ export async function listAssignmentDocuments(pool, {
      LEFT JOIN app.assignment_document_field_candidates candidate
        ON candidate.document_id = document.id
      WHERE document.account_id = $1
+       AND document.uad_workfile_id IS NULL
+       AND document.tax_protest_file_id IS NULL
        AND (
          ($2::bigint IS NULL AND $3::boolean = true AND document.assignment_file_id IS NULL)
          OR (

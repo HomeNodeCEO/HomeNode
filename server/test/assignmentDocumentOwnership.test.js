@@ -7,6 +7,7 @@ function database({
   ambiguousAssignment = false,
   mismatchedDocument = false,
   uadScopedDocument = false,
+  propertyTaxScopedDocument = false,
 } = {}) {
   const statements = [];
   const client = {
@@ -32,6 +33,9 @@ function database({
           assignment_file_id: null,
           uad_workfile_id: uadScopedDocument && id === 9
             ? "4cc0c873-5f66-45c2-99eb-b3b23a870a98"
+            : null,
+          tax_protest_file_id: propertyTaxScopedDocument && id === 9
+            ? "0bf8f944-2843-421f-859e-01a9cb92f3fc"
             : null,
         }));
         return { rows, rowCount: rows.length };
@@ -96,6 +100,13 @@ test("reconciliation rejects ambiguous assignments and cross-account documents",
   );
   await assert.rejects(
     () => reconcileLegacyAssignmentDocuments(database({ uadScopedDocument: true }).pool, request),
+    (error) => error?.code === "assignment_document_already_scoped",
+  );
+  await assert.rejects(
+    () => reconcileLegacyAssignmentDocuments(
+      database({ propertyTaxScopedDocument: true }).pool,
+      request,
+    ),
     (error) => error?.code === "assignment_document_already_scoped",
   );
 });

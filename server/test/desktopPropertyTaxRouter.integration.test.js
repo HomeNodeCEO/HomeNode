@@ -22,6 +22,7 @@ function baseOptions(overrides = {}) {
     requireWorkflowAccess: () => true,
     requireEditor: () => true,
     authenticationRequired: false,
+    ensureDocuments: async () => {},
     resolveAccountId: async (_pool, value) => value.toUpperCase(),
     hasPermission: () => { throw new Error("unexpected_permission_check"); },
     decideAccess: () => { throw new Error("unexpected_access_check"); },
@@ -71,6 +72,23 @@ function patchSketch(baseUrl, accountId, fileId, body = {}) {
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+function listDocuments(baseUrl, accountId, fileId) {
+  return fetch(`${baseUrl}/api/accounts/${accountId}/property-tax-protest/${fileId}/documents`);
+}
+
+function uploadDocument(baseUrl, accountId, fileId, body = Buffer.from("%PDF-test")) {
+  return fetch(`${baseUrl}/api/accounts/${accountId}/property-tax-protest/${fileId}/documents`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/pdf",
+      "x-document-type": "district_evidence",
+      "x-document-title": encodeURIComponent("District evidence.pdf"),
+      "x-document-file-name": encodeURIComponent("district evidence.pdf"),
+    },
+    body,
   });
 }
 
@@ -429,6 +447,174 @@ test("Property Tax read failures remain validation-aware and diagnostic-safe", a
   assert.equal(errors.length, 2);
 });
 
+test("Property Tax document lists use the authenticated canonical file scope", async (context) => {
+  const calls = [];
+  const file = {
+    tax_protest_file_id: "tax-file-1",
+    report_file_id: "report-file-1",
+    organization_id: "org-allowed",
+    assigned_appraiser_user_id: "user-1",
+  };
+  const documents = [{ id: 41, tax_protest_file_id: "tax-file-1" }];
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    hasPermission: (_auth, _workflow, _permission, organizationId) => (
+      organizationId === "org-allowed"
+    ),
+    getFile: async (_pool, accountId, fileId, settings) => {
+      calls.push({ type: "file", accountId, fileId, settings });
+      return file;
+    },
+    decideAccess: (_auth, receivedFile, permission) => {
+      calls.push({ type: "access", receivedFile, permission });
+      return true;
+    },
+    listDocuments: async (_pool, options) => {
+      calls.push({ type: "list", options });
+      return documents;
+    },
+  }), identity);
+  context.after(server.close);
+
+  const response = await listDocuments(server.baseUrl, "legacy_1", "tax-file-1");
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    account_id: "LEGACY_1",
+    documents,
+  });
+  assert.deepEqual(calls, [
+    {
+      type: "file",
+      accountId: "LEGACY_1",
+      fileId: "tax-file-1",
+      settings: { organizationIds: ["org-allowed"] },
+    },
+    { type: "access", receivedFile: file, permission: "read" },
+    {
+      type: "list",
+      options: {
+        accountId: "LEGACY_1",
+        taxProtestFileId: "tax-file-1",
+        reportFileId: "report-file-1",
+        includePropertyEvidence: false,
+      },
+    },
+  ]);
+});
+
+test("Property Tax document reads require matching protest and report identities", async (context) => {
+  let getDocumentCalls = 0;
+  const file = {
+    tax_protest_file_id: "tax-file-1",
+    report_file_id: "report-file-1",
+  };
+  const options = baseOptions({
+    pool: {
+      query: async (sql, values) => {
+        assert.match(sql, /tax_protest_file_id = \$2 AND report_file_id = \$3/);
+        assert.deepEqual(values, [41, "tax-file-1", "report-file-1"]);
+        return { rows: [{ id: 41 }] };
+      },
+    },
+    getFile: async () => file,
+    getDocument: async (_pool, documentId) => {
+      getDocumentCalls += 1;
+      return { id: documentId, tax_protest_file_id: "tax-file-1" };
+    },
+  });
+  const server = await startRouter(options);
+  context.after(server.close);
+
+  const response = await fetch(
+    `${server.baseUrl}/api/accounts/123/property-tax-protest/tax-file-1/documents/41`,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    document: { id: 41, tax_protest_file_id: "tax-file-1" },
+  });
+  assert.equal(getDocumentCalls, 1);
+});
+
+test("Property Tax uploads bind only the canonical protest and report files", async (context) => {
+  const calls = [];
+  const file = {
+    tax_protest_file_id: "tax-file-1",
+    report_file_id: "report-file-1",
+    organization_id: "org-allowed",
+    assigned_appraiser_user_id: "user-1",
+  };
+  const storage = { configured: false };
+  const ocrProvider = { configured: true };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    documentStorage: storage,
+    documentOcrProvider: ocrProvider,
+    hasPermission: () => true,
+    getFile: async () => file,
+    decideAccess: (_auth, receivedFile, permission) => {
+      calls.push({ type: "access", receivedFile, permission });
+      return true;
+    },
+    createDocument: async (_pool, options) => {
+      calls.push({ type: "create", options });
+      return { id: 42, processing_status: "uploaded" };
+    },
+    processDocument: async (_pool, documentId, options) => {
+      calls.push({ type: "process", documentId, options });
+      return { id: documentId, processing_status: "review_required" };
+    },
+  }), identity);
+  context.after(server.close);
+
+  const response = await uploadDocument(server.baseUrl, "legacy_1", "tax-file-1");
+  assert.equal(response.status, 201);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    account_id: "LEGACY_1",
+    document: { id: 42, processing_status: "uploaded" },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls[0].type, "access");
+  assert.equal(calls[0].permission, "write");
+  assert.equal(calls[1].type, "create");
+  assert.equal(calls[1].options.organizationId, "org-allowed");
+  assert.equal(calls[1].options.accountId, "LEGACY_1");
+  assert.equal(calls[1].options.taxProtestFileId, "tax-file-1");
+  assert.equal(calls[1].options.reportFileId, "report-file-1");
+  assert.equal(calls[1].options.assignmentFileId, undefined);
+  assert.equal(calls[1].options.uadWorkfileId, undefined);
+  assert.equal(calls[1].options.documentType, "district_evidence");
+  assert.ok(Buffer.isBuffer(calls[1].options.content));
+  assert.equal(calls[1].options.storage, storage);
+  assert.deepEqual(calls[2], {
+    type: "process",
+    documentId: 42,
+    options: { storage, ocrProvider },
+  });
+});
+
+test("Property Tax document failures return bounded diagnostics", async (context) => {
+  const errors = [];
+  const server = await startRouter(baseOptions({
+    getFile: async () => {
+      throw new Error("database_password=secret");
+    },
+    logger: { error(...args) { errors.push(args); } },
+  }));
+  context.after(server.close);
+
+  const response = await listDocuments(server.baseUrl, "123", "tax-file-1");
+  assert.equal(response.status, 500);
+  const body = await response.json();
+  assert.deepEqual(body, { error: "property_tax_documents_lookup_failed" });
+  assert.doesNotMatch(JSON.stringify(body), /password|secret/);
+  assert.equal(errors.length, 1);
+});
+
 test("Property Tax desktop composition and route position remain explicit", () => {
   assert.throws(() => createDesktopPropertyTaxRouter(), /desktop_property_tax_pool_required/);
   assert.throws(
@@ -438,6 +624,10 @@ test("Property Tax desktop composition and route position remain explicit", () =
   assert.throws(
     () => createDesktopPropertyTaxRouter(baseOptions({ requireWorkflowAccess: null })),
     /desktop_property_tax_workflow_policy_required/,
+  );
+  assert.throws(
+    () => createDesktopPropertyTaxRouter(baseOptions({ ensureDocuments: null })),
+    /desktop_property_tax_document_readiness_required/,
   );
   assert.throws(
     () => createDesktopPropertyTaxRouter(baseOptions({ authenticationRequired: null })),
@@ -462,4 +652,5 @@ test("Property Tax desktop composition and route position remain explicit", () =
   assert.equal(source.includes("/property-tax-protest/:fileId/evidence/version"), false);
   assert.equal(source.includes('app.patch("/api/accounts/:id/property-tax-protest/:fileId"'), false);
   assert.equal(source.includes("/property-tax-protest/:fileId/sketch"), false);
+  assert.equal(source.includes("/property-tax-protest/:fileId/documents"), false);
 });

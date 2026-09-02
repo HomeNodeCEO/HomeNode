@@ -1,58 +1,86 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import * as api from '@/lib/api';
-import {
-  loadAssignmentFiles,
-  loadCustomAppraisalWorkfile,
-} from '@/lib/appraisalFileRequests';
-import { editorCredentialForRequest } from '@/lib/editorCredential';
+import PropertyTaxPacketWorkspace from '@/components/PropertyTaxPacketWorkspace';
 import PropertyTaxWorkfileReview from '@/components/PropertyTaxWorkfileReview';
+import * as api from '@/lib/api';
+import type { PropertyTaxProtestFile } from '@/lib/api';
 import {
-  readAppraisalReportDraft,
-  type AppraisalReportSalesDraft,
-} from '@/lib/appraisalReportDraft';
+  buildPropertyTaxSummary,
+  readPropertyTaxWorkspace,
+} from '@/lib/propertyTaxWorkspace';
 
-const DEFAULT_SALES_NOTES =
-  "Comparable sales are analyzed based on the subject's condition to provide the best comparisons possible.";
-const DEFAULT_ADJUSTMENT_NOTES =
-  'Applied adjustments for time/date of sale, neighborhood, gross living area, room and bath count, condition, quality, and feature differences based on market-supported evidence.';
-const DEFAULT_COST_TO_CURE_TOTAL = 31_900;
+function displayCurrency(value: number | null): string {
+  if (value == null) return 'Not entered';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
 
-const SAFE_PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
-
-function SubjectPhotoCanvas({ file, index }: { file: File; index: number }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let bitmap: ImageBitmap | null = null;
-    void createImageBitmap(file).then((decoded) => {
-      if (cancelled) {
-        decoded.close();
-        return;
-      }
-      bitmap = decoded;
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const scale = Math.min(1, 1_600 / Math.max(decoded.width, decoded.height));
-      canvas.width = Math.max(1, Math.round(decoded.width * scale));
-      canvas.height = Math.max(1, Math.round(decoded.height * scale));
-      canvas.getContext('2d')?.drawImage(decoded, 0, 0, canvas.width, canvas.height);
-    }).catch(() => undefined);
-    return () => {
-      cancelled = true;
-      bitmap?.close();
-    };
-  }, [file]);
-
+function SourceCard({ label, value, empty }: { label: string; value: string; empty: string }) {
   return (
-    <canvas
-      ref={canvasRef}
-      role="img"
-      aria-label={`Subject photo ${index + 1}`}
-      className="aspect-[4/3] h-full w-full object-cover"
-    />
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="text-xs font-semibold uppercase tracking-[0.1em] text-slate-500">{label}</div>
+      <p className={`mt-2 whitespace-pre-wrap text-sm ${value ? 'text-slate-800' : 'italic text-slate-500'}`}>
+        {value || empty}
+      </p>
+    </div>
+  );
+}
+
+function ComparableGridUnavailable({ hasProperty }: { hasProperty: boolean }) {
+  return (
+    <section className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Shared calculation engine · Property Tax persistence</div>
+          <h2 className="mt-1 text-lg font-semibold text-slate-950">Comparable sales grid</h2>
+          <p className="mt-1 max-w-3xl text-sm text-slate-600">
+            HomeNode-recommended sales and appraisal-district sales will appear together here after a canonical Property Tax file is loaded.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="hn-action-secondary rounded-lg px-3 py-2 text-sm font-semibold" disabled>Add recommended sales</button>
+          <button type="button" className="hn-action-secondary rounded-lg px-3 py-2 text-sm font-semibold" disabled>Add district sale</button>
+          <button type="button" className="hn-action-primary rounded-lg px-4 py-2 text-sm font-semibold" disabled>Save comparable grid</button>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+        {hasProperty
+          ? 'Loading the canonical Property Tax file. If this message remains, refresh the file or confirm that this property has a Property Tax file.'
+          : 'Select a property first. The comparable grid, recommendations, and evidence documents are isolated to that property’s Property Tax file.'}
+        {!hasProperty && (
+          <a href="/" className="ml-2 font-semibold underline">Open Property Search</a>
+        )}
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
+        <table className="min-w-[900px] w-full border-collapse text-left text-xs">
+          <thead className="bg-slate-100 text-slate-700">
+            <tr>
+              {['Source', 'Review', 'Address', 'Sale date', 'Sale price', 'District adjusted', 'Current adjustment', 'Adjusted indication', 'Analysis'].map((label) => (
+                <th key={label} className="border-b border-slate-200 px-3 py-2 font-semibold">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colSpan={9} className="px-4 py-8 text-center text-sm text-slate-500">
+                No Property Tax file loaded yet.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/50 p-4">
+        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-violet-700">File-scoped source documents</div>
+        <h3 className="mt-1 text-lg font-semibold text-slate-950">District evidence &amp; MLS document loader</h3>
+        <p className="mt-2 text-sm text-slate-600">Select a Property Tax file to upload and view district evidence packets or MLS sheets.</p>
+      </div>
+    </section>
   );
 }
 
@@ -71,23 +99,16 @@ export default function PropertyTaxProtest() {
     return params.get('fileId');
   }, [location.search]);
 
-  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [subjectAddress, setSubjectAddress] = useState('');
   const [subjectLoading, setSubjectLoading] = useState(false);
   const [subjectError, setSubjectError] = useState<string | null>(null);
-  const [photoPreviews, setPhotoPreviews] = useState<File[]>([]);
-  const [salesDraft, setSalesDraft] = useState<AppraisalReportSalesDraft | null>(null);
-  const [assignmentFileId, setAssignmentFileId] = useState<number | null>(null);
-  const workfileRevisionRef = useRef(0);
-  const [salesNotes, setSalesNotes] = useState(DEFAULT_SALES_NOTES);
-  const [adjustmentNotes, setAdjustmentNotes] = useState(DEFAULT_ADJUSTMENT_NOTES);
-  const [costToCureNotes, setCostToCureNotes] = useState(
-    `Estimated cost to cure is $${DEFAULT_COST_TO_CURE_TOTAL.toLocaleString()} for necessary repairs and deferred maintenance that buyers typically expect to be reflected in price.`,
-  );
+  const [canonicalFile, setCanonicalFile] = useState<PropertyTaxProtestFile | null>(null);
   const [summary, setSummary] = useState('');
-  const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
 
+  const snapshot = useMemo(
+    () => readPropertyTaxWorkspace(canonicalFile?.workfile_data),
+    [canonicalFile?.workfile_data],
+  );
   const authorizationUrl = propertyId
     ? `/signup?accountId=${encodeURIComponent(propertyId)}${
         ownerName ? `&ownerName=${encodeURIComponent(ownerName)}` : ''
@@ -95,85 +116,15 @@ export default function PropertyTaxProtest() {
     : '/signup';
 
   useEffect(() => {
-    let cancelled = false;
-    const hydrate = (draft: AppraisalReportSalesDraft | null) => {
-      if (cancelled) return;
-      setSalesDraft(draft);
-      setSalesNotes(draft?.salesNotes || DEFAULT_SALES_NOTES);
-      setAdjustmentNotes(draft?.adjustmentNotes || DEFAULT_ADJUSTMENT_NOTES);
-      if (draft?.opinionOfValue != null && draft?.opinionAfterCostToCure != null) {
-      const measuredCost = Math.max(
-        0,
-        Math.round(draft.opinionOfValue - draft.opinionAfterCostToCure),
-      );
-      if (measuredCost > 0) {
-        setCostToCureNotes(
-          `The current sales-comparison draft reflects a $${measuredCost.toLocaleString()} cost-to-cure impact. Necessary repairs and deferred maintenance should be considered in the final value reconciliation.`,
-        );
-      }
-      }
-    };
-    setAssignmentFileId(null);
-    workfileRevisionRef.current = 0;
+    setCanonicalFile(null);
+    setSummary('');
+  }, [propertyId, requestedPropertyTaxFileId]);
+
+  useEffect(() => {
     if (!propertyId) {
-      hydrate(null);
-      return () => { cancelled = true; };
+      setSubjectAddress('');
+      return;
     }
-    void loadAssignmentFiles(propertyId)
-      .then(async (response) => {
-        const file = response.latest_file;
-        if (!file || cancelled) {
-          hydrate(readAppraisalReportDraft(propertyId));
-          return;
-        }
-        setAssignmentFileId(file.id);
-        const result = await loadCustomAppraisalWorkfile(propertyId, file.id);
-        if (cancelled) return;
-        const section = result.workfile.sections.sales_comparison;
-        workfileRevisionRef.current = Number(section?.revision || 0);
-        hydrate(
-          (section?.value as AppraisalReportSalesDraft | undefined) ||
-            readAppraisalReportDraft(propertyId),
-        );
-      })
-      .catch(() => hydrate(readAppraisalReportDraft(propertyId)));
-    return () => { cancelled = true; };
-  }, [propertyId]);
-
-  useEffect(() => {
-    if (!salesDraft) return;
-    const updatedDraft = {
-      ...salesDraft,
-      savedAt: new Date().toISOString(),
-      salesNotes,
-      adjustmentNotes,
-    };
-    setSalesDraft(updatedDraft);
-    if (propertyId && assignmentFileId) {
-      const editorKey = editorCredentialForRequest();
-      if (editorKey) {
-        void api.saveCustomAppraisalWorkfileSection(
-          propertyId,
-          assignmentFileId,
-          'sales_comparison',
-          {
-            value: updatedDraft,
-            expected_revision: workfileRevisionRef.current,
-            save_reason: 'manual_save',
-            reviewer: 'HomeNode property tax workspace',
-          },
-          editorKey,
-        ).then((response) => {
-          workfileRevisionRef.current = response.section.revision;
-        });
-      }
-    }
-    // The state update above intentionally tracks the latest saved timestamp.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [salesNotes, adjustmentNotes, assignmentFileId, propertyId]);
-
-  useEffect(() => {
-    if (!propertyId) return;
     let cancelled = false;
     setSubjectLoading(true);
     setSubjectError(null);
@@ -181,8 +132,12 @@ export default function PropertyTaxProtest() {
       .then((response) => {
         if (!cancelled) setSubjectAddress(response?.account?.address || '');
       })
-      .catch((error: any) => {
-        if (!cancelled) setSubjectError(error?.message || 'Subject information could not be loaded.');
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setSubjectError(error instanceof Error
+            ? error.message
+            : 'Subject information could not be loaded.');
+        }
       })
       .finally(() => {
         if (!cancelled) setSubjectLoading(false);
@@ -192,56 +147,20 @@ export default function PropertyTaxProtest() {
     };
   }, [propertyId]);
 
-  const replacePhotos = (files: File[]) => {
-    setPhotoPreviews(files
-      .filter((file) => SAFE_PHOTO_TYPES.has(file.type) && file.size <= MAX_PHOTO_BYTES)
-      .slice(0, 100));
+  useEffect(() => {
+    setSummary('');
+  }, [canonicalFile?.tax_protest_file_id, canonicalFile?.revision]);
+
+  const generateSummary = () => {
+    if (!canonicalFile) return;
+    setSummary(buildPropertyTaxSummary({
+      subject: subjectAddress || `account ${propertyId}`,
+      snapshot,
+    }));
   };
 
-  const generateSummary = async () => {
-    setSummaryLoading(true);
-    setSummaryError(null);
-    const subject = subjectAddress || (propertyId ? `account ${propertyId}` : 'the subject property');
-    try {
-      try {
-        const data = await api.fetchJSON<any>(api.makeUrl('/api/summary'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            subject,
-            salesNotes,
-            adjustmentNotes,
-            costToCure: {
-              total: DEFAULT_COST_TO_CURE_TOTAL,
-              narrative: costToCureNotes,
-            },
-          }),
-        });
-        const generated = String(data?.summary || data?.content || '').trim();
-        if (generated) {
-          setSummary(generated);
-          return;
-        }
-      } catch {
-        // The local template below keeps this rough-draft workspace functional.
-      }
-
-      setSummary(
-        [
-          `The property-tax protest for ${subject} is supported by a sales comparison analysis using nearby, competitive transactions with similar physical and market characteristics. ${salesNotes}`,
-          adjustmentNotes,
-          costToCureNotes,
-          'The appraisal district evidence should be reviewed against the selected market evidence, adjustment support, property condition, and subject photographs before the final protest position is reconciled.',
-        ].join(' '),
-      );
-    } catch (error: any) {
-      setSummaryError(error?.message || 'The protest summary could not be generated.');
-    } finally {
-      setSummaryLoading(false);
-    }
-  };
-
-  const downloadSummaryPdf = () => {
+  const printSummary = () => {
+    if (!summary) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
     const printableDocument = printWindow.document;
@@ -254,7 +173,7 @@ export default function PropertyTaxProtest() {
     heading.textContent = 'Property Tax Protest Summary';
     const meta = printableDocument.createElement('div');
     meta.className = 'meta';
-    meta.textContent = `${subjectAddress || propertyId || 'Subject property'} · Generated ${new Date().toLocaleString()}`;
+    meta.textContent = `${canonicalFile?.file_number || propertyId} · ${subjectAddress || 'Subject property'} · Generated ${new Date().toLocaleString()}`;
     const narrative = printableDocument.createElement('div');
     summary.split(/\r?\n/).forEach((line, index) => {
       if (index > 0) narrative.append(printableDocument.createElement('br'));
@@ -277,9 +196,7 @@ export default function PropertyTaxProtest() {
         <header className="hn-app-header rounded-2xl border px-5 py-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="hn-eyebrow text-xs tracking-[0.16em]">
-                Rough-draft workspace
-              </div>
+              <div className="hn-eyebrow text-xs tracking-[0.16em]">Canonical protest workspace</div>
               <h1 className="mt-1 text-2xl font-semibold">Property Tax Protest</h1>
               <p className="mt-1 text-sm text-slate-600">
                 {subjectLoading
@@ -303,6 +220,9 @@ export default function PropertyTaxProtest() {
               >
                 Begin Authorization Form
               </a>
+              <a href="/" className="hn-action-secondary btn btn-ghost btn-sm normal-case">
+                ← Close Report
+              </a>
             </div>
           </div>
           {subjectError && (
@@ -312,116 +232,90 @@ export default function PropertyTaxProtest() {
           )}
         </header>
 
-        {propertyId && <PropertyTaxWorkfileReview accountId={propertyId} fileId={requestedPropertyTaxFileId} />}
+        <PropertyTaxPacketWorkspace file={canonicalFile} />
+
+        {!canonicalFile && <ComparableGridUnavailable hasProperty={Boolean(propertyId)} />}
+
+        {propertyId ? (
+          <PropertyTaxWorkfileReview
+            accountId={propertyId}
+            fileId={requestedPropertyTaxFileId}
+            onFileChange={setCanonicalFile}
+          />
+        ) : (
+          <section className="hn-workspace-surface mt-4 rounded-2xl border p-6 text-center text-sm text-slate-600">
+            Select a property and Property Tax Protest file to open this workspace.
+          </section>
+        )}
+
         <section className="hn-workspace-surface mt-4 rounded-2xl border p-4">
           <h2 className="text-xl font-semibold">Appraisal District Evidence Analysis</h2>
-          <p className="mt-2 max-w-5xl text-sm text-slate-700">
-            District evidence has not yet been requested for this rough draft. Once a protest is filed, this area can compare the district&apos;s sales, adjustments, and valuation support with the appraiser-selected evidence.
-          </p>
-          <p className="mt-2 text-sm text-slate-600">
-            The sample rows below preserve the working layout for the future evidence review.
-          </p>
-          <DistrictEvidenceAccordion />
-        </section>
-
-        <section className="hn-workspace-surface mt-4 rounded-2xl border p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-semibold">Subject Photos</h2>
-              <p className="mt-1 text-sm text-slate-600">Upload condition and property photos for the protest packet.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => photoInputRef.current?.click()}
-              className="hn-action-primary rounded-md border px-4 py-2 text-sm font-semibold"
-            >
-              Upload Photos
-            </button>
-            <input
-              ref={photoInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              multiple
-              className="hidden"
-              onChange={(event) => replacePhotos(Array.from(event.target.files || []))}
-            />
-          </div>
-
-          {photoPreviews.length > 0 ? (
-            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-              {photoPreviews.map((photo, index) => (
-                <figure
-                  key={`${photo.name}-${photo.lastModified}-${index}`}
-                  className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
-                >
-                  <SubjectPhotoCanvas file={photo} index={index} />
-                </figure>
-              ))}
-            </div>
+          {snapshot.districtEvidenceSummary ? (
+            <p className="mt-3 whitespace-pre-wrap text-sm text-slate-700">
+              {snapshot.districtEvidenceSummary}
+            </p>
           ) : (
             <div className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-5 text-center text-sm text-slate-600">
-              No subject photos uploaded yet.
+              No district evidence analysis has been entered in this protest file.
             </div>
           )}
+          <p className="mt-3 text-xs text-slate-500">
+            This evidence belongs only to the selected Property Tax Protest file. It is never loaded from or saved to Custom Appraisal or UAD 3.6 files.
+          </p>
         </section>
 
         <section className="hn-workspace-surface mt-4 rounded-2xl border p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-xl font-semibold">Protest Summary Generator</h2>
-              <p className="mt-1 text-sm text-slate-600">
-                Build a rough narrative from the sales comparison, adjustment support, and property condition evidence.
+              <h2 className="text-xl font-semibold">Canonical Protest Summary</h2>
+              <p className="mt-1 max-w-3xl text-sm text-slate-600">
+                Build a deterministic narrative from the selected protest file. Edit the source fields above and save a new revision before regenerating.
               </p>
             </div>
-            <div className="text-xs text-slate-500">
-              {salesDraft ? 'Connected to the current sales-comparison draft' : 'Local rough draft'}
+            <div className="text-right text-xs text-slate-500">
+              <div>{canonicalFile ? canonicalFile.file_number : 'No protest file loaded'}</div>
+              {canonicalFile && <div>Revision {canonicalFile.revision}</div>}
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <label className="flex flex-col text-xs text-slate-600">
-              Sales Comparison Approach
-              <textarea
-                value={salesNotes}
-                onChange={(event) => setSalesNotes(event.target.value)}
-                className="mt-1 h-20 rounded-md border border-slate-300 p-2 text-sm text-slate-800"
-              />
-            </label>
-            <label className="flex flex-col text-xs text-slate-600">
-              Adjustment Analysis
-              <textarea
-                value={adjustmentNotes}
-                onChange={(event) => setAdjustmentNotes(event.target.value)}
-                className="mt-1 h-20 rounded-md border border-slate-300 p-2 text-sm text-slate-800"
-              />
-            </label>
-            <label className="flex flex-col text-xs text-slate-600">
-              Cost to Cure
-              <textarea
-                value={costToCureNotes}
-                onChange={(event) => setCostToCureNotes(event.target.value)}
-                className="mt-1 h-20 rounded-md border border-slate-300 p-2 text-sm text-slate-800"
-              />
-            </label>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            <SourceCard
+              label="Sales comparison analysis"
+              value={snapshot.salesComparisonNotes}
+              empty="No sales-comparison analysis entered."
+            />
+            <SourceCard
+              label="Adjustment support"
+              value={snapshot.adjustmentNotes}
+              empty="No adjustment support entered."
+            />
+            <SourceCard
+              label="Cost to cure"
+              value={[
+                snapshot.repairCostToCure == null ? '' : displayCurrency(snapshot.repairCostToCure),
+                snapshot.repairCostToCureNotes,
+              ].filter(Boolean).join(' — ')}
+              empty="No cost-to-cure amount or support entered."
+            />
           </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={generateSummary}
-              disabled={summaryLoading}
-              className="rounded-md border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-wait disabled:opacity-60"
+              disabled={!canonicalFile}
+              className="rounded-md border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {summaryLoading ? 'Generating…' : 'Generate Summary'}
+              Generate Summary
             </button>
             {summary && (
               <>
                 <button
                   type="button"
-                  onClick={downloadSummaryPdf}
+                  onClick={printSummary}
                   className="rounded-md border border-slate-800 bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900"
                 >
-                  Download PDF
+                  Print / Save PDF
                 </button>
                 <button
                   type="button"
@@ -432,7 +326,6 @@ export default function PropertyTaxProtest() {
                 </button>
               </>
             )}
-            {summaryError && <div className="text-sm text-red-600">{summaryError}</div>}
           </div>
 
           <label className="mt-3 block text-xs text-slate-600">
@@ -440,50 +333,14 @@ export default function PropertyTaxProtest() {
             <textarea
               value={summary}
               readOnly
-              className="mt-1 h-32 w-full rounded-md border border-slate-300 p-3 text-sm text-slate-800"
-              placeholder="Summary will appear here"
+              className="mt-1 h-40 w-full rounded-md border border-slate-300 p-3 text-sm text-slate-800"
+              placeholder={canonicalFile
+                ? 'Generate a summary from the saved canonical protest data.'
+                : 'Load a Property Tax Protest file first.'}
             />
           </label>
         </section>
       </main>
-    </div>
-  );
-}
-
-function DistrictEvidenceAccordion() {
-  const [open, setOpen] = useState<number | null>(null);
-  const rows = [
-    'District Comp 1: 789 Elm St - $510,000',
-    'District Comp 2: 101 Oak Dr - $499,000',
-    'District Comp 3: 212 Cedar Ave - $505,000',
-    'District Comp 4: 313 Birch Rd - $515,000',
-  ];
-
-  return (
-    <div className="mt-3 overflow-hidden rounded-lg border border-slate-200">
-      {rows.map((label, index) => {
-        const isOpen = open === index;
-        return (
-          <div key={label} className="border-t border-slate-200 first:border-t-0">
-            <button
-              type="button"
-              onClick={() => setOpen(isOpen ? null : index)}
-              aria-expanded={isOpen}
-              className="flex w-full items-center justify-between px-4 py-2.5 text-left hover:bg-slate-50"
-            >
-              <span className="font-medium text-slate-800">{label}</span>
-              <span aria-hidden="true" className={`text-slate-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}>
-                ▾
-              </span>
-            </button>
-            {isOpen && (
-              <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                District evidence details and the appraiser&apos;s rebuttal will appear here once the evidence packet is received.
-              </div>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }

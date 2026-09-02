@@ -78,11 +78,12 @@ increments its revision, and appends `app.tax_protest_file_history`. Unknown
 workfile keys are preserved. Known fields are normalized and validated on both
 mobile acceptance and desktop save.
 
-The existing Property Tax Protest page now includes a separate canonical review
-card. It loads accepted mobile values, the verified photo index, and the latest
-sketch status. Desktop save requires the HomeNode editor key and exact expected
-revision; a concurrent save reloads instead of replacing the newer work.
-The older rough-draft analysis controls remain independent.
+The Property Tax Protest page is backed only by the selected canonical protest
+file. It loads accepted mobile values, the verified photo index, and the latest
+sketch status. Its evidence analysis and deterministic summary read the same
+`workfile_data`; they do not load or save Custom Appraisal or UAD workfiles.
+Desktop save requires the HomeNode editor key and exact expected revision; a
+concurrent save reloads instead of replacing the newer work.
 
 ## Persistence and audit
 

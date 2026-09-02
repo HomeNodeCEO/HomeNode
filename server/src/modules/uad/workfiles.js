@@ -36,7 +36,7 @@ export function normalizeUadFileNumber(value, { accountId, workfileId } = {}) {
   const suffix = String(accountId || "subject").replace(/[^A-Za-z0-9]/g, "").slice(-8) || "subject";
   const idSuffix = String(workfileId || randomUUID()).replaceAll("-", "").slice(0, 8);
   const year = new Date().getUTCFullYear();
-  return `HN-UAD-${year}-${suffix}-${idSuffix}`;
+  return `3.6-${year}-${suffix}-${idSuffix}`;
 }
 
 function workfileResponse(row) {

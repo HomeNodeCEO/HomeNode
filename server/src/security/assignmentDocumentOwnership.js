@@ -62,7 +62,7 @@ export async function reconcileLegacyAssignmentDocuments(pool, {
     }
 
     const documentResult = await client.query(
-      `SELECT id, account_id, assignment_file_id, uad_workfile_id
+      `SELECT id, account_id, assignment_file_id, uad_workfile_id, tax_protest_file_id
          FROM app.assignment_documents
         WHERE id = ANY($1::bigint[])
         ORDER BY id
@@ -76,7 +76,9 @@ export async function reconcileLegacyAssignmentDocuments(pool, {
       throw codedError("assignment_document_account_mismatch");
     }
     if (documentResult.rows.some((document) =>
-      document.assignment_file_id !== null || document.uad_workfile_id !== null)) {
+      document.assignment_file_id !== null
+      || document.uad_workfile_id !== null
+      || document.tax_protest_file_id != null)) {
       throw codedError("assignment_document_already_scoped");
     }
 

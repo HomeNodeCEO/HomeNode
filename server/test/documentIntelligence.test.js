@@ -3,6 +3,7 @@ import test from "node:test";
 import PDFDocument from "pdfkit";
 
 import {
+  buildDistrictComparableCandidates,
   buildDocumentFieldCandidates,
   classifyDocument,
   extractPdfEvidence,
@@ -31,6 +32,7 @@ test("document classification recognizes the appraisal document families", () =>
     classifyDocument({ pages: ["NTREIS Full Report MLS No 21062330 ST P DOM 14 OLP $525,000 LP $510,000"] }),
     "mls_sheet",
   );
+  assert.equal(classifyDocument({ pages: ["APPRAISAL DISTRICT EVIDENCE District Comparable Sales"] }), "district_evidence");
 });
 
 test("purchase contracts outrank incidental zoning-ordinance language during classification", () => {
@@ -152,6 +154,39 @@ test("personal-property inclusion survives PDF line wrapping and plural stay lan
   const byField = new Map(candidates.map((candidate) => [candidate.field_key, candidate]));
   assert.equal(byField.get("contract_personal_property_included")?.normalized_value, "Yes");
   assert.match(byField.get("contract_personal_property_details")?.normalized_value || "", /shed stays with the property/i);
+});
+
+test("district evidence yields page-cited comparable rows for protest review", () => {
+  const candidates = buildDistrictComparableCandidates([
+    [
+      "APPRAISAL DISTRICT EVIDENCE",
+      "Comparable Sale 1",
+      "Address: 100 Main Street, Dallas, TX 75201",
+      "Account Number: 00000000000000001",
+      "Sale Date: 06/15/2025",
+      "Sale Price: $425,000",
+      "Adjusted Sale Price: $438,000",
+      "Living Area: 1,950",
+      "Year Built: 1998",
+      "Neighborhood Code: NBHD-10",
+      "Building Class: 17",
+      "Comparable Sale 2",
+      "Address: 200 Oak Street, Dallas, TX 75201",
+      "Sale Date: 08/20/2025",
+      "Sale Price: $450,000",
+      "Living Area: 2,050",
+    ].join("\n"),
+  ]);
+  assert.equal(candidates.length, 2);
+  const first = JSON.parse(candidates[0].normalized_value);
+  assert.equal(first.address, "100 Main Street, Dallas, TX 75201");
+  assert.equal(first.sale_date, "2025-06-15");
+  assert.equal(first.sale_price, 425_000);
+  assert.equal(first.adjusted_value, 438_000);
+  assert.equal(first.living_area_sqft, 1_950);
+  assert.equal(first.neighborhood_code, "NBHD-10");
+  assert.equal(candidates[0].page_number, 1);
+  assert.equal(candidates[0].field_key, "district_comparable");
 });
 
 test("labeled fields retain the verbatim source text and normalized money", () => {

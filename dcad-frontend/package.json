@@ -27,7 +27,10 @@
     "test:timed-request-cache": "node --experimental-strip-types scripts/testTimedRequestCache.mjs",
     "test:zoning-evidence-presentation": "node --experimental-strip-types scripts/testZoningEvidencePresentation.mjs",
     "test:application-session-editor": "node --experimental-strip-types scripts/testApplicationSessionEditor.mjs",
-    "test:uad-auth": "node --experimental-strip-types scripts/testUadAuth.mjs"
+    "test:uad-auth": "node --experimental-strip-types scripts/testUadAuth.mjs",
+    "test:property-tax-isolation": "node --experimental-strip-types scripts/testPropertyTaxIsolation.mjs",
+    "test:property-tax-case": "node --experimental-strip-types scripts/testPropertyTaxCase.mjs",
+    "test:property-tax-comparables": "node --test --experimental-strip-types scripts/testPropertyTaxComparableAnalysis.mjs scripts/testPropertyTaxComparableGrid.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.540.0",

@@ -20,7 +20,7 @@ export function makeUrl(path: string, params?: Record<string, string | number | 
   return BASE ? u.toString() : path + (u.search ? `?${u.searchParams.toString()}` : '');
 }
 
-async function fetchWithApplicationAuthentication(
+export async function fetchWithApplicationAuthentication(
   input: string,
   init: RequestInit = {},
 ): Promise<Response> {
@@ -2597,6 +2597,7 @@ export type AssignmentDocumentType =
   | 'purchase_contract'
   | 'engagement_letter'
   | 'mls_sheet'
+  | 'district_evidence'
   | 'map'
   | 'other';
 
@@ -2642,6 +2643,7 @@ export interface AssignmentDocument {
   account_id: string;
   assignment_file_id: number | null;
   uad_workfile_id?: string | null;
+  tax_protest_file_id?: string | null;
   report_file_id?: string | null;
   document_type: AssignmentDocumentType;
   title: string;
@@ -4045,48 +4047,4 @@ export async function runQualitativeAnalysis(request: {
       applied: request.applied === true,
     }),
   });
-}
-
-export async function getPropertyTaxProtestFile(
-  accountId: string,
-  fileId?: string,
-): Promise<PropertyTaxProtestFile | null> {
-  const params = fileId ? `?file_id=${encodeURIComponent(fileId)}` : '';
-  const response = await fetchJSON<{ account_id: string; file: PropertyTaxProtestFile | null }>(
-    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest${params}`),
-  );
-  return response.file;
-}
-
-export async function getPropertyTaxEvidenceVersion(
-  accountId: string,
-  fileId: string,
-): Promise<EvidenceVersion> {
-  const response = await fetchJSON<{ account_id: string; file: EvidenceVersion }>(
-    makeUrl(
-      `/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/evidence/version`,
-    ),
-    { cache: 'no-store', timeoutMs: 10_000, retryTransient: true },
-  );
-  return response.file;
-}
-
-export async function updatePropertyTaxProtestFile(
-  accountId: string,
-  fileId: string,
-  input: { expected_revision: number; workfile_data: Record<string, unknown>; reviewer?: string },
-  editorKey: string,
-): Promise<PropertyTaxProtestFile> {
-  const response = await fetchJSON<{ ok: true; file: PropertyTaxProtestFile }>(
-    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}`),
-    {
-      method: 'PATCH',
-      headers: {
-        'content-type': 'application/json',
-        'x-homenode-editor-key': editorKey,
-      },
-      body: JSON.stringify(input),
-    },
-  );
-  return response.file;
 }

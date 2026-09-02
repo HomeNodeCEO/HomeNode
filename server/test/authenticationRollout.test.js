@@ -183,16 +183,16 @@ test("browser authentication bootstrap fails visibly instead of exposing an empt
 
 test("legacy property editors accept the authenticated workflow identity before editor-key fallback", () => {
   const server = read("../src/oldServer.js");
-  const housingStart = server.indexOf('app.patch("/api/accounts/:id/housing-profile"');
+  const housingRouter = read("../src/modules/accounts/housingProfileRouter.js");
+  const housingStart = server.indexOf("app.use(createHousingProfileRouter(");
   const housingEnd = server.indexOf('app.patch("/api/accounts/:id/report-manual-values"', housingStart);
   const zoningStart = server.indexOf('app.put("/api/accounts/:id/zoning-verification"');
   const zoningEnd = server.indexOf("function decodedDocumentHeader", zoningStart);
   assert.ok(housingStart >= 0 && housingEnd > housingStart);
   assert.ok(zoningStart >= 0 && zoningEnd > zoningStart);
 
-  const housing = server.slice(housingStart, housingEnd);
-  assert.match(housing, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
-  assert.doesNotMatch(housing, /housing_profile_editor_not_configured|invalid_editor_key/);
+  assert.match(housingRouter, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
+  assert.doesNotMatch(housingRouter, /housing_profile_editor_not_configured|invalid_editor_key/);
 
   const zoning = server.slice(zoningStart, zoningEnd);
   assert.match(zoning, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);

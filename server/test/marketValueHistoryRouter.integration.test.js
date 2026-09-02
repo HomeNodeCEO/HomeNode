@@ -150,7 +150,7 @@ test("market value history composition is explicit and its inline handler is abs
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const mutations = source.indexOf("app.use(createEnrichmentMutationRouter(");
   const history = source.indexOf("app.use(createMarketValueHistoryRouter(");
-  const search = source.indexOf('app.get("/api/search"');
+  const search = source.indexOf("app.use(createPropertySearchRouter(");
   assert.ok(history > mutations);
   assert.ok(search > history);
   assert.equal(source.includes('app.get("/api/accounts/:id/market_value_history"'), false);

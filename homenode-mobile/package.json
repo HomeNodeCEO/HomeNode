@@ -28,7 +28,7 @@
     "react-native": "0.86.3"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.4.0",
     "@types/react": "~19.2.18",
     "expo-doctor": "^1.18.1",
     "tsx": "^4.20.6",

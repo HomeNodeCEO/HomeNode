@@ -35,6 +35,18 @@ export function assignmentDocumentRequestedType(document = {}) {
   return storedType;
 }
 
+export function assignmentDocumentCandidatesForContext(
+  candidates = [],
+  { uadWorkfileId = null, documentType = "other" } = {},
+) {
+  if (!Array.isArray(candidates)) return [];
+  if (!uadWorkfileId || documentType !== "purchase_contract") return candidates;
+  // The purchase-contract classification itself is sufficient evidence for the
+  // UAD Assignment Reason. Do not make the appraiser confirm a synthetic
+  // assignment_type candidate that was not read from a labeled contract field.
+  return candidates.filter((candidate) => candidate?.field_key !== "assignment_type");
+}
+
 function cleanText(value, maximum = 4_000) {
   const text = String(value ?? "").trim();
   return text ? text.slice(0, maximum) : null;
@@ -845,6 +857,10 @@ export async function processAssignmentDocument(pool, documentId, {
       fileName: document.file_name,
       ocrProvider,
     });
+    const extractionCandidates = assignmentDocumentCandidatesForContext(extraction.candidates, {
+      uadWorkfileId: document.uad_workfile_id,
+      documentType: extraction.document_type,
+    });
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -869,7 +885,7 @@ export async function processAssignmentDocument(pool, documentId, {
       }
       let suggestedCandidateCount = 0;
       const storedCandidates = [];
-      for (const candidate of extraction.candidates) {
+      for (const candidate of extractionCandidates) {
         const retainedReview = retainedAssignmentDocumentReview(previousReviews, candidate);
         if (retainedReview.review_status === "suggested") suggestedCandidateCount += 1;
         const insertedCandidate = await client.query(
@@ -896,7 +912,7 @@ export async function processAssignmentDocument(pool, documentId, {
         );
         storedCandidates.push(publicCandidate(insertedCandidate.rows[0]));
       }
-      const processingStatus = extraction.candidates.length > 0 && suggestedCandidateCount === 0
+      const processingStatus = extractionCandidates.length > 0 && suggestedCandidateCount === 0
         ? "reviewed"
         : extraction.extraction_status;
       const updated = await client.query(
@@ -922,7 +938,7 @@ export async function processAssignmentDocument(pool, documentId, {
           extraction.extraction_method,
           JSON.stringify({
             text_length: extraction.text_length,
-            candidate_count: extraction.candidates.length,
+            candidate_count: extractionCandidates.length,
             suggested_candidate_count: suggestedCandidateCount,
             review_reason: extraction.review_reason,
             requested_document_type: requestedDocumentType,

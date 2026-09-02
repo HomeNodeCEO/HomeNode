@@ -10,6 +10,13 @@ const SUPPORTED_DOCUMENT_FIELDS = new Set([
   "lender_client_address",
   "contract_price",
   "contract_date",
+  "closing_date",
+  "loan_amount",
+  "down_payment",
+  "earnest_money",
+  "seller_concessions",
+  "contract_property_condition",
+  "contract_repairs",
   "listing_status",
   "mls_number",
   "list_date",
@@ -24,6 +31,20 @@ const MLS_DOCUMENT_FIELDS = new Set([
   "days_on_market", "original_list_price", "list_price",
 ]);
 
+const PURCHASE_CONTRACT_REVIEW_FIELDS = new Set([
+  "buyer_name",
+  "seller_name",
+  "contract_price",
+  "contract_date",
+  "closing_date",
+  "loan_amount",
+  "down_payment",
+  "earnest_money",
+  "seller_concessions",
+  "contract_property_condition",
+  "contract_repairs",
+]);
+
 function positiveInteger(value) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
@@ -36,6 +57,10 @@ function cleanText(value, maximum = 4_000) {
 function sourceReference(row) {
   const page = row.page_number == null ? "unknown" : Number(row.page_number);
   return `assignment_document:${row.document_id}:candidate:${row.id}:page:${page}:sha256:${row.checksum_sha256}`;
+}
+
+function purchaseContractSourceReference(document) {
+  return `assignment_document:${document.id}:purchase_contract:sha256:${document.checksum_sha256}`;
 }
 
 function assignmentReason(value) {
@@ -66,8 +91,132 @@ function subjectListingStatus(value) {
 }
 
 function uadDocumentCurrency(value) {
-  const amount = Number(cleanText(value, 100).replace(/[$,]/g, ""));
+  const normalized = cleanText(value, 100).replace(/[$,]/g, "");
+  if (!normalized) return null;
+  const amount = Number(normalized);
   return Number.isFinite(amount) && amount >= 0 && amount <= 999_999_999.99 ? amount : null;
+}
+
+function confirmedCandidateValue(candidate) {
+  return cleanText(
+    candidate?.confirmed_value ?? candidate?.normalized_value ?? candidate?.raw_value,
+  );
+}
+
+function confirmedPurchaseContractCandidates(candidates = []) {
+  const byField = new Map();
+  for (const candidate of candidates) {
+    if (candidate?.review_status !== "confirmed") continue;
+    if (!PURCHASE_CONTRACT_REVIEW_FIELDS.has(candidate.field_key)) continue;
+    const value = confirmedCandidateValue(candidate);
+    if (value) byField.set(candidate.field_key, { ...candidate, value });
+  }
+  return byField;
+}
+
+function formatContractCurrency(value) {
+  const amount = uadDocumentCurrency(value);
+  return amount == null
+    ? null
+    : new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }).format(amount);
+}
+
+export function buildUadSalesContractAnalysis(candidates = []) {
+  const fields = confirmedPurchaseContractCandidates(candidates);
+  const value = (key) => fields.get(key)?.value || null;
+  const buyer = value("buyer_name");
+  const seller = value("seller_name");
+  const contractDate = value("contract_date");
+  const closingDate = value("closing_date");
+  const salesPrice = formatContractCurrency(value("contract_price"));
+  const downPayment = formatContractCurrency(value("down_payment"));
+  const loanAmount = formatContractCurrency(value("loan_amount"));
+  const earnestMoney = formatContractCurrency(value("earnest_money"));
+  const concessions = formatContractCurrency(value("seller_concessions"));
+  const concessionsAmount = uadDocumentCurrency(value("seller_concessions"));
+  const condition = value("contract_property_condition");
+  const repairs = value("contract_repairs");
+  const parts = [
+    buyer ? `Contract buyer(s): ${buyer}.` : null,
+    seller ? `Contract seller(s): ${seller}.` : null,
+    contractDate ? `The contract was fully executed on ${contractDate}.` : null,
+    salesPrice ? `The agreed sales price is ${salesPrice}.` : null,
+    downPayment ? `The cash portion/down payment is ${downPayment}.` : null,
+    loanAmount ? `The sum of financing is ${loanAmount}.` : null,
+    earnestMoney ? `Earnest money is ${earnestMoney}.` : null,
+    closingDate ? `Closing is scheduled on or before ${closingDate}.` : null,
+    concessionsAmount === 0
+      ? "Section 12A(1)(b) reports no seller concessions."
+      : concessions
+        ? `Section 12A(1)(b) seller concessions are ${concessions}.`
+        : null,
+    condition === "as_is"
+      ? "The buyer accepts the property as is; no seller-paid repairs or treatments are stated in Section 7D(2)."
+      : condition === "seller_repairs"
+        ? repairs
+          ? `The buyer accepts the property as is provided the seller completes these repairs or treatments at the seller's expense: ${repairs}.`
+          : "The contract selects the seller-repair provision; the specific repairs or treatments require manual verification."
+        : repairs
+          ? `Seller repairs or treatments stated in the contract: ${repairs}.`
+          : null,
+  ].filter(Boolean);
+  return cleanText(parts.join(" "), 5_000);
+}
+
+export function uadPurchaseContractValues(candidates = []) {
+  const fields = confirmedPurchaseContractCandidates(candidates);
+  const value = (key) => fields.get(key)?.value || null;
+  const values = [
+    { uid: "0600.0016", context_key: "sales_contract", value: true },
+    { uid: "0600.0010", context_key: "sales_contract", value: true },
+  ];
+  const price = uadDocumentCurrency(value("contract_price"));
+  if (price != null && price > 0) {
+    values.push({ uid: "0600.0008", context_key: "sales_contract", value: price });
+  }
+  const contractDate = value("contract_date");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(contractDate || "")) {
+    values.push({ uid: "0600.0009", context_key: "sales_contract", value: contractDate });
+  }
+  const concessions = uadDocumentCurrency(value("seller_concessions"));
+  if (concessions != null) {
+    values.push({ uid: "0600.0006", context_key: "sales_contract", value: concessions > 0 });
+    if (concessions > 0) {
+      values.push(
+        { uid: "0600.0005", context_key: "sales_contract", value: true },
+        { uid: "0600.0011", context_key: "sales_contract", value: concessions },
+      );
+    } else {
+      values.push(
+        { uid: "0600.0005", context_key: "sales_contract", value: null },
+        { uid: "0600.0011", context_key: "sales_contract", value: null },
+        { uid: "0600.0007", context_key: "sales_contract", value: null },
+      );
+    }
+  }
+  const analysis = buildUadSalesContractAnalysis(candidates);
+  if (analysis) {
+    values.push({ uid: "0600.0014", context_key: "sales_contract_commentary", value: analysis });
+  }
+  return values;
+}
+
+export function uadPurchaseContractAssignmentValues(candidates = []) {
+  const fields = confirmedPurchaseContractCandidates(candidates);
+  const values = [
+    { uid: "1000.0034", context_key: "assignment", value: "Purchase" },
+  ];
+  for (const [fieldKey, role] of [["buyer_name", "borrower"], ["seller_name", "seller"]]) {
+    const candidateValue = fields.get(fieldKey)?.value;
+    const partyValues = candidateValue ? uadDocumentPartyNameValues(candidateValue, role) : null;
+    if (partyValues) values.push(...partyValues);
+  }
+  return values;
 }
 
 export function uadMlsListingValues(fieldKeyValue, value, entityId) {
@@ -272,6 +421,107 @@ export function uadDocumentCandidateIsApplicable(fieldKey) {
   return SUPPORTED_DOCUMENT_FIELDS.has(String(fieldKey || "").trim());
 }
 
+async function saveDocumentBackedUadSection(
+  pool,
+  workfileId,
+  section,
+  values,
+  actorUserId,
+  sourceReferenceValue,
+  changeSummary,
+) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const revision = await pool.query(
+      "SELECT current_revision FROM appraisal.uad_workfiles WHERE id = $1",
+      [workfileId],
+    );
+    if (!revision.rows[0]) throw new Error("uad_workfile_not_found");
+    try {
+      return await saveUadSection(pool, workfileId, section, {
+        expected_revision: Number(revision.rows[0].current_revision),
+        save_reason: "autosave",
+        values,
+      }, actorUserId, {
+        sourceType: "document",
+        sourceReference: sourceReferenceValue,
+        changeSummary,
+      });
+    } catch (error) {
+      if (error?.message !== "uad_section_stale_revision" || attempt === 2) throw error;
+    }
+  }
+  throw new Error("uad_section_stale_revision");
+}
+
+export async function synchronizeUadPurchaseContract(
+  pool,
+  workfileIdValue,
+  documentIdValue,
+  actorUserId = null,
+) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  const documentId = positiveInteger(documentIdValue);
+  if (!documentId) throw new Error("invalid_document_id");
+  const documentResult = await pool.query(
+    `SELECT id, uad_workfile_id, document_type, checksum_sha256
+       FROM app.assignment_documents
+      WHERE id = $1 AND uad_workfile_id = $2`,
+    [documentId, workfileId],
+  );
+  const document = documentResult.rows[0];
+  if (!document) throw new Error("document_not_found");
+  if (document.document_type !== "purchase_contract") {
+    return {
+      applied: false,
+      reason: "purchase_contract_required",
+      field_key: "purchase_contract",
+    };
+  }
+  const candidateResult = await pool.query(
+    `SELECT *
+       FROM app.assignment_document_field_candidates
+      WHERE document_id = $1
+      ORDER BY id`,
+    [documentId],
+  );
+  const provenance = purchaseContractSourceReference(document);
+  const assignmentValues = uadPurchaseContractAssignmentValues(candidateResult.rows);
+  const salesContractValues = uadPurchaseContractValues(candidateResult.rows);
+  const assignmentResult = await saveDocumentBackedUadSection(
+    pool,
+    workfileId,
+    "assignment",
+    assignmentValues,
+    actorUserId,
+    provenance,
+    "Applied the purchase-contract classification to UAD Assignment Information",
+  );
+  const salesContractResult = await saveDocumentBackedUadSection(
+    pool,
+    workfileId,
+    "sales_contract",
+    salesContractValues,
+    actorUserId,
+    provenance,
+    "Synchronized reviewed purchase-contract evidence with UAD Sales Contract",
+  );
+  return {
+    applied: true,
+    field_key: "purchase_contract",
+    section: "sales_contract",
+    sections: ["assignment", "sales_contract"],
+    source_reference: provenance,
+    current_revision: salesContractResult.current_revision,
+    changed_field_count: assignmentResult.changed_field_count + salesContractResult.changed_field_count,
+    applied_fields: [...assignmentValues, ...salesContractValues].map((item) => ({
+      uid: item.uid,
+      context_key: item.context_key,
+      entity_id: item.entity_id || null,
+      value: item.value,
+    })),
+  };
+}
+
 export async function applyConfirmedUadDocumentCandidate(
   pool,
   workfileIdValue,
@@ -301,6 +551,17 @@ export async function applyConfirmedUadDocumentCandidate(
   }
 
   const value = cleanText(candidate.confirmed_value || candidate.normalized_value || candidate.raw_value);
+  if (
+    candidate.document_type === "purchase_contract"
+    && PURCHASE_CONTRACT_REVIEW_FIELDS.has(candidate.field_key)
+  ) {
+    return synchronizeUadPurchaseContract(
+      pool,
+      workfileId,
+      documentId,
+      actorUserId,
+    );
+  }
   let section = "assignment";
   let values = [];
   if (MLS_DOCUMENT_FIELDS.has(candidate.field_key)) {
@@ -366,29 +627,27 @@ export async function applyConfirmedUadDocumentCandidate(
     values = [{ uid: "0600.0009", context_key: "sales_contract", value }];
   }
 
-  const revision = await pool.query(
-    "SELECT current_revision FROM appraisal.uad_workfiles WHERE id = $1",
-    [workfileId],
-  );
-  if (!revision.rows[0]) throw new Error("uad_workfile_not_found");
   const provenance = sourceReference(candidate);
-  const result = await saveUadSection(pool, workfileId, section, {
-    expected_revision: Number(revision.rows[0].current_revision),
-    save_reason: "autosave",
+  const result = await saveDocumentBackedUadSection(
+    pool,
+    workfileId,
+    section,
     values,
-  }, actorUserId, {
-    sourceType: "document",
-    sourceReference: provenance,
-    changeSummary: `Applied appraiser-confirmed document evidence to ${section}`,
-  });
+    actorUserId,
+    provenance,
+    `Applied appraiser-confirmed document evidence to ${section}`,
+  );
+  const contractResult = candidate.document_type === "purchase_contract"
+    ? await synchronizeUadPurchaseContract(pool, workfileId, documentId, actorUserId)
+    : null;
   return {
     applied: true,
     field_key: candidate.field_key,
     section,
     source_reference: provenance,
-    current_revision: result.current_revision,
-    changed_field_count: result.changed_field_count,
-    applied_fields: values.map((item) => ({
+    current_revision: contractResult?.current_revision || result.current_revision,
+    changed_field_count: result.changed_field_count + (contractResult?.changed_field_count || 0),
+    applied_fields: [...values, ...(contractResult?.applied_fields || [])].map((item) => ({
       uid: item.uid,
       context_key: item.context_key,
       entity_id: item.entity_id || null,

@@ -13,7 +13,10 @@ import { applyUadCompletionSuggestions } from "./completionApply.js";
 import { getUadCertificationReadiness, signUadWorkfile } from "./certifications.js";
 import { getUadComplianceStatus, runUadCompliance } from "./uadComplianceService.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
-import { applyConfirmedUadDocumentCandidate } from "./documentEvidence.js";
+import {
+  applyConfirmedUadDocumentCandidate,
+  synchronizeUadPurchaseContract,
+} from "./documentEvidence.js";
 import { createUadEntity, deleteUadEntity } from "./entities.js";
 import { generateUadXmlArtifact, getLatestUadXmlArtifact } from "./uadArtifacts.js";
 import { generateUadPdfArtifact, getLatestUadPdfArtifact } from "./uadPdfArtifacts.js";
@@ -53,6 +56,7 @@ import {
   verifyUadAssigneeMembership,
 } from "./access.js";
 import {
+  confirmAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
   deleteAssignmentDocument,
@@ -522,9 +526,19 @@ export function createUadRouter({
           storage,
         });
         if (document.processing_status === "uploaded") {
+          const actorUserId = req.mobileAuth?.userId || null;
           void processAssignmentDocument(pool, document.id, {
             storage,
             ocrProvider: documentOcrProvider,
+          }).then(async (processedDocument) => {
+            if (processedDocument.document_type === "purchase_contract") {
+              await synchronizeUadPurchaseContract(
+                pool,
+                scope.uad_workfile_id,
+                processedDocument.id,
+                actorUserId,
+              );
+            }
           }).catch((error) => {
             if (error?.message !== "document_processing_in_progress") {
               console.warn("[uad documents] background extraction failed", error?.message || error);
@@ -584,7 +598,29 @@ export function createUadRouter({
         storage,
         ocrProvider: documentOcrProvider,
       });
+      if (document.document_type === "purchase_contract") {
+        await synchronizeUadPurchaseContract(
+          pool,
+          req.params.workfileId,
+          document.id,
+          req.mobileAuth?.userId || null,
+        );
+      }
       return res.json({ document });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/documents/:documentId/synchronize-purchase-contract", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      return res.json(await synchronizeUadPurchaseContract(
+        pool,
+        req.params.workfileId,
+        req.params.documentId,
+        req.mobileAuth?.userId || null,
+      ));
     } catch (error) {
       return sendError(res, error);
     }
@@ -616,6 +652,34 @@ export function createUadRouter({
         reviewer: req.body?.reviewer,
       });
       return res.json({ candidate });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/documents/:documentId/candidates/confirm-all-purchase-contract", async (req, res) => {
+    try {
+      await requireUadDocument(req.params.workfileId, req.params.documentId);
+      const document = await getAssignmentDocument(pool, req.params.documentId);
+      if (document.document_type !== "purchase_contract") {
+        throw new Error("document_purchase_contract_required");
+      }
+      await confirmAssignmentDocumentCandidates(pool, {
+        documentId: req.params.documentId,
+        reviewer: req.body?.reviewer,
+        reportSubjectAddress: req.body?.report_subject_address,
+        candidateValues: req.body?.candidate_values,
+      });
+      const application = await synchronizeUadPurchaseContract(
+        pool,
+        req.params.workfileId,
+        req.params.documentId,
+        req.mobileAuth?.userId || null,
+      );
+      return res.json({
+        document: await getAssignmentDocument(pool, req.params.documentId),
+        application,
+      });
     } catch (error) {
       return sendError(res, error);
     }

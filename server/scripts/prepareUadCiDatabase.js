@@ -44,22 +44,6 @@ try {
       bath_count numeric,
       number_units integer
     );
-    CREATE TABLE IF NOT EXISTS core.owner_summary (
-      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
-      tax_year integer NOT NULL,
-      owner_name text,
-      mailing_address text,
-      PRIMARY KEY (account_id, tax_year)
-    );
-    CREATE TABLE IF NOT EXISTS core.owner_parties (
-      id bigserial PRIMARY KEY,
-      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
-      tax_year integer NOT NULL,
-      owner_name text,
-      ownership_pct numeric
-    );
-    CREATE INDEX IF NOT EXISTS owner_parties_account_year_idx
-      ON core.owner_parties (account_id, tax_year DESC);
     CREATE TABLE IF NOT EXISTS core.land_detail (
       id bigserial PRIMARY KEY,
       account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,

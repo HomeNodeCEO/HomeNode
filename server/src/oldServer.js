@@ -73,8 +73,6 @@ import {
   calculateQualitativeAnalysis,
   qualitativeAnalysisErrorStatus,
 } from "./util/qualitativeAnalysis.js";
-import { getAccountPropertyActivityHistory } from "./services/accountSalesHistory.js";
-import { loadAccountDetailSections } from "./services/accountDetailSections.js";
 import { indexAssignmentFileDetails } from "./services/assignmentFileDetails.js";
 import { summarizeComparableResults } from "./services/comparableResponseSummary.js";
 import {
@@ -204,6 +202,7 @@ import { createPropertyCatalogRouter } from "./modules/propertyCatalog/router.js
 import { createOperationalRouter } from "./modules/operations/router.js";
 import { createSignupRouter } from "./modules/signup/router.js";
 import { createAppraisalRatingsRouter } from "./modules/appraisalRatings/router.js";
+import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
 import {
   createReportFile,
   listReportFiles,
@@ -806,168 +805,13 @@ app.use(createOperationalRouter({
   },
 }));
 app.use(createSignupRouter({ pool, signupRateLimiter }));
-
-/**
- * GET /api/accounts/:id
- * Returns an object compatible with the frontend's AccountDetail shape:
- *   { account: AccountRow, primary_improvements: {...} }
- */
-app.get("/api/accounts/:id", async (req, res) => {
-  const id = String(req.params.id || "").trim();
-  if (!id) return res.status(400).json({ error: "missing_id" });
-  try {
-    await accountQualityReady;
-    const canonicalId = await resolveCanonicalAccountId(pool, id);
-    const accountSql = `
-      SELECT
-        a.account_id,
-        COALESCE(NULLIF(BTRIM(a.address), ''), raw_loc.address) AS address,
-        COALESCE(NULLIF(BTRIM(a.city), ''), raw_loc.city) AS city,
-        COALESCE(NULLIF(BTRIM(a.postal_code), ''), raw_loc.postal_code) AS postal_code,
-        a.county,
-        a.neighborhood_code,
-        a.subdivision,
-        a.legal_description,
-        a.data_quality_status,
-        a.data_quality_flags,
-        a.canonical_account_id,
-        COALESCE(vsc.certified_year, mv.tax_year)                 AS latest_tax_year,
-        COALESCE(vsc.market_value, mv.total_value)                AS latest_market_value,
-        COALESCE(vsc.improvement_value, mv.imp_value)             AS latest_improvement_value,
-        COALESCE(vsc.land_value, mv.land_value)                   AS latest_land_value,
-        COALESCE(vsc.capped_value, mv.homestead_cap_value)        AS latest_capped_value
-      FROM core.accounts a
-      LEFT JOIN core.value_summary_current vsc ON vsc.account_id = a.account_id
-      LEFT JOIN LATERAL (
-        SELECT m.* FROM core.market_values m
-        WHERE m.account_id = a.account_id
-        ORDER BY m.tax_year DESC
-        LIMIT 1
-      ) mv ON TRUE
-      LEFT JOIN LATERAL (
-        SELECT COALESCE(
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
-               ) AS address,
-               COALESCE(
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,city}'), ''),
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,situs_city}'), '')
-               ) AS city,
-               COALESCE(
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,postal_code}'), ''),
-                 NULLIF(BTRIM(r.raw #>> '{detail,property_location,zip_code}'), '')
-               ) AS postal_code
-        FROM core.dcad_json_raw r
-        WHERE r.account_id = a.account_id
-          AND COALESCE(
-                NULLIF(BTRIM(r.raw #>> '{detail,property_location,address}'), ''),
-                NULLIF(BTRIM(r.raw #>> '{detail,property_location,subject_address}'), '')
-              ) IS NOT NULL
-        ORDER BY r.tax_year DESC, r.fetched_at DESC
-        LIMIT 1
-      ) raw_loc ON TRUE
-      WHERE a.account_id = $1
-    `;
-    const { rows: accRows } = await pool.query(accountSql, [canonicalId]);
-    if (!accRows.length) return res.status(404).json({ error: "not_found" });
-
-    // Sales history is core account data. Start its indexed lookup immediately
-    // and include it in this response instead of making the frontend wait on
-    // the general-purpose /api/sales view.
-    const propertyActivityHistoryPromise = getAccountPropertyActivityHistory(pool, canonicalId)
-      .catch((error) => {
-        console.warn("property activity lookup failed", error?.code || "unknown_error");
-        return [];
-      });
-    const censusGeographyPromise = (async () => {
-      await censusGeographyReady;
-      await ensureCensusGeographySchema(pool);
-      const { rows } = await pool.query(
-        `SELECT tract_geoid, tract_code, state_fips, county_fips, block_code,
-                benchmark, vintage, status, response_status, review_reason,
-                source_method, source_latitude, source_longitude,
-                looked_up_at, updated_at
-         FROM core.account_census_geographies
-         WHERE account_id = $1`,
-        [canonicalId],
-      );
-      return rows[0] || null;
-    })().catch((error) => {
-      console.warn("census geography lookup failed", error?.message || error);
-      return null;
-    });
-    const reportManualValuesPromise = (async () => {
-      await propertyEnrichmentReady;
-      const { rows } = await pool.query(
-        `SELECT attribute_key, attribute_value, revision, reviewer, notes, updated_at
-         FROM app.property_attribute_manual_values
-         WHERE account_id = $1 AND attribute_key LIKE 'report.%'
-         ORDER BY attribute_key`,
-        [canonicalId],
-      );
-      return Object.fromEntries(
-        rows.map((row) => [row.attribute_key, {
-          value: row.attribute_value,
-          revision: Number(row.revision || 0),
-          reviewer: row.reviewer,
-          notes: row.notes,
-          updated_at: row.updated_at,
-        }]),
-      );
-    })().catch((error) => {
-      console.warn("report manual values lookup failed", error?.code || "unknown_error");
-      return {};
-    });
-    const propertyContextPromise = (async () => {
-      await ensurePropertyContextAvailable();
-      return getStoredPropertyContext(pool, { accountId: canonicalId });
-    })().catch((error) => {
-      console.warn("property context lookup failed", error?.message || error);
-      return null;
-    });
-
-    // Once the canonical account exists, these independent indexed sections can
-    // load concurrently. Land detail also selects its latest year in one query,
-    // avoiding an additional database round trip on every report open.
-    const sections = await loadAccountDetailSections(pool, canonicalId);
-    const resp = {
-      account: {
-        ...accRows[0],
-        requested_account_id: id,
-        resolved_from_legacy: canonicalId !== id.toUpperCase(),
-      },
-      primary_improvements: sections.primaryImprovement,
-      housing_profile: sections.housingProfile,
-      owner_summary: sections.owner
-        ? {
-            owner_name: sections.owner.owner_name,
-            mailing_address: sections.owner.mailing_address,
-            tax_year: sections.owner.tax_year,
-          }
-        : null,
-      owner_parties: sections.owner?.owner_parties || [],
-      legal_current: sections.legalCurrent,
-      legal_history: sections.legalHistory,
-      exemptions_summary_year: sections.exemptionYear,
-      exemptions_summary: sections.exemptions,
-      homestead_yes: sections.homesteadYes,
-      land_detail: sections.landRows,
-      property_activity_history: await propertyActivityHistoryPromise,
-      census_geography: await censusGeographyPromise,
-      report_manual_values: await reportManualValuesPromise,
-      property_context: await propertyContextPromise,
-      additional_improvements: sections.additionalImprovements,
-    };
-    resp.sales_history = resp.property_activity_history.filter(
-      (row) => row.record_type === "closed_sale",
-    );
-
-    res.json(resp);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "accounts_failed" });
-  }
-});
+app.use(createAccountDetailRouter({
+  pool,
+  accountQualityReady,
+  censusGeographyReady,
+  propertyEnrichmentReady,
+  ensurePropertyContextAvailable,
+}));
 
 /**
  * GET /api/accounts/:id/photos

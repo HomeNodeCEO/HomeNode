@@ -10,6 +10,10 @@ import {
 } from "../src/security/redTeamIsolation.js";
 
 const serverSource = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
+const accountDetailRouterSource = fs.readFileSync(
+  new URL("../src/modules/accounts/detailRouter.js", import.meta.url),
+  "utf8",
+);
 const redTeamBaseSource = fs.readFileSync(new URL("../scripts/prepareRedteamBaseDatabase.js", import.meta.url), "utf8");
 const redTeamSalesFixtureSource = fs.readFileSync(new URL("../src/security/redTeamSalesFixtures.js", import.meta.url), "utf8");
 const pairedSalesSource = fs.readFileSync(new URL("../src/services/pairedSalesAnalysis.js", import.meta.url), "utf8");
@@ -284,11 +288,11 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   assert.match(redTeamSalesFixtureSource, /REDTEAM_RECONCILIATION_COUNT = 2/);
   assert.match(redTeamSalesFixtureSource, /ensureAppraisalRatingsSchema\(pool\)/);
   assert.match(
-    serverSource,
-    /getAccountPropertyActivityHistory\(pool, canonicalId\)[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \[\];[\s\S]*?\}\);/,
+    accountDetailRouterSource,
+    /loadPropertyActivity\(pool, canonicalId\)[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \[\];[\s\S]*?\}\);/,
   );
   assert.match(
-    serverSource,
+    accountDetailRouterSource,
     /reportManualValuesPromise[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \{\};[\s\S]*?\}\);/,
   );
 });

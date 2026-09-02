@@ -31,11 +31,17 @@ READINESS_MAX_DATABASE_WAITERS=5
 
 `GET /health` is the inexpensive liveness probe. `GET /ready` checks shutdown
 state, database connectivity and pool pressure, artifact-executor availability,
-and memory pressure. Memory readiness defaults to 85 percent of the container
-limit when Node can discover that limit. `READINESS_MAX_RSS_MB` can override it.
-Render should use `/health` for automatic process restart and `/ready` for
-deployment verification and alerting; a database outage should not create a
-liveness restart loop.
+startup schema initialization, authentication posture, and memory pressure.
+Required property, appraisal, assignment-file, document, and workfile schemas
+must finish initialization before readiness returns HTTP 200. Signup capture and
+the scheduled Census/location backfill schemas are auxiliary; their failures are
+reported as stable warnings without creating a liveness restart loop. Readiness
+responses expose only bounded component codes, never SQL or dependency errors.
+
+Memory readiness defaults to 85 percent of the container limit when Node can
+discover that limit. `READINESS_MAX_RSS_MB` can override it. Render should use
+`/health` for automatic process restart and `/ready` for deployment verification
+and alerting; a database outage should not create a liveness restart loop.
 
 At startup, artifact rows left in `generating` beyond the configured stale
 window are marked `failed` with the bounded recovery code

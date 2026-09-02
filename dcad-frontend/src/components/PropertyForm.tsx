@@ -3,7 +3,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Dispatch, SetStateAction } from "react";
 
-export type PropertyState = Record<string, any>;
+export type PropertyState = Record<string, unknown>;
 
 export type FieldType =
   | "text"
@@ -25,18 +25,18 @@ export type FieldSpec = {
   max?: number;
   options?: Option[];
   disabledUntilData?: boolean;
-  toState?: (raw: string) => any;
-  fromState?: (v: any) => string | number;
+  toState?: (raw: string) => unknown;
+  fromState?: (v: unknown) => string | number;
   full?: boolean;
 };
 
-export function PropertyForm({
+export function PropertyForm<T extends PropertyState>({
   property,
   setProperty,
   sections,
 }: {
-  property: PropertyState;
-  setProperty: Dispatch<SetStateAction<PropertyState>>;
+  property: T;
+  setProperty: Dispatch<SetStateAction<T>>;
   sections: { title: string; fields: FieldSpec[] }[];
 }) {
   return (
@@ -66,7 +66,7 @@ export function PropertyForm({
   );
 }
 
-function readValue(state: PropertyState, spec: FieldSpec) {
+function readValue(state: PropertyState, spec: FieldSpec): unknown {
   const v = state?.[spec.key];
   return spec.fromState ? spec.fromState(v) : v ?? "";
 }
@@ -77,8 +77,8 @@ function Field({
   onChange,
 }: {
   spec: FieldSpec;
-  value: any;
-  onChange: (v: any) => void;
+  value: unknown;
+  onChange: (v: unknown) => void;
 }) {
   const disabled = !!spec.disabledUntilData && (value === undefined || value === null || value === "");
 
@@ -101,7 +101,7 @@ function Field({
   }
 
   if (spec.type === "currency") {
-    const display = typeof value === "number" ? value.toString() : (value ?? "");
+    const display = typeof value === "number" || typeof value === "string" ? value : "";
     return (
       <Input
         type="number"
@@ -114,14 +114,14 @@ function Field({
         onChange={(e) => {
           const raw = e.target.value;
           const num = raw === "" ? "" : Number(raw);
-          onChange(Number.isFinite(num as number) ? num : "");
+          onChange(typeof num === "number" && Number.isFinite(num) ? num : "");
         }}
       />
     );
   }
 
   if (spec.type === "decimal") {
-    const display = value ?? "";
+    const display = typeof value === "number" || typeof value === "string" ? value : "";
     return (
       <Input
         type="number"
@@ -134,14 +134,14 @@ function Field({
         onChange={(e) => {
           const raw = e.target.value;
           const num = raw === "" ? "" : Number(raw);
-          onChange(Number.isFinite(num as number) ? num : "");
+          onChange(typeof num === "number" && Number.isFinite(num) ? num : "");
         }}
       />
     );
   }
 
   if (spec.type === "number" || spec.type === "year") {
-    const display = value ?? "";
+    const display = typeof value === "number" || typeof value === "string" ? value : "";
     return (
       <Input
         type="number"
@@ -154,7 +154,7 @@ function Field({
         onChange={(e) => {
           const raw = e.target.value;
           const num = raw === "" ? "" : Number(raw);
-          onChange(Number.isFinite(num as number) ? num : "");
+          onChange(typeof num === "number" && Number.isFinite(num) ? num : "");
         }}
       />
     );
@@ -165,7 +165,7 @@ function Field({
       type="text"
       placeholder={spec.placeholder}
       disabled={disabled}
-      value={value ?? ""}
+      value={typeof value === "number" || typeof value === "string" ? value : ""}
       onChange={(e) => onChange(spec.toState ? spec.toState(e.target.value) : e.target.value)}
     />
   );

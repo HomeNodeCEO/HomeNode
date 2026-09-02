@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  DOCUMENT_EXTRACTION_SCHEMA_VERSION,
   extractPdfEvidence,
   findZoningDescriptionInPages,
   normalizeDocumentType,
@@ -45,6 +46,17 @@ export function assignmentDocumentCandidatesForContext(
   // UAD Assignment Reason. Do not make the appraiser confirm a synthetic
   // assignment_type candidate that was not read from a labeled contract field.
   return candidates.filter((candidate) => candidate?.field_key !== "assignment_type");
+}
+
+export function assignmentDocumentNeedsExtractionUpgrade(document = {}) {
+  const fileLabel = `${document?.file_name || ""} ${document?.title || ""}`;
+  const appearsToBePurchaseContract = document?.document_type === "purchase_contract"
+    || assignmentDocumentRequestedType(document) === "purchase_contract"
+    || /\b(?:contract|purchase agreement)\b/i.test(fileLabel);
+  if (!appearsToBePurchaseContract) return false;
+  if (!["review_required", "reviewed"].includes(document?.processing_status)) return false;
+  return cleanText(document?.extraction_summary?.extraction_schema_version, 100)
+    !== DOCUMENT_EXTRACTION_SCHEMA_VERSION;
 }
 
 function cleanText(value, maximum = 4_000) {
@@ -937,6 +949,7 @@ export async function processAssignmentDocument(pool, documentId, {
           processingStatus,
           extraction.extraction_method,
           JSON.stringify({
+            extraction_schema_version: DOCUMENT_EXTRACTION_SCHEMA_VERSION,
             text_length: extraction.text_length,
             candidate_count: extractionCandidates.length,
             suggested_candidate_count: suggestedCandidateCount,
@@ -968,14 +981,21 @@ export async function processAssignmentDocument(pool, documentId, {
            extraction_summary = jsonb_build_object(
              'error', $2::text,
              'processing_attempts', processing_attempts,
-             'automatic_retry_exhausted', $3::boolean
+             'automatic_retry_exhausted', $3::boolean,
+             'extraction_schema_version', $5::text
            ),
            processing_started_at = NULL,
            next_processing_at = $4,
            last_processing_error = $2,
            processed_at = now(), updated_at = now()
        WHERE id = $1`,
-      [id, message, attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS, nextProcessingAt],
+      [
+        id,
+        message,
+        attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
+        nextProcessingAt,
+        DOCUMENT_EXTRACTION_SCHEMA_VERSION,
+      ],
     );
     throw error;
   }

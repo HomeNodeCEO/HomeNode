@@ -10,6 +10,10 @@ export const DOCUMENT_TYPES = Object.freeze([
   "other",
 ]);
 
+// Persist this with every extraction so documents created before a parser
+// improvement can be upgraded exactly once from their immutable source PDF.
+export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-09-02-v2";
+
 const DOCUMENT_TYPE_SET = new Set(DOCUMENT_TYPES);
 const MAX_PDF_PAGES = 250;
 const MAX_EXTRACTED_TEXT_LENGTH = 4_000_000;

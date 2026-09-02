@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   assignmentDetailsFromConfirmedDocument,
   assignmentDocumentCandidatesForContext,
+  assignmentDocumentNeedsExtractionUpgrade,
   assignmentDocumentRequestedType,
   assignmentDocumentCandidateReviewKey,
   assignmentDocumentRetryDelayMs,
@@ -34,6 +35,35 @@ test("UAD purchase contracts omit the synthetic assignment-type review candidate
     }),
     candidates,
   );
+});
+
+test("legacy reviewed purchase contracts receive one extraction-schema upgrade", () => {
+  assert.equal(assignmentDocumentNeedsExtractionUpgrade({
+    document_type: "purchase_contract",
+    processing_status: "review_required",
+    extraction_summary: {},
+  }), true);
+  assert.equal(assignmentDocumentNeedsExtractionUpgrade({
+    document_type: "purchase_contract",
+    processing_status: "review_required",
+    extraction_summary: { extraction_schema_version: "2026-09-02-v2" },
+  }), false);
+  assert.equal(assignmentDocumentNeedsExtractionUpgrade({
+    document_type: "engagement_letter",
+    processing_status: "review_required",
+    extraction_summary: {},
+  }), false);
+  assert.equal(assignmentDocumentNeedsExtractionUpgrade({
+    document_type: "zoning_ordinance",
+    processing_status: "review_required",
+    file_name: "Contract.pdf",
+    extraction_summary: {},
+  }), true);
+  assert.equal(assignmentDocumentNeedsExtractionUpgrade({
+    document_type: "purchase_contract",
+    processing_status: "processing",
+    extraction_summary: {},
+  }), false);
 });
 
 test("reprocessing preserves explicit types but reclassifies a legacy contract mistaken for zoning", () => {

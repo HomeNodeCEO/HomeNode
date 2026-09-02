@@ -58,6 +58,12 @@ import {
 } from "./vehicleStorageCatalog.js";
 
 export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
+  assignment_owner: Object.freeze({
+    title: "Current owners of public record",
+    addLabel: "Add owner",
+    minItems: 0,
+    maxItems: 20,
+  }),
   assignment_seller: Object.freeze({
     title: "Sellers",
     addLabel: "Add seller",
@@ -235,7 +241,11 @@ const fields = [
     label,
     dataType: "string",
     maxLength,
-    ...(contextKey === "seller" ? { entityType: "assignment_seller" } : {}),
+    ...(contextKey === "seller"
+      ? { entityType: "assignment_seller" }
+      : contextKey === "owner"
+        ? { entityType: "assignment_owner" }
+        : {}),
   })),
   {
     section: "assignment",

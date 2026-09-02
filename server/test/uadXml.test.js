@@ -143,6 +143,29 @@ test("MISMO XML keeps imported borrower and seller role/name data in their respe
   assert.equal((generated.xml.match(/<PartyRoleType>PropertySeller<\/PartyRoleType>/g) || []).length, 2);
 });
 
+test("MISMO XML keeps multiple current public-record owners in distinct PARTY records", () => {
+  const editor = editorFixture();
+  const firstOwnerId = "00000000-0000-4000-8000-000000000013";
+  const secondOwnerId = "00000000-0000-4000-8000-000000000014";
+  editor.entities.push(
+    { id: firstOwnerId, parent_entity_id: null, entity_type: "assignment_owner", entity_identifier: "public-record-owner-1", ordinal: 1 },
+    { id: secondOwnerId, parent_entity_id: null, entity_type: "assignment_owner", entity_identifier: "public-record-owner-2", ordinal: 2 },
+  );
+  editor.values.push(
+    { entity_id: firstOwnerId, context_key: "owner", uid: "1000.0022", value: "GREGORY" },
+    { entity_id: firstOwnerId, context_key: "owner", uid: "1000.0023", value: "PATTERSON" },
+    { entity_id: secondOwnerId, context_key: "owner", uid: "1000.0024", value: "Example Owner Trust" },
+  );
+
+  const generated = buildUadMismoXml(editor);
+  const individualOwner = generated.xml.match(/<PARTY>[\s\S]*?<FirstName>GREGORY<\/FirstName>[\s\S]*?<\/PARTY>/)?.[0] || "";
+  const trustOwner = generated.xml.match(/<PARTY>[\s\S]*?<FullName>Example Owner Trust<\/FullName>[\s\S]*?<\/PARTY>/)?.[0] || "";
+  assert.match(individualOwner, /<LastName>PATTERSON<\/LastName>/);
+  assert.match(trustOwner, /<FullName>Example Owner Trust<\/FullName>/);
+  assert.equal((generated.xml.match(/<FirstName>GREGORY<\/FirstName>/g) || []).length, 1);
+  assert.equal((generated.xml.match(/<FullName>Example Owner Trust<\/FullName>/g) || []).length, 1);
+});
+
 test("MISMO XML generation references deterministic external delivery images", async () => {
   const editor = editorFixture();
   const comparable = editor.entities.find((entity) => entity.entity_type === "sales_comparable");

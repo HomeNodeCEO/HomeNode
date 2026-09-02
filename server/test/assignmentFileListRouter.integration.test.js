@@ -399,7 +399,7 @@ test("assignment-file list composition and route position remain explicit", () =
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const reportManualValues = source.indexOf("app.use(createReportManualValuesRouter(");
   const assignmentFiles = source.indexOf("app.use(createAssignmentFileListRouter(");
-  const reportFiles = source.indexOf("function desktopReportFileErrorStatus(");
+  const reportFiles = source.indexOf("app.use(createDesktopReportFilesRouter(");
   assert.ok(assignmentFiles > reportManualValues);
   assert.ok(reportFiles > assignmentFiles);
   assert.equal(source.includes('app.get("/api/accounts/:id/assignment-files"'), false);

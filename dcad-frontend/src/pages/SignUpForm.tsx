@@ -2,6 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import * as api from '@/lib/api';
 import { fetchDetail } from '@/lib/dcad';
+import {
+  countyFromAccount,
+  legalDescriptionFromAccount,
+  legalDescriptionFromDetail,
+  mailingAddressFromDetail,
+  mapscoFromDetail,
+  ownerNameFromDetail,
+  signupErrorMessage,
+  subjectAddressFromAccount,
+  subjectAddressFromDetail,
+} from '@/features/signup/signupPrefill';
 
 type PropertyItem = { accountNumber: string; situsAddress: string; legalDescription: string };
 type OverlayFields = {
@@ -90,15 +101,8 @@ export default function SignUpForm() {
     let cancelled = false;
     (async () => {
       try {
-        const detail: any = await fetchDetail(accountId);
-        const fromOwner = detail?.owner?.owner_name || detail?.owner_name || detail?.owner?.name || '';
-        const fromMulti = Array.isArray(detail?.owner?.multi_owner) && detail.owner.multi_owner.length
-          ? (detail.owner.multi_owner[0]?.owner_name || detail.owner.multi_owner[0]?.name || '')
-          : '';
-        const fromHistory = Array.isArray(detail?.history?.owner_history) && detail.history.owner_history.length
-          ? (detail.history.owner_history[0]?.owner || '')
-          : '';
-        const ownerName: string | undefined = (fromOwner || fromMulti || fromHistory || '').toString().trim();
+        const detail: unknown = await fetchDetail(accountId);
+        const ownerName = ownerNameFromDetail(detail);
         if (!cancelled && ownerName) {
           setFields(f => ({ ...f, ownerName }));
         }
@@ -134,8 +138,7 @@ export default function SignUpForm() {
         // Prefer county from DB
         try {
           const d = await api.getAccount(accountId);
-          const rawCounty = (d as any)?.account?.county || '';
-          const trimmed = String(rawCounty || '').trim();
+          const trimmed = countyFromAccount(d);
           if (trimmed) {
             const base = titleCaseCounty(trimmed.replace(/\s*county$/i, '').trim());
             if (base) name = `${base} Central Appraisal District`;
@@ -144,8 +147,8 @@ export default function SignUpForm() {
         // Fallback to mapsco via scraper detail => Dallas CAD
         if (!name) {
           try {
-            const det: any = await fetchDetail(accountId);
-            const mapsco = det?.detail?.property_location?.mapsco || det?.property_location?.mapsco || '';
+            const det: unknown = await fetchDetail(accountId);
+            const mapsco = mapscoFromDetail(det);
             if (mapsco) name = 'Dallas Central Appraisal District';
           } catch {}
         }
@@ -165,21 +168,13 @@ export default function SignUpForm() {
     let cancelled = false;
     (async () => {
       try {
-        const det: any = await fetchDetail(accountId);
-        const legalObj = det?.detail?.legal_description || det?.legal_description || null;
-        let text = '';
-        if (legalObj && Array.isArray(legalObj.lines)) {
-          text = legalObj.lines.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
-        } else if (Array.isArray(legalObj)) {
-          text = legalObj.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
-        } else if (typeof legalObj === 'string') {
-          text = String(legalObj).trim();
-        }
+        const det: unknown = await fetchDetail(accountId);
+        const text = legalDescriptionFromDetail(det);
         if (!cancelled && text) {
           setFields(f => {
             const lp = [...f.listedProperties];
-            if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
-            lp[0] = { ...lp[0], legalDescription: text } as any;
+            if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' };
+            lp[0] = { ...lp[0], legalDescription: text };
             return { ...f, listedProperties: lp };
           });
         }
@@ -229,37 +224,23 @@ export default function SignUpForm() {
         let legalFromDetail: string = '';
         try {
           const d = await api.getAccount(accountId);
-          subjectAddress = (d as any)?.account?.address || '';
+          subjectAddress = subjectAddressFromAccount(d);
           // Prefer legal description from DB current if available
-          const legalDB: any = (d as any)?.legal_current || null;
-          if (legalDB && !legalFromDetail) {
-            if (Array.isArray(legalDB.legal_lines)) {
-              legalFromDetail = legalDB.legal_lines.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
-            } else if (typeof legalDB.legal_text === 'string') {
-              legalFromDetail = legalDB.legal_text.trim();
-            }
-          }
+          legalFromDetail = legalDescriptionFromAccount(d);
         } catch {}
         if (!subjectAddress) {
           try {
-            const det: any = await fetchDetail(accountId);
-            subjectAddress = det?.detail?.property_location?.address || det?.property_location?.address || '';
+            const det: unknown = await fetchDetail(accountId);
+            subjectAddress = subjectAddressFromDetail(det);
             // Try to extract legal description lines
-            const ld: any = det?.detail?.legal_description || det?.legal_description || null;
-            if (Array.isArray(ld)) {
-              legalFromDetail = ld.map((x: any) => (x && typeof x === 'string' ? x.trim() : String(x || '').trim())).filter(Boolean).join('\n');
-            } else if (ld && typeof ld === 'object' && Array.isArray(ld?.lines)) {
-              legalFromDetail = ld.lines.map((x: any) => String(x || '').trim()).filter(Boolean).join('\n');
-            } else if (typeof ld === 'string') {
-              legalFromDetail = ld.trim();
-            }
+            legalFromDetail = legalDescriptionFromDetail(det) || legalFromDetail;
           } catch {}
         }
         // Mailing address from Property Report
         let mailingAddress = '';
         try {
-          const det: any = await fetchDetail(accountId);
-          mailingAddress = det?.detail?.owner?.mailing_address || det?.owner?.mailing_address || '';
+          const det: unknown = await fetchDetail(accountId);
+          mailingAddress = mailingAddressFromDetail(det);
         } catch {}
         if (mailingAddress) {
           const parts = parseMailingParts(mailingAddress);
@@ -278,13 +259,13 @@ export default function SignUpForm() {
         if (!cancelled && subjectAddress) {
           setFields(f => {
             const lp = [...f.listedProperties];
-            if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' } as PropertyItem;
+            if (!lp[0]) lp[0] = { accountNumber: '', situsAddress: '', legalDescription: '' };
             const updated0 = {
               accountNumber: accountId,
               situsAddress: subjectAddress,
               legalDescription: f.listedProperties[0]?.legalDescription || legalFromDetail || '',
             };
-            lp[0] = updated0 as any;
+            lp[0] = updated0;
             return { ...f, listedProperties: lp };
           });
         }
@@ -333,15 +314,15 @@ export default function SignUpForm() {
         ownerName: fields.ownerName,
         ownerTelephone: fields.ownerTelephone,
       };
-      const res = await fetch(api.makeUrl('/api/signup/email'), {
+      await api.fetchJSON<{ ok: boolean }>(api.makeUrl('/api/signup/email'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
+        timeoutMs: 15000,
       });
-      if (!res.ok) throw new Error(await res.text());
       alert('Submitted! We will follow up by email.');
-    } catch (e: any) {
-      alert(e?.message || 'Submit failed');
+    } catch (error: unknown) {
+      alert(signupErrorMessage(error));
     }
   }
 

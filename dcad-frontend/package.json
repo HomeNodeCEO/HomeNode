@@ -9,6 +9,7 @@
     "build:checked": "vite build && node scripts/checkBundleBudget.mjs",
     "lint": "eslint .",
     "lint:ci": "node scripts/checkLintBudget.mjs",
+    "quality:source": "node scripts/checkSourceBudget.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"scripts/test*.mjs\"",
     "preview": "vite preview",

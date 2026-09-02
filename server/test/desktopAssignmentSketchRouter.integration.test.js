@@ -345,7 +345,7 @@ test("desktop assignment sketch composition and route position remain explicit",
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const history = source.indexOf("app.use(createAppraisalHistoryRouter(");
   const sketches = source.indexOf("app.use(createDesktopAssignmentSketchRouter(");
-  const propertyTax = source.indexOf('app.get("/api/accounts/:id/property-tax-protest"');
+  const propertyTax = source.indexOf("app.use(createDesktopPropertyTaxRouter(");
   assert.ok(sketches > history);
   assert.ok(propertyTax > sketches);
   assert.equal(source.includes("/mobile-sketch/preview.svg"), false);

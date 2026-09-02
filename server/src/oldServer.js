@@ -207,14 +207,7 @@ import { createAssignmentFileListRouter } from "./modules/assignmentFiles/listRo
 import { createDesktopReportFilesRouter } from "./modules/accounts/reportFilesRouter.js";
 import { createAppraisalHistoryRouter } from "./modules/accounts/appraisalHistoryRouter.js";
 import { createDesktopAssignmentSketchRouter } from "./modules/mobile/desktopAssignmentSketchRouter.js";
-import {
-  savePropertyTaxInspectionSketch,
-} from "./modules/mobile/desktopSketches.js";
-import {
-  getDesktopPropertyTaxEvidenceVersion,
-  getDesktopPropertyTaxFile,
-  saveDesktopPropertyTaxFile,
-} from "./modules/mobile/desktopPropertyTax.js";
+import { createDesktopPropertyTaxRouter } from "./modules/mobile/desktopPropertyTaxRouter.js";
 import { registerOriginalAppraisalReport } from "./services/appraisalHistory.js";
 import {
   authenticatedApiRateLimitKey,
@@ -819,182 +812,14 @@ app.use(createDesktopAssignmentSketchRouter({
   requireEditor,
   requireAssignmentAccess: requireCustomAssignmentAccess,
 }));
-
-/** Load the current canonical Property Tax Protest file and accepted mobile evidence. */
-app.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "property_tax_protest", "read")) return;
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  try {
-    await Promise.all([accountQualityReady, propertyEnrichmentReady]);
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    const organizationIds = applicationAuthenticationRequired && req.mobileAuth
-      ? (req.mobileAuth.organizations || [])
-        .filter((organization) => hasApplicationPermission(
-          req.mobileAuth,
-          "property_tax_protest",
-          "read",
-          organization.organizationId,
-        ))
-        .map((organization) => organization.organizationId)
-      : null;
-    const file = await getDesktopPropertyTaxFile(
-      pool,
-      canonicalId,
-      req.query.file_id || null,
-      { organizationIds },
-    );
-    if (
-      applicationAuthenticationRequired
-      && req.mobileAuth
-      && file
-      && !decideAssignmentAccess(req.mobileAuth, file, "read")
-    ) {
-      return res.status(403).json({ error: "property_tax_protest_access_denied" });
-    }
-    return res.json({ account_id: canonicalId, file });
-  } catch (error) {
-    if (String(error?.message || "").startsWith("invalid_")) {
-      return res.status(400).json({ error: error.message });
-    }
-    console.error("property tax protest load failed", error);
-    return res.status(500).json({ error: "property_tax_protest_load_failed" });
-  }
-});
-
-/** Lightweight verified-photo and committed-sketch token for one protest file. */
-app.get("/api/accounts/:id/property-tax-protest/:fileId/evidence/version", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "property_tax_protest", "read")) return;
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  try {
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    const organizationIds = applicationAuthenticationRequired && req.mobileAuth
-      ? (req.mobileAuth.organizations || [])
-        .filter((organization) => hasApplicationPermission(
-          req.mobileAuth,
-          "property_tax_protest",
-          "read",
-          organization.organizationId,
-        ))
-        .map((organization) => organization.organizationId)
-      : null;
-    const file = await getDesktopPropertyTaxEvidenceVersion(
-      pool,
-      canonicalId,
-      req.params.fileId,
-      { organizationIds },
-    );
-    if (!file) return res.status(404).json({ error: "property_tax_protest_file_not_found" });
-    if (
-      applicationAuthenticationRequired
-      && req.mobileAuth
-      && !decideAssignmentAccess(req.mobileAuth, file, "read")
-    ) return res.status(403).json({ error: "property_tax_protest_access_denied" });
-    return res.set("cache-control", "no-store").json({ account_id: canonicalId, file });
-  } catch (error) {
-    if (String(error?.message || "").startsWith("invalid_")) {
-      return res.status(400).json({ error: error.message });
-    }
-    console.error("property tax protest evidence version failed", error);
-    return res.status(500).json({ error: "property_tax_protest_evidence_version_failed" });
-  }
-});
-
-/** Save a reviewed desktop protest revision without replacing prior history. */
-app.patch("/api/accounts/:id/property-tax-protest/:fileId", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  if (!requireEditor(req, res)) return;
-  try {
-    await Promise.all([accountQualityReady, propertyEnrichmentReady]);
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    const existingFile = await getDesktopPropertyTaxFile(pool, canonicalId, req.params.fileId);
-    if (
-      applicationAuthenticationRequired
-      && req.mobileAuth
-      && (!existingFile || !decideAssignmentAccess(req.mobileAuth, existingFile, "write"))
-    ) {
-      return res.status(existingFile ? 403 : 404).json({
-        error: existingFile ? "property_tax_protest_access_denied" : "property_tax_protest_file_not_found",
-      });
-    }
-    const file = await saveDesktopPropertyTaxFile(
-      pool,
-      canonicalId,
-      req.params.fileId,
-      req.body || {},
-    );
-    return res.json({ ok: true, file });
-  } catch (error) {
-    if (error?.message === "property_tax_protest_revision_conflict") {
-      return res.status(409).json({ error: error.message, current_revision: error.currentRevision });
-    }
-    if (error?.message === "property_tax_protest_file_not_found") {
-      return res.status(404).json({ error: error.message });
-    }
-    if (String(error?.message || "").startsWith("invalid_")) {
-      return res.status(400).json({ error: error.message });
-    }
-    console.error("property tax protest save failed", error);
-    return res.status(500).json({ error: "property_tax_protest_save_failed" });
-  }
-});
-
-/** Revise the Property Tax Protest sketch through the authenticated desktop workflow. */
-app.patch("/api/accounts/:id/property-tax-protest/:fileId/sketch", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  if (!requireEditor(req, res)) return;
-  try {
-    await Promise.all([accountQualityReady, propertyEnrichmentReady]);
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    const existingFile = await getDesktopPropertyTaxFile(pool, canonicalId, req.params.fileId);
-    if (
-      applicationAuthenticationRequired
-      && req.mobileAuth
-      && (!existingFile || !decideAssignmentAccess(req.mobileAuth, existingFile, "write"))
-    ) {
-      return res.status(existingFile ? 403 : 404).json({
-        error: existingFile ? "property_tax_protest_access_denied" : "property_tax_protest_file_not_found",
-      });
-    }
-    const result = await savePropertyTaxInspectionSketch(
-      pool,
-      canonicalId,
-      req.params.fileId,
-      req.body || {},
-      req.mobileAuth?.userId || null,
-    );
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    if (error?.message === "property_tax_protest_sketch_not_found") {
-      return res.status(404).json({ error: error.message });
-    }
-    if (error?.message === "sketch_revision_conflict") {
-      return res.status(409).json({ error: error.message, current_revision: error.currentRevision });
-    }
-    if (
-      String(error?.message || "").startsWith("invalid_")
-      || String(error?.message || "").startsWith("duplicate_")
-      || error?.message === "sketch_not_ready_for_confirmation"
-      || error?.message === "sketch_operation_conflict"
-    ) {
-      return res.status(error?.message === "sketch_operation_conflict" ? 409 : 400)
-        .json({ error: error.message });
-    }
-    console.error("property tax protest sketch review failed", error);
-    return res.status(500).json({ error: "property_tax_protest_sketch_update_failed" });
-  }
-});
+app.use(createDesktopPropertyTaxRouter({
+  pool,
+  accountQualityReady,
+  propertyEnrichmentReady,
+  requireWorkflowAccess,
+  requireEditor,
+  authenticationRequired: applicationAuthenticationRequired,
+}));
 
 /** Create a new appraisal file without changing any earlier assignment file. */
 app.post("/api/accounts/:id/assignment-files", async (req, res) => {

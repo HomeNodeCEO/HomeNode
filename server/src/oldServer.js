@@ -205,6 +205,7 @@ import { createHousingProfileRouter } from "./modules/accounts/housingProfileRou
 import { createReportManualValuesRouter } from "./modules/accounts/reportManualValuesRouter.js";
 import { createAssignmentFileListRouter } from "./modules/assignmentFiles/listRouter.js";
 import { createDesktopReportFilesRouter } from "./modules/accounts/reportFilesRouter.js";
+import { createAppraisalHistoryRouter } from "./modules/accounts/appraisalHistoryRouter.js";
 import {
   getAssignmentInspectionSketch,
   saveAssignmentInspectionSketch,
@@ -216,12 +217,7 @@ import {
   getDesktopPropertyTaxFile,
   saveDesktopPropertyTaxFile,
 } from "./modules/mobile/desktopPropertyTax.js";
-import {
-  listPreviousAppraisalFiles,
-  registerOriginalAppraisalReport,
-} from "./services/appraisalHistory.js";
-import { replicateAppraisalFile } from "./services/appraisalReplication.js";
-import { loadSharedAppraisalCompletion } from "./services/appraisalCompletionAdapter.js";
+import { registerOriginalAppraisalReport } from "./services/appraisalHistory.js";
 import {
   authenticatedApiRateLimitKey,
   createCorsMiddleware,
@@ -245,10 +241,6 @@ import {
 import { getApplicationAuthReadiness } from "./security/applicationAuthReadiness.js";
 import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
 import { authorizeCustomAssignmentFile, decideAssignmentAccess } from "./security/assignmentAccess.js";
-import {
-  authorizeAppraisalReportFile,
-  buildAppraisalHistoryAccessScope,
-} from "./security/appraisalHistoryAccess.js";
 import {
   createRuntimeResilienceConfiguration,
 } from "./security/runtimeResilience.js";
@@ -813,129 +805,12 @@ app.use(createDesktopReportFilesRouter({
   pool,
   requireWorkflowAccess,
 }));
-
-/** List Custom and UAD appraisal history without treating prior observations as current facts. */
-app.get("/api/accounts/:id/appraisal-history", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  try {
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    const schema = await pool.query(
-      "SELECT to_regclass('app.appraisal_cases') AS table_name",
-    );
-    if (!schema.rows[0]?.table_name) {
-      return res.status(503).json({ error: "appraisal_history_schema_unavailable" });
-    }
-    const accessScope = applicationAuthenticationRequired && req.mobileAuth
-      ? buildAppraisalHistoryAccessScope(req.mobileAuth)
-      : null;
-    return res.json(await listPreviousAppraisalFiles(pool, canonicalId, accessScope));
-  } catch (error) {
-    if (String(error?.message || "").startsWith("invalid_")) {
-      return res.status(400).json({ error: error.message });
-    }
-    console.error("appraisal history list failed", error);
-    return res.status(500).json({ error: "appraisal_history_list_failed" });
-  }
-});
-
-/** Load the workflow-neutral completion document anchored to one immutable subject snapshot. */
-app.get("/api/accounts/:id/appraisal-history/:reportFileId/completion", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  try {
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    if (applicationAuthenticationRequired && req.mobileAuth) {
-      await authorizeAppraisalReportFile(pool, req.mobileAuth, {
-        accountId: canonicalId,
-        reportFileId: req.params.reportFileId,
-        permission: "read",
-      });
-    }
-    const completion = await loadSharedAppraisalCompletion(pool, {
-      accountId: canonicalId,
-      reportFileId: req.params.reportFileId,
-    });
-    return res.json({ ok: true, account_id: canonicalId, completion });
-  } catch (error) {
-    const message = String(error?.message || "");
-    if (message === "appraisal_report_file_access_denied") {
-      return res.status(403).json({ error: message });
-    }
-    if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
-    if (message.startsWith("invalid_")) return res.status(400).json({ error: message });
-    if (
-      message === "appraisal_subject_snapshot_required"
-      || message === "shared_appraisal_completion_source_not_found"
-    ) {
-      return res.status(409).json({ error: message });
-    }
-    console.error("shared appraisal completion load failed", error);
-    return res.status(500).json({ error: "shared_appraisal_completion_load_failed" });
-  }
-});
-
-/** Create either an alternate report for the same assignment or a clean new appraisal template. */
-app.post("/api/accounts/:id/appraisal-history/:reportFileId/replicate", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  if (!requireEditor(req, res)) return;
-  try {
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    let sourceAccess = null;
-    if (applicationAuthenticationRequired && req.mobileAuth) {
-      sourceAccess = await authorizeAppraisalReportFile(pool, req.mobileAuth, {
-        accountId: canonicalId,
-        reportFileId: req.params.reportFileId,
-        permission: "write",
-      });
-      const targetWorkflow = String(req.body?.target_workflow_type || "").trim();
-      if (["custom_appraisal", "uad_3_6"].includes(targetWorkflow)
-          && !hasApplicationPermission(
-            req.mobileAuth,
-            targetWorkflow,
-            "write",
-            sourceAccess.organization_id,
-          )) {
-        return res.status(403).json({ error: "appraisal_replication_access_denied" });
-      }
-    }
-    const result = await replicateAppraisalFile(pool, {
-      accountId: canonicalId,
-      sourceReportFileId: req.params.reportFileId,
-      input: req.body || {},
-      actorUserId: req.mobileAuth?.userId || null,
-      organizationId: sourceAccess?.organization_id || null,
-    });
-    return res.status(201).json({ ok: true, ...result });
-  } catch (error) {
-    const message = String(error?.message || "");
-    if (message === "appraisal_report_file_access_denied") {
-      return res.status(403).json({ error: message });
-    }
-    if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
-    if (
-      message.startsWith("invalid_")
-      || message === "same_assignment_confirmation_required"
-      || message === "same_assignment_requires_alternate_workflow"
-    ) {
-      return res.status(400).json({ error: message });
-    }
-    if (message.endsWith("_conflict") || error?.code === "23505") {
-      return res.status(409).json({ error: message || "appraisal_replication_conflict" });
-    }
-    console.error("appraisal file replication failed", error);
-    return res.status(500).json({ error: "appraisal_file_replication_failed" });
-  }
-});
+app.use(createAppraisalHistoryRouter({
+  pool,
+  requireWorkflowAccess,
+  requireEditor,
+  authenticationRequired: applicationAuthenticationRequired,
+}));
 
 /** Download or embed the current report-file sketch as a scalable vector exhibit. */
 app.get("/api/accounts/:id/assignment-files/:fileId/mobile-sketch/preview.svg", async (req, res) => {

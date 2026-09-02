@@ -263,7 +263,7 @@ test("desktop report-file composition and route position remain explicit", () =>
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const assignmentFiles = source.indexOf("app.use(createAssignmentFileListRouter(");
   const reportFiles = source.indexOf("app.use(createDesktopReportFilesRouter(");
-  const history = source.indexOf('app.get("/api/accounts/:id/appraisal-history"');
+  const history = source.indexOf("app.use(createAppraisalHistoryRouter(");
   assert.ok(reportFiles > assignmentFiles);
   assert.ok(history > reportFiles);
   assert.equal(source.includes('app.get("/api/accounts/:id/report-files"'), false);

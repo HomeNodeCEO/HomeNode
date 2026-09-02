@@ -59,10 +59,12 @@ test("desktop latest-file lookups remain organization scoped after authenticatio
 
 test("previous-appraisal history, completion, and replication enforce canonical ownership", () => {
   const server = read("../src/oldServer.js");
+  const router = read("../src/modules/accounts/appraisalHistoryRouter.js");
   const history = read("../src/services/appraisalHistory.js");
   const replication = read("../src/services/appraisalReplication.js");
-  assert.match(server, /buildAppraisalHistoryAccessScope/);
-  assert.match(server, /authorizeAppraisalReportFile/);
+  assert.match(server, /createAppraisalHistoryRouter/);
+  assert.match(router, /buildAppraisalHistoryAccessScope/);
+  assert.match(router, /authorizeAppraisalReportFile/);
   assert.match(history, /customOrganizationWideReadIds/);
   assert.match(history, /uadOrganizationWideReadIds/);
   assert.match(replication, /organization_id IS NOT DISTINCT FROM \$3::uuid/);

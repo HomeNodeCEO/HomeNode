@@ -4,7 +4,10 @@ import {
   DALLAS_RESIDENTIAL_2026,
   type PropertyTaxPacketMilestone,
 } from '@/lib/propertyTaxCase';
-import { readPropertyTaxWorkspace } from '@/lib/propertyTaxWorkspace';
+import {
+  resolvePropertyTaxAnalysisContext,
+  type PropertyTaxDatabaseDefaults,
+} from '@/lib/propertyTaxWorkspace';
 
 function displayDate(value: string | null): string {
   if (!value) return 'Not scheduled';
@@ -30,13 +33,16 @@ function statusLabel(status: PropertyTaxPacketMilestone['status']): string {
 
 export default function PropertyTaxPacketWorkspace({
   file,
+  databaseDefaults,
 }: {
   file: PropertyTaxProtestFile | null;
+  databaseDefaults: PropertyTaxDatabaseDefaults;
 }) {
-  const snapshot = readPropertyTaxWorkspace(file?.workfile_data);
+  const analysisContext = resolvePropertyTaxAnalysisContext(file?.workfile_data, databaseDefaults);
   const readiness = buildPropertyTaxPacketReadiness({
     workfileData: file?.workfile_data,
-    taxYear: snapshot.taxYear,
+    taxYear: analysisContext.taxYear,
+    neighborhoodCode: analysisContext.neighborhoodCode,
     hasCanonicalFile: Boolean(file),
   });
   const district = readiness.districtConfiguration || DALLAS_RESIDENTIAL_2026;
@@ -82,12 +88,17 @@ export default function PropertyTaxPacketWorkspace({
           {warning}
         </div>
       ))}
+      {file && analysisContext.warnings.map((warning) => (
+        <div key={warning} className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          {warning}
+        </div>
+      ))}
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <h3 className="text-sm font-semibold text-slate-900">Comparable selection contract</h3>
           <p className="mt-2 text-sm leading-6 text-slate-600">
-            The first search stays inside the recorded DCAD neighborhood and building class, requires verified arm&apos;s-length sales, and ranks physical similarity without using price. After selection, the shared adjustment engine identifies which adjusted indications support a reduction.
+            The first search uses the workfile neighborhood or the most recent database neighborhood when available, then applies building class, verified arm&apos;s-length status, and price-independent physical similarity. Missing context remains a review flag and never blocks the analysis.
           </p>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4">

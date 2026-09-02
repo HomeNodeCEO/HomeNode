@@ -181,13 +181,16 @@ export function districtConfigurationFor(
 export function buildPropertyTaxPacketReadiness({
   workfileData,
   taxYear,
+  neighborhoodCode,
   hasCanonicalFile,
 }: {
   workfileData: PropertyTaxWorkfileData | null | undefined;
   taxYear: number | null;
+  neighborhoodCode?: string;
   hasCanonicalFile: boolean;
 }): PropertyTaxPacketReadiness {
   const caseData = readPropertyTaxCase(workfileData);
+  const effectiveNeighborhoodCode = neighborhoodCode?.trim() || caseData.neighborhoodCode;
   const districtConfiguration = districtConfigurationFor(caseData.districtCode, taxYear);
   const warnings: string[] = [];
   const effectiveProtestDeadline = caseData.protestDeadline
@@ -216,7 +219,7 @@ export function buildPropertyTaxPacketReadiness({
 
   const caseConfigured = Boolean(hasCanonicalFile && districtConfiguration
     && caseData.propertyUse === 'single_family_residential'
-    && caseData.neighborhoodCode);
+    && effectiveNeighborhoodCode);
   const filed = Boolean(caseData.protestFiledAt && caseData.filingMethod);
   const requestSent = Boolean(caseData.evidenceRequestSentAt && caseData.evidenceRequestMethod);
   const evidenceReceived = Boolean(caseData.districtEvidenceReceivedAt);
@@ -232,8 +235,8 @@ export function buildPropertyTaxPacketReadiness({
         label: 'Dallas case setup',
         status: caseConfigured ? 'complete' : hasCanonicalFile ? 'attention' : 'not_started',
         detail: caseConfigured
-          ? `Neighborhood ${caseData.neighborhoodCode} is the initial comparable boundary.`
-          : 'Select Dallas 2026, single-family residential use, and the DCAD neighborhood.',
+          ? `Neighborhood ${effectiveNeighborhoodCode} is the initial comparable boundary.`
+          : 'Review the district and property use. Missing tax-year or neighborhood values use the latest database context when available and do not block analysis.',
       },
       {
         key: 'protest_filing',

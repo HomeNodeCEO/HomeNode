@@ -74,3 +74,20 @@ test('an unloaded file remains not started and never implies a filing', () => {
   assert.equal(readiness.milestones[1].status, 'not_started');
   assert.equal(readiness.districtEvidenceDueDate, null);
 });
+
+test('the latest database neighborhood can satisfy case context without a workfile save', () => {
+  const readiness = buildPropertyTaxPacketReadiness({
+    workfileData: {
+      protest_case: {
+        district_code: 'tx-dallas-cad',
+        property_use: 'single_family_residential',
+      },
+    },
+    taxYear: 2026,
+    neighborhoodCode: 'DB-NBHD-10',
+    hasCanonicalFile: true,
+  });
+  const setup = readiness.milestones.find((item) => item.key === 'case_setup');
+  assert.equal(setup?.status, 'complete');
+  assert.match(setup?.detail || '', /DB-NBHD-10/);
+});

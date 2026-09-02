@@ -7,7 +7,14 @@ import type { PropertyTaxProtestFile } from '@/lib/api';
 import {
   buildPropertyTaxSummary,
   readPropertyTaxWorkspace,
+  type PropertyTaxDatabaseDefaults,
 } from '@/lib/propertyTaxWorkspace';
+
+const EMPTY_DATABASE_DEFAULTS: PropertyTaxDatabaseDefaults = Object.freeze({
+  loaded: false,
+  taxYear: null,
+  neighborhoodCode: '',
+});
 
 function displayCurrency(value: number | null): string {
   if (value == null) return 'Not entered';
@@ -102,6 +109,7 @@ export default function PropertyTaxProtest() {
   const [subjectAddress, setSubjectAddress] = useState('');
   const [subjectLoading, setSubjectLoading] = useState(false);
   const [subjectError, setSubjectError] = useState<string | null>(null);
+  const [databaseDefaults, setDatabaseDefaults] = useState<PropertyTaxDatabaseDefaults>(EMPTY_DATABASE_DEFAULTS);
   const [canonicalFile, setCanonicalFile] = useState<PropertyTaxProtestFile | null>(null);
   const [summary, setSummary] = useState('');
 
@@ -123,20 +131,33 @@ export default function PropertyTaxProtest() {
   useEffect(() => {
     if (!propertyId) {
       setSubjectAddress('');
+      setDatabaseDefaults({ ...EMPTY_DATABASE_DEFAULTS, loaded: true });
       return;
     }
     let cancelled = false;
     setSubjectLoading(true);
     setSubjectError(null);
+    setDatabaseDefaults(EMPTY_DATABASE_DEFAULTS);
     api.getAccount(propertyId)
       .then((response) => {
-        if (!cancelled) setSubjectAddress(response?.account?.address || '');
+        if (!cancelled) {
+          const latestTaxYear = Number(response?.account?.latest_tax_year);
+          setSubjectAddress(response?.account?.address || '');
+          setDatabaseDefaults({
+            loaded: true,
+            taxYear: Number.isInteger(latestTaxYear) && latestTaxYear >= 2000 && latestTaxYear <= 2200
+              ? latestTaxYear
+              : null,
+            neighborhoodCode: String(response?.account?.neighborhood_code || '').trim(),
+          });
+        }
       })
       .catch((error: unknown) => {
         if (!cancelled) {
           setSubjectError(error instanceof Error
             ? error.message
             : 'Subject information could not be loaded.');
+          setDatabaseDefaults({ ...EMPTY_DATABASE_DEFAULTS, loaded: true });
         }
       })
       .finally(() => {
@@ -232,7 +253,7 @@ export default function PropertyTaxProtest() {
           )}
         </header>
 
-        <PropertyTaxPacketWorkspace file={canonicalFile} />
+        <PropertyTaxPacketWorkspace file={canonicalFile} databaseDefaults={databaseDefaults} />
 
         {!canonicalFile && <ComparableGridUnavailable hasProperty={Boolean(propertyId)} />}
 
@@ -240,6 +261,7 @@ export default function PropertyTaxProtest() {
           <PropertyTaxWorkfileReview
             accountId={propertyId}
             fileId={requestedPropertyTaxFileId}
+            databaseDefaults={databaseDefaults}
             onFileChange={setCanonicalFile}
           />
         ) : (

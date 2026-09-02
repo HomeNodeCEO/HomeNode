@@ -214,7 +214,7 @@ test("legacy property editors accept the authenticated workflow identity before 
 test("the legacy editor key is inert whenever mandatory authentication is active", () => {
   const server = read("../src/oldServer.js");
   const helpers = [
-    ["function requireEditor(req, res)", "/** Coordinate coverage", true],
+    ["function requireEditor(req, res)", "app.use(createGeographyOperationsRouter(", true],
     ["async function requireCustomAssignmentAccess", "async function requireAssignmentDocumentAccess", false],
     ["async function requireAssignmentDocumentAccess", "function requireWorkflowAccess", false],
     ["function requireWorkflowAccess", "function assignmentPhotoErrorStatus", true],

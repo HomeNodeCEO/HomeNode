@@ -85,6 +85,7 @@ test("TREC resale sections produce the complete Hardy contract analysis", () => 
     seller_name: "Lorenzo Jr Loredo, Andi Li-Kay Thompson",
     buyer_name: "Zachary Thames",
     contract_property_condition: "as_is",
+    contract_personal_property_included: "No",
     assignment_type: "purchase_transaction",
   });
   assert.equal(candidates.find((candidate) => candidate.field_key === "contract_date")?.page_number, 10);
@@ -109,6 +110,48 @@ test("a checked TREC seller-repair option extracts the specific repair narrative
     candidates.find((candidate) => candidate.field_key === "contract_repairs")?.normalized_value,
     "Replace the damaged roof shingles and repair the active plumbing leak.",
   );
+});
+
+test("TREC Section 2D exclusions and stay-with-property language remain separate review items", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "purchase_contract",
+    pages: [[
+      "ONE TO FOUR FAMILY RESIDENTIAL CONTRACT",
+      "D. EXCLUSIONS: The following improvements and accessories will be retained by Seller and must be removed prior to delivery of possession: Shed to stay with property.",
+      "E. RESERVATIONS: Any reservation for oil, gas, or other minerals is made in an attached addendum.",
+    ].join("\n")],
+  });
+  const byField = new Map(candidates.map((candidate) => [candidate.field_key, candidate]));
+  assert.equal(byField.get("contract_exclusions")?.normalized_value, "Shed to stay with property");
+  assert.equal(byField.get("contract_personal_property_included")?.normalized_value, "Yes");
+  assert.equal(byField.get("contract_personal_property_details")?.normalized_value, "Shed to stay with property");
+  assert.equal(byField.get("contract_exclusions")?.page_number, 1);
+  assert.match(byField.get("contract_personal_property_details")?.evidence_excerpt || "", /Shed to stay/);
+});
+
+test("negative stay-with-property language is retained as an exclusion without becoming an inclusion", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "purchase_contract",
+    pages: [[
+      "ONE TO FOUR FAMILY RESIDENTIAL CONTRACT",
+      "D. EXCLUSIONS: The following improvements and accessories will be retained by Seller and must be removed prior to delivery of possession: Refrigerator does not stay with property.",
+      "E. RESERVATIONS: None.",
+    ].join("\n")],
+  });
+  const byField = new Map(candidates.map((candidate) => [candidate.field_key, candidate]));
+  assert.equal(byField.get("contract_exclusions")?.normalized_value, "Refrigerator does not stay with property");
+  assert.equal(byField.get("contract_personal_property_included")?.normalized_value, "No");
+  assert.equal(byField.has("contract_personal_property_details"), false);
+});
+
+test("personal-property inclusion survives PDF line wrapping and plural stay language", () => {
+  const candidates = buildDocumentFieldCandidates({
+    documentType: "purchase_contract",
+    pages: ["ONE TO FOUR FAMILY RESIDENTIAL CONTRACT\nThe detached storage shed stays with\nthe property."],
+  });
+  const byField = new Map(candidates.map((candidate) => [candidate.field_key, candidate]));
+  assert.equal(byField.get("contract_personal_property_included")?.normalized_value, "Yes");
+  assert.match(byField.get("contract_personal_property_details")?.normalized_value || "", /shed stays with the property/i);
 });
 
 test("labeled fields retain the verbatim source text and normalized money", () => {

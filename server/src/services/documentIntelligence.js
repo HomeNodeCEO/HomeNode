@@ -12,7 +12,7 @@ export const DOCUMENT_TYPES = Object.freeze([
 
 // Persist this with every extraction so documents created before a parser
 // improvement can be upgraded exactly once from their immutable source PDF.
-export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-09-02-v2";
+export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-09-02-v3";
 
 const DOCUMENT_TYPE_SET = new Set(DOCUMENT_TYPES);
 const MAX_PDF_PAGES = 250;
@@ -437,6 +437,127 @@ function trecPropertyConditionCandidates(pages) {
   return [];
 }
 
+function trecSection2dExclusionsCandidate(pages) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const page = cleanText(pages[pageIndex], 500_000);
+    const match = page.match(
+      /(?:^|\n)\s*D\.\s*EXCLUSIONS:\s*([\s\S]*?)(?=\n\s*E\.\s*RESERVATIONS:)/i,
+    );
+    if (!match) continue;
+    const sectionText = compactEvidence(match[1])
+      .replace(
+        /^The following improvements and accessories will be retained by Seller and must be removed prior to delivery of possession:\s*/i,
+        "",
+      )
+      .replace(/^[\s._-]+|[\s._-]+$/g, "")
+      .trim();
+    if (!sectionText) return null;
+    return {
+      field_key: "contract_exclusions",
+      raw_value: sectionText,
+      normalized_value: sectionText,
+      page_number: pageIndex + 1,
+      confidence: 0.96,
+      evidence_excerpt: compactEvidence(match[0]),
+      extraction_method: "trec_section_2d_exclusions",
+    };
+  }
+  return null;
+}
+
+function contractPersonalPropertyCandidates(pages, exclusionsCandidate = null) {
+  const affirmativePatterns = [
+    /\b(?:shall|will|must|to)?\s*(?:stay|remain|convey|transfer)s?\s+with\s+(?:the\s+)?(?:property|sale|home|house)\b/i,
+    /\b(?:included|conveyed|transferred)\s+(?:in|with)\s+(?:the\s+)?(?:sale|property)\b/i,
+    /\b(?:to\s+be|will\s+be|shall\s+be)\s+left\s+with\s+(?:the\s+)?(?:property|sale|home|house)\b/i,
+  ];
+  const negativePattern = /\b(?:not|does\s+not|do\s+not|will\s+not|shall\s+not|won't|excluded?|removed?|retained\s+by\s+seller)\b/i;
+  const containsAffirmativeLanguage = (value) => (
+    affirmativePatterns.some((pattern) => pattern.test(value))
+  );
+  const findings = [];
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const sourceLines = cleanText(pages[pageIndex], 500_000)
+      .split(/\n/)
+      .map((line) => compactEvidence(line))
+      .filter(Boolean);
+    const wrappedLines = sourceLines.slice(0, -1)
+      .map((line, index) => ({ line, next: sourceLines[index + 1] }))
+      .filter(({ line, next }) => (
+        !containsAffirmativeLanguage(line)
+        && !containsAffirmativeLanguage(next)
+        && containsAffirmativeLanguage(`${line} ${next}`)
+      ))
+      .map(({ line, next }) => `${line} ${next}`);
+    const lines = [
+      ...sourceLines,
+      ...wrappedLines,
+      ...(exclusionsCandidate?.page_number === pageIndex + 1
+        ? [exclusionsCandidate.raw_value]
+        : []),
+    ];
+    for (const line of lines) {
+      const value = line
+        .replace(/^D\.\s*EXCLUSIONS:\s*/i, "")
+        .replace(
+          /^The following improvements and accessories will be retained by Seller and must be removed prior to delivery of possession:\s*/i,
+          "",
+        )
+        .replace(/^[\s._-]+|[\s._-]+$/g, "")
+        .trim();
+      if (!value) continue;
+      if (!containsAffirmativeLanguage(value)) continue;
+      if (negativePattern.test(value)) continue;
+      const identity = value.toLowerCase();
+      if (!findings.some((finding) => finding.identity === identity)) {
+        findings.push({ identity, value, pageNumber: pageIndex + 1 });
+      }
+      if (findings.length >= 8) break;
+    }
+    if (findings.length >= 8) break;
+  }
+  if (findings.length) {
+    const details = findings.map((finding) => finding.value).join("; ").slice(0, 2_000);
+    const evidence = findings
+      .map((finding) => `Page ${finding.pageNumber}: ${finding.value}`)
+      .join(" ")
+      .slice(0, 2_000);
+    return [
+      {
+        field_key: "contract_personal_property_included",
+        raw_value: "Yes",
+        normalized_value: "Yes",
+        page_number: findings[0].pageNumber,
+        confidence: 0.92,
+        evidence_excerpt: evidence,
+        extraction_method: "contract_personal_property_inclusion_phrase",
+      },
+      {
+        field_key: "contract_personal_property_details",
+        raw_value: details,
+        normalized_value: details,
+        page_number: findings[0].pageNumber,
+        confidence: 0.9,
+        evidence_excerpt: evidence,
+        extraction_method: "contract_personal_property_inclusion_phrase",
+      },
+    ];
+  }
+  const evidencePage = exclusionsCandidate?.page_number || 1;
+  const exclusionContext = exclusionsCandidate?.raw_value
+    ? `Section 2D states: ${exclusionsCandidate.raw_value}`
+    : "No affirmative 'stay with property' or equivalent inclusion language was found in the extracted contract text.";
+  return [{
+    field_key: "contract_personal_property_included",
+    raw_value: "No",
+    normalized_value: "No",
+    page_number: evidencePage,
+    confidence: 0.76,
+    evidence_excerpt: `${exclusionContext} Appraiser confirmation is required.`,
+    extraction_method: "contract_personal_property_negative_review",
+  }];
+}
+
 function buildPurchaseContractCandidates(pages) {
   const candidates = [
     firstContractPatternCandidate(pages, {
@@ -475,6 +596,9 @@ function buildPurchaseContractCandidates(pages) {
   ].filter(Boolean);
   candidates.push(...trecPartyCandidates(pages));
   candidates.push(...trecPropertyConditionCandidates(pages));
+  const exclusionsCandidate = trecSection2dExclusionsCandidate(pages);
+  if (exclusionsCandidate) candidates.push(exclusionsCandidate);
+  candidates.push(...contractPersonalPropertyCandidates(pages, exclusionsCandidate));
   return candidates;
 }
 

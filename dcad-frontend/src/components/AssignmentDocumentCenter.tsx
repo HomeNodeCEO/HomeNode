@@ -57,6 +57,9 @@ const FIELD_LABELS: Record<string, string> = {
   seller_concessions: 'Seller Concessions',
   contract_property_condition: 'Property Condition Provision',
   contract_repairs: 'Seller Repairs / Treatments',
+  contract_personal_property_included: 'Personal Property Conveyed',
+  contract_personal_property_details: 'Personal Property Included in Sale',
+  contract_exclusions: 'Contract Section 2D Exclusions',
   seller_name: 'Seller',
   buyer_name: 'Buyer / Borrower',
   lender_client_name: 'Lender / Client',
@@ -793,7 +796,18 @@ export default function AssignmentDocumentCenter({
                           </div>
                           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">Suggested</span>
                         </div>
-                        <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))} />
+                        {candidate.field_key === 'contract_personal_property_included' ? (
+                          <select
+                            className="select select-bordered select-sm mt-2 w-full bg-white"
+                            value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value}
+                            onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))}
+                          >
+                            <option value="Yes">Yes</option>
+                            <option value="No">No</option>
+                          </select>
+                        ) : (
+                          <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))} />
+                        )}
                         <p className="mt-2 rounded bg-slate-50 p-2 text-[11px] leading-4 text-slate-600">{candidate.evidence_excerpt || candidate.raw_value}</p>
                         {candidate.id ? (
                           <div className="mt-2 flex gap-2">

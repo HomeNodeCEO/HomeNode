@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  getPropertyTaxProtestFile,
-  getPropertyTaxEvidenceVersion,
   updatePropertyTaxInspectionSketch,
-  updatePropertyTaxProtestFile,
   type PropertyTaxProtestFile,
 } from '@/lib/api';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import MobileSketchReview from '@/components/MobileSketchReview';
 import PropertyTaxComparableGrid from '@/components/PropertyTaxComparableGrid';
 import SketchWorkspaceEmptyState from '@/components/SketchWorkspaceEmptyState';
+import {
+  getPropertyTaxEvidenceVersion,
+  getPropertyTaxProtestFile,
+  updatePropertyTaxProtestFile,
+} from '@/lib/propertyTaxApi';
 
 type FieldSpec = {
   path: [string, string];

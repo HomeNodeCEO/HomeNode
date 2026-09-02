@@ -8,6 +8,10 @@ const router = fs.readFileSync(
   new URL("../src/modules/mobile/desktopPropertyTaxRouter.js", import.meta.url),
   "utf8",
 );
+const mobileMigrations = fs.readFileSync(
+  new URL("../src/database/mobileMigrations.js", import.meta.url),
+  "utf8",
+);
 const migration = fs.readFileSync(
   new URL("../migrations/20261004_assignment_document_property_tax_evidence.sql", import.meta.url),
   "utf8",
@@ -20,6 +24,7 @@ test("Property Tax documents have a dedicated canonical-file scope", () => {
   assert.match(migration, /FOREIGN KEY \(tax_protest_file_id\)/);
   assert.match(migration, /REFERENCES app\.tax_protest_files\(id\) ON DELETE RESTRICT/);
   assert.match(migration, /num_nonnulls\(assignment_file_id, uad_workfile_id, tax_protest_file_id\) <= 1/);
+  assert.match(mobileMigrations, /20261004_assignment_document_property_tax_evidence\.sql/);
 });
 
 test("Property Tax document routes verify both protest and report identities", () => {

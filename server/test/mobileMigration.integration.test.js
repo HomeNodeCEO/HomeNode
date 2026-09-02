@@ -260,7 +260,7 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     });
     const taxTargetReview = await getTargetFieldReview(pool, auth, taxSession.session.id);
     const conditionPath = "property_tax_protest.subject.condition_rating";
-    assert.equal(taxTargetReview.catalog.length, 18);
+    assert.equal(taxTargetReview.catalog.length, 23);
     assert.deepEqual(taxTargetReview.values[conditionPath], { exists: false });
 
     const taxPayload = {

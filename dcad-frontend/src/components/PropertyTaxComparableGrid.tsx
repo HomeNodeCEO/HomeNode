@@ -3,12 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PropertyTaxEvidenceDocumentCenter from '@/components/PropertyTaxEvidenceDocumentCenter';
 import {
   getComparableRecommendations,
-  getPropertyTaxProtestFile,
-  updatePropertyTaxProtestFile,
   type PropertyTaxProtestFile,
 } from '@/lib/api';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import { readPropertyTaxCase } from '@/lib/propertyTaxCase';
+import {
+  getPropertyTaxProtestFile,
+  updatePropertyTaxProtestFile,
+} from '@/lib/propertyTaxApi';
 import {
   analyzePropertyTaxComparables,
   DALLAS_RESIDENTIAL_COMPARABLE_POLICY,

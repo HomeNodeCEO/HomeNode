@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import type {
+  AssignmentDocument,
+  PropertyTaxProtestFile,
+} from '@/lib/api';
 import {
   deletePropertyTaxDocument,
   getPropertyTaxDocument,
@@ -7,9 +11,7 @@ import {
   getPropertyTaxDocuments,
   reprocessPropertyTaxDocument,
   uploadPropertyTaxDocument,
-  type AssignmentDocument,
-  type PropertyTaxProtestFile,
-} from '@/lib/api';
+} from '@/lib/propertyTaxApi';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import {
   districtEvidenceGridRows,

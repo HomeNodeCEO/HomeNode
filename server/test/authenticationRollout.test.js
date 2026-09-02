@@ -194,9 +194,10 @@ test("browser authentication bootstrap fails visibly instead of exposing an empt
 test("legacy property editors accept the authenticated workflow identity before editor-key fallback", () => {
   const server = read("../src/oldServer.js");
   const housingRouter = read("../src/modules/accounts/housingProfileRouter.js");
+  const zoningRouter = read("../src/modules/accounts/zoningRouter.js");
   const housingStart = server.indexOf("app.use(createHousingProfileRouter(");
   const housingEnd = server.indexOf("app.use(createReportManualValuesRouter(", housingStart);
-  const zoningStart = server.indexOf('app.put("/api/accounts/:id/zoning-verification"');
+  const zoningStart = server.indexOf("app.use(createZoningRouter(");
   const zoningEnd = server.indexOf("function decodedDocumentHeader", zoningStart);
   assert.ok(housingStart >= 0 && housingEnd > housingStart);
   assert.ok(zoningStart >= 0 && zoningEnd > zoningStart);
@@ -204,11 +205,17 @@ test("legacy property editors accept the authenticated workflow identity before 
   assert.match(housingRouter, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
   assert.doesNotMatch(housingRouter, /housing_profile_editor_not_configured|invalid_editor_key/);
 
-  const zoning = server.slice(zoningStart, zoningEnd);
-  assert.match(zoning, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
-  assert.match(zoning, /assignment_file_required/);
-  assert.match(zoning, /requireCustomAssignmentAccess\(req, res, accountId, assignmentFileId, "write"\)/);
-  assert.doesNotMatch(zoning, /zoning_editor_not_configured|invalid_editor_key/);
+  const zoningMount = server.slice(zoningStart, zoningEnd);
+  assert.match(zoningMount, /requireWorkflowAccess,/);
+  assert.match(zoningMount, /requireAssignmentAccess: requireCustomAssignmentAccess/);
+  assert.match(zoningMount, /authenticationRequired: applicationAuthenticationRequired/);
+  assert.match(zoningRouter, /requireWorkflowAccess\(req, res, "custom_appraisal", "write"\)/);
+  assert.match(zoningRouter, /assignment_file_required/);
+  assert.match(
+    zoningRouter,
+    /requireAssignmentAccess\(req, res, accountId, assignmentFileId, "write"\)/,
+  );
+  assert.doesNotMatch(zoningRouter, /zoning_editor_not_configured|invalid_editor_key/);
 });
 
 test("the legacy editor key is inert whenever mandatory authentication is active", () => {

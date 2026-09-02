@@ -80,12 +80,6 @@ import {
 } from "./services/customAppraisalWorkfiles.js";
 import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
 import {
-  getPropertyZoningEvidence,
-  getZoningDocumentDescriptionSuggestion,
-  getZoningDocumentContent,
-  savePropertyZoningVerification,
-} from "./services/zoningEvidence.js";
-import {
   confirmAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
@@ -148,6 +142,7 @@ import {
   createAccountPropertyContextRouter,
   createPropertyContextStatusRouter,
 } from "./modules/accounts/propertyContextRouter.js";
+import { createZoningRouter } from "./modules/accounts/zoningRouter.js";
 import { createSalesListRouter } from "./modules/sales/salesListRouter.js";
 import { createSalesMediaRouter } from "./modules/sales/mediaRouter.js";
 import { createComparisonStudyRouter } from "./modules/sales/comparisonStudyRouter.js";
@@ -2506,97 +2501,13 @@ app.use(createAccountPropertyContextRouter({
   ensureAvailable: ensurePropertyContextAvailable,
 }));
 
-/** Load the correct official zoning evidence and review contact for a subject. */
-app.get("/api/accounts/:id/zoning-evidence", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  try {
-    await ensurePropertyContextAvailable();
-    const accountId = await resolveCanonicalAccountId(pool, requestedId);
-    const assignmentFileId = normalizeAssignmentFileId(req.query.assignment_file_id);
-    const evidence = await getPropertyZoningEvidence(pool, { accountId, assignmentFileId });
-    res.json({ ok: true, account_id: accountId, evidence });
-  } catch (error) {
-    const message = error?.message || "zoning_evidence_lookup_failed";
-    res.status(message === "account_not_found" ? 404 : 500).json({ error: message });
-  }
-});
-
-/** Stream the immutable cached PDF inline; old versions remain auditable. */
-app.get("/api/zoning-source-documents/:id/content", async (req, res) => {
-  const documentId = Number(req.params.id);
-  if (!Number.isInteger(documentId) || documentId < 1) {
-    return res.status(400).json({ error: "invalid_zoning_document_id" });
-  }
-  try {
-    await ensurePropertyContextAvailable();
-    const document = await getZoningDocumentContent(pool, documentId);
-    if (!document) return res.status(404).json({ error: "zoning_document_not_found" });
-    res.set({
-      "Content-Type": document.content_type || "application/pdf",
-      "Content-Disposition": `inline; filename="zoning-evidence-${document.id}.pdf"`,
-      ETag: `"${document.checksum_sha256}"`,
-      "Cache-Control": "private, max-age=86400, immutable",
-      "X-Content-Type-Options": "nosniff",
-    });
-    return res.send(document.content);
-  } catch (error) {
-    console.error("zoning document stream failed", error);
-    return res.status(500).json({ error: "zoning_document_stream_failed" });
-  }
-});
-
-/** Suggest the verbatim district wording found beside a confirmed zoning code. */
-app.get("/api/zoning-source-documents/:id/description-suggestion", async (req, res) => {
-  try {
-    await ensurePropertyContextAvailable();
-    const result = await getZoningDocumentDescriptionSuggestion(pool, {
-      documentId: req.params.id,
-      zoningCode: String(req.query.zoning_code || "").trim(),
-    });
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    const message = error?.message || "zoning_description_suggestion_failed";
-    const status = message === "zoning_document_not_found"
-      ? 404
-      : message === "invalid_zoning_document_id" ? 400 : 500;
-    return res.status(status).json({ error: message });
-  }
-});
-
-/** Save an appraiser-confirmed zoning result with its source and reviewer. */
-app.put("/api/accounts/:id/zoning-verification", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
-  try {
-    await ensurePropertyContextAvailable();
-    const accountId = await resolveCanonicalAccountId(pool, requestedId);
-    const assignmentFileId = normalizeAssignmentFileId(req.body?.assignment_file_id);
-    if (applicationAuthenticationRequired && req.mobileAuth && !assignmentFileId) {
-      return res.status(400).json({ error: "assignment_file_required" });
-    }
-    if (assignmentFileId
-        && !await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) {
-      return;
-    }
-    const verification = await savePropertyZoningVerification(pool, {
-      accountId,
-      assignmentFileId,
-      input: req.body,
-    });
-    return res.json({ ok: true, account_id: accountId, verification });
-  } catch (error) {
-    const message = error?.message || "zoning_verification_failed";
-    const clientErrors = new Set([
-      "invalid_zoning_jurisdiction",
-      "zoning_code_required",
-      "zoning_description_required",
-      "zoning_reviewer_required",
-      "invalid_zoning_source_type",
-      "invalid_zoning_source_document",
-    ]);
-    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
-  }
-});
+app.use(createZoningRouter({
+  pool,
+  ensureAvailable: ensurePropertyContextAvailable,
+  requireWorkflowAccess,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
+  authenticationRequired: applicationAuthenticationRequired,
+}));
 
 function decodedDocumentHeader(req, name, fallback = "") {
   const value = String(req.get(name) || fallback);

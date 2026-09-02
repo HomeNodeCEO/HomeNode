@@ -304,7 +304,7 @@ test("geography operations composition is explicit and inline routes are absent"
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const workfiles = source.indexOf("app.use(createAssignmentWorkfileMutationRouter(");
   const geography = source.indexOf("app.use(createGeographyOperationsRouter(");
-  const reconciliation = source.indexOf('app.get("/api/sales/reconciliation-queue"');
+  const reconciliation = source.indexOf("app.use(createSalesReconciliationRouter(");
   assert.ok(geography > workfiles);
   assert.ok(reconciliation > geography);
   for (const route of [

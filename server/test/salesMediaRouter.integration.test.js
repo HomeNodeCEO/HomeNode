@@ -104,9 +104,7 @@ test("sales media validates dependencies and remains before the property catalog
   assert.throws(() => createSalesMediaRouter(), /sales_media_pool_required/);
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
-  const documentCandidates = source.indexOf(
-    'app.patch("/api/documents/:documentId/candidates/:candidateId"',
-  );
+  const documentCandidates = source.indexOf("app.use(createAssignmentDocumentRouter(");
   const salesMedia = source.indexOf("app.use(createSalesMediaRouter({ pool }));");
   const propertyCatalog = source.indexOf("app.use(createPropertyCatalogRouter({ pool }));");
   assert.ok(documentCandidates > 0);

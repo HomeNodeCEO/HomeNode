@@ -244,7 +244,10 @@ test("server isolates UAD storage while preserving shared mobile and document st
   assert.match(serverSource, /process\.env\.UAD_R2_BUCKET !== process\.env\.R2_BUCKET/);
   assert.match(serverSource, /createUadRouter\(\{[\s\S]*?storage: uadObjectStorage/);
   assert.match(serverSource, /createMobileRouter\(\{[\s\S]*?storage: sharedObjectStorage/);
-  assert.match(serverSource, /createAssignmentDocument\([\s\S]*?storage: sharedObjectStorage/);
+  assert.match(
+    serverSource,
+    /createAssignmentDocumentRouter\(\{[\s\S]*?objectStorage: sharedObjectStorage/,
+  );
 });
 
 test("red-team startup bootstraps the guarded synthetic base before migrations", () => {

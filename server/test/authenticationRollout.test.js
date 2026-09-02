@@ -78,20 +78,21 @@ test("previous-appraisal history, completion, and replication enforce canonical 
 test("assignment photos and documents require assignment-level access after activation", () => {
   const server = read("../src/oldServer.js");
   const documents = read("../src/services/assignmentDocuments.js");
-  assert.match(server, /requireAssignmentDocumentAccess/);
-  assert.match(server, /assignment_document_access_denied/);
-  assert.match(server, /assignment_file_required/);
-  assert.match(server, /requireCustomAssignmentAccess\(req, res, accountId, assignmentFileId, "read"\)/);
-  assert.match(server, /requireCustomAssignmentAccess\(req, res, accountId, assignmentFileId, "write"\)/);
+  const documentRouter = read("../src/modules/assignmentFiles/documentRouter.js");
+  assert.match(documentRouter, /requireDocumentAccess/);
+  assert.match(documentRouter, /assignment_document_access_denied/);
+  assert.match(documentRouter, /assignment_file_required/);
+  assert.match(documentRouter, /requireAssignmentAccess\(req, res, accountId, assignmentFileId, "read"\)/);
+  assert.match(documentRouter, /requireAssignmentAccess\([\s\S]*accountId,[\s\S]*assignmentFileId,[\s\S]*"write"/);
   assert.match(documents, /includePropertyEvidence/);
   assert.match(documents, /organizations\/\$\{organization\}\/custom-appraisal/);
-  const deleteStart = server.indexOf('app.delete("/api/documents/:id"');
-  const deleteEnd = server.indexOf("/** Retry text extraction", deleteStart);
+  const deleteStart = documentRouter.indexOf('router.delete("/api/documents/:id"');
+  const deleteEnd = documentRouter.indexOf("/** Retry text extraction", deleteStart);
   assert.ok(deleteStart >= 0 && deleteEnd > deleteStart);
-  const deleteRoute = server.slice(deleteStart, deleteEnd);
+  const deleteRoute = documentRouter.slice(deleteStart, deleteEnd);
   assert.match(deleteRoute, /requireEditor\(req, res\)/);
-  assert.match(deleteRoute, /requireAssignmentDocumentAccess\(req, res, req\.params\.id, "write"\)/);
-  assert.match(deleteRoute, /deleteAssignmentDocument\(pool, sharedObjectStorage, req\.params\.id\)/);
+  assert.match(deleteRoute, /requireDocumentAccess\(req, res, req\.params\.id, "write"\)/);
+  assert.match(deleteRoute, /deleteDocument\(pool, objectStorage, req\.params\.id\)/);
 });
 
 test("custom appraisal signatures are identity-bound, authenticated, and append-only", () => {
@@ -198,7 +199,7 @@ test("legacy property editors accept the authenticated workflow identity before 
   const housingStart = server.indexOf("app.use(createHousingProfileRouter(");
   const housingEnd = server.indexOf("app.use(createReportManualValuesRouter(", housingStart);
   const zoningStart = server.indexOf("app.use(createZoningRouter(");
-  const zoningEnd = server.indexOf("function decodedDocumentHeader", zoningStart);
+  const zoningEnd = server.indexOf("async function requireCustomAssignmentAccess", zoningStart);
   assert.ok(housingStart >= 0 && housingEnd > housingStart);
   assert.ok(zoningStart >= 0 && zoningEnd > zoningStart);
 
@@ -222,8 +223,7 @@ test("the legacy editor key is inert whenever mandatory authentication is active
   const server = read("../src/oldServer.js");
   const helpers = [
     ["function requireEditor(req, res)", "app.use(createGeographyOperationsRouter(", true],
-    ["async function requireCustomAssignmentAccess", "async function requireAssignmentDocumentAccess", false],
-    ["async function requireAssignmentDocumentAccess", "function requireWorkflowAccess", false],
+    ["async function requireCustomAssignmentAccess", "function requireWorkflowAccess", false],
     ["function requireWorkflowAccess", "app.use(createAssignmentPhotoRouter(", true],
   ];
   for (const [startMarker, endMarker, retainsPreActivationFallback] of helpers) {

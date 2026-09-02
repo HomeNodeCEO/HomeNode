@@ -1,6 +1,3 @@
-// src/lib/api.ts
-// Postgres-backed API client (no scraper)
-
 import { isAuthenticatedSessionEditorCredential } from '@/lib/editorCredential';
 import { createTimedRequestCache } from '@/lib/timedRequestCache';
 
@@ -11,7 +8,6 @@ const BASE =
     .toString()
     .replace(/\/+$/, ''); // '' means use relative paths (dev proxy)
 
-/** Small helper to build URLs with query params */
 export function makeUrl(path: string, params?: Record<string, string | number | boolean | undefined>) {
   const u = new URL((BASE || '') + path, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
   if (params) {
@@ -19,11 +15,9 @@ export function makeUrl(path: string, params?: Record<string, string | number | 
       if (v !== undefined && v !== null && v !== '') u.searchParams.set(k, String(v));
     }
   }
-  // When BASE is absolute, URL() will keep it. When BASE is '', we need the path as-is:
   return BASE ? u.toString() : path + (u.search ? `?${u.searchParams.toString()}` : '');
 }
 
-/** Fetch JSON with timeout + nicer errors */
 async function fetchWithApplicationAuthentication(
   input: string,
   init: RequestInit = {},
@@ -91,8 +85,6 @@ export async function fetchJSON<T = any>(input: string, init?: FetchJSONOptions)
   }
   throw new Error('Request failed');
 }
-
-/** ---------------- Types returned by your API ---------------- */
 
 export interface AccountRow {
   account_id: string;
@@ -246,6 +238,7 @@ export interface AssignmentDetailsPayload {
   lender_client_address?: string;
   subject_under_contract?: boolean;
   contract_arms_length?: boolean | null;
+  contract_buyer_names?: string;
   contract_seller_names?: string;
   contract_price?: string | number;
   contract_date?: string;
@@ -256,6 +249,7 @@ export interface AssignmentDetailsPayload {
   seller_concessions?: string | number;
   contract_property_condition?: string;
   contract_repairs?: string;
+  contract_analysis_summary?: string;
   seller_matches_public_records?: boolean | null;
   seller_mismatch_explanation?: string;
   neighborhood_land_use_one_unit_pct?: string | number;
@@ -1874,12 +1868,6 @@ export interface GroupedAnalysesResponse {
   }>;
 }
 
-/** ---------------- API calls (DB only; no scraper) ---------------- */
-
-/**
- * Search accounts by address fragment, Dallas account ID, or native Collin geoID.
- * Backend route: GET /api/search?q=&limit=&offset=
- */
 export async function searchAccounts(q: string, limit = 25, offset = 0): Promise<AccountRow[]> {
   if (!q || !q.trim()) return [];
   const url = makeUrl('/api/search', { q: q.trim(), limit, offset });
@@ -2688,6 +2676,14 @@ export interface AssignmentDocumentCandidate {
   confirmed_value?: string | null;
   reviewer?: string | null;
   reviewed_at?: string | null;
+  assignment_application?: AssignmentDocumentApplication;
+}
+
+export interface AssignmentDocumentApplication {
+  applied: boolean;
+  reason?: string;
+  revision?: number;
+  assignment_details?: AssignmentDetailsPayload;
 }
 
 export interface AssignmentDocumentCandidateReview {
@@ -2882,8 +2878,12 @@ export async function confirmAllAssignmentDocumentCandidates(
     candidateValues?: Record<number, string>;
   },
   editorKey: string,
-): Promise<AssignmentDocument> {
-  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+): Promise<{ document: AssignmentDocument; assignmentApplication?: AssignmentDocumentApplication }> {
+  const response = await fetchJSON<{
+    ok: true;
+    document: AssignmentDocument;
+    assignment_application?: AssignmentDocumentApplication;
+  }>(
     makeUrl(`/api/documents/${documentId}/confirm-all`),
     {
       method: 'POST',
@@ -2895,7 +2895,7 @@ export async function confirmAllAssignmentDocumentCandidates(
       }),
     },
   );
-  return response.document;
+  return { document: response.document, assignmentApplication: response.assignment_application };
 }
 
 export async function reviewAssignmentDocumentCandidate(
@@ -3126,7 +3126,6 @@ export async function createAssignmentFile(
   });
 }
 
-/** Save work to the current assignment file using its internal concurrency version. */
 export async function updateAssignmentFile(
   accountId: string,
   assignmentFileId: number,
@@ -3153,7 +3152,6 @@ export async function updateAssignmentFile(
   );
 }
 
-/** Load the database-backed, file-specific Custom Appraisal workfile. */
 export async function getCustomAppraisalWorkfile(
   accountId: string,
   assignmentFileId: number,
@@ -3166,7 +3164,6 @@ export async function getCustomAppraisalWorkfile(
   );
 }
 
-/** Save one workfile section without overwriting another page's appraisal data. */
 export async function saveCustomAppraisalWorkfileSection<T extends object>(
   accountId: string,
   assignmentFileId: number,

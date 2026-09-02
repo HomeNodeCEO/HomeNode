@@ -148,6 +148,15 @@ export default function ListingsContractsSalesContent({
         <div className="mt-4 space-y-4">
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               <label className="block lg:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Contract Buyer Name(s)</span>
+                <input
+                  type="text" maxLength={1000} className="input input-bordered input-sm mt-1 w-full bg-white"
+                  value={assignmentDraft.contract_buyer_names || ""}
+                  onChange={(event) => onAssignmentChange("contract_buyer_names", event.target.value)}
+                  placeholder="Buyer name exactly as shown in the contract"
+                />
+              </label>
+              <label className="block lg:col-span-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Contract Seller Name(s)</span>
                 <input
                   type="text" maxLength={1000} className="input input-bordered input-sm mt-1 w-full bg-white"
@@ -211,6 +220,17 @@ export default function ListingsContractsSalesContent({
                 />
               </label>
             </div>
+
+            <label className="block">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Contract Analysis</span>
+              <textarea
+                maxLength={5000}
+                className="textarea textarea-bordered mt-1 min-h-28 w-full bg-white leading-6"
+                value={assignmentDraft.contract_analysis_summary || ""}
+                onChange={(event) => onAssignmentChange("contract_analysis_summary", event.target.value)}
+                placeholder="Approved contract evidence will generate the same narrative used in UAD 3.6."
+              />
+            </label>
 
             <div className="grid gap-4 lg:grid-cols-2">
               <fieldset className="rounded-xl border border-slate-200 bg-white p-3">

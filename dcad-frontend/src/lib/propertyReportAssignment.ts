@@ -39,6 +39,7 @@ export function assignmentDraftFromDetail(value?: AssignmentDetails): Assignment
     contract_arms_length: typeof value?.contract_arms_length === "boolean"
       ? value.contract_arms_length
       : true,
+    contract_buyer_names: value?.contract_buyer_names || "",
     contract_seller_names: value?.contract_seller_names || "",
     contract_price: value?.contract_price || "",
     contract_date: value?.contract_date || "",
@@ -49,6 +50,7 @@ export function assignmentDraftFromDetail(value?: AssignmentDetails): Assignment
     seller_concessions: value?.seller_concessions || "",
     contract_property_condition: value?.contract_property_condition || "",
     contract_repairs: value?.contract_repairs || "",
+    contract_analysis_summary: value?.contract_analysis_summary || "",
     seller_matches_public_records:
       typeof value?.seller_matches_public_records === "boolean"
         ? value.seller_matches_public_records

@@ -12,6 +12,7 @@ import {
   reviewAssignmentDocumentCandidate,
   uploadAssignmentDocument,
   type AssignmentDocument,
+  type AssignmentDocumentApplication,
   type AssignmentDocumentCandidate,
   type AssignmentDocumentType,
 } from '@/lib/api';
@@ -126,6 +127,7 @@ interface AssignmentDocumentCenterProps {
     value: string,
     documentType: AssignmentDocumentType,
   ) => void;
+  onCustomAssignmentApplied?: (application: AssignmentDocumentApplication) => void;
   onUadApplied?: (result: UadDocumentApplicationResult) => void;
   className?: string;
 }
@@ -137,6 +139,7 @@ export default function AssignmentDocumentCenter({
   subjectAddress = '',
   getEditorKey = EMPTY_EDITOR_KEY,
   onApplyConfirmedCandidate,
+  onCustomAssignmentApplied,
   onUadApplied,
   className = '',
 }: AssignmentDocumentCenterProps) {
@@ -337,6 +340,7 @@ export default function AssignmentDocumentCenter({
         confirmedValue,
         reviewer: reviewer.trim(),
       } as const;
+      let customApplication: AssignmentDocumentApplication | undefined;
       if (isUad && uadWorkfileId) {
         await reviewUadDocumentCandidate(
           uadWorkfileId,
@@ -345,7 +349,16 @@ export default function AssignmentDocumentCenter({
           reviewInput,
         );
       } else {
-        await reviewAssignmentDocumentCandidate(selectedDocument.id, candidate.id, reviewInput, editorKey);
+        const reviewed = await reviewAssignmentDocumentCandidate(
+          selectedDocument.id,
+          candidate.id,
+          reviewInput,
+          editorKey,
+        );
+        if (reviewed.assignment_application) {
+          customApplication = reviewed.assignment_application;
+          onCustomAssignmentApplied?.(reviewed.assignment_application);
+        }
       }
       if (reviewStatus === 'confirmed') {
         if (isUad && uadWorkfileId) {
@@ -354,7 +367,7 @@ export default function AssignmentDocumentCenter({
           setMessage(result.applied
             ? `Candidate confirmed and applied to UAD ${uadSectionLabel(result.section)}.`
             : 'Candidate confirmed with its source page retained. This evidence has no direct UAD form mapping.');
-        } else {
+        } else if (!customApplication) {
           onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, selectedDocument.document_type);
         }
       }
@@ -363,7 +376,9 @@ export default function AssignmentDocumentCenter({
       if (reviewStatus === 'rejected') {
         setMessage('Candidate rejected; the source PDF remains unchanged.');
       } else if (!isUad) {
-        setMessage('Candidate confirmed with its exact source page retained.');
+        setMessage(customApplication?.applied
+          ? 'Candidate confirmed and synchronized with Assignment Details and Contract Analysis.'
+          : 'Candidate confirmed with its exact source page retained.');
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The review could not be saved.');
@@ -500,12 +515,17 @@ export default function AssignmentDocumentCenter({
         );
         return;
       }
-      const document = await confirmAllAssignmentDocumentCandidates(selectedDocument.id, {
+      const response = await confirmAllAssignmentDocumentCandidates(selectedDocument.id, {
         reviewer: reviewer.trim(),
         reportSubjectAddress: subjectAddress,
         candidateValues,
       }, editorKey);
-      const applied = applyConfirmedDocumentFields(document);
+      const { document } = response;
+      if (response.assignmentApplication) {
+        onCustomAssignmentApplied?.(response.assignmentApplication);
+      } else {
+        applyConfirmedDocumentFields(document);
+      }
       setSelectedDocument(document);
       setCandidateValues(Object.fromEntries(
         (document.candidates || [])
@@ -515,7 +535,7 @@ export default function AssignmentDocumentCenter({
       await loadDocuments();
       setMessage(
         `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved`
-          + `${applied ? ' and added to the current draft' : ''}. Save Assignment Details to retain form changes.`,
+          + ' and synchronized with Assignment Details and Contract Analysis.',
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'The extracted fields could not be approved.';

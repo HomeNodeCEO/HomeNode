@@ -109,19 +109,28 @@ test("confirmed purchase-contract evidence marks the subject under contract with
     assignment_types: ["rehab"],
     subject_under_contract: false,
   }, [
-    { field_key: "contract_price", review_status: "confirmed", confirmed_value: "425000" },
-    { field_key: "seller_name", review_status: "confirmed", confirmed_value: "Example Seller" },
+    { field_key: "buyer_name", review_status: "confirmed", confirmed_value: "Zachary Thames" },
+    { field_key: "seller_name", review_status: "confirmed", confirmed_value: "Lorenzo Jr Loredo, Andi Li-Kay Thompson" },
+    { field_key: "contract_date", review_status: "confirmed", confirmed_value: "2026-08-25" },
+    { field_key: "contract_price", review_status: "confirmed", confirmed_value: "282500.00" },
+    { field_key: "down_payment", review_status: "confirmed", confirmed_value: "8475.00" },
+    { field_key: "loan_amount", review_status: "confirmed", confirmed_value: "274025.00" },
+    { field_key: "earnest_money", review_status: "confirmed", confirmed_value: "2600.00" },
     { field_key: "closing_date", review_status: "confirmed", confirmed_value: "2026-09-24" },
-    { field_key: "contract_property_condition", review_status: "confirmed", confirmed_value: "seller_repairs" },
-    { field_key: "contract_repairs", review_status: "confirmed", confirmed_value: "Repair the active plumbing leak." },
+    { field_key: "seller_concessions", review_status: "confirmed", confirmed_value: "0.00" },
+    { field_key: "contract_property_condition", review_status: "confirmed", confirmed_value: "as_is" },
   ], "purchase_contract");
   assert.deepEqual(result.assignmentDetails.assignment_types, ["rehab", "purchase_transaction"]);
   assert.equal(result.assignmentDetails.subject_under_contract, true);
-  assert.equal(result.assignmentDetails.contract_price, "425000");
-  assert.equal(result.assignmentDetails.contract_seller_names, "Example Seller");
+  assert.equal(result.assignmentDetails.contract_buyer_names, "Zachary Thames");
+  assert.equal(result.assignmentDetails.contract_price, "282500.00");
+  assert.equal(result.assignmentDetails.contract_seller_names, "Lorenzo Jr Loredo, Andi Li-Kay Thompson");
   assert.equal(result.assignmentDetails.contract_closing_date, "2026-09-24");
-  assert.equal(result.assignmentDetails.contract_property_condition, "seller_repairs");
-  assert.equal(result.assignmentDetails.contract_repairs, "Repair the active plumbing leak.");
+  assert.equal(result.assignmentDetails.contract_property_condition, "as_is");
+  assert.equal(
+    result.assignmentDetails.contract_analysis_summary,
+    "Contract buyer(s): Zachary Thames. Contract seller(s): Lorenzo Jr Loredo, Andi Li-Kay Thompson. The contract was fully executed on 2026-08-25. The agreed sales price is $282,500.00. The cash portion/down payment is $8,475.00. The sum of financing is $274,025.00. Earnest money is $2,600.00. Closing is scheduled on or before 2026-09-24. Section 12A(1)(b) reports no seller concessions. The buyer accepts the property as is; no seller-paid repairs or treatments are stated in Section 7D(2).",
+  );
 });
 
 test("assignment document object keys are assignment-scoped and content-addressed", () => {

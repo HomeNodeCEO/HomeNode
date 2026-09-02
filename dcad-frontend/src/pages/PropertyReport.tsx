@@ -20,7 +20,7 @@ import {
   updateMobileInspectionSketch,
   type AppraisalAssignmentFile,
   type AssignmentPhoto,
-  type AssignmentDocumentType,
+  type AssignmentDocumentApplication,
   type AssignmentDetailsPayload,
   type PropertyComplexityAssessment,
   type ReportManualSectionKey,
@@ -119,8 +119,6 @@ import {
   HOA_FREQUENCY_OPTIONS,
   OCCUPANCY_OPTIONS,
   assignmentDraftFromDetail,
-  assignmentTypesFromConfirmedDocument,
-  subjectUnderContractFromConfirmedDocument,
   assignmentValidationErrors,
   cloneEditorValue,
 } from "@/lib/propertyReportAssignment";
@@ -929,6 +927,7 @@ function AddressHero({
           contract_arms_length: typeof detail?.assignment_details?.contract_arms_length === "boolean"
             ? detail.assignment_details.contract_arms_length
             : true,
+          contract_buyer_names: detail?.assignment_details?.contract_buyer_names || "",
           contract_seller_names: detail?.assignment_details?.contract_seller_names || "",
           contract_price: detail?.assignment_details?.contract_price || "",
           contract_date: detail?.assignment_details?.contract_date || "",
@@ -940,6 +939,7 @@ function AddressHero({
           contract_property_condition:
             detail?.assignment_details?.contract_property_condition || "",
           contract_repairs: detail?.assignment_details?.contract_repairs || "",
+          contract_analysis_summary: detail?.assignment_details?.contract_analysis_summary || "",
           seller_matches_public_records:
             typeof detail?.assignment_details?.seller_matches_public_records === "boolean"
               ? detail.assignment_details.seller_matches_public_records
@@ -1059,81 +1059,35 @@ function AddressHero({
     setAssignmentSaveMessage("");
   };
 
-  const applyConfirmedDocumentCandidate = useCallback((
-    fieldKey: string,
-    value: string,
-    documentType: AssignmentDocumentType,
-  ) => {
-    if (fieldKey === "assignment_type") {
-      const supportedTypes = new Set([
-        "purchase_transaction",
-        "refinance",
-        "heloc",
-        "rtl",
-        "rehab",
-        "bridge_loan",
-        "new_construction",
-        "dscr",
-      ]);
-      if (!supportedTypes.has(value)) {
-        setAssignmentSaveMessage("The confirmed assignment type remains attached as page-cited evidence for manual review.");
-        return;
-      }
-      setAssignmentDraft((current) => {
-        return {
-          ...current,
-          assignment_types: assignmentTypesFromConfirmedDocument(
-            current.assignment_types,
-            value,
-            documentType,
-          ),
-          subject_under_contract: subjectUnderContractFromConfirmedDocument(
-            current.subject_under_contract,
-            value,
-            documentType,
-          ),
-        };
-      });
-      setAssignmentDirty(true);
-      setAssignmentSaveMessage(
-        "Confirmed document evidence prefills the assignment type. Save Assignment Details to retain it.",
-      );
-      return;
-    }
-    const assignmentFieldByCandidate: Record<string, keyof AssignmentDetails> = {
-      lender_client_name: "lender_client_name",
-      lender_client_address: "lender_client_address",
-      contract_price: "contract_price",
-      contract_date: "contract_date",
-      closing_date: "contract_closing_date",
-      loan_amount: "loan_amount",
-      down_payment: "down_payment",
-      earnest_money: "earnest_money",
-      seller_concessions: "seller_concessions",
-      seller_name: "contract_seller_names",
-      contract_property_condition: "contract_property_condition",
-      contract_repairs: "contract_repairs",
-    };
-    const assignmentField = assignmentFieldByCandidate[fieldKey];
-    if (!assignmentField) {
-      setAssignmentSaveMessage("The confirmed document field remains attached as page-cited evidence.");
-      return;
-    }
-    setAssignmentDraft((current) => {
-      const next: AssignmentDetails = { ...current, [assignmentField]: value };
-      if (documentType === "purchase_contract") {
-        const types = new Set(current.assignment_types || []);
-        types.add("purchase_transaction");
-        next.assignment_types = Array.from(types);
-        next.subject_under_contract = true;
-      }
-      return next;
-    });
-    setAssignmentDirty(true);
-    setAssignmentSaveMessage(
-      "Confirmed document evidence prefills this assignment. Save Assignment Details to retain it.",
+  const applyConfirmedDocumentApplication = useCallback((application: AssignmentDocumentApplication) => {
+    const currentFile = activeAssignmentFileRef.current;
+    if (!currentFile || !application.assignment_details || !application.revision) return;
+    const remoteDraft = assignmentDraftFromDetail(application.assignment_details);
+    const reconciliation = reconcileCustomAppraisalDraft(
+      assignmentSavedDraftRef.current,
+      assignmentDraftRef.current,
+      remoteDraft,
     );
-  }, []);
+    const nextDraft = cloneEditorValue(reconciliation.rebased);
+    const updatedFile = {
+      ...currentFile,
+      assignment_details: application.assignment_details,
+      revision: application.revision,
+    };
+    activeAssignmentFileRef.current = updatedFile;
+    assignmentSavedDraftRef.current = cloneEditorValue(remoteDraft);
+    assignmentDraftRef.current = nextDraft;
+    assignmentDirtyRef.current = reconciliation.localChangedKeys.length > 0;
+    setActiveAssignmentFile(updatedFile);
+    setAssignmentFiles((files) => files.map((file) => file.id === updatedFile.id ? updatedFile : file));
+    setAssignmentDraft(nextDraft);
+    setAssignmentDirty(reconciliation.localChangedKeys.length > 0);
+    setAssignmentConflictKeys(reconciliation.conflictKeys);
+    setAssignmentAutosaveState(reconciliation.localChangedKeys.length ? "pending" : "saved");
+    setAssignmentSaveMessage(reconciliation.conflictKeys.length
+      ? "Contract evidence was saved; your existing edits were preserved for conflict review."
+      : "Approved contract evidence and analysis were saved to this appraisal file.");
+  }, [setActiveAssignmentFile, setAssignmentFiles]);
 
   const importCustomMarketArea = useCallback(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
@@ -2928,7 +2882,7 @@ function AddressHero({
               assignmentFileId={activeAssignmentFile?.id || null}
               subjectAddress={documentReviewSubjectAddress}
               getEditorKey={editorKeyForSave}
-              onApplyConfirmedCandidate={applyConfirmedDocumentCandidate}
+              onCustomAssignmentApplied={applyConfirmedDocumentApplication}
               className="order-6"
             />
           </Suspense>

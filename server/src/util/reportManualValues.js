@@ -97,7 +97,7 @@ function positiveAmount(value) {
   const parsed = Number(String(value).replace(/[$,\s]/g, ""));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
-export function validateAssignmentDetails(value) {
+export function validateAssignmentDetails(value, { requireCompletion = true } = {}) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("invalid_assignment_details");
   }
@@ -176,11 +176,13 @@ export function validateAssignmentDetails(value) {
   const subjectUnderContract = value.subject_under_contract === true;
   const sellerMismatchExplanation = text(value.seller_mismatch_explanation);
   const contractTextFields = [
+    ["contract_buyer_names", 1000],
     ["contract_seller_names", 1000],
     ["contract_date", 100],
     ["contract_closing_date", 100],
     ["contract_property_condition", 100],
     ["contract_repairs", 5000],
+    ["contract_analysis_summary", 5000],
     ["seller_mismatch_explanation", 3000],
   ];
   const subjectConditionTextFields = [
@@ -376,29 +378,31 @@ export function validateAssignmentDetails(value) {
   if (unemploymentZip && !/^\d{5}$/.test(unemploymentZip)) {
     throw new Error("invalid_neighborhood_unemployment_zip");
   }
-  if (pud && !((positiveAmount(value.hoa_dues_amount) && hoaFrequency) || hoaExplanation)) {
-    throw new Error("pud_requires_hoa_dues_or_explanation");
-  }
-  if (pud && hoaFrequency === "other" && !hoaExplanation) {
-    throw new Error("other_hoa_frequency_requires_explanation");
-  }
-  if (occupancy === "unknown" && !occupancyExplanation) {
-    throw new Error("unknown_occupancy_requires_explanation");
-  }
-  if (assignmentTypes.includes("other") && !assignmentExplanation) {
-    throw new Error("other_assignment_type_requires_explanation");
-  }
-  if (subjectUnderContract && !assignmentTypes.includes("purchase_transaction")) {
-    throw new Error("contract_requires_purchase_transaction");
-  }
-  if (subjectUnderContract && typeof value.contract_arms_length !== "boolean") {
-    throw new Error("contract_requires_arms_length_selection");
-  }
-  if (subjectUnderContract && typeof value.seller_matches_public_records !== "boolean") {
-    throw new Error("contract_requires_seller_match_selection");
-  }
-  if (subjectUnderContract && value.seller_matches_public_records === false && !sellerMismatchExplanation) {
-    throw new Error("seller_mismatch_requires_explanation");
+  if (requireCompletion) {
+    if (pud && !((positiveAmount(value.hoa_dues_amount) && hoaFrequency) || hoaExplanation)) {
+      throw new Error("pud_requires_hoa_dues_or_explanation");
+    }
+    if (pud && hoaFrequency === "other" && !hoaExplanation) {
+      throw new Error("other_hoa_frequency_requires_explanation");
+    }
+    if (occupancy === "unknown" && !occupancyExplanation) {
+      throw new Error("unknown_occupancy_requires_explanation");
+    }
+    if (assignmentTypes.includes("other") && !assignmentExplanation) {
+      throw new Error("other_assignment_type_requires_explanation");
+    }
+    if (subjectUnderContract && !assignmentTypes.includes("purchase_transaction")) {
+      throw new Error("contract_requires_purchase_transaction");
+    }
+    if (subjectUnderContract && typeof value.contract_arms_length !== "boolean") {
+      throw new Error("contract_requires_arms_length_selection");
+    }
+    if (subjectUnderContract && typeof value.seller_matches_public_records !== "boolean") {
+      throw new Error("contract_requires_seller_match_selection");
+    }
+    if (subjectUnderContract && value.seller_matches_public_records === false && !sellerMismatchExplanation) {
+      throw new Error("seller_mismatch_requires_explanation");
+    }
   }
   return true;
 }

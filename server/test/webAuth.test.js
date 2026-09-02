@@ -130,6 +130,47 @@ test("login transaction cookie is host-only, secure, HTTP-only, and short-lived"
   });
 });
 
+test("concurrent browser logins share one OIDC discovery request", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  let requestCount = 0;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const responses = await Promise.all(Array.from({ length: 12 }, () => (
+      fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" })
+    )));
+    assert.equal(responses.every((response) => response.status === 302), true);
+  }, {
+    fetchImpl: async () => {
+      requestCount += 1;
+      await new Promise((resolve) => setImmediate(resolve));
+      return new Response(JSON.stringify(discovery), { status: 200 });
+    },
+  });
+  assert.equal(requestCount, 1);
+});
+
+test("browser OIDC discovery stalls fail within the configured deadline", async () => {
+  await withAuthServer({
+    ...CONFIGURED_ENVIRONMENT,
+    OIDC_HTTP_TIMEOUT_MS: "100",
+  }, async (baseUrl) => {
+    const started = Date.now();
+    const response = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "web_auth_unavailable" });
+    assert.ok(Date.now() - started < 1_000);
+  }, {
+    fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("secret provider detail")), {
+        once: true,
+      });
+    }),
+  });
+});
+
 test("cross-site sessions require an HTTPS frontend and its exact CORS origin", () => {
   const options = {
     pool: { query: async () => ({ rows: [] }) },
@@ -375,4 +416,45 @@ test("callback diagnostics identify the failing stage without logging provider s
     "[web-auth] callback failed stage=token_exchange reason=http_401:invalid_client",
   ]);
   assert.doesNotMatch(warnings[0], /top-secret|error_description|one-time-code/);
+});
+
+test("token-exchange network stalls return a bounded retryable outage", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  const warnings = [];
+  let requestCount = 0;
+  await withAuthServer({
+    ...CONFIGURED_ENVIRONMENT,
+    OIDC_HTTP_TIMEOUT_MS: "100",
+  }, async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    const authorizationUrl = new URL(login.headers.get("location"));
+    const transactionCookie = login.headers.get("set-cookie").split(";", 1)[0];
+    const callback = await fetch(
+      `${baseUrl}/api/auth/callback?code=one-time-code&state=${authorizationUrl.searchParams.get("state")}`,
+      { headers: { cookie: transactionCookie }, redirect: "manual" },
+    );
+    assert.equal(callback.status, 503);
+    assert.deepEqual(await callback.json(), { error: "authentication_unavailable" });
+  }, {
+    logger: { warn(message) { warnings.push(message); } },
+    fetchImpl: async (_url, options = {}) => {
+      requestCount += 1;
+      if (requestCount === 1) return new Response(JSON.stringify(discovery), { status: 200 });
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener(
+          "abort",
+          () => reject(new Error("provider response included a secret")),
+          { once: true },
+        );
+      });
+    },
+  });
+  assert.deepEqual(warnings, [
+    "[web-auth] callback failed stage=token_exchange reason=token_exchange_unavailable",
+  ]);
+  assert.doesNotMatch(warnings[0], /provider response|secret|one-time-code/);
 });

@@ -3,6 +3,19 @@ import { createPublicKey, verify as verifySignature } from "node:crypto";
 const TOKEN_PATTERN = /^Bearer\s+([^\s]+)$/i;
 const MAX_TOKEN_LENGTH = 16_384;
 const DEFAULT_CACHE_MILLISECONDS = 5 * 60 * 1000;
+const DEFAULT_FETCH_TIMEOUT_MILLISECONDS = 5_000;
+
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(minimum, Math.min(parsed, maximum));
+}
+
+function providerUnavailable(code) {
+  const error = new Error(code);
+  error.statusCode = 503;
+  return error;
+}
 
 function accessTokenError(diagnostic = "unspecified") {
   const error = new Error("invalid_access_token");
@@ -86,6 +99,7 @@ export function createOidcAccessTokenVerifier({
   now = () => Date.now(),
   clockToleranceSeconds = 60,
   cacheMilliseconds = DEFAULT_CACHE_MILLISECONDS,
+  fetchTimeoutMilliseconds = DEFAULT_FETCH_TIMEOUT_MILLISECONDS,
 } = {}) {
   const configured = Boolean(issuerValue && audienceValue);
   if (!configured) {
@@ -110,29 +124,32 @@ export function createOidcAccessTokenVerifier({
     ? httpsUrl(jwksUriValue, "invalid_oidc_jwks_uri")
     : null;
   const tolerance = Math.max(0, Math.min(300, Number(clockToleranceSeconds) || 0));
+  const fetchTimeout = boundedInteger(
+    fetchTimeoutMilliseconds,
+    DEFAULT_FETCH_TIMEOUT_MILLISECONDS,
+    100,
+    30_000,
+  );
   let discoveryCache = null;
   let jwksCache = null;
+  let discoveryPromise = null;
+  let jwksPromise = null;
 
   async function fetchJson(url, code) {
-    let response;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), fetchTimeout);
+    timer.unref?.();
     try {
-      response = await fetchImpl(url, { headers: { accept: "application/json" } });
-    } catch {
-      const error = new Error(code);
-      error.statusCode = 503;
-      throw error;
-    }
-    if (!response?.ok) {
-      const error = new Error(code);
-      error.statusCode = 503;
-      throw error;
-    }
-    try {
+      const response = await fetchImpl(url, {
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!response?.ok) throw providerUnavailable(code);
       return await response.json();
     } catch {
-      const error = new Error(code);
-      error.statusCode = 503;
-      throw error;
+      throw providerUnavailable(code);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -142,33 +159,60 @@ export function createOidcAccessTokenVerifier({
     if (discoveryCache && discoveryCache.expiresAt > nowMilliseconds) {
       return discoveryCache.jwksUri;
     }
-    const discovery = await fetchJson(
-      `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
-      "oidc_discovery_unavailable",
-    );
-    if (discovery?.issuer !== issuer) throw new Error("oidc_discovery_issuer_mismatch");
-    const jwksUri = httpsUrl(discovery?.jwks_uri, "invalid_oidc_jwks_uri");
-    discoveryCache = { jwksUri, expiresAt: nowMilliseconds + cacheMilliseconds };
-    return jwksUri;
+    if (!discoveryPromise) {
+      discoveryPromise = (async () => {
+        const discovery = await fetchJson(
+          `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
+          "oidc_discovery_unavailable",
+        );
+        if (discovery?.issuer !== issuer) {
+          throw providerUnavailable("oidc_discovery_issuer_mismatch");
+        }
+        let jwksUri;
+        try {
+          jwksUri = httpsUrl(discovery?.jwks_uri, "invalid_oidc_jwks_uri");
+        } catch {
+          throw providerUnavailable("invalid_oidc_jwks_uri");
+        }
+        discoveryCache = { jwksUri, expiresAt: now() + cacheMilliseconds };
+        return jwksUri;
+      })();
+    }
+    const pending = discoveryPromise;
+    try {
+      return await pending;
+    } finally {
+      if (discoveryPromise === pending) discoveryPromise = null;
+    }
   }
 
   async function keys({ refresh = false } = {}) {
     const nowMilliseconds = now();
     if (!refresh && jwksCache && jwksCache.expiresAt > nowMilliseconds) return jwksCache.keys;
-    const jwks = await fetchJson(await resolveJwksUri(), "oidc_jwks_unavailable");
-    if (!Array.isArray(jwks?.keys)) throw new Error("invalid_oidc_jwks");
-    const imported = new Map();
-    for (const jwk of jwks.keys) {
-      if (jwk?.kty !== "RSA" || !jwk.kid || (jwk.use && jwk.use !== "sig")) continue;
-      if (jwk.alg && jwk.alg !== "RS256") continue;
-      try {
-        imported.set(jwk.kid, createPublicKey({ key: jwk, format: "jwk" }));
-      } catch {
-        // Ignore malformed or unsupported keys. A usable matching key is required below.
-      }
+    if (!jwksPromise) {
+      jwksPromise = (async () => {
+        const jwks = await fetchJson(await resolveJwksUri(), "oidc_jwks_unavailable");
+        if (!Array.isArray(jwks?.keys)) throw providerUnavailable("invalid_oidc_jwks");
+        const imported = new Map();
+        for (const jwk of jwks.keys) {
+          if (jwk?.kty !== "RSA" || !jwk.kid || (jwk.use && jwk.use !== "sig")) continue;
+          if (jwk.alg && jwk.alg !== "RS256") continue;
+          try {
+            imported.set(jwk.kid, createPublicKey({ key: jwk, format: "jwk" }));
+          } catch {
+            // Ignore malformed or unsupported keys. A usable matching key is required below.
+          }
+        }
+        jwksCache = { keys: imported, expiresAt: now() + cacheMilliseconds };
+        return imported;
+      })();
     }
-    jwksCache = { keys: imported, expiresAt: nowMilliseconds + cacheMilliseconds };
-    return imported;
+    const pending = jwksPromise;
+    try {
+      return await pending;
+    } finally {
+      if (jwksPromise === pending) jwksPromise = null;
+    }
   }
 
   async function verify(tokenValue) {

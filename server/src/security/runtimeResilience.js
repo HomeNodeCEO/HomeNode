@@ -124,6 +124,7 @@ export function installGracefulShutdown({
   let forced = false;
   let poolClosePromise = null;
   let forceTimer = null;
+  let fatalReported = false;
 
   const closePool = () => {
     poolClosePromise ||= Promise.resolve().then(() => pool.end());
@@ -160,8 +161,19 @@ export function installGracefulShutdown({
   };
   const onSigterm = () => begin("SIGTERM");
   const onSigint = () => begin("SIGINT");
+  const beginFatalShutdown = (code) => {
+    if (fatalReported) return;
+    fatalReported = true;
+    processTarget.exitCode = 1;
+    logger.error?.(`[fatal] ${code}`);
+    begin(code);
+  };
+  const onUncaughtException = () => beginFatalShutdown("uncaught_exception");
+  const onUnhandledRejection = () => beginFatalShutdown("unhandled_rejection");
   processTarget.once("SIGTERM", onSigterm);
   processTarget.once("SIGINT", onSigint);
+  processTarget.once("uncaughtException", onUncaughtException);
+  processTarget.once("unhandledRejection", onUnhandledRejection);
 
   return Object.freeze({
     begin,
@@ -169,6 +181,8 @@ export function installGracefulShutdown({
     dispose() {
       processTarget.removeListener("SIGTERM", onSigterm);
       processTarget.removeListener("SIGINT", onSigint);
+      processTarget.removeListener("uncaughtException", onUncaughtException);
+      processTarget.removeListener("unhandledRejection", onUnhandledRejection);
       if (forceTimer) clearTimeoutImpl(forceTimer);
     },
   });

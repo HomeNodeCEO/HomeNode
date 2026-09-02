@@ -13,6 +13,7 @@ const identity = Object.freeze({
 
 async function startApplication({ authenticationRequired = true, readinessError = null } = {}) {
   const app = express();
+  const rateLimitedRequests = [];
   mountApplicationRouteBoundary(app, {
     authenticationPolicy: { authenticationRequired },
     webSessionAuthenticator(req, _res, next) {
@@ -34,7 +35,10 @@ async function startApplication({ authenticationRequired = true, readinessError 
       if (req.get("authorization") === "Bearer application-token") req.mobileAuth = identity;
       next();
     },
-    globalApiRateLimiter(_req, _res, next) { next(); },
+    globalApiRateLimiter(req, _res, next) {
+      rateLimitedRequests.push(req.originalUrl);
+      next();
+    },
     webAuthRouter(req, res, next) {
       if (req.path === "/status") return res.json({ configured: true, required: true });
       return next();
@@ -56,6 +60,7 @@ async function startApplication({ authenticationRequired = true, readinessError 
   if (!address || typeof address === "string") throw new Error("test_server_address_unavailable");
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
+    rateLimitedRequests,
     close: () => new Promise((resolve, reject) => server.close((error) => (
       error ? reject(error) : resolve()
     ))),
@@ -93,6 +98,11 @@ test("application route boundary preserves UAD, mobile, web auth, and legacy ord
     headers: { authorization: "Bearer application-token" },
   });
   assert.equal(authenticatedLegacy.status, 200);
+  assert.deepEqual(server.rateLimitedRequests, [
+    "/api/auth/status",
+    "/api/legacy",
+    "/api/legacy",
+  ]);
 });
 
 test("browser session hydration protects session and readiness endpoints", async (context) => {
@@ -111,6 +121,11 @@ test("browser session hydration protects session and readiness endpoints", async
   const readiness = await fetch(`${server.baseUrl}/api/auth/readiness`, { headers });
   assert.equal(readiness.status, 200);
   assert.deepEqual(await readiness.json(), { ok: true, readiness: { activation_ready: true } });
+  assert.deepEqual(server.rateLimitedRequests, [
+    "/api/auth/me",
+    "/api/auth/me",
+    "/api/auth/readiness",
+  ]);
 });
 
 test("readiness failures remain bounded and rollout mode preserves legacy access", async (context) => {

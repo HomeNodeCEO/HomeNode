@@ -64,16 +64,14 @@ export function mountApplicationRouteBoundary(app, {
   // remains ahead of the legacy application gate.
   app.use("/api/mobile", routeMobile);
   app.use("/api", hydrateBearer);
-  app.use(rateLimit);
-  app.use("/api/auth", routeWebAuth);
 
-  app.get("/api/auth/me", (req, res) => {
+  app.get("/api/auth/me", rateLimit, (req, res) => {
     res.set("cache-control", "no-store");
     if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
     return res.json({ ok: true, session: buildSession(req.mobileAuth) });
   });
 
-  app.get("/api/auth/readiness", async (req, res) => {
+  app.get("/api/auth/readiness", rateLimit, async (req, res) => {
     res.set("cache-control", "no-store");
     if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
     try {
@@ -88,6 +86,11 @@ export function mountApplicationRouteBoundary(app, {
     }
   });
 
+  // Browser bootstrap routes and the remaining legacy API surface are each
+  // rate-limited exactly once. Keep the protected audit handlers explicit so
+  // automated security review can verify their authorization boundary.
+  app.use("/api/auth", rateLimit, routeWebAuth);
+  app.use("/api", rateLimit);
   app.use("/api", createLegacyApplicationAuthenticationGate(authenticationPolicy));
   return app;
 }

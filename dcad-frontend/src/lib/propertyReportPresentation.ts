@@ -203,6 +203,21 @@ export function documentSubjectAddressComparison(
   };
 }
 
+/**
+ * A subject-address mismatch is a hard confirmation gate only for engagement
+ * letters. Other evidence keeps its extracted address visible for review, but
+ * its individual fields must remain approvable.
+ */
+export function assignmentDocumentConfirmationBlocked(
+  documentType: unknown,
+  addressMatches: boolean | null,
+  addressOverrideAcknowledged: boolean,
+): boolean {
+  return documentType === 'engagement_letter'
+    && addressMatches === false
+    && !addressOverrideAcknowledged;
+}
+
 export interface ConfirmedDocumentFieldCandidate {
   field_key: string;
   review_status?: string | null;

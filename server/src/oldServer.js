@@ -42,10 +42,7 @@ import {
   ensureAccountQualitySchema,
   resolveCanonicalAccountId,
 } from "./services/accountQuality.js";
-import {
-  editorKeyMatches,
-  normalizeHousingProfileUpdate,
-} from "./util/housingProfileEdit.js";
+import { editorKeyMatches } from "./util/housingProfileEdit.js";
 import { buildGroupedAnalysis } from "./util/groupedAnalysis.js";
 import { parseGroupedAnalysisBreakdowns } from "./util/groupedAnalysisBreakdowns.js";
 import {
@@ -205,6 +202,7 @@ import { createAppraisalRatingsRouter } from "./modules/appraisalRatings/router.
 import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
 import { createAccountPhotosRouter } from "./modules/accounts/photosRouter.js";
 import { createHousingProfileRouter } from "./modules/accounts/housingProfileRouter.js";
+import { createReportManualValuesRouter } from "./modules/accounts/reportManualValuesRouter.js";
 import {
   createReportFile,
   listReportFiles,
@@ -607,16 +605,6 @@ async function ensurePropertyContextAvailable() {
   }
 }
 
-const REPORT_MANUAL_SECTION_KEYS = new Set([
-  "report.subject_identification",
-  "report.exemptions",
-  "report.sales_history",
-  "report.property_characteristics",
-  "report.land_details",
-  "report.appraisal_values",
-  "report.assignment_details",
-]);
-
 const ASSIGNMENT_FILE_SELECT = `
   SELECT f.id, f.account_id, f.file_number, f.assignment_details,
          f.organization_id, f.assigned_appraiser_user_id, f.supervisory_appraiser_user_id,
@@ -823,159 +811,11 @@ app.use(createHousingProfileRouter({
   accountIdAllowed: legacyAccountIdAllowed,
   requireWorkflowAccess,
 }));
-
-/**
- * Explicitly save user-verified Property Report section overrides. Source CAD
- * and MLS rows remain immutable; every save is upserted and appended to the
- * audit history. This endpoint intentionally supports Dallas and non-Dallas
- * accounts because report editing is separate from the enrichment pipeline.
- */
-app.patch("/api/accounts/:id/report-manual-values", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  if (!requireEditor(req, res)) return;
-  const sections = req.body?.sections;
-  if (!sections || typeof sections !== "object" || Array.isArray(sections)) {
-    return res.status(400).json({ error: "invalid_report_sections" });
-  }
-  const entries = Object.entries(sections);
-  if (
-    !entries.length ||
-    entries.length > REPORT_MANUAL_SECTION_KEYS.size ||
-    entries.some(([key, value]) =>
-      !REPORT_MANUAL_SECTION_KEYS.has(key) || value === undefined
-    )
-  ) {
-    return res.status(400).json({ error: "invalid_report_sections" });
-  }
-  const serializedSize = Buffer.byteLength(JSON.stringify(sections), "utf8");
-  if (serializedSize > 250_000) {
-    return res.status(413).json({ error: "report_sections_too_large" });
-  }
-  try {
-    for (const [key, value] of entries) validateReportManualSection(key, value);
-  } catch (error) {
-    return res.status(400).json({
-      error: error?.message || "invalid_report_section_value",
-    });
-  }
-
-  const reviewer = String(req.body?.reviewer || "HomeNode editor")
-    .trim()
-    .slice(0, 200) || "HomeNode editor";
-  const notes = String(req.body?.notes || "Property Report manual edit")
-    .trim()
-    .slice(0, 4000) || null;
-  let housingUpdate = null;
-  const characteristics = sections["report.property_characteristics"];
-  if (
-    characteristics?.housing_profile?.housing_type &&
-    typeof characteristics.housing_profile === "object"
-  ) {
-    try {
-      housingUpdate = normalizeHousingProfileUpdate({
-        ...characteristics.housing_profile,
-        notes,
-      });
-    } catch (error) {
-      return res.status(400).json({
-        error: error?.message || "invalid_housing_profile",
-      });
-    }
-  }
-  const client = await pool.connect();
-  try {
-    await propertyEnrichmentReady;
-    await client.query("BEGIN");
-    const canonicalId = await resolveCanonicalAccountId(client, requestedId);
-    const accountResult = await client.query(
-      "SELECT 1 FROM core.accounts WHERE account_id = $1",
-      [canonicalId],
-    );
-    if (!accountResult.rowCount) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ error: "account_not_found" });
-    }
-
-    if (housingUpdate) {
-      await client.query(
-        `INSERT INTO core.account_housing_profiles (
-           account_id, structural_style, housing_type, attachment_type,
-           architectural_style, source_name, observed_at, confidence, notes
-         ) VALUES ($1,$2,$3,$4,$5,'HomeNode Property Report manual edit',now(),1.000,$6)
-         ON CONFLICT (account_id) DO UPDATE SET
-           structural_style = EXCLUDED.structural_style,
-           housing_type = EXCLUDED.housing_type,
-           attachment_type = EXCLUDED.attachment_type,
-           architectural_style = EXCLUDED.architectural_style,
-           source_name = EXCLUDED.source_name,
-           observed_at = EXCLUDED.observed_at,
-           confidence = EXCLUDED.confidence,
-           notes = EXCLUDED.notes,
-           updated_at = now()`,
-        [
-          canonicalId,
-          housingUpdate.structuralStyle,
-          housingUpdate.housingType,
-          housingUpdate.attachmentType,
-          housingUpdate.architecturalStyle,
-          housingUpdate.notes,
-        ],
-      );
-    }
-
-    const savedEntries = [];
-    for (const [attributeKey, attributeValue] of entries) {
-      const { rows: currentRows } = await client.query(
-        `SELECT revision FROM app.property_attribute_manual_values
-         WHERE account_id = $1 AND attribute_key = $2 FOR UPDATE`,
-        [canonicalId, attributeKey],
-      );
-      const revision = Number(currentRows[0]?.revision || 0) + 1;
-      const valueJson = JSON.stringify(attributeValue);
-      const { rows } = await client.query(
-        `INSERT INTO app.property_attribute_manual_values (
-           account_id, attribute_key, attribute_value, notes, reviewer, revision
-         ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)
-         ON CONFLICT (account_id, attribute_key) DO UPDATE SET
-           attribute_value = EXCLUDED.attribute_value,
-           notes = EXCLUDED.notes,
-           reviewer = EXCLUDED.reviewer,
-           revision = EXCLUDED.revision,
-           updated_at = now()
-         RETURNING attribute_key, attribute_value, revision, reviewer, notes, updated_at`,
-        [canonicalId, attributeKey, valueJson, notes, reviewer, revision],
-      );
-      await client.query(
-        `INSERT INTO app.property_attribute_manual_history (
-           account_id, attribute_key, attribute_value, notes, reviewer, revision
-         ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
-        [canonicalId, attributeKey, valueJson, notes, reviewer, revision],
-      );
-      savedEntries.push([attributeKey, {
-        value: rows[0].attribute_value,
-        revision: Number(rows[0].revision),
-        reviewer: rows[0].reviewer,
-        notes: rows[0].notes,
-        updated_at: rows[0].updated_at,
-      }]);
-    }
-    await client.query("COMMIT");
-    return res.json({
-      ok: true,
-      account_id: canonicalId,
-      manual_values: Object.fromEntries(savedEntries),
-    });
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    console.error("/api/accounts/:id/report-manual-values failed", error);
-    return res.status(500).json({ error: "report_manual_values_update_failed" });
-  } finally {
-    client.release();
-  }
-});
+app.use(createReportManualValuesRouter({
+  pool,
+  propertyEnrichmentReady,
+  requireEditor,
+}));
 
 /** List the independently versioned appraisal files for one property. */
 app.get("/api/accounts/:id/assignment-files", async (req, res) => {

@@ -185,7 +185,7 @@ test("legacy property editors accept the authenticated workflow identity before 
   const server = read("../src/oldServer.js");
   const housingRouter = read("../src/modules/accounts/housingProfileRouter.js");
   const housingStart = server.indexOf("app.use(createHousingProfileRouter(");
-  const housingEnd = server.indexOf('app.patch("/api/accounts/:id/report-manual-values"', housingStart);
+  const housingEnd = server.indexOf("app.use(createReportManualValuesRouter(", housingStart);
   const zoningStart = server.indexOf('app.put("/api/accounts/:id/zoning-verification"');
   const zoningEnd = server.indexOf("function decodedDocumentHeader", zoningStart);
   assert.ok(housingStart >= 0 && housingEnd > housingStart);

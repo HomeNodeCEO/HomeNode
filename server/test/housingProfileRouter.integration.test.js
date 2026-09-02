@@ -210,7 +210,7 @@ test("housing profile composition and legacy route position remain explicit", ()
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const accountPhotos = source.indexOf("app.use(createAccountPhotosRouter(");
   const housingProfile = source.indexOf("app.use(createHousingProfileRouter(");
-  const reportManualValues = source.indexOf('app.patch("/api/accounts/:id/report-manual-values"');
+  const reportManualValues = source.indexOf("app.use(createReportManualValuesRouter(");
   assert.ok(housingProfile > accountPhotos);
   assert.ok(reportManualValues > housingProfile);
 });

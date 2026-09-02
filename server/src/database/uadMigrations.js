@@ -51,6 +51,7 @@ const MIGRATIONS = Object.freeze([
   "20260928_uad_sketch_editor.sql",
   "20261002_uad_document_evidence.sql",
   "20261004_uad_assignment_sellers.sql",
+  "20261004_uad_public_owner_sources.sql",
   "20261005_uad_public_record_owners.sql",
 ]);
 export const UAD_MIGRATION_NAMES = MIGRATIONS;

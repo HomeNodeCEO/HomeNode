@@ -54,6 +54,7 @@ export const UAD_SALES_CONTRACT_FIELDS = Object.freeze([
   field("Contract review", "0600.0002", "20.002", "Does this appear to be an arm's length transaction?", "boolean", {
     showWhen: contractExists,
     requiredWhen: contractExists,
+    guidance: "This conclusion always requires the appraiser's manual review and is never selected from document extraction.",
   }),
   field("Contract review", "0600.0003", "20.003", "Non-arm's length commentary", "text", {
     maxLength: 1250,

@@ -779,8 +779,12 @@ export default function UadWorkfileEditor({ workfileId, onClose, initialSection 
           const key = fieldValueKey(field.contextKey, field.uid, entityId);
           const saved = savedByKey.get(key);
           const wide = field.dataType === "text" || Boolean(field.maxLength && field.maxLength > 100);
+          const manualContractReview = field.contextKey === "sales_contract" && field.uid === "0600.0002";
           return (
-            <label className={wide ? "md:col-span-2" : ""} key={field.key}>
+            <label
+              className={`${wide ? "md:col-span-2" : ""} ${manualContractReview ? "hn-evidence-reviewer-frame rounded-xl p-3" : ""}`.trim()}
+              key={field.key}
+            >
               <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800">
                 {field.label}{isRequired(field, entityId) && <span className="text-red-700" title="Required">*</span>}
               </span>

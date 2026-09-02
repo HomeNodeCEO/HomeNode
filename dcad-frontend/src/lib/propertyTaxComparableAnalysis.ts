@@ -153,7 +153,8 @@ export function propertyTaxComparableSimilarity(
   score += closenessPoints(differenceRatio(subject.bedroomCount, candidate.bedroomCount), 5);
   score += closenessPoints(differenceRatio(subject.garageSpaces, candidate.garageSpaces), 5);
   if (normalized(subject.buildingClass) && normalized(subject.buildingClass) === normalized(candidate.buildingClass)) score += 12;
-  if (normalized(subject.neighborhoodCode) === normalized(candidate.neighborhoodCode)) score += 10;
+  if (normalized(subject.neighborhoodCode)
+      && normalized(subject.neighborhoodCode) === normalized(candidate.neighborhoodCode)) score += 10;
 
   const valuationDate = dateOnly(subject.valuationDate);
   const saleDate = dateOnly(candidate.saleDate);
@@ -185,7 +186,7 @@ function assessCandidate(
   if (normalized(subject.propertyUse) !== normalized(candidate.propertyUse)) {
     exclusionCodes.push('different_property_use');
   }
-  if (policy.requireSameNeighborhood
+  if (policy.requireSameNeighborhood && normalized(subject.neighborhoodCode)
       && normalized(subject.neighborhoodCode) !== normalized(candidate.neighborhoodCode)) {
     exclusionCodes.push('different_neighborhood');
   }
@@ -220,7 +221,6 @@ export function analyzePropertyTaxComparables({
 }): PropertyTaxComparableAnalysisResult {
   if (!subject.accountId.trim()) throw new Error('property_tax_subject_account_required');
   if (!dateOnly(subject.valuationDate)) throw new Error('property_tax_valuation_date_required');
-  if (!subject.neighborhoodCode.trim()) throw new Error('property_tax_neighborhood_required');
 
   const candidateDecisions = candidates.map((candidate) => assessCandidate(subject, candidate, policy));
   const decisionsById = new Map(candidateDecisions.map((decision) => [decision.saleId, decision]));
@@ -288,8 +288,12 @@ export function analyzePropertyTaxComparables({
   });
 
   const diagnostics: string[] = [];
+  if (!subject.neighborhoodCode.trim()) {
+    diagnostics.push('The subject neighborhood is unavailable; comparable analysis continued without applying the same-neighborhood exclusion and requires reviewer confirmation.');
+  }
   if (selectedComparables.length < policy.minimumSelectedComparables) {
-    diagnostics.push(`Only ${selectedComparables.length} eligible same-neighborhood comparable sale(s) were found; ${policy.minimumSelectedComparables} are required before packet generation.`);
+    const boundary = subject.neighborhoodCode.trim() ? 'same-neighborhood ' : '';
+    diagnostics.push(`Only ${selectedComparables.length} eligible ${boundary}comparable sale(s) were found; ${policy.minimumSelectedComparables} are required before packet generation.`);
   }
   if (!numericRules.length && !binaryRules.length
       && !selectedComparables.some((comparable) => comparable.candidate.manualAdjustments?.length)) {

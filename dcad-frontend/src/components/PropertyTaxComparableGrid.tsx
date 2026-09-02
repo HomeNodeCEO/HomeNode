@@ -25,7 +25,12 @@ import {
   writePropertyTaxComparableGrid,
   type PropertyTaxComparableGridRow,
 } from '@/lib/propertyTaxComparableGrid';
-import { readPropertyTaxWorkspace } from '@/lib/propertyTaxWorkspace';
+import {
+  readPropertyTaxWorkspace,
+  resolvePropertyTaxAnalysisContext,
+  type PropertyTaxAnalysisContext,
+  type PropertyTaxDatabaseDefaults,
+} from '@/lib/propertyTaxWorkspace';
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -48,17 +53,19 @@ function currency(value: number | null | undefined): string {
   }).format(Number(value));
 }
 
-function comparableSubject(file: PropertyTaxProtestFile): PropertyTaxComparableSubject | null {
+function comparableSubject(
+  file: PropertyTaxProtestFile,
+  analysisContext: PropertyTaxAnalysisContext,
+): PropertyTaxComparableSubject {
   const workspace = readPropertyTaxWorkspace(file.workfile_data);
   const caseData = readPropertyTaxCase(file.workfile_data);
-  if (!workspace.taxYear || !caseData.neighborhoodCode) return null;
   const subject = record(file.workfile_data.subject);
   return {
     accountId: file.account_id,
-    valuationDate: `${workspace.taxYear}-01-01`,
+    valuationDate: `${analysisContext.taxYear}-01-01`,
     districtAppraisedValue: workspace.districtAppraisedValue,
     propertyUse: caseData.propertyUse || 'single_family_residential',
-    neighborhoodCode: caseData.neighborhoodCode,
+    neighborhoodCode: analysisContext.neighborhoodCode,
     buildingClass: caseData.buildingClass,
     historicDistrictName: caseData.historicDistrictName,
     livingAreaSqft: finite(subject.living_area_sqft),
@@ -84,10 +91,12 @@ function sameValue(left: string, right: string): boolean {
 export default function PropertyTaxComparableGrid({
   accountId,
   file,
+  databaseDefaults,
   onFileSaved,
 }: {
   accountId: string;
   file: PropertyTaxProtestFile;
+  databaseDefaults: PropertyTaxDatabaseDefaults;
   onFileSaved: (file: PropertyTaxProtestFile) => void;
 }) {
   const storedGrid = useMemo(() => readPropertyTaxComparableGrid(file.workfile_data), [file.workfile_data]);
@@ -97,14 +106,19 @@ export default function PropertyTaxComparableGrid({
   const [message, setMessage] = useState('');
   const automaticRecommendationFile = useRef('');
   const caseData = useMemo(() => readPropertyTaxCase(file.workfile_data), [file.workfile_data]);
-  const subject = useMemo(() => comparableSubject(file), [file]);
+  const workspace = useMemo(() => readPropertyTaxWorkspace(file.workfile_data), [file.workfile_data]);
+  const analysisContext = useMemo(
+    () => resolvePropertyTaxAnalysisContext(file.workfile_data, databaseDefaults),
+    [databaseDefaults, file.workfile_data],
+  );
+  const subject = useMemo(() => comparableSubject(file, analysisContext), [analysisContext, file]);
 
   useEffect(() => {
     setRows(readPropertyTaxComparableGrid(file.workfile_data).rows);
   }, [file.tax_protest_file_id, file.revision, file.workfile_data]);
 
   const analysis = useMemo<PropertyTaxComparableAnalysisResult | null>(() => {
-    if (!subject || !rows.length) return null;
+    if (!rows.length) return null;
     try {
       return analyzePropertyTaxComparables({
         subject,
@@ -129,10 +143,6 @@ export default function PropertyTaxComparableGrid({
   }, []);
 
   const loadRecommendations = useCallback(async (automatic = false) => {
-    if (!subject) {
-      if (!automatic) setMessage('Enter the tax year and DCAD neighborhood code, then save the protest file before requesting recommendations.');
-      return;
-    }
     setLoadingRecommendations(true);
     if (!automatic) setMessage('');
     try {
@@ -150,7 +160,7 @@ export default function PropertyTaxComparableGrid({
         if (!key || seenSales.has(key)) return false;
         seenSales.add(key);
         return (
-        sameValue(sale.neighborhood_code || '', subject.neighborhoodCode)
+        (!subject.neighborhoodCode || sameValue(sale.neighborhood_code || '', subject.neighborhoodCode))
         && (!subject.buildingClass || sameValue(sale.cad_building_class || '', subject.buildingClass))
         );
       }).slice(0, DALLAS_RESIDENTIAL_COMPARABLE_POLICY.maximumSelectedComparables);
@@ -162,8 +172,10 @@ export default function PropertyTaxComparableGrid({
         .filter((row): row is PropertyTaxComparableGridRow => Boolean(row));
       setRows((current) => mergePropertyTaxComparableRows(current, incoming));
       setMessage(incoming.length
-        ? `${incoming.length} same-neighborhood recommended sale${incoming.length === 1 ? '' : 's'} added to the draft grid.`
-        : 'No recommended sales matched both the saved DCAD neighborhood and building-class boundary.');
+        ? `${incoming.length} ${subject.neighborhoodCode ? 'same-neighborhood ' : ''}recommended sale${incoming.length === 1 ? '' : 's'} added to the draft grid.`
+        : subject.neighborhoodCode
+          ? 'No recommended sales matched the available DCAD neighborhood and building-class boundary.'
+          : 'No recommended sales were available for the current search window; the missing neighborhood remains flagged for review.');
     } catch (error) {
       if (!automatic) setMessage(error instanceof Error ? error.message : 'Comparable recommendations could not be loaded.');
     } finally {
@@ -172,10 +184,13 @@ export default function PropertyTaxComparableGrid({
   }, [accountId, subject]);
 
   useEffect(() => {
-    if (!subject || rows.length || automaticRecommendationFile.current === file.tax_protest_file_id) return;
-    automaticRecommendationFile.current = file.tax_protest_file_id;
+    const savedContextComplete = Boolean(workspace.taxYear && caseData.neighborhoodCode);
+    const recommendationKey = `${file.tax_protest_file_id}:${subject.valuationDate}:${subject.neighborhoodCode}`;
+    if ((!databaseDefaults.loaded && !savedContextComplete)
+        || rows.length || automaticRecommendationFile.current === recommendationKey) return;
+    automaticRecommendationFile.current = recommendationKey;
     void loadRecommendations(true);
-  }, [file.tax_protest_file_id, loadRecommendations, rows.length, subject]);
+  }, [caseData.neighborhoodCode, databaseDefaults.loaded, file.tax_protest_file_id, loadRecommendations, rows.length, subject, workspace.taxYear]);
 
   const updateRow = (id: string, patch: Partial<PropertyTaxComparableGridRow>) => {
     setRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
@@ -261,7 +276,7 @@ export default function PropertyTaxComparableGrid({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="hn-action-secondary rounded-lg px-3 py-2 text-sm font-semibold" onClick={() => void loadRecommendations(false)} disabled={loadingRecommendations || !subject}>
+          <button type="button" className="hn-action-secondary rounded-lg px-3 py-2 text-sm font-semibold" onClick={() => void loadRecommendations(false)} disabled={loadingRecommendations}>
             {loadingRecommendations ? 'Finding sales…' : 'Add recommended sales'}
           </button>
           <button type="button" className="hn-action-secondary rounded-lg px-3 py-2 text-sm font-semibold" onClick={addBlankDistrictRow}>Add district sale</button>
@@ -271,11 +286,11 @@ export default function PropertyTaxComparableGrid({
         </div>
       </div>
 
-      {!subject && (
-        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Save a tax year and DCAD neighborhood code in the canonical workfile to enable automatic recommendations and analysis.
+      {analysisContext.warnings.map((warning) => (
+        <div key={warning} className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {warning}
         </div>
-      )}
+      ))}
       {message && <div className="mt-3 rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm text-slate-700">{message}</div>}
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -318,7 +333,7 @@ export default function PropertyTaxComparableGrid({
                 </tr>
               );
             })}
-            {!rows.length && <tr><td colSpan={17} className="px-4 py-8 text-center text-sm text-slate-500">Recommended sales will load after the case is configured. Upload district evidence below to stage the district&apos;s sales in the same grid.</td></tr>}
+            {!rows.length && <tr><td colSpan={17} className="px-4 py-8 text-center text-sm text-slate-500">Recommended sales load from the latest available property data. Upload district evidence below to stage the district&apos;s sales in the same grid.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -329,7 +344,12 @@ export default function PropertyTaxComparableGrid({
         <div className="rounded-lg border border-slate-200 bg-white p-3"><div className="text-[10px] font-semibold uppercase text-slate-500">Current indicated median</div><div className="mt-1 text-lg font-semibold">{currency(analysis?.indicatedMarketValue)}</div></div>
       </div>
       {analysis?.diagnostics.map((diagnostic) => <p key={diagnostic} className="mt-2 text-xs text-amber-800">{diagnostic}</p>)}
-      {caseData.neighborhoodCode && <p className="mt-2 text-xs text-slate-500">Recommendation boundary: DCAD neighborhood {caseData.neighborhoodCode}{caseData.buildingClass ? ` · building class ${caseData.buildingClass}` : ''}.</p>}
+      <p className="mt-2 text-xs text-slate-500">
+        Analysis date: January 1, {analysisContext.taxYear} ({analysisContext.taxYearSource}).
+        {analysisContext.neighborhoodCode
+          ? ` Recommendation boundary: DCAD neighborhood ${analysisContext.neighborhoodCode} (${analysisContext.neighborhoodCodeSource})${caseData.buildingClass ? ` · building class ${caseData.buildingClass}` : ''}.`
+          : ' No neighborhood boundary is available; candidate neighborhood remains a reviewer flag.'}
+      </p>
 
       <PropertyTaxEvidenceDocumentCenter
         accountId={accountId}

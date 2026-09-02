@@ -12,6 +12,7 @@ import {
   getPropertyTaxProtestFile,
   updatePropertyTaxProtestFile,
 } from '@/lib/propertyTaxApi';
+import type { PropertyTaxDatabaseDefaults } from '@/lib/propertyTaxWorkspace';
 
 type FieldSpec = {
   path: [string, string];
@@ -25,6 +26,7 @@ type FieldSpec = {
 type PropertyTaxWorkfileReviewProps = {
   accountId: string;
   fileId?: string | null;
+  databaseDefaults: PropertyTaxDatabaseDefaults;
   onFileChange?: (file: PropertyTaxProtestFile | null) => void;
 };
 
@@ -112,8 +114,25 @@ function readNested(source: Record<string, unknown>, path: [string, string]) {
   return value == null ? '' : String(value);
 }
 
-function buildValues(file: PropertyTaxProtestFile) {
-  return Object.fromEntries(FIELDS.map((field) => [keyFor(field), readNested(file.workfile_data, field.path)]));
+function applyDatabaseDefaults(
+  values: Record<string, string>,
+  databaseDefaults: PropertyTaxDatabaseDefaults,
+) {
+  const next = { ...values };
+  if (!next['valuation.tax_year'] && databaseDefaults.taxYear) {
+    next['valuation.tax_year'] = String(databaseDefaults.taxYear);
+  }
+  if (!next['subject.district_neighborhood_code'] && databaseDefaults.neighborhoodCode.trim()) {
+    next['subject.district_neighborhood_code'] = databaseDefaults.neighborhoodCode.trim();
+  }
+  return next;
+}
+
+function buildValues(file: PropertyTaxProtestFile, databaseDefaults: PropertyTaxDatabaseDefaults) {
+  return applyDatabaseDefaults(
+    Object.fromEntries(FIELDS.map((field) => [keyFor(field), readNested(file.workfile_data, field.path)])),
+    databaseDefaults,
+  );
 }
 
 function mergeValues(file: PropertyTaxProtestFile, values: Record<string, string>) {
@@ -147,6 +166,7 @@ function formatDate(value: string | null | undefined) {
 export default function PropertyTaxWorkfileReview({
   accountId,
   fileId,
+  databaseDefaults,
   onFileChange,
 }: PropertyTaxWorkfileReviewProps) {
   const [file, setFile] = useState<PropertyTaxProtestFile | null>(null);
@@ -166,9 +186,9 @@ export default function PropertyTaxWorkfileReview({
   const acceptSavedFile = useCallback((current: PropertyTaxProtestFile) => {
     evidenceVersionRef.current = current.evidence_version || evidenceVersionRef.current;
     setFile(current);
-    setValues(buildValues(current));
+    setValues(buildValues(current, databaseDefaults));
     onFileChange?.(current);
-  }, [onFileChange]);
+  }, [databaseDefaults, onFileChange]);
 
   const load = async () => {
     if (!accountId) return;
@@ -178,7 +198,7 @@ export default function PropertyTaxWorkfileReview({
       const result = await getPropertyTaxProtestFile(accountId, fileId || undefined);
       evidenceVersionRef.current = result?.evidence_version || null;
       setFile(result);
-      setValues(result ? buildValues(result) : {});
+      setValues(result ? buildValues(result, databaseDefaults) : {});
       onFileChange?.(result);
     } catch (loadError: unknown) {
       setError(loadError instanceof Error ? loadError.message : 'The canonical protest file could not be loaded.');
@@ -192,6 +212,11 @@ export default function PropertyTaxWorkfileReview({
     // load is scoped to the active account and intentionally refreshed when it changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, fileId]);
+
+  useEffect(() => {
+    if (!file || !databaseDefaults.loaded) return;
+    setValues((current) => applyDatabaseDefaults(current, databaseDefaults));
+  }, [databaseDefaults, file]);
 
   const activeFileId = file?.tax_protest_file_id || null;
   const refreshSketchEvidence = useCallback(async () => {
@@ -338,8 +363,18 @@ export default function PropertyTaxWorkfileReview({
           <PropertyTaxComparableGrid
             accountId={accountId}
             file={file}
+            databaseDefaults={databaseDefaults}
             onFileSaved={acceptSavedFile}
           />
+
+          {databaseDefaults.loaded && (
+            !readNested(file.workfile_data, ['valuation', 'tax_year'])
+            || !readNested(file.workfile_data, ['subject', 'district_neighborhood_code'])
+          ) && (
+            <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+              Missing tax-year or neighborhood fields are prefilled from the latest property database record when available. They remain review flags until this Property Tax revision is saved, but they do not block recommendations or analysis.
+            </div>
+          )}
 
           <div className="mt-5 space-y-4">
             {groups.map((group) => (

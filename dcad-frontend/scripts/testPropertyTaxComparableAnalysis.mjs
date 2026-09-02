@@ -86,6 +86,16 @@ test('selection rank is independent of sale price', () => {
   );
 });
 
+test('a missing subject neighborhood is a review flag instead of an analysis blocker', () => {
+  const result = analyzePropertyTaxComparables({
+    subject: { ...subject, neighborhoodCode: '' },
+    candidates: [candidate({ neighborhoodCode: 'NBHD-10' })],
+  });
+  assert.equal(result.selectedComparables.length, 1);
+  assert.equal(result.candidateDecisions[0].eligible, true);
+  assert.match(result.diagnostics.join(' '), /continued without applying the same-neighborhood exclusion/);
+});
+
 test('the shared adjustment math produces auditable indications and a median', () => {
   const result = analyzePropertyTaxComparables({
     subject,

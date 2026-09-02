@@ -18,6 +18,20 @@ export interface PropertyTaxWorkspaceSnapshot {
   appraiserComments: string;
 }
 
+export interface PropertyTaxDatabaseDefaults {
+  loaded: boolean;
+  taxYear: number | null;
+  neighborhoodCode: string;
+}
+
+export interface PropertyTaxAnalysisContext {
+  taxYear: number;
+  neighborhoodCode: string;
+  taxYearSource: 'workfile' | 'database' | 'system';
+  neighborhoodCodeSource: 'workfile' | 'database' | 'missing';
+  warnings: string[];
+}
+
 function recordAt(source: PropertyTaxWorkfileData, key: string): Record<string, unknown> {
   const value = source[key];
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -63,6 +77,65 @@ export function readPropertyTaxWorkspace(
     districtEvidenceSummary: textAt(analysis, 'district_evidence_summary'),
     protestRationale: textAt(analysis, 'protest_rationale'),
     appraiserComments: textAt(inspection, 'appraiser_comments'),
+  };
+}
+
+function validTaxYear(value: unknown): number | null {
+  const normalized = Number(value);
+  return Number.isInteger(normalized) && normalized >= 2000 && normalized <= 2200
+    ? normalized
+    : null;
+}
+
+/**
+ * Resolve non-blocking analysis inputs without writing database-derived values
+ * into the canonical protest revision. Explicit workfile values always win;
+ * otherwise the latest property record is used, with a visible review flag.
+ */
+export function resolvePropertyTaxAnalysisContext(
+  workfileData: PropertyTaxWorkfileData | null | undefined,
+  databaseDefaults: PropertyTaxDatabaseDefaults,
+  systemYear = new Date().getFullYear(),
+): PropertyTaxAnalysisContext {
+  const workspace = readPropertyTaxWorkspace(workfileData);
+  const subject = recordAt(workfileData || {}, 'subject');
+  const savedNeighborhoodCode = textAt(subject, 'district_neighborhood_code');
+  const savedTaxYear = validTaxYear(workspace.taxYear);
+  const databaseTaxYear = validTaxYear(databaseDefaults.taxYear);
+  const fallbackSystemYear = validTaxYear(systemYear) || 2000;
+  const databaseNeighborhoodCode = databaseDefaults.neighborhoodCode.trim();
+  const warnings: string[] = [];
+
+  const taxYear = savedTaxYear || databaseTaxYear || fallbackSystemYear;
+  const taxYearSource = savedTaxYear
+    ? 'workfile' as const
+    : databaseTaxYear
+      ? 'database' as const
+      : 'system' as const;
+  const neighborhoodCode = savedNeighborhoodCode || databaseNeighborhoodCode;
+  const neighborhoodCodeSource = savedNeighborhoodCode
+    ? 'workfile' as const
+    : databaseNeighborhoodCode
+      ? 'database' as const
+      : 'missing' as const;
+
+  if (!savedTaxYear && databaseTaxYear) {
+    warnings.push(`Tax year is not saved in this workfile; using the most recent database tax year, ${databaseTaxYear}.`);
+  } else if (!savedTaxYear && !databaseTaxYear && databaseDefaults.loaded) {
+    warnings.push(`Tax year is unavailable in the workfile and property database; using ${taxYear} for the sale search and flagging it for review.`);
+  }
+  if (!savedNeighborhoodCode && databaseNeighborhoodCode) {
+    warnings.push(`Neighborhood is not saved in this workfile; using the most recent database code, ${databaseNeighborhoodCode}.`);
+  } else if (!savedNeighborhoodCode && !databaseNeighborhoodCode && databaseDefaults.loaded) {
+    warnings.push('The DCAD neighborhood is unavailable in the workfile and property database; recommendations and analysis will continue without neighborhood filtering and remain flagged for review.');
+  }
+
+  return {
+    taxYear,
+    neighborhoodCode,
+    taxYearSource,
+    neighborhoodCodeSource,
+    warnings,
   };
 }
 

@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   buildPropertyTaxSummary,
   readPropertyTaxWorkspace,
+  resolvePropertyTaxAnalysisContext,
 } from '../src/lib/propertyTaxWorkspace.ts';
 
 const protestPage = fs.readFileSync(
@@ -63,11 +64,52 @@ test('the protest workspace has no Custom Appraisal persistence dependency', () 
   assert.match(canonicalReview, /Canonical Property Tax file/);
   assert.match(canonicalReview, /Desktop Property Tax workspace/);
   assert.match(canonicalReview, /revisionSourceLabel="Property Tax"/);
+  assert.match(protestPage, /latest_tax_year/);
+  assert.match(protestPage, /neighborhood_code/);
+  assert.doesNotMatch(comparableGrid, /Save a tax year and DCAD neighborhood code/);
+  assert.doesNotMatch(comparableGrid, /disabled=\{loadingRecommendations \|\| !subject\}/);
   assert.ok(
     canonicalReview.indexOf('<PropertyTaxComparableGrid')
       < canonicalReview.indexOf('{groups.map'),
     'the comparable grid should appear before the detailed workfile field groups',
   );
+});
+
+test('analysis context uses the latest database fields without overwriting explicit workfile values', () => {
+  const databaseDefaults = {
+    loaded: true,
+    taxYear: 2026,
+    neighborhoodCode: 'DB-NBHD-10',
+  };
+  const inherited = resolvePropertyTaxAnalysisContext({}, databaseDefaults, 2030);
+  assert.equal(inherited.taxYear, 2026);
+  assert.equal(inherited.neighborhoodCode, 'DB-NBHD-10');
+  assert.equal(inherited.taxYearSource, 'database');
+  assert.equal(inherited.neighborhoodCodeSource, 'database');
+  assert.equal(inherited.warnings.length, 2);
+
+  const explicit = resolvePropertyTaxAnalysisContext({
+    valuation: { tax_year: 2025 },
+    subject: { district_neighborhood_code: 'SAVED-NBHD-5' },
+  }, databaseDefaults, 2030);
+  assert.equal(explicit.taxYear, 2025);
+  assert.equal(explicit.neighborhoodCode, 'SAVED-NBHD-5');
+  assert.equal(explicit.taxYearSource, 'workfile');
+  assert.equal(explicit.neighborhoodCodeSource, 'workfile');
+  assert.deepEqual(explicit.warnings, []);
+});
+
+test('missing database context falls back without blocking and remains flagged', () => {
+  const context = resolvePropertyTaxAnalysisContext({}, {
+    loaded: true,
+    taxYear: null,
+    neighborhoodCode: '',
+  }, 2027);
+  assert.equal(context.taxYear, 2027);
+  assert.equal(context.neighborhoodCode, '');
+  assert.equal(context.taxYearSource, 'system');
+  assert.equal(context.neighborhoodCodeSource, 'missing');
+  assert.match(context.warnings.join(' '), /continue without neighborhood filtering/);
 });
 
 test('the shared calculation boundary contains no workflow persistence identity', () => {

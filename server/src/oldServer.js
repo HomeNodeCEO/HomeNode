@@ -245,6 +245,11 @@ import {
   createOptionalApplicationAuthenticator,
   hasApplicationPermission,
 } from "./security/applicationAccess.js";
+import {
+  applicationAuthenticationOperationalState,
+  assertApplicationAuthenticationStartup,
+  createApplicationAuthenticationPolicy,
+} from "./security/applicationAuthenticationPolicy.js";
 import { getApplicationAuthReadiness } from "./security/applicationAuthReadiness.js";
 import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
 import { authorizeCustomAssignmentFile, decideAssignmentAccess } from "./security/assignmentAccess.js";
@@ -264,8 +269,23 @@ import {
   signupRequestMetadata,
 } from "./security/signupSecurity.js";
 
+const applicationAuthenticationPolicy = createApplicationAuthenticationPolicy();
+const webOidcVerifier = createOidcAccessTokenVerifier({
+  issuer: process.env.OIDC_WEB_ISSUER || process.env.OIDC_ISSUER,
+  audience: process.env.OIDC_WEB_CLIENT_ID,
+  jwksUri: process.env.OIDC_WEB_JWKS_URI || process.env.OIDC_JWKS_URI,
+  clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
+});
+assertApplicationAuthenticationStartup({
+  authenticationPolicy: applicationAuthenticationPolicy,
+  environment: process.env,
+  webOidcConfigured: webOidcVerifier.configured,
+});
+const applicationAuthenticationRequired = applicationAuthenticationPolicy.authenticationRequired;
 const app = express();
-const httpSecurity = createHttpSecurityConfiguration();
+const httpSecurity = createHttpSecurityConfiguration(process.env, {
+  authenticationPolicy: applicationAuthenticationPolicy,
+});
 const redTeamIsolation = createRedTeamIsolationConfiguration();
 const legacyAccountIdAllowed = (value) => isLegacyAccountIdAllowed(value, {
   redTeamEnabled: redTeamIsolation.enabled,
@@ -355,6 +375,9 @@ const runtimeHealth = createRuntimeHealthHandlers({
   pool,
   isShuttingDown: () => Boolean(gracefulShutdown?.isShuttingDown()),
   artifactExecutorSnapshot: getUadArtifactExecutionSnapshot,
+  securityPostureSnapshot: () => applicationAuthenticationOperationalState(
+    applicationAuthenticationPolicy,
+  ),
 });
 const artifactRecoveryMonitor = startUadArtifactRecoveryMonitor(pool, {
   shouldRun: () => getUadArtifactExecutionSnapshot().active === 0,
@@ -367,26 +390,6 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });
-const webOidcVerifier = createOidcAccessTokenVerifier({
-  issuer: process.env.OIDC_WEB_ISSUER || process.env.OIDC_ISSUER,
-  audience: process.env.OIDC_WEB_CLIENT_ID,
-  jwksUri: process.env.OIDC_WEB_JWKS_URI || process.env.OIDC_JWKS_URI,
-  clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
-});
-const applicationAuthenticationRequired = environmentFlag(
-  process.env.APPLICATION_AUTHENTICATION_REQUIRED,
-);
-if (applicationAuthenticationRequired && (
-  !webOidcVerifier.configured
-  || !process.env.OIDC_WEB_CLIENT_ID
-  || !process.env.OIDC_WEB_CLIENT_SECRET
-  || !process.env.OIDC_WEB_REDIRECT_URI
-  || !process.env.WEB_APP_URL
-  || String(process.env.APP_SESSION_SECRET || "").length < 32
-  || String(process.env.APP_SIGNING_SECRET || "").length < 32
-)) {
-  throw new Error("application_authentication_required_but_not_configured");
-}
 // Browser sessions must be hydrated before UAD routing so the same secure
 // HomeNode session can authorize UAD pages without requiring a mobile bearer
 // token. Mobile continues to use its separate public-client audience below.
@@ -428,7 +431,11 @@ app.use("/api", createOptionalApplicationAuthenticator(authenticateApplicationUs
 // the broad limiter after authentication so each signed-in user receives an
 // independent counter instead of competing for a shared proxy/public-IP key.
 app.use(globalApiRateLimiter);
-app.use("/api/auth", createWebAuthRouter({ pool, verifier: webOidcVerifier }));
+app.use("/api/auth", createWebAuthRouter({
+  pool,
+  verifier: webOidcVerifier,
+  authenticationPolicy: applicationAuthenticationPolicy,
+}));
 
 app.get("/api/auth/me", (req, res) => {
   res.set("cache-control", "no-store");

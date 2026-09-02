@@ -93,3 +93,46 @@ test("readiness returns bounded blocker codes without leaking dependency errors"
   ]);
   assert.doesNotMatch(JSON.stringify(degraded.body), /postgres|secret|sensitive/i);
 });
+
+test("readiness reports rollout posture with stable warnings without taking traffic offline", async () => {
+  const handlers = createRuntimeHealthHandlers({
+    pool: { async query() { return { rows: [{ ready: 1 }] }; } },
+    securityPostureSnapshot: () => ({
+      status: "degraded",
+      mode: "production_rollout",
+      warnings: [
+        "legacy_auth_rollout_active",
+        "legacy_auth_rollout_expiring",
+        "not safe to expose: 2026-09-30",
+      ],
+      configured_secret: "must-not-leak",
+    }),
+  });
+  const ready = response();
+  await handlers.readiness({}, ready);
+  assert.equal(ready.statusCode, 200);
+  assert.equal(ready.body.ok, true);
+  assert.deepEqual(ready.body.warnings, [
+    "legacy_auth_rollout_active",
+    "legacy_auth_rollout_expiring",
+  ]);
+  assert.deepEqual(ready.body.checks.security, {
+    status: "degraded",
+    mode: "production_rollout",
+    warnings: ["legacy_auth_rollout_active", "legacy_auth_rollout_expiring"],
+  });
+  assert.doesNotMatch(JSON.stringify(ready.body), /2026|secret|must-not-leak/i);
+});
+
+test("readiness fails closed with a stable code when security posture is unavailable", async () => {
+  const handlers = createRuntimeHealthHandlers({
+    pool: { async query() { return { rows: [{ ready: 1 }] }; } },
+    securityPostureSnapshot: () => { throw new Error("secret diagnostic"); },
+  });
+  const degraded = response();
+  await handlers.readiness({}, degraded);
+  assert.equal(degraded.statusCode, 503);
+  assert.deepEqual(degraded.body.blockers, ["security_posture_unavailable"]);
+  assert.deepEqual(degraded.body.warnings, ["security_posture_unavailable"]);
+  assert.doesNotMatch(JSON.stringify(degraded.body), /secret diagnostic/);
+});

@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
+import { createApplicationAuthenticationPolicy } from "./applicationAuthenticationPolicy.js";
 
 const SESSION_COOKIE = "__Host-homenode_session";
 const TRANSACTION_COOKIE = "__Host-homenode_auth_tx";
@@ -255,6 +256,7 @@ export function createWebAuthRouter({
   pool,
   verifier,
   environment = process.env,
+  authenticationPolicy = createApplicationAuthenticationPolicy(environment),
   fetchImpl = globalThis.fetch,
   logger = console,
 }) {
@@ -276,7 +278,7 @@ export function createWebAuthRouter({
   // Configuration and enforcement are deliberately separate rollout stages.
   // WorkOS can be provisioned and tested without replacing the editor-key
   // workflow until APPLICATION_AUTHENTICATION_REQUIRED is explicitly enabled.
-  const required = enabled(environment.APPLICATION_AUTHENTICATION_REQUIRED);
+  const required = authenticationPolicy.authenticationRequired;
   let discovery = null;
 
   async function getDiscovery() {

@@ -245,7 +245,7 @@ test("sales reconciliation composition is explicit and inline handlers are absen
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const geography = source.indexOf("app.use(createGeographyOperationsRouter(");
   const reconciliation = source.indexOf("app.use(createSalesReconciliationRouter(");
-  const reviews = source.indexOf('app.get("/api/sales/reviews"');
+  const reviews = source.indexOf("app.use(createSaleReviewRouter(");
   assert.ok(reconciliation > geography);
   assert.ok(reviews > reconciliation);
   assert.equal(source.includes('app.get("/api/sales/reconciliation-queue"'), false);

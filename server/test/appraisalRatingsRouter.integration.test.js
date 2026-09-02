@@ -219,7 +219,7 @@ test("rating writes retain editor denial and bounded transaction failures", asyn
 
 test("entrypoint mounts appraisal ratings at the original account-domain position", () => {
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
-  const saleHistory = source.indexOf('app.get("/api/sales/:sourceRecordId/review-history"');
+  const saleHistory = source.indexOf("app.use(createSaleReviewRouter(");
   const ratings = source.indexOf("app.use(createAppraisalRatingsRouter(");
   const enrichment = source.indexOf("app.use(createEnrichmentReadRouter(");
   assert.ok(ratings > saleHistory);

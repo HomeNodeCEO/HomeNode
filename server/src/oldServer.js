@@ -84,16 +84,6 @@ import {
 } from "./services/assignmentDocuments.js";
 import { createDocumentOcrProvider } from "./services/documentOcr.js";
 import {
-  createAssignmentPhotoUpload,
-  getAssignmentEvidenceVersion,
-  getAssignmentPhotoVersion,
-  listAssignmentPhotos,
-  removeAssignmentPhoto,
-  uploadAssignmentPhotoObject,
-  updateAssignmentPhotoMetadata,
-  verifyAssignmentPhoto,
-} from "./services/assignmentPhotos.js";
-import {
   enqueuePropertyInfluenceAccounts,
   getPropertyInfluenceContexts,
 } from "./services/propertyInfluenceStore.js";
@@ -143,6 +133,7 @@ import { createHousingProfileRouter } from "./modules/accounts/housingProfileRou
 import { createReportManualValuesRouter } from "./modules/accounts/reportManualValuesRouter.js";
 import { createAssignmentFileListRouter } from "./modules/assignmentFiles/listRouter.js";
 import { createAssignmentFileMutationRouter } from "./modules/assignmentFiles/mutationRouter.js";
+import { createAssignmentPhotoRouter } from "./modules/assignmentFiles/photoRouter.js";
 import { createAssignmentWorkfileReadRouter } from "./modules/assignmentFiles/workfileReadRouter.js";
 import { createAssignmentWorkfileMutationRouter } from "./modules/assignmentFiles/workfileMutationRouter.js";
 import { createDesktopReportFilesRouter } from "./modules/accounts/reportFilesRouter.js";
@@ -2439,174 +2430,13 @@ function requireWorkflowAccess(req, res, workflow, permission) {
   return false;
 }
 
-function assignmentPhotoErrorStatus(message) {
-  if (message === "assignment_photo_file_not_found" || message === "assignment_photo_not_found"
-      || message === "assignment_photo_object_not_found" || message === "account_not_found") return 404;
-  if (message === "custom_appraisal_workfile_signed" || message === "assignment_photo_limit_conflict"
-      || message === "assignment_photo_id_conflict" || message === "assignment_photo_revision_conflict") return 409;
-  if (message === "assignment_photo_storage_not_configured") return 503;
-  if (message === "invalid_assignment_file_id" || message.startsWith("invalid_assignment_photo")) return 400;
-  return 500;
-}
-
-/** List one Custom Appraisal file's shared desktop and mobile photo evidence. */
-app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  try {
-    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
-    const result = await listAssignmentPhotos(pool, sharedObjectStorage, { accountId, assignmentFileId });
-    return res.json({ ok: true, account_id: accountId, ...result });
-  } catch (error) {
-    const message = error?.message || "assignment_photos_lookup_failed";
-    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** Cheap change token for near-real-time mobile-to-desktop photo synchronization. */
-app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos/version", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  try {
-    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
-    const result = await getAssignmentPhotoVersion(pool, { accountId, assignmentFileId });
-    return res.set("cache-control", "no-store").json({ ok: true, account_id: accountId, ...result });
-  } catch (error) {
-    const message = error?.message || "assignment_photo_version_lookup_failed";
-    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** Lightweight verified photo + committed sketch token for one active appraisal file. */
-app.get("/api/accounts/:id/assignment-files/:assignmentFileId/evidence/version", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  try {
-    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
-    const result = await getAssignmentEvidenceVersion(pool, { accountId, assignmentFileId });
-    return res.set("cache-control", "no-store").json({ ok: true, account_id: accountId, ...result });
-  } catch (error) {
-    const message = error?.message || "assignment_evidence_version_lookup_failed";
-    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** Create private R2 upload URLs for a desktop-selected appraisal photo. */
-app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/upload-requests", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
-    const result = await createAssignmentPhotoUpload(pool, sharedObjectStorage, {
-      accountId,
-      assignmentFileId,
-      input: req.body,
-    });
-    return res.status(201).json({ ok: true, ...result });
-  } catch (error) {
-    const message = error?.message || "assignment_photo_upload_request_failed";
-    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** Authenticated same-origin fallback when a browser cannot PUT directly to private R2. */
-app.put(
-  "/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId/objects/:objectId/content",
-  express.raw({
-    type: ["image/avif", "image/bmp", "image/jpeg", "image/png", "image/tiff", "image/webp"],
-    limit: "50mb",
-  }),
-  async (req, res) => {
-    if (!requireEditor(req, res)) return;
-    try {
-      const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-      const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-      if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-      if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
-      const uploaded = await uploadAssignmentPhotoObject(pool, sharedObjectStorage, {
-        accountId,
-        assignmentFileId,
-        photoId: req.params.photoId,
-        objectId: req.params.objectId,
-        contentType: req.get("content-type"),
-        content: req.body,
-      });
-      return res.json({ ok: true, uploaded });
-    } catch (error) {
-      const message = error?.message || "assignment_photo_object_upload_failed";
-      return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-    }
-  },
-);
-
-/** Verify uploaded object sizes/types before the photo becomes report evidence. */
-app.post("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId/verify", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
-    const photo = await verifyAssignmentPhoto(pool, sharedObjectStorage, {
-      accountId,
-      assignmentFileId,
-      photoId: req.params.photoId,
-    });
-    return res.json({ ok: true, photo });
-  } catch (error) {
-    const message = error?.message || "assignment_photo_verification_failed";
-    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** Save an appraiser-reviewed photo category and printable label. */
-app.patch("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
-    const photo = await updateAssignmentPhotoMetadata(pool, sharedObjectStorage, {
-      accountId,
-      assignmentFileId,
-      photoId: req.params.photoId,
-      input: req.body,
-    });
-    return res.json({ ok: true, photo });
-  } catch (error) {
-    const message = error?.message || "assignment_photo_update_failed";
-    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** Remove an unverified desktop placeholder or retain a verified photo as excluded evidence. */
-app.delete("/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    const accountId = await resolveCanonicalAccountId(pool, String(req.params.id || "").trim());
-    const assignmentFileId = normalizeAssignmentFileId(req.params.assignmentFileId);
-    if (!assignmentFileId) return res.status(400).json({ error: "invalid_assignment_file_id" });
-    if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
-    const result = await removeAssignmentPhoto(pool, {
-      accountId,
-      assignmentFileId,
-      photoId: req.params.photoId,
-    });
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    const message = error?.message || "assignment_photo_remove_failed";
-    return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
-  }
-});
+app.use(createAssignmentPhotoRouter({
+  pool,
+  objectStorage: sharedObjectStorage,
+  requireWorkflowAccess,
+  requireEditor,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
+}));
 
 /** List assignment PDFs and their machine-review status for a property file. */
 app.get("/api/accounts/:id/documents", async (req, res) => {

@@ -244,8 +244,8 @@ test("desktop photo center watches the exact active file for mobile changes", ()
     path.resolve(directory, "../../dcad-frontend/src/lib/api.ts"),
     "utf8",
   );
-  const server = fs.readFileSync(
-    path.resolve(directory, "../src/oldServer.js"),
+  const photoRouter = fs.readFileSync(
+    path.resolve(directory, "../src/modules/assignmentFiles/photoRouter.js"),
     "utf8",
   );
   assert.match(center, /const LIVE_REFRESH_MS = 5_000/);
@@ -281,7 +281,10 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(center, /Edit label/);
   assert.match(center, /updateAssignmentPhotoMetadata/);
   assert.match(api, /export async function updateAssignmentPhotoMetadata/);
-  assert.match(server, /app\.patch\("\/api\/accounts\/:id\/assignment-files\/:assignmentFileId\/photos\/:photoId"/);
+  assert.match(
+    photoRouter,
+    /router\.patch\(\s+"\/api\/accounts\/:id\/assignment-files\/:assignmentFileId\/photos\/:photoId"/,
+  );
   assert.match(report, /photo\.caption\?\.trim\(\) \|\| photo\.room_label/);
   assert.match(report, /view_url: photo\.view_url/);
   assert.match(report, /assignmentFileNumber=\{activeAssignmentFile\?\.file_number \|\| null\}/);

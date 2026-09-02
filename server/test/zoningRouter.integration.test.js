@@ -315,9 +315,7 @@ test("zoning verification retains client-error mapping and validates composition
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const propertyContext = source.indexOf("app.use(createAccountPropertyContextRouter(");
   const zoning = source.indexOf("app.use(createZoningRouter(");
-  const assignmentPhotos = source.indexOf(
-    'app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos"',
-  );
+  const assignmentPhotos = source.indexOf("app.use(createAssignmentPhotoRouter(");
   assert.ok(propertyContext > 0);
   assert.ok(zoning > propertyContext);
   assert.ok(assignmentPhotos > zoning);

@@ -145,7 +145,7 @@ test("mandatory unified authentication fails closed across the legacy API surfac
   const server = read("../src/oldServer.js");
   const boundary = read("../src/security/applicationRouteBoundary.js");
   const boundaryMount = server.indexOf("mountApplicationRouteBoundary(app");
-  const accountRead = server.indexOf('app.get("/api/accounts/:id"');
+  const accountRead = server.indexOf("app.use(createAccountDetailRouter(");
   assert.ok(boundaryMount >= 0 && accountRead > boundaryMount);
   assert.match(boundary, /app\.use\("\/api", createLegacyApplicationAuthenticationGate/);
   assert.match(boundary, /authenticationPolicy\.authenticationRequired/);

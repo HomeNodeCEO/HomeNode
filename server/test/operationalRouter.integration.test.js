@@ -142,9 +142,9 @@ test("entrypoint preserves the legacy boundary and extracted-router mount order"
   const boundary = source.indexOf("mountApplicationRouteBoundary(app");
   const operations = source.indexOf("app.use(createOperationalRouter(");
   const signup = source.indexOf("app.use(createSignupRouter(");
-  const accounts = source.indexOf('app.get("/api/accounts/:id"');
+  const accounts = source.indexOf("app.use(createAccountDetailRouter(");
   assert.ok(boundary >= 0);
   assert.ok(operations > boundary, "operations must retain the existing application boundary");
   assert.ok(signup > operations, "signup must retain its position after operations");
-  assert.ok(accounts > signup, "legacy account routes must remain after the extracted routers");
+  assert.ok(accounts > signup, "account detail must remain after operations and signup");
 });

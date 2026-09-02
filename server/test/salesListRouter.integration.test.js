@@ -255,7 +255,7 @@ test("sales list router validates collaborators and remains between recommendati
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const recommendations = source.indexOf('app.get("/api/sales/recommendations"');
   const salesList = source.indexOf("app.use(createSalesListRouter(");
-  const grouped = source.indexOf('app.get("/api/sales/grouped-analysis"');
+  const grouped = source.indexOf("app.use(createGroupedAnalysisRouter(");
   assert.ok(recommendations > 0);
   assert.ok(salesList > recommendations);
   assert.ok(grouped > salesList);

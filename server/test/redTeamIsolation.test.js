@@ -22,6 +22,10 @@ const salesListRouterSource = fs.readFileSync(
   new URL("../src/modules/sales/salesListRouter.js", import.meta.url),
   "utf8",
 );
+const groupedAnalysisRouterSource = fs.readFileSync(
+  new URL("../src/modules/sales/groupedAnalysisRouter.js", import.meta.url),
+  "utf8",
+);
 const comparisonStudyRouterSource = fs.readFileSync(
   new URL("../src/modules/sales/comparisonStudyRouter.js", import.meta.url),
   "utf8",
@@ -273,7 +277,7 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS pool boolean/);
   assert.doesNotMatch(redTeamBaseSource, /ALTER COLUMN pool TYPE boolean/);
   assert.match(
-    serverSource,
+    groupedAnalysisRouterSource,
     /sale\.mls_pool_yn,[\s\S]*?lower\(btrim\(sale\.cad_pool::text\)\)[\s\S]*?AS pool_yn/,
   );
   for (const analysisSource of [pairedSalesSource, regressionSource]) {
@@ -312,6 +316,11 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   );
   assert.match(salesListRouterSource, /accountIdAllowed\(subjectAccountId\)/);
   assert.match(salesListRouterSource, /accountIdAllowed\(q\)/);
+  assert.match(
+    serverSource,
+    /createGroupedAnalysisRouter\(\{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,
+  );
+  assert.match(groupedAnalysisRouterSource, /accountIdAllowed\(subjectAccountId\)/);
   for (const [source, builder] of [
     [comparisonStudyRouterSource, "buildPairedStudy"],
     [valuationStudyRouterSource, "buildMarketAnalyses"],

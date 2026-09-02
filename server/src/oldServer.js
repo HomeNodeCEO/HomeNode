@@ -78,13 +78,6 @@ import {
 import {
   ensureCustomAppraisalWorkfileSchema,
 } from "./services/customAppraisalWorkfiles.js";
-import {
-  analyzePropertyContext,
-  getPropertyContextStatus,
-  getStoredPropertyContext,
-  propertyContextErrorStatus,
-  savePropertyContextReview,
-} from "./services/propertyContext.js";
 import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
 import {
   getPropertyZoningEvidence,
@@ -151,6 +144,10 @@ import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
 import { createMarketValueHistoryRouter } from "./modules/accounts/marketValueHistoryRouter.js";
 import { createPropertySearchRouter } from "./modules/accounts/propertySearchRouter.js";
 import { createRelatedParcelsRouter } from "./modules/accounts/relatedParcelsRouter.js";
+import {
+  createAccountPropertyContextRouter,
+  createPropertyContextStatusRouter,
+} from "./modules/accounts/propertyContextRouter.js";
 import { createSalesListRouter } from "./modules/sales/salesListRouter.js";
 import { createSalesMediaRouter } from "./modules/sales/mediaRouter.js";
 import { createComparisonStudyRouter } from "./modules/sales/comparisonStudyRouter.js";
@@ -2344,20 +2341,10 @@ app.post("/api/sales/neighborhood-land-use", async (req, res) => {
   }
 });
 
-/**
- * GET /api/property-context/status
- *
- * Reports local mirror freshness without contacting any external service.
- */
-app.get("/api/property-context/status", async (_req, res) => {
-  try {
-    await ensurePropertyContextAvailable();
-    res.json(await getPropertyContextStatus(pool));
-  } catch (error) {
-    console.error("/api/property-context/status failed", error);
-    res.status(500).json({ error: "property_context_status_failed" });
-  }
-});
+app.use(createPropertyContextStatusRouter({
+  pool,
+  ensureAvailable: ensurePropertyContextAvailable,
+}));
 
 /**
  * GET /api/neighborhood-engine/readiness
@@ -2514,75 +2501,10 @@ app.post("/api/accounts/:id/neighborhood-relevance/generate", async (req, res) =
   }
 });
 
-/** Load the latest saved property-context and complexity assessment. */
-app.get("/api/accounts/:id/property-context", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  try {
-    await ensurePropertyContextAvailable();
-    const accountId = await resolveCanonicalAccountId(pool, requestedId);
-    const assignmentFileId = normalizeAssignmentFileId(
-      req.query.assignment_file_id,
-    );
-    const assessment = await getStoredPropertyContext(pool, {
-      accountId,
-      assignmentFileId,
-    });
-    res.json({ account_id: accountId, assessment });
-  } catch (error) {
-    const message = error?.message || "property_context_lookup_failed";
-    res.status(propertyContextErrorStatus(message)).json({ error: message });
-  }
-});
-
-/**
- * POST /api/accounts/:id/property-context/analyze
- *
- * Uses only locally stored CAD, property-characteristic, and road data. Source
- * outages are surfaced in the response but never cause a live GIS dependency.
- */
-app.post("/api/accounts/:id/property-context/analyze", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  try {
-    await ensurePropertyContextAvailable();
-    const accountId = await resolveCanonicalAccountId(pool, requestedId);
-    const assignmentFileId = normalizeAssignmentFileId(
-      req.body?.assignment_file_id,
-    );
-    const assessment = await analyzePropertyContext(pool, {
-      accountId,
-      assignmentFileId,
-      customGeometry: req.body?.custom_geometry || null,
-      geography: req.body?.geography || null,
-    });
-    res.json({ ok: true, account_id: accountId, assessment });
-  } catch (error) {
-    const message = error?.message || "property_context_analysis_failed";
-    console.error("/api/accounts/:id/property-context/analyze failed", error);
-    res.status(propertyContextErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** Save an appraiser confirmation or override without rewriting source data. */
-app.patch("/api/accounts/:id/property-context", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  try {
-    await ensurePropertyContextAvailable();
-    const accountId = await resolveCanonicalAccountId(pool, requestedId);
-    const assignmentFileId = normalizeAssignmentFileId(
-      req.body?.assignment_file_id,
-    );
-    const assessment = await savePropertyContextReview(pool, {
-      accountId,
-      assignmentFileId,
-      review: req.body,
-    });
-    res.json({ ok: true, account_id: accountId, assessment });
-  } catch (error) {
-    const message = error?.message || "property_context_review_failed";
-    console.error("/api/accounts/:id/property-context review failed", error);
-    res.status(propertyContextErrorStatus(message)).json({ error: message });
-  }
-});
+app.use(createAccountPropertyContextRouter({
+  pool,
+  ensureAvailable: ensurePropertyContextAvailable,
+}));
 
 /** Load the correct official zoning evidence and review contact for a subject. */
 app.get("/api/accounts/:id/zoning-evidence", async (req, res) => {

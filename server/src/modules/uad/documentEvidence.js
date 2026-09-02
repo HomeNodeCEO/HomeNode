@@ -17,6 +17,9 @@ const SUPPORTED_DOCUMENT_FIELDS = new Set([
   "seller_concessions",
   "contract_property_condition",
   "contract_repairs",
+  "contract_personal_property_included",
+  "contract_personal_property_details",
+  "contract_exclusions",
   "listing_status",
   "mls_number",
   "list_date",
@@ -43,6 +46,9 @@ const PURCHASE_CONTRACT_REVIEW_FIELDS = new Set([
   "seller_concessions",
   "contract_property_condition",
   "contract_repairs",
+  "contract_personal_property_included",
+  "contract_personal_property_details",
+  "contract_exclusions",
 ]);
 
 function positiveInteger(value) {
@@ -126,6 +132,13 @@ function formatContractCurrency(value) {
       }).format(amount);
 }
 
+function uadDocumentBoolean(value) {
+  const normalized = cleanText(value, 100).toLowerCase();
+  if (["true", "yes", "y", "included"].includes(normalized)) return true;
+  if (["false", "no", "n", "none", "not included"].includes(normalized)) return false;
+  return null;
+}
+
 export function buildUadSalesContractAnalysis(candidates = []) {
   const fields = confirmedPurchaseContractCandidates(candidates);
   const value = (key) => fields.get(key)?.value || null;
@@ -141,6 +154,9 @@ export function buildUadSalesContractAnalysis(candidates = []) {
   const concessionsAmount = uadDocumentCurrency(value("seller_concessions"));
   const condition = value("contract_property_condition");
   const repairs = value("contract_repairs");
+  const personalPropertyIncluded = uadDocumentBoolean(value("contract_personal_property_included"));
+  const personalPropertyDetails = value("contract_personal_property_details");
+  const exclusions = value("contract_exclusions");
   const parts = [
     buyer ? `Contract buyer(s): ${buyer}.` : null,
     seller ? `Contract seller(s): ${seller}.` : null,
@@ -164,6 +180,14 @@ export function buildUadSalesContractAnalysis(candidates = []) {
         : repairs
           ? `Seller repairs or treatments stated in the contract: ${repairs}.`
           : null,
+    personalPropertyIncluded === true
+      ? personalPropertyDetails
+        ? `The contract identifies personal property conveyed with the sale: ${personalPropertyDetails}. Personal-property value is not included in the appraisal opinion of value.`
+        : "The contract indicates that personal property is conveyed with the sale; the specific items require appraiser description. Personal-property value is not included in the appraisal opinion of value."
+      : personalPropertyIncluded === false
+        ? "The contract does not identify personal property conveyed with the sale."
+        : null,
+    exclusions ? `Contract Section 2D exclusions language: ${exclusions}.` : null,
   ].filter(Boolean);
   return cleanText(parts.join(" "), 5_000);
 }
@@ -198,6 +222,14 @@ export function uadPurchaseContractValues(candidates = []) {
         { uid: "0600.0007", context_key: "sales_contract", value: null },
       );
     }
+  }
+  const personalPropertyIncluded = uadDocumentBoolean(value("contract_personal_property_included"));
+  if (personalPropertyIncluded !== null) {
+    values.push({
+      uid: "0600.0004",
+      context_key: "sales_contract",
+      value: personalPropertyIncluded,
+    });
   }
   const analysis = buildUadSalesContractAnalysis(candidates);
   if (analysis) {

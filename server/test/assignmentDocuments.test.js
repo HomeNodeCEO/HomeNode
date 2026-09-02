@@ -46,7 +46,7 @@ test("legacy reviewed purchase contracts receive one extraction-schema upgrade",
   assert.equal(assignmentDocumentNeedsExtractionUpgrade({
     document_type: "purchase_contract",
     processing_status: "review_required",
-    extraction_summary: { extraction_schema_version: "2026-09-02-v2" },
+    extraction_summary: { extraction_schema_version: "2026-09-02-v3" },
   }), false);
   assert.equal(assignmentDocumentNeedsExtractionUpgrade({
     document_type: "engagement_letter",

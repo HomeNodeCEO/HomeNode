@@ -20,6 +20,8 @@ test("UAD document evidence accepts only fields with reviewed canonical mappings
     "lender_client_address", "contract_price", "contract_date",
     "closing_date", "loan_amount", "down_payment", "earnest_money",
     "seller_concessions", "contract_property_condition", "contract_repairs",
+    "contract_personal_property_included", "contract_personal_property_details",
+    "contract_exclusions",
     "listing_status", "mls_number", "list_date", "listing_end_date",
     "days_on_market", "original_list_price", "list_price",
   ]) {
@@ -39,6 +41,7 @@ const hardyContractCandidates = [
   ["closing_date", "2026-09-24"],
   ["seller_concessions", "0.00"],
   ["contract_property_condition", "as_is"],
+  ["contract_personal_property_included", "No"],
 ].map(([field_key, confirmed_value], index) => ({
   id: index + 1,
   field_key,
@@ -58,6 +61,7 @@ test("reviewed Hardy contract evidence builds the complete UAD sales-contract an
   assert.match(analysis, /Closing is scheduled on or before 2026-09-24/);
   assert.match(analysis, /12A\(1\)\(b\) reports no seller concessions/);
   assert.match(analysis, /accepts the property as is/);
+  assert.match(analysis, /does not identify personal property conveyed/);
 });
 
 test("purchase-contract synchronization never infers the arm's-length conclusion", () => {
@@ -68,6 +72,7 @@ test("purchase-contract synchronization never infers the arm's-length conclusion
   assert.equal(byKey.get("sales_contract:0600.0008"), 282500);
   assert.equal(byKey.get("sales_contract:0600.0009"), "2026-08-25");
   assert.equal(byKey.get("sales_contract:0600.0006"), false);
+  assert.equal(byKey.get("sales_contract:0600.0004"), false);
   assert.equal(byKey.has("sales_contract:0600.0002"), false);
   assert.match(byKey.get("sales_contract_commentary:0600.0014"), /Earnest money/);
   assert.deepEqual(uadPurchaseContractAssignmentValues(hardyContractCandidates), [
@@ -76,6 +81,25 @@ test("purchase-contract synchronization never infers the arm's-length conclusion
     { uid: "1000.0101", context_key: "borrower", value: "Zachary" },
     { uid: "1000.0102", context_key: "borrower", value: "Thames" },
   ]);
+});
+
+test("confirmed personal property and Section 2D exclusions populate the UAD decision and analysis", () => {
+  const candidates = [
+    ["contract_personal_property_included", "Yes"],
+    ["contract_personal_property_details", "Shed to stay with property"],
+    ["contract_exclusions", "Refrigerator retained by seller"],
+  ].map(([field_key, confirmed_value], index) => ({
+    id: index + 1,
+    field_key,
+    confirmed_value,
+    review_status: "confirmed",
+  }));
+  const values = uadPurchaseContractValues(candidates);
+  const byKey = new Map(values.map((value) => [`${value.context_key}:${value.uid}`, value.value]));
+  assert.equal(byKey.get("sales_contract:0600.0004"), true);
+  assert.match(byKey.get("sales_contract_commentary:0600.0014"), /Shed to stay with property/);
+  assert.match(byKey.get("sales_contract_commentary:0600.0014"), /Section 2D exclusions language: Refrigerator retained by seller/);
+  assert.match(byKey.get("sales_contract_commentary:0600.0014"), /not included in the appraisal opinion of value/);
 });
 
 test("classification-only contract synchronization does not invent unreviewed terms", () => {
@@ -236,6 +260,18 @@ test("the UAD arm's-length decision is visually marked as a permanent manual-rev
   assert.match(editorSource, /manualContractReview[\s\S]*0600\.0002/);
   assert.match(editorSource, /hn-evidence-reviewer-frame/);
   assert.match(catalogSource, /always requires the appraiser's manual review/);
+});
+
+test("the evidence center presents personal property as a Yes or No appraiser decision", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL(
+    "../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx",
+    import.meta.url,
+  ), "utf8");
+  assert.match(source, /contract_personal_property_included:\s*'Personal Property Conveyed'/);
+  assert.match(source, /candidate\.field_key === 'contract_personal_property_included'/);
+  assert.match(source, /<option value="Yes">Yes<\/option>/);
+  assert.match(source, /<option value="No">No<\/option>/);
 });
 
 test("UAD purchase contracts use one batch review request instead of per-field synchronization", async () => {

@@ -43,29 +43,8 @@ import { buildGroupedAnalysis } from "./util/groupedAnalysis.js";
 import { parseGroupedAnalysisBreakdowns } from "./util/groupedAnalysisBreakdowns.js";
 import {
   buildMarketConditionsAnalyses,
-  getMarketContext,
   marketConditionsErrorStatus,
 } from "./services/marketConditions.js";
-import {
-  buildPairedSalesStudy,
-  pairedSalesErrorStatus,
-} from "./services/pairedSalesAnalysis.js";
-import {
-  buildRegressionStudy,
-  regressionAnalysisErrorStatus,
-} from "./services/regressionAnalysis.js";
-import {
-  calculateDepreciatedCostAdjustment,
-  depreciatedCostAdjustmentErrorStatus,
-} from "./util/depreciatedCostAdjustment.js";
-import {
-  buildSiteValuationStudy,
-  siteValuationErrorStatus,
-} from "./services/siteValuation.js";
-import {
-  calculateQualitativeAnalysis,
-  qualitativeAnalysisErrorStatus,
-} from "./util/qualitativeAnalysis.js";
 import { summarizeComparableResults } from "./services/comparableResponseSummary.js";
 import {
   ensureCensusGeographySchema,
@@ -173,6 +152,8 @@ import { createSaleReviewRouter } from "./modules/appraisalRatings/saleReviewRou
 import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
 import { createMarketValueHistoryRouter } from "./modules/accounts/marketValueHistoryRouter.js";
 import { createPropertySearchRouter } from "./modules/accounts/propertySearchRouter.js";
+import { createComparisonStudyRouter } from "./modules/sales/comparisonStudyRouter.js";
+import { createValuationStudyRouter } from "./modules/sales/valuationStudyRouter.js";
 import { createAccountPhotosRouter } from "./modules/accounts/photosRouter.js";
 import { createHousingProfileRouter } from "./modules/accounts/housingProfileRouter.js";
 import { createReportManualValuesRouter } from "./modules/accounts/reportManualValuesRouter.js";
@@ -2539,58 +2520,10 @@ app.get("/api/sales/grouped-analysis", async (req, res) => {
   }
 });
 
-/**
- * POST /api/sales/paired-analysis
- *
- * Finds non-overlapping, closely matched sale pairs within one selected market
- * area. Negative feature contributions are retained so the mean, median, COD,
- * coefficient of variation, and standard deviation describe the full evidence.
- */
-app.post("/api/sales/paired-analysis", async (req, res) => {
-  try {
-    const result = await buildPairedSalesStudy(pool, {
-      subjectAccountId: String(
-        req.body?.subject_account_id || "",
-      ).trim(),
-      marketKey: String(req.body?.market_key || "city").trim(),
-      asOfDate: String(req.body?.as_of || "").trim(),
-      customGeometry: req.body?.custom_geometry || null,
-      accountIdAllowed: legacyAccountIdAllowed,
-    });
-    res.json(result);
-  } catch (error) {
-    const message = error?.message || "paired_sales_analysis_failed";
-    console.error("/api/sales/paired-analysis failed", error);
-    res.status(pairedSalesErrorStatus(message)).json({
-      error: message,
-    });
-  }
-});
-
-/**
- * GET /api/sales/market-context
- *
- * Returns the subject location and market identifiers needed to center the
- * market-conditions map before a study is run.
- */
-app.get("/api/sales/market-context", async (req, res) => {
-  const subjectAccountId = String(
-    req.query.subject_account_id || "",
-  ).trim();
-  try {
-    const subject = await getMarketContext(pool, subjectAccountId, {
-      accountIdAllowed: legacyAccountIdAllowed,
-    });
-    res.json({ subject });
-  } catch (error) {
-    const message = error?.message || "market_context_failed";
-    console.error("/api/sales/market-context failed", error);
-    res.status(marketConditionsErrorStatus(message)).json({
-      error: message,
-      ...(error?.detail ? { detail: error.detail } : {}),
-    });
-  }
-});
+app.use(createComparisonStudyRouter({
+  pool,
+  accountIdAllowed: legacyAccountIdAllowed,
+}));
 
 /**
  * GET /api/accounts/:id/related-parcels
@@ -2744,104 +2677,10 @@ app.get("/api/accounts/:id/related-parcels", async (req, res) => {
   }
 });
 
-/**
- * POST /api/sales/market-analysis
- *
- * Builds independent market-conditions studies for any requested combination
- * of city, ZIP, cumulative one-through-five-mile radii, and an appraiser-drawn
- * GeoJSON polygon. These areas do not filter comparable recommendations.
- */
-app.post("/api/sales/market-analysis", async (req, res) => {
-  try {
-    const result = await buildMarketConditionsAnalyses(pool, {
-      subjectAccountId: String(
-        req.body?.subject_account_id || "",
-      ).trim(),
-      areaKeys: req.body?.area_keys,
-      asOfDate: String(req.body?.as_of || "").trim(),
-      periodMonths: req.body?.period_months ?? 24,
-      customGeometry: req.body?.custom_geometry || null,
-      marketContextOverride: req.body?.context_override || null,
-      accountIdAllowed: legacyAccountIdAllowed,
-    });
-    res.json(result);
-  } catch (error) {
-    const message = error?.message || "market_analysis_failed";
-    console.error("/api/sales/market-analysis failed", error);
-    res.status(marketConditionsErrorStatus(message)).json({
-      error: message,
-      ...(error?.detail ? { detail: error.detail } : {}),
-    });
-  }
-});
-
-/**
- * POST /api/sales/regression-analysis
- *
- * Fits an auditable OLS model to same-housing-type sales in one appraiser-selected
- * market area. Sale prices remain unadjusted for time, and incomplete predictors
- * are reported rather than silently replaced with zeroes.
- */
-app.post("/api/sales/regression-analysis", async (req, res) => {
-  try {
-    const result = await buildRegressionStudy(pool, {
-      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
-      marketKey: String(req.body?.market_key || "city").trim(),
-      asOfDate: String(req.body?.as_of || "").trim(),
-      customGeometry: req.body?.custom_geometry || null,
-      accountIdAllowed: legacyAccountIdAllowed,
-    });
-    res.json(result);
-  } catch (error) {
-    const message = error?.message || "regression_analysis_failed";
-    console.error("/api/sales/regression-analysis failed", error);
-    res.status(regressionAnalysisErrorStatus(message)).json({ error: message });
-  }
-});
-
-/**
- * POST /api/sales/depreciated-cost-adjustment
- *
- * Recalculates one feature adjustment from replacement cost new less accrued
- * depreciation. The result can support GLA, garage, or pool differences; land
- * is excluded because it is not a depreciable improvement.
- */
-app.post("/api/sales/depreciated-cost-adjustment", (req, res) => {
-  try {
-    res.json(calculateDepreciatedCostAdjustment(req.body || {}));
-  } catch (error) {
-    const message = error?.message || "depreciated_cost_adjustment_failed";
-    res.status(depreciatedCostAdjustmentErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** POST /api/sales/site-valuation — allocated site value per square foot. */
-app.post("/api/sales/site-valuation", async (req, res) => {
-  try {
-    const result = await buildSiteValuationStudy(pool, {
-      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
-      marketKey: String(req.body?.market_key || "city").trim(),
-      asOfDate: String(req.body?.as_of || "").trim(),
-      customGeometry: req.body?.custom_geometry || null,
-      accountIdAllowed: legacyAccountIdAllowed,
-    });
-    res.json(result);
-  } catch (error) {
-    const message = error?.message || "site_valuation_failed";
-    console.error("/api/sales/site-valuation failed", error);
-    res.status(siteValuationErrorStatus(message)).json({ error: message });
-  }
-});
-
-/** POST /api/sales/qualitative-analysis — reconcile appraisal bracketing judgments. */
-app.post("/api/sales/qualitative-analysis", (req, res) => {
-  try {
-    res.json(calculateQualitativeAnalysis(req.body || {}, req.body?.comparables || []));
-  } catch (error) {
-    const message = error?.message || "qualitative_analysis_failed";
-    res.status(qualitativeAnalysisErrorStatus(message)).json({ error: message });
-  }
-});
+app.use(createValuationStudyRouter({
+  pool,
+  accountIdAllowed: legacyAccountIdAllowed,
+}));
 
 /**
  * POST /api/sales/neighborhood-profile

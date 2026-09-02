@@ -127,6 +127,15 @@ test("assignment details enforce contract E&O safeguards", () => {
   );
 });
 
+test("document evidence can save a structurally valid contract draft before E&O review is complete", () => {
+  assert.equal(validateAssignmentDetails({
+    assignment_types: ["purchase_transaction"],
+    subject_under_contract: true,
+    contract_buyer_names: "Zachary Thames",
+    contract_analysis_summary: "Reviewed contract evidence is awaiting final E&O answers.",
+  }, { requireCompletion: false }), true);
+});
+
 test("assignment details accept a complete neighborhood profile", () => {
   assert.equal(validateAssignmentDetails({
     neighborhood_land_use_one_unit_pct: 85,

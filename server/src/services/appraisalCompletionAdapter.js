@@ -78,6 +78,7 @@ function assignmentProfile(assignment) {
       arms_length: typeof assignment.contract_arms_length === "boolean"
         ? assignment.contract_arms_length
         : null,
+      buyer_names: text(assignment.contract_buyer_names, 1_000),
       seller_names: text(assignment.contract_seller_names, 1_000),
       contract_price: number(assignment.contract_price),
       contract_date: text(assignment.contract_date, 40),
@@ -88,6 +89,7 @@ function assignmentProfile(assignment) {
       seller_concessions: number(assignment.seller_concessions),
       property_condition: text(assignment.contract_property_condition, 100),
       repairs: text(assignment.contract_repairs, 5_000),
+      analysis_summary: text(assignment.contract_analysis_summary, 5_000),
       seller_matches_public_records: typeof assignment.seller_matches_public_records === "boolean"
         ? assignment.seller_matches_public_records
         : null,

@@ -4580,7 +4580,12 @@ app.post("/api/documents/:id/subject-address-override", async (req, res) => {
       candidateValues: req.body?.candidate_values,
     });
     const document = await getAssignmentDocument(pool, result.document_id);
-    return res.json({ ok: true, document, override: result.subject_address_override });
+    return res.json({
+      ok: true,
+      document,
+      override: result.subject_address_override,
+      assignment_application: result.assignment_application,
+    });
   } catch (error) {
     const message = error?.message || "document_subject_address_override_failed";
     const clientErrors = new Set([
@@ -4607,7 +4612,7 @@ app.post("/api/documents/:id/confirm-all", async (req, res) => {
       candidateValues: req.body?.candidate_values,
     });
     const document = await getAssignmentDocument(pool, result.document_id);
-    return res.json({ ok: true, document });
+    return res.json({ ok: true, document, assignment_application: result.assignment_application });
   } catch (error) {
     const message = error?.message || "document_candidates_confirm_all_failed";
     const clientErrors = new Set([

@@ -8,6 +8,7 @@ import {
 } from "./documentIntelligence.js";
 import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
 import { validateAssignmentDetails } from "../util/reportManualValues.js";
+import { buildPurchaseContractAnalysis } from "./purchaseContractAnalysis.js";
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
@@ -215,6 +216,7 @@ const DOCUMENT_ASSIGNMENT_FIELDS = Object.freeze({
   down_payment: "down_payment",
   earnest_money: "earnest_money",
   seller_concessions: "seller_concessions",
+  buyer_name: "contract_buyer_names",
   seller_name: "contract_seller_names",
   contract_property_condition: "contract_property_condition",
   contract_repairs: "contract_repairs",
@@ -274,6 +276,13 @@ export function assignmentDetailsFromConfirmedDocument(
       next.subject_under_contract = true;
     }
   }
+  if (documentType === "purchase_contract") {
+    const analysis = buildPurchaseContractAnalysis(candidates);
+    if (analysis && next.contract_analysis_summary !== analysis) {
+      next.contract_analysis_summary = analysis;
+      changed = true;
+    }
+  }
   return { changed, assignmentDetails: next };
 }
 
@@ -308,7 +317,7 @@ async function persistConfirmedDocumentCandidates(client, {
   if (!merged.changed) {
     return { applied: false, reason: "assignment_fields_unchanged", revision: Number(assignmentFile.revision) };
   }
-  validateAssignmentDetails(merged.assignmentDetails);
+  validateAssignmentDetails(merged.assignmentDetails, { requireCompletion: false });
   const revision = Number(assignmentFile.revision) + 1;
   await client.query(
     `UPDATE app.assignment_files
@@ -1282,13 +1291,20 @@ export async function reviewAssignmentDocumentCandidate(pool, {
         [document],
       );
     }
-    const assignmentApplication = status === "confirmed"
-      ? await persistConfirmedDocumentCandidates(client, {
-          sourceDocument,
-          candidates: [rows[0]],
-          reviewerName,
-        })
-      : { applied: false, reason: "candidate_rejected" };
+    let assignmentApplication = { applied: false, reason: "candidate_rejected" };
+    if (status === "confirmed") {
+      const { rows: documentCandidates } = await client.query(
+        `SELECT * FROM app.assignment_document_field_candidates
+         WHERE document_id = $1
+         ORDER BY id`,
+        [document],
+      );
+      assignmentApplication = await persistConfirmedDocumentCandidates(client, {
+        sourceDocument,
+        candidates: documentCandidates,
+        reviewerName,
+      });
+    }
     await client.query("COMMIT");
     return {
       ...publicCandidate(rows[0]),

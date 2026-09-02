@@ -331,7 +331,7 @@ test("sales study composition preserves route positions and removes inline handl
   const comparison = source.indexOf("app.use(createComparisonStudyRouter(");
   const related = source.indexOf("app.use(createRelatedParcelsRouter(");
   const valuation = source.indexOf("app.use(createValuationStudyRouter(");
-  const neighborhood = source.indexOf('app.post("/api/sales/neighborhood-profile"');
+  const neighborhood = source.indexOf("app.use(createNeighborhoodAnalysisRouter(");
   assert.ok(comparison > grouped);
   assert.ok(related > comparison);
   assert.ok(valuation > related);

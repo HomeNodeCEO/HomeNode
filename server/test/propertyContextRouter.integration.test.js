@@ -235,7 +235,7 @@ test("property-context routers validate composition and retain both mount positi
   );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
-  const landUse = source.indexOf('app.post("/api/sales/neighborhood-land-use"');
+  const landUse = source.indexOf("app.use(createNeighborhoodAnalysisRouter(");
   const status = source.indexOf("app.use(createPropertyContextStatusRouter(");
   const neighborhood = source.indexOf("app.use(createNeighborhoodRouter(");
   const accountContext = source.indexOf("app.use(createAccountPropertyContextRouter(");

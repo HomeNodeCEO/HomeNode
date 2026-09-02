@@ -28,26 +28,11 @@ import { ensureAccountQualitySchema } from "./services/accountQuality.js";
 import { editorKeyMatches } from "./util/housingProfileEdit.js";
 import { buildGroupedAnalysis } from "./util/groupedAnalysis.js";
 import { parseGroupedAnalysisBreakdowns } from "./util/groupedAnalysisBreakdowns.js";
-import {
-  buildMarketConditionsAnalyses,
-  marketConditionsErrorStatus,
-} from "./services/marketConditions.js";
 import { summarizeComparableResults } from "./services/comparableResponseSummary.js";
 import {
   ensureCensusGeographySchema,
   startCensusGeographyWorker,
 } from "./services/censusGeography.js";
-import { loadBoundaryStreetNames } from "./services/boundaryStreets.js";
-import {
-  compactNeighborhoodProfileResponse,
-  isNeighborhoodProfileBusyError,
-  neighborhoodProfileRequestKey,
-  runNeighborhoodProfileOperation,
-} from "./services/neighborhoodProfileExecution.js";
-import {
-  buildNeighborhoodLandUseAnalysis,
-  neighborhoodLandUseErrorStatus,
-} from "./services/neighborhoodLandUse.js";
 import {
   ensureAppraisalRatingsSchema,
 } from "./services/appraisalRatings.js";
@@ -111,6 +96,7 @@ import { createSalesListRouter } from "./modules/sales/salesListRouter.js";
 import { createSalesMediaRouter } from "./modules/sales/mediaRouter.js";
 import { createComparisonStudyRouter } from "./modules/sales/comparisonStudyRouter.js";
 import { createValuationStudyRouter } from "./modules/sales/valuationStudyRouter.js";
+import { createNeighborhoodAnalysisRouter } from "./modules/sales/neighborhoodAnalysisRouter.js";
 import { createAccountPhotosRouter } from "./modules/accounts/photosRouter.js";
 import { createHousingProfileRouter } from "./modules/accounts/housingProfileRouter.js";
 import { createReportManualValuesRouter } from "./modules/accounts/reportManualValuesRouter.js";
@@ -2221,89 +2207,10 @@ app.use(createValuationStudyRouter({
   accountIdAllowed: legacyAccountIdAllowed,
 }));
 
-/**
- * POST /api/sales/neighborhood-profile
- *
- * Refreshes the appraiser-defined neighborhood ranges, a citywide comparison,
- * and a reviewable north/east/south/west road summary for the drawn boundary.
- */
-app.post("/api/sales/neighborhood-profile", async (req, res) => {
-  const request = {
-    subjectAccountId: String(req.body?.subject_account_id || "").trim(),
-    asOfDate: String(req.body?.as_of || "").trim(),
-    periodMonths: req.body?.period_months ?? 24,
-    customGeometry: req.body?.custom_geometry || null,
-    marketContextOverride: req.body?.context_override || null,
-    forceRefresh: req.body?.force_refresh === true,
-  };
-  try {
-    const response = await runNeighborhoodProfileOperation(
-      neighborhoodProfileRequestKey(request),
-      async () => {
-        const market = await buildMarketConditionsAnalyses(pool, {
-          subjectAccountId: request.subjectAccountId,
-          areaKeys: ["custom", "city"],
-          asOfDate: request.asOfDate,
-          periodMonths: request.periodMonths,
-          customGeometry: request.customGeometry,
-          marketContextOverride: request.marketContextOverride,
-          accountIdAllowed: legacyAccountIdAllowed,
-        });
-        let boundaryStreets = null;
-        let boundaryStreetWarning = null;
-        try {
-          boundaryStreets = await loadBoundaryStreetNames(pool, request.customGeometry);
-        } catch (error) {
-          boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
-          console.warn("/api/sales/neighborhood-profile street lookup failed", error);
-        }
-        return compactNeighborhoodProfileResponse({
-          ...market,
-          boundary_streets: boundaryStreets,
-          boundary_street_warning: boundaryStreetWarning,
-        });
-      },
-      { allowCached: !request.forceRefresh },
-    );
-    res.json(response);
-  } catch (error) {
-    const message = error?.message || "neighborhood_profile_failed";
-    if (isNeighborhoodProfileBusyError(message)) {
-      res.set("Retry-After", "10");
-      res.status(503).json({ error: "neighborhood_profile_busy" });
-      return;
-    }
-    console.error("/api/sales/neighborhood-profile failed", error);
-    res.status(marketConditionsErrorStatus(message)).json({
-      error: message,
-      ...(error?.detail ? { detail: error.detail } : {}),
-    });
-  }
-});
-
-/**
- * POST /api/sales/neighborhood-land-use
- *
- * Calculates present land-use percentages from every official DCAD parcel
- * intersecting the saved appraiser-defined polygon. This is intentionally
- * on-demand and independent from the residential account scraper.
- */
-app.post("/api/sales/neighborhood-land-use", async (req, res) => {
-  try {
-    const result = await buildNeighborhoodLandUseAnalysis(pool, {
-      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
-      customGeometry: req.body?.custom_geometry || null,
-    });
-    res.json(result);
-  } catch (error) {
-    const message = error?.message || "neighborhood_land_use_analysis_failed";
-    console.error("/api/sales/neighborhood-land-use failed", error);
-    res.status(neighborhoodLandUseErrorStatus(message)).json({
-      error: message,
-      ...(error?.detail ? { detail: error.detail } : {}),
-    });
-  }
-});
+app.use(createNeighborhoodAnalysisRouter({
+  pool,
+  accountIdAllowed: legacyAccountIdAllowed,
+}));
 
 app.use(createPropertyContextStatusRouter({
   pool,

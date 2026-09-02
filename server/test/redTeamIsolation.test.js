@@ -14,6 +14,14 @@ const accountDetailRouterSource = fs.readFileSync(
   new URL("../src/modules/accounts/detailRouter.js", import.meta.url),
   "utf8",
 );
+const comparisonStudyRouterSource = fs.readFileSync(
+  new URL("../src/modules/sales/comparisonStudyRouter.js", import.meta.url),
+  "utf8",
+);
+const valuationStudyRouterSource = fs.readFileSync(
+  new URL("../src/modules/sales/valuationStudyRouter.js", import.meta.url),
+  "utf8",
+);
 const redTeamBaseSource = fs.readFileSync(new URL("../scripts/prepareRedteamBaseDatabase.js", import.meta.url), "utf8");
 const redTeamSalesFixtureSource = fs.readFileSync(new URL("../src/security/redTeamSalesFixtures.js", import.meta.url), "utf8");
 const pairedSalesSource = fs.readFileSync(new URL("../src/services/pairedSalesAnalysis.js", import.meta.url), "utf8");
@@ -260,18 +268,26 @@ test("red-team bootstrap and account reads preserve optional sales availability"
     );
   }
   assert.match(
-    serverSource,
-    /getMarketContext\(pool, subjectAccountId, \{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,
+    comparisonStudyRouterSource,
+    /loadMarketContext\(pool, subjectAccountId, \{[\s\S]*?accountIdAllowed/,
   );
-  for (const builder of [
-    "buildPairedSalesStudy",
-    "buildMarketConditionsAnalyses",
-    "buildRegressionStudy",
-    "buildSiteValuationStudy",
+  assert.match(
+    serverSource,
+    /createComparisonStudyRouter\(\{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,
+  );
+  assert.match(
+    serverSource,
+    /createValuationStudyRouter\(\{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,
+  );
+  for (const [source, builder] of [
+    [comparisonStudyRouterSource, "buildPairedStudy"],
+    [valuationStudyRouterSource, "buildMarketAnalyses"],
+    [valuationStudyRouterSource, "buildRegression"],
+    [valuationStudyRouterSource, "buildSiteValuation"],
   ]) {
     assert.match(
-      serverSource,
-      new RegExp(`${builder}\\(pool, \\{[\\s\\S]*?accountIdAllowed: legacyAccountIdAllowed`),
+      source,
+      new RegExp(`${builder}\\(pool, \\{[\\s\\S]*?accountIdAllowed`),
     );
   }
   assert.match(redTeamBaseSource, /ADD COLUMN IF NOT EXISTS listing_key text/);

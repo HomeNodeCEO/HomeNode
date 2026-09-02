@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   activityTypeLabel,
+  assignmentDocumentConfirmationBlocked,
   displayValue,
   documentSubjectAddressComparison,
   formatBaths,
@@ -104,4 +105,23 @@ test('engagement addresses tolerate suffix formatting but block a different subj
   );
   assert.equal(mismatch.matches, false);
   assert.equal(mismatch.documentAddress, '513 HARDY DR, Garland, TX 75041-3536');
+});
+
+test('only engagement-letter mismatches block evidence confirmation', () => {
+  assert.equal(
+    assignmentDocumentConfirmationBlocked('engagement_letter', false, false),
+    true,
+  );
+  assert.equal(
+    assignmentDocumentConfirmationBlocked('engagement_letter', false, true),
+    false,
+  );
+  assert.equal(
+    assignmentDocumentConfirmationBlocked('purchase_contract', false, false),
+    false,
+  );
+  assert.equal(
+    assignmentDocumentConfirmationBlocked('purchase_contract', true, false),
+    false,
+  );
 });

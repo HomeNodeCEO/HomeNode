@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import {
   confirmAllAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
@@ -15,6 +16,7 @@ import {
   type AssignmentDocumentType,
 } from '@/lib/api';
 import {
+  assignmentDocumentConfirmationBlocked,
   confirmedDocumentFieldApplications,
   documentSubjectAddressComparison,
 } from '@/lib/propertyReportPresentation';
@@ -135,14 +137,16 @@ export default function AssignmentDocumentCenter({
   onUadApplied,
   className = '',
 }: AssignmentDocumentCenterProps) {
+  const { session } = useApplicationAuth();
   const isUad = Boolean(uadWorkfileId);
+  const defaultReviewer = session?.display_name?.trim() || session?.email?.trim() || '';
   const [open, setOpen] = useState(false);
   const [documents, setDocuments] = useState<AssignmentDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<AssignmentDocument | null>(null);
   const [documentType, setDocumentType] = useState<AssignmentDocumentType>('other');
   const [documentTitle, setDocumentTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [reviewer, setReviewer] = useState('');
+  const [reviewer, setReviewer] = useState(() => defaultReviewer.trim());
   const [candidateValues, setCandidateValues] = useState<Record<number, string>>({});
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
@@ -161,7 +165,11 @@ export default function AssignmentDocumentCenter({
   ), [documentSubjectCandidate, subjectAddress]);
   const subjectAddressOverride = selectedDocument?.extraction_summary?.subject_address_override;
   const subjectAddressMismatch = subjectAddressComparison.matches === false;
-  const confirmationBlocked = subjectAddressMismatch && !subjectAddressOverride?.acknowledged;
+  const confirmationBlocked = assignmentDocumentConfirmationBlocked(
+    selectedDocument?.document_type,
+    subjectAddressComparison.matches,
+    Boolean(subjectAddressOverride?.acknowledged),
+  );
   const reviewableCandidates = useMemo(
     () => (selectedDocument?.candidates || []).filter((candidate) => !(
       isUad
@@ -188,6 +196,12 @@ export default function AssignmentDocumentCenter({
   const rejectedCandidateCount = reviewedCandidates.filter((candidate) => (
     candidate.review_status === 'rejected'
   )).length;
+
+  useEffect(() => {
+    const authenticatedReviewer = defaultReviewer.trim();
+    if (!authenticatedReviewer) return;
+    setReviewer((current) => current.trim() || authenticatedReviewer);
+  }, [defaultReviewer]);
 
   const loadDocuments = useCallback(async () => {
     if (!accountId) return;

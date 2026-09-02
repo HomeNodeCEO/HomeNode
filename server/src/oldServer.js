@@ -3,34 +3,11 @@ import { isIP } from "node:net";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import pg from "pg";
-import { ensureAccountLocationsTable } from "./services/accountLocations.js";
-import {
-  ensureLocationBackfillQueueSchema,
-  startLocationBackfillWorker,
-} from "./services/locationBackfillQueue.js";
-import { ensureAccountQualitySchema } from "./services/accountQuality.js";
 import { editorKeyMatches } from "./util/housingProfileEdit.js";
-import {
-  ensureCensusGeographySchema,
-  startCensusGeographyWorker,
-} from "./services/censusGeography.js";
-import {
-  ensureAppraisalRatingsSchema,
-} from "./services/appraisalRatings.js";
-import { ensurePropertyEnrichmentSchema } from "./services/propertyEnrichment.js";
-import {
-  ensureSalesReconciliationSchema,
-} from "./services/salesReconciliation.js";
 import { TrestleClient } from "./services/trestleClient.js";
 import {
   assertNonDallasEnrichmentCounty,
 } from "./util/nonDallasEnrichment.js";
-import { ensureAssignmentFilesSchema } from "./services/assignmentFiles.js";
-import {
-  ensureCustomAppraisalWorkfileSchema,
-} from "./services/customAppraisalWorkfiles.js";
-import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
-import { ensureAssignmentDocumentsSchema } from "./services/assignmentDocuments.js";
 import { createDocumentOcrProvider } from "./services/documentOcr.js";
 import {
   createCachedScraperStatusLoader,
@@ -116,6 +93,7 @@ import {
   createRuntimeResilienceConfiguration,
 } from "./security/runtimeResilience.js";
 import { startApplicationHttpLifecycle } from "./application/httpLifecycle.js";
+import { createApplicationStartupResources } from "./application/startupResources.js";
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
 import { mountApplicationRouteBoundary } from "./security/applicationRouteBoundary.js";
@@ -299,172 +277,24 @@ mountApplicationRouteBoundary(app, {
 
 const trestleClient = new TrestleClient();
 
-// Ensure a simple signups table exists (no external migrations required)
-async function ensureSignupsTable() {
-  const ddl = `
-    CREATE SCHEMA IF NOT EXISTS app;
-    CREATE TABLE IF NOT EXISTS app.signups (
-      id            bigserial PRIMARY KEY,
-      created_at    timestamptz NOT NULL DEFAULT now(),
-      source        text,
-      account_id    text,
-      owner_name    text NOT NULL,
-      owner_telephone text NOT NULL,
-      owner_email   text,
-      user_agent    text,
-      ip            text,
-      meta          jsonb
-    );
-  `;
-  await pool.query(ddl);
-}
-void startupInitialization
-  .track("signups_schema", ensureSignupsTable, { required: false })
-  .then(() => console.log("[init] app.signups ensured"))
-  .catch((error) => {
-    console.warn("[init] ensureSignupsTable failed (continuing)", error?.message || error);
-  });
-
-const accountLocationsReady = startupInitialization
-  .track("account_locations_schema", () => ensureAccountLocationsTable(pool))
-  .then(() => console.log("[init] core.account_locations ensured"))
-  .catch((error) => {
-    console.warn(
-      "[init] ensureAccountLocationsTable failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-const accountQualityReady = startupInitialization
-  .track("account_quality_schema", () => ensureAccountQualitySchema(pool))
-  .then(() => console.log("[init] DCAD account quality schema ensured"))
-  .catch((error) => {
-    console.warn(
-      "[init] ensureAccountQualitySchema failed (continuing)",
-      error?.message || error,
-    );
-  });
-
-const appraisalRatingsReady = startupInitialization
-  .track("appraisal_ratings_schema", () => ensureAppraisalRatingsSchema(pool))
-  .then(() => console.log("[init] appraisal rating review schema ensured"))
-  .catch((error) => {
-    console.warn(
-      "[init] ensureAppraisalRatingsSchema failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-const propertyEnrichmentReady = startupInitialization
-  .track("property_enrichment_schema", () => ensurePropertyEnrichmentSchema(pool))
-  .then(() => console.log("[init] non-Dallas property enrichment schema ensured"))
-  .catch((error) => {
-    console.warn(
-      "[init] ensurePropertyEnrichmentSchema failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-let assignmentFilesSchemaReady = false;
-const assignmentFilesReady = startupInitialization
-  .track("assignment_files_schema", () => ensureAssignmentFilesSchema(pool))
-  .then(() => {
-    assignmentFilesSchemaReady = true;
-    console.log("[init] appraisal assignment file schema ensured");
-  })
-  .catch((error) => {
-    console.warn(
-      "[init] ensureAssignmentFilesSchema failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-async function ensureAssignmentFilesAvailable() {
-  await assignmentFilesReady;
-  if (!assignmentFilesSchemaReady) {
-    await ensureAssignmentFilesSchema(pool);
-    assignmentFilesSchemaReady = true;
-  }
-}
-
-let customAppraisalWorkfilesSchemaReady = false;
-const customAppraisalWorkfilesReady = startupInitialization
-  .track("custom_appraisal_workfiles_schema", async () => {
-    await assignmentFilesReady;
-    return ensureCustomAppraisalWorkfileSchema(pool);
-  })
-  .then(() => {
-    customAppraisalWorkfilesSchemaReady = true;
-    console.log("[init] custom appraisal workfile schema ensured");
-  })
-  .catch((error) => {
-    console.warn(
-      "[init] custom appraisal workfile schema failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-async function ensureCustomAppraisalWorkfilesAvailable() {
-  await customAppraisalWorkfilesReady;
-  if (!customAppraisalWorkfilesSchemaReady) {
-    await ensureAssignmentFilesAvailable();
-    await ensureCustomAppraisalWorkfileSchema(pool);
-    customAppraisalWorkfilesSchemaReady = true;
-  }
-}
-
-let assignmentDocumentsSchemaReady = false;
-const assignmentDocumentsReady = startupInitialization
-  .track("assignment_documents_schema", async () => {
-    await assignmentFilesReady;
-    return ensureAssignmentDocumentsSchema(pool);
-  })
-  .then(() => {
-    assignmentDocumentsSchemaReady = true;
-    console.log("[init] assignment document evidence schema ensured");
-  })
-  .catch((error) => {
-    console.warn(
-      "[init] assignment document evidence schema failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-async function ensureAssignmentDocumentsAvailable() {
-  await assignmentDocumentsReady;
-  if (!assignmentDocumentsSchemaReady) {
-    await ensureAssignmentDocumentsSchema(pool);
-    assignmentDocumentsSchemaReady = true;
-  }
-}
-
-let propertyContextSchemaReady = false;
-const propertyContextReady = startupInitialization
-  .track("property_context_schema", async () => {
-    await Promise.all([
-      accountLocationsReady,
-      assignmentFilesReady,
-    ]);
-    return ensurePropertyContextSchema(pool);
-  })
-  .then(() => {
-    propertyContextSchemaReady = true;
-    console.log("[init] offline property-context schema ensured");
-  })
-  .catch((error) => {
-    console.warn(
-      "[init] property-context schema failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-async function ensurePropertyContextAvailable() {
-  await propertyContextReady;
-  if (!propertyContextSchemaReady) {
-    await ensurePropertyContextSchema(pool);
-    propertyContextSchemaReady = true;
-  }
-}
+const {
+  accountLocationsReady,
+  accountQualityReady,
+  appraisalRatingsReady,
+  propertyEnrichmentReady,
+  salesReconciliationReady,
+  locationBackfillReady,
+  censusGeographyReady,
+  ensureAssignmentFilesAvailable,
+  ensureCustomAppraisalWorkfilesAvailable,
+  ensureAssignmentDocumentsAvailable,
+  ensurePropertyContextAvailable,
+  locationBackfillInlineEnabled,
+  censusGeographyInlineEnabled,
+} = createApplicationStartupResources({
+  pool,
+  startupInitialization,
+});
 
 function greatCircleDistanceMilesSql({
   subjectLatitude,
@@ -482,87 +312,6 @@ function greatCircleDistanceMilesSql({
     ))
   )`;
 }
-
-const salesReconciliationReady = startupInitialization
-  .track("sales_reconciliation_schema", () => ensureSalesReconciliationSchema(pool))
-  .then(() => console.log("[init] sales reconciliation schema ensured"))
-  .catch((error) => {
-    console.warn(
-      "[init] ensureSalesReconciliationSchema failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-let locationBackfillWorker = null;
-const locationBackfillInlineEnabled = environmentFlag(
-  process.env.LOCATION_BACKFILL_ENABLED,
-);
-const locationBackfillReady = startupInitialization
-  .track("location_backfill_schema", async () => {
-    await Promise.all([
-      accountLocationsReady,
-      salesReconciliationReady,
-    ]);
-    return ensureLocationBackfillQueueSchema(pool);
-  }, { required: false })
-  .then(() => {
-    console.log("[init] location backfill queue ensured");
-    if (locationBackfillInlineEnabled) {
-      locationBackfillWorker = startLocationBackfillWorker(pool, {
-        intervalMs: process.env.LOCATION_BACKFILL_INTERVAL_MS,
-        seedIntervalMs: process.env.LOCATION_BACKFILL_SEED_INTERVAL_MS,
-        initialDelayMs: process.env.LOCATION_BACKFILL_INITIAL_DELAY_MS,
-        batchSize: process.env.LOCATION_BACKFILL_BATCH_SIZE,
-        seedLimit: process.env.LOCATION_BACKFILL_SEED_LIMIT,
-        maximumAttempts: process.env.LOCATION_BACKFILL_MAX_ATTEMPTS,
-      });
-      console.log(
-        `[init] location backfill worker started (${locationBackfillWorker.workerId})`,
-      );
-    } else {
-      console.log("[init] location backfill worker disabled; use scheduled maintenance");
-    }
-  })
-  .catch((error) => {
-    console.warn(
-      "[init] location backfill queue failed (will retry on request)",
-      error?.message || error,
-    );
-  });
-
-let censusGeographyWorker = null;
-const censusGeographyInlineEnabled = environmentFlag(
-  process.env.CENSUS_GEOGRAPHY_ENABLED,
-);
-const censusGeographyReady = startupInitialization
-  .track("census_geography_schema", async () => {
-    await accountLocationsReady;
-    return ensureCensusGeographySchema(pool);
-  }, { required: false })
-  .then(() => {
-    console.log("[init] census geography schema ensured");
-    if (censusGeographyInlineEnabled) {
-      censusGeographyWorker = startCensusGeographyWorker(pool, {
-        intervalMs: process.env.CENSUS_GEOGRAPHY_INTERVAL_MS,
-        seedIntervalMs: process.env.CENSUS_GEOGRAPHY_SEED_INTERVAL_MS,
-        initialDelayMs: process.env.CENSUS_GEOGRAPHY_INITIAL_DELAY_MS,
-        batchSize: process.env.CENSUS_GEOGRAPHY_BATCH_SIZE,
-        seedLimit: process.env.CENSUS_GEOGRAPHY_SEED_LIMIT,
-        maximumAttempts: process.env.CENSUS_GEOGRAPHY_MAX_ATTEMPTS,
-      });
-      console.log(
-        `[init] census geography worker started (${censusGeographyWorker.workerId})`,
-      );
-    } else {
-      console.log("[init] census geography worker disabled; use scheduled maintenance");
-    }
-  })
-  .catch((error) => {
-    console.warn(
-      "[init] census geography initialization failed (will retry on request)",
-      error?.message || error,
-    );
-  });
 
 app.use(createOperationalRouter({
   runtimeHealth,

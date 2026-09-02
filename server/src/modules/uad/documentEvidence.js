@@ -1,4 +1,4 @@
-import { createUadEntityWithClient } from "./entities.js";
+import { createUadEntityWithClient, deleteUadEntityWithClient } from "./entities.js";
 import { saveUadSection } from "./editor.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import {
@@ -155,7 +155,7 @@ export function uadPurchaseContractAssignmentValues(candidates = []) {
   const values = [
     { uid: "1000.0034", context_key: "assignment", value: "Purchase" },
   ];
-  for (const [fieldKey, role] of [["buyer_name", "borrower"], ["seller_name", "seller"]]) {
+  for (const [fieldKey, role] of [["buyer_name", "borrower"]]) {
     const candidateValue = fields.get(fieldKey)?.value;
     const partyValues = candidateValue ? uadDocumentPartyNameValues(candidateValue, role) : null;
     if (partyValues) values.push(...partyValues);
@@ -213,18 +213,19 @@ export function uadDocumentPartyNameValues(value, role) {
   const name = cleanText(value, 300);
   if (!name) return null;
   const business = /\b(?:bank|company|co\.?|corp(?:oration)?\.?|inc(?:orporated)?\.?|llc|l\.l\.c\.|llp|lp|ltd\.?|trust|association|holdings?)\b/i.test(name);
+  const nameParts = name.replace(/[^A-Za-z0-9'-]+/g, " ").split(/\s+/).filter(Boolean);
   const multiplePeople = /\s(?:&|and)\s|;/i.test(name);
   const prefixes = role === "borrower"
     ? { first: "1000.0101", middle: "1000.0170", last: "1000.0102", suffix: "1000.0171", legal: "1000.0104" }
     : { first: "1000.0018", middle: "1000.0172", last: "1000.0019", suffix: "1000.0173", legal: "1000.0020" };
-  if (multiplePeople) return null;
   const partyRole = role === "borrower" ? "Borrower" : "PropertySeller";
-  if (business) {
+  if (business && nameParts.length >= 2) {
     return [
       { uid: role === "borrower" ? "1000.0105" : "1000.0116", context_key: role, value: partyRole },
       { uid: prefixes.legal, context_key: role, value: name },
     ];
   }
+  if (multiplePeople) return null;
   const parts = name.replace(/,/g, " ").split(/\s+/).filter(Boolean);
   if (parts.length < 2 || parts.length > 5) return null;
   const suffixPattern = /^(?:jr\.?|sr\.?|ii|iii|iv|v)$/i;
@@ -239,6 +240,36 @@ export function uadDocumentPartyNameValues(value, role) {
     { uid: prefixes.last, context_key: role, value: last },
     ...(suffix ? [{ uid: prefixes.suffix, context_key: role, value: suffix.replace(/\.$/, "") }] : []),
   ];
+}
+
+export function uadDocumentSellerParties(value) {
+  const name = cleanText(value, 1_000);
+  if (!name) return null;
+  let names = [name];
+  const separated = name
+    .replace(/,\s*(?:and|&)\s+/gi, ";")
+    .replace(/\s+(?:and|&)\s+/gi, ";")
+    .split(/\s*;\s*/)
+    .filter(Boolean);
+  if (separated.length > 1 && separated.every((partyName) => uadDocumentPartyNameValues(partyName, "seller"))) {
+    names = separated;
+  }
+  names = names.flatMap((part) => {
+    const commaParts = part.split(/\s*,\s*/).filter(Boolean);
+    return commaParts.length > 1
+      && commaParts.every((partyName) => uadDocumentPartyNameValues(partyName, "seller"))
+      ? commaParts
+      : [part];
+  });
+  if (names.length === 1 && names[0] !== name && !uadDocumentPartyNameValues(names[0], "seller")) {
+    names = [name];
+  }
+  if (!names.length || names.length > 20) return null;
+  const parties = names.map((partyName) => ({
+    name: cleanText(partyName, 300),
+    values: uadDocumentPartyNameValues(partyName, "seller"),
+  }));
+  return parties.every((party) => party.name && party.values) ? parties : null;
 }
 
 export function parseUadClientAddress(value) {
@@ -287,6 +318,102 @@ async function findOrCreateClientContact(pool, workfileId, documentId, actorUser
     }, { actorUserId });
     await client.query("COMMIT");
     return entity.id;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function synchronizeDocumentSellerParties(
+  pool,
+  workfileId,
+  documentId,
+  sellerName,
+  actorUserId,
+) {
+  if (!sellerName) return [];
+  const parties = uadDocumentSellerParties(sellerName);
+  if (!parties) throw new Error("uad_document_party_name_requires_manual_entry");
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`uad-document-sellers:${workfileId}:${documentId}`],
+    );
+    const repeated = await client.query(
+      `SELECT id, ordinal, data
+         FROM appraisal.uad_entities
+        WHERE workfile_id = $1
+          AND entity_type = 'assignment_seller'
+          AND data->>'source_document_id' = $2
+        ORDER BY COALESCE((data->>'source_party_index')::integer, ordinal), ordinal, id
+        FOR UPDATE`,
+      [workfileId, String(documentId)],
+    );
+    const byIndex = new Map(repeated.rows.map((row) => [
+      Number(row.data?.source_party_index || row.ordinal),
+      row,
+    ]));
+    for (const row of repeated.rows) {
+      const sourceIndex = Number(row.data?.source_party_index || row.ordinal);
+      if (sourceIndex > parties.length) {
+        await deleteUadEntityWithClient(client, workfileId, row.id, { actorUserId });
+        byIndex.delete(sourceIndex);
+      }
+    }
+    const entityIds = [];
+    for (let index = 0; index < parties.length; index += 1) {
+      const sourceIndex = index + 1;
+      const party = parties[index];
+      let entityId = byIndex.get(sourceIndex)?.id || null;
+      if (!entityId) {
+        const entity = await createUadEntityWithClient(client, workfileId, {
+          entity_type: "assignment_seller",
+          label: party.name,
+          data: {
+            source: "assignment_document",
+            source_document_id: String(documentId),
+            source_party_index: sourceIndex,
+          },
+        }, { actorUserId });
+        entityId = entity.id;
+      } else {
+        await client.query(
+          `UPDATE appraisal.uad_entities
+              SET label = $2,
+                  data = data || $3::jsonb,
+                  updated_at = now()
+            WHERE id = $1`,
+          [
+            entityId,
+            party.name,
+            JSON.stringify({
+              source: "assignment_document",
+              source_document_id: String(documentId),
+              source_party_index: sourceIndex,
+            }),
+          ],
+        );
+      }
+      entityIds.push(entityId);
+    }
+    await client.query("COMMIT");
+    const sellerUids = [
+      "1000.0018", "1000.0172", "1000.0019", "1000.0173",
+      "1000.0020", "1000.0021", "1000.0116",
+    ];
+    return parties.flatMap((party, index) => {
+      const activeValues = new Map(party.values.map((item) => [item.uid, item.value]));
+      return sellerUids.map((uid) => ({
+        uid,
+        context_key: "seller",
+        entity_id: entityIds[index],
+        value: activeValues.get(uid) ?? null,
+      }));
+    });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -429,7 +556,18 @@ export async function synchronizeUadPurchaseContract(
     [documentId],
   );
   const provenance = purchaseContractSourceReference(document);
-  const assignmentValues = uadPurchaseContractAssignmentValues(candidateResult.rows);
+  const confirmedCandidates = confirmedPurchaseContractCandidates(candidateResult.rows);
+  const sellerValues = await synchronizeDocumentSellerParties(
+    pool,
+    workfileId,
+    documentId,
+    confirmedCandidates.get("seller_name")?.value || null,
+    actorUserId,
+  );
+  const assignmentValues = [
+    ...uadPurchaseContractAssignmentValues(candidateResult.rows),
+    ...sellerValues,
+  ];
   const salesContractValues = uadPurchaseContractValues(candidateResult.rows);
   const assignmentResult = await saveDocumentBackedUadSection(
     pool,
@@ -532,8 +670,8 @@ export async function applyConfirmedUadDocumentCandidate(
     const reason = assignmentReason(value);
     if (!reason) throw new Error("uad_document_assignment_reason_requires_manual_entry");
     values = [{ uid: "1000.0034", context_key: "assignment", value: reason }];
-  } else if (["buyer_name", "seller_name"].includes(candidate.field_key)) {
-    values = uadDocumentPartyNameValues(value, candidate.field_key === "buyer_name" ? "borrower" : "seller");
+  } else if (candidate.field_key === "buyer_name") {
+    values = uadDocumentPartyNameValues(value, "borrower");
     if (!values) throw new Error("uad_document_party_name_requires_manual_entry");
   } else if (["lender_client_name", "lender_client_address"].includes(candidate.field_key)) {
     const address = candidate.field_key === "lender_client_address" ? parseUadClientAddress(value) : null;

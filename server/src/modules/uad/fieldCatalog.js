@@ -58,6 +58,12 @@ import {
 } from "./vehicleStorageCatalog.js";
 
 export const UAD_REPEATABLE_ENTITY_GROUPS = Object.freeze({
+  assignment_seller: Object.freeze({
+    title: "Sellers",
+    addLabel: "Add seller",
+    minItems: 0,
+    maxItems: 20,
+  }),
   assignment_contact: Object.freeze({
     title: "Assignment contacts",
     addLabel: "Add lender / client",
@@ -229,6 +235,7 @@ const fields = [
     label,
     dataType: "string",
     maxLength,
+    ...(contextKey === "seller" ? { entityType: "assignment_seller" } : {}),
   })),
   {
     section: "assignment",
@@ -268,6 +275,7 @@ const fields = [
     showWhen: { uid: "1000.0018", present: true },
     requiredWhen: { uid: "1000.0018", present: true },
     guidance: "UAD requires PartyRoleType with an individual seller name.",
+    entityType: "assignment_seller",
   },
   {
     section: "assignment",
@@ -281,6 +289,7 @@ const fields = [
     showWhen: { uid: "1000.0020", present: true },
     requiredWhen: { uid: "1000.0020", present: true },
     guidance: "UAD requires PartyRoleType with a legal-entity seller name.",
+    entityType: "assignment_seller",
   },
   {
     section: "assignment",

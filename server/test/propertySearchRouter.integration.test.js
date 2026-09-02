@@ -250,7 +250,7 @@ test("property search composition is explicit and its inline handler is absent",
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const history = source.indexOf("app.use(createMarketValueHistoryRouter(");
   const search = source.indexOf("app.use(createPropertySearchRouter(");
-  const recommendations = source.indexOf('app.get("/api/sales/recommendations"');
+  const recommendations = source.indexOf("app.use(createComparableRecommendationsRouter(");
   assert.ok(search > history);
   assert.ok(recommendations > search);
   assert.equal(source.includes('app.get("/api/search"'), false);

@@ -240,7 +240,7 @@ test("property-context routers validate composition and retain both mount positi
   const readiness = source.indexOf('app.get("/api/neighborhood-engine/readiness"');
   const relevance = source.indexOf('app.post("/api/accounts/:id/neighborhood-relevance/generate"');
   const accountContext = source.indexOf("app.use(createAccountPropertyContextRouter(");
-  const zoning = source.indexOf('app.get("/api/accounts/:id/zoning-evidence"');
+  const zoning = source.indexOf("app.use(createZoningRouter(");
   assert.ok(landUse > 0);
   assert.ok(status > landUse);
   assert.ok(readiness > status);

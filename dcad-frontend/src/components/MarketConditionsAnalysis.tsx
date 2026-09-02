@@ -69,6 +69,11 @@ type MapInstance = {
   };
   addSource: (id: string, source: Record<string, unknown>) => void;
   getSource: (id: string) => MapSource | undefined;
+  addImage: (
+    id: string,
+    image: { width: number; height: number; data: Uint8Array },
+    options?: { pixelRatio?: number },
+  ) => void;
   addLayer: (layer: Record<string, unknown>) => void;
   getLayer: (id: string) => unknown;
   getCanvas: () => { style: { cursor: string } };
@@ -127,6 +132,24 @@ type Props = {
 
 const CLOSE_BOUNDARY_PIXEL_TOLERANCE = 18;
 const RELEVANCE_SOURCE_ID = 'neighborhood-relevance-pockets';
+const RECOMMENDED_PROPERTY_IMAGE_ID = 'recommended-property-square';
+
+function makeRecommendedPropertySquare(): {
+  width: number;
+  height: number;
+  data: Uint8Array;
+} {
+  const width = 10;
+  const height = 10;
+  const data = new Uint8Array(width * height * 4);
+  for (let offset = 0; offset < data.length; offset += 4) {
+    data[offset] = 5;
+    data[offset + 1] = 46;
+    data[offset + 2] = 22;
+    data[offset + 3] = 245;
+  }
+  return { width, height, data };
+}
 
 function makeRelevanceFeatureCollection(
   candidates: Props['relevanceVisualization'] = [],
@@ -1471,6 +1494,11 @@ export default function MarketConditionsAnalysis({
             type: 'geojson',
             data: makeRelevanceFeatureCollection(initialRelevanceVisualizationRef.current),
           });
+          map.addImage(
+            RECOMMENDED_PROPERTY_IMAGE_ID,
+            makeRecommendedPropertySquare(),
+            { pixelRatio: 2 },
+          );
           map.addLayer({
             id: 'neighborhood-relevance-pockets-halo',
             type: 'circle',
@@ -1525,16 +1553,22 @@ export default function MarketConditionsAnalysis({
           });
           map.addLayer({
             id: 'neighborhood-relevance-recommended-area',
-            type: 'circle',
+            type: 'symbol',
             source: RELEVANCE_SOURCE_ID,
             filter: ['==', ['get', 'recommended_population'], true],
+            layout: {
+              'icon-image': RECOMMENDED_PROPERTY_IMAGE_ID,
+              'icon-size': [
+                'interpolate', ['linear'], ['zoom'],
+                10, 0.65,
+                12, 0.8,
+                16, 1.05,
+              ],
+              'icon-allow-overlap': true,
+              'icon-ignore-placement': true,
+            },
             paint: {
-              'circle-radius': 8.5,
-              'circle-color': '#06b6d4',
-              'circle-opacity': 0.08,
-              'circle-stroke-color': '#0891b2',
-              'circle-stroke-width': 1.8,
-              'circle-stroke-opacity': 0.9,
+              'icon-opacity': 0.94,
             },
           });
           map.on('click', (event) => {
@@ -2325,9 +2359,9 @@ export default function MarketConditionsAnalysis({
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" />Marginal</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-orange-500" />Low relevance</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Excluded</span>
-                <span className="basis-full text-cyan-800">
-                  <span className="mr-1 inline-block h-2.5 w-2.5 rounded-full border-2 border-cyan-600 bg-cyan-100 align-middle" />
-                  Cyan outlines show the HomeNode-recommended analytical area.
+                <span className="basis-full text-green-950">
+                  <span className="mr-1 inline-block h-2.5 w-2.5 bg-green-950 align-middle" />
+                  Dark-green squares identify properties in the HomeNode-recommended analytical area.
                 </span>
                 <span className="basis-full text-slate-500">White-outlined points form the primary statistical population used for neighborhood medians and predominant values.</span>
                 <span className="basis-full text-slate-500">Magenta outlines are appraiser-added pockets; red outlines are appraiser-removed pockets.</span>

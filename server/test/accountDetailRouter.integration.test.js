@@ -247,7 +247,7 @@ test("entrypoint mounts account detail after signup and before adjacent account 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const signup = source.indexOf("app.use(createSignupRouter(");
   const accountDetail = source.indexOf("app.use(createAccountDetailRouter(");
-  const accountPhotos = source.indexOf('app.get("/api/accounts/:id/photos"');
+  const accountPhotos = source.indexOf("app.use(createAccountPhotosRouter(");
   assert.ok(accountDetail > signup);
   assert.ok(accountPhotos > accountDetail);
 });

@@ -264,6 +264,17 @@ export default function NeighborhoodCharacteristicsContent({
   const relevancePockets = useMemo(() => summarizePockets(
     effectiveRelevanceAssessment?.visualization || [],
   ), [effectiveRelevanceAssessment]);
+  const relevanceLiveSummary = useMemo(() => {
+    const statistics = effectiveRelevanceAssessment?.summary.relevant_statistics;
+    if (!statistics) return null;
+    return {
+      reliabilityScore: statistics.reliability_score,
+      compositeCod: statistics.composite_cod,
+      propertyCount: statistics.included_property_count,
+      saleCount: statistics.included_sale_count,
+      pocketCount: effectiveRelevanceAssessment?.summary.selected_pocket_count || 0,
+    };
+  }, [effectiveRelevanceAssessment]);
   const zipUnemployment = parseNumber(assignmentDraft.neighborhood_unemployment_pct);
   const cityUnemployment = parseNumber(assignmentDraft.neighborhood_city_unemployment_pct);
   const unemploymentDifference = zipUnemployment !== null && cityUnemployment !== null
@@ -1738,6 +1749,8 @@ export default function NeighborhoodCharacteristicsContent({
             initialCustomGeometrySource={assignmentDraft.neighborhood_boundary_source}
             suggestedCustomGeometry={generatedBoundary?.boundary || null}
             relevanceVisualization={relevanceMapVisualization}
+            relevanceSummary={relevanceLiveSummary}
+            onRelevancePocketToggle={setPocketIncluded}
             onCustomGeometryChange={handleCustomGeometryChange}
             embedded
           />

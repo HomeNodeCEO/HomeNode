@@ -27,6 +27,7 @@ import {
   shouldAdoptIncomingMarketArea,
   type MarketAreaOrigin,
 } from '@/lib/marketAreaGeometry';
+import { makeNeighborhoodPocketFeatureCollection } from '@/lib/neighborhoodPocketMap';
 
 const MAPLIBRE_SCRIPT =
   'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js';
@@ -60,12 +61,23 @@ type BoundaryCoordinate = [number, number];
 type MapClickEvent = {
   lngLat: { lng: number; lat: number };
   point: { x: number; y: number };
+  features?: Array<{ properties?: Record<string, unknown> }>;
 };
 
 type MapInstance = {
   on: {
     (event: 'load', callback: () => void): void;
     (event: 'click', callback: (event: MapClickEvent) => void): void;
+    (
+      event: 'click',
+      layerId: string,
+      callback: (event: MapClickEvent) => void,
+    ): void;
+    (
+      event: 'mouseenter' | 'mouseleave',
+      layerId: string,
+      callback: () => void,
+    ): void;
   };
   addSource: (id: string, source: Record<string, unknown>) => void;
   getSource: (id: string) => MapSource | undefined;
@@ -114,9 +126,12 @@ type Props = {
   suggestedCustomGeometry?: GeoJsonPolygon | null;
   relevanceVisualization?: Array<{
     parcel_object_id: number;
+    pocket_id?: string | null;
+    cluster_id?: string | null;
     score: number | null;
     excluded: boolean;
     classification: string;
+    system_selected?: boolean;
     primary_population: boolean;
     recommended_population?: boolean;
     relevance_band: string;
@@ -127,14 +142,37 @@ type Props = {
     geometry: GeoJsonPolygon | null,
     origin: MarketAreaOrigin,
   ) => void;
+  relevanceSummary?: {
+    reliabilityScore: number;
+    compositeCod: number | null;
+    propertyCount: number;
+    saleCount: number;
+    pocketCount: number;
+  } | null;
+  onRelevancePocketToggle?: (
+    pocketId: string,
+    include: boolean,
+    systemSelected: boolean,
+  ) => void;
   embedded?: boolean;
 };
 
 const CLOSE_BOUNDARY_PIXEL_TOLERANCE = 18;
 const RELEVANCE_SOURCE_ID = 'neighborhood-relevance-pockets';
-const RECOMMENDED_PROPERTY_IMAGE_ID = 'recommended-property-square';
+const RELEVANCE_POCKET_SOURCE_ID = 'neighborhood-relevance-pocket-areas';
+const RELEVANCE_POCKET_FILL_LAYER_ID = 'neighborhood-relevance-pocket-fill';
+const RECOMMENDED_PROPERTY_IMAGES = [
+  { band: 'highest', id: 'recommended-property-square-highest', color: [5, 46, 22] },
+  { band: 'high', id: 'recommended-property-square-high', color: [21, 128, 61] },
+  { band: 'relevant', id: 'recommended-property-square-relevant', color: [34, 197, 94] },
+  { band: 'marginal', id: 'recommended-property-square-marginal', color: [234, 179, 8] },
+  { band: 'low', id: 'recommended-property-square-low', color: [234, 88, 12] },
+  { band: 'insufficient_data', id: 'recommended-property-square-insufficient', color: [124, 58, 237] },
+  { band: 'excluded', id: 'recommended-property-square-excluded', color: [100, 116, 139] },
+] as const;
+const RECOMMENDED_PROPERTY_FALLBACK_IMAGE_ID = 'recommended-property-square-excluded';
 
-function makeRecommendedPropertySquare(): {
+function makeRecommendedPropertySquare(color: readonly [number, number, number]): {
   width: number;
   height: number;
   data: Uint8Array;
@@ -143,9 +181,9 @@ function makeRecommendedPropertySquare(): {
   const height = 10;
   const data = new Uint8Array(width * height * 4);
   for (let offset = 0; offset < data.length; offset += 4) {
-    data[offset] = 5;
-    data[offset + 1] = 46;
-    data[offset + 2] = 22;
+    data[offset] = color[0];
+    data[offset + 1] = color[1];
+    data[offset + 2] = color[2];
     data[offset + 3] = 245;
   }
   return { width, height, data };
@@ -161,9 +199,11 @@ function makeRelevanceFeatureCollection(
       id: candidate.parcel_object_id,
       geometry: candidate.point,
       properties: {
+        pocket_id: candidate.pocket_id || candidate.cluster_id || '',
         score: Number(candidate.score) || 0,
         excluded: candidate.excluded,
         classification: candidate.classification,
+        system_selected: candidate.system_selected ?? candidate.primary_population,
         primary_population: candidate.primary_population,
         recommended_population: candidate.recommended_population === true,
         relevance_band: candidate.relevance_band,
@@ -990,6 +1030,8 @@ export default function MarketConditionsAnalysis({
   suggestedCustomGeometry = null,
   relevanceVisualization = [],
   onCustomGeometryChange,
+  relevanceSummary = null,
+  onRelevancePocketToggle,
   embedded = false,
 }: Props) {
   const savedDraft = useMemo(
@@ -1093,6 +1135,7 @@ export default function MarketConditionsAnalysis({
   const [mapError, setMapError] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);
   const [isBoundaryDrawing, setIsBoundaryDrawing] = useState(false);
+  const [pocketInteractionMessage, setPocketInteractionMessage] = useState<string | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapInstance | null>(null);
   const draftBoundaryRef = useRef<BoundaryCoordinate[]>([]);
@@ -1101,7 +1144,9 @@ export default function MarketConditionsAnalysis({
   const initialMarketOriginRef = useRef(resolvedInitialOrigin);
   const initialRelevanceVisualizationRef = useRef(relevanceVisualization);
   const onCustomGeometryChangeRef = useRef(onCustomGeometryChange);
+  const onRelevancePocketToggleRef = useRef(onRelevancePocketToggle);
   onCustomGeometryChangeRef.current = onCustomGeometryChange;
+  onRelevancePocketToggleRef.current = onRelevancePocketToggle;
   const appraiserModifiedRef = useRef(
     resolvedInitialOrigin === 'appraiser' || resolvedInitialOrigin === 'cleared',
   );
@@ -1494,11 +1539,53 @@ export default function MarketConditionsAnalysis({
             type: 'geojson',
             data: makeRelevanceFeatureCollection(initialRelevanceVisualizationRef.current),
           });
-          map.addImage(
-            RECOMMENDED_PROPERTY_IMAGE_ID,
-            makeRecommendedPropertySquare(),
-            { pixelRatio: 2 },
-          );
+          map.addSource(RELEVANCE_POCKET_SOURCE_ID, {
+            type: 'geojson',
+            data: makeNeighborhoodPocketFeatureCollection(
+              initialRelevanceVisualizationRef.current,
+            ),
+          });
+          map.addLayer({
+            id: RELEVANCE_POCKET_FILL_LAYER_ID,
+            type: 'fill',
+            source: RELEVANCE_POCKET_SOURCE_ID,
+            paint: {
+              'fill-color': [
+                'match', ['get', 'status'],
+                'included', '#10b981',
+                'removed', '#ef4444',
+                '#64748b',
+              ],
+              'fill-opacity': [
+                'match', ['get', 'status'],
+                'included', 0.1,
+                'removed', 0.08,
+                0.05,
+              ],
+            },
+          });
+          map.addLayer({
+            id: 'neighborhood-relevance-pocket-outline',
+            type: 'line',
+            source: RELEVANCE_POCKET_SOURCE_ID,
+            paint: {
+              'line-color': [
+                'match', ['get', 'status'],
+                'included', '#047857',
+                'removed', '#dc2626',
+                '#64748b',
+              ],
+              'line-width': [
+                'case',
+                ['==', ['get', 'recommended'], true], 2,
+                1.25,
+              ],
+              'line-opacity': 0.82,
+            },
+          });
+          RECOMMENDED_PROPERTY_IMAGES.forEach(({ id, color }) => {
+            map?.addImage(id, makeRecommendedPropertySquare(color), { pixelRatio: 2 });
+          });
           map.addLayer({
             id: 'neighborhood-relevance-pockets-halo',
             type: 'circle',
@@ -1557,7 +1644,11 @@ export default function MarketConditionsAnalysis({
             source: RELEVANCE_SOURCE_ID,
             filter: ['==', ['get', 'recommended_population'], true],
             layout: {
-              'icon-image': RECOMMENDED_PROPERTY_IMAGE_ID,
+              'icon-image': [
+                'match', ['get', 'relevance_band'],
+                ...RECOMMENDED_PROPERTY_IMAGES.flatMap(({ band, id }) => [band, id]),
+                RECOMMENDED_PROPERTY_FALLBACK_IMAGE_ID,
+              ],
               'icon-size': [
                 'interpolate', ['linear'], ['zoom'],
                 10, 0.65,
@@ -1570,6 +1661,27 @@ export default function MarketConditionsAnalysis({
             paint: {
               'icon-opacity': 0.94,
             },
+          });
+          map.on('click', RELEVANCE_POCKET_FILL_LAYER_ID, (event) => {
+            if (boundaryDrawingRef.current) return;
+            const properties = event.features?.[0]?.properties;
+            const pocketId = String(properties?.pocket_id || '');
+            if (!pocketId || !onRelevancePocketToggleRef.current) return;
+            const currentlyIncluded = properties?.included === true ||
+              properties?.included === 'true';
+            const systemSelected = properties?.system_selected === true ||
+              properties?.system_selected === 'true';
+            const include = !currentlyIncluded;
+            onRelevancePocketToggleRef.current(pocketId, include, systemSelected);
+            setPocketInteractionMessage(
+              `${include ? 'Included' : 'Removed'} the selected pocket. Live metrics updated.`,
+            );
+          });
+          map.on('mouseenter', RELEVANCE_POCKET_FILL_LAYER_ID, () => {
+            if (!boundaryDrawingRef.current && map) map.getCanvas().style.cursor = 'pointer';
+          });
+          map.on('mouseleave', RELEVANCE_POCKET_FILL_LAYER_ID, () => {
+            if (map) map.getCanvas().style.cursor = boundaryDrawingRef.current ? 'crosshair' : '';
           });
           map.on('click', (event) => {
             if (!boundaryDrawingRef.current) return;
@@ -1651,6 +1763,9 @@ export default function MarketConditionsAnalysis({
     if (!mapReady) return;
     mapRef.current?.getSource(RELEVANCE_SOURCE_ID)?.setData(
       makeRelevanceFeatureCollection(relevanceVisualization),
+    );
+    mapRef.current?.getSource(RELEVANCE_POCKET_SOURCE_ID)?.setData(
+      makeNeighborhoodPocketFeatureCollection(relevanceVisualization),
     );
   }, [mapReady, relevanceVisualization]);
 
@@ -2339,11 +2454,40 @@ export default function MarketConditionsAnalysis({
             {studyContext &&
             studyContext.latitude !== null &&
             studyContext.longitude !== null ? (
-              <div
-                ref={mapContainerRef}
-                className="mt-4 h-[340px] w-full overflow-hidden rounded-xl border border-slate-300 bg-slate-100"
-                aria-label="Custom market area drawing map"
-              />
+              <div className="relative mt-4">
+                <div
+                  ref={mapContainerRef}
+                  className="h-[340px] w-full overflow-hidden rounded-xl border border-slate-300 bg-slate-100"
+                  aria-label="Custom market area drawing map"
+                />
+                {relevanceSummary ? (
+                  <div
+                    className="pointer-events-none absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-lg border border-emerald-200 bg-white/95 px-3 py-2 text-[11px] shadow-md backdrop-blur-sm"
+                    aria-live="polite"
+                  >
+                    <div className="font-semibold uppercase tracking-wide text-emerald-900">
+                      Live analytical result
+                    </div>
+                    <div className="mt-0.5 text-base font-bold text-slate-950">
+                      {relevanceSummary.reliabilityScore}/100 reliability
+                    </div>
+                    <div className="mt-0.5 text-slate-700">
+                      {relevanceSummary.pocketCount.toLocaleString()} pockets ·{' '}
+                      {relevanceSummary.propertyCount.toLocaleString()} properties ·{' '}
+                      {relevanceSummary.saleCount.toLocaleString()} sales · COD{' '}
+                      {relevanceSummary.compositeCod ?? 'Pending'}
+                    </div>
+                    <div className="mt-1 text-slate-600">
+                      Click a shaded pocket to include or remove it.
+                    </div>
+                    {pocketInteractionMessage ? (
+                      <div className="mt-1 font-medium text-emerald-800">
+                        {pocketInteractionMessage}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
                 The study-center location is unavailable. Select a related CAD
@@ -2359,9 +2503,14 @@ export default function MarketConditionsAnalysis({
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" />Marginal</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-orange-500" />Low relevance</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Excluded</span>
-                <span className="basis-full text-green-950">
-                  <span className="mr-1 inline-block h-2.5 w-2.5 bg-green-950 align-middle" />
-                  Dark-green squares identify properties in the HomeNode-recommended analytical area.
+                <span className="basis-full text-slate-600">
+                  <span className="mr-0.5 inline-block h-2.5 w-2.5 bg-green-800 align-middle" />
+                  <span className="mr-0.5 inline-block h-2.5 w-2.5 bg-yellow-400 align-middle" />
+                  <span className="mr-1 inline-block h-2.5 w-2.5 bg-orange-500 align-middle" />
+                  Squares identify properties in the HomeNode-recommended analytical area and retain each property's relevance color.
+                </span>
+                <span className="basis-full text-slate-500">
+                  Shaded pocket areas are clickable: green is included, gray is available, and red is removed.
                 </span>
                 <span className="basis-full text-slate-500">White-outlined points form the primary statistical population used for neighborhood medians and predominant values.</span>
                 <span className="basis-full text-slate-500">Magenta outlines are appraiser-added pockets; red outlines are appraiser-removed pockets.</span>

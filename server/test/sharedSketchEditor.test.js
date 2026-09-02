@@ -41,13 +41,15 @@ test("one desktop measured-sketch editor is wired to all three report workflows"
   const uad = read("../../dcad-frontend/src/features/uad/components/UadSketchEditor.tsx");
   const router = read("../src/modules/uad/router.js");
   const server = read("../src/oldServer.js");
+  const propertyTaxRouter = read("../src/modules/mobile/desktopPropertyTaxRouter.js");
   const desktopSketches = read("../src/modules/mobile/desktopSketches.js");
   assert.match(custom, /<MobileSketchReview/);
   assert.match(protest, /<MobileSketchReview/);
   assert.match(uad, /<MobileSketchReview/);
   assert.match(uad, /editUadSketch/);
   assert.match(router, /shared_across_report_types: true/);
-  assert.match(server, /property-tax-protest\/:fileId\/sketch/);
+  assert.match(server, /createDesktopPropertyTaxRouter/);
+  assert.match(propertyTaxRouter, /property-tax-protest\/:fileId\/sketch/);
   assert.match(desktopSketches, /saveDesktopInspectionSketch/);
   assert.match(desktopSketches, /savePropertyTaxInspectionSketch/);
 });

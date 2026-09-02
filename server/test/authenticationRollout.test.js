@@ -48,9 +48,11 @@ test("desktop latest-file lookups remain organization scoped after authenticatio
   const server = read("../src/oldServer.js");
   const assignmentList = read("../src/modules/assignmentFiles/listRouter.js");
   const propertyTax = read("../src/modules/mobile/desktopPropertyTax.js");
+  const propertyTaxRouter = read("../src/modules/mobile/desktopPropertyTaxRouter.js");
   assert.match(server, /AND \(\$2::uuid IS NULL OR organization_id = \$2\)/);
   assert.match(propertyTax, /report_file\.organization_id = ANY\(\$3::uuid\[\]\)/);
-  assert.match(server, /\{ organizationIds \}/);
+  assert.match(server, /createDesktopPropertyTaxRouter/);
+  assert.match(propertyTaxRouter, /organizationIds: organizationIdsForRead\(req\)/);
   assert.match(assignmentList, /const enforcedIdentity = authenticationRequired && req\.mobileAuth/);
   assert.match(assignmentList, /legacy_assignment_details: enforcedIdentity/);
   assert.match(assignmentList, /queriedRows\.filter\(\(row\) => decideAccess\(req\.mobileAuth, row, "read"\)\)/);

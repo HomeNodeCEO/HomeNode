@@ -17,6 +17,7 @@ const ASSIGNMENT_TYPES = new Set([
   "dscr",
   "other",
 ]);
+const CONTRACT_PROPERTY_CONDITIONS = new Set(["", "as_is", "seller_repairs"]);
 const CONDITION_RATINGS = new Set([
   "",
   "C1",
@@ -177,6 +178,9 @@ export function validateAssignmentDetails(value) {
   const contractTextFields = [
     ["contract_seller_names", 1000],
     ["contract_date", 100],
+    ["contract_closing_date", 100],
+    ["contract_property_condition", 100],
+    ["contract_repairs", 5000],
     ["seller_mismatch_explanation", 3000],
   ];
   const subjectConditionTextFields = [
@@ -229,6 +233,9 @@ export function validateAssignmentDetails(value) {
   if (!OCCUPANCIES.has(occupancy)) throw new Error("invalid_occupancy");
   if (assignmentTypes.some((item) => !ASSIGNMENT_TYPES.has(item))) {
     throw new Error("invalid_assignment_type");
+  }
+  if (!CONTRACT_PROPERTY_CONDITIONS.has(text(value.contract_property_condition).toLowerCase())) {
+    throw new Error("invalid_contract_property_condition");
   }
   if (value.lender_client_name !== undefined && typeof value.lender_client_name !== "string") {
     throw new Error("invalid_lender_client_name");

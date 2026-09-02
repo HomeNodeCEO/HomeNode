@@ -311,6 +311,169 @@ function firstLabeledCandidate(entries, {
   return null;
 }
 
+function compactEvidence(value) {
+  return cleanText(value, 2_000).replace(/\s+/g, " ").trim();
+}
+
+function firstContractPatternCandidate(pages, {
+  fieldKey,
+  pattern,
+  normalize = (value) => value,
+  confidence = 0.97,
+  extractionMethod = "trec_contract_section",
+}) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const page = cleanText(pages[pageIndex], 500_000);
+    const match = page.match(pattern);
+    if (!match?.[1]) continue;
+    const rawValue = compactEvidence(match[1]);
+    const normalizedValue = normalize(rawValue);
+    if (!rawValue || normalizedValue == null || normalizedValue === "") continue;
+    return {
+      field_key: fieldKey,
+      raw_value: rawValue,
+      normalized_value: String(normalizedValue),
+      page_number: pageIndex + 1,
+      confidence,
+      evidence_excerpt: compactEvidence(match[0]),
+      extraction_method: extractionMethod,
+    };
+  }
+  return null;
+}
+
+function trecEffectiveDateCandidate(pages) {
+  const numeric = firstContractPatternCandidate(pages, {
+    fieldKey: "contract_date",
+    pattern: /EXECUTED[\s\S]{0,180}?(\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4}))[\s\S]{0,100}?\(Effective Date\)/i,
+    normalize: normalizedDate,
+    confidence: 0.99,
+    extractionMethod: "trec_effective_date",
+  });
+  if (numeric) return numeric;
+  return firstContractPatternCandidate(pages, {
+    fieldKey: "contract_date",
+    pattern: /EXECUTED\s+the\s+(\d{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+[A-Za-z]+,?\s+\d{4})[\s\S]{0,100}?\(Effective Date\)/i,
+    normalize: (value) => normalizedDate(value.replace(/(?:st|nd|rd|th)\b/i, "")),
+    confidence: 0.98,
+    extractionMethod: "trec_effective_date",
+  });
+}
+
+function trecPartyCandidates(pages) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const page = cleanText(pages[pageIndex], 500_000);
+    const match = page.match(
+      /parties\s*:\s*The parties to this contract are\s+([\s\S]{1,500}?)\s*\(Seller\)\s*and\s+([\s\S]{1,300}?)\s*\(Buyer\)/i,
+    );
+    if (!match) continue;
+    const evidence = compactEvidence(match[0]);
+    return [
+      {
+        field_key: "seller_name",
+        raw_value: compactEvidence(match[1]),
+        normalized_value: compactEvidence(match[1]),
+        page_number: pageIndex + 1,
+        confidence: 0.98,
+        evidence_excerpt: evidence,
+        extraction_method: "trec_contract_parties",
+      },
+      {
+        field_key: "buyer_name",
+        raw_value: compactEvidence(match[2]),
+        normalized_value: compactEvidence(match[2]),
+        page_number: pageIndex + 1,
+        confidence: 0.98,
+        evidence_excerpt: evidence,
+        extraction_method: "trec_contract_parties",
+      },
+    ];
+  }
+  return [];
+}
+
+function trecPropertyConditionCandidates(pages) {
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const page = cleanText(pages[pageIndex], 500_000);
+    const asIsSelected = /(?:^|\n)\s*(?:X|x|☒|✓)\s*\(1\)\s*Buyer accepts the Property As Is\./i.test(page);
+    const repairsSelected = /(?:^|\n)\s*(?:X|x|☒|✓)\s*\(2\)\s*Buyer accepts the Property As Is provided Seller/i.test(page);
+    if (!asIsSelected && !repairsSelected) continue;
+    const candidates = [{
+      field_key: "contract_property_condition",
+      raw_value: repairsSelected
+        ? "Buyer accepts the Property As Is subject to seller repairs"
+        : "Buyer accepts the Property As Is",
+      normalized_value: repairsSelected ? "seller_repairs" : "as_is",
+      page_number: pageIndex + 1,
+      confidence: 0.99,
+      evidence_excerpt: repairsSelected
+        ? "Selected: (2) Buyer accepts the Property As Is provided Seller completes specific repairs and treatments."
+        : "Selected: (1) Buyer accepts the Property As Is.",
+      extraction_method: "trec_property_condition_checkbox",
+    }];
+    if (repairsSelected) {
+      const repairMatch = page.match(
+        /following specific repairs and treatments:\s*([\s\S]{1,2000}?)(?=\(Do not insert general phrases|E\.\s+LENDER REQUIRED REPAIRS)/i,
+      );
+      const repairText = compactEvidence(repairMatch?.[1]);
+      if (repairText) {
+        candidates.push({
+          field_key: "contract_repairs",
+          raw_value: repairText,
+          normalized_value: repairText,
+          page_number: pageIndex + 1,
+          confidence: 0.94,
+          evidence_excerpt: compactEvidence(repairMatch[0]),
+          extraction_method: "trec_property_condition_repairs",
+        });
+      }
+    }
+    return candidates;
+  }
+  return [];
+}
+
+function buildPurchaseContractCandidates(pages) {
+  const candidates = [
+    firstContractPatternCandidate(pages, {
+      fieldKey: "down_payment",
+      pattern: /Cash portion of (?:the )?Sales Price payable by Buyer at closing[\s\S]{0,160}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
+      normalize: normalizedMoney,
+    }),
+    firstContractPatternCandidate(pages, {
+      fieldKey: "loan_amount",
+      pattern: /Sum of all financing described[\s\S]{0,280}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
+      normalize: normalizedMoney,
+    }),
+    firstContractPatternCandidate(pages, {
+      fieldKey: "contract_price",
+      pattern: /Sales Price\s*\(Sum of A and B\)[\s\S]{0,120}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
+      normalize: normalizedMoney,
+    }),
+    firstContractPatternCandidate(pages, {
+      fieldKey: "earnest_money",
+      pattern: /\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s+as earnest money\b/i,
+      normalize: normalizedMoney,
+    }),
+    firstContractPatternCandidate(pages, {
+      fieldKey: "closing_date",
+      pattern: /closing of the sale will be on or before\s+((?:[A-Za-z]+\s+\d{1,2},?\s+\d{4})|(?:\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})))/i,
+      normalize: normalizedDate,
+      extractionMethod: "trec_closing_date",
+    }),
+    trecEffectiveDateCandidate(pages),
+    firstContractPatternCandidate(pages, {
+      fieldKey: "seller_concessions",
+      pattern: /\(b\)\s+an amount not to exceed\s*\$\s*(N\/?A|NONE|NO|[0-9][0-9,]*(?:\.\d{1,2})?)/i,
+      normalize: normalizedMoney,
+      extractionMethod: "trec_seller_expense_concession",
+    }),
+  ].filter(Boolean);
+  candidates.push(...trecPartyCandidates(pages));
+  candidates.push(...trecPropertyConditionCandidates(pages));
+  return candidates;
+}
+
 function normalizedPostalAddress(value) {
   const source = cleanText(value, 2_000).replace(/\s+/g, " ");
   if (!source) return null;
@@ -428,8 +591,6 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   const normalizedRequested = normalizeDocumentType(requestedType);
   if (normalizedRequested !== "other") return normalizedRequested;
   const sample = `${fileName}\n${pages.join("\n").slice(0, 80_000)}`.toLowerCase();
-  if (/zoning\s+(?:map|district)|official\s+zoning\s+map/.test(sample)) return "zoning_map";
-  if (/zoning\s+(?:ordinance|code)|development\s+code/.test(sample)) return "zoning_ordinance";
   if (/one\s+to\s+four\s+family\s+residential\s+contract|earnest\s+money|purchase\s+contract/.test(sample)) {
     return "purchase_contract";
   }
@@ -445,6 +606,8 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   if (explicitMlsIdentity || /\bmls(?:[-_\s]+)(?:sheet|listing|report)\b/.test(sample) || mlsSignals >= 2) {
     return "mls_sheet";
   }
+  if (/zoning\s+(?:map|district)|official\s+zoning\s+map/.test(sample)) return "zoning_map";
+  if (/zoning\s+(?:ordinance|code)|development\s+code/.test(sample)) return "zoning_ordinance";
   return "other";
 }
 
@@ -481,6 +644,8 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
   const entries = pageLines(pages);
   const specializedCandidates = documentType === "engagement_letter"
     ? buildEngagementLetterCandidates(entries)
+    : documentType === "purchase_contract"
+      ? buildPurchaseContractCandidates(pages)
     : documentType === "mls_sheet"
       ? buildMlsSheetCandidates(entries)
       : [];

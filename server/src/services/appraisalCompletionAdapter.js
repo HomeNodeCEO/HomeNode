@@ -81,10 +81,13 @@ function assignmentProfile(assignment) {
       seller_names: text(assignment.contract_seller_names, 1_000),
       contract_price: number(assignment.contract_price),
       contract_date: text(assignment.contract_date, 40),
+      closing_date: text(assignment.contract_closing_date, 40),
       loan_amount: number(assignment.loan_amount),
       down_payment: number(assignment.down_payment),
       earnest_money: number(assignment.earnest_money),
       seller_concessions: number(assignment.seller_concessions),
+      property_condition: text(assignment.contract_property_condition, 100),
+      repairs: text(assignment.contract_repairs, 5_000),
       seller_matches_public_records: typeof assignment.seller_matches_public_records === "boolean"
         ? assignment.seller_matches_public_records
         : null,

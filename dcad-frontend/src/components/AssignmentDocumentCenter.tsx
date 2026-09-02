@@ -52,6 +52,8 @@ const FIELD_LABELS: Record<string, string> = {
   down_payment: 'Down Payment',
   earnest_money: 'Earnest Money',
   seller_concessions: 'Seller Concessions',
+  contract_property_condition: 'Property Condition Provision',
+  contract_repairs: 'Seller Repairs / Treatments',
   seller_name: 'Seller',
   buyer_name: 'Buyer / Borrower',
   lender_client_name: 'Lender / Client',

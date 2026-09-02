@@ -58,8 +58,18 @@ test("assignment details allow a purchase contract with seller verification", ()
     subject_under_contract: true,
     contract_arms_length: true,
     contract_seller_names: "Pat Example",
+    contract_closing_date: "2026-09-24",
+    contract_property_condition: "seller_repairs",
+    contract_repairs: "Repair the active plumbing leak before closing.",
     seller_matches_public_records: true,
   }), true);
+});
+
+test("assignment details reject an unknown contract property-condition value", () => {
+  assert.throws(
+    () => validateAssignmentDetails({ contract_property_condition: "maybe" }),
+    /invalid_contract_property_condition/,
+  );
 });
 
 test("assignment details accept subject condition and neighborhood conformity review", () => {

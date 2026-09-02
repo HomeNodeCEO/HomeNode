@@ -12,6 +12,29 @@ export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
 const STALE_PROCESSING_MINUTES = 15;
 
+export function assignmentDocumentRequestedType(document = {}) {
+  const recordedType = (cleanText(
+    document?.extraction_summary?.requested_document_type,
+    100,
+  ) || "").toLowerCase();
+  if (recordedType) {
+    try {
+      return normalizeDocumentType(recordedType);
+    } catch {
+      // Fall through to the stored document type when legacy metadata is invalid.
+    }
+  }
+  const storedType = normalizeDocumentType(document?.document_type || "other");
+  const fileLabel = `${document?.file_name || ""} ${document?.title || ""}`;
+  if (
+    ["zoning_map", "zoning_ordinance"].includes(storedType)
+    && /\b(?:contract|purchase agreement)\b/i.test(fileLabel)
+  ) {
+    return "other";
+  }
+  return storedType;
+}
+
 function cleanText(value, maximum = 4_000) {
   const text = String(value ?? "").trim();
   return text ? text.slice(0, maximum) : null;
@@ -163,11 +186,14 @@ const DOCUMENT_ASSIGNMENT_FIELDS = Object.freeze({
   lender_client_address: "lender_client_address",
   contract_price: "contract_price",
   contract_date: "contract_date",
+  closing_date: "contract_closing_date",
   loan_amount: "loan_amount",
   down_payment: "down_payment",
   earnest_money: "earnest_money",
   seller_concessions: "seller_concessions",
   seller_name: "contract_seller_names",
+  contract_property_condition: "contract_property_condition",
+  contract_repairs: "contract_repairs",
 });
 
 function confirmedCandidateValue(candidate) {
@@ -813,8 +839,9 @@ export async function processAssignmentDocument(pool, documentId, {
     const documentWithContent = Buffer.isBuffer(document.content) && document.content.length
       ? document
       : await loadAssignmentDocumentContent(pool, id, { storage });
+    const requestedDocumentType = assignmentDocumentRequestedType(document);
     const extraction = await extractPdfEvidence(documentWithContent.content, {
-      requestedType: document.document_type,
+      requestedType: requestedDocumentType,
       fileName: document.file_name,
       ocrProvider,
     });
@@ -898,6 +925,7 @@ export async function processAssignmentDocument(pool, documentId, {
             candidate_count: extraction.candidates.length,
             suggested_candidate_count: suggestedCandidateCount,
             review_reason: extraction.review_reason,
+            requested_document_type: requestedDocumentType,
             ocr: extraction.ocr_metadata,
             processing_attempts: Number(document.processing_attempts || 0),
           }),

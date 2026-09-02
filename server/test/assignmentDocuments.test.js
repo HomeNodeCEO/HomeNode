@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   assignmentDetailsFromConfirmedDocument,
+  assignmentDocumentRequestedType,
   assignmentDocumentCandidateReviewKey,
   assignmentDocumentRetryDelayMs,
   buildAssignmentDocumentObjectKey,
@@ -13,6 +14,22 @@ import {
   loadAssignmentDocumentContent,
   retainedAssignmentDocumentReview,
 } from "../src/services/assignmentDocuments.js";
+
+test("reprocessing preserves explicit types but reclassifies a legacy contract mistaken for zoning", () => {
+  assert.equal(assignmentDocumentRequestedType({
+    document_type: "zoning_ordinance",
+    file_name: "Contract.pdf",
+  }), "other");
+  assert.equal(assignmentDocumentRequestedType({
+    document_type: "purchase_contract",
+    file_name: "Contract.pdf",
+    extraction_summary: { requested_document_type: "other" },
+  }), "other");
+  assert.equal(assignmentDocumentRequestedType({
+    document_type: "zoning_ordinance",
+    file_name: "Garland zoning ordinance.pdf",
+  }), "zoning_ordinance");
+});
 
 test("confirmed engagement evidence replaces a stale assignment type and persists client fields", () => {
   const result = assignmentDetailsFromConfirmedDocument({
@@ -43,11 +60,17 @@ test("confirmed purchase-contract evidence marks the subject under contract with
   }, [
     { field_key: "contract_price", review_status: "confirmed", confirmed_value: "425000" },
     { field_key: "seller_name", review_status: "confirmed", confirmed_value: "Example Seller" },
+    { field_key: "closing_date", review_status: "confirmed", confirmed_value: "2026-09-24" },
+    { field_key: "contract_property_condition", review_status: "confirmed", confirmed_value: "seller_repairs" },
+    { field_key: "contract_repairs", review_status: "confirmed", confirmed_value: "Repair the active plumbing leak." },
   ], "purchase_contract");
   assert.deepEqual(result.assignmentDetails.assignment_types, ["rehab", "purchase_transaction"]);
   assert.equal(result.assignmentDetails.subject_under_contract, true);
   assert.equal(result.assignmentDetails.contract_price, "425000");
   assert.equal(result.assignmentDetails.contract_seller_names, "Example Seller");
+  assert.equal(result.assignmentDetails.contract_closing_date, "2026-09-24");
+  assert.equal(result.assignmentDetails.contract_property_condition, "seller_repairs");
+  assert.equal(result.assignmentDetails.contract_repairs, "Repair the active plumbing leak.");
 });
 
 test("assignment document object keys are assignment-scoped and content-addressed", () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -79,4 +80,16 @@ test("only a purchase contract confirms that the subject is under contract", () 
     subjectUnderContractFromConfirmedDocument(true, "heloc", "engagement_letter"),
     true,
   );
+});
+
+test("contract fields remain visible without manually selecting Subject Under Contract", () => {
+  const source = readFileSync(new URL(
+    "../../dcad-frontend/src/components/ListingsContractsSalesContent.tsx",
+    import.meta.url,
+  ), "utf8");
+  assert.doesNotMatch(source, /Contract terms remain hidden until Subject Under Contract/);
+  assert.match(source, /contract_closing_date/);
+  assert.match(source, /contract_property_condition/);
+  assert.match(source, /contract_repairs/);
+  assert.match(source, /approved purchase contract will add Purchase Transaction automatically/i);
 });

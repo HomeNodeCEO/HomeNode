@@ -249,10 +249,13 @@ export interface AssignmentDetailsPayload {
   contract_seller_names?: string;
   contract_price?: string | number;
   contract_date?: string;
+  contract_closing_date?: string;
   loan_amount?: string | number;
   down_payment?: string | number;
   earnest_money?: string | number;
   seller_concessions?: string | number;
+  contract_property_condition?: string;
+  contract_repairs?: string;
   seller_matches_public_records?: boolean | null;
   seller_mismatch_explanation?: string;
   neighborhood_land_use_one_unit_pct?: string | number;

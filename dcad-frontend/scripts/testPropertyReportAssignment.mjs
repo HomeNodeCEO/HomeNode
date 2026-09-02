@@ -11,6 +11,8 @@ test("assignment hydration preserves explicit values and clones arrays", () => {
     pud: true,
     subject_conforms_to_neighborhood: false,
     assignment_types: ["purchase_transaction"],
+    contract_closing_date: "2026-09-24",
+    contract_property_condition: "as_is",
     lender_revision_count: -2,
   };
   const draft = assignmentDraftFromDetail(source);
@@ -18,6 +20,8 @@ test("assignment hydration preserves explicit values and clones arrays", () => {
   assert.equal(draft.subject_conforms_to_neighborhood, false);
   assert.deepEqual(draft.assignment_types, ["purchase_transaction"]);
   assert.notEqual(draft.assignment_types, source.assignment_types);
+  assert.equal(draft.contract_closing_date, "2026-09-24");
+  assert.equal(draft.contract_property_condition, "as_is");
   assert.equal(draft.lender_revision_count, 0);
 });
 
@@ -43,6 +47,7 @@ test("assignment validation retains established contract safeguards", () => {
     contract_arms_length: null,
     contract_price: "",
     contract_date: "",
+    contract_closing_date: "",
     seller_matches_public_records: null,
   });
   assert.deepEqual(errors, [
@@ -50,6 +55,7 @@ test("assignment validation retains established contract safeguards", () => {
     "Select Yes or No for Arms Length.",
     "Enter the subject contract price.",
     "Enter a valid subject contract date.",
+    "Enter a valid contract closing date.",
     "Select Yes or No for whether the seller matches public records.",
   ]);
 });

@@ -4,7 +4,6 @@ import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import pg from "pg";
 import nodemailer from "nodemailer";
-import { parseClassFilter } from "./util/parseClasses.js";
 import { normalizePropertyCity, parsePropertySearch } from "./util/propertySearch.js";
 import {
   analyzeComparableOutliers,
@@ -209,6 +208,7 @@ import { startUadArtifactRecoveryMonitor } from "./modules/uad/uadArtifactRecove
 import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.js";
 import { createMobileAuthenticator, createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
+import { createPropertyCatalogRouter } from "./modules/propertyCatalog/router.js";
 import {
   createReportFile,
   listReportFiles,
@@ -6781,98 +6781,7 @@ app.get("/api/sales/:sourceRecordId/photos", async (req, res) => {
   }
 });
 
-/**
- * Helper to build WHERE for classes (numeric ranges + labels).
- * Returns { whereSql, params } pieces to plug into the main query.
- */
-function buildClassWhere({ classes, county, neighborhoods }) {
-  const { exact, lows, highs, labels } = parseClassFilter(String(classes || ""));
-  const counties = String(county || "").split(",").map(s => s.trim()).filter(Boolean);
-  const nbhds   = String(neighborhoods || "").split(",").map(s => s.trim()).filter(Boolean);
-
-  const where = [];
-  const params = [];
-
-  // Build the class OR-group
-  const classParts = [];
-  if (exact.length || lows.length || highs.length) {
-    classParts.push(
-      `matches_classes_lohi(c.building_class_int, $${params.push(exact)}::int[], $${params.push(lows)}::int[], $${params.push(highs)}::int[])`
-    );
-  }
-  if (labels.length) {
-    classParts.push(`UPPER(c.building_class) = ANY($${params.push(labels.map(l => l.toUpperCase()))}::text[])`);
-  }
-  if (classParts.length) where.push(`(${classParts.join(" OR ")})`);
-
-  if (counties.length) where.push(`p.county = ANY($${params.push(counties)}::text[])`);
-  if (nbhds.length)    where.push(`p.neighborhood_code = ANY($${params.push(nbhds)}::text[])`);
-
-  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  return { whereSql, params };
-}
-
-/**
- * GET /api/properties/search
- * Query:
- *   - classes: e.g. "14" or "7,12,25; 2-3; 5-6" or "CONDOMINIUM; LAND ONLY"
- *   - limit: number (default 100, max 1000)
- *   - county, neighborhoods: optional comma-separated lists
- */
-app.get("/api/properties/search", async (req, res) => {
-  try {
-    const { classes = "", limit = "100", county = "", neighborhoods = "" } = req.query;
-    const lim = Math.min(parseInt(limit, 10) || 100, 1000);
-
-    const { whereSql, params } = buildClassWhere({ classes, county, neighborhoods });
-
-    // If literally no filters, you can choose to return an error or everything. We?ll just return first N.
-    const sql = `
-      SELECT p.account_id, p.county, p.situs_address,
-             c.building_class, c.building_class_int
-      FROM properties p
-      JOIN primary_building_class c USING (account_id)
-      ${whereSql}
-      ORDER BY p.account_id
-      LIMIT $${params.push(lim)}
-    `;
-
-    const { rows } = await pool.query(sql, params);
-    res.json({ count: rows.length, rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "query_failed" });
-  }
-});
-
-/**
- * GET /api/stats/class-distribution
- * Same filters as /search; returns grouped counts by class label & code.
- */
-app.get("/api/stats/class-distribution", async (req, res) => {
-  try {
-    const { classes = "", county = "", neighborhoods = "" } = req.query;
-    const { whereSql, params } = buildClassWhere({ classes, county, neighborhoods });
-
-    const sql = `
-      SELECT
-        c.building_class       AS class_label,
-        c.building_class_int   AS class_code_int,
-        COUNT(*)::bigint       AS n
-      FROM properties p
-      JOIN primary_building_class c USING (account_id)
-      ${whereSql}
-      GROUP BY c.building_class, c.building_class_int
-      ORDER BY n DESC, class_label NULLS LAST
-    `;
-
-    const { rows } = await pool.query(sql, params);
-    res.json({ count: rows.length, rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "stats_failed" });
-  }
-});
+app.use(createPropertyCatalogRouter({ pool }));
 
 const port = parseInt(process.env.PORT || "4000", 10);
 app.use(jsonErrorHandler);

@@ -33,9 +33,6 @@ import {
 import {
   enqueueLocationBackfillAccounts,
   ensureLocationBackfillQueueSchema,
-  getLocationBackfillStatus,
-  runLocationBackfillBatch,
-  seedLocationBackfillQueue,
   startLocationBackfillWorker,
 } from "./services/locationBackfillQueue.js";
 import {
@@ -73,16 +70,8 @@ import {
 import { summarizeComparableResults } from "./services/comparableResponseSummary.js";
 import {
   ensureCensusGeographySchema,
-  getCensusGeographyStatus,
-  lookupAccountCensusGeographyNow,
-  runCensusGeographyBatch,
-  seedCensusGeographyQueue,
   startCensusGeographyWorker,
 } from "./services/censusGeography.js";
-import {
-  fetchCensusCityProfile,
-  fetchCensusZipProfile,
-} from "./services/censusZipProfile.js";
 import { loadBoundaryStreetNames } from "./services/boundaryStreets.js";
 import {
   compactNeighborhoodProfileResponse,
@@ -186,6 +175,7 @@ import { createMobileAuthenticator, createOidcAccessTokenVerifier } from "./modu
 import { createMobileRouter } from "./modules/mobile/router.js";
 import { createPropertyCatalogRouter } from "./modules/propertyCatalog/router.js";
 import { createOperationalRouter } from "./modules/operations/router.js";
+import { createGeographyOperationsRouter } from "./modules/operations/geographyRouter.js";
 import { createSignupRouter } from "./modules/signup/router.js";
 import { createAppraisalRatingsRouter } from "./modules/appraisalRatings/router.js";
 import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
@@ -841,115 +831,13 @@ function requireEditor(req, res) {
   return true;
 }
 
-/** Coordinate coverage and queue health for mapped sale accounts. */
-app.get("/api/location-backfill/status", async (_req, res) => {
-  try {
-    await locationBackfillReady;
-    await ensureLocationBackfillQueueSchema(pool);
-    return res.json(await getLocationBackfillStatus(pool));
-  } catch (error) {
-    console.error("location backfill status failed", error);
-    return res.status(500).json({ error: "location_backfill_status_failed" });
-  }
-});
-
-/** Explicit maintenance run; ordinary imports and sweeps remain automatic. */
-app.post("/api/location-backfill/run", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await locationBackfillReady;
-    await ensureLocationBackfillQueueSchema(pool);
-    const seed = await seedLocationBackfillQueue(pool, {
-      limit: req.body?.seed_limit,
-    });
-    const result = await runLocationBackfillBatch(pool, {
-      batchSize: req.body?.batch_size,
-      maximumAttempts: process.env.LOCATION_BACKFILL_MAX_ATTEMPTS,
-    });
-    return res.json({ ok: true, seed, result });
-  } catch (error) {
-    console.error("location backfill maintenance run failed", error);
-    return res.status(500).json({ error: "location_backfill_run_failed" });
-  }
-});
-
-/** Census tract coverage for every property with a cached parcel coordinate. */
-app.get("/api/census-geography/status", async (_req, res) => {
-  try {
-    await censusGeographyReady;
-    await ensureCensusGeographySchema(pool);
-    return res.json(await getCensusGeographyStatus(pool));
-  } catch (error) {
-    console.error("census geography status failed", error);
-    return res.status(500).json({ error: "census_geography_status_failed" });
-  }
-});
-
-/** Give a report user one validated tract immediately without waiting for the queue. */
-app.post("/api/accounts/:id/census-geography/lookup", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  if (!requireEditor(req, res)) return;
-  try {
-    await accountQualityReady;
-    await censusGeographyReady;
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    const censusGeography = await lookupAccountCensusGeographyNow(pool, canonicalId);
-    return res.json({ ok: true, account_id: canonicalId, census_geography: censusGeography });
-  } catch (error) {
-    const code = String(error?.code || error?.message || "");
-    if (code === "account_not_found") return res.status(404).json({ error: code });
-    if (code === "census_lookup_input_missing") return res.status(422).json({ error: code });
-    console.error("on-demand census geography lookup failed", error);
-    return res.status(502).json({ error: "census_geography_lookup_failed" });
-  }
-});
-
-/** Latest configured ACS 5-year unemployment estimate for a ZIP/ZCTA. */
-app.get("/api/census/zip-profile/:postalCode", async (req, res) => {
-  try {
-    return res.json(await fetchCensusZipProfile(req.params.postalCode));
-  } catch (error) {
-    const code = String(error?.code || error?.message || "census_zip_profile_failed");
-    const status = Number(error?.status) || 502;
-    if (status >= 500) console.error("Census ZIP profile lookup failed", code);
-    return res.status(status).json({ error: code });
-  }
-});
-
-/** Latest configured ACS 5-year unemployment estimate for a city/place. */
-app.get("/api/census/city-profile", async (req, res) => {
-  try {
-    return res.json(await fetchCensusCityProfile(req.query.city, req.query.state));
-  } catch (error) {
-    const code = String(error?.code || error?.message || "census_city_profile_failed");
-    const status = Number(error?.status) || 502;
-    if (status >= 500) console.error("Census city profile lookup failed", code);
-    return res.status(status).json({ error: code });
-  }
-});
-
-/** Explicit maintenance run; the normal low-impact worker remains automatic. */
-app.post("/api/census-geography/run", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await censusGeographyReady;
-    await ensureCensusGeographySchema(pool);
-    const seed = await seedCensusGeographyQueue(pool, {
-      limit: req.body?.seed_limit,
-    });
-    const result = await runCensusGeographyBatch(pool, {
-      batchSize: req.body?.batch_size,
-      maximumAttempts: process.env.CENSUS_GEOGRAPHY_MAX_ATTEMPTS,
-    });
-    return res.json({ ok: true, seed, result });
-  } catch (error) {
-    console.error("census geography maintenance run failed", error);
-    return res.status(500).json({ error: "census_geography_run_failed" });
-  }
-});
+app.use(createGeographyOperationsRouter({
+  pool,
+  locationBackfillReady,
+  censusGeographyReady,
+  accountQualityReady,
+  requireEditor,
+}));
 
 /** Unmatched closed sales remain visible until a user verifies their CAD account. */
 app.get("/api/sales/reconciliation-queue", async (req, res) => {

@@ -57,6 +57,28 @@ application has its own confidential-client ID and audience. Merely configuring
 these values does not show the login gate or disable editor-key access; explicit
 activation does both.
 
+Production must always declare its authentication mode explicitly. During the
+temporary preparation stage, set both values below and choose a reviewed future
+UTC date for the rollout deadline:
+
+```text
+APPLICATION_AUTHENTICATION_REQUIRED=false
+LEGACY_AUTH_ROLLOUT_UNTIL=YYYY-MM-DD
+```
+
+Production startup rejects a missing, blank, or non-literal authentication
+value. Only the exact lowercase strings `true` and `false` are accepted. A
+production `false` value also fails startup when the rollout date is missing,
+malformed, today, or in the past. Development and tests retain the historical
+default when the setting is absent.
+
+Valid rollout mode remains ready so an approved migration window does not take
+desktop or mobile synchronization offline. `/ready` exposes only stable
+`legacy_auth_rollout_*` warning codes and no configured values; monitoring must
+alert on the active, expiring, or expired posture. A process that crosses the
+deadline continues serving until its next restart or deployment, when startup
+fails closed. Extend the deadline only through a reviewed configuration change.
+
 The browser authorization-code flow uses state, PKCE, and a signed,
 short-lived transaction cookie. HomeNode verifies the returned OpenID Connect
 ID token against the web client ID and requires its nonce to match that signed
@@ -168,6 +190,10 @@ The shared editor key remains a temporary migration path only while enforcement
 is disabled. After all expected users can log in and access the correct
 organization files, activate mandatory authentication; the stored key then
 becomes inert and may be removed from the hosting environment separately.
+
+After private workflows activate mandatory authentication, rollback may use
+only a previous authentication-enforcing release or maintenance mode. Never
+restore `APPLICATION_AUTHENTICATION_REQUIRED=false` as an incident rollback.
 
 ## Storage remains independent
 

@@ -153,6 +153,25 @@ test("mandatory unified authentication fails closed across the legacy API surfac
   assert.match(server.slice(legacyGate, accountRead), /authentication_required/);
 });
 
+test("one startup policy controls HTTP, browser, and legacy enforcement without moving mobile", () => {
+  const server = read("../src/oldServer.js");
+  const policyCreation = server.indexOf(
+    "const applicationAuthenticationPolicy = createApplicationAuthenticationPolicy()",
+  );
+  const databasePool = server.indexOf("const pool = new pg.Pool(");
+  const mobileMount = server.indexOf('app.use("/api/mobile"');
+  const authStatus = server.indexOf('app.get("/api/auth/me"');
+  const legacyGate = server.indexOf('app.use("/api", (req, res, next) =>', authStatus);
+  assert.ok(policyCreation >= 0 && policyCreation < databasePool);
+  assert.ok(mobileMount > databasePool && legacyGate > mobileMount);
+  assert.match(server, /createHttpSecurityConfiguration\(process\.env, \{\s+authenticationPolicy: applicationAuthenticationPolicy/);
+  assert.match(server, /createWebAuthRouter\(\{\s+pool,\s+verifier: webOidcVerifier,\s+authenticationPolicy: applicationAuthenticationPolicy/);
+  assert.doesNotMatch(
+    server,
+    /environmentFlag\(\s*process\.env\.APPLICATION_AUTHENTICATION_REQUIRED/,
+  );
+});
+
 test("browser authentication bootstrap fails visibly instead of exposing an empty application", () => {
   const frontend = read("../../dcad-frontend/src/features/auth/ApplicationAuth.tsx");
   assert.match(frontend, /if \(!statusResponse\.ok\) throw new Error\('authentication_status_unavailable'\)/);

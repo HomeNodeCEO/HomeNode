@@ -13,6 +13,28 @@ function memorySnapshot(memoryUsage) {
   });
 }
 
+function securitySnapshot(loadSnapshot) {
+  try {
+    const value = loadSnapshot?.() || {};
+    const status = ["ready", "degraded", "development"].includes(value.status)
+      ? value.status
+      : "degraded";
+    const mode = /^[a-z0-9_]{1,80}$/.test(String(value.mode || ""))
+      ? String(value.mode)
+      : "unavailable";
+    const warnings = [...new Set((Array.isArray(value.warnings) ? value.warnings : [])
+      .map((warning) => String(warning || ""))
+      .filter((warning) => /^[a-z0-9_]{1,120}$/.test(warning)))];
+    return Object.freeze({ status, mode, warnings: Object.freeze(warnings) });
+  } catch {
+    return Object.freeze({
+      status: "degraded",
+      mode: "unavailable",
+      warnings: Object.freeze(["security_posture_unavailable"]),
+    });
+  }
+}
+
 async function queryWithDeadline(pool, timeoutMs) {
   let timer = null;
   try {
@@ -34,6 +56,7 @@ export function createRuntimeHealthHandlers({
   pool,
   isShuttingDown = () => false,
   artifactExecutorSnapshot = () => ({ ready: true, active: 0, queued: 0 }),
+  securityPostureSnapshot = () => ({ status: "ready", mode: "enforced", warnings: [] }),
   memoryUsage = () => process.memoryUsage(),
   constrainedMemory = () => process.constrainedMemory?.(),
   environment = process.env,
@@ -86,6 +109,8 @@ export function createRuntimeHealthHandlers({
     if (waiting > maxWaitingClients) blockers.push("database_pool_saturated");
     const artifacts = artifactExecutorSnapshot();
     if (artifacts?.ready === false) blockers.push("artifact_executor_unavailable");
+    const security = securitySnapshot(securityPostureSnapshot);
+    if (security.mode === "unavailable") blockers.push("security_posture_unavailable");
     const memory = memorySnapshot(memoryUsage);
     if (maxRssMb > 0 && memory.rss_mb >= maxRssMb) blockers.push("memory_pressure");
     const ok = blockers.length === 0;
@@ -93,6 +118,7 @@ export function createRuntimeHealthHandlers({
       ok,
       status: ok ? "ready" : "degraded",
       blockers,
+      warnings: security.warnings,
       checks: {
         database: {
           connected: databaseConnected,
@@ -105,6 +131,7 @@ export function createRuntimeHealthHandlers({
           },
         },
         artifact_executor: artifacts,
+        security,
         memory: { ...memory, maximum_rss_mb: maxRssMb || null },
       },
     });

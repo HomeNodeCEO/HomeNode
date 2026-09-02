@@ -29,6 +29,7 @@ test("strict UAD security fails closed without authentication and explicit CORS"
 test("strict UAD security accepts only explicit HTTPS origins", () => {
   const configuration = createHttpSecurityConfiguration({
     NODE_ENV: "production",
+    APPLICATION_AUTHENTICATION_REQUIRED: "true",
     UAD_SECURITY_STRICT: "true",
     UAD_AUTHENTICATION_REQUIRED: "true",
     CORS_ORIGIN: "https://redteam.homenode.com,https://review.homenode.com",
@@ -51,6 +52,7 @@ test("strict UAD security accepts only explicit HTTPS origins", () => {
   assert.throws(
     () => createHttpSecurityConfiguration({
       NODE_ENV: "production",
+      APPLICATION_AUTHENTICATION_REQUIRED: "true",
       CORS_ORIGIN: "http://redteam.homenode.com",
     }),
     /invalid_cors_origin/,
@@ -62,6 +64,7 @@ test("unified application authentication also protects UAD routes", () => {
     APPLICATION_AUTHENTICATION_REQUIRED: "true",
   });
   assert.equal(configuration.authenticationRequired, true);
+  assert.equal(configuration.applicationAuthenticationMode, "enforced");
 });
 
 test("signup throttling remains independently bounded", () => {
@@ -100,7 +103,10 @@ test("Render rate limiting uses Cloudflare's single-address client header", () =
 });
 
 test("global rate limiting leaves router policies and auth bootstrap checks independent", () => {
-  const enabled = createHttpSecurityConfiguration({ NODE_ENV: "production" });
+  const enabled = createHttpSecurityConfiguration({
+    NODE_ENV: "production",
+    APPLICATION_AUTHENTICATION_REQUIRED: "true",
+  });
   for (const path of [
     "/api/uad",
     "/api/uad/capabilities",

@@ -1,3 +1,5 @@
+import { createApplicationAuthenticationPolicy } from "./applicationAuthenticationPolicy.js";
+
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 300;
 const DEFAULT_API_RATE_LIMIT_MAX = 600;
@@ -53,13 +55,15 @@ function normalizedOrigin(value, { allowHttp = false } = {}) {
   return parsed.origin;
 }
 
-export function createHttpSecurityConfiguration(environment = process.env) {
+export function createHttpSecurityConfiguration(environment = process.env, {
+  authenticationPolicy = createApplicationAuthenticationPolicy(environment),
+} = {}) {
   const strict = enabled(environment.UAD_SECURITY_STRICT);
   // APPLICATION_AUTHENTICATION_REQUIRED is the single browser-application
   // activation switch. Keep the older UAD-specific switch as a compatible,
   // stricter override for isolated UAD deployments.
   const authenticationRequired = enabled(environment.UAD_AUTHENTICATION_REQUIRED)
-    || enabled(environment.APPLICATION_AUTHENTICATION_REQUIRED);
+    || authenticationPolicy.authenticationRequired;
   const rateLimitEnabled = strict || enabled(environment.UAD_RATE_LIMIT_ENABLED);
   const apiRateLimitEnabled = environment.NODE_ENV === "production"
     || enabled(environment.API_RATE_LIMIT_ENABLED);
@@ -84,6 +88,7 @@ export function createHttpSecurityConfiguration(environment = process.env) {
   return Object.freeze({
     strict,
     authenticationRequired,
+    applicationAuthenticationMode: authenticationPolicy.mode,
     corsRestricted: origins.length > 0,
     corsOrigins: Object.freeze([...new Set(origins)]),
     rateLimitEnabled,

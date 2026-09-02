@@ -250,3 +250,20 @@ test("UAD purchase contracts use one batch review request instead of per-field s
   assert.match(routerSource, /confirmAssignmentDocumentCandidates/);
   assert.match(routerSource, /synchronizeUadPurchaseContract/);
 });
+
+test("opening UAD contract evidence is read-only and remains usable when the PDF preview fails", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const centerSource = await readFile(
+    new URL("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx", import.meta.url),
+    "utf8",
+  );
+  const loadDocumentSource = centerSource.slice(
+    centerSource.indexOf("const loadDocument = useCallback"),
+    centerSource.indexOf("useEffect(() => {", centerSource.indexOf("const loadDocument = useCallback")),
+  );
+  assert.match(loadDocumentSource, /Promise\.allSettled/);
+  assert.match(loadDocumentSource, /setSelectedDocument\(document\)/);
+  assert.match(loadDocumentSource, /Contract information loaded for review/);
+  assert.doesNotMatch(loadDocumentSource, /synchronizeUadPurchaseContract/);
+  assert.match(centerSource, /The contract details are available below/);
+});

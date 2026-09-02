@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const metroRoot = path.dirname(require.resolve('metro/package.json'));
+const expoRequire = createRequire(require.resolve('expo/package.json'));
+const expoCliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json'));
+const metroRoot = path.dirname(expoCliRequire.resolve('metro/package.json'));
 const imageSizeModule = require.resolve('image-size', { paths: [metroRoot] });
 
 const malformedImages = {
@@ -61,7 +63,7 @@ test('patched image-size rejects malformed boxes without blocking the build proc
 });
 
 test('Expo xcode tooling resolves the patched uuid release', () => {
-  const xcodeRoot = path.dirname(require.resolve('xcode/package.json'));
+  const xcodeRoot = path.dirname(expoCliRequire.resolve('xcode/package.json'));
   const uuidPackage = require(
     require.resolve('uuid/package.json', { paths: [xcodeRoot] }),
   ) as { version: string };

@@ -3,6 +3,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogC
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Save, X, Plus } from "lucide-react";
+import {
+  editableInputValue,
+  normalizeSecondaryImprovements,
+  normalizeSectionEditData,
+  type SectionChangeLog,
+  type SectionEditData,
+  type SecondaryImprovement,
+} from "@/features/propertyDetails/sectionEditData";
 
 // Props are intentionally generic so you can reuse this for any section.
 export default function SectionEditModal({
@@ -15,14 +23,14 @@ export default function SectionEditModal({
   isOpen: boolean;
   onClose: (open: boolean) => void;
   section: string;
-  data: any;
-  onSave: (updates: any, changeLog: any) => Promise<void> | void;
+  data: unknown;
+  onSave: (updates: SectionEditData, changeLog: SectionChangeLog) => Promise<void> | void;
 }) {
-  const [editData, setEditData] = useState<any>({});
+  const [editData, setEditData] = useState<SectionEditData>({});
   const [isSaving, setIsSaving] = useState(false);
 
   React.useEffect(() => {
-    if (isOpen) setEditData(data || {});
+    if (isOpen) setEditData(normalizeSectionEditData(data));
   }, [isOpen, data]);
 
   const handleSave = async () => {
@@ -46,22 +54,27 @@ export default function SectionEditModal({
     }
   };
 
-  const handleSecondaryImprovementChange = (index: number, field: string, value: any) => {
-    const next = [...(editData.secondary_improvements || [])];
+  const handleSecondaryImprovementChange = (
+    index: number,
+    field: keyof SecondaryImprovement,
+    value: string | number,
+  ) => {
+    const next = normalizeSecondaryImprovements(editData.secondary_improvements);
     if (!next[index]) next[index] = {};
-    next[index][field] = value;
-    setEditData((p: any) => ({ ...p, secondary_improvements: next }));
+    next[index] = { ...next[index], [field]: value };
+    setEditData((previous) => ({ ...previous, secondary_improvements: next }));
   };
   const addSecondaryImprovement = () => {
     const next = [
-      ...(editData.secondary_improvements || []),
+      ...normalizeSecondaryImprovements(editData.secondary_improvements),
       { improvement_type: "", construction: "", floor: "", exterior_wall: "", area_sqft: 0 },
     ];
-    setEditData((p: any) => ({ ...p, secondary_improvements: next }));
+    setEditData((previous) => ({ ...previous, secondary_improvements: next }));
   };
   const removeSecondaryImprovement = (index: number) => {
-    const next = (editData.secondary_improvements || []).filter((_: any, i: number) => i !== index);
-    setEditData((p: any) => ({ ...p, secondary_improvements: next }));
+    const next = normalizeSecondaryImprovements(editData.secondary_improvements)
+      .filter((_item, itemIndex) => itemIndex !== index);
+    setEditData((previous) => ({ ...previous, secondary_improvements: next }));
   };
 
   const renderFields = () => {
@@ -75,24 +88,24 @@ export default function SectionEditModal({
                 <label className="text-sm font-medium">Square Footage</label>
                 <Input
                   type="number"
-                  value={editData.square_footage ?? ""}
-                  onChange={(e) => setEditData((p: any) => ({ ...p, square_footage: parseInt(e.target.value) || 0 }))}
+                  value={editableInputValue(editData.square_footage)}
+                  onChange={(e) => setEditData((previous) => ({ ...previous, square_footage: parseInt(e.target.value) || 0 }))}
                 />
               </div>
               <div>
                 <label className="text-sm font-medium">Total Area Sqft</label>
                 <Input
                   type="number"
-                  value={editData.total_area_sqft ?? ""}
-                  onChange={(e) => setEditData((p: any) => ({ ...p, total_area_sqft: parseInt(e.target.value) || 0 }))}
+                  value={editableInputValue(editData.total_area_sqft)}
+                  onChange={(e) => setEditData((previous) => ({ ...previous, total_area_sqft: parseInt(e.target.value) || 0 }))}
                 />
               </div>
               <div>
                 <label className="text-sm font-medium">Stories</label>
                 <Input
                   type="number"
-                  value={editData.stories ?? ""}
-                  onChange={(e) => setEditData((p: any) => ({ ...p, stories: parseInt(e.target.value) || 0 }))}
+                  value={editableInputValue(editData.stories)}
+                  onChange={(e) => setEditData((previous) => ({ ...previous, stories: parseInt(e.target.value) || 0 }))}
                 />
               </div>
               <div>
@@ -100,8 +113,8 @@ export default function SectionEditModal({
                 <Input
                   type="number"
                   step="0.1"
-                  value={editData.bath_count ?? ""}
-                  onChange={(e) => setEditData((p: any) => ({ ...p, bath_count: parseFloat(e.target.value) || 0 }))}
+                  value={editableInputValue(editData.bath_count)}
+                  onChange={(e) => setEditData((previous) => ({ ...previous, bath_count: parseFloat(e.target.value) || 0 }))}
                 />
               </div>
 
@@ -114,7 +127,7 @@ export default function SectionEditModal({
                   </Button>
                 </div>
                 <div className="space-y-3 max-h-48 overflow-auto">
-                  {(editData.secondary_improvements || []).map((imp: any, idx: number) => (
+                  {normalizeSecondaryImprovements(editData.secondary_improvements).map((imp, idx) => (
                     <div key={idx} className="p-3 border rounded-lg bg-slate-50">
                       <div className="flex justify-between items-center mb-2">
                         <span className="font-medium">#{idx + 1}</span>
@@ -125,34 +138,34 @@ export default function SectionEditModal({
                       <div className="grid grid-cols-2 gap-2">
                         <Input
                           placeholder="Improvement Type"
-                          value={imp.improvement_type || ""}
+                          value={editableInputValue(imp.improvement_type)}
                           onChange={(e) => handleSecondaryImprovementChange(idx, "improvement_type", e.target.value)}
                         />
                         <Input
                           placeholder="Construction"
-                          value={imp.construction || ""}
+                          value={editableInputValue(imp.construction)}
                           onChange={(e) => handleSecondaryImprovementChange(idx, "construction", e.target.value)}
                         />
                         <Input
                           placeholder="Floor"
-                          value={imp.floor || ""}
+                          value={editableInputValue(imp.floor)}
                           onChange={(e) => handleSecondaryImprovementChange(idx, "floor", e.target.value)}
                         />
                         <Input
                           placeholder="Exterior Wall"
-                          value={imp.exterior_wall || ""}
+                          value={editableInputValue(imp.exterior_wall)}
                           onChange={(e) => handleSecondaryImprovementChange(idx, "exterior_wall", e.target.value)}
                         />
                         <Input
                           placeholder="Area Sqft"
                           type="number"
-                          value={imp.area_sqft || ""}
+                          value={editableInputValue(imp.area_sqft)}
                           onChange={(e) => handleSecondaryImprovementChange(idx, "area_sqft", parseInt(e.target.value) || 0)}
                         />
                       </div>
                     </div>
                   ))}
-                  {(!editData.secondary_improvements || editData.secondary_improvements.length === 0) && (
+                  {normalizeSecondaryImprovements(editData.secondary_improvements).length === 0 && (
                     <p className="text-slate-500 text-sm">No secondary improvements yet.</p>
                   )}
                 </div>

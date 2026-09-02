@@ -47,16 +47,17 @@ test("authenticated mobile discovery and replication exclude organization-less l
 test("desktop latest-file lookups remain organization scoped after authentication", () => {
   const server = read("../src/oldServer.js");
   const assignmentList = read("../src/modules/assignmentFiles/listRouter.js");
+  const assignmentMutations = read("../src/modules/assignmentFiles/mutationRouter.js");
   const propertyTax = read("../src/modules/mobile/desktopPropertyTax.js");
   const propertyTaxRouter = read("../src/modules/mobile/desktopPropertyTaxRouter.js");
-  assert.match(server, /AND \(\$2::uuid IS NULL OR organization_id = \$2\)/);
+  assert.match(assignmentMutations, /AND \(\$2::uuid IS NULL OR organization_id = \$2\)/);
   assert.match(propertyTax, /report_file\.organization_id = ANY\(\$3::uuid\[\]\)/);
   assert.match(server, /createDesktopPropertyTaxRouter/);
   assert.match(propertyTaxRouter, /organizationIds: organizationIdsForRead\(req\)/);
   assert.match(assignmentList, /const enforcedIdentity = authenticationRequired && req\.mobileAuth/);
   assert.match(assignmentList, /legacy_assignment_details: enforcedIdentity/);
   assert.match(assignmentList, /queriedRows\.filter\(\(row\) => decideAccess\(req\.mobileAuth, row, "read"\)\)/);
-  assert.match(server, /if \(!applicationAuthenticationRequired \|\| !req\.mobileAuth\) \{\s+await mirrorLatestAssignmentDetails/);
+  assert.match(assignmentMutations, /if \(!authenticationRequired \|\| !req\.mobileAuth\) \{\s+await mirrorLatestAssignmentDetails/);
 });
 
 test("previous-appraisal history, completion, and replication enforce canonical ownership", () => {

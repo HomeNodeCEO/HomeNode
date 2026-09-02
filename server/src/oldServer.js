@@ -91,8 +91,6 @@ import { ensurePropertyEnrichmentSchema } from "./services/propertyEnrichment.js
 import {
   ensureSalesReconciliationSchema,
   findAccountByCountyIdentifier,
-  listSalesReconciliationQueue,
-  reconcileSalesSourceRecord,
 } from "./services/salesReconciliation.js";
 import { TrestleClient } from "./services/trestleClient.js";
 import { getTrestleReplicationStatus } from "./services/trestleReplication.js";
@@ -176,6 +174,7 @@ import { createMobileRouter } from "./modules/mobile/router.js";
 import { createPropertyCatalogRouter } from "./modules/propertyCatalog/router.js";
 import { createOperationalRouter } from "./modules/operations/router.js";
 import { createGeographyOperationsRouter } from "./modules/operations/geographyRouter.js";
+import { createSalesReconciliationRouter } from "./modules/operations/salesReconciliationRouter.js";
 import { createSignupRouter } from "./modules/signup/router.js";
 import { createAppraisalRatingsRouter } from "./modules/appraisalRatings/router.js";
 import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
@@ -839,97 +838,13 @@ app.use(createGeographyOperationsRouter({
   requireEditor,
 }));
 
-/** Unmatched closed sales remain visible until a user verifies their CAD account. */
-app.get("/api/sales/reconciliation-queue", async (req, res) => {
-  try {
-    await salesReconciliationReady;
-    const queue = await listSalesReconciliationQueue(pool, {
-      limit: req.query.limit,
-      offset: req.query.offset,
-    });
-    return res.json(queue);
-  } catch (error) {
-    console.error("sales reconciliation queue failed", error);
-    return res.status(500).json({ error: "sales_reconciliation_queue_failed" });
-  }
-});
-
-/** Explicitly verify a sale-to-account link and upsert the canonical sale. */
-app.patch("/api/sales/:sourceRecordId/reconcile", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await salesReconciliationReady;
-    const result = await reconcileSalesSourceRecord(
-      pool,
-      req.params.sourceRecordId,
-      req.body,
-    );
-    try {
-      await locationBackfillReady;
-      await ensureLocationBackfillQueueSchema(pool);
-      await enqueueLocationBackfillAccounts(
-        pool,
-        [
-          {
-            account_id: result.account.account_id,
-            address: result.account.address,
-            county: result.account.county,
-          },
-        ],
-        {
-          reason: "sales_reconciliation",
-          priority: 200,
-        },
-      );
-    } catch (locationError) {
-      console.warn(
-        "manual sale link saved; location queueing deferred",
-        locationError?.message || locationError,
-      );
-    }
-    try {
-      await ensurePropertyContextAvailable();
-      await enqueuePropertyInfluenceAccounts(
-        pool,
-        [result.account.account_id],
-        {
-          reason: "sales_reconciliation",
-          priority: 200,
-        },
-      );
-    } catch (influenceError) {
-      // The confirmed sale remains saved. The durable sale trigger and the
-      // next maintenance seed provide two independent retry paths.
-      console.warn(
-        "manual sale link saved; influence queueing deferred",
-        influenceError?.message || influenceError,
-      );
-    }
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    const message = error?.message || "sales_reconciliation_failed";
-    let status = 500;
-    if (message === "source_record_not_found" || message === "account_not_found") {
-      status = 404;
-    } else if (
-      message === "ambiguous_collin_account_id" ||
-      message === "county_account_identifier_conflict"
-    ) {
-      status = 409;
-    } else if (
-      String(message).startsWith("invalid_") ||
-      message === "source_record_not_closed_sale" ||
-      message === "account_county_mismatch" ||
-      message === "account_identifier_mismatch"
-    ) {
-      status = 400;
-    }
-    if (status === 500) {
-      console.error("sales reconciliation failed", error);
-    }
-    return res.status(status).json({ error: message });
-  }
-});
+app.use(createSalesReconciliationRouter({
+  pool,
+  salesReconciliationReady,
+  locationBackfillReady,
+  requireEditor,
+  ensurePropertyContextAvailable,
+}));
 
 /** Batch-load manually verified condition and quality ratings for MLS source rows. */
 app.get("/api/sales/reviews", async (req, res) => {

@@ -114,6 +114,7 @@ type Props = {
     classification: string;
     primary_population: boolean;
     relevance_band: string;
+    appraiser_override?: 'included' | 'removed' | null;
     point: { type: 'Point'; coordinates: [number, number] };
   }>;
   onCustomGeometryChange?: (
@@ -141,6 +142,7 @@ function makeRelevanceFeatureCollection(
         classification: candidate.classification,
         primary_population: candidate.primary_population,
         relevance_band: candidate.relevance_band,
+        appraiser_override: candidate.appraiser_override || '',
       },
     })),
   };
@@ -1504,8 +1506,18 @@ export default function MarketConditionsAnalysis({
                 'insufficient_data', '#7c3aed',
                 '#64748b',
                 ],
-              'circle-stroke-width': ['case', ['get', 'primary_population'], 0.8, 0],
-              'circle-stroke-color': '#ffffff',
+              'circle-stroke-width': [
+                'case',
+                ['!=', ['get', 'appraiser_override'], ''], 2.25,
+                ['get', 'primary_population'], 0.8,
+                0,
+              ],
+              'circle-stroke-color': [
+                'match', ['get', 'appraiser_override'],
+                'included', '#e32ff7',
+                'removed', '#dc2626',
+                '#ffffff',
+              ],
               'circle-stroke-opacity': 0.8,
             },
           });
@@ -2298,6 +2310,7 @@ export default function MarketConditionsAnalysis({
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-orange-500" />Low relevance</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Excluded</span>
                 <span className="basis-full text-slate-500">White-outlined points form the primary statistical population used for neighborhood medians and predominant values.</span>
+                <span className="basis-full text-slate-500">Magenta outlines are appraiser-added pockets; red outlines are appraiser-removed pockets.</span>
                 {customGeometryOrigin === 'automatic' ? (
                   <span className="basis-full text-slate-500">
                     The dashed outline is a discovery envelope, not an appraiser-confirmed neighborhood boundary. Draw or edit the final narrative boundary as needed.

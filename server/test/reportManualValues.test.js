@@ -175,6 +175,9 @@ test("assignment details accept a complete neighborhood profile", () => {
       coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
     },
     neighborhood_boundary_confirmed: true,
+    neighborhood_relevance_removed_pocket_ids: ["analysis:selected:101"],
+    neighborhood_relevance_added_pocket_ids: ["analysis:review:202"],
+    neighborhood_relevance_override_updated_at: "2026-09-02T12:00:00.000Z",
     highest_best_use_conclusion: "current_use",
     highest_best_use_summary: "The current residential use is consistent with zoning.",
     highest_best_use_zoning_compatible: true,
@@ -226,4 +229,7 @@ test("assignment details enforce neighborhood totals and boundary confirmation",
   assert.throws(() => validateAssignmentDetails({
     subject_concluded_value: -1,
   }), /invalid_neighborhood_value_comparison/);
+  assert.throws(() => validateAssignmentDetails({
+    neighborhood_relevance_removed_pocket_ids: "analysis:selected:101",
+  }), /invalid_neighborhood_relevance_removed_pocket_ids/);
 });

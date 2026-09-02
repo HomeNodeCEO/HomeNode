@@ -12,10 +12,8 @@ import { getPropertyContextSourceHealth } from "./propertyContextStore.js";
 
 const RELEVANCE_SALE_HISTORY_MONTHS = 36;
 const MINIMUM_DISSIMILAR_POCKET_SIZE = 3;
-const MAX_CANDIDATE_PARCELS = 5000;
 const ADJACENCY_DISTANCE_METERS = 20;
-const PRIMARY_POPULATION_THRESHOLDS = Object.freeze([80, 70, 60]);
-const TARGET_PRIMARY_SALE_COUNT = 30;
+export const RELEVANT_POCKET_THRESHOLD = 55;
 const schemaReadyByPool = new WeakMap();
 
 function normalizedAccountId(value) {
@@ -81,9 +79,23 @@ function relevanceVisualization(candidates = []) {
       score: candidate.score,
       excluded: candidate.excluded === true,
       classification: candidate.statistical_classification,
-      cluster_id: candidate.contiguous_cluster?.id || candidate.cluster_id || null,
+      cluster_id: candidate.analysis_pocket?.id || candidate.cluster_id || null,
+      pocket_id: candidate.analysis_pocket?.id || candidate.cluster_id || null,
+      pocket_size: candidate.analysis_pocket?.size || candidate.cluster_size || 1,
+      system_selected: candidate.analysis_pocket?.system_selected ??
+        candidate.primary_population === true,
       primary_population: candidate.primary_population === true,
       relevance_band: candidate.relevance_band || null,
+      same_subject_neighborhood: candidate.same_subject_neighborhood === true,
+      year_built: candidate.year_built ?? null,
+      site_area_sqft: candidate.site_area_sqft ?? null,
+      gla_sqft: candidate.gla_sqft ??
+        candidate.gla_diagnostic?.candidate_gla_sqft ?? null,
+      market_value: candidate.market_value ?? null,
+      sale_price: candidate.sale_price ?? null,
+      sale_date: candidate.sale_date ?? null,
+      sales: candidate.sales || [],
+      distance_miles: candidate.distance_miles ?? null,
       point: candidate.point,
     }));
 }
@@ -201,6 +213,7 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
          parcel.residential_year_built AS year_built,
          parcel.parcel_area_sqft AS site_area_sqft,
          parcel.residential_area_sqft AS gla_sqft,
+         parcel.current_market_value AS market_value,
          ST_Distance(subject.center::geography, candidate_location.center::geography)
            / 1609.344 AS distance_miles,
          ST_AsGeoJSON(candidate_location.center)::jsonb AS point
@@ -216,7 +229,7 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
            (parcel.geom && boundary.geom AND ST_Covers(boundary.geom, candidate_location.center))
            OR (
              ST_DWithin(subject.center::geography, candidate_location.center::geography,
-               $4::double precision * 1609.344)
+               $3::double precision * 1609.344)
              AND (
                (NULLIF(BTRIM(subject.neighborhood_code), '') IS NOT NULL AND
                  UPPER(BTRIM(account.neighborhood_code)) = UPPER(BTRIM(subject.neighborhood_code)))
@@ -250,7 +263,6 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
                 THEN 0 ELSE 1 END,
                 ST_Distance(subject.center::geography, candidate_location.center::geography),
                 parcel.object_id
-       LIMIT $3
      )
      SELECT
        candidate.*,
@@ -266,7 +278,6 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
     [
       accountId,
       JSON.stringify(boundary),
-      MAX_CANDIDATE_PARCELS,
       radiusMiles,
     ],
   );
@@ -286,7 +297,7 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
     })
     .map((row) => String(row.account_id).trim())
     .filter(Boolean))];
-  const latestSales = await loadLatestCandidateSales(pool, saleAccountIds);
+  const salesByAccount = await loadCandidateSales(pool, saleAccountIds);
   return {
     subject: {
       account_id: accountId,
@@ -299,7 +310,8 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
       legal_neighborhood_name: subjectNeighborhoodName,
     },
     candidates: rows.map((row) => {
-      const sale = latestSales.get(String(row.account_id || "").trim());
+      const sales = salesByAccount.get(String(row.account_id || "").trim()) || [];
+      const sale = sales[0];
       const candidateNeighborhoodName = normalizeLegalNeighborhoodName(
         row.subdivision_name,
         row.legal_description,
@@ -313,6 +325,7 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
         year_built: row.year_built,
         site_area_sqft: row.site_area_sqft,
         gla_sqft: row.gla_sqft,
+        market_value: row.market_value,
         subdivision_name: row.subdivision_name,
         neighborhood_code: row.neighborhood_code,
         legal_neighborhood_name: candidateNeighborhoodName,
@@ -326,17 +339,17 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
         distance_miles: row.distance_miles,
         sale_price: sale?.sale_price ?? null,
         sale_date: sale?.sale_date ?? null,
+        sales,
         point: row.point,
       };
     }),
   };
 }
 
-async function loadLatestCandidateSales(pool, accountIds) {
+async function loadCandidateSales(pool, accountIds) {
   if (!accountIds.length) return new Map();
   const { rows } = await pool.query(
-    `SELECT DISTINCT ON (sale.primary_account_id)
-       sale.primary_account_id,
+    `SELECT sale.primary_account_id,
        sale.sale_price::numeric AS sale_price,
        sale.closing_date AS sale_date
      FROM core.v_sales_enriched sale
@@ -349,12 +362,20 @@ async function loadLatestCandidateSales(pool, accountIds) {
               sale.source_record_id DESC NULLS LAST`,
     [accountIds, RELEVANCE_SALE_HISTORY_MONTHS],
   );
-  return new Map(rows.map((row) => [String(row.primary_account_id), row]));
+  const salesByAccount = new Map();
+  for (const row of rows) {
+    const accountId = String(row.primary_account_id || "").trim();
+    if (!accountId) continue;
+    const sales = salesByAccount.get(accountId) || [];
+    sales.push({ sale_price: row.sale_price, sale_date: row.sale_date });
+    salesByAccount.set(accountId, sales);
+  }
+  return salesByAccount;
 }
 
 async function loadPotentialPocketAdjacency(pool, parcelObjectIds) {
   const ids = [...new Set(parcelObjectIds.map(Number).filter(Number.isSafeInteger))];
-  if (ids.length < MINIMUM_DISSIMILAR_POCKET_SIZE) return [];
+  if (ids.length < 2) return [];
   const { rows } = await pool.query(
     `SELECT left_parcel.object_id AS left_id,
             right_parcel.object_id AS right_id
@@ -516,34 +537,117 @@ function relevanceBand(score, excluded = false) {
   return "low";
 }
 
-export function applyAdaptivePrimaryPopulation(
+export function applyCompleteRelevantPocketPopulation(
   candidates = [],
-  { targetSaleCount = TARGET_PRIMARY_SALE_COUNT } = {},
+  adjacencyPairs = [],
+  { threshold = RELEVANT_POCKET_THRESHOLD } = {},
 ) {
-  const eligible = candidates.filter(
-    (candidate) => !candidate.excluded && Number.isFinite(Number(candidate.score)),
-  );
-  const salesAt = (threshold) => eligible.filter(
-    (candidate) => Number(candidate.score) >= threshold && Number(candidate.sale_price) > 0,
-  ).length;
-  let selectedThreshold = PRIMARY_POPULATION_THRESHOLDS.at(-1);
-  for (const threshold of PRIMARY_POPULATION_THRESHOLDS) {
-    selectedThreshold = threshold;
-    if (salesAt(threshold) >= targetSaleCount) break;
-  }
-  const primarySaleCount = salesAt(selectedThreshold);
-  return {
-    threshold: selectedThreshold,
-    target_sale_count: targetSaleCount,
-    primary_sale_count: primarySaleCount,
-    target_met: primarySaleCount >= targetSaleCount,
-    candidates: candidates.map((candidate) => ({
+  const byId = new Map();
+  const parent = new Map();
+  const selectionKey = new Map();
+  const normalized = candidates.map((candidate) => {
+    const id = Number(candidate.parcel_object_id);
+    const score = Number(candidate.score);
+    const systemSelected = !candidate.excluded && (
+      candidate.same_subject_neighborhood === true ||
+      (Number.isFinite(score) && score >= threshold)
+    );
+    const band = relevanceBand(candidate.score, candidate.excluded);
+    const neighborhoodIdentity = String(
+      candidate.neighborhood_code ||
+      candidate.legal_neighborhood_name ||
+      candidate.subdivision_name || "",
+    ).trim().toUpperCase();
+    const [longitude, latitude] = candidate.point?.coordinates || [];
+    const fallbackGrid = Number.isFinite(Number(longitude)) && Number.isFinite(Number(latitude))
+      ? `grid:${Math.floor(Number(longitude) / 0.002)}:${Math.floor(Number(latitude) / 0.002)}`
+      : `parcel:${id}`;
+    const groupingKey = [
+      systemSelected ? "selected" : "review",
+      candidate.same_subject_neighborhood
+        ? `subject:${neighborhoodIdentity || fallbackGrid}`
+        : `neighborhood:${neighborhoodIdentity || fallbackGrid}:band:${band}`,
+      String(candidate.land_use_category || "unknown"),
+      candidate.excluded ? String(candidate.exclusion_reason || "excluded") : "eligible",
+    ].join("|");
+    const value = {
       ...candidate,
-      primary_population: !candidate.excluded &&
-        Number.isFinite(Number(candidate.score)) &&
-        Number(candidate.score) >= selectedThreshold,
-      relevance_band: relevanceBand(candidate.score, candidate.excluded),
-    })),
+      primary_population: systemSelected,
+      relevance_band: band,
+    };
+    if (Number.isSafeInteger(id)) {
+      byId.set(id, value);
+      parent.set(id, id);
+      selectionKey.set(id, groupingKey);
+    }
+    return value;
+  });
+  const find = (id) => {
+    const current = parent.get(id);
+    if (current === id) return id;
+    const root = find(current);
+    parent.set(id, root);
+    return root;
+  };
+  const union = (left, right) => {
+    if (!parent.has(left) || !parent.has(right)) return;
+    if (selectionKey.get(left) !== selectionKey.get(right)) return;
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) {
+      parent.set(Math.max(leftRoot, rightRoot), Math.min(leftRoot, rightRoot));
+    }
+  };
+  // Recorded subdivision/CAD-neighborhood identity is the primary pocket
+  // boundary. This deliberately keeps the full subdivision population
+  // together and avoids an expensive all-parcel spatial self-join. Parcels
+  // without a recorded identity fall into small deterministic map cells.
+  const firstIdBySelectionKey = new Map();
+  for (const [id, key] of selectionKey) {
+    const first = firstIdBySelectionKey.get(key);
+    if (first === undefined) firstIdBySelectionKey.set(key, id);
+    else union(first, id);
+  }
+  for (const [left, right] of adjacencyPairs) union(Number(left), Number(right));
+  const membersByRoot = new Map();
+  for (const id of parent.keys()) {
+    const root = find(id);
+    const members = membersByRoot.get(root) || [];
+    members.push(id);
+    membersByRoot.set(root, members);
+  }
+  const pocketById = new Map();
+  for (const members of membersByRoot.values()) {
+    const sorted = members.sort((left, right) => left - right);
+    const selected = byId.get(sorted[0])?.primary_population === true;
+    const pocketId = `analysis:${selected ? "selected" : "review"}:${sorted[0]}`;
+    for (const id of sorted) {
+      pocketById.set(id, {
+        id: pocketId,
+        size: sorted.length,
+        system_selected: selected,
+      });
+    }
+  }
+  const pocketed = normalized.map((candidate) => ({
+    ...candidate,
+    analysis_pocket: pocketById.get(Number(candidate.parcel_object_id)) || null,
+  }));
+  const pockets = new Map(pocketed
+    .filter((candidate) => candidate.analysis_pocket)
+    .map((candidate) => [candidate.analysis_pocket.id, candidate.analysis_pocket]));
+  return {
+    threshold,
+    primary_sale_count: pocketed.reduce((count, candidate) => {
+      if (!candidate.primary_population) return count;
+      if (Array.isArray(candidate.sales) && candidate.sales.length) {
+        return count + candidate.sales.filter((sale) => Number(sale.sale_price) > 0).length;
+      }
+      return count + (Number(candidate.sale_price) > 0 ? 1 : 0);
+    }, 0),
+    selected_pocket_count: [...pockets.values()].filter((pocket) => pocket.system_selected).length,
+    total_pocket_count: pockets.size,
+    candidates: pocketed,
   };
 }
 
@@ -604,13 +708,31 @@ function distributionSummary(values) {
 export function summarizeRelevantPopulation(candidates = []) {
   const reviewable = candidates.filter((candidate) => !candidate.excluded);
   const included = candidates.filter((candidate) => candidate.primary_population === true);
-  const sales = included.filter((candidate) => Number(candidate.sale_price) > 0);
+  const sales = included.flatMap((candidate) => {
+    if (Array.isArray(candidate.sales) && candidate.sales.length) {
+      return candidate.sales
+        .filter((sale) => Number(sale.sale_price) > 0)
+        .map((sale) => ({
+          ...candidate,
+          sale_price: sale.sale_price,
+          sale_date: sale.sale_date,
+        }));
+    }
+    return Number(candidate.sale_price) > 0 ? [candidate] : [];
+  });
   const gla = (candidate) => Number(candidate.gla_diagnostic?.candidate_gla_sqft) || null;
   const salePpsf = sales.map((candidate) => {
     const area = gla(candidate);
     return area ? Number(candidate.sale_price) / area : null;
   });
   const propertyProfile = {
+    market_value: distributionSummary(included.map((candidate) => candidate.market_value)),
+    value_per_square_foot: distributionSummary(included.map((candidate) => {
+      const area = gla(candidate);
+      return area && Number(candidate.market_value) > 0
+        ? Number(candidate.market_value) / area
+        : null;
+    })),
     age: distributionSummary(included.map((candidate) => candidate.year_built)),
     site_size: distributionSummary(included.map((candidate) => candidate.site_area_sqft)),
     gla: distributionSummary(included.map(gla)),
@@ -640,7 +762,7 @@ export function summarizeRelevantPopulation(candidates = []) {
       100 - Math.min(70, averageCod * 1.5) + Math.min(20, saleCoverage / 5),
     ));
   return {
-    population_rule: "adaptive_primary_relevance_population",
+    population_rule: "all_system_relevant_pockets",
     reviewable_property_count: reviewable.length,
     included_property_count: included.length,
     included_sale_count: sales.length,
@@ -671,12 +793,12 @@ function candidatePersistencePayload(candidates) {
         ? "relevance_score_below_threshold"
         : null
     ),
-    cluster_id: candidate.contiguous_cluster?.id || null,
-    cluster_size: candidate.contiguous_cluster?.size || null,
+    cluster_id: candidate.analysis_pocket?.id || candidate.contiguous_cluster?.id || null,
+    cluster_size: candidate.analysis_pocket?.size || candidate.contiguous_cluster?.size || null,
     year_built: candidate.year_built,
     site_area_sqft: candidate.site_area_sqft,
     sale_price: candidate.sale_price,
-    sale_date: candidate.sale_price_date,
+    sale_date: candidate.sale_date,
     distance_miles: candidate.distance_miles,
     factors: candidate.factors,
     diagnostics: {
@@ -686,6 +808,9 @@ function candidatePersistencePayload(candidates) {
       exclusion_threshold_percent: candidate.exclusion_threshold_percent,
       gla: candidate.gla_diagnostic,
       contiguous_cluster: candidate.contiguous_cluster || null,
+      analysis_pocket: candidate.analysis_pocket || null,
+      sales: candidate.sales || [],
+      market_value: candidate.market_value ?? null,
     },
     point: candidate.point,
     primary_population: candidate.primary_population === true,
@@ -825,14 +950,15 @@ export async function generateNeighborhoodRelevance(pool, {
     .map((candidate) => candidate.parcel_object_id);
   const adjacency = await loadPotentialPocketAdjacency(pool, potentialIds);
   const pocketScreened = applyContiguousPocketClassification(landUseScreened, adjacency);
-  const primaryPopulation = applyAdaptivePrimaryPopulation(pocketScreened);
+  const primaryPopulation = applyCompleteRelevantPocketPopulation(pocketScreened, adjacency);
   const candidates = primaryPopulation.candidates;
   const summary = {
     ...summarizeCandidates(candidates),
     primary_population_threshold: primaryPopulation.threshold,
-    primary_population_target_sale_count: primaryPopulation.target_sale_count,
     primary_population_sale_count: primaryPopulation.primary_sale_count,
-    primary_population_target_met: primaryPopulation.target_met,
+    primary_population_rule: "all_system_relevant_pockets",
+    selected_pocket_count: primaryPopulation.selected_pocket_count,
+    total_pocket_count: primaryPopulation.total_pocket_count,
   };
   const signature = hashInput({
     methodology_version: NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION,
@@ -842,8 +968,10 @@ export async function generateNeighborhoodRelevance(pool, {
       parcel_object_id: candidate.parcel_object_id,
       year_built: candidate.year_built,
       site_area_sqft: candidate.site_area_sqft,
+      market_value: candidate.market_value,
       sale_price: candidate.sale_price,
       sale_date: candidate.sale_date,
+      sales: candidate.sales,
       distance_miles: candidate.distance_miles,
     })),
   });
@@ -899,7 +1027,14 @@ export async function getLatestNeighborhoodRelevance(pool, {
   const { rows: candidateRows } = await pool.query(
     `SELECT parcel_object_id, account_id, address, score, excluded,
             statistical_classification AS classification, cluster_id,
-            primary_population, relevance_band,
+            cluster_id AS pocket_id, COALESCE(cluster_size, 1) AS pocket_size,
+            primary_population AS system_selected,
+            primary_population, relevance_band, same_subject_neighborhood,
+            year_built, site_area_sqft,
+            NULLIF(diagnostics->'gla'->>'candidate_gla_sqft', '')::numeric AS gla_sqft,
+            NULLIF(diagnostics->>'market_value', '')::numeric AS market_value,
+            sale_price, sale_date, COALESCE(diagnostics->'sales', '[]'::jsonb) AS sales,
+            distance_miles,
             ST_AsGeoJSON(point)::jsonb AS point
      FROM app.neighborhood_relevance_candidates
      WHERE assessment_id = $1

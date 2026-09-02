@@ -3154,6 +3154,7 @@ app.post("/api/accounts/:id/neighborhood-boundary/generate", async (req, res) =>
       accountId,
       assignmentFileId,
       searchProfileKey: req.body?.search_profile,
+      discoveryRadiusMiles: req.body?.discovery_radius_miles,
     });
     res.json({ ok: true, account_id: accountId, assessment });
   } catch (error) {
@@ -3163,6 +3164,7 @@ app.post("/api/accounts/:id/neighborhood-boundary/generate", async (req, res) =>
       "invalid_account_id",
       "invalid_assignment_file",
       "invalid_neighborhood_search_profile",
+      "invalid_neighborhood_discovery_radius",
     ]);
     const status = message === "account_not_found" ||
       message === "subject_parcel_geometry_unavailable" ? 404

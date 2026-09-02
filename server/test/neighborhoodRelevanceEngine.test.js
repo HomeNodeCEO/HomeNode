@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   applyContiguousPocketClassification,
-  applyAdaptivePrimaryPopulation,
+  applyCompleteRelevantPocketPopulation,
   applyLandUsePrerequisite,
   ensureNeighborhoodRelevanceSchema,
   generateNeighborhoodRelevance,
@@ -80,45 +80,48 @@ test("does not remove a same-neighborhood parcel during prerequisite or pocket s
 
 test("calculates neighborhood ranges from the exact included relevance population", () => {
   const result = summarizeRelevantPopulation([
-    { excluded: false, primary_population: true, score: 90, year_built: 1980, site_area_sqft: 8000, sale_price: 300000,
+    { excluded: false, primary_population: true, score: 90, year_built: 1980, site_area_sqft: 8000, market_value: 300000, sale_price: 350000,
+      sales: [{ sale_price: 350000, sale_date: "2026-06-01" }, { sale_price: 300000, sale_date: "2025-01-01" }],
       gla_diagnostic: { candidate_gla_sqft: 1500 } },
-    { excluded: false, primary_population: true, score: 80, year_built: 1990, site_area_sqft: 10000, sale_price: 400000,
+    { excluded: false, primary_population: true, score: 80, year_built: 1990, site_area_sqft: 10000, market_value: 500000, sale_price: 400000,
       gla_diagnostic: { candidate_gla_sqft: 2000 } },
     { excluded: true, score: 10, year_built: 2025, site_area_sqft: 50000, sale_price: 1500000,
       gla_diagnostic: { candidate_gla_sqft: 5000 } },
   ]);
-  assert.equal(result.population_rule, "adaptive_primary_relevance_population");
+  assert.equal(result.population_rule, "all_system_relevant_pockets");
   assert.equal(result.included_property_count, 2);
-  assert.equal(result.included_sale_count, 2);
+  assert.equal(result.included_sale_count, 3);
   assert.equal(result.sales_profile.sale_price.median, 350000);
   assert.equal(result.sales_profile.price_per_square_foot.median, 200);
+  assert.equal(result.property_profile.market_value.median, 400000);
+  assert.equal(result.property_profile.value_per_square_foot.median, 225);
   assert.equal(result.property_profile.age.median, 1985);
 });
 
-test("widens the primary population only enough to meet the target sale count", () => {
+test("uses every property in system-selected relevant pockets without a sale-count target", () => {
   const candidates = [
     ...Array.from({ length: 10 }, (_, index) => ({ score: 85, sale_price: 300000 + index, excluded: false })),
     ...Array.from({ length: 25 }, (_, index) => ({ score: 75, sale_price: 310000 + index, excluded: false })),
     ...Array.from({ length: 10 }, (_, index) => ({ score: 65, sale_price: 320000 + index, excluded: false })),
     { score: 95, sale_price: 500000, excluded: true },
   ];
-  const result = applyAdaptivePrimaryPopulation(candidates);
-  assert.equal(result.threshold, 70);
-  assert.equal(result.primary_sale_count, 35);
-  assert.equal(result.target_met, true);
-  assert.equal(result.candidates.filter((candidate) => candidate.primary_population).length, 35);
+  const result = applyCompleteRelevantPocketPopulation(candidates);
+  assert.equal(result.threshold, 55);
+  assert.equal(result.primary_sale_count, 45);
+  assert.equal(result.candidates.filter((candidate) => candidate.primary_population).length, 45);
   assert.equal(result.candidates.at(-1).primary_population, false);
 });
 
-test("uses the sixty-percent floor and reports a sparse primary sample", () => {
-  const result = applyAdaptivePrimaryPopulation([
+test("uses a fixed explainable relevance floor even when the available sales are sparse", () => {
+  const result = applyCompleteRelevantPocketPopulation([
     { score: 81, sale_price: 300000, excluded: false },
     { score: 61, sale_price: 310000, excluded: false },
     { score: 59, sale_price: 320000, excluded: false },
+    { score: 54, sale_price: 330000, excluded: false },
   ]);
-  assert.equal(result.threshold, 60);
-  assert.equal(result.primary_sale_count, 2);
-  assert.equal(result.target_met, false);
+  assert.equal(result.threshold, 55);
+  assert.equal(result.primary_sale_count, 3);
+  assert.equal(result.candidates.at(-1).primary_population, false);
 });
 
 test("creates normalized assessment and candidate persistence", async () => {
@@ -145,7 +148,7 @@ test("scores and persists the local parcel population without time-adjusting sal
     methodology_version: 1,
     status: "generated",
     search_profile: "suburban_simple",
-    discovery_radius_miles: 2,
+    discovery_radius_miles: 3,
     input_signature: "boundary-signature",
     boundary_geojson: boundary,
     evidence: {},
@@ -176,6 +179,7 @@ test("scores and persists the local parcel population without time-adjusting sal
   }));
   const saleRows = [
     ["A", 290000],
+    ["A", 275000],
     ["B", 300000],
     ["C", 280000],
   ].map(([accountId, price]) => ({
@@ -214,7 +218,7 @@ test("scores and persists the local parcel population without time-adjusting sal
       if (/WITH boundary AS MATERIALIZED/.test(statement) && /candidate_location/.test(statement)) {
         return { rows: candidateRows, rowCount: candidateRows.length };
       }
-      if (/SELECT DISTINCT ON \(sale\.primary_account_id\)/.test(statement)) {
+      if (/FROM core\.v_sales_enriched sale/.test(statement)) {
         return { rows: saleRows, rowCount: saleRows.length };
       }
       if (/FROM gis\.source_sync_state/.test(statement)) return { rows: [], rowCount: 0 };
@@ -231,9 +235,11 @@ test("scores and persists the local parcel population without time-adjusting sal
   assert.equal(result.summary.sale_prices_time_adjusted, false);
   assert.ok(statements.some((sql) => /core\.v_sales_enriched/.test(sql)));
   assert.equal(statements.filter((sql) => /core\.v_sales_enriched/.test(sql)).length, 1);
+  assert.ok(statements.every((sql) => !/DISTINCT ON \(sale\.primary_account_id\)/.test(sql)));
   assert.ok(statements.some((sql) => /primary_account_id = ANY\(\$1::text\[\]\)/.test(sql)));
   assert.ok(statements.some((sql) => /subject\.legal_description/.test(sql)));
-  assert.ok(statements.some((sql) => /\$4::double precision \* 1609\.344/.test(sql)));
+  assert.ok(statements.some((sql) => /\$3::double precision \* 1609\.344/.test(sql)));
+  assert.ok(statements.every((sql) => !/LIMIT \$3/.test(sql)));
   assert.ok(statements.every((sql) => !/LEFT JOIN LATERAL[\s\S]+core\.v_sales_enriched/.test(sql)));
   assert.ok(statements.some((sql) => /DELETE FROM app\.neighborhood_relevance_candidates/.test(sql)));
   assert.ok(statements.some((sql) => /jsonb_to_recordset/.test(sql)));

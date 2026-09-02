@@ -71,7 +71,7 @@ function generatedRow(overrides = {}) {
     methodology_version: NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION,
     status: "generated",
     search_profile: "suburban_simple",
-    discovery_radius_miles: 2,
+    discovery_radius_miles: 3,
     input_signature: "signature",
     boundary_geojson: boundary,
     evidence: {},
@@ -163,6 +163,7 @@ test("generates a local, persisted broad boundary without a remote road dependen
   });
   assert.equal(result.methodology_version, NEIGHBORHOOD_BOUNDARY_METHODOLOGY_VERSION);
   assert.equal(result.search_profile, "suburban_simple");
+  assert.equal(calls.find((call) => /INSERT INTO app\.neighborhood_boundary_assessments/.test(call.sql)).params[5], 3);
   assert.equal(result.review_required, true);
   assert.ok(statements.some((sql) => /ST_ConcaveHull/.test(sql)));
   assert.ok(statements.some((sql) => /gis\.traffic_volume_segments/.test(sql)));
@@ -173,8 +174,7 @@ test("generates a local, persisted broad boundary without a remote road dependen
   ).params[7]);
   assert.ok(savedBoundary.coordinates[0].length >= 5);
   assert.deepEqual(savedBoundary.coordinates[0][0], savedBoundary.coordinates[0].at(-1));
-  assert.ok(savedBoundary.coordinates[0].some((point) => point[0] === -96.625));
-  assert.ok(savedBoundary.coordinates[0].some((point) => point[1] === 32.994));
+  assert.deepEqual(savedBoundary, boundary);
 });
 
 test("rejects an invalid explicit profile before spatial analysis", async () => {
@@ -191,6 +191,26 @@ test("rejects an invalid explicit profile before spatial analysis", async () => 
       searchProfileKey: "oceanfront_impossible",
     }),
     /invalid_neighborhood_search_profile/,
+  );
+  assert.equal(statements.some((sql) => /ST_ConcaveHull/.test(sql)), false);
+});
+
+test("rejects an invalid discovery-radius expansion before spatial analysis", async () => {
+  const statements = [];
+  const responses = [[], [], [], [], [], [{ geography: "suburban", complexity: "simple" }]];
+  const pool = {
+    async query(sql) {
+      statements.push(String(sql));
+      const rows = responses.shift() || [];
+      return { rows, rowCount: rows.length };
+    },
+  };
+  await assert.rejects(
+    generateNeighborhoodBoundary(pool, {
+      accountId: "26272500060150000",
+      discoveryRadiusMiles: 25,
+    }),
+    /invalid_neighborhood_discovery_radius/,
   );
   assert.equal(statements.some((sql) => /ST_ConcaveHull/.test(sql)), false);
 });

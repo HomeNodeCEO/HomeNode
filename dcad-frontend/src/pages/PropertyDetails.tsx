@@ -5,71 +5,20 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PropertyForm, type FieldSpec } from "@/components/PropertyForm";
-
-type Property = {
-  account_number?: string;
-
-  // valuation
-  market_value?: number | "";
-  taxable_value?: number | "";
-  land_value?: number | "";
-  improvement_value?: number | "";
-
-  // characteristics
-  owner_name?: string;
-  square_footage?: number | "";
-  bedroom_count?: number | "";
-  bath_count?: number | "";
-  garage_bay_count?: number | "";
-  land_acreage?: number | "";
-  zoning?: string;
-  classification?: string;
-  year_built?: number | "";
-  effective_year_built?: number | "";
-  last_inspection_year?: number | "";
-  solar_panels?: boolean;
-  functional_obsolescence?: boolean;
-};
+import {
+  mapDcadDetailToProperty,
+  propertyDetailsErrorMessage,
+  type EditableProperty,
+} from "@/features/propertyDetails/propertyMapping";
 
 export default function PropertyDetails() {
   const location = useLocation();
   const presetAccount = useMemo(() => new URLSearchParams(location.search).get("account_id") || "", [location.search]);
 
-  const [property, setProperty] = useState<Property>({ account_number: presetAccount });
+  const [property, setProperty] = useState<EditableProperty>({ account_number: presetAccount });
   const [loading, setLoading] = useState(false);
-  const [raw, setRaw] = useState<any>(null);
+  const [raw, setRaw] = useState<unknown>(null);
   const hasAutoImported = useRef(false);
-
-  // Map API JSON -> our Property fields (adjust paths to match your JSON)
-  function mapDetailToProperty(detail: any): Property {
-    return {
-      account_number: property.account_number,
-      owner_name: detail?.owner?.name ?? "",
-
-      market_value: toNum(detail?.current_year?.market_value),
-      taxable_value: toNum(detail?.current_year?.taxable_value),
-      land_value: toNum(detail?.value_summary?.land_value ?? detail?.improvements?.land_value),
-      improvement_value: toNum(detail?.value_summary?.improvement_value ?? detail?.improvements?.improvement_value),
-
-      square_footage: toNum(detail?.characteristics?.living_area_sqft),
-      bedroom_count: toNum(detail?.characteristics?.bedrooms),
-      bath_count: toNum(detail?.characteristics?.baths),
-      garage_bay_count: toNum(detail?.characteristics?.garage_bays),
-      land_acreage: toNum(detail?.land?.acreage),
-      zoning: detail?.zoning ?? "",
-      classification: detail?.classification ?? "",
-      year_built: toNum(detail?.characteristics?.year_built),
-      effective_year_built: toNum(detail?.characteristics?.effective_year_built),
-      last_inspection_year: toNum(detail?.inspection?.last_year),
-      solar_panels: !!detail?.features?.solar_panels,
-      functional_obsolescence: !!detail?.condition?.functional_obsolescence,
-    };
-  }
-  function toNum(v: any): number | "" {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : "";
-    // keeps "" if null/undefined/NaN so inputs stay blank instead of "0"
-  }
 
   async function importFromDCAD() {
     if (!property.account_number) { alert("Enter an Account ID first."); return; }
@@ -77,11 +26,11 @@ export default function PropertyDetails() {
     try {
       const resp = await fetchDetail(property.account_number);
       setRaw(resp);
-      const mapped = mapDetailToProperty(resp?.detail);
+      const mapped = mapDcadDetailToProperty(resp?.detail, property.account_number);
       setProperty(prev => ({ ...prev, ...mapped }));
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      alert(e?.message || "Import failed");
+      alert(propertyDetailsErrorMessage(e));
     } finally { setLoading(false); }
   }
 
@@ -158,8 +107,8 @@ export default function PropertyDetails() {
 
       {/* New schema-driven cards */}
       <PropertyForm
-        property={property as any}
-        setProperty={setProperty as any}
+        property={property}
+        setProperty={setProperty}
         sections={[
           { title: "Valuation", fields: valuationFields },
           { title: "Property Specifications", fields: specFields },

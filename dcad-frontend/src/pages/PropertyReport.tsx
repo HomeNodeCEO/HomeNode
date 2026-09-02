@@ -67,7 +67,9 @@ import {
   CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
   CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS,
   customAppraisalDraftsMatch,
+  isVisibleManualAssignmentSave,
   reconcileCustomAppraisalDraft,
+  retainCurrentDraftWhenUnchanged,
   type CustomAppraisalAutosaveState,
 } from "@/lib/customAppraisalAutosave";
 
@@ -467,6 +469,13 @@ function AddressHero({
 
   useEffect(() => {
     assignmentDraftRef.current = assignmentDraft;
+    const draftChanged = !customAppraisalDraftsMatch(
+      assignmentDraft,
+      assignmentSavedDraftRef.current,
+    );
+    assignmentDirtyRef.current = draftChanged;
+    setAssignmentDirty((current) => current === draftChanged ? current : draftChanged);
+    if (!draftChanged) assignmentFirstDirtyAtRef.current = null;
   }, [assignmentDraft]);
 
   useEffect(() => {
@@ -516,7 +525,6 @@ function AddressHero({
     accountId,
     assignmentDraft,
     setAssignmentDraft,
-    setAssignmentDirty,
     customMarketStudy,
     marketConditionsDraft,
     detailCity: detail?.property_location?.city,
@@ -584,25 +592,27 @@ function AddressHero({
     cityProfile,
   }: CensusProfilesLoaded) => {
     unemploymentLookupSucceeded.current = true;
-    setAssignmentDraft((current) => ({
-      ...current,
-      ...(zipProfile ? {
+    setAssignmentDraft((current) => {
+      const updated = {
+        ...current,
+        ...(zipProfile ? {
         neighborhood_unemployment_pct: zipProfile.unemployment_percent,
         neighborhood_unemployment_zip: zipProfile.postal_code,
         neighborhood_unemployment_source: zipProfile.source,
         neighborhood_unemployment_dataset_year: zipProfile.dataset_year,
         neighborhood_unemployment_variable: zipProfile.variable,
       } : {}),
-      ...(cityProfile ? {
+        ...(cityProfile ? {
         neighborhood_city_unemployment_pct: cityProfile.unemployment_percent,
         neighborhood_city_unemployment_name:
           cityProfile.geography_name || `${cityProfile.city}, ${cityProfile.state}`,
         neighborhood_city_unemployment_source: cityProfile.source,
         neighborhood_city_unemployment_dataset_year: cityProfile.dataset_year,
         neighborhood_city_unemployment_variable: cityProfile.variable,
-      } : {}),
-    }));
-    setAssignmentDirty(true);
+        } : {}),
+      };
+      return retainCurrentDraftWhenUnchanged(current, updated);
+    });
   }, []);
   const {
     censusLookupLoading,
@@ -1226,7 +1236,8 @@ function AddressHero({
         return false;
       }
 
-      setSavingAssignmentFile(true);
+      const visibleManualSave = isVisibleManualAssignmentSave(saveReason);
+      if (visibleManualSave) setSavingAssignmentFile(true);
       setAssignmentAutosaveState("saving");
       if (saveReason === "autosave") setAssignmentSaveMessage("Protecting changes in PostgreSQL…");
       try {
@@ -1346,7 +1357,7 @@ function AddressHero({
         );
         return false;
       } finally {
-        setSavingAssignmentFile(false);
+        if (visibleManualSave) setSavingAssignmentFile(false);
       }
     })();
 

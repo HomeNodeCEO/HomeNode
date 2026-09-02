@@ -10,6 +10,7 @@ import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
 } from "@/lib/neighborhoodCharacteristics";
+import { retainCurrentDraftWhenUnchanged } from "@/lib/customAppraisalAutosave";
 import { cloneEditorValue } from "@/lib/propertyReportAssignment";
 import { hasValue } from "@/lib/propertyReportPresentation";
 
@@ -22,7 +23,6 @@ type UseNeighborhoodProfileOptions = {
   accountId?: string;
   assignmentDraft: AssignmentDetailsPayload;
   setAssignmentDraft: Dispatch<SetStateAction<AssignmentDetailsPayload>>;
-  setAssignmentDirty: Dispatch<SetStateAction<boolean>>;
   customMarketStudy: MarketStudy | null;
   marketConditionsDraft: MarketConditionsDraft | null;
   detailCity?: string | null;
@@ -39,7 +39,6 @@ export function useNeighborhoodProfile({
   accountId,
   assignmentDraft,
   setAssignmentDraft,
-  setAssignmentDirty,
   customMarketStudy,
   marketConditionsDraft,
   detailCity,
@@ -137,12 +136,13 @@ export function useNeighborhoodProfile({
           .filter(([, street]) => street)
           .map(([side, street]) => `${side}: ${street}`)
           .join("; ");
-        return {
+        const updated = {
           ...current,
           neighborhood_boundary_geometry: cloneEditorValue(geometry),
           neighborhood_boundary_label: customStudy.market.label || "Appraiser-defined market area",
           neighborhood_boundary_source: "sales_comparison_market_conditions",
-          neighborhood_boundary_saved_at: marketConditionsDraft?.savedAt || new Date().toISOString(),
+          neighborhood_boundary_saved_at: marketConditionsDraft?.savedAt ||
+            current.neighborhood_boundary_saved_at || new Date().toISOString(),
           neighborhood_boundary_confirmed: geometryChanged ? false : current.neighborhood_boundary_confirmed,
           neighborhood_boundary_confirmed_at: geometryChanged ? "" : current.neighborhood_boundary_confirmed_at,
           neighborhood_house_price_low: summary.minimum_sale_price ?? "",
@@ -175,8 +175,8 @@ export function useNeighborhoodProfile({
           neighborhood_boundary_streets_source: boundaryStreets?.source || current.neighborhood_boundary_streets_source || "",
           neighborhood_boundary_streets_retrieved_at: boundaryStreets?.retrieved_at || current.neighborhood_boundary_streets_retrieved_at || "",
         };
+        return retainCurrentDraftWhenUnchanged(current, updated);
       });
-      setAssignmentDirty(true);
       setProfileMessage(profile.boundary_street_warning
         ? "Market ranges and city averages refreshed. Boundary streets could not be refreshed and still require review."
         : "Appraiser-defined ranges, city averages, and four-side boundary suggestions refreshed.");
@@ -200,7 +200,7 @@ export function useNeighborhoodProfile({
         setProfileLoading(false);
       }
     }
-  }, [accountId, assignmentDraft.neighborhood_boundary_geometry, customMarketStudy, detailCity, marketConditionsDraft, setAssignmentDirty, setAssignmentDraft]);
+  }, [accountId, assignmentDraft.neighborhood_boundary_geometry, customMarketStudy, detailCity, marketConditionsDraft, setAssignmentDraft]);
 
   useEffect(() => {
     const geometry = assignmentDraft.neighborhood_boundary_geometry || customMarketStudy?.market.custom_geometry;

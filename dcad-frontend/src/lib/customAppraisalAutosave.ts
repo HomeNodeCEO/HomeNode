@@ -9,6 +9,12 @@ export type CustomAppraisalAutosaveState =
   | "error"
   | "conflict";
 
+export function isVisibleManualAssignmentSave(
+  saveReason: "manual_save" | "autosave",
+): boolean {
+  return saveReason === "manual_save";
+}
+
 function jsonEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -59,4 +65,11 @@ export function reconcileCustomAppraisalDraft<T extends object>(
 
 export function customAppraisalDraftsMatch(left: object, right: object): boolean {
   return jsonEqual(left, right);
+}
+
+export function retainCurrentDraftWhenUnchanged<T extends object>(
+  current: T,
+  updated: T,
+): T {
+  return customAppraisalDraftsMatch(current, updated) ? current : updated;
 }

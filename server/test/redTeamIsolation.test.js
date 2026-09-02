@@ -18,6 +18,10 @@ const relatedParcelsRouterSource = fs.readFileSync(
   new URL("../src/modules/accounts/relatedParcelsRouter.js", import.meta.url),
   "utf8",
 );
+const salesListRouterSource = fs.readFileSync(
+  new URL("../src/modules/sales/salesListRouter.js", import.meta.url),
+  "utf8",
+);
 const comparisonStudyRouterSource = fs.readFileSync(
   new URL("../src/modules/sales/comparisonStudyRouter.js", import.meta.url),
   "utf8",
@@ -299,6 +303,12 @@ test("red-team bootstrap and account reads preserve optional sales availability"
     /createRelatedParcelsRouter\(\{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,
   );
   assert.match(relatedParcelsRouterSource, /accountIdAllowed\(accountId\)/);
+  assert.match(
+    serverSource,
+    /createSalesListRouter\(\{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed/,
+  );
+  assert.match(salesListRouterSource, /accountIdAllowed\(subjectAccountId\)/);
+  assert.match(salesListRouterSource, /accountIdAllowed\(q\)/);
   for (const [source, builder] of [
     [comparisonStudyRouterSource, "buildPairedStudy"],
     [valuationStudyRouterSource, "buildMarketAnalyses"],

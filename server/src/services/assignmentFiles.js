@@ -1,5 +1,21 @@
 const MAX_FILE_NUMBER_LENGTH = 100;
 
+export const ASSIGNMENT_FILE_SELECT = `
+  SELECT f.id, f.account_id, f.file_number, f.assignment_details,
+         f.organization_id, f.assigned_appraiser_user_id, f.supervisory_appraiser_user_id,
+         f.inherited_from_file_id, parent.file_number AS inherited_from_file_number,
+         f.reviewer, f.revision, f.created_at, f.updated_at,
+         workfile.workfile_key, workfile.canonical_file_name,
+         workfile.status AS workfile_status,
+         workfile.signed_at AS workfile_signed_at,
+         workfile.signed_by AS workfile_signed_by,
+         workfile.updated_at AS workfile_updated_at
+  FROM app.assignment_files f
+  LEFT JOIN app.assignment_files parent ON parent.id = f.inherited_from_file_id
+  LEFT JOIN app.custom_appraisal_workfiles workfile
+    ON workfile.assignment_file_id = f.id
+`;
+
 export function normalizeAssignmentFileNumber(value) {
   const fileNumber = String(value ?? "").trim();
   if (

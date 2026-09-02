@@ -46,11 +46,14 @@ test("authenticated mobile discovery and replication exclude organization-less l
 
 test("desktop latest-file lookups remain organization scoped after authentication", () => {
   const server = read("../src/oldServer.js");
+  const assignmentList = read("../src/modules/assignmentFiles/listRouter.js");
   const propertyTax = read("../src/modules/mobile/desktopPropertyTax.js");
   assert.match(server, /AND \(\$2::uuid IS NULL OR organization_id = \$2\)/);
   assert.match(propertyTax, /report_file\.organization_id = ANY\(\$3::uuid\[\]\)/);
   assert.match(server, /\{ organizationIds \}/);
-  assert.match(server, /legacy_assignment_details: applicationAuthenticationRequired && req\.mobileAuth/);
+  assert.match(assignmentList, /const enforcedIdentity = authenticationRequired && req\.mobileAuth/);
+  assert.match(assignmentList, /legacy_assignment_details: enforcedIdentity/);
+  assert.match(assignmentList, /queriedRows\.filter\(\(row\) => decideAccess\(req\.mobileAuth, row, "read"\)\)/);
   assert.match(server, /if \(!applicationAuthenticationRequired \|\| !req\.mobileAuth\) \{\s+await mirrorLatestAssignmentDetails/);
 });
 

@@ -3,7 +3,6 @@ import { isIP } from "node:net";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import pg from "pg";
-import { editorKeyMatches } from "./util/housingProfileEdit.js";
 import { TrestleClient } from "./services/trestleClient.js";
 import {
   assertNonDallasEnrichmentCounty,
@@ -79,7 +78,6 @@ import { createRedTeamIsolationConfiguration } from "./security/redTeamIsolation
 import {
   buildApplicationSession,
   createOptionalApplicationAuthenticator,
-  hasApplicationPermission,
 } from "./security/applicationAccess.js";
 import {
   applicationAuthenticationOperationalState,
@@ -88,7 +86,7 @@ import {
 } from "./security/applicationAuthenticationPolicy.js";
 import { getApplicationAuthReadiness } from "./security/applicationAuthReadiness.js";
 import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
-import { authorizeCustomAssignmentFile } from "./security/assignmentAccess.js";
+import { createApplicationAccessGuards } from "./security/applicationAccessGuards.js";
 import {
   createRuntimeResilienceConfiguration,
 } from "./security/runtimeResilience.js";
@@ -295,6 +293,14 @@ const {
   pool,
   startupInitialization,
 });
+const {
+  requireEditor,
+  requireCustomAssignmentAccess,
+  requireWorkflowAccess,
+} = createApplicationAccessGuards({
+  pool,
+  authenticationRequired: applicationAuthenticationRequired,
+});
 
 function greatCircleDistanceMilesSql({
   subjectLatitude,
@@ -423,37 +429,6 @@ app.use(createAssignmentWorkfileMutationRouter({
   objectStorage: sharedObjectStorage,
 }));
 
-function requireEditor(req, res) {
-  if (req.mobileAuth) {
-    if (
-      hasApplicationPermission(req.mobileAuth, "custom_appraisal", "write")
-      || hasApplicationPermission(req.mobileAuth, "property_tax_protest", "write")
-    ) {
-      return true;
-    }
-    res.set("cache-control", "no-store")
-      .status(403)
-      .json({ error: "application_access_denied" });
-    return false;
-  }
-  if (applicationAuthenticationRequired) {
-    res.set("cache-control", "no-store")
-      .status(401)
-      .json({ error: "authentication_required" });
-    return false;
-  }
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (!configuredEditorKey) {
-    res.status(503).json({ error: "editor_not_configured" });
-    return false;
-  }
-  if (!editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    res.status(401).json({ error: "invalid_editor_key" });
-    return false;
-  }
-  return true;
-}
-
 app.use(createGeographyOperationsRouter({
   pool,
   locationBackfillReady,
@@ -581,54 +556,6 @@ app.use(createZoningRouter({
   requireAssignmentAccess: requireCustomAssignmentAccess,
   authenticationRequired: applicationAuthenticationRequired,
 }));
-
-async function requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, permission) {
-  if (!applicationAuthenticationRequired) return true;
-  if (req.mobileAuth) {
-    try {
-      await authorizeCustomAssignmentFile(pool, req.mobileAuth, {
-        accountId,
-        assignmentFileId,
-        permission,
-      });
-      return true;
-    } catch (error) {
-      const notFound = error?.message === "assignment_file_not_found";
-      res.set("cache-control", "no-store").status(notFound ? 404 : 403).json({
-        error: notFound ? "assignment_file_not_found" : "assignment_file_access_denied",
-      });
-      return false;
-    }
-  }
-  res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
-  return false;
-}
-
-function requireWorkflowAccess(req, res, workflow, permission) {
-  if (req.mobileAuth) {
-    if (hasApplicationPermission(req.mobileAuth, workflow, permission)) return true;
-    res.set("cache-control", "no-store")
-      .status(403)
-      .json({ error: "application_access_denied" });
-    return false;
-  }
-  if (applicationAuthenticationRequired) {
-    res.set("cache-control", "no-store")
-      .status(401)
-      .json({ error: "authentication_required" });
-    return false;
-  }
-  const configuredEditorKey = String(process.env.HOMENODE_EDITOR_KEY || "");
-  if (configuredEditorKey && editorKeyMatches(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-    return true;
-  }
-  if (!applicationAuthenticationRequired) return true;
-  res.set("cache-control", "no-store");
-  res.status(req.mobileAuth ? 403 : 401).json({
-    error: req.mobileAuth ? "application_access_denied" : "authentication_required",
-  });
-  return false;
-}
 
 app.use(createAssignmentPhotoRouter({
   pool,

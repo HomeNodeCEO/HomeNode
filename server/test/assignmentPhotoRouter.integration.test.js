@@ -359,11 +359,11 @@ test("assignment photo router validates composition and replaces inline routes",
   );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
-  const workflowAccess = source.indexOf("function requireWorkflowAccess");
+  const guards = source.indexOf("createApplicationAccessGuards({");
   const photoRouter = source.indexOf("app.use(createAssignmentPhotoRouter(");
   const documents = source.indexOf("app.use(createAssignmentDocumentRouter(");
-  assert.ok(workflowAccess > 0);
-  assert.ok(photoRouter > workflowAccess);
+  assert.ok(guards > 0);
+  assert.ok(photoRouter > guards);
   assert.ok(documents > photoRouter);
   assert.equal(
     source.includes('app.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos"'),

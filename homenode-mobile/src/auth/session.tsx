@@ -6,6 +6,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import type { MobileConfig } from "../config";
 import { clearActiveOfflineUser } from "../offline/store";
+import { classifyRefreshFailure, type AccessTokenRequest } from "./refreshPolicy";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -27,7 +28,7 @@ type AuthContextValue = {
   error: string | null;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
-  getAccessToken: () => Promise<string>;
+  getAccessToken: (request?: AccessTokenRequest) => Promise<string>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -161,14 +162,15 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
     })();
   }, [config.clientId, config.redirectUri, discovery, request, response]);
 
-  const getAccessToken = useCallback(async () => {
+  const getAccessToken = useCallback(async ({ forceRefresh = false }: AccessTokenRequest = {}) => {
     if (!session) throw new Error("authentication_required");
-    if (isFresh(session)) return session.accessToken;
-    if (!session.refreshToken || !discovery) {
+    if (!forceRefresh && isFresh(session)) return session.accessToken;
+    if (!session.refreshToken) {
       await clearStoredSession();
       setSession(null);
       throw new Error("session_expired");
     }
+    if (!discovery) throw new Error("token_refresh_temporarily_unavailable");
     if (!refreshPromise.current) {
       refreshPromise.current = (async () => {
         try {
@@ -182,9 +184,14 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
           setSession(next);
           return next;
         } catch (reason) {
-          await clearStoredSession();
-          setSession(null);
-          throw reason;
+          if (classifyRefreshFailure(reason, {
+            confirmedTokenError: reason instanceof AuthSession.TokenError,
+          }) === "terminal") {
+            await clearStoredSession();
+            setSession(null);
+            throw new Error("session_expired");
+          }
+          throw new Error("token_refresh_temporarily_unavailable");
         } finally {
           refreshPromise.current = null;
         }

@@ -268,6 +268,7 @@ test("locks the phase-one Assignment and Subject catalog to context-aware offici
   assert.equal(getUadField("subject_address", "0100.0007")?.reportFieldId, "3.000");
   assert.equal(getUadField("assignment_commentary", "0100.0044")?.reportFieldId, "2.061");
   assert.equal(getUadField("subject_commentary", "0100.0044")?.reportFieldId, "3.032");
+  assert.equal(getUadField("owner", "1000.0023")?.entityType, "assignment_owner");
 });
 
 test("prefills trusted HomeNode subject values without marking them appraiser-confirmed", () => {

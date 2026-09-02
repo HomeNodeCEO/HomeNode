@@ -268,6 +268,7 @@ test("the ordered migrations add official UAD fields before linking shared priva
   );
   assert.ok(UAD_MIGRATION_NAMES.includes("20261002_uad_document_evidence.sql"));
   assert.ok(UAD_MIGRATION_NAMES.includes("20261004_uad_assignment_sellers.sql"));
+  assert.ok(UAD_MIGRATION_NAMES.includes("20261005_uad_public_record_owners.sql"));
   assert.match(mobileManifest, /20261002_assignment_document_uad_evidence\.sql/);
   assert.match(uadMigration, /uad_entities_entity_type_check/);
   assert.match(uadMigration, /'assignment_contact'/);

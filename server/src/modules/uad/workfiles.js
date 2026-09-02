@@ -5,7 +5,8 @@ import {
   INITIAL_UAD_INSPECTION_METHOD,
   INITIAL_UAD_PROPERTY_TYPE,
 } from "./constants.js";
-import { buildUadPrefillValues } from "./fieldCatalog.js";
+import { buildUadPrefillValues, getUadField } from "./fieldCatalog.js";
+import { buildUadPublicRecordOwners } from "./publicRecordOwners.js";
 import { registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -134,6 +135,23 @@ async function loadSubjectSnapshot(client, accountId) {
        to_jsonb(a) AS account,
        to_jsonb(l) - 'location_geom' AS location,
        to_jsonb(p) AS primary_improvements,
+       (
+         SELECT to_jsonb(os)
+           FROM core.owner_summary os
+          WHERE os.account_id = a.account_id
+          ORDER BY os.tax_year DESC
+          LIMIT 1
+       ) AS owner_summary,
+       COALESCE((
+         SELECT jsonb_agg(to_jsonb(op) ORDER BY op.id)
+           FROM core.owner_parties op
+          WHERE op.account_id = a.account_id
+            AND op.tax_year = (
+              SELECT MAX(latest.tax_year)
+                FROM core.owner_parties latest
+               WHERE latest.account_id = a.account_id
+            )
+       ), '[]'::jsonb) AS owner_parties,
        COALESCE((
          SELECT jsonb_agg(to_jsonb(ld) ORDER BY ld.tax_year DESC, ld.line_number)
            FROM core.land_detail ld
@@ -171,6 +189,10 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
   const specificationReleaseKey = input.specification_release_key || CURRENT_UAD_RELEASE_KEY;
 
   const subjectData = await loadSubjectSnapshot(client, accountId);
+  const publicRecordOwners = buildUadPublicRecordOwners(subjectData).map((owner) => ({
+    ...owner,
+    entityId: randomUUID(),
+  }));
   const reportedLivingUnits = Number(subjectData?.primary_improvements?.number_units);
   const dwellingLivingUnits = Number.isInteger(reportedLivingUnits) && reportedLivingUnits > 0 ? reportedLivingUnits : 1;
   const reportedYearBuilt = Number(subjectData?.primary_improvements?.year_built);
@@ -218,6 +240,8 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
             "core.accounts",
             "core.account_locations",
             "core.primary_improvements",
+            "core.owner_summary",
+            "core.owner_parties",
             "core.land_detail",
             "core.secondary_improvements",
           ],
@@ -225,6 +249,49 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
         actorUserId,
       ],
     );
+
+    for (const owner of publicRecordOwners) {
+      await client.query(
+        `INSERT INTO appraisal.uad_entities (
+           id, workfile_id, parent_entity_id, entity_type, entity_identifier,
+           ordinal, label, data
+         ) VALUES ($1, $2, NULL, 'assignment_owner', $3, $4, $5, $6::jsonb)`,
+        [
+          owner.entityId,
+          workfileId,
+          `public-record-owner-${owner.ordinal}`,
+          owner.ordinal,
+          owner.name,
+          JSON.stringify({
+            source: "homenodedb_public_record",
+            source_reference: owner.sourceReference,
+            source_tax_year: owner.taxYear,
+            ownership_percent: owner.ownershipPercent,
+          }),
+        ],
+      );
+      for (const item of owner.values) {
+        const field = getUadField(item.context_key, item.uid);
+        if (!field) throw new Error(`uad_public_owner_field_missing:${item.context_key}:${item.uid}`);
+        await client.query(
+          `INSERT INTO appraisal.uad_field_values (
+             id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
+             source_type, source_reference, source_observed_at, is_appraiser_confirmed
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb,
+                     'public_record', $8, now(), false)`,
+          [
+            randomUUID(),
+            workfileId,
+            owner.entityId,
+            item.context_key,
+            item.uid,
+            field.reportFieldId,
+            JSON.stringify(item.value),
+            owner.sourceReference,
+          ],
+        );
+      }
+    }
 
     await client.query(
       `INSERT INTO appraisal.uad_entities (
@@ -322,6 +389,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
             unit: unitEntityId,
             site_parcel: siteParcelEntityId,
             vehicle_storage: vehicleStorageEntityId,
+            public_record_owners: publicRecordOwners.map((owner) => owner.entityId),
           },
         }),
         actorUserId,

@@ -28,6 +28,9 @@ const MARKET_INVENTORY_TYPES = Object.freeze({
   market_total_sales: Object.freeze({ value: "TotalSales", sort: 854 }),
 });
 const ENTITY_ANCHOR_OVERRIDES = Object.freeze({
+  // Public-record owners are repeatable PARTY records just like contract
+  // sellers, but use the dedicated Section 2 owner UIDs.
+  assignment_owner: Object.freeze(["PARTY"]),
   // Section 2 can contain more than one contract seller. Keep every seller in
   // its own repeatable MISMO PARTY while retaining the official seller UIDs.
   assignment_seller: Object.freeze(["PARTY"]),

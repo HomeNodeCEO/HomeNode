@@ -97,6 +97,7 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND conname = 'uad_entities_entity_type_check'
     `);
     assert.match(sellerEntityConstraint.rows[0]?.definition || "", /assignment_seller/);
+    assert.match(sellerEntityConstraint.rows[0]?.definition || "", /assignment_owner/);
 
     const sellerFieldMetadata = await pool.query(`
       SELECT count(*)::integer AS count
@@ -106,6 +107,15 @@ test("UAD foundation migration creates isolated schemas and seeded roles", {
          AND metadata->>'repeatable_entity_type' = 'assignment_seller'
     `);
     assert.equal(sellerFieldMetadata.rows[0]?.count, 7);
+
+    const ownerFieldMetadata = await pool.query(`
+      SELECT count(*)::integer AS count
+        FROM uad_ref.fields
+       WHERE release_key = 'uad-3.6-2026-08-13-h1.5'
+         AND property_context = 'owner'
+         AND metadata->>'repeatable_entity_type' = 'assignment_owner'
+    `);
+    assert.equal(ownerFieldMetadata.rows[0]?.count, 5);
 
     const phaseOneFields = await pool.query(`
       SELECT count(*)::integer AS count

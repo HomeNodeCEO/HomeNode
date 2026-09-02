@@ -24,10 +24,7 @@ import {
   ensureLocationBackfillQueueSchema,
   startLocationBackfillWorker,
 } from "./services/locationBackfillQueue.js";
-import {
-  ensureAccountQualitySchema,
-  resolveCanonicalAccountId,
-} from "./services/accountQuality.js";
+import { ensureAccountQualitySchema } from "./services/accountQuality.js";
 import { editorKeyMatches } from "./util/housingProfileEdit.js";
 import { buildGroupedAnalysis } from "./util/groupedAnalysis.js";
 import { parseGroupedAnalysisBreakdowns } from "./util/groupedAnalysisBreakdowns.js";
@@ -62,26 +59,12 @@ import { TrestleClient } from "./services/trestleClient.js";
 import {
   assertNonDallasEnrichmentCounty,
 } from "./util/nonDallasEnrichment.js";
-import {
-  ensureAssignmentFilesSchema,
-  normalizeAssignmentFileId,
-} from "./services/assignmentFiles.js";
+import { ensureAssignmentFilesSchema } from "./services/assignmentFiles.js";
 import {
   ensureCustomAppraisalWorkfileSchema,
 } from "./services/customAppraisalWorkfiles.js";
 import { ensurePropertyContextSchema } from "./services/propertyContextStore.js";
-import {
-  confirmAssignmentDocumentCandidates,
-  confirmAssignmentDocumentDespiteSubjectMismatch,
-  createAssignmentDocument,
-  deleteAssignmentDocument,
-  ensureAssignmentDocumentsSchema,
-  getAssignmentDocument,
-  listAssignmentDocuments,
-  MAX_ASSIGNMENT_DOCUMENT_BYTES,
-  processAssignmentDocument,
-  reviewAssignmentDocumentCandidate,
-} from "./services/assignmentDocuments.js";
+import { ensureAssignmentDocumentsSchema } from "./services/assignmentDocuments.js";
 import { createDocumentOcrProvider } from "./services/documentOcr.js";
 import {
   enqueuePropertyInfluenceAccounts,
@@ -133,6 +116,7 @@ import { createHousingProfileRouter } from "./modules/accounts/housingProfileRou
 import { createReportManualValuesRouter } from "./modules/accounts/reportManualValuesRouter.js";
 import { createAssignmentFileListRouter } from "./modules/assignmentFiles/listRouter.js";
 import { createAssignmentFileMutationRouter } from "./modules/assignmentFiles/mutationRouter.js";
+import { createAssignmentDocumentRouter } from "./modules/assignmentFiles/documentRouter.js";
 import { createAssignmentPhotoRouter } from "./modules/assignmentFiles/photoRouter.js";
 import { createAssignmentWorkfileReadRouter } from "./modules/assignmentFiles/workfileReadRouter.js";
 import { createAssignmentWorkfileMutationRouter } from "./modules/assignmentFiles/workfileMutationRouter.js";
@@ -162,7 +146,7 @@ import {
 } from "./security/applicationAuthenticationPolicy.js";
 import { getApplicationAuthReadiness } from "./security/applicationAuthReadiness.js";
 import { createWebAuthRouter, createWebSessionAuthenticator } from "./security/webAuth.js";
-import { authorizeCustomAssignmentFile, decideAssignmentAccess } from "./security/assignmentAccess.js";
+import { authorizeCustomAssignmentFile } from "./security/assignmentAccess.js";
 import {
   createRuntimeResilienceConfiguration,
 } from "./security/runtimeResilience.js";
@@ -2344,15 +2328,6 @@ app.use(createZoningRouter({
   authenticationRequired: applicationAuthenticationRequired,
 }));
 
-function decodedDocumentHeader(req, name, fallback = "") {
-  const value = String(req.get(name) || fallback);
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
 async function requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, permission) {
   if (!applicationAuthenticationRequired) return true;
   if (req.mobileAuth) {
@@ -2373,38 +2348,6 @@ async function requireCustomAssignmentAccess(req, res, accountId, assignmentFile
   }
   res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
   return false;
-}
-
-async function requireAssignmentDocumentAccess(req, res, documentIdValue, permission) {
-  if (!applicationAuthenticationRequired) return true;
-  if (!req.mobileAuth) {
-    res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
-    return false;
-  }
-  const documentId = Number(documentIdValue);
-  if (!Number.isSafeInteger(documentId) || documentId < 1) {
-    res.status(400).json({ error: "invalid_document_id" });
-    return false;
-  }
-  const { rows } = await pool.query(
-    `SELECT document.id, document.assignment_file_id,
-            assignment.account_id, assignment.organization_id,
-            assignment.assigned_appraiser_user_id, assignment.supervisory_appraiser_user_id
-       FROM app.assignment_documents document
-       LEFT JOIN app.assignment_files assignment ON assignment.id = document.assignment_file_id
-      WHERE document.id = $1`,
-    [documentId],
-  );
-  if (!rows.length) {
-    res.status(404).json({ error: "document_not_found" });
-    return false;
-  }
-  if (!rows[0].assignment_file_id
-      || !decideAssignmentAccess(req.mobileAuth, rows[0], permission)) {
-    res.set("cache-control", "no-store").status(403).json({ error: "assignment_document_access_denied" });
-    return false;
-  }
-  return true;
 }
 
 function requireWorkflowAccess(req, res, workflow, permission) {
@@ -2441,267 +2384,16 @@ app.use(createAssignmentPhotoRouter({
   requireAssignmentAccess: requireCustomAssignmentAccess,
 }));
 
-/** List assignment PDFs and their machine-review status for a property file. */
-app.get("/api/accounts/:id/documents", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    const accountId = await resolveCanonicalAccountId(pool, requestedId);
-    const assignmentFileId = normalizeAssignmentFileId(req.query.assignment_file_id);
-    if (applicationAuthenticationRequired && req.mobileAuth && !assignmentFileId) {
-      return res.status(400).json({ error: "assignment_file_required" });
-    }
-    if (assignmentFileId
-        && !await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
-    const documents = await listAssignmentDocuments(pool, {
-      accountId,
-      assignmentFileId,
-      includePropertyEvidence: !(applicationAuthenticationRequired && req.mobileAuth),
-    });
-    return res.json({ ok: true, account_id: accountId, documents });
-  } catch (error) {
-    const message = error?.message || "assignment_documents_lookup_failed";
-    return res.status(message === "account_not_found" ? 404 : 500).json({ error: message });
-  }
-});
-
-/**
- * Upload a PDF without base64 expansion. Extraction is durable and asynchronous;
- * a scheduled maintenance pass retries any interrupted work.
- */
-app.post(
-  "/api/accounts/:id/documents",
-  express.raw({
-    type: ["application/pdf", "application/octet-stream"],
-    limit: MAX_ASSIGNMENT_DOCUMENT_BYTES,
-  }),
-  async (req, res) => {
-    const requestedId = String(req.params.id || "").trim();
-    if (!requireEditor(req, res)) return;
-    try {
-      await ensureAssignmentDocumentsAvailable();
-      const accountId = await resolveCanonicalAccountId(pool, requestedId);
-      const assignmentFileId = normalizeAssignmentFileId(req.get("x-assignment-file-id"));
-      if (applicationAuthenticationRequired && req.mobileAuth && !assignmentFileId) {
-        return res.status(400).json({ error: "assignment_file_required" });
-      }
-      let documentOrganizationId = null;
-      if (assignmentFileId) {
-        const { rows } = await pool.query(
-          "SELECT organization_id FROM app.assignment_files WHERE id = $1 AND account_id = $2",
-          [assignmentFileId, accountId],
-        );
-        if (!rows.length) return res.status(400).json({ error: "invalid_assignment_file" });
-        if (!await requireCustomAssignmentAccess(req, res, accountId, assignmentFileId, "write")) return;
-        documentOrganizationId = rows[0].organization_id || null;
-      }
-      const document = await createAssignmentDocument(pool, {
-        organizationId: documentOrganizationId,
-        accountId,
-        assignmentFileId,
-        documentType: decodedDocumentHeader(req, "x-document-type", "other"),
-        title: decodedDocumentHeader(req, "x-document-title"),
-        fileName: decodedDocumentHeader(req, "x-document-file-name", "document.pdf"),
-        contentType: req.get("content-type"),
-        content: req.body,
-        uploadedBy: decodedDocumentHeader(req, "x-document-uploaded-by"),
-        storage: sharedObjectStorage,
-      });
-      if (document.processing_status === "uploaded") {
-        void processAssignmentDocument(pool, document.id, { storage: sharedObjectStorage }).catch((error) => {
-          if (error?.message !== "document_processing_in_progress") {
-            console.warn("[documents] background extraction failed", error?.message || error);
-          }
-        });
-      }
-      return res.status(201).json({ ok: true, account_id: accountId, document });
-    } catch (error) {
-      const message = error?.message || "assignment_document_upload_failed";
-      const clientErrors = new Set([
-        "document_content_required",
-        "document_too_large",
-        "document_not_pdf",
-        "invalid_document_type",
-      ]);
-      return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
-    }
-  },
-);
-
-/** Load a document plus page-cited field candidates. */
-app.get("/api/documents/:id", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "read")) return;
-    const document = await getAssignmentDocument(pool, req.params.id);
-    if (!document) return res.status(404).json({ error: "document_not_found" });
-    return res.json({ ok: true, document });
-  } catch (error) {
-    console.error("assignment document lookup failed", error);
-    return res.status(500).json({ error: "assignment_document_lookup_failed" });
-  }
-});
-
-/** Stream immutable uploaded source bytes inline for the embedded PDF viewer. */
-app.get("/api/documents/:id/content", async (req, res) => {
-  if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "read")) return;
-    const document = await getAssignmentDocument(pool, req.params.id, {
-      includeContent: true,
-      storage: sharedObjectStorage,
-    });
-    if (!document) return res.status(404).json({ error: "document_not_found" });
-    const fileName = String(document.file_name || `document-${document.id}.pdf`)
-      .replace(/[\r\n"]/g, "_");
-    res.set({
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${fileName}"`,
-      ETag: `"${document.checksum_sha256}"`,
-      "Cache-Control": "private, max-age=86400, immutable",
-      "X-Content-Type-Options": "nosniff",
-    });
-    return res.send(document.content);
-  } catch (error) {
-    console.error("assignment document stream failed", error);
-    return res.status(500).json({ error: "assignment_document_stream_failed" });
-  }
-});
-
-/** Permanently remove an assignment PDF and its extracted evidence from private storage. */
-app.delete("/api/documents/:id", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
-    const result = await deleteAssignmentDocument(pool, sharedObjectStorage, req.params.id);
-    res.set("cache-control", "no-store");
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    const message = error?.message || "assignment_document_delete_failed";
-    if (message === "document_not_found") return res.status(404).json({ error: message });
-    if (message === "invalid_document_id") return res.status(400).json({ error: message });
-    if (message === "assignment_document_storage_not_configured") {
-      return res.status(503).json({ error: message });
-    }
-    console.error("assignment document delete failed", error);
-    return res.status(500).json({ error: "assignment_document_delete_failed" });
-  }
-});
-
-/** Retry text extraction after a worker interruption or parser improvement. */
-app.post("/api/documents/:id/reprocess", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
-    const document = await processAssignmentDocument(pool, req.params.id, {
-      force: true,
-      storage: sharedObjectStorage,
-      ocrProvider: documentOcrProvider,
-    });
-    return res.json({ ok: true, document });
-  } catch (error) {
-    const message = error?.message || "assignment_document_reprocess_failed";
-    const clientErrors = new Set([
-      "invalid_document_id",
-      "document_processing_in_progress",
-      "document_retry_not_due",
-      "document_not_processable",
-    ]);
-    return res.status(message === "document_not_found" ? 404 : clientErrors.has(message) ? 409 : 500).json({ error: message });
-  }
-});
-
-/** Record an appraiser mismatch override and confirm the visible engagement suggestions in one audit event. */
-app.post("/api/documents/:id/subject-address-override", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
-    const result = await confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
-      documentId: req.params.id,
-      reviewer: req.body?.reviewer,
-      reportSubjectAddress: req.body?.report_subject_address,
-      candidateValues: req.body?.candidate_values,
-    });
-    const document = await getAssignmentDocument(pool, result.document_id);
-    return res.json({
-      ok: true,
-      document,
-      override: result.subject_address_override,
-      assignment_application: result.assignment_application,
-    });
-  } catch (error) {
-    const message = error?.message || "document_subject_address_override_failed";
-    const clientErrors = new Set([
-      "invalid_document_id",
-      "document_reviewer_required",
-      "report_subject_address_required",
-      "engagement_letter_required",
-      "document_subject_address_candidate_required",
-    ]);
-    return res.status(message === "document_not_found" ? 404 : clientErrors.has(message) ? 400 : 500).json({ error: message });
-  }
-});
-
-/** Confirm every visible machine suggestion in one audited document review. */
-app.post("/api/documents/:id/confirm-all", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    if (!await requireAssignmentDocumentAccess(req, res, req.params.id, "write")) return;
-    const result = await confirmAssignmentDocumentCandidates(pool, {
-      documentId: req.params.id,
-      reviewer: req.body?.reviewer,
-      reportSubjectAddress: req.body?.report_subject_address,
-      candidateValues: req.body?.candidate_values,
-    });
-    const document = await getAssignmentDocument(pool, result.document_id);
-    return res.json({ ok: true, document, assignment_application: result.assignment_application });
-  } catch (error) {
-    const message = error?.message || "document_candidates_confirm_all_failed";
-    const clientErrors = new Set([
-      "invalid_document_id",
-      "document_reviewer_required",
-      "report_subject_address_required",
-    ]);
-    if (message === "document_not_found") return res.status(404).json({ error: message });
-    if (message === "document_subject_address_mismatch") {
-      return res.status(409).json({ error: message });
-    }
-    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
-  }
-});
-
-/** Confirm or reject one machine suggestion without mutating the source PDF. */
-app.patch("/api/documents/:documentId/candidates/:candidateId", async (req, res) => {
-  if (!requireEditor(req, res)) return;
-  try {
-    await ensureAssignmentDocumentsAvailable();
-    if (!await requireAssignmentDocumentAccess(req, res, req.params.documentId, "write")) return;
-    const candidate = await reviewAssignmentDocumentCandidate(pool, {
-      documentId: req.params.documentId,
-      candidateId: req.params.candidateId,
-      reviewStatus: req.body?.review_status,
-      confirmedValue: req.body?.confirmed_value,
-      reviewer: req.body?.reviewer,
-    });
-    return res.json({ ok: true, candidate });
-  } catch (error) {
-    const message = error?.message || "document_candidate_review_failed";
-    const clientErrors = new Set([
-      "invalid_document_candidate",
-      "invalid_document_review_status",
-      "document_reviewer_required",
-      "document_candidate_not_found",
-    ]);
-    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
-  }
-});
+app.use(createAssignmentDocumentRouter({
+  pool,
+  objectStorage: sharedObjectStorage,
+  ensureAvailable: ensureAssignmentDocumentsAvailable,
+  requireWorkflowAccess,
+  requireEditor,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
+  authenticationRequired: applicationAuthenticationRequired,
+  ocrProvider: documentOcrProvider,
+}));
 
 app.use(createSalesMediaRouter({ pool }));
 

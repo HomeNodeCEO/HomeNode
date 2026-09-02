@@ -8,6 +8,10 @@ const router = fs.readFileSync(
   new URL("../src/modules/mobile/desktopPropertyTaxRouter.js", import.meta.url),
   "utf8",
 );
+const customDocumentRouter = fs.readFileSync(
+  new URL("../src/modules/assignmentFiles/documentRouter.js", import.meta.url),
+  "utf8",
+);
 const mobileMigrations = fs.readFileSync(
   new URL("../src/database/mobileMigrations.js", import.meta.url),
   "utf8",
@@ -50,10 +54,10 @@ test("legacy Custom Appraisal document routes exclude other workflow documents",
   assert.match(service, /document\.uad_workfile_id IS NULL/);
   assert.match(service, /document\.tax_protest_file_id IS NULL/);
 
-  const accessStart = server.indexOf("async function requireAssignmentDocumentAccess");
-  const accessEnd = server.indexOf("function requireWorkflowAccess", accessStart);
-  const accessGuard = server.slice(accessStart, accessEnd);
-  assert.match(accessGuard, /if \(!applicationAuthenticationRequired\)/);
+  const accessStart = customDocumentRouter.indexOf("async function requireDocumentAccess");
+  const accessEnd = customDocumentRouter.indexOf("/** List assignment PDFs", accessStart);
+  const accessGuard = customDocumentRouter.slice(accessStart, accessEnd);
+  assert.match(accessGuard, /if \(!authenticationRequired\)/);
   assert.match(accessGuard, /if \(!rows\[0\]\.assignment_file_id/);
   assert.match(accessGuard, /assignment_document_access_denied/);
 });

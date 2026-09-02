@@ -329,6 +329,11 @@ test("the staging bootstrap is guarded against production execution", () => {
   assert.match(source, /UPDATE appraisal\.uad_workfiles/);
   assert.match(source, /UPDATE app\.report_files report_file/);
   assert.match(source, /UPDATE app\.appraisal_cases appraisal_case/);
+  assert.match(source, /CREATE EXTENSION IF NOT EXISTS postgis/);
+  assert.match(source, /ADD COLUMN IF NOT EXISTS geocoded_at timestamptz NOT NULL DEFAULT now\(\)/);
+  assert.match(source, /CREATE TABLE IF NOT EXISTS core\.sales_source_records/);
+  assert.match(source, /CREATE TABLE IF NOT EXISTS core\.sale_parcels/);
+  assert.match(source, /CREATE TABLE IF NOT EXISTS core\.sales \(/);
   assert.equal(source.match(/account_id LIKE 'UAD-STAGING-%'/g)?.length, 3);
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });

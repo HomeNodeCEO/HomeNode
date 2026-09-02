@@ -264,6 +264,7 @@ import {
 } from "./security/runtimeResilience.js";
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
+import { mountApplicationRouteBoundary } from "./security/applicationRouteBoundary.js";
 import {
   normalizeSignupPayload,
   signupDeliveryStatus,
@@ -314,7 +315,7 @@ const loadDcadScraperStatus = redTeamIsolation.external_status_enabled
 app.use(requestPerformance.middleware);
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));
-const globalApiRateLimiter = rateLimit({
+const globalApiRateLimiterOptions = {
   windowMs: httpSecurity.apiRateLimitWindowMs,
   limit: httpSecurity.apiRateLimitMax,
   // UAD and mobile own stricter limiters and response contracts inside their
@@ -339,7 +340,7 @@ const globalApiRateLimiter = rateLimit({
     });
     res.status(429).json({ error: "api_rate_limit_exceeded" });
   },
-});
+};
 
 const signupRateLimiter = rateLimit({
   windowMs: httpSecurity.signupRateLimitWindowMs,
@@ -393,11 +394,7 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });
-// Browser sessions must be hydrated before UAD routing so the same secure
-// HomeNode session can authorize UAD pages without requiring a mobile bearer
-// token. Mobile continues to use its separate public-client audience below.
-app.use("/api", createWebSessionAuthenticator({ pool }));
-app.use("/api/uad", createUadRouter({
+const uadRouter = createUadRouter({
   pool,
   storage: uadObjectStorage,
   verifier: mobileOidcVerifier,
@@ -406,18 +403,16 @@ app.use("/api/uad", createUadRouter({
   enabled: environmentFlag(process.env.UAD_WORKSPACE_ENABLED),
   authenticationRequired: httpSecurity.authenticationRequired,
   security: httpSecurity,
-}));
-app.use("/api/uad", uadBodyParserErrorHandler);
-app.use(express.json({ limit: "1mb" }));
+});
 
-app.use("/api/mobile", createMobileRouter({
+const mobileRouter = createMobileRouter({
   pool,
   verifier: mobileOidcVerifier,
   storage: sharedObjectStorage,
   enabled: environmentFlag(process.env.MOBILE_INSPECTION_ENABLED),
   recentFileDays: Number(process.env.MOBILE_RECENT_FILE_DAYS || 30),
   security: httpSecurity,
-}));
+});
 
 // UAD, Custom Appraisal, Property Tax Protest, and mobile all share the same
 // provisioned OIDC identity and organization membership model. The UAD/mobile
@@ -429,50 +424,26 @@ const authenticateApplicationUser = createMobileAuthenticator({
   pool,
   verifier: mobileOidcVerifier,
 });
-app.use("/api", createOptionalApplicationAuthenticator(authenticateApplicationUser));
-// Browser report pages load several independent analyses in parallel. Mount
-// the broad limiter after authentication so each signed-in user receives an
-// independent counter instead of competing for a shared proxy/public-IP key.
-app.use(globalApiRateLimiter);
-app.use("/api/auth", createWebAuthRouter({
-  pool,
-  verifier: webOidcVerifier,
+mountApplicationRouteBoundary(app, {
   authenticationPolicy: applicationAuthenticationPolicy,
-}));
-
-app.get("/api/auth/me", (req, res) => {
-  res.set("cache-control", "no-store");
-  if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
-  return res.json({ ok: true, session: buildApplicationSession(req.mobileAuth) });
-});
-
-// This read-only, administrator-only audit makes the authentication rollout
-// observable on hosted environments where an interactive database shell is
-// intentionally unavailable. It returns counts and stable blocker codes only.
-app.get("/api/auth/readiness", async (req, res) => {
-  res.set("cache-control", "no-store");
-  if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });
-  try {
-    const readiness = await getApplicationAuthReadiness(pool, req.mobileAuth);
-    return res.json({ ok: true, readiness });
-  } catch (error) {
-    if (error?.code === "auth_readiness_access_denied") {
-      return res.status(403).json({ error: "auth_readiness_access_denied" });
-    }
-    console.warn("[auth] readiness audit unavailable");
-    return res.status(503).json({ error: "auth_readiness_unavailable" });
-  }
-});
-
-// UAD and mobile are mounted above with their own enforcement. Once unified
-// authentication is activated, fail closed for every remaining legacy API
-// route instead of depending on each historical handler to remember a guard.
-// Once this gate is active, the legacy editor key is deliberately inert.
-app.use("/api", (req, res, next) => {
-  if (!applicationAuthenticationRequired || req.mobileAuth) return next();
-  return res.set("cache-control", "no-store")
-    .status(401)
-    .json({ error: "authentication_required" });
+  webSessionAuthenticator: createWebSessionAuthenticator({ pool }),
+  uadRouter,
+  uadBodyParserErrorHandler,
+  jsonBodyParser: express.json({ limit: "1mb" }),
+  mobileRouter,
+  optionalApplicationAuthenticator: createOptionalApplicationAuthenticator(
+    authenticateApplicationUser,
+  ),
+  // Browser report pages load several independent analyses in parallel. The
+  // broad limiter follows authentication so users receive independent counters.
+  globalApiRateLimiterOptions,
+  webAuthRouter: createWebAuthRouter({
+    pool,
+    verifier: webOidcVerifier,
+    authenticationPolicy: applicationAuthenticationPolicy,
+  }),
+  buildSession: buildApplicationSession,
+  loadAuthReadiness: (identity) => getApplicationAuthReadiness(pool, identity),
 });
 
 const trestleClient = new TrestleClient();

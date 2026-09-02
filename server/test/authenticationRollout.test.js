@@ -129,13 +129,13 @@ test("rollout audit covers identity, ownership, and canonical registry consisten
 });
 
 test("hosted activation readiness is authenticated, administrator-only, and diagnostic-safe", () => {
-  const server = read("../src/oldServer.js");
+  const boundary = read("../src/security/applicationRouteBoundary.js");
   const readiness = read("../src/security/applicationAuthReadiness.js");
-  assert.match(server, /app\.get\("\/api\/auth\/readiness"/);
-  assert.match(server, /if \(!req\.mobileAuth\).*authentication_required/);
-  assert.match(server, /auth_readiness_access_denied/);
-  assert.match(server, /auth_readiness_unavailable/);
-  assert.doesNotMatch(server, /readiness audit unavailable.*error/i);
+  assert.match(boundary, /app\.get\("\/api\/auth\/readiness"/);
+  assert.match(boundary, /if \(!req\.mobileAuth\).*authentication_required/);
+  assert.match(boundary, /auth_readiness_access_denied/);
+  assert.match(boundary, /auth_readiness_unavailable/);
+  assert.doesNotMatch(boundary, /readiness audit unavailable.*error/i);
   assert.match(readiness, /organization_admin/);
   assert.match(readiness, /homenode_admin/);
   assert.match(readiness, /positiveCountBlockers/);
@@ -143,14 +143,15 @@ test("hosted activation readiness is authenticated, administrator-only, and diag
 
 test("mandatory unified authentication fails closed across the legacy API surface", () => {
   const server = read("../src/oldServer.js");
-  const authMe = server.indexOf('app.get("/api/auth/me"');
-  const legacyGate = server.indexOf('app.use("/api", (req, res, next) =>', authMe);
+  const boundary = read("../src/security/applicationRouteBoundary.js");
+  const boundaryMount = server.indexOf("mountApplicationRouteBoundary(app");
   const accountRead = server.indexOf('app.get("/api/accounts/:id"');
-  assert.ok(authMe >= 0 && legacyGate > authMe && accountRead > legacyGate);
-  assert.match(server.slice(legacyGate, accountRead), /applicationAuthenticationRequired/);
-  assert.match(server.slice(legacyGate, accountRead), /req\.mobileAuth/);
-  assert.doesNotMatch(server.slice(legacyGate, accountRead), /x-homenode-editor-key|configuredEditorKey/);
-  assert.match(server.slice(legacyGate, accountRead), /authentication_required/);
+  assert.ok(boundaryMount >= 0 && accountRead > boundaryMount);
+  assert.match(boundary, /app\.use\("\/api", createLegacyApplicationAuthenticationGate/);
+  assert.match(boundary, /authenticationPolicy\.authenticationRequired/);
+  assert.match(boundary, /req\.mobileAuth/);
+  assert.doesNotMatch(boundary, /x-homenode-editor-key|configuredEditorKey/);
+  assert.match(boundary, /authentication_required/);
 });
 
 test("one startup policy controls HTTP, browser, and legacy enforcement without moving mobile", () => {
@@ -159,12 +160,12 @@ test("one startup policy controls HTTP, browser, and legacy enforcement without 
     "const applicationAuthenticationPolicy = createApplicationAuthenticationPolicy()",
   );
   const databasePool = server.indexOf("const pool = new pg.Pool(");
-  const mobileMount = server.indexOf('app.use("/api/mobile"');
-  const authStatus = server.indexOf('app.get("/api/auth/me"');
-  const legacyGate = server.indexOf('app.use("/api", (req, res, next) =>', authStatus);
+  const mobileRouter = server.indexOf("const mobileRouter = createMobileRouter(");
+  const boundaryMount = server.indexOf("mountApplicationRouteBoundary(app");
   assert.ok(policyCreation >= 0 && policyCreation < databasePool);
-  assert.ok(mobileMount > databasePool && legacyGate > mobileMount);
+  assert.ok(mobileRouter > databasePool && boundaryMount > mobileRouter);
   assert.match(server, /createHttpSecurityConfiguration\(process\.env, \{\s+authenticationPolicy: applicationAuthenticationPolicy/);
+  assert.match(server, /mountApplicationRouteBoundary\(app, \{\s+authenticationPolicy: applicationAuthenticationPolicy/);
   assert.match(server, /createWebAuthRouter\(\{\s+pool,\s+verifier: webOidcVerifier,\s+authenticationPolicy: applicationAuthenticationPolicy/);
   assert.doesNotMatch(
     server,

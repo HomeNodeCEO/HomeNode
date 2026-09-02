@@ -414,6 +414,7 @@ function InspectionScreen({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedSketchRoom, setSelectedSketchRoom] = useState<SelectedSketchRoom | null>(null);
+  const [sketchLabelDragging, setSketchLabelDragging] = useState(false);
   const [selectedTab, setSelectedTab] = useState<InspectionTab>("subject");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const completed = session.status === "completed";
@@ -436,6 +437,7 @@ function InspectionScreen({
     setSelectedSketchRoom(null);
     setSelectedTab("subject");
     setDrawerOpen(false);
+    setSketchLabelDragging(false);
   }, [session.id]);
 
   const selectTab = (tab: InspectionTab) => {
@@ -490,7 +492,10 @@ function InspectionScreen({
         </Pressable>
         <Text numberOfLines={1} style={styles.toolbarTitle}>{selectedTabLabel}</Text>
       </View> : null}
-      <ScrollView contentContainerStyle={[styles.content, !completed && styles.inspectionContent]}>
+      <ScrollView
+        contentContainerStyle={[styles.content, !completed && styles.inspectionContent]}
+        scrollEnabled={!sketchLabelDragging}
+      >
       <Text style={styles.eyebrow}>OFFLINE FIELD INSPECTION</Text>
       <Text style={styles.title}>{property.address}</Text>
       <Text style={[styles.networkBanner, online ? styles.onlineBanner : styles.offlineBanner]}>
@@ -552,6 +557,7 @@ function InspectionScreen({
             sessionId={session.id}
             online={online}
             selectedRoomId={selectedSketchRoom?.id || null}
+            onLabelDragActiveChange={setSketchLabelDragging}
             onSelectRoom={setSelectedSketchRoom}
           />
         </View>

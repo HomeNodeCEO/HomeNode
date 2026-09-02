@@ -138,10 +138,20 @@ function updateArea(draft: ManualSketchDraft, areaId: string, update: (area: Ske
 }
 
 const CANVAS_PADDING = 54;
-const DIMENSION_WIDTH = 54;
-const DIMENSION_HEIGHT = 25;
-const ROOM_LABEL_WIDTH = 78;
-const ROOM_LABEL_HEIGHT = 30;
+const DEFAULT_DIMENSION_SIZE = Object.freeze({ width: 34, height: 17 });
+const DEFAULT_ROOM_LABEL_SIZE = Object.freeze({ width: 50, height: 18 });
+
+function clampLabelCenter(
+  position: SketchPoint,
+  size: { width: number; height: number },
+  canvasWidth: number,
+  canvasHeight: number,
+) {
+  return {
+    x: Math.max(size.width / 2, Math.min(canvasWidth - (size.width / 2), position.x)),
+    y: Math.max(size.height / 2, Math.min(canvasHeight - (size.height / 2), position.y)),
+  };
+}
 
 function lineStyle(from: SketchPoint, to: SketchPoint, thickness = 1) {
   const length = Math.hypot(to.x - from.x, to.y - from.y);
@@ -154,41 +164,60 @@ function lineStyle(from: SketchPoint, to: SketchPoint, thickness = 1) {
   };
 }
 
-function DraggableDimension({ midpoint, position, label, deduction, canvasWidth, canvasHeight, onMove }: {
+function DraggableDimension({ midpoint, position, label, deduction, canvasWidth, canvasHeight, onDragActiveChange, onMove }: {
   midpoint: SketchPoint;
   position: SketchPoint;
   label: string;
   deduction: boolean;
   canvasWidth: number;
   canvasHeight: number;
+  onDragActiveChange: (active: boolean) => void;
   onMove: (position: SketchPoint) => void;
 }) {
   const [translation, setTranslation] = useState({ x: 0, y: 0 });
+  const [labelSize, setLabelSize] = useState<{ width: number; height: number }>(DEFAULT_DIMENSION_SIZE);
   const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
     onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) + Math.abs(gesture.dy) > 2,
+    onMoveShouldSetPanResponderCapture: (_, gesture) => Math.abs(gesture.dx) + Math.abs(gesture.dy) > 2,
+    onPanResponderGrant: () => onDragActiveChange(true),
     onPanResponderMove: (_, gesture) => setTranslation({ x: gesture.dx, y: gesture.dy }),
     onPanResponderRelease: (_, gesture) => {
-      onMove({
-        x: Math.max(DIMENSION_WIDTH / 2, Math.min(canvasWidth - (DIMENSION_WIDTH / 2), position.x + gesture.dx)),
-        y: Math.max(DIMENSION_HEIGHT / 2, Math.min(canvasHeight - (DIMENSION_HEIGHT / 2), position.y + gesture.dy)),
-      });
+      onDragActiveChange(false);
+      onMove(clampLabelCenter(
+        { x: position.x + gesture.dx, y: position.y + gesture.dy },
+        labelSize,
+        canvasWidth,
+        canvasHeight,
+      ));
       setTranslation({ x: 0, y: 0 });
     },
-    onPanResponderTerminate: () => setTranslation({ x: 0, y: 0 }),
+    onPanResponderTerminate: () => {
+      setTranslation({ x: 0, y: 0 });
+      onDragActiveChange(false);
+    },
     onPanResponderTerminationRequest: () => false,
-  }), [canvasHeight, canvasWidth, onMove, position.x, position.y]);
+    onShouldBlockNativeResponder: () => true,
+  }), [canvasHeight, canvasWidth, labelSize, onDragActiveChange, onMove, position.x, position.y]);
   const current = { x: position.x + translation.x, y: position.y + translation.y };
   return <>
     <View style={[styles.dimensionLeader, lineStyle(midpoint, current)]} />
     <View
       accessibilityHint="Drag to move this dimension label away from nearby labels"
       accessibilityLabel={`${label} wall dimension`}
+      hitSlop={8}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setLabelSize((currentSize) => currentSize.width === width && currentSize.height === height
+          ? currentSize
+          : { width, height });
+      }}
       {...panResponder.panHandlers}
       style={[
         styles.dimension,
         deduction && styles.deductionDimension,
-        { left: current.x - (DIMENSION_WIDTH / 2), top: current.y - (DIMENSION_HEIGHT / 2) },
+        { left: current.x - (labelSize.width / 2), top: current.y - (labelSize.height / 2) },
       ]}
     >
       <Text style={[styles.dimensionText, deduction && styles.deductionDimensionText]}>{label}</Text>
@@ -196,43 +225,62 @@ function DraggableDimension({ midpoint, position, label, deduction, canvasWidth,
   </>;
 }
 
-function DraggableRoomLabel({ position, label, selected, canvasWidth, canvasHeight, onSelect, onMove }: {
+function DraggableRoomLabel({ position, label, selected, canvasWidth, canvasHeight, onDragActiveChange, onSelect, onMove }: {
   position: SketchPoint;
   label: string;
   selected: boolean;
   canvasWidth: number;
   canvasHeight: number;
+  onDragActiveChange: (active: boolean) => void;
   onSelect: () => void;
   onMove: (position: SketchPoint) => void;
 }) {
   const [translation, setTranslation] = useState({ x: 0, y: 0 });
+  const [labelSize, setLabelSize] = useState<{ width: number; height: number }>(DEFAULT_ROOM_LABEL_SIZE);
   const panResponder = useMemo(() => PanResponder.create({
     onStartShouldSetPanResponder: () => true,
+    onStartShouldSetPanResponderCapture: () => true,
     onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) + Math.abs(gesture.dy) > 2,
+    onMoveShouldSetPanResponderCapture: (_, gesture) => Math.abs(gesture.dx) + Math.abs(gesture.dy) > 2,
+    onPanResponderGrant: () => onDragActiveChange(true),
     onPanResponderMove: (_, gesture) => setTranslation({ x: gesture.dx, y: gesture.dy }),
     onPanResponderRelease: (_, gesture) => {
+      onDragActiveChange(false);
       onSelect();
       if (Math.abs(gesture.dx) + Math.abs(gesture.dy) > 2) {
-        onMove({
-          x: Math.max(ROOM_LABEL_WIDTH / 2, Math.min(canvasWidth - (ROOM_LABEL_WIDTH / 2), position.x + gesture.dx)),
-          y: Math.max(ROOM_LABEL_HEIGHT / 2, Math.min(canvasHeight - (ROOM_LABEL_HEIGHT / 2), position.y + gesture.dy)),
-        });
+        onMove(clampLabelCenter(
+          { x: position.x + gesture.dx, y: position.y + gesture.dy },
+          labelSize,
+          canvasWidth,
+          canvasHeight,
+        ));
       }
       setTranslation({ x: 0, y: 0 });
     },
-    onPanResponderTerminate: () => setTranslation({ x: 0, y: 0 }),
+    onPanResponderTerminate: () => {
+      setTranslation({ x: 0, y: 0 });
+      onDragActiveChange(false);
+    },
     onPanResponderTerminationRequest: () => false,
-  }), [canvasHeight, canvasWidth, onMove, onSelect, position.x, position.y]);
+    onShouldBlockNativeResponder: () => true,
+  }), [canvasHeight, canvasWidth, labelSize, onDragActiveChange, onMove, onSelect, position.x, position.y]);
   const current = { x: position.x + translation.x, y: position.y + translation.y };
   return (
     <View
       accessibilityHint="Drag to reposition this room label inside its measured area"
       accessibilityLabel={`${label} room marker`}
       accessibilityRole="button"
+      hitSlop={8}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setLabelSize((currentSize) => currentSize.width === width && currentSize.height === height
+          ? currentSize
+          : { width, height });
+      }}
       {...panResponder.panHandlers}
       style={[
         styles.roomPin,
-        { left: current.x - (ROOM_LABEL_WIDTH / 2), top: current.y - (ROOM_LABEL_HEIGHT / 2) },
+        { left: current.x - (labelSize.width / 2), top: current.y - (labelSize.height / 2) },
         selected && styles.roomPinSelected,
       ]}
     >
@@ -241,7 +289,7 @@ function DraggableRoomLabel({ position, label, selected, canvasWidth, canvasHeig
   );
 }
 
-function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGarage, selectedRoomId, selectedWall, onSelectRoom, onMoveRoom, onMoveDimension, onSelectWall, onConnectTarget, onStartGarage }: {
+function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGarage, selectedRoomId, selectedWall, onLabelDragActiveChange, onSelectRoom, onMoveRoom, onMoveDimension, onSelectWall, onConnectTarget, onStartGarage }: {
   areas: SketchAreaDraft[];
   selectedAreaId: string;
   rooms: SketchRoomDraft[];
@@ -249,6 +297,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
   placingGarage: boolean;
   selectedRoomId: string | null;
   selectedWall: SelectedSketchWall | null;
+  onLabelDragActiveChange: (active: boolean) => void;
   onSelectRoom: (room: SketchRoomDraft) => void;
   onMoveRoom: (roomId: string, point: { x: number; y: number }) => void;
   onMoveDimension: (areaId: string, segmentIndex: number, offset: SketchPoint) => void;
@@ -374,6 +423,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
           deduction={line.area.glaTreatment === "deduction"}
           canvasWidth={canvasWidth}
           canvasHeight={canvasHeight}
+          onDragActiveChange={onLabelDragActiveChange}
           onMove={(position) => {
             const anchor = canvasToModel(position, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING);
             onMoveDimension(line.area.id, line.index, {
@@ -465,6 +515,7 @@ function SketchCanvas({ areas, selectedAreaId, rooms, closureTargets, placingGar
             canvasWidth={canvasWidth}
             key={room.id}
             label={room.label}
+            onDragActiveChange={onLabelDragActiveChange}
             onMove={(canvasPoint) => {
               const modelPoint = canvasToModel(canvasPoint, displayVertices, canvasWidth, canvasHeight, CANVAS_PADDING);
               if (roomArea && pointInArea(modelPoint, roomArea.vertices)) onMoveRoom(room.id, modelPoint);
@@ -504,6 +555,7 @@ export function SketchEditorPanel({
   sessionId,
   online,
   selectedRoomId,
+  onLabelDragActiveChange,
   onSelectRoom,
 }: {
   api: MobileApi;
@@ -512,6 +564,7 @@ export function SketchEditorPanel({
   sessionId: string;
   online: boolean;
   selectedRoomId: string | null;
+  onLabelDragActiveChange?: (active: boolean) => void;
   onSelectRoom: (room: SelectedSketchRoom | null) => void;
 }) {
   const [clientSketchId, setClientSketchId] = useState(() => Crypto.randomUUID());
@@ -543,6 +596,12 @@ export function SketchEditorPanel({
       selectedWallArea.vertices[selectedWall.segmentIndex + 1]!.y - selectedWallArea.vertices[selectedWall.segmentIndex]!.y,
     )
     : null;
+
+  useEffect(() => () => onLabelDragActiveChange?.(false), [onLabelDragActiveChange]);
+  const handleLabelDragActiveChange = useCallback(
+    (active: boolean) => onLabelDragActiveChange?.(active),
+    [onLabelDragActiveChange],
+  );
 
   const setNormalizedBearing = (value: number) => setBearing(String(normalizeSketchBearing(value)));
   const adjustBearing = (change: number) => setNormalizedBearing(Number(bearing) + change);
@@ -958,6 +1017,7 @@ export function SketchEditorPanel({
         placingGarage={placingGarage}
         selectedRoomId={selectedRoomId}
         selectedWall={selectedWall}
+        onLabelDragActiveChange={handleLabelDragActiveChange}
         onSelectRoom={selectRoom}
         onMoveRoom={moveRoom}
         onMoveDimension={moveDimension}
@@ -1113,12 +1173,12 @@ const styles = StyleSheet.create({
   closureDotStart: { backgroundColor: COLORS.violet },
   closureHelp: { backgroundColor: COLORS.goldSoft, borderRadius: 8, color: COLORS.goldInk, fontSize: 12, fontWeight: "700", lineHeight: 18, padding: 9 },
   dimensionLeader: { backgroundColor: COLORS.mutedSoft, height: 1, opacity: 0.75, position: "absolute" },
-  dimension: { alignItems: "center", backgroundColor: COLORS.surfaceMuted, borderColor: COLORS.borderStrong, borderRadius: 5, borderWidth: 1, height: DIMENSION_HEIGHT, justifyContent: "center", position: "absolute", width: DIMENSION_WIDTH },
+  dimension: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.88)", borderColor: COLORS.borderStrong, borderRadius: 3, borderWidth: 0.75, justifyContent: "center", paddingHorizontal: 2, paddingVertical: 1, position: "absolute" },
   dimensionText: { color: COLORS.textPurple, fontSize: 10, fontWeight: "800" },
   deductionDimension: { backgroundColor: COLORS.goldSoft, borderColor: COLORS.gold },
   deductionDimensionText: { color: COLORS.goldInk },
   deductionNotice: { backgroundColor: COLORS.goldSoft, borderRadius: 8, color: COLORS.goldInk, fontSize: 12, fontWeight: "700", lineHeight: 18, padding: 9 },
-  roomPin: { alignItems: "center", backgroundColor: COLORS.violetSoft, borderColor: COLORS.violet, borderRadius: 13, borderWidth: 1, height: ROOM_LABEL_HEIGHT, justifyContent: "center", paddingHorizontal: 5, position: "absolute", width: ROOM_LABEL_WIDTH },
+  roomPin: { alignItems: "center", backgroundColor: "rgba(255,255,255,0.88)", borderColor: COLORS.violet, borderRadius: 3, borderWidth: 0.75, justifyContent: "center", maxWidth: 120, paddingHorizontal: 2, paddingVertical: 1, position: "absolute" },
   roomPinSelected: { backgroundColor: COLORS.violet },
   roomPinText: { color: COLORS.violet, fontSize: 9, fontWeight: "800" },
   roomPinTextSelected: { color: COLORS.white },

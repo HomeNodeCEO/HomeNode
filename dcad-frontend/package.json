@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:checked": "vite build && node scripts/checkBundleBudget.mjs",
     "lint": "eslint .",
+    "test": "node --experimental-strip-types --test \"scripts/test*.mjs\"",
     "preview": "vite preview",
     "test:adjustments": "node scripts/testComparableAdjustments.mjs",
     "test:ratings": "node scripts/testConditionQualityRatings.mjs",

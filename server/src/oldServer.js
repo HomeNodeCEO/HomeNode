@@ -3,7 +3,6 @@ import { isIP } from "node:net";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import pg from "pg";
-import nodemailer from "nodemailer";
 import { normalizePropertyCity, parsePropertySearch } from "./util/propertySearch.js";
 import {
   analyzeComparableOutliers,
@@ -187,9 +186,7 @@ import {
   enqueuePropertyInfluenceAccounts,
   getPropertyInfluenceContexts,
 } from "./services/propertyInfluenceStore.js";
-import { getRecentScheduledMaintenanceRuns } from "./services/scheduledMaintenance.js";
 import {
-  buildDataRepairReadiness,
   createCachedScraperStatusLoader,
 } from "./services/operationalReadiness.js";
 import { getNeighborhoodEngineReadiness } from "./services/neighborhoodEngineReadiness.js";
@@ -209,6 +206,8 @@ import { createUadComplianceRegistry } from "./modules/uad/uadComplianceClient.j
 import { createMobileAuthenticator, createOidcAccessTokenVerifier } from "./modules/mobile/auth.js";
 import { createMobileRouter } from "./modules/mobile/router.js";
 import { createPropertyCatalogRouter } from "./modules/propertyCatalog/router.js";
+import { createOperationalRouter } from "./modules/operations/router.js";
+import { createSignupRouter } from "./modules/signup/router.js";
 import {
   createReportFile,
   listReportFiles,
@@ -264,11 +263,6 @@ import { startApplicationHttpLifecycle } from "./application/httpLifecycle.js";
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
 import { mountApplicationRouteBoundary } from "./security/applicationRouteBoundary.js";
-import {
-  normalizeSignupPayload,
-  signupDeliveryStatus,
-  signupRequestMetadata,
-} from "./security/signupSecurity.js";
 
 const applicationAuthenticationPolicy = createApplicationAuthenticationPolicy();
 const webOidcVerifier = createOidcAccessTokenVerifier({
@@ -798,228 +792,24 @@ const censusGeographyReady = startupInitialization
     );
   });
 
-// Liveness is intentionally cheap; readiness proves the database and bounded
-// artifact executor can accept useful work without turning dependency outages
-// into restart loops.
-app.get("/health", runtimeHealth.liveness);
-app.get("/ready", runtimeHealth.readiness);
-
-// Operational acceptance endpoint. It intentionally reports aggregate timing
-// and worker state only; credentials, SQL text, and raw property identifiers
-// are never included.
-app.get("/api/system/performance", async (_req, res) => {
-  let recentMaintenance = [];
-  let maintenanceStatus = "available";
-  try {
-    recentMaintenance = await getRecentScheduledMaintenanceRuns(pool, { limit: 8 });
-  } catch (error) {
-    maintenanceStatus = "unavailable";
-    console.warn("[performance] maintenance history unavailable", error?.message || error);
-  }
-  res.json({
-    ok: true,
-    uptime_seconds: Math.round(process.uptime()),
-    web_process: {
-      inline_workers: {
-        census_geography: censusGeographyInlineEnabled,
-        sales_location_backfill: locationBackfillInlineEnabled,
-      },
-      scheduled_maintenance_expected: !censusGeographyInlineEnabled && !locationBackfillInlineEnabled,
-    },
-    document_evidence: {
-      private_object_storage_configured: sharedObjectStorage.configured,
-      ocr_provider: documentOcrProvider.provider,
-      ocr_configured: documentOcrProvider.configured,
-      ocr_runs_in_scheduled_maintenance: true,
-    },
-    requests: requestPerformance.snapshot(),
-    artifact_executor: getUadArtifactExecutionSnapshot(),
-    artifact_recovery: artifactRecoveryMonitor.snapshot(),
-    maintenance: {
-      status: maintenanceStatus,
-      recent_runs: recentMaintenance,
-    },
-  });
-});
-
-/**
- * Aggregate repair and enrichment readiness. This endpoint performs no repair
- * work and exposes only counts, timings, and normalized queue state.
- */
-app.get("/api/system/data-repair", async (_req, res) => {
-  res.set("Cache-Control", "no-store");
-  const [maintenanceResult, scraperResult] = await Promise.allSettled([
-    getRecentScheduledMaintenanceRuns(pool, { limit: 30 }),
-    loadDcadScraperStatus(),
-  ]);
-  if (maintenanceResult.status === "rejected") {
-    console.warn(
-      "[operations] maintenance history unavailable",
-      maintenanceResult.reason?.message || maintenanceResult.reason,
-    );
-  }
-  if (scraperResult.status === "rejected") {
-    console.warn(
-      "[operations] scraper status unavailable",
-      scraperResult.reason?.message || scraperResult.reason,
-    );
-  }
-  const memory = process.memoryUsage();
-  const readiness = buildDataRepairReadiness({
-    recentMaintenance: maintenanceResult.status === "fulfilled"
-      ? maintenanceResult.value
-      : [],
-    scraper: scraperResult.status === "fulfilled"
-      ? scraperResult.value
-      : {
-          payload: null,
-          stale: false,
-          error: String(
-            scraperResult.reason?.message ||
-            scraperResult.reason ||
-            "dcad_scraper_status_unavailable"
-          ),
-        },
-    requestPerformance: requestPerformance.snapshot(),
-  });
-  return res.json({
-    ...readiness,
-    runtime: {
-      uptime_seconds: Math.round(process.uptime()),
-      memory_mb: {
-        resident_set: Math.round(memory.rss / 1_048_576),
-        heap_used: Math.round(memory.heapUsed / 1_048_576),
-        heap_total: Math.round(memory.heapTotal / 1_048_576),
-      },
-      database_pool: {
-        total: Number(pool.totalCount || 0),
-        idle: Number(pool.idleCount || 0),
-        waiting: Number(pool.waitingCount || 0),
-      },
-      inline_bulk_workers_enabled:
-        censusGeographyInlineEnabled || locationBackfillInlineEnabled,
-    },
-  });
-});
-
-// SMTP status (non-sensitive): helps verify Render env is set correctly
-app.get("/api/signup/smtp-status", (_req, res) => {
-  const usingUrl = Boolean(process.env.SMTP_URL || process.env.SMTP_CONNECTION_URL);
-  const hasHost = Boolean(process.env.SMTP_HOST);
-  const port = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT, 10) : null;
-  const secure = process.env.SMTP_SECURE === "1" || process.env.SMTP_SECURE === "true";
-  const hasUser = Boolean(process.env.SMTP_USER);
-  const hasPass = Boolean(process.env.SMTP_PASS);
-  const fromSet = Boolean(process.env.MAIL_FROM || process.env.SMTP_FROM);
-  const cors = process.env.CORS_ORIGIN || process.env.CORS_ORIGINS || null;
-  const configured = usingUrl || hasHost;
-  res.json({
-    ok: true,
-    smtp: {
-      configured,
-      using_url: usingUrl,
-      has_host: hasHost,
-      port,
-      secure,
-      has_user: hasUser,
-      has_pass: hasPass,
-      from_set: fromSet,
-    },
-    cors_origin: cors,
-  });
-});
-
-// Lightweight email submission endpoint for Sign Up form
-// Expects JSON: { ownerName: string, ownerTelephone: string, accountId?: string }
-app.post("/api/signup/email", signupRateLimiter, async (req, res) => {
-  try {
-    let payload;
-    try {
-      payload = normalizeSignupPayload(req.body);
-    } catch (error) {
-      return res
-        .status(400)
-        .set("cache-control", "no-store")
-        .json({ error: error?.message || "invalid_signup_payload" });
-    }
-    const { accountId, ownerEmail, ownerName, ownerTelephone } = payload;
-
-    // Configure transporter from env. Prefer SMTP_URL if provided; otherwise fall back to host/port/user/pass.
-    const smtpUrl = process.env.SMTP_URL || process.env.SMTP_CONNECTION_URL;
-    let transporter;
-    if (smtpUrl) {
-      transporter = nodemailer.createTransport(smtpUrl);
-    } else if (process.env.SMTP_HOST) {
-      transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || "587", 10),
-        secure: process.env.SMTP_SECURE === "1" || process.env.SMTP_SECURE === "true",
-        auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS || "" } : undefined,
-      });
-    }
-
-    const to = "homenodeceo@gmail.com";
-    const subject = `New Enrollment Submission${accountId ? ` - ${accountId}` : ""}`;
-    const text = `A new enrollment was submitted.\n\nOwner Name: ${ownerName}\nTelephone: ${ownerTelephone}\n${accountId ? `Account ID: ${accountId}\n` : ""}`;
-
-    // Persist signup in DB regardless of email status
-    let id = null;
-    try {
-      const metadata = signupRequestMetadata(req);
-      const meta = { referer: metadata.referer };
-      const { rows } = await pool.query(
-        `INSERT INTO app.signups (source, account_id, owner_name, owner_telephone, owner_email, user_agent, ip, meta)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [
-          "web-signup",
-          accountId || null,
-          ownerName,
-          ownerTelephone,
-          ownerEmail,
-          metadata.userAgent,
-          metadata.ip,
-          meta,
-        ]
-      );
-      id = rows?.[0]?.id ?? null;
-    } catch (e) {
-      const code = /^[A-Z0-9_]{1,32}$/i.test(String(e?.code || "")) ? String(e.code) : "unknown";
-      console.error("[signup] DB insert failed", { code });
-      // Continue to try email even if DB failed
-    }
-
-    // Try to send email if SMTP is configured; do not fail the request if mail fails
-    let emailSent = false;
-    if (transporter) {
-      try {
-        await transporter.sendMail({
-          to,
-          from: process.env.MAIL_FROM || process.env.SMTP_FROM || "no-reply@homenode",
-          subject,
-          text,
-        });
-        emailSent = true;
-      } catch {
-        console.warn("[signup] SMTP delivery failed");
-      }
-    }
-
-    // Never return raw provider diagnostics to an unauthenticated client.
-    res.set("cache-control", "no-store").json({
-      ok: true,
-      id,
-      email_sent: emailSent,
-      email_status: signupDeliveryStatus({ configured: Boolean(transporter), sent: emailSent }),
-    });
-  } catch (err) {
-    const code = /^[A-Z0-9_]{1,32}$/i.test(String(err?.code || "")) ? String(err.code) : "unknown";
-    console.error("/api/signup/email failed", { code });
-    res
-      .status(500)
-      .set("cache-control", "no-store")
-      .json({ error: "email_failed" });
-  }
-});
+app.use(createOperationalRouter({
+  runtimeHealth,
+  pool,
+  requestPerformance,
+  artifactRecoveryMonitor,
+  getArtifactExecutorSnapshot: getUadArtifactExecutionSnapshot,
+  loadDcadScraperStatus,
+  inlineWorkers: {
+    censusGeography: censusGeographyInlineEnabled,
+    locationBackfill: locationBackfillInlineEnabled,
+  },
+  documentEvidence: {
+    privateObjectStorageConfigured: sharedObjectStorage.configured,
+    ocrProvider: documentOcrProvider.provider,
+    ocrConfigured: documentOcrProvider.configured,
+  },
+}));
+app.use(createSignupRouter({ pool, signupRateLimiter }));
 
 /**
  * GET /api/accounts/:id

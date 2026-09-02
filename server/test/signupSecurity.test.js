@@ -55,11 +55,16 @@ test("signup delivery status never contains provider diagnostics", () => {
 });
 
 test("the public signup route uses its dedicated limiter and generic diagnostics", () => {
-  const source = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/oldServer.js"), "utf8");
-  assert.match(source, /app\.post\("\/api\/signup\/email", signupRateLimiter,/);
-  assert.match(source, /signup_rate_limit_exceeded/);
-  assert.match(source, /signupRequestMetadata\(req\)/);
-  assert.doesNotMatch(source, /email_error:/);
-  assert.doesNotMatch(source, /req\.headers\["x-forwarded-for"\]/);
-  assert.doesNotMatch(source, /json\(\{ error: "email_failed", message:/);
+  const entrypoint = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/oldServer.js"), "utf8");
+  const router = fs.readFileSync(
+    path.join(TEST_DIRECTORY, "../src/modules/signup/router.js"),
+    "utf8",
+  );
+  assert.match(entrypoint, /app\.use\(createSignupRouter\(\{ pool, signupRateLimiter \}\)\)/);
+  assert.match(entrypoint, /signup_rate_limit_exceeded/);
+  assert.match(router, /router\.post\("\/api\/signup\/email", signupRateLimiter,/);
+  assert.match(router, /signupRequestMetadata\(req\)/);
+  assert.doesNotMatch(router, /email_error:/);
+  assert.doesNotMatch(router, /req\.headers\["x-forwarded-for"\]/);
+  assert.doesNotMatch(router, /json\(\{ error: "email_failed", message:/);
 });

@@ -627,6 +627,57 @@ test("verifies an RS256 OIDC access token with JWKS", async () => {
   assert.equal(claims.iss, ISSUER);
 });
 
+test("concurrent cold OIDC verification shares one bounded JWKS request", async () => {
+  let requestCount = 0;
+  const oidc = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    jwksUri: `${ISSUER}/.well-known/jwks.json`,
+    now: () => NOW,
+    fetchImpl: async () => {
+      requestCount += 1;
+      await new Promise((resolve) => setImmediate(resolve));
+      return new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 });
+    },
+  });
+  const claims = await Promise.all(Array.from({ length: 20 }, () => oidc.verify(token())));
+  assert.equal(requestCount, 1);
+  assert.equal(claims.every((claim) => claim.sub === "user_123"), true);
+});
+
+test("OIDC provider stalls and malformed JWKS fail as bounded 503 outages", async () => {
+  const stalled = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    jwksUri: `${ISSUER}/.well-known/jwks.json`,
+    now: () => NOW,
+    fetchTimeoutMilliseconds: 100,
+    fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("provider connection stalled")), {
+        once: true,
+      });
+    }),
+  });
+  const started = Date.now();
+  await assert.rejects(
+    () => stalled.verify(token()),
+    (error) => error.statusCode === 503 && error.message === "oidc_jwks_unavailable",
+  );
+  assert.ok(Date.now() - started < 1_000);
+
+  const malformed = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    jwksUri: `${ISSUER}/.well-known/jwks.json`,
+    now: () => NOW,
+    fetchImpl: async () => new Response(JSON.stringify({ keys: "not-an-array" }), { status: 200 }),
+  });
+  await assert.rejects(
+    () => malformed.verify(token()),
+    (error) => error.statusCode === 503 && error.message === "invalid_oidc_jwks",
+  );
+});
+
 
 test("preflights OIDC discovery and supported signing keys", async () => {
   const status = await verifier().preflight();

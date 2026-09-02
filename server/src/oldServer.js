@@ -277,6 +277,7 @@ const webOidcVerifier = createOidcAccessTokenVerifier({
   audience: process.env.OIDC_WEB_CLIENT_ID,
   jwksUri: process.env.OIDC_WEB_JWKS_URI || process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
+  fetchTimeoutMilliseconds: process.env.OIDC_HTTP_TIMEOUT_MS,
 });
 assertApplicationAuthenticationStartup({
   authenticationPolicy: applicationAuthenticationPolicy,
@@ -393,6 +394,7 @@ const mobileOidcVerifier = createOidcAccessTokenVerifier({
   audience: process.env.OIDC_AUDIENCE,
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
+  fetchTimeoutMilliseconds: process.env.OIDC_HTTP_TIMEOUT_MS,
 });
 const uadRouter = createUadRouter({
   pool,

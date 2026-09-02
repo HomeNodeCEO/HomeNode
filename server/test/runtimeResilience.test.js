@@ -169,3 +169,40 @@ test("shutdown deadline force-closes stuck connections and releases the database
     controller.dispose();
   }
 });
+
+test("fatal process events log stable codes and enter the existing graceful drain", async () => {
+  const processTarget = new EventEmitter();
+  processTarget.exitCode = 0;
+  const messages = [];
+  let closeCallback = null;
+  let poolEndCount = 0;
+  const controller = installGracefulShutdown({
+    server: {
+      close(callback) { closeCallback = callback; },
+      closeIdleConnections() {},
+    },
+    pool: { async end() { poolEndCount += 1; } },
+    graceMs: 5_000,
+    processTarget,
+    logger: {
+      info(message) { messages.push(message); },
+      error(message) { messages.push(message); },
+    },
+  });
+  try {
+    processTarget.emit("uncaughtException", new Error("database password must not be logged"));
+    processTarget.emit("unhandledRejection", new Error("provider secret must not be logged"));
+    assert.equal(processTarget.exitCode, 1);
+    assert.equal(controller.isShuttingDown(), true);
+    assert.deepEqual(messages, [
+      "[fatal] uncaught_exception",
+      "[shutdown] uncaught_exception received; draining connections",
+    ]);
+    assert.doesNotMatch(messages.join(" "), /password|provider secret/i);
+    closeCallback(null);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(poolEndCount, 1);
+  } finally {
+    controller.dispose();
+  }
+});

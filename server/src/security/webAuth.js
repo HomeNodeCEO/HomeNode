@@ -12,6 +12,30 @@ const TRANSACTION_COOKIE_OPTIONS = Object.freeze({
   sameSite: "lax",
 });
 const SAFE_SESSION_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const DEFAULT_OIDC_HTTP_TIMEOUT_MS = 5_000;
+
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed)) return fallback;
+  return Math.max(minimum, Math.min(parsed, maximum));
+}
+
+async function fetchWithDeadline(fetchImpl, url, init, timeoutMs, errorCode, consume) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetchImpl(url, { ...init, signal: controller.signal });
+  } catch {
+    clearTimeout(timer);
+    throw new Error(errorCode);
+  }
+  try {
+    return consume ? await consume(response) : response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function enabled(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -125,6 +149,7 @@ const SAFE_AUTH_FAILURES = new Set([
   "invalid_oidc_discovery",
   "oidc_discovery_unavailable",
   "organization_membership_required",
+  "token_exchange_unavailable",
   "token_exchange_failed",
 ]);
 
@@ -267,6 +292,12 @@ export function createWebAuthRouter({
   const frontendUrl = String(environment.WEB_APP_URL || "").trim();
   const sessionSecret = String(environment.APP_SESSION_SECRET || "").trim();
   const sessionSecurity = webSessionSecurity(environment);
+  const oidcHttpTimeoutMs = boundedInteger(
+    environment.OIDC_HTTP_TIMEOUT_MS,
+    DEFAULT_OIDC_HTTP_TIMEOUT_MS,
+    100,
+    30_000,
+  );
   const configured = Boolean(
     verifier?.configured
     && clientId
@@ -280,17 +311,40 @@ export function createWebAuthRouter({
   // workflow until APPLICATION_AUTHENTICATION_REQUIRED is explicitly enabled.
   const required = authenticationPolicy.authenticationRequired;
   let discovery = null;
+  let discoveryPromise = null;
 
   async function getDiscovery() {
     if (discovery) return discovery;
-    const response = await fetchImpl(`${verifier.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`);
-    if (!response.ok) throw new Error("oidc_discovery_unavailable");
-    const value = await response.json();
-    if (value.issuer !== verifier.issuer || !value.authorization_endpoint || !value.token_endpoint) {
-      throw new Error("invalid_oidc_discovery");
+    if (!discoveryPromise) {
+      discoveryPromise = (async () => {
+        const value = await fetchWithDeadline(
+          fetchImpl,
+          `${verifier.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`,
+          undefined,
+          oidcHttpTimeoutMs,
+          "oidc_discovery_unavailable",
+          async (response) => {
+            if (!response.ok) throw new Error("oidc_discovery_unavailable");
+            try {
+              return await response.json();
+            } catch {
+              throw new Error("invalid_oidc_discovery");
+            }
+          },
+        );
+        if (value.issuer !== verifier.issuer || !value.authorization_endpoint || !value.token_endpoint) {
+          throw new Error("invalid_oidc_discovery");
+        }
+        discovery = value;
+        return discovery;
+      })();
     }
-    discovery = value;
-    return discovery;
+    const pending = discoveryPromise;
+    try {
+      return await pending;
+    } finally {
+      if (discoveryPromise === pending) discoveryPromise = null;
+    }
   }
 
   router.get("/status", (_req, res) => res
@@ -344,13 +398,21 @@ export function createWebAuthRouter({
         code_verifier: transaction.verifier,
       });
       stage = "token_exchange";
-      const response = await fetchImpl(metadata.token_endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-        body,
-      });
-      if (!response.ok) throw await tokenExchangeFailure(response);
-      const tokens = await response.json();
+      const tokens = await fetchWithDeadline(
+        fetchImpl,
+        metadata.token_endpoint,
+        {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+          body,
+        },
+        oidcHttpTimeoutMs,
+        "token_exchange_unavailable",
+        async (response) => {
+          if (!response.ok) throw await tokenExchangeFailure(response);
+          return response.json();
+        },
+      );
       stage = "token_verification";
       if (!tokens?.id_token) throw idTokenError("id_token_missing");
       const claims = await verifier.verify(tokens.id_token);
@@ -372,10 +434,17 @@ export function createWebAuthRouter({
       return res.redirect(302, frontendUrl);
     } catch (error) {
       logger.warn?.(`[web-auth] callback failed stage=${stage} reason=${authFailureReason(error)}`);
-      const code = ["identity_not_provisioned", "organization_membership_required"].includes(error?.message)
+      const accountUnavailable = ["identity_not_provisioned", "organization_membership_required"]
+        .includes(error?.message);
+      const providerUnavailable = ["oidc_discovery_unavailable", "token_exchange_unavailable"]
+        .includes(error?.message);
+      const code = accountUnavailable
         ? "account_not_provisioned"
-        : "authentication_failed";
-      return res.status(code === "account_not_provisioned" ? 403 : 401).json({ error: code });
+        : providerUnavailable
+          ? "authentication_unavailable"
+          : "authentication_failed";
+      const status = accountUnavailable ? 403 : providerUnavailable ? 503 : 401;
+      return res.status(status).json({ error: code });
     }
   });
 

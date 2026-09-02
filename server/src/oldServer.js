@@ -93,15 +93,12 @@ import {
   findAccountByCountyIdentifier,
 } from "./services/salesReconciliation.js";
 import { TrestleClient } from "./services/trestleClient.js";
-import { getTrestleReplicationStatus } from "./services/trestleReplication.js";
 import {
-  countyGisConfiguration,
   fetchParcelAreaSuggestion,
 } from "./services/parcelGis.js";
 import {
   assertNonDallasEnrichmentCounty,
   assertPropertyAttributeKey,
-  NON_DALLAS_ENRICHMENT_COUNTIES,
 } from "./util/nonDallasEnrichment.js";
 import { markMaterialParcelDifferences } from "./util/relatedParcelDifferences.js";
 import {
@@ -175,6 +172,7 @@ import { createPropertyCatalogRouter } from "./modules/propertyCatalog/router.js
 import { createOperationalRouter } from "./modules/operations/router.js";
 import { createGeographyOperationsRouter } from "./modules/operations/geographyRouter.js";
 import { createSalesReconciliationRouter } from "./modules/operations/salesReconciliationRouter.js";
+import { createEnrichmentReadRouter } from "./modules/operations/enrichmentReadRouter.js";
 import { createSignupRouter } from "./modules/signup/router.js";
 import { createAppraisalRatingsRouter } from "./modules/appraisalRatings/router.js";
 import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
@@ -1004,77 +1002,12 @@ async function getNonDallasAccount(client, accountId) {
   };
 }
 
-/** Non-sensitive activation status for the additive non-Dallas pipeline. */
-app.get("/api/enrichment/status", async (_req, res) => {
-  const gis = Object.fromEntries(
-    NON_DALLAS_ENRICHMENT_COUNTIES.map((county) => {
-      const configuration = countyGisConfiguration(county);
-      return [county, { configured: configuration.configured }];
-    }),
-  );
-  try {
-    return res.json({
-      dallas_county_isolated: true,
-      supported_counties: NON_DALLAS_ENRICHMENT_COUNTIES,
-      trestle: await getTrestleReplicationStatus(pool, trestleClient.status()),
-      gis,
-      resolution_order: ["manual_verified", "trestle", "cad", "manual_review"],
-    });
-  } catch (error) {
-    console.error("enrichment status failed", error);
-    return res.status(500).json({ error: "enrichment_status_failed" });
-  }
-});
-
-/** Load verified overrides, review flags, and pending GIS suggestions for an account. */
-app.get("/api/accounts/:id/enrichment", async (req, res) => {
-  const id = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(id)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  try {
-    await propertyEnrichmentReady;
-    const account = await getNonDallasAccount(pool, id);
-    if (!account) return res.status(404).json({ error: "account_not_found" });
-    const [manualResult, reviewResult, gisResult] = await Promise.all([
-      pool.query(
-        `SELECT attribute_key, attribute_value, notes, reviewer, revision,
-                created_at, updated_at
-         FROM app.property_attribute_manual_values
-         WHERE account_id = $1 ORDER BY attribute_key`,
-        [id],
-      ),
-      pool.query(
-        `SELECT attribute_key, reason, status, evidence, first_flagged_at,
-                updated_at, resolved_at
-         FROM app.enrichment_review_queue
-         WHERE account_id = $1 ORDER BY status, attribute_key`,
-        [id],
-      ),
-      pool.query(
-        `SELECT id, area_square_feet, area_acres, source_url, status,
-                reviewed_by, reviewed_at, created_at
-         FROM app.parcel_geometry_suggestions
-         WHERE account_id = $1 ORDER BY created_at DESC LIMIT 10`,
-        [id],
-      ),
-    ]);
-    return res.json({
-      account_id: id,
-      county: account.normalized_county,
-      manual_values: manualResult.rows,
-      review_queue: reviewResult.rows,
-      parcel_area_suggestions: gisResult.rows,
-    });
-  } catch (error) {
-    const message = String(error?.message || "");
-    if (message === "dallas_enrichment_isolated") {
-      return res.status(409).json({ error: message });
-    }
-    console.error("account enrichment load failed", error);
-    return res.status(500).json({ error: "account_enrichment_failed" });
-  }
-});
+app.use(createEnrichmentReadRouter({
+  pool,
+  propertyEnrichmentReady,
+  trestleClient,
+  getNonDallasAccount,
+}));
 
 /** Save a verified non-Dallas attribute. No autosave and no source-row mutation. */
 app.patch("/api/accounts/:id/verified-attribute", async (req, res) => {

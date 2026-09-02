@@ -221,7 +221,7 @@ test("entrypoint mounts appraisal ratings at the original account-domain positio
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const saleHistory = source.indexOf('app.get("/api/sales/:sourceRecordId/review-history"');
   const ratings = source.indexOf("app.use(createAppraisalRatingsRouter(");
-  const enrichment = source.indexOf('app.get("/api/enrichment/status"');
+  const enrichment = source.indexOf("app.use(createEnrichmentReadRouter(");
   assert.ok(ratings > saleHistory);
   assert.ok(enrichment > ratings);
 });

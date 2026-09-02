@@ -1,4 +1,6 @@
 import type { MobileConfig } from "../config";
+import type { AccessTokenRequest } from "../auth/refreshPolicy";
+import { canReplayAfterAuthenticationFailure } from "../auth/refreshPolicy";
 import type { WorkflowType } from "../domain/workflows";
 import type { FieldState, JsonValue, SyncOperationRequest } from "../offline/model";
 import type { ManualSketchApiDocument } from "../sketch/model";
@@ -488,14 +490,17 @@ export function propertySearchPath(query: string, limit = 20) {
 export class MobileApi {
   constructor(
     private readonly config: MobileConfig,
-    private readonly getAccessToken: () => Promise<string>,
+    private readonly getAccessToken: (request?: AccessTokenRequest) => Promise<string>,
   ) {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const token = await this.getAccessToken();
-    let response: Response;
+  private async authenticatedFetch(
+    path: string,
+    init: RequestInit,
+    request: AccessTokenRequest = {},
+  ) {
+    const token = await this.getAccessToken(request);
     try {
-      response = await fetch(`${this.config.apiBaseUrl}${path}`, {
+      return await fetch(`${this.config.apiBaseUrl}${path}`, {
         ...init,
         headers: {
           accept: "application/json",
@@ -506,6 +511,16 @@ export class MobileApi {
       });
     } catch {
       throw new ApiError(0, "network_request_failed");
+    }
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    let response = await this.authenticatedFetch(path, init);
+    if (
+      response.status === 401
+      && canReplayAfterAuthenticationFailure(init.method)
+    ) {
+      response = await this.authenticatedFetch(path, init, { forceRefresh: true });
     }
     const payload = await response.json().catch(() => ({})) as { error?: string; details?: unknown };
     if (!response.ok) {

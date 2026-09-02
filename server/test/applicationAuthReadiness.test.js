@@ -108,6 +108,14 @@ test("readiness passes only when identity, ownership, consistency, and registry 
   assert.deepEqual(result.blockers, []);
   assert.equal(result.organizations[0].valid_appraiser_licenses, 1);
   assert.ok(pool.calls.every(({ sql }) => !/password|client_secret|session_secret/i.test(sql)));
+  const ownershipSql = pool.calls.find(({ sql }) =>
+    sql.includes("AS documents_without_owned_assignment"))?.sql || "";
+  assert.match(ownershipSql, /LEFT JOIN appraisal\.uad_workfiles workfile/);
+  assert.match(
+    ownershipSql,
+    /document\.assignment_file_id IS NULL AND document\.uad_workfile_id IS NULL/,
+  );
+  assert.match(ownershipSql, /workfile\.organization_id IS NULL/);
 });
 
 test("readiness returns bounded blocker codes and counts without database diagnostics", async () => {

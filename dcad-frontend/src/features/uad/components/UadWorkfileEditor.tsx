@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
 import {
   createUadEntity,
@@ -26,6 +26,10 @@ interface Props {
   workfileId: string;
   onClose: () => void;
   initialSection?: UadSectionKey;
+}
+
+export interface UadWorkfileEditorHandle {
+  closeReport: () => Promise<void>;
 }
 
 const inputClass = "mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-violet-700 focus:ring-2 focus:ring-violet-100";
@@ -138,7 +142,11 @@ function evaluateCondition(condition: UadCondition | undefined, lookup: (key: st
   return true;
 }
 
-export default function UadWorkfileEditor({ workfileId, onClose, initialSection = "assignment" }: Props) {
+const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function UadWorkfileEditor({
+  workfileId,
+  onClose,
+  initialSection = "assignment",
+}, ref) {
   const [editor, setEditor] = useState<UadEditorResponse | null>(null);
   const [activeSection, setActiveSection] = useState<UadSectionKey>(initialSection);
   const [draft, setDraft] = useState<Record<string, UadFieldValue>>({});
@@ -693,11 +701,13 @@ export default function UadWorkfileEditor({ workfileId, onClose, initialSection 
     setActiveSection(nextSection);
   }
 
-  async function handleCloseReport() {
+  const handleCloseReport = useCallback(async () => {
     if (saving) return;
     if (dirtyKeysRef.current.size && !(await persistAutosave())) return;
     onClose();
-  }
+  }, [onClose, persistAutosave, saving]);
+
+  useImperativeHandle(ref, () => ({ closeReport: handleCloseReport }), [handleCloseReport]);
 
   function renderControl(field: UadFieldDefinition, entityId: string | null) {
     const key = fieldValueKey(field.contextKey, field.uid, entityId);
@@ -824,7 +834,6 @@ export default function UadWorkfileEditor({ workfileId, onClose, initialSection 
             >
               {saving ? "Saving…" : dirty ? "Save changes" : "Save"}
             </button>
-            <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-60" disabled={saving} onClick={() => void handleCloseReport()} type="button">← Close Report</button>
           </div>
         </div>
       </header>
@@ -1795,4 +1804,6 @@ export default function UadWorkfileEditor({ workfileId, onClose, initialSection 
       </div>
     </section>
   );
-}
+});
+
+export default UadWorkfileEditor;

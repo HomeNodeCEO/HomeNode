@@ -51,6 +51,8 @@ function safeEnvironment(overrides = {}) {
     REDTEAM_DATA_CLASSIFICATION: "synthetic_only",
     UAD_SECURITY_STRICT: "true",
     UAD_AUTHENTICATION_REQUIRED: "true",
+    APPLICATION_AUTHENTICATION_REQUIRED: "true",
+    APPLICATION_AUTHENTICATION_BEARER_ONLY: "true",
     UAD_RATE_LIMIT_ENABLED: "true",
     UAD_WORKSPACE_ENABLED: "true",
     MOBILE_INSPECTION_ENABLED: "true",
@@ -94,6 +96,15 @@ test("accepts a fully isolated synthetic red-team configuration", () => {
   });
   assert.equal(assertRedTeamDatabaseName("homenode_redteam"), "homenode_redteam");
   assert.equal(assertRedTeamFixtureAccountId("UAD-REDTEAM-SFR-0001"), "UAD-REDTEAM-SFR-0001");
+});
+
+test("requires explicit unified bearer-only application authentication", () => {
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    APPLICATION_AUTHENTICATION_REQUIRED: "",
+  })), /application_authentication_required/);
+  assert.throws(() => createRedTeamIsolationConfiguration(safeEnvironment({
+    APPLICATION_AUTHENTICATION_BEARER_ONLY: "",
+  })), /application_authentication_bearer_only_required/);
 });
 
 test("static red-team issuer must remain synthetic and use a marked JWKS URL", () => {

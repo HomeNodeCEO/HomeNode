@@ -16,6 +16,18 @@ const COMPLETE_WORKOS = Object.freeze({
   APP_SESSION_SECRET: "s".repeat(32),
   APP_SIGNING_SECRET: "g".repeat(32),
 });
+const COMPLETE_REDTEAM_BEARER = Object.freeze({
+  HOMENODE_DEPLOYMENT_ENVIRONMENT: "redteam",
+  REDTEAM_ISOLATION_STRICT: "true",
+  REDTEAM_DATA_CLASSIFICATION: "synthetic_only",
+  UAD_SECURITY_STRICT: "true",
+  UAD_AUTHENTICATION_REQUIRED: "true",
+  APPLICATION_AUTHENTICATION_REQUIRED: "true",
+  APPLICATION_AUTHENTICATION_BEARER_ONLY: "true",
+  OIDC_ISSUER: "https://identity-redteam.example.invalid/",
+  OIDC_AUDIENCE: "homenode-redteam-api",
+  OIDC_JWKS_URI: "https://keys.example.invalid/redteam-jwks.json",
+});
 
 function production(overrides = {}) {
   return { NODE_ENV: "production", ...overrides };
@@ -140,6 +152,54 @@ test("production true fails startup for incomplete WorkOS configuration", () => 
     () => assertApplicationAuthenticationStartup({
       authenticationPolicy,
       environment: COMPLETE_WORKOS,
+      webOidcConfigured: false,
+    }),
+    { message: "application_authentication_required_but_not_configured" },
+  );
+});
+
+test("strict synthetic red-team deployments may enforce bearer-only authentication", () => {
+  const environment = production(COMPLETE_REDTEAM_BEARER);
+  const authenticationPolicy = createApplicationAuthenticationPolicy(environment, { now: NOW });
+  assert.equal(assertApplicationAuthenticationStartup({
+    authenticationPolicy,
+    environment,
+    webOidcConfigured: false,
+  }), authenticationPolicy);
+});
+
+test("bearer-only authentication is rejected outside the complete red-team boundary", () => {
+  const authenticationPolicy = createApplicationAuthenticationPolicy(production({
+    APPLICATION_AUTHENTICATION_REQUIRED: "true",
+  }), { now: NOW });
+  for (const missing of [
+    "HOMENODE_DEPLOYMENT_ENVIRONMENT",
+    "REDTEAM_ISOLATION_STRICT",
+    "REDTEAM_DATA_CLASSIFICATION",
+    "UAD_SECURITY_STRICT",
+    "UAD_AUTHENTICATION_REQUIRED",
+    "APPLICATION_AUTHENTICATION_BEARER_ONLY",
+    "OIDC_ISSUER",
+    "OIDC_AUDIENCE",
+    "OIDC_JWKS_URI",
+  ]) {
+    assert.throws(
+      () => assertApplicationAuthenticationStartup({
+        authenticationPolicy,
+        environment: production({ ...COMPLETE_REDTEAM_BEARER, [missing]: "" }),
+        webOidcConfigured: false,
+      }),
+      { message: "application_authentication_required_but_not_configured" },
+      missing,
+    );
+  }
+  assert.throws(
+    () => assertApplicationAuthenticationStartup({
+      authenticationPolicy,
+      environment: production({
+        ...COMPLETE_REDTEAM_BEARER,
+        HOMENODE_DEPLOYMENT_ENVIRONMENT: "production",
+      }),
       webOidcConfigured: false,
     }),
     { message: "application_authentication_required_but_not_configured" },

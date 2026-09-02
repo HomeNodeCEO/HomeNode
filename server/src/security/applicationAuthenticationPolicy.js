@@ -43,6 +43,18 @@ function policy(value) {
   });
 }
 
+function redTeamBearerOnlyConfigured(environment) {
+  return environment.APPLICATION_AUTHENTICATION_BEARER_ONLY === "true"
+    && String(environment.HOMENODE_DEPLOYMENT_ENVIRONMENT || "").trim().toLowerCase() === "redteam"
+    && environment.REDTEAM_ISOLATION_STRICT === "true"
+    && String(environment.REDTEAM_DATA_CLASSIFICATION || "").trim().toLowerCase() === "synthetic_only"
+    && environment.UAD_SECURITY_STRICT === "true"
+    && environment.UAD_AUTHENTICATION_REQUIRED === "true"
+    && Boolean(String(environment.OIDC_ISSUER || "").trim())
+    && Boolean(String(environment.OIDC_AUDIENCE || "").trim())
+    && Boolean(String(environment.OIDC_JWKS_URI || "").trim());
+}
+
 export function createApplicationAuthenticationPolicy(
   environment = process.env,
   { now = () => new Date() } = {},
@@ -94,6 +106,12 @@ export function assertApplicationAuthenticationStartup({
     throw new TypeError("application_authentication_policy_required");
   }
   if (!authenticationPolicy.authenticationRequired) return authenticationPolicy;
+  // The disposable red-team application intentionally has no human login.
+  // Its browser harness injects short-lived synthetic bearer tokens, and the
+  // application route boundary authorizes those tokens through the same OIDC
+  // identity and organization model as mobile/UAD. This exception remains
+  // fail-closed unless every isolated red-team marker and OIDC input is exact.
+  if (redTeamBearerOnlyConfigured(environment)) return authenticationPolicy;
   if (
     !webOidcConfigured
     || !String(environment.OIDC_WEB_CLIENT_ID || "").trim()

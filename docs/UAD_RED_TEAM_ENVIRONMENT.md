@@ -25,6 +25,15 @@ Strict mode automatically enables the application rate limiter. Configure
 Cloudflare rate limiting as the distributed outer control because the
 application limiter is intentionally a per-process defense-in-depth control.
 
+The disposable service must also set both
+`APPLICATION_AUTHENTICATION_REQUIRED=true` and
+`APPLICATION_AUTHENTICATION_BEARER_ONLY=true`. Bearer-only mode exists solely
+for this strict `synthetic_only` boundary: the test browser injects a short-lived
+synthetic access token, while every application and UAD endpoint still passes
+through the shared OIDC identity, organization, and role authorization model.
+It does not enable a human login flow and is rejected in staging, production,
+or any red-team deployment with incomplete isolation or OIDC markers.
+
 Use `npm run start:redteam:uad` for the API service. Its first command runs a
 pre-migration isolation check and connects only far enough to verify that the
 actual PostgreSQL database name contains `redteam`. It also refuses a

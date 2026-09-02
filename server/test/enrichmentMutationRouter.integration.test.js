@@ -432,7 +432,7 @@ test("enrichment mutation composition is explicit and inline handlers are absent
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const reads = source.indexOf("app.use(createEnrichmentReadRouter(");
   const mutations = source.indexOf("app.use(createEnrichmentMutationRouter(");
-  const history = source.indexOf('app.get("/api/accounts/:id/market_value_history"');
+  const history = source.indexOf("app.use(createMarketValueHistoryRouter(");
   assert.ok(mutations > reads);
   assert.ok(history > mutations);
   assert.equal(source.includes('app.patch("/api/accounts/:id/verified-attribute"'), false);

@@ -123,8 +123,6 @@ import {
 } from "./services/assignmentFiles.js";
 import {
   ensureCustomAppraisalWorkfileSchema,
-  saveCustomAppraisalWorkfileSection,
-  signCustomAppraisalWorkfile,
 } from "./services/customAppraisalWorkfiles.js";
 import {
   analyzePropertyContext,
@@ -197,6 +195,7 @@ import { createReportManualValuesRouter } from "./modules/accounts/reportManualV
 import { createAssignmentFileListRouter } from "./modules/assignmentFiles/listRouter.js";
 import { createAssignmentFileMutationRouter } from "./modules/assignmentFiles/mutationRouter.js";
 import { createAssignmentWorkfileReadRouter } from "./modules/assignmentFiles/workfileReadRouter.js";
+import { createAssignmentWorkfileMutationRouter } from "./modules/assignmentFiles/workfileMutationRouter.js";
 import { createDesktopReportFilesRouter } from "./modules/accounts/reportFilesRouter.js";
 import { createAppraisalHistoryRouter } from "./modules/accounts/appraisalHistoryRouter.js";
 import { createDesktopAssignmentSketchRouter } from "./modules/mobile/desktopAssignmentSketchRouter.js";
@@ -802,114 +801,14 @@ app.use(createAssignmentWorkfileReadRouter({
   objectStorage: sharedObjectStorage,
 }));
 
-/** Save one independently versioned Custom Appraisal section. */
-app.put("/api/accounts/:id/assignment-files/:fileId/workfile/sections/:sectionKey", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  if (!requireEditor(req, res)) return;
-  let assignmentFileId;
-  try {
-    assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
-    await ensureCustomAppraisalWorkfilesAvailable();
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "write")) return;
-    const section = await saveCustomAppraisalWorkfileSection(pool, {
-      accountId: canonicalId,
-      assignmentFileId,
-      sectionKey: req.params.sectionKey,
-      sectionValue: req.body?.value,
-      expectedRevision: req.body?.expected_revision,
-      saveReason: req.body?.save_reason,
-      reviewer: req.body?.reviewer,
-    });
-    return res.json({ ok: true, account_id: canonicalId, assignment_file_id: assignmentFileId, section });
-  } catch (error) {
-    if (error?.message === "assignment_file_not_found") {
-      return res.status(404).json({ error: error.message });
-    }
-    if (error?.message === "custom_appraisal_section_revision_conflict") {
-      return res.status(409).json({
-        error: error.message,
-        current_revision: Number(error.currentRevision || 0),
-      });
-    }
-    if (error?.message === "custom_appraisal_workfile_signed") {
-      return res.status(409).json({ error: error.message });
-    }
-    if (
-      String(error?.message || "").startsWith("invalid_") ||
-      error?.message === "custom_appraisal_section_too_large"
-    ) {
-      return res.status(400).json({ error: error.message });
-    }
-    console.error("custom appraisal workfile section save failed", error);
-    return res.status(500).json({ error: "custom_appraisal_workfile_save_failed" });
-  }
-});
-
-/** Create the immutable snapshot that represents the signed/finalized appraisal. */
-app.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req, res) => {
-  const requestedId = String(req.params.id || "").trim();
-  if (!/^[0-9A-Za-z_-]{1,50}$/.test(requestedId)) {
-    return res.status(400).json({ error: "invalid_account_id" });
-  }
-  if (!requireEditor(req, res)) return;
-  if (applicationAuthenticationRequired && !req.mobileAuth) {
-    return res.status(401).json({ error: "authenticated_signer_required" });
-  }
-  try {
-    const assignmentFileId = normalizeAssignmentFileId(req.params.fileId, { required: true });
-    await ensureCustomAppraisalWorkfilesAvailable();
-    const canonicalId = await resolveCanonicalAccountId(pool, requestedId);
-    if (!await requireCustomAssignmentAccess(req, res, canonicalId, assignmentFileId, "sign")) return;
-    const workfile = await signCustomAppraisalWorkfile(pool, {
-      accountId: canonicalId,
-      assignmentFileId,
-      signedBy: req.mobileAuth?.displayName || req.body?.signed_by || req.body?.reviewer,
-      signerUserId: req.mobileAuth?.userId || null,
-      signedFromIp: req.ip,
-      signedUserAgent: req.get("user-agent"),
-      signingSecret: process.env.APP_SIGNING_SECRET,
-      acknowledgedWarningCodes: req.body?.acknowledged_warning_codes,
-      objectStorage: sharedObjectStorage,
-    });
-    return res.json({ ok: true, account_id: canonicalId, workfile });
-  } catch (error) {
-    if (error?.message === "assignment_file_not_found") {
-      return res.status(404).json({ error: error.message });
-    }
-    if (["custom_appraisal_workfile_signed", "custom_appraisal_workfile_empty"].includes(error?.message)) {
-      return res.status(409).json({ error: error.message });
-    }
-    if (error?.message === "custom_appraisal_signer_not_assigned") {
-      return res.status(403).json({ error: error.message });
-    }
-    if (error?.message === "custom_appraisal_signing_secret_not_configured") {
-      return res.status(503).json({ error: error.message });
-    }
-    if (error?.message === "custom_appraisal_eo_incomplete") {
-      return res.status(422).json({
-        error: error.message,
-        readiness_errors: error.readinessErrors || [],
-        readiness: error.readiness || null,
-      });
-    }
-    if (error?.message === "custom_appraisal_eo_warnings_unacknowledged") {
-      return res.status(422).json({
-        error: error.message,
-        readiness_warnings: error.readinessWarnings || [],
-        readiness: error.readiness || null,
-      });
-    }
-    if (String(error?.message || "").startsWith("invalid_")) {
-      return res.status(400).json({ error: error.message });
-    }
-    console.error("custom appraisal workfile signing failed", error);
-    return res.status(500).json({ error: "custom_appraisal_workfile_sign_failed" });
-  }
-});
+app.use(createAssignmentWorkfileMutationRouter({
+  pool,
+  ensureCustomAppraisalWorkfilesAvailable,
+  requireEditor,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
+  authenticationRequired: applicationAuthenticationRequired,
+  objectStorage: sharedObjectStorage,
+}));
 
 function requireEditor(req, res) {
   if (req.mobileAuth) {

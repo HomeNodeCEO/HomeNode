@@ -96,10 +96,12 @@ test("assignment photos and documents require assignment-level access after acti
 
 test("custom appraisal signatures are identity-bound, authenticated, and append-only", () => {
   const server = read("../src/oldServer.js");
+  const mutations = read("../src/modules/assignmentFiles/workfileMutationRouter.js");
   const workfiles = read("../src/services/customAppraisalWorkfiles.js");
   const migration = read("../migrations/20260929_custom_appraisal_signature_hardening.sql");
-  assert.match(server, /APP_SIGNING_SECRET/);
-  assert.match(server, /authenticated_signer_required/);
+  assert.match(server, /createAssignmentWorkfileMutationRouter/);
+  assert.match(mutations, /APP_SIGNING_SECRET/);
+  assert.match(mutations, /authenticated_signer_required/);
   assert.match(workfiles, /custom_appraisal_signer_not_assigned/);
   assert.match(workfiles, /createHmac\("sha256", signingSecret\)/);
   assert.match(workfiles, /signature_event_id/);

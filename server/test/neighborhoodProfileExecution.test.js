@@ -126,13 +126,16 @@ test("neighborhood profile request keys cover every analysis input", () => {
 });
 
 test("the neighborhood profile route is protected by the execution gate", () => {
-  const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
-  const route = source.slice(
-    source.indexOf('app.post("/api/sales/neighborhood-profile"'),
-    source.indexOf('app.post("/api/sales/neighborhood-land-use"'),
+  const source = fs.readFileSync(
+    new URL("../src/modules/sales/neighborhoodAnalysisRouter.js", import.meta.url),
+    "utf8",
   );
-  assert.match(route, /runNeighborhoodProfileOperation/);
-  assert.match(route, /compactNeighborhoodProfileResponse/);
+  const route = source.slice(
+    source.indexOf('router.post("/api/sales/neighborhood-profile"'),
+    source.indexOf('router.post("/api/sales/neighborhood-land-use"'),
+  );
+  assert.match(route, /runProfileOperation/);
+  assert.match(route, /compactProfileResponse/);
   assert.match(route, /allowCached: !request\.forceRefresh/);
   assert.match(route, /Retry-After/);
   assert.match(route, /status\(503\)/);

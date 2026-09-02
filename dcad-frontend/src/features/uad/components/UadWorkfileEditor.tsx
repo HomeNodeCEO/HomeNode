@@ -615,7 +615,7 @@ export default function UadWorkfileEditor({ workfileId, onClose, initialSection 
   }
 
   async function handleSave() {
-    if (!section || saving) return;
+    if (!editor || !section || saving) return;
     const submitted: Array<{ uid: string; context_key: string; entity_id?: string | null; value: UadFieldValue }> = [];
     const missing: string[] = [];
     for (const group of section.groups) {

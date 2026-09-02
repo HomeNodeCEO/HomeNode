@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as api from '@/lib/api';
 import { loadCustomAppraisalWorkfile } from '@/lib/appraisalFileRequests';
 import type { DepreciatedCostAdjustmentResponse, DepreciatedCostTarget } from '@/lib/api';
@@ -71,7 +71,7 @@ export default function DepreciatedCostAnalysis({
   const [calculating, setCalculating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadCostEvidence = async () => {
+  const loadCostEvidence = useCallback(async () => {
     if (!assignmentFileId) {
       setCostApproach(null);
       setError('Create or open an appraisal file before using Depreciated Cost.');
@@ -91,9 +91,9 @@ export default function DepreciatedCostAnalysis({
     } finally {
       setLoading(false);
     }
-  };
+  }, [assignmentFileId, subjectAccountId]);
 
-  useEffect(() => { void loadCostEvidence(); }, [subjectAccountId, assignmentFileId]);
+  useEffect(() => { void loadCostEvidence(); }, [loadCostEvidence]);
 
   const evidenceOptions = useMemo<EvidenceOption[]>(() => {
     if (!costApproach) return [];
@@ -132,7 +132,7 @@ export default function DepreciatedCostAnalysis({
     setDescription(selected.description);
     setUnitCost(String(selected.unitCost));
     setResult(null);
-  }, [costApproach]);
+  }, [evidenceOptions, sourceId]);
 
   const depreciationPercent = useMemo(() => {
     if (!costApproach) return 0;

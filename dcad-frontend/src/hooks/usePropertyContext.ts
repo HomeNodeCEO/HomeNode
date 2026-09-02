@@ -3,13 +3,14 @@ import {
   analyzePropertyContext,
   getPropertyContextAssessment,
   savePropertyContextReview,
+  type GeoJsonPolygon,
   type PropertyComplexityAssessment,
   type PropertyComplexityLevel,
 } from "@/lib/api";
 
 type ContextAnalysisOptions = {
   assignmentFileId?: number | null;
-  customGeometry?: unknown;
+  customGeometry?: GeoJsonPolygon | null;
   geography?: string | null;
 };
 

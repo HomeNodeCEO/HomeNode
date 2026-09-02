@@ -1,4 +1,4 @@
-﻿import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 export function Card({ className = "", children }: { className?: string; children: ReactNode }) {
   // Keep children as-is so Header/Content can be separate "card-body" blocks.

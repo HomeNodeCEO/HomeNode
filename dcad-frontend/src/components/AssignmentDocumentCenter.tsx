@@ -191,7 +191,7 @@ export default function AssignmentDocumentCenter({
         ? await listUadDocuments(uadWorkfileId)
         : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
       setDocuments(loaded);
-      if (selectedDocument) {
+      if (selectedDocument?.id) {
         const matching = loaded.find((document) => document.id === selectedDocument.id);
         if (!matching) setSelectedDocument(null);
       }

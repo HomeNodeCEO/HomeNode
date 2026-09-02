@@ -8,6 +8,8 @@
     "build": "vite build",
     "build:checked": "vite build && node scripts/checkBundleBudget.mjs",
     "lint": "eslint .",
+    "lint:ci": "node scripts/checkLintBudget.mjs",
+    "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"scripts/test*.mjs\"",
     "preview": "vite preview",
     "test:adjustments": "node scripts/testComparableAdjustments.mjs",
@@ -35,6 +37,7 @@
   "devDependencies": {
     "@eslint/js": "^9.33.0",
     "@tailwindcss/postcss": "^4.1.12",
+    "@types/node": "^24.0.0",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.0",

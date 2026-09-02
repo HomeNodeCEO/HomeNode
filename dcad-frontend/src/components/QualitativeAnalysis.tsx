@@ -61,7 +61,7 @@ export default function QualitativeAnalysis({
     setSelections(restored);
     setResult(savedAnalysis || null);
     setError(null);
-  }, [signature, savedAnalysis?.calculated_at]);
+  }, [signature, savedAnalysis]);
 
   const selectionPayload = (): QualitativeSelectionInput[] => comparables.flatMap((comparable, index) => {
     const key = comparableKey(comparable.sale, index);
@@ -95,7 +95,10 @@ export default function QualitativeAnalysis({
   const updateSelection = (key: string, changes: Partial<LocalSelection>) => {
     setSelections((current) => ({
       ...current,
-      [key]: { classification: '', commentary: '', ...current[key], ...changes },
+      [key]: {
+        classification: changes.classification ?? current[key]?.classification ?? '',
+        commentary: changes.commentary ?? current[key]?.commentary ?? '',
+      },
     }));
     setResult(null);
   };

@@ -743,7 +743,7 @@ export default function NeighborhoodCharacteristicsContent({
     onBoundarySuggestionsChange,
   ]);
 
-  const analyzeRelevantPropertyDataset = async () => {
+  const analyzeRelevantPropertyDataset = useCallback(async () => {
     if (!accountId || relevanceLoading) return;
     const boundaryAssessmentId = Number(
       assignmentDraft.neighborhood_boundary_engine_assessment_id,
@@ -817,7 +817,13 @@ export default function NeighborhoodCharacteristicsContent({
     } finally {
       setRelevanceLoading(false);
     }
-  };
+  }, [
+    accountId,
+    assignmentDraft.neighborhood_boundary_engine_assessment_id,
+    assignmentDraft.neighborhood_boundary_engine_assignment_file_id,
+    onAssignmentChange,
+    relevanceLoading,
+  ]);
 
   useEffect(() => {
     const boundaryAssessmentId = Number(
@@ -834,6 +840,7 @@ export default function NeighborhoodCharacteristicsContent({
     accountId,
     assignmentFileId,
     assignmentDraft.neighborhood_boundary_engine_assessment_id,
+    analyzeRelevantPropertyDataset,
     relevanceLoading,
   ]);
 

@@ -5,7 +5,9 @@
 //   (defaults countyId to 1 = Dallas; override if you support more counties)
 
 import {
+  apiSearch,
   getAccount as getAccountDb,
+  type AccountRow,
 } from './api';
 import { hasSnapshotValue, mergeNonBlankSnapshot } from './reportSnapshotMerge';
 
@@ -19,7 +21,7 @@ export async function getHealth(): Promise<any> {
 // Legacy shape for older UI code that expected { query, results }
 export type LegacySearchResponse = {
   query: string;
-  results: SearchResult[];
+  results: AccountRow[];
 };
 
 /**
@@ -33,7 +35,8 @@ export async function searchByAddress(
   countyId = 1
 ): Promise<LegacySearchResponse> {
   if (!q?.trim()) return { query: q ?? '', results: [] };
-  const { results } = await searchProperties({ q, limit, countyId });
+  void countyId;
+  const results = await apiSearch(q, limit);
   return { query: q, results };
 }
 
@@ -46,6 +49,7 @@ export const search = searchByAddress;
  * - Defaults countyId to 1 (Dallas).
  */
 export async function fetchDetail(accountId: string, countyId = 1) {
+  void countyId;
   // Database-backed detail only (no scraper). Map DB result to the legacy detail shape
   const normalizedAccountId = (accountId || '').trim();
   const data = await getAccountDb(normalizedAccountId);

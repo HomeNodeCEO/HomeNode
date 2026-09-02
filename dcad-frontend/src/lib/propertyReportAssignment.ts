@@ -5,6 +5,8 @@ import {
 } from "./neighborhoodCharacteristics.ts";
 import { parseNumber } from "./propertyReportPresentation.ts";
 
+type AssignmentDetails = AssignmentDetailsPayload;
+
 export function cloneEditorValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value ?? {})) as T;
 }

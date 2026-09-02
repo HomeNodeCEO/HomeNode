@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { fetchProperty } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,9 +52,105 @@ type Property = {
   effective_year_built?: number | "";
   last_inspection_year?: number | "";
 
+  // Optional report fields supplied by richer county sources.
+  tax_agent?: string | null;
+  owner_name?: string | null;
+  owner_mailing_address?: string | null;
+  owner_type?: string | null;
+  ownership_percent?: string | number | null;
+  deed_date?: string | null;
+  deed_type?: string | null;
+  purchase_price?: string | number | null;
+  grantor?: string | null;
+  homestead_display?: string | null;
+  ag_use_display?: string | null;
+  mineral_rights_display?: string | null;
+  legal_description?: string | null;
+  owner_notes?: string | null;
+  total_living_area?: string | number | null;
+  percent_complete?: string | number | null;
+  stories?: string | number | null;
+  stories_num?: string | number | null;
+  construction_type_display?: string | null;
+  construction_type?: string | null;
+  foundation_display?: string | null;
+  foundation_type?: string | null;
+  roof_type?: string | null;
+  roof_material?: string | null;
+  fence_type?: string | null;
+  exterior_material?: string | null;
+  basement_display?: string | null;
+  basement?: boolean | string | null;
+  heating_display?: string | null;
+  heating_type?: string | null;
+  cooling_display?: string | null;
+  air_conditioning?: string | null;
+  pool_display?: string | null;
+  pool?: boolean | null;
+
   // protest history (optional)
   protest_history?: Array<{ year: number; status: string; initial_value: number; final_value: number }>;
 };
+
+function toNum(v: any): number | "" {
+  if (v === null || v === undefined || v === "") return "";
+  const n = Number(String(v).replace(/[,$\s]/g, ""));
+  return Number.isFinite(n) ? n : "";
+}
+
+function mapMergedToProperty(detail: any, fallbackAccountNumber: string): Partial<Property> {
+  const account = detail?.account ?? detail ?? {};
+  const improvement = detail?.primary_improvements ?? detail ?? {};
+  const owner = detail?.owner_summary ?? detail?.owner ?? {};
+  const vs = detail?.value_summary ?? {};
+  const bathNum =
+    improvement?.bath_count ??
+    detail?.bath_count_num ??
+    (typeof detail?.bath_count_display === "number" ? detail?.bath_count_display : undefined);
+
+  return {
+    account_number: account?.account_id ?? fallbackAccountNumber,
+    address: account?.address ?? detail?.situs_address ?? detail?.address ?? "",
+    photos: detail?.photos ?? [],
+    market_value: toNum(vs.market_value ?? account?.latest_market_value ?? detail?.market_value),
+    appraised_value: toNum(vs.capped_value ?? account?.latest_capped_value ?? detail?.taxable_value ?? detail?.appraised_value),
+    improvement_value: toNum(vs.improvement_value ?? account?.latest_improvement_value),
+    land_value: toNum(vs.land_value ?? account?.latest_land_value),
+    neighborhood_multiplier: toNum(detail?.neighborhood?.multiplier ?? detail?.neighborhood_multiplier),
+    county: account?.county ?? detail?.county ?? detail?.county_name ?? "",
+    square_footage: toNum(improvement?.living_area_sqft ?? improvement?.total_living_area),
+    total_living_area: improvement?.total_living_area ?? improvement?.living_area_sqft ?? null,
+    land_acreage: toNum(detail?.land_acreage ?? detail?.land?.acreage),
+    bedroom_count: toNum(improvement?.bedroom_count),
+    bath_count: bathNum ?? "",
+    garage_bay_count: toNum(detail?.garage_bay_count),
+    solar_panels: !!detail?.solar_panels,
+    functional_obsolescence: !!detail?.functional_obsolescence,
+    classification: improvement?.building_class ?? detail?.classification,
+    year_built: toNum(improvement?.year_built),
+    effective_year_built: toNum(improvement?.effective_year_built),
+    last_inspection_year: toNum(detail?.last_inspection_year),
+    neighborhood_code: account?.neighborhood_code ?? detail?.neighborhood?.code,
+    subdivision: account?.subdivision ?? detail?.neighborhood?.subdivision,
+    owner_name: owner?.owner_name ?? null,
+    owner_mailing_address: owner?.mailing_address ?? null,
+    ownership_percent: detail?.owner_parties?.[0]?.ownership_pct ?? null,
+    legal_description: account?.legal_description ?? null,
+    percent_complete: improvement?.percent_complete ?? null,
+    stories: improvement?.stories ?? null,
+    construction_type: improvement?.construction_type ?? null,
+    foundation_type: improvement?.foundation ?? null,
+    roof_type: improvement?.roof_type ?? null,
+    roof_material: improvement?.roof_material ?? null,
+    fence_type: improvement?.fence_type ?? null,
+    exterior_material: improvement?.exterior_material ?? null,
+    basement: improvement?.basement ?? null,
+    heating_type: improvement?.heating ?? null,
+    air_conditioning: improvement?.air_conditioning ?? null,
+    pool: improvement?.pool ?? null,
+    protest_history: detail?.protest_history ?? [],
+  };
+}
 
 export default function PropertyDetailsBase44() {
   const { countyId, accountId } = useParams<{ countyId: string; accountId: string }>();
@@ -68,62 +164,13 @@ export default function PropertyDetailsBase44() {
   const hasAutoLoaded = useRef(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
-  function toNum(v: any): number | "" {
-    if (v === null || v === undefined || v === "") return "";
-    const n = Number(String(v).replace(/[,$\s]/g, ""));
-    return Number.isFinite(n) ? n : "";
-  }
-
-  // Map the MERGED endpoint payload -> our local Property shape
-  function mapMergedToProperty(detail: any): Partial<Property> {
-    // value_summary exists on the merged payload; fall back to top-level if present
-    const vs = detail?.value_summary ?? {};
-
-    // Try to preserve decimals for baths if present (e.g., 2.5)
-    const bathNum =
-      detail?.bath_count_num ??
-      (typeof detail?.bath_count_display === "number" ? detail?.bath_count_display : undefined);
-
-    return {
-      account_number: detail?.account_id ?? property.account_number ?? "",
-      address: detail?.situs_address ?? detail?.address ?? "",
-      photos: detail?.photos ?? [],
-
-      market_value: toNum(vs.market_value ?? detail?.market_value),
-      appraised_value: toNum(vs.capped_value ?? detail?.taxable_value ?? detail?.appraised_value),
-      improvement_value: toNum(vs.improvement_value),
-      land_value: toNum(vs.land_value),
-      neighborhood_multiplier: toNum(detail?.neighborhood?.multiplier ?? detail?.neighborhood_multiplier),
-
-      county: detail?.county ?? detail?.county_name ?? "",
-
-      square_footage: toNum(detail?.living_area_sqft ?? detail?.total_living_area),
-      land_acreage: toNum(detail?.land_acreage ?? detail?.land?.acreage),
-      bedroom_count: toNum(detail?.bedroom_count),
-      bath_count: bathNum ?? "",
-      garage_bay_count: toNum(detail?.garage_bay_count),
-      solar_panels: !!detail?.solar_panels,
-      functional_obsolescence: !!detail?.functional_obsolescence,
-
-      classification: detail?.building_class ?? detail?.classification,
-      year_built: toNum(detail?.year_built),
-      effective_year_built: toNum(detail?.effective_year_built),
-      last_inspection_year: toNum(detail?.last_inspection_year),
-
-      neighborhood_code: detail?.neighborhood_code ?? detail?.neighborhood?.code,
-      subdivision: detail?.subdivision ?? detail?.neighborhood?.subdivision,
-
-      protest_history: detail?.protest_history ?? [],
-    };
-  }
-
-  async function loadFromMerged() {
+  const loadFromMerged = useCallback(async () => {
     if (!countyId || !accountId) return;
     setLoading(true);
     try {
       const resp = await fetchProperty(Number(countyId), accountId);
       setRaw(resp);
-      const mapped = mapMergedToProperty(resp);
+      const mapped = mapMergedToProperty(resp, accountId);
       setProperty(prev => ({ ...prev, ...mapped }));
     } catch (e: any) {
       console.error(e);
@@ -131,7 +178,7 @@ export default function PropertyDetailsBase44() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [accountId, countyId]);
 
   // Auto-load on first mount or when params change
   useEffect(() => {
@@ -144,7 +191,7 @@ export default function PropertyDetailsBase44() {
       setProperty(p => ({ ...p, account_number: accountId }));
       void loadFromMerged();
     }
-  }, [countyId, accountId]);
+  }, [countyId, accountId, loadFromMerged]);
 
   const capLoss = (property.market_value || 0) - (property.appraised_value || 0);
 

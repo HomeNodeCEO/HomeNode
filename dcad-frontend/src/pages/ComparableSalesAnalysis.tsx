@@ -139,6 +139,8 @@ type SubjectData = {
   housing_type?: string | null;
   attachment_type?: 'detached' | 'attached' | 'mixed' | 'unknown' | null;
   architectural_style?: string | null;
+  deck?: boolean | string | null;
+  fence_type?: string | null;
 };
 
 type HousingEditForm = {
@@ -543,6 +545,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     propertyContextRefresh,
     propertyId,
     activeAssignmentFile?.id,
+    appraiserDefinedAdjustmentArea?.geometry,
   ]);
 
   useEffect(() => {
@@ -2558,6 +2561,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     compConcessions,
     compTimeAdjustments,
     roomCountTotalAdjustments,
+    roomCountBedAdjustments,
+    roomCountBathAdjustments,
     glaAdjustments,
     garageAdjustments,
     poolAdjustments,
@@ -4056,7 +4061,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
 
-          {(recommendationSummary?.secondary_sales?.length || recommendationSummary?.competitive_sales?.length) > 0 && (
+          {recommendationSummary &&
+            (recommendationSummary.secondary_sales.length || recommendationSummary.competitive_sales.length) > 0 && (
             <section className="mt-6 rounded-2xl border border-slate-300 bg-slate-50 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>

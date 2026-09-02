@@ -1,12 +1,14 @@
 ﻿import * as React from "react";
 
-type Variant = "primary" | "secondary" | "ghost" | "outline";
+type Variant = "primary" | "default" | "secondary" | "ghost" | "outline" | "destructive";
+type Size = "sm" | "default" | "lg" | "icon";
 
 export function Button({
   className = "",
   variant = "primary",
+  size = "default",
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size }) {
   const base = "btn app-action-button";
   const styles =
     variant === "secondary"
@@ -15,6 +17,16 @@ export function Button({
       ? "btn-ghost"
       : variant === "outline"
       ? "btn-outline"
+      : variant === "destructive"
+      ? "btn-error"
       : "btn-primary";
-  return <button className={`${base} ${styles} ${className}`} {...props} />;
+  const sizing =
+    size === "sm"
+      ? "btn-sm"
+      : size === "lg"
+      ? "btn-lg"
+      : size === "icon"
+      ? "btn-square"
+      : "";
+  return <button className={`${base} ${styles} ${sizing} ${className}`} {...props} />;
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { searchByAddress } from "./lib/api"; // If your '@' alias isn't set, use: ../../lib/dcad
+import { searchByAddress } from "@/lib/dcad";
 import { Link } from "react-router-dom";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";

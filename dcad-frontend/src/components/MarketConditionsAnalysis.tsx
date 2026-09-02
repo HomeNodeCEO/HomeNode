@@ -1071,6 +1071,8 @@ export default function MarketConditionsAnalysis({
   const draftBoundaryRef = useRef<BoundaryCoordinate[]>([]);
   const boundaryDrawingRef = useRef(false);
   const initialCustomGeometryRef = useRef(customGeometry);
+  const initialMarketOriginRef = useRef(resolvedInitialOrigin);
+  const initialRelevanceVisualizationRef = useRef(relevanceVisualization);
   const onCustomGeometryChangeRef = useRef(onCustomGeometryChange);
   onCustomGeometryChangeRef.current = onCustomGeometryChange;
   const appraiserModifiedRef = useRef(
@@ -1460,10 +1462,10 @@ export default function MarketConditionsAnalysis({
               'circle-stroke-width': 2,
             },
           });
-          updateBoundaryAppearance(map, resolvedInitialOrigin);
+          updateBoundaryAppearance(map, initialMarketOriginRef.current);
           map.addSource(RELEVANCE_SOURCE_ID, {
             type: 'geojson',
-            data: makeRelevanceFeatureCollection(relevanceVisualization),
+            data: makeRelevanceFeatureCollection(initialRelevanceVisualizationRef.current),
           });
           map.addLayer({
             id: 'neighborhood-relevance-pockets-halo',

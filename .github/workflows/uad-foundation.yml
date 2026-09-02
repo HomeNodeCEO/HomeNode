@@ -51,6 +51,8 @@ jobs:
           cache: npm
           cache-dependency-path: dcad-frontend/package-lock.json
       - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint:ci
       - run: npm run build:checked
       - run: npm test
 

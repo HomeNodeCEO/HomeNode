@@ -7,7 +7,7 @@ export default function PropertyDetail({ countyId, accountId }: { countyId: numb
 
   useEffect(() => {
     let stop = false;
-    fetchPropertyDetail(countyId, accountId)
+    fetchPropertyDetail(accountId)
       .then(d => { if (!stop) setData(d); })
       .catch(console.error);
     return () => { stop = true; };

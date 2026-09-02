@@ -14,8 +14,8 @@ type ApiSearchRow = {
   city?: string | null;
   postal_code?: string | null;
   search_match?: "exact_account" | "exact_address" | "address_prefix" | "same_street" | "city_prefix" | null;
-  owner: string | null;
-  situs_address: string | null;
+  owner?: string | null;
+  situs_address?: string | null;
   latest_market_value?: number | string | null; // <- allow MV from backend if present
   data_quality_status?: string | null;
   data_quality_flags?: string[] | null;

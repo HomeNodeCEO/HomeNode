@@ -41,38 +41,45 @@ export default function PropertyDetailPage() {
   );
   if (!data) return <Page chrome><div>No data.</div></Page>;
 
+  const account = data.account;
+  const improvement = data.primary_improvements;
+
   return (
     <Page chrome>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
-        <h1 style={{ margin: 0 }}>{data.situs_address}</h1>
+        <h1 style={{ margin: 0 }}>{account.address || "Address unavailable"}</h1>
         <Link to=".." style={{ textDecoration: "none" }}>&larr; Back</Link>
       </div>
 
       <div style={{ fontSize: 14, opacity: 0.8, marginTop: 4 }}>
-        Account {data.account_id} · County {data.county_id}
+        Account {account.account_id} · County {account.county || "unavailable"}
       </div>
 
       <div style={{ marginTop: 16, display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr", maxWidth: 800 }}>
-        <Row k="Year Built" v={data.year_built ?? "—"} />
-        <Row k="Stories" v={data.stories_display ?? "—"} />
-        <Row k="Baths" v={data.bath_count_display ?? "—"} />
-        <Row k="Beds" v={data.bedroom_count ?? "—"} />
-        <Row k="Living Area (sf)" v={data.living_area_sqft ?? "—"} />
-        <Row k="Total Living (sf)" v={data.total_living_area ?? "—"} />
-        <Row k="Pool" v={data.pool_display ?? "—"} />
-        <Row k="Basement" v={data.basement_display ?? "—"} />
-        <Row k="Construction" v={data.construction_type_display ?? "—"} />
-        <Row k="A/C" v={data.air_conditioning_display ?? "—"} />
-        <Row k="Heating" v={data.heating_display ?? "—"} />
-        <Row k="Foundation" v={data.foundation_display ?? "—"} />
-        <Row k="Roof Material" v={data.roof_material_display ?? "—"} />
-        <Row k="Roof Type" v={data.roof_type_display ?? "—"} />
-        <Row k="Exterior" v={data.exterior_material_display ?? "—"} />
-        <Row k="Fence" v={data.fence_type_display ?? "—"} />
-        <Row k="Units" v={data.number_units ?? "—"} />
+        <Row k="Year Built" v={improvement?.year_built ?? "—"} />
+        <Row k="Stories" v={improvement?.stories ?? "—"} />
+        <Row k="Baths" v={improvement?.bath_count ?? "—"} />
+        <Row k="Beds" v={improvement?.bedroom_count ?? "—"} />
+        <Row k="Living Area (sf)" v={improvement?.living_area_sqft ?? "—"} />
+        <Row k="Total Living (sf)" v={improvement?.total_living_area ?? "—"} />
+        <Row k="Pool" v={displayBoolean(improvement?.pool)} />
+        <Row k="Basement" v={displayBoolean(improvement?.basement)} />
+        <Row k="Construction" v={improvement?.construction_type ?? "—"} />
+        <Row k="A/C" v={improvement?.air_conditioning ?? "—"} />
+        <Row k="Heating" v={improvement?.heating ?? "—"} />
+        <Row k="Foundation" v={improvement?.foundation ?? "—"} />
+        <Row k="Roof Material" v={improvement?.roof_material ?? "—"} />
+        <Row k="Roof Type" v={improvement?.roof_type ?? "—"} />
+        <Row k="Exterior" v={improvement?.exterior_material ?? "—"} />
+        <Row k="Fence" v={improvement?.fence_type ?? "—"} />
+        <Row k="Units" v={improvement?.number_units ?? "—"} />
       </div>
     </Page>
   );
+}
+
+function displayBoolean(value: boolean | null | undefined) {
+  return value == null ? "—" : value ? "Yes" : "No";
 }
 
 function Row({ k, v }: { k: string; v: string | number | boolean }) {

@@ -1,7 +1,8 @@
 {
   "eslint": {
-    "maximumErrors": 318,
-    "maximumWarnings": 0
+    "maximumErrors": 0,
+    "maximumWarnings": 0,
+    "maximumExplicitAny": 307
   },
   "sourceFiles": {
     "server/src/oldServer.js": 271790,

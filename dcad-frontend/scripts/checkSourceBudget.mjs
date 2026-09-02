@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -8,7 +8,8 @@ const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 let failed = false;
 for (const [relativePath, maximumBytes] of Object.entries(budget.sourceFiles)) {
-  const bytes = (await stat(resolve(repositoryRoot, relativePath))).size;
+  const source = await readFile(resolve(repositoryRoot, relativePath), 'utf8');
+  const bytes = Buffer.byteLength(source.replace(/\r\n/g, '\n'), 'utf8');
   if (bytes > maximumBytes) {
     console.error(`${relativePath}: ${bytes} bytes exceeds ${maximumBytes} byte source budget`);
     failed = true;

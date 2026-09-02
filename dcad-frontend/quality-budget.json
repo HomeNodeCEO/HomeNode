@@ -4,11 +4,11 @@
     "maximumWarnings": 0
   },
   "sourceFiles": {
-    "server/src/oldServer.js": 275101,
-    "server/src/modules/uad/editor.js": 288416,
-    "dcad-frontend/src/pages/PropertyReport.tsx": 173499,
-    "dcad-frontend/src/pages/ComparableSalesAnalysis.tsx": 292174,
-    "dcad-frontend/src/lib/api.ts": 134762,
-    "dcad-frontend/src/styles/base44-main.css": 491611
+    "server/src/oldServer.js": 271790,
+    "server/src/modules/uad/editor.js": 283335,
+    "dcad-frontend/src/pages/PropertyReport.tsx": 169785,
+    "dcad-frontend/src/pages/ComparableSalesAnalysis.tsx": 291093,
+    "dcad-frontend/src/lib/api.ts": 133321,
+    "dcad-frontend/src/styles/base44-main.css": 474571
   }
 }

@@ -23,7 +23,6 @@ function boundedInteger(value, fallback, minimum, maximum) {
 async function fetchWithDeadline(fetchImpl, url, init, timeoutMs, errorCode, consume) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
   let response;
   try {
     response = await fetchImpl(url, { ...init, signal: controller.signal });

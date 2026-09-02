@@ -138,7 +138,6 @@ export function createOidcAccessTokenVerifier({
   async function fetchJson(url, code) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), fetchTimeout);
-    timer.unref?.();
     try {
       const response = await fetchImpl(url, {
         headers: { accept: "application/json" },

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   confirmAllAssignmentDocumentCandidates,
@@ -28,7 +28,6 @@ import {
   listUadDocuments,
   reprocessUadDocument,
   reviewUadDocumentCandidate,
-  synchronizeUadPurchaseContract,
   uploadUadDocument,
   type UadDocumentApplicationResult,
 } from '@/features/uad/api';
@@ -148,7 +147,6 @@ export default function AssignmentDocumentCenter({
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const synchronizedPurchaseContracts = useRef(new Set<number>());
   const documentSubjectCandidate = useMemo(
     () => selectedDocument?.candidates?.find((candidate) => (
       candidate.field_key === 'subject_property_address'
@@ -219,7 +217,7 @@ export default function AssignmentDocumentCenter({
     try {
       const editorKey = getEditorKey();
       if (!isUad && !editorKey) return;
-      const [document, content] = await Promise.all([
+      const [documentResult, contentResult] = await Promise.allSettled([
         isUad && uadWorkfileId
           ? getUadDocument(uadWorkfileId, documentId)
           : getAssignmentDocument(documentId, editorKey),
@@ -227,28 +225,29 @@ export default function AssignmentDocumentCenter({
           ? getUadDocumentContent(uadWorkfileId, documentId)
           : getAssignmentDocumentContent(documentId, editorKey),
       ]);
-      const contractSynchronization = isUad
-        && uadWorkfileId
-        && document.document_type === 'purchase_contract'
-        && !['uploaded', 'processing', 'ocr_required', 'extraction_failed'].includes(document.processing_status)
-        && !synchronizedPurchaseContracts.current.has(document.id)
-          ? await synchronizeUadPurchaseContract(uadWorkfileId, document.id)
-          : null;
-      if (contractSynchronization?.applied) synchronizedPurchaseContracts.current.add(document.id);
+      if (documentResult.status === 'rejected') throw documentResult.reason;
+      const document = documentResult.value;
       setSelectedDocument(document);
-      setViewerUrl(URL.createObjectURL(content));
       setCandidateValues(Object.fromEntries(
         (document.candidates || [])
           .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
           .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
       ));
-      if (contractSynchronization?.applied) onUadApplied?.(contractSynchronization);
+      if (contentResult.status === 'fulfilled') {
+        setViewerUrl(URL.createObjectURL(contentResult.value));
+      } else {
+        setViewerUrl('');
+        const previewError = contentResult.reason instanceof Error
+          ? contentResult.reason.message
+          : 'The source PDF preview is temporarily unavailable.';
+        setMessage(`Contract information loaded for review, but the source PDF preview could not be opened: ${previewError}`);
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The document could not be loaded.');
     } finally {
       setLoading(false);
     }
-  }, [getEditorKey, isUad, onUadApplied, uadWorkfileId]);
+  }, [getEditorKey, isUad, uadWorkfileId]);
 
   useEffect(() => {
     if (open) void loadDocuments();
@@ -453,7 +452,6 @@ export default function AssignmentDocumentCenter({
               .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
               .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
           ));
-          synchronizedPurchaseContracts.current.add(selectedDocument.id);
           onUadApplied?.(response.application);
           await loadDocuments();
           setMessage(
@@ -632,8 +630,12 @@ export default function AssignmentDocumentCenter({
             </div>
 
             <div className="min-w-0">
-              {selectedDocument ? (
+              {selectedDocument && viewerUrl ? (
                 <iframe title={selectedDocument.title} src={`/pdfjs-viewer.html?file=${encodeURIComponent(viewerUrl)}`} className="h-[80vh] min-h-[52rem] max-h-[72rem] w-full rounded-lg border border-slate-300 bg-slate-100" />
+              ) : selectedDocument ? (
+                <div className="flex h-64 items-center justify-center rounded-lg border border-amber-300 bg-amber-50 p-5 text-center text-sm text-amber-900">
+                  The contract details are available below. The immutable source PDF preview is temporarily unavailable; select the contract again to retry it.
+                </div>
               ) : (
                 <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-600">Select a document to view the immutable source PDF.</div>
               )}

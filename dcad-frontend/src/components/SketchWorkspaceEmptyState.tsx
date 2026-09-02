@@ -3,6 +3,8 @@ type Props = {
   subtitle: string;
   onRefresh?: () => void | Promise<void>;
   refreshing?: boolean;
+  refreshLabel?: string;
+  refreshingLabel?: string;
 };
 
 export default function SketchWorkspaceEmptyState({
@@ -10,6 +12,8 @@ export default function SketchWorkspaceEmptyState({
   subtitle,
   onRefresh,
   refreshing = false,
+  refreshLabel = "Check mobile sync",
+  refreshingLabel = "Checking mobile sync…",
 }: Props) {
   return (
     <div className="mt-4 rounded-xl border border-dashed border-emerald-300 bg-emerald-50/60 p-4">
@@ -22,7 +26,7 @@ export default function SketchWorkspaceEmptyState({
           onClick={() => void onRefresh()}
           type="button"
         >
-          {refreshing ? "Checking mobile sync…" : "Check mobile sync"}
+          {refreshing ? refreshingLabel : refreshLabel}
         </button>
       ) : null}
     </div>

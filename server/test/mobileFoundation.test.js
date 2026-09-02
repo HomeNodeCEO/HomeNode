@@ -24,6 +24,7 @@ import {
   formatDailyAssignmentFileNumber,
   normalizeAssignmentDate,
   normalizeWorkflowType,
+  reportFilePrefix,
 } from "../src/modules/mobile/fileNumbers.js";
 import { calculateManualSketch } from "../src/modules/mobile/manualSketch.js";
 import {
@@ -147,30 +148,54 @@ test("formats independent, recognizable report-file sequences", () => {
     workflowType: "custom_appraisal",
     calendarYear: 2026,
     sequenceNumber: 1,
-  }), "HN-CA-2026-000001");
+  }), "CA-2026-000001");
   assert.equal(formatReportFileNumber({
     workflowType: "uad_3_6",
     calendarYear: 2026,
     sequenceNumber: 1,
-  }), "HN-UAD-2026-000001");
+  }), "3.6-2026-000001");
   assert.equal(formatReportFileNumber({
     workflowType: "property_tax_protest",
     calendarYear: 2026,
     sequenceNumber: 1,
-  }), "HN-PTP-2026-000001");
+  }), "PT-2026-000001");
+  assert.equal(reportFilePrefix("custom_appraisal"), "CA");
+  assert.equal(reportFilePrefix("uad_3_6"), "3.6");
+  assert.equal(reportFilePrefix("property_tax_protest"), "PT");
   assert.throws(() => normalizeWorkflowType("uploaded_jpeg"), /invalid_workflow_type/);
 });
 
-test("formats organization-wide daily appraisal file numbers", () => {
-  assert.equal(normalizeAssignmentDate("2026-08-27"), "2026-08-27");
+test("formats classified organization-wide daily appraisal file numbers", () => {
+  assert.equal(normalizeAssignmentDate("2026-09-02"), "2026-09-02");
   assert.equal(formatDailyAssignmentFileNumber({
-    assignmentDate: "2026-08-27",
+    workflowType: "custom_appraisal",
+    assignmentDate: "2026-09-02",
     sequenceNumber: 1,
-  }), "2026-239-01");
+  }), "CA-2026-245-01");
   assert.equal(formatDailyAssignmentFileNumber({
+    workflowType: "uad_3_6",
+    assignmentDate: "2026-09-02",
+    sequenceNumber: 1,
+  }), "3.6-2026-245-01");
+  assert.equal(formatDailyAssignmentFileNumber({
+    workflowType: "property_tax_protest",
+    assignmentDate: "2026-09-02",
+    sequenceNumber: 1,
+  }), "PT-2026-245-01");
+  assert.equal(new Set([
+    formatDailyAssignmentFileNumber({ workflowType: "custom_appraisal", assignmentDate: "2026-09-02", sequenceNumber: 1 }),
+    formatDailyAssignmentFileNumber({ workflowType: "uad_3_6", assignmentDate: "2026-09-02", sequenceNumber: 1 }),
+    formatDailyAssignmentFileNumber({ workflowType: "property_tax_protest", assignmentDate: "2026-09-02", sequenceNumber: 1 }),
+  ]).size, 3);
+  assert.throws(
+    () => formatDailyAssignmentFileNumber({ assignmentDate: "2026-09-02", sequenceNumber: 1 }),
+    /invalid_workflow_type/,
+  );
+  assert.equal(formatDailyAssignmentFileNumber({
+    workflowType: "uad_3_6",
     assignmentDate: "2026-12-31",
     sequenceNumber: 123,
-  }), "2026-365-123");
+  }), "3.6-2026-365-123");
   assert.throws(() => normalizeAssignmentDate("2026-02-30"), /invalid_assignment_date/);
 });
 
@@ -185,15 +210,15 @@ test("allocates one atomic sequence across report workflows for an organization 
   const allocation = await allocateReportFileNumber(client, {
     organizationId: "10000000-0000-4000-8000-000000000001",
     workflowType: "uad_3_6",
-    assignmentDate: "2026-08-27",
+    assignmentDate: "2026-09-02",
   });
-  assert.equal(allocation.fileNumber, "2026-239-02");
+  assert.equal(allocation.fileNumber, "3.6-2026-245-02");
   assert.equal(allocation.workflowType, "uad_3_6");
-  assert.equal(allocation.assignmentDate, "2026-08-27");
+  assert.equal(allocation.assignmentDate, "2026-09-02");
   assert.match(calls[0].sql, /report_file_daily_counters/);
   assert.deepEqual(calls[0].values, [
     "10000000-0000-4000-8000-000000000001",
-    "2026-08-27",
+    "2026-09-02",
   ]);
 });
 
@@ -267,11 +292,13 @@ test("canonicalizes and validates offline sync operations", () => {
 
 test("property tax adapter exposes a bounded canonical field catalog", () => {
   const catalog = propertyTaxFieldCatalog();
-  assert.equal(catalog.length, 18);
+  assert.equal(catalog.length, 23);
   assert.equal(new Set(catalog.map((field) => field.field_path)).size, catalog.length);
   assert.ok(catalog.every((field) => field.target_reference.kind === "property_tax_protest"));
   assert.ok(catalog.some((field) => field.field_path.endsWith(".repair_cost_to_cure")));
   assert.ok(catalog.some((field) => field.field_path.endsWith(".district_appraised_value")));
+  assert.ok(catalog.some((field) => field.field_path.endsWith(".site_size_sqft")));
+  assert.ok(catalog.some((field) => field.field_path.endsWith(".garage_spaces")));
   assert.ok(catalog.some((field) => field.field_path.endsWith(".protest_rationale")));
   assert.ok(catalog.every((field) => !field.field_path.startsWith("custom_appraisal.")));
   const normalized = normalizePropertyTaxWorkfileData({

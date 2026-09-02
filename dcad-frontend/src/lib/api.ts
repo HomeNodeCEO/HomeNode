@@ -2597,6 +2597,7 @@ export type AssignmentDocumentType =
   | 'purchase_contract'
   | 'engagement_letter'
   | 'mls_sheet'
+  | 'district_evidence'
   | 'map'
   | 'other';
 
@@ -2642,6 +2643,7 @@ export interface AssignmentDocument {
   account_id: string;
   assignment_file_id: number | null;
   uad_workfile_id?: string | null;
+  tax_protest_file_id?: string | null;
   report_file_id?: string | null;
   document_type: AssignmentDocumentType;
   title: string;
@@ -4089,4 +4091,95 @@ export async function updatePropertyTaxProtestFile(
     },
   );
   return response.file;
+}
+
+export async function getPropertyTaxDocuments(
+  accountId: string,
+  fileId: string,
+): Promise<AssignmentDocument[]> {
+  const response = await fetchJSON<{ ok: true; documents: AssignmentDocument[] }>(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/documents`),
+  );
+  return response.documents;
+}
+
+export async function getPropertyTaxDocument(
+  accountId: string,
+  fileId: string,
+  documentId: number,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/documents/${documentId}`),
+  );
+  return response.document;
+}
+
+export async function getPropertyTaxDocumentContent(
+  accountId: string,
+  fileId: string,
+  documentId: number,
+): Promise<Blob> {
+  const response = await fetchWithApplicationAuthentication(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/documents/${documentId}/content`),
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body?.error || `HTTP ${response.status}`);
+  }
+  return response.blob();
+}
+
+export async function uploadPropertyTaxDocument(
+  accountId: string,
+  fileId: string,
+  file: File,
+  metadata: {
+    documentType: 'district_evidence' | 'mls_sheet' | 'other';
+    title?: string;
+    uploadedBy?: string;
+  },
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/documents`),
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/pdf',
+        'x-homenode-editor-key': editorKey,
+        'x-document-type': encodeURIComponent(metadata.documentType),
+        'x-document-title': encodeURIComponent(metadata.title || file.name),
+        'x-document-file-name': encodeURIComponent(file.name),
+        'x-document-uploaded-by': encodeURIComponent(metadata.uploadedBy || ''),
+      },
+      body: file,
+      timeoutMs: 120_000,
+    },
+  );
+  return response.document;
+}
+
+export async function deletePropertyTaxDocument(
+  accountId: string,
+  fileId: string,
+  documentId: number,
+  editorKey: string,
+): Promise<void> {
+  await fetchJSON(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/documents/${documentId}`),
+    { method: 'DELETE', headers: { 'x-homenode-editor-key': editorKey } },
+  );
+}
+
+export async function reprocessPropertyTaxDocument(
+  accountId: string,
+  fileId: string,
+  documentId: number,
+  editorKey: string,
+): Promise<AssignmentDocument> {
+  const response = await fetchJSON<{ ok: true; document: AssignmentDocument }>(
+    makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest/${encodeURIComponent(fileId)}/documents/${documentId}/reprocess`),
+    { method: 'POST', headers: { 'x-homenode-editor-key': editorKey }, timeoutMs: 120_000 },
+  );
+  return response.document;
 }

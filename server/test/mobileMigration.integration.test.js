@@ -115,7 +115,7 @@ test("mobile report files preserve prior versions and allocate one daily assignm
       client_request_id: firstCustomRequest,
     });
     assert.equal(firstCustom.created, true);
-    assert.match(firstCustom.reportFile.file_number, /^\d{4}-\d{3}-01$/);
+    assert.match(firstCustom.reportFile.file_number, /^CA-\d{4}-\d{3}-01$/);
     assert.equal(firstCustom.reportFile.previous_report_file_id, null);
     const firstCustomOwnership = await pool.query(
       `SELECT organization_id, assigned_appraiser_user_id, created_by_user_id, updated_by_user_id
@@ -152,7 +152,7 @@ test("mobile report files preserve prior versions and allocate one daily assignm
       client_request_id: randomUUID(),
       previous_report_file_id: firstCustom.reportFile.id,
     });
-    assert.match(secondCustom.reportFile.file_number, /^\d{4}-\d{3}-02$/);
+    assert.match(secondCustom.reportFile.file_number, /^CA-\d{4}-\d{3}-02$/);
     assert.equal(secondCustom.reportFile.previous_report_file_id, firstCustom.reportFile.id);
 
     const uad = await createReportFile(pool, auth, {
@@ -167,8 +167,8 @@ test("mobile report files preserve prior versions and allocate one daily assignm
       workflow_type: "property_tax_protest",
       client_request_id: randomUUID(),
     });
-    assert.match(uad.reportFile.file_number, /^\d{4}-\d{3}-03$/);
-    assert.match(tax.reportFile.file_number, /^\d{4}-\d{3}-04$/);
+    assert.match(uad.reportFile.file_number, /^3\.6-\d{4}-\d{3}-03$/);
+    assert.match(tax.reportFile.file_number, /^PT-\d{4}-\d{3}-04$/);
 
     const uadFoundation = await pool.query(
       `SELECT

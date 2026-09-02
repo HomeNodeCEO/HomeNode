@@ -70,8 +70,8 @@ test("JSON and binary API requests share cookie, token, and marker stripping", (
   assert.doesNotMatch(search, /await fetch\(url\)/);
   assert.equal(
     (api.match(/fetchWithApplicationAuthentication\(/g) || []).length,
-    5,
-    "the shared helper plus JSON, document, workfile, and PDF calls must all use authenticated fetch",
+    6,
+    "the shared helper plus JSON, document, Property Tax evidence, workfile, and PDF calls must all use authenticated fetch",
   );
 });
 

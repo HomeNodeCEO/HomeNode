@@ -65,7 +65,7 @@ test("normalizes UAD workfile identity without accepting unsafe values", () => {
       accountId: "12345678901234567",
       workfileId: "c164248f-645d-48aa-a389-dc668e6c5dc9",
     }),
-    /^HN-UAD-\d{4}-01234567-c164248f$/,
+    /^3\.6-\d{4}-01234567-c164248f$/,
   );
 });
 

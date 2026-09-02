@@ -113,6 +113,7 @@ type Props = {
     excluded: boolean;
     classification: string;
     primary_population: boolean;
+    recommended_population?: boolean;
     relevance_band: string;
     appraiser_override?: 'included' | 'removed' | null;
     point: { type: 'Point'; coordinates: [number, number] };
@@ -141,6 +142,7 @@ function makeRelevanceFeatureCollection(
         excluded: candidate.excluded,
         classification: candidate.classification,
         primary_population: candidate.primary_population,
+        recommended_population: candidate.recommended_population === true,
         relevance_band: candidate.relevance_band,
         appraiser_override: candidate.appraiser_override || '',
       },
@@ -1521,6 +1523,20 @@ export default function MarketConditionsAnalysis({
               'circle-stroke-opacity': 0.8,
             },
           });
+          map.addLayer({
+            id: 'neighborhood-relevance-recommended-area',
+            type: 'circle',
+            source: RELEVANCE_SOURCE_ID,
+            filter: ['==', ['get', 'recommended_population'], true],
+            paint: {
+              'circle-radius': 8.5,
+              'circle-color': '#06b6d4',
+              'circle-opacity': 0.08,
+              'circle-stroke-color': '#0891b2',
+              'circle-stroke-width': 1.8,
+              'circle-stroke-opacity': 0.9,
+            },
+          });
           map.on('click', (event) => {
             if (!boundaryDrawingRef.current) return;
             const coordinate: BoundaryCoordinate = [
@@ -2309,6 +2325,10 @@ export default function MarketConditionsAnalysis({
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-yellow-400" />Marginal</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-orange-500" />Low relevance</span>
                 <span><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />Excluded</span>
+                <span className="basis-full text-cyan-800">
+                  <span className="mr-1 inline-block h-2.5 w-2.5 rounded-full border-2 border-cyan-600 bg-cyan-100 align-middle" />
+                  Cyan outlines show the HomeNode-recommended analytical area.
+                </span>
                 <span className="basis-full text-slate-500">White-outlined points form the primary statistical population used for neighborhood medians and predominant values.</span>
                 <span className="basis-full text-slate-500">Magenta outlines are appraiser-added pockets; red outlines are appraiser-removed pockets.</span>
                 {customGeometryOrigin === 'automatic' ? (

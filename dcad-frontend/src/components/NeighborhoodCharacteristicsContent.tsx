@@ -32,6 +32,7 @@ import {
 import type { MarketAreaOrigin } from "@/lib/marketAreaGeometry";
 import {
   applyPocketOverrides,
+  recommendPocketSelection,
   summarizePockets,
 } from "@/lib/neighborhoodPocketSelection";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
@@ -237,6 +238,29 @@ export default function NeighborhoodCharacteristicsContent({
       removedPocketIds,
       addedPocketIds,
     ]);
+  const pocketRecommendation = useMemo(() => relevanceAssessment
+    ? recommendPocketSelection(relevanceAssessment)
+    : null, [relevanceAssessment]);
+  const recommendedPocketIds = useMemo(
+    () => new Set(pocketRecommendation?.recommendedPocketIds || []),
+    [pocketRecommendation],
+  );
+  const relevanceMapVisualization = useMemo(() =>
+    (effectiveRelevanceAssessment?.visualization || []).map((candidate) => ({
+      ...candidate,
+      recommended_population: recommendedPocketIds.has(
+        candidate.pocket_id || candidate.cluster_id || "",
+      ),
+    })), [effectiveRelevanceAssessment, recommendedPocketIds]);
+  const recommendationActive = useMemo(() => {
+    if (!pocketRecommendation || !effectiveRelevanceAssessment?.visualization) return false;
+    const current = new Set(effectiveRelevanceAssessment.visualization
+      .filter((candidate) => candidate.primary_population)
+      .map((candidate) => candidate.pocket_id || candidate.cluster_id)
+      .filter((value): value is string => Boolean(value)));
+    return current.size === recommendedPocketIds.size &&
+      [...recommendedPocketIds].every((id) => current.has(id));
+  }, [effectiveRelevanceAssessment, pocketRecommendation, recommendedPocketIds]);
   const relevancePockets = useMemo(() => summarizePockets(
     effectiveRelevanceAssessment?.visualization || [],
   ), [effectiveRelevanceAssessment]);
@@ -924,6 +948,29 @@ export default function NeighborhoodCharacteristicsContent({
     );
   }, [applyRelevantStatistics, onAssignmentChange, relevanceAssessment]);
 
+  const applyRecommendedPocketSelection = useCallback(() => {
+    if (!relevanceAssessment || !pocketRecommendation) return;
+    const removed = pocketRecommendation.removedSystemPocketIds;
+    onAssignmentChange("neighborhood_relevance_removed_pocket_ids", removed);
+    onAssignmentChange("neighborhood_relevance_added_pocket_ids", []);
+    onAssignmentChange("neighborhood_relevance_override_updated_at", new Date().toISOString());
+    const recommended = applyPocketOverrides(relevanceAssessment, removed, []);
+    applyRelevantStatistics(recommended);
+    const statistics = recommended.summary.relevant_statistics;
+    setRelevanceMessage(
+      `Applied HomeNode's recommended analytical area: ` +
+      `${pocketRecommendation.recommendedPocketCount.toLocaleString()} pockets, ` +
+      `${statistics?.included_property_count.toLocaleString() || 0} properties, and ` +
+      `${statistics?.included_sale_count.toLocaleString() || 0} available sales. ` +
+      "The rough narrative boundary remains available for appraiser editing.",
+    );
+  }, [
+    applyRelevantStatistics,
+    onAssignmentChange,
+    pocketRecommendation,
+    relevanceAssessment,
+  ]);
+
   useEffect(() => {
     const boundaryAssessmentId = Number(
       assignmentDraft.neighborhood_boundary_engine_assessment_id,
@@ -1504,6 +1551,45 @@ export default function NeighborhoodCharacteristicsContent({
             ) : null}
           </div>
         ) : null}
+        {pocketRecommendation && pocketRecommendation.baselinePocketCount > 0 ? (
+          <div className="mt-2 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="max-w-4xl">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-cyan-950">
+                    HomeNode Recommended Analytical Area
+                  </span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                    recommendationActive
+                      ? "bg-emerald-100 text-emerald-900"
+                      : "bg-cyan-100 text-cyan-900"
+                  }`}>
+                    {recommendationActive ? "Recommendation active" : "Ready for review"}
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] leading-4 text-cyan-950">
+                  {pocketRecommendation.rationale}
+                </p>
+                <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-cyan-900">
+                  <span>Recommended pockets: <strong>{pocketRecommendation.recommendedPocketCount}</strong></span>
+                  <span>Reliability: <strong>{pocketRecommendation.recommendedReliabilityScore}/100</strong></span>
+                  <span>Change: <strong>{pocketRecommendation.reliabilityGain >= 0 ? "+" : ""}{pocketRecommendation.reliabilityGain}</strong></span>
+                  <span>Average similarity: <strong>{pocketRecommendation.averageSimilarityScore ?? "Pending"}%</strong></span>
+                  <span>Property coverage: <strong>{pocketRecommendation.propertyCoveragePercent}%</strong></span>
+                  <span>Sale coverage: <strong>{pocketRecommendation.saleCoveragePercent}%</strong></span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="hn-action-primary btn btn-sm normal-case rounded-lg text-white disabled:opacity-70"
+                onClick={applyRecommendedPocketSelection}
+                disabled={recommendationActive}
+              >
+                {recommendationActive ? "Recommended Area Applied" : "Use Recommended Area"}
+              </button>
+            </div>
+          </div>
+        ) : null}
         {relevancePockets.length ? (
           <details className="mt-2 rounded-lg border border-slate-200 bg-white" open>
             <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-slate-800">
@@ -1536,7 +1622,9 @@ export default function NeighborhoodCharacteristicsContent({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="text-xs font-semibold text-slate-900">
-                          Pocket {index + 1}{pocket.containsSubjectSubdivision ? " · Subject subdivision" : ""}
+                          Pocket {index + 1}
+                          {pocket.containsSubjectSubdivision ? " · Subject subdivision" : ""}
+                          {recommendedPocketIds.has(pocket.id) ? " · Recommended" : ""}
                         </div>
                         <div className="mt-0.5 text-[10px] text-slate-600">
                           {pocket.propertyCount.toLocaleString()} properties · {pocket.saleCount.toLocaleString()} sales · {pocket.averageScore ?? "—"}% avg. relevance
@@ -1649,7 +1737,7 @@ export default function NeighborhoodCharacteristicsContent({
             initialCustomGeometry={assignmentDraft.neighborhood_boundary_geometry}
             initialCustomGeometrySource={assignmentDraft.neighborhood_boundary_source}
             suggestedCustomGeometry={generatedBoundary?.boundary || null}
-            relevanceVisualization={effectiveRelevanceAssessment?.visualization || []}
+            relevanceVisualization={relevanceMapVisualization}
             onCustomGeometryChange={handleCustomGeometryChange}
             embedded
           />

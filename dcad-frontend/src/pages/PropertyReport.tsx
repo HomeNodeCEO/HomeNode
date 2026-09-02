@@ -1239,7 +1239,6 @@ function AddressHero({
       const visibleManualSave = isVisibleManualAssignmentSave(saveReason);
       if (visibleManualSave) setSavingAssignmentFile(true);
       setAssignmentAutosaveState("saving");
-      if (saveReason === "autosave") setAssignmentSaveMessage("Protecting changes in PostgreSQL…");
       try {
         const response = await updateAssignmentFile(
           accountId,
@@ -1278,11 +1277,13 @@ function AddressHero({
         setAssignmentAutosaveState(newerEditsRemain ? "pending" : "saved");
         const savedTime = new Date(savedAt)
           .toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        setAssignmentSaveMessage(
-          newerEditsRemain
-            ? `Changes saved to file ${response.assignment_file.file_number} at ${savedTime}; newer edits are queued.`
-            : `All changes saved to file ${response.assignment_file.file_number} at ${savedTime}.`,
-        );
+        if (visibleManualSave) {
+          setAssignmentSaveMessage(
+            newerEditsRemain
+              ? `Changes saved to file ${response.assignment_file.file_number} at ${savedTime}; newer edits are queued.`
+              : `All changes saved to file ${response.assignment_file.file_number} at ${savedTime}.`,
+          );
+        }
         return true;
       } catch (error) {
         const message = error instanceof Error
@@ -1742,12 +1743,10 @@ function AddressHero({
       assignmentAutosaveState === "conflict" ||
       activeAssignmentFile?.workfile?.status === "signed",
   );
-  const customAppraisalSaveStatus = assignmentAutosaveState === "saving"
-    ? "Protecting changes in PostgreSQL…"
-    : assignmentAutosaveState === "conflict"
+  const customAppraisalSaveStatus = assignmentAutosaveState === "conflict"
       ? "Autosave paused for a concurrent-edit decision"
       : assignmentDirty
-        ? "Changes queued for autosave within one minute"
+        ? "Autosave active · changes queued"
         : lastAssignmentSavedAt
           ? `All changes saved · ${new Date(lastAssignmentSavedAt).toLocaleTimeString([], {
               hour: "numeric",
@@ -1886,7 +1885,7 @@ function AddressHero({
           </button>
         </div>
         <p
-          className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-violet-100"
+          className="mt-2 min-h-4 break-words text-right text-[11px] font-medium leading-4 text-violet-100 sm:ml-auto sm:min-w-[22rem]"
           aria-live="polite"
         >
           {assignmentSaveMessage || workfileStatusMessage || customAppraisalSaveStatus || "\u00a0"}

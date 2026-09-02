@@ -224,11 +224,18 @@ export default function UadWorkspaceEntry() {
             className="mt-4"
             onUadApplied={(result) => {
               if (!result.applied) return;
+              const listedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId);
+              const nextRevision = result.current_revision || listedWorkfile?.current_revision || 0;
+              if (
+                listedWorkfile
+                && nextRevision <= listedWorkfile.current_revision
+                && (result.changed_field_count || 0) === 0
+              ) return;
               setWorkfiles((current) => current.map((workfile) => (
                 workfile.id === activeWorkfileId
                   ? {
                       ...workfile,
-                      current_revision: result.current_revision || workfile.current_revision,
+                      current_revision: nextRevision || workfile.current_revision,
                       updated_at: new Date().toISOString(),
                     }
                   : workfile

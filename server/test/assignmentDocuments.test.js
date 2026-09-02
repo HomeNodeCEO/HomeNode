@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   assignmentDetailsFromConfirmedDocument,
+  assignmentDocumentCandidatesForContext,
   assignmentDocumentRequestedType,
   assignmentDocumentCandidateReviewKey,
   assignmentDocumentRetryDelayMs,
@@ -14,6 +15,26 @@ import {
   loadAssignmentDocumentContent,
   retainedAssignmentDocumentReview,
 } from "../src/services/assignmentDocuments.js";
+
+test("UAD purchase contracts omit the synthetic assignment-type review candidate", () => {
+  const candidates = [
+    { field_key: "assignment_type", normalized_value: "purchase_transaction" },
+    { field_key: "contract_price", normalized_value: "282500.00" },
+  ];
+  assert.deepEqual(
+    assignmentDocumentCandidatesForContext(candidates, {
+      uadWorkfileId: "20000000-0000-4000-8000-000000000002",
+      documentType: "purchase_contract",
+    }),
+    [candidates[1]],
+  );
+  assert.deepEqual(
+    assignmentDocumentCandidatesForContext(candidates, {
+      documentType: "purchase_contract",
+    }),
+    candidates,
+  );
+});
 
 test("reprocessing preserves explicit types but reclassifies a legacy contract mistaken for zoning", () => {
   assert.equal(assignmentDocumentRequestedType({

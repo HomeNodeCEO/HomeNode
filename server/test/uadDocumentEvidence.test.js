@@ -3,7 +3,10 @@ import test from "node:test";
 
 import { UAD_MIGRATION_NAMES } from "../src/database/uadMigrations.js";
 import {
+  buildUadSalesContractAnalysis,
   parseUadClientAddress,
+  uadPurchaseContractAssignmentValues,
+  uadPurchaseContractValues,
   uadDocumentPartyNameValues,
   uadDocumentCandidateIsApplicable,
   uadMlsListingValues,
@@ -15,13 +18,72 @@ test("UAD document evidence accepts only fields with reviewed canonical mappings
   for (const field of [
     "assignment_type", "buyer_name", "seller_name", "lender_client_name",
     "lender_client_address", "contract_price", "contract_date",
+    "closing_date", "loan_amount", "down_payment", "earnest_money",
+    "seller_concessions", "contract_property_condition", "contract_repairs",
     "listing_status", "mls_number", "list_date", "listing_end_date",
     "days_on_market", "original_list_price", "list_price",
   ]) {
     assert.equal(uadDocumentCandidateIsApplicable(field), true, field);
   }
   assert.equal(uadDocumentCandidateIsApplicable("subject_property_address"), false);
-  assert.equal(uadDocumentCandidateIsApplicable("loan_amount"), false);
+});
+
+const hardyContractCandidates = [
+  ["buyer_name", "Zachary Thames"],
+  ["seller_name", "Lorenzo Jr Loredo and Andi Li-Kay Thompson"],
+  ["contract_date", "2026-08-25"],
+  ["contract_price", "282500.00"],
+  ["down_payment", "8475.00"],
+  ["loan_amount", "274025.00"],
+  ["earnest_money", "2600.00"],
+  ["closing_date", "2026-09-24"],
+  ["seller_concessions", "0.00"],
+  ["contract_property_condition", "as_is"],
+].map(([field_key, confirmed_value], index) => ({
+  id: index + 1,
+  field_key,
+  confirmed_value,
+  review_status: "confirmed",
+}));
+
+test("reviewed Hardy contract evidence builds the complete UAD sales-contract analysis", () => {
+  const analysis = buildUadSalesContractAnalysis(hardyContractCandidates);
+  assert.match(analysis, /Contract buyer\(s\): Zachary Thames\./);
+  assert.match(analysis, /Contract seller\(s\): Lorenzo Jr Loredo and Andi Li-Kay Thompson\./);
+  assert.match(analysis, /fully executed on 2026-08-25/);
+  assert.match(analysis, /agreed sales price is \$282,500\.00/);
+  assert.match(analysis, /cash portion\/down payment is \$8,475\.00/);
+  assert.match(analysis, /sum of financing is \$274,025\.00/);
+  assert.match(analysis, /Earnest money is \$2,600\.00/);
+  assert.match(analysis, /Closing is scheduled on or before 2026-09-24/);
+  assert.match(analysis, /12A\(1\)\(b\) reports no seller concessions/);
+  assert.match(analysis, /accepts the property as is/);
+});
+
+test("purchase-contract synchronization never infers the arm's-length conclusion", () => {
+  const values = uadPurchaseContractValues(hardyContractCandidates);
+  const byKey = new Map(values.map((value) => [`${value.context_key}:${value.uid}`, value.value]));
+  assert.equal(byKey.get("sales_contract:0600.0016"), true);
+  assert.equal(byKey.get("sales_contract:0600.0010"), true);
+  assert.equal(byKey.get("sales_contract:0600.0008"), 282500);
+  assert.equal(byKey.get("sales_contract:0600.0009"), "2026-08-25");
+  assert.equal(byKey.get("sales_contract:0600.0006"), false);
+  assert.equal(byKey.has("sales_contract:0600.0002"), false);
+  assert.match(byKey.get("sales_contract_commentary:0600.0014"), /Earnest money/);
+  assert.deepEqual(uadPurchaseContractAssignmentValues(hardyContractCandidates), [
+    { uid: "1000.0034", context_key: "assignment", value: "Purchase" },
+    { uid: "1000.0103", context_key: "borrower", value: "Borrower" },
+    { uid: "1000.0101", context_key: "borrower", value: "Zachary" },
+    { uid: "1000.0102", context_key: "borrower", value: "Thames" },
+  ]);
+});
+
+test("classification-only contract synchronization does not invent unreviewed terms", () => {
+  assert.deepEqual(uadPurchaseContractValues([]), [
+    { uid: "0600.0016", context_key: "sales_contract", value: true },
+    { uid: "0600.0010", context_key: "sales_contract", value: true },
+  ]);
+  assert.equal(buildUadSalesContractAnalysis([]), "");
 });
 
 test("UAD client address parsing requires the official structured address components", () => {
@@ -160,4 +222,31 @@ test("the UAD editor bypasses browser caches after document evidence changes", a
     source.indexOf("export interface UadSectionSaveResult"),
   );
   assert.match(getEditor, /cache:\s*["']no-store["']/);
+});
+
+test("the UAD arm's-length decision is visually marked as a permanent manual-review field", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [editorSource, catalogSource] = await Promise.all([
+    readFile(
+      new URL("../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../src/modules/uad/salesContractCatalog.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(editorSource, /manualContractReview[\s\S]*0600\.0002/);
+  assert.match(editorSource, /hn-evidence-reviewer-frame/);
+  assert.match(catalogSource, /always requires the appraiser's manual review/);
+});
+
+test("UAD purchase contracts use one batch review request instead of per-field synchronization", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [centerSource, apiSource, routerSource] = await Promise.all([
+    readFile(new URL("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../dcad-frontend/src/features/uad/api.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/modules/uad/router.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(centerSource, /confirmAllUadPurchaseContractCandidates/);
+  assert.match(apiSource, /candidates\/confirm-all-purchase-contract/);
+  assert.match(routerSource, /confirmAssignmentDocumentCandidates/);
+  assert.match(routerSource, /synchronizeUadPurchaseContract/);
 });

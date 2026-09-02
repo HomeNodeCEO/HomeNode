@@ -432,6 +432,7 @@ export async function reprocessUadDocument(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/reprocess`),
     { method: "POST", timeoutMs: 120_000 },
   );
+  if (response.document.document_type === "purchase_contract") announceUadWorkfileMutation(workfileId);
   return response.document;
 }
 
@@ -481,6 +482,7 @@ export interface UadDocumentApplicationResult {
   reason?: string;
   field_key: string;
   section?: UadSectionKey;
+  sections?: UadSectionKey[];
   source_reference?: string;
   current_revision?: number;
   changed_field_count?: number;
@@ -490,6 +492,44 @@ export interface UadDocumentApplicationResult {
     entity_id: string | null;
     value: UadFieldValue;
   }>;
+}
+
+export async function confirmAllUadPurchaseContractCandidates(
+  workfileId: string,
+  documentId: number,
+  input: { reviewer: string; reportSubjectAddress: string; candidateValues?: Record<number, string> },
+): Promise<{ document: AssignmentDocument; application: UadDocumentApplicationResult }> {
+  const response = await uadFetchJSON<{
+    document: AssignmentDocument;
+    application: UadDocumentApplicationResult;
+  }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/candidates/confirm-all-purchase-contract`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        reviewer: input.reviewer,
+        report_subject_address: input.reportSubjectAddress,
+        candidate_values: input.candidateValues || {},
+      }),
+    },
+  );
+  if (response.application.applied && (response.application.changed_field_count || 0) > 0) {
+    announceUadWorkfileMutation(workfileId);
+  }
+  return response;
+}
+
+export async function synchronizeUadPurchaseContract(
+  workfileId: string,
+  documentId: number,
+): Promise<UadDocumentApplicationResult> {
+  const result = await uadFetchJSON<UadDocumentApplicationResult>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}/synchronize-purchase-contract`),
+    { method: "POST" },
+  );
+  if (result.applied && (result.changed_field_count || 0) > 0) announceUadWorkfileMutation(workfileId);
+  return result;
 }
 
 export async function applyUadDocumentCandidate(

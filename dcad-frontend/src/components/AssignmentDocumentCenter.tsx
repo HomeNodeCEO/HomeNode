@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   confirmAllAssignmentDocumentCandidates,
@@ -20,6 +20,7 @@ import {
 } from '@/lib/propertyReportPresentation';
 import {
   applyUadDocumentCandidate,
+  confirmAllUadPurchaseContractCandidates,
   confirmUadDocumentDespiteSubjectMismatch,
   deleteUadDocument,
   getUadDocument,
@@ -27,6 +28,7 @@ import {
   listUadDocuments,
   reprocessUadDocument,
   reviewUadDocumentCandidate,
+  synchronizeUadPurchaseContract,
   uploadUadDocument,
   type UadDocumentApplicationResult,
 } from '@/features/uad/api';
@@ -146,6 +148,7 @@ export default function AssignmentDocumentCenter({
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const synchronizedPurchaseContracts = useRef(new Set<number>());
   const documentSubjectCandidate = useMemo(
     () => selectedDocument?.candidates?.find((candidate) => (
       candidate.field_key === 'subject_property_address'
@@ -161,17 +164,25 @@ export default function AssignmentDocumentCenter({
   const subjectAddressOverride = selectedDocument?.extraction_summary?.subject_address_override;
   const subjectAddressMismatch = subjectAddressComparison.matches === false;
   const confirmationBlocked = subjectAddressMismatch && !subjectAddressOverride?.acknowledged;
+  const reviewableCandidates = useMemo(
+    () => (selectedDocument?.candidates || []).filter((candidate) => !(
+      isUad
+      && selectedDocument?.document_type === 'purchase_contract'
+      && candidate.field_key === 'assignment_type'
+    )),
+    [isUad, selectedDocument],
+  );
   const suggestedCandidates = useMemo(
-    () => (selectedDocument?.candidates || []).filter((candidate) => (
+    () => reviewableCandidates.filter((candidate) => (
       candidate.review_status === 'suggested'
     )),
-    [selectedDocument],
+    [reviewableCandidates],
   );
   const reviewedCandidates = useMemo(
-    () => (selectedDocument?.candidates || []).filter((candidate) => (
+    () => reviewableCandidates.filter((candidate) => (
       candidate.review_status !== 'suggested'
     )),
-    [selectedDocument],
+    [reviewableCandidates],
   );
   const confirmedCandidateCount = reviewedCandidates.filter((candidate) => (
     candidate.review_status === 'confirmed'
@@ -216,6 +227,14 @@ export default function AssignmentDocumentCenter({
           ? getUadDocumentContent(uadWorkfileId, documentId)
           : getAssignmentDocumentContent(documentId, editorKey),
       ]);
+      const contractSynchronization = isUad
+        && uadWorkfileId
+        && document.document_type === 'purchase_contract'
+        && !['uploaded', 'processing', 'ocr_required', 'extraction_failed'].includes(document.processing_status)
+        && !synchronizedPurchaseContracts.current.has(document.id)
+          ? await synchronizeUadPurchaseContract(uadWorkfileId, document.id)
+          : null;
+      if (contractSynchronization?.applied) synchronizedPurchaseContracts.current.add(document.id);
       setSelectedDocument(document);
       setViewerUrl(URL.createObjectURL(content));
       setCandidateValues(Object.fromEntries(
@@ -223,12 +242,13 @@ export default function AssignmentDocumentCenter({
           .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
           .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
       ));
+      if (contractSynchronization?.applied) onUadApplied?.(contractSynchronization);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The document could not be loaded.');
     } finally {
       setLoading(false);
     }
-  }, [getEditorKey, isUad, uadWorkfileId]);
+  }, [getEditorKey, isUad, onUadApplied, uadWorkfileId]);
 
   useEffect(() => {
     if (open) void loadDocuments();
@@ -417,6 +437,30 @@ export default function AssignmentDocumentCenter({
     setMessage('');
     try {
       if (isUad && uadWorkfileId) {
+        if (selectedDocument.document_type === 'purchase_contract') {
+          const response = await confirmAllUadPurchaseContractCandidates(
+            uadWorkfileId,
+            selectedDocument.id,
+            {
+              reviewer: reviewer.trim(),
+              reportSubjectAddress: subjectAddress,
+              candidateValues,
+            },
+          );
+          setSelectedDocument(response.document);
+          setCandidateValues(Object.fromEntries(
+            (response.document.candidates || [])
+              .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
+              .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
+          ));
+          synchronizedPurchaseContracts.current.add(selectedDocument.id);
+          onUadApplied?.(response.application);
+          await loadDocuments();
+          setMessage(
+            `${suggestedCandidates.length} extracted contract field${suggestedCandidates.length === 1 ? '' : 's'} approved and synchronized with UAD Assignment Information and Sales Contract.`,
+          );
+          return;
+        }
         let applied = 0;
         for (const candidate of suggestedCandidates) {
           if (!candidate.id) continue;
@@ -773,7 +817,7 @@ export default function AssignmentDocumentCenter({
                           </button>
                         ) : null}
                       </div>
-                    )) : !(selectedDocument.candidates || []).length ? (
+                    )) : !reviewableCandidates.length ? (
                       <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3 text-xs leading-5 text-slate-600">No labeled fields were found. Review the visible PDF directly; scanned or blurry pages remain appraiser-review items.</p>
                     ) : null}
                   </div>

@@ -315,7 +315,7 @@ const loadDcadScraperStatus = redTeamIsolation.external_status_enabled
 app.use(requestPerformance.middleware);
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));
-const globalApiRateLimiter = rateLimit({
+const globalApiRateLimiterOptions = {
   windowMs: httpSecurity.apiRateLimitWindowMs,
   limit: httpSecurity.apiRateLimitMax,
   // UAD and mobile own stricter limiters and response contracts inside their
@@ -340,7 +340,7 @@ const globalApiRateLimiter = rateLimit({
     });
     res.status(429).json({ error: "api_rate_limit_exceeded" });
   },
-});
+};
 
 const signupRateLimiter = rateLimit({
   windowMs: httpSecurity.signupRateLimitWindowMs,
@@ -436,7 +436,7 @@ mountApplicationRouteBoundary(app, {
   ),
   // Browser report pages load several independent analyses in parallel. The
   // broad limiter follows authentication so users receive independent counters.
-  globalApiRateLimiter,
+  globalApiRateLimiterOptions,
   webAuthRouter: createWebAuthRouter({
     pool,
     verifier: webOidcVerifier,

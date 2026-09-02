@@ -35,9 +35,15 @@ async function startApplication({ authenticationRequired = true, readinessError 
       if (req.get("authorization") === "Bearer application-token") req.mobileAuth = identity;
       next();
     },
-    globalApiRateLimiter(req, _res, next) {
-      rateLimitedRequests.push(req.originalUrl);
-      next();
+    globalApiRateLimiterOptions: {
+      windowMs: 60_000,
+      limit: 1_000,
+      standardHeaders: false,
+      legacyHeaders: false,
+      keyGenerator(req) {
+        rateLimitedRequests.push(req.originalUrl);
+        return `integration:${rateLimitedRequests.length}`;
+      },
     },
     webAuthRouter(req, res, next) {
       if (req.path === "/status") return res.json({ configured: true, required: true });

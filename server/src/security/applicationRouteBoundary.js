@@ -1,3 +1,5 @@
+import { rateLimit as createRateLimiter } from "express-rate-limit";
+
 function requireMiddleware(value, code) {
   if (typeof value !== "function") throw new TypeError(code);
   return value;
@@ -23,7 +25,7 @@ export function mountApplicationRouteBoundary(app, {
   jsonBodyParser,
   mobileRouter,
   optionalApplicationAuthenticator,
-  globalApiRateLimiter,
+  globalApiRateLimiterOptions,
   webAuthRouter,
   buildSession,
   loadAuthReadiness,
@@ -45,7 +47,10 @@ export function mountApplicationRouteBoundary(app, {
     optionalApplicationAuthenticator,
     "optional_application_authenticator_required",
   );
-  const rateLimit = requireMiddleware(globalApiRateLimiter, "global_api_rate_limiter_required");
+  if (!globalApiRateLimiterOptions || typeof globalApiRateLimiterOptions !== "object") {
+    throw new TypeError("global_api_rate_limiter_options_required");
+  }
+  const rateLimit = createRateLimiter(globalApiRateLimiterOptions);
   const routeWebAuth = requireMiddleware(webAuthRouter, "web_auth_router_required");
   if (typeof buildSession !== "function") throw new TypeError("application_session_builder_required");
   if (typeof loadAuthReadiness !== "function") {
@@ -71,7 +76,6 @@ export function mountApplicationRouteBoundary(app, {
     return res.json({ ok: true, session: buildSession(req.mobileAuth) });
   });
 
-  // codeql[js/missing-rate-limiting] The required injected limiter is the route's second argument.
   app.get("/api/auth/readiness", rateLimit, async (req, res) => {
     res.set("cache-control", "no-store");
     if (!req.mobileAuth) return res.status(401).json({ error: "authentication_required" });

@@ -170,6 +170,8 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
+// The provider and its hook intentionally share the private context.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useApplicationAuth() {
   const value = useContext(AuthContext);
   if (!value) throw new Error('useApplicationAuth must be used inside ApplicationAuthProvider');

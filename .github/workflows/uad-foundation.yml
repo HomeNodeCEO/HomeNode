@@ -53,6 +53,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint:ci
+      - run: npm run quality:source
       - run: npm run build:checked
       - run: npm test
 

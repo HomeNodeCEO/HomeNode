@@ -178,6 +178,44 @@ membership, active appraiser profile, non-expired active license, complete
 file/appraiser ownership and canonical report/history coverage, no cross-table
 organization mismatches, and no unattached legacy document evidence.
 
+After enabling authentication in staging, run the credential-free public gate:
+
+```text
+APPLICATION_AUTH_STAGING_BASE_URL=https://homenode-api-staging.onrender.com \
+  npm run verify:staging:application-auth -- --public-only
+```
+
+It requires healthy runtime and OIDC configuration, mandatory browser/UAD
+authentication, native mobile bearer configuration, anonymous `401` responses,
+and an inert legacy editor key. It performs only `GET` requests.
+
+Then run `.github/workflows/application-auth-staging-matrix.yml` with a single
+organization-A account that contains owned Custom Appraisal, UAD 3.6, and
+Property Tax fixtures. Configure the protected `application-auth-staging`
+environment with these non-secret variables:
+
+- `APPLICATION_AUTH_STAGING_ORG_A_ID`
+- `APPLICATION_AUTH_STAGING_ORG_B_ID`
+
+Configure these environment secrets immediately before the run with distinct,
+short-lived staging access tokens, and delete or replace them after the run:
+
+- `APPLICATION_AUTH_STAGING_ORG_A_TOKEN` for an organization-A administrator
+- `APPLICATION_AUTH_STAGING_ORG_B_TOKEN` for a writable organization-B user
+
+The workflow inputs provide the shared account ID plus the organization-A
+Custom assignment numeric ID, UAD workfile UUID, and Property Tax file UUID.
+The matrix confirms the two session memberships are distinct, requires the
+server readiness audit to return `activation_ready: true`, exercises positive
+read access, demands anonymous `401` and cross-organization `403` responses for
+read/write/upload/sign boundaries, and proves mobile discovery includes all
+three organization-A targets for A and none for B. Denial probes use only B or
+anonymous credentials plus payloads that are deliberately invalid negative
+controls, so even a failed authorization assertion cannot alter fixture data.
+They must still be rejected by authentication before validation runs. The
+tool emits status codes and stable error codes only; it never emits tokens,
+fixture identifiers, response bodies, or raw network diagnostics.
+
 Property Tax activation additionally requires every protest target to have one
 canonical report-file row, a current history revision whose status and JSON
 match the live protest file, and authenticated desktop-save events with a

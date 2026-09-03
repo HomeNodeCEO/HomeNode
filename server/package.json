@@ -43,6 +43,7 @@
         "provision:application-user": "node scripts/provisionMobileUser.js",
         "bootstrap:application-organization": "node scripts/bootstrapApplicationOrganization.js",
         "audit:application-auth-rollout": "node scripts/auditApplicationAuthRollout.js",
+        "verify:staging:application-auth": "node scripts/verifyApplicationAuthStaging.js",
         "reconcile:assignment-documents": "node scripts/reconcileLegacyAssignmentDocuments.js",
         "migrate:legacy-appraisals:organization": "node scripts/migrateLegacyAppraisalOrganization.js",
         "verify:mobile-oidc": "node scripts/verifyMobileOidcConfiguration.js",

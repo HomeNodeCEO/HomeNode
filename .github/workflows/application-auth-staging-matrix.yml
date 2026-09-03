@@ -1,0 +1,54 @@
+name: Application authentication staging matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: HTTPS origin of the deployed staging API
+        required: true
+        default: https://homenode-api-staging.onrender.com
+        type: string
+      account_id:
+        description: Organization A account containing all three positive fixtures
+        required: true
+        type: string
+      custom_assignment_file_id:
+        description: Numeric Custom Appraisal assignment ID owned by organization A
+        required: true
+        type: string
+      uad_workfile_id:
+        description: UAD 3.6 workfile UUID owned by organization A
+        required: true
+        type: string
+      property_tax_file_id:
+        description: Property Tax file UUID owned by organization A
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  two-organization-matrix:
+    runs-on: ubuntu-latest
+    environment: application-auth-staging
+    defaults:
+      run:
+        working-directory: server
+    env:
+      APPLICATION_AUTH_STAGING_BASE_URL: ${{ inputs.base_url }}
+      APPLICATION_AUTH_STAGING_ACCOUNT_ID: ${{ inputs.account_id }}
+      APPLICATION_AUTH_STAGING_CUSTOM_ASSIGNMENT_FILE_ID: ${{ inputs.custom_assignment_file_id }}
+      APPLICATION_AUTH_STAGING_UAD_WORKFILE_ID: ${{ inputs.uad_workfile_id }}
+      APPLICATION_AUTH_STAGING_PROPERTY_TAX_FILE_ID: ${{ inputs.property_tax_file_id }}
+      APPLICATION_AUTH_STAGING_ORG_A_ID: ${{ vars.APPLICATION_AUTH_STAGING_ORG_A_ID }}
+      APPLICATION_AUTH_STAGING_ORG_B_ID: ${{ vars.APPLICATION_AUTH_STAGING_ORG_B_ID }}
+      APPLICATION_AUTH_STAGING_ORG_A_TOKEN: ${{ secrets.APPLICATION_AUTH_STAGING_ORG_A_TOKEN }}
+      APPLICATION_AUTH_STAGING_ORG_B_TOKEN: ${{ secrets.APPLICATION_AUTH_STAGING_ORG_B_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify enforced authentication and tenant isolation
+        run: npm run verify:staging:application-auth

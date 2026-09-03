@@ -9,7 +9,6 @@
     "server/src/modules/uad/editor.js": 283335,
     "dcad-frontend/src/pages/PropertyReport.tsx": 169785,
     "dcad-frontend/src/pages/ComparableSalesAnalysis.tsx": 270075,
-    "dcad-frontend/src/lib/api.ts": 133321,
-    "dcad-frontend/src/styles/base44-main.css": 474571
+    "dcad-frontend/src/lib/api.ts": 133321
   }
 }

@@ -1,5 +1,16 @@
 ﻿@import "tailwindcss";
 
+/* Base44 property-detail compatibility rules retained without its generated Tailwind bundle. */
+.ownership-grid > div {
+  background-color: #f4f7fa;
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+.ownership-grid .addl-info-section .space-y-3 > div:last-child {
+  display: none;
+}
+
 :root {
   color-scheme: light;
   --hn-midnight: #120d24;

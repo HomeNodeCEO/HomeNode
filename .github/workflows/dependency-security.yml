@@ -39,7 +39,10 @@ jobs:
           cache-dependency-path: ${{ matrix.project }}/package-lock.json
       - run: npm ci
       - name: Reject moderate, high, or critical known vulnerabilities
-        run: npm audit --audit-level=moderate
+        # Audit the immutable dependency graph from source control. This avoids
+        # npm's legacy "quick" endpoint rejecting an otherwise valid installed
+        # tree while preserving the same moderate-or-higher release gate.
+        run: npm audit --package-lock-only --audit-level=moderate
 
   pnpm-audit:
     runs-on: ubuntu-latest

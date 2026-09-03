@@ -76,6 +76,15 @@ import {
   type CostToCureLine,
   type SalesAnalysisPeriodMonths,
 } from '@/lib/comparableSalesPresentation';
+import {
+  accountNeedsRoomRefresh,
+  boundedErrorMessage,
+  mergeSubjectData,
+  responseSummary,
+  subjectFromAccountResponse,
+  subjectFromDetailResponse,
+  type SubjectData,
+} from '@/lib/comparableSubjectData';
 
 const ConditionQualityStudy = lazy(
   () => import('@/components/ConditionQualityStudy'),
@@ -109,39 +118,6 @@ const DEFAULT_SALES_NOTES =
   "Comparable sales are analyzed based on the subject's condition to provide the best comparisons possible.";
 const DEFAULT_ADJUSTMENT_NOTES =
   'Applied adjustments for time/date of sale, neighborhood, gross living area, room and bath count, condition, quality, and feature differences based on market-supported evidence.';
-
-type SubjectData = {
-  accountId: string;
-  address?: string | null;
-  total_living_area?: number | string | null;
-  market_value?: number | string | null;
-  nbhd_code?: string | null;
-  land_size_sqft?: number | null;
-  view?: string | null;
-  construction_type?: string | null;
-  building_class?: string | null;
-  actual_age?: number | string | null;
-  stories?: number | string | null;
-  bedroom_count?: number | string | null;
-  baths_full?: number | string | null;
-  baths_half?: number | string | null;
-  bath_count?: number | string | null;
-  basement?: boolean | string | null;
-  basement_raw?: string | null;
-  heating?: string | null;
-  air_conditioning?: string | null;
-  basement_sqft?: number | null;
-  solar_panels?: boolean | null;
-  solar_area_sqft?: number | null;
-  garage_area_sqft?: number | null;
-  pool?: boolean | string | null;
-  structural_style?: string | null;
-  housing_type?: string | null;
-  attachment_type?: 'detached' | 'attached' | 'mixed' | 'unknown' | null;
-  architectural_style?: string | null;
-  deck?: boolean | string | null;
-  fence_type?: string | null;
-};
 
 type HousingEditForm = {
   housingType: string;
@@ -214,7 +190,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   // NOTE: Per request, if Const Type contains "ONE AND ONE HALF STORIES",
   //       we display it as "2 Story".
   const normalizeConstType = (stories: unknown, construction: unknown): string => {
-    const toStr = (v: any) => (v === null || v === undefined ? '' : String(v)).trim();
+    const toStr = (value: unknown) => (
+      value === null || value === undefined ? '' : String(value)
+    ).trim();
     const sStr = toStr(stories).toLowerCase();
     const cStr = toStr(construction).toLowerCase();
 
@@ -763,17 +741,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         loading: false,
         error: response.photos?.length ? null : 'No additional MLS photos were returned.',
       } : current);
-    } catch (photoError: any) {
+    } catch (photoError: unknown) {
       setGallery((current) => current?.title === title ? {
         ...current,
         loading: false,
-        error: photoError?.message || 'The MLS gallery could not be loaded.',
+        error: boundedErrorMessage(photoError, 'The MLS gallery could not be loaded.'),
       } : current);
     }
   };
 
   // Display helper: normalize pool value from DB (boolean or 'T'/'N') to 'Yes'/'No'
-  const poolDisplay = (raw: any): string => {
+  const poolDisplay = (raw: unknown): string => {
     if (raw === true) return 'Yes';
     if (raw === false) return 'No';
     const s = String(raw ?? '').trim();
@@ -822,15 +800,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             costToCure: { total: costToCureTotal, items: serializedCostToCureItems },
           }),
         };
-        let data: any;
+        let data: unknown;
         try {
           data = await api.fetchJSON(api.makeUrl('/api/summary'), request);
         } catch {
-          const base = (import.meta as any)?.env?.VITE_API_URL || 'http://localhost:8080';
+          const base = import.meta.env.VITE_API_URL || 'http://localhost:8080';
           data = await api.fetchJSON(`${String(base).replace(/\/+$/, '')}/summary`, request);
         }
-        const text = (data && (data.summary || data.content)) || '';
-        if (text) { setSummary(String(text).trim()); return; }
+        const generatedSummary = responseSummary(data);
+        if (generatedSummary) { setSummary(generatedSummary); return; }
       } catch {}
 
       // Fallback: local template
@@ -840,8 +818,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         `A cost-to-cure analysis identified approximately $${costToCureTotal.toLocaleString()} in user-entered repairs. These items impact both buyer appeal and contributory value and should be reflected in the final reconciliation.`,
       ].join(' ');
       setSummary(local);
-    } catch (e: any) {
-      setSummaryError(e?.message || 'Failed to generate summary');
+    } catch (summaryError: unknown) {
+      setSummaryError(boundedErrorMessage(summaryError, 'Failed to generate summary'));
     } finally {
       setSummaryLoading(false);
     }
@@ -885,340 +863,49 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setError(null);
       try {
         // Prefer DB-backed endpoint
-        if (typeof (api as any).getAccount === 'function') {
-          const d = await (api as any).getAccount(propertyId);
-          const imp = d?.primary_improvements || {};
-          const housing = d?.housing_profile || {};
-          setSubject({
-            accountId: propertyId,
-            address: d?.account?.address ?? null,
-            total_living_area: (imp?.total_living_area ?? imp?.living_area_sqft) ?? null,
-            market_value: d?.account?.latest_market_value ?? null,
-            nbhd_code: d?.account?.neighborhood_code ?? null,
-            construction_type: imp?.construction_type ?? null,
-            building_class: (imp as any)?.building_class ?? null,
-            actual_age: imp?.actual_age ?? null,
-            stories: (imp as any)?.stories ?? null,
-            land_size_sqft: null,
-            bedroom_count: (imp as any)?.bedroom_count ?? null,
-            bath_count: (imp as any)?.bath_count ?? null,
-            baths_full: (imp as any)?.baths_full ?? null,
-            baths_half: (imp as any)?.baths_half ?? null,
-            basement: (imp as any)?.basement ?? null,
-            basement_raw: (imp as any)?.basement_raw ?? null,
-            heating: (imp as any)?.heating ?? null,
-            air_conditioning: (imp as any)?.air_conditioning ?? null,
-            deck: (imp as any)?.deck ?? null,
-            fence_type: (imp as any)?.fence_type ?? null,
-            pool: (imp as any)?.pool ?? null,
-            structural_style: housing?.structural_style ?? null,
-            housing_type: housing?.housing_type ?? null,
-            attachment_type: housing?.attachment_type ?? null,
-            architectural_style: housing?.architectural_style ?? null,
-          });
-          // Try to augment with scraper detail for missing fields (e.g., land size, building class)
+        const accountResponse = await api.getAccount(propertyId);
+        setSubject(subjectFromAccountResponse(accountResponse, propertyId));
+
+        // Add checked compatibility fields that are not represented by the core account type.
+        try {
+          const legacyResponse = await fetchDetail(propertyId);
+          const legacySubject = subjectFromDetailResponse(legacyResponse, propertyId);
+          setSubject((current) => mergeSubjectData(current, legacySubject, propertyId));
+        } catch { /* optional compatibility enrichment failed; keep the DB response */ }
+
+        // Refresh legacy rows whose original scrape predates bedroom/full-half bath capture.
+        // This endpoint persists recovered values so later visits stay DB-backed.
+        if (accountNeedsRoomRefresh(accountResponse)) {
           try {
-            const s = await fetchDetail(propertyId);
-            const detail = s?.detail || s;
-            const mi = detail?.main_improvement || {};
-            const landRows: Array<{ area_sqft?: string | number }>|undefined = detail?.land_detail;
-            const landSize = Array.isArray(landRows)
-              ? landRows.reduce((acc, r) => {
-                  const v = r?.area_sqft as any;
-                  const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-                  return acc + (Number.isFinite(n) ? n : 0);
-                }, 0)
-              : 0;
-            const mv = detail?.value_summary?.market_value ?? null;
-            const nbhd =
-              (detail as any)?.neighborhood_code ||
-              (detail as any)?.neighborhood?.code ||
-              (detail as any)?.property_location?.neighborhood ||
-              null;
-            // Basement SF from DB detail (secondary/additional improvements)
-            const _simps: any[] = (detail as any)?.secondary_improvements || [];
-            const _aimps: any[] = (detail as any)?.additional_improvements || [];
-            const _allImps: any[] = Array.isArray(_simps) && _simps.length ? _simps : (Array.isArray(_aimps) ? _aimps : []);
-            const _basements = _allImps.filter((r: any) => {
-              const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-              const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-              return t.includes('basement') || d.includes('basement') || t.includes('bsmt') || d.includes('bsmt');
-            });
-            const basementSqftFromDb = _basements.reduce((acc: number, r: any) => {
-              const v = (r?.area_size ?? r?.area_sqft) as any;
-              const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-              return acc + (Number.isFinite(n) ? n : 0);
-            }, 0);
-            // Garage/Parking sqft from improvements (garage or carport)
-            const _garages = _allImps.filter((r: any) => {
-              const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-              const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-              return t.includes('garage') || d.includes('garage') || t.includes('carport') || d.includes('carport');
-            });
-            const garageSqftFromDb = _garages.reduce((acc: number, r: any) => {
-              const v = (r?.area_size ?? r?.area_sqft) as any;
-              const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-              return acc + (Number.isFinite(n) ? n : 0);
-            }, 0);
-            setSubject(prev => ({
-              ...(prev || { accountId: propertyId }),
-              land_size_sqft: (landSize || 0) > 0 ? landSize : (prev?.land_size_sqft ?? null),
-              market_value: prev?.market_value ?? mv ?? null,
-              nbhd_code: prev?.nbhd_code ?? nbhd ?? null,
-              construction_type: prev?.construction_type ?? (mi?.construction_type ?? null),
-              building_class: prev?.building_class ?? (mi?.building_class ?? null),
-              actual_age: prev?.actual_age ?? (mi?.actual_age ?? null),
-              stories: prev?.stories ?? ((mi as any)?.stories ?? (mi as any)?.stories_text ?? null),
-              bedroom_count: prev?.bedroom_count ?? ((mi as any)?.bedroom_count ?? (detail as any)?.bedroom_count ?? null),
-              baths_full: prev?.baths_full ?? ((mi as any)?.baths_full ?? null),
-              baths_half: prev?.baths_half ?? ((mi as any)?.baths_half ?? null),
-              bath_count: prev?.bath_count ?? ((mi as any)?.bath_count ?? null),
-              basement: prev?.basement ?? ((mi as any)?.basement ?? (detail as any)?.basement ?? null),
-              basement_raw: prev?.basement_raw ?? ((mi as any)?.basement_raw ?? null),
-              heating: prev?.heating ?? ((mi as any)?.heating ?? (detail as any)?.heating ?? null),
-              air_conditioning: prev?.air_conditioning ?? ((mi as any)?.air_conditioning ?? (detail as any)?.air_conditioning ?? null),
-              basement_sqft: prev?.basement_sqft ?? ((basementSqftFromDb || 0) > 0 ? basementSqftFromDb : null),
-              garage_area_sqft: prev?.garage_area_sqft ?? ((garageSqftFromDb || 0) > 0 ? garageSqftFromDb : null),
-              solar_panels: prev?.solar_panels ?? (() => {
-                const sec: any[] = (detail as any)?.secondary_improvements || [];
-                const addl: any[] = (detail as any)?.additional_improvements || [];
-                const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
-                return arr.some((r: any) => {
-                  const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                  const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                  return t.includes('solar') || d.includes('solar');
-                }) || null;
-              })(),
-              solar_area_sqft: prev?.solar_area_sqft ?? (() => {
-                const sec: any[] = (detail as any)?.secondary_improvements || [];
-                const addl: any[] = (detail as any)?.additional_improvements || [];
-                const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
-                const total = arr.reduce((acc: number, r: any) => {
-                  const isSolar = (() => {
-                    const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                    const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                    return t.includes('solar') || d.includes('solar');
-                  })();
-                  if (!isSolar) return acc;
-                  const v = (r?.area_size ?? r?.area_sqft) as any;
-                  const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-                  return acc + (Number.isFinite(n) ? n : 0);
-                }, 0);
-                return (total || 0) > 0 ? total : null;
-              })(),
-            }));
-          } catch { /* optional augment failed; ignore */ }
-          // Refresh legacy rows whose original scrape predates bedroom/full-half bath capture.
-          // The scraper endpoint persists the recovered values, so later visits stay DB-backed.
-          try {
-            const env: any = (import.meta as any).env || {};
-            const base = (
-              env.VITE_SCRAPER_BASE ||
-              env.VITE_SCRAPER_URL ||
-              'https://dcad-scraper-with-api.onrender.com'
-            ).toString().replace(/\/+$/, '');
-            const needsBedroom = (imp as any)?.bedroom_count == null || (imp as any)?.bedroom_count === '';
-            const needsBaths =
-              ((imp as any)?.baths_full == null || (imp as any)?.baths_full === '') &&
-              ((imp as any)?.baths_half == null || (imp as any)?.baths_half === '') &&
-              ((imp as any)?.bath_count == null || (imp as any)?.bath_count === '');
-            if (base && (needsBedroom || needsBaths)) {
-              const res = await fetch(`${base}/detail/${encodeURIComponent(propertyId)}`);
-              if (res.ok) {
-                const payload: any = await res.json();
-                const detail = payload?.detail || payload || {};
-                const mi = (detail?.primary_improvements || detail?.main_improvement || {}) as any;
-                // Compute basement sqft from scraper detail
-                const simps: any[] = (detail as any)?.secondary_improvements || [];
-                const aimps: any[] = (detail as any)?.additional_improvements || [];
-                const allImps: any[] = Array.isArray(simps) && simps.length ? simps : (Array.isArray(aimps) ? aimps : []);
-                const basements = allImps.filter((r: any) => {
-                  const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                  const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                  return t.includes('basement') || d.includes('basement') || t.includes('bsmt') || d.includes('bsmt');
-                });
-                const bsf = basements.reduce((acc: number, r: any) => {
-                  const v = (r?.area_size ?? r?.area_sqft) as any;
-                  const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-                  return acc + (Number.isFinite(n) ? n : 0);
-                }, 0);
-                if (mi || (bsf || 0) > 0) {
-                  setSubject(prev => ({
-                    ...(prev || { accountId: propertyId }),
-                    bedroom_count: prev?.bedroom_count ?? (mi as any)?.bedroom_count ?? (detail as any)?.bedroom_count ?? null,
-                    baths_full: prev?.baths_full ?? (mi as any)?.baths_full ?? null,
-                    baths_half: prev?.baths_half ?? (mi as any)?.baths_half ?? null,
-                    bath_count: prev?.bath_count ?? (mi as any)?.bath_count ?? null,
-                    basement: prev?.basement ?? (mi as any)?.basement ?? null,
-                    basement_raw: prev?.basement_raw ?? (mi as any)?.basement_raw ?? null,
-                    heating: prev?.heating ?? (mi as any)?.heating ?? null,
-                    air_conditioning: prev?.air_conditioning ?? (mi as any)?.air_conditioning ?? null,
-                    basement_sqft: prev?.basement_sqft ?? ((bsf || 0) > 0 ? bsf : null),
-                    garage_area_sqft: prev?.garage_area_sqft ?? (() => {
-                      const garages = allImps.filter((r: any) => {
-                        const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                        const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                        return t.includes('garage') || d.includes('garage') || t.includes('carport') || d.includes('carport');
-                      });
-                      const gsf = garages.reduce((acc: number, r: any) => {
-                        const v = (r?.area_size ?? r?.area_sqft) as any;
-                        const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-                        return acc + (Number.isFinite(n) ? n : 0);
-                      }, 0);
-                      return (gsf || 0) > 0 ? gsf : null;
-                    })(),
-                    solar_panels: prev?.solar_panels ?? (() => {
-                      const sec: any[] = (detail as any)?.secondary_improvements || [];
-                      const addl: any[] = (detail as any)?.additional_improvements || [];
-                      const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
-                      return arr.some((r: any) => {
-                        const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                        const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                        return t.includes('solar') || d.includes('solar');
-                      }) || null;
-                    })(),
-                    solar_area_sqft: prev?.solar_area_sqft ?? (() => {
-                      const sec: any[] = (detail as any)?.secondary_improvements || [];
-                      const addl: any[] = (detail as any)?.additional_improvements || [];
-                      const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
-                      const total = arr.reduce((acc: number, r: any) => {
-                        const isSolar = (() => {
-                          const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                          const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                          return t.includes('solar') || d.includes('solar');
-                        })();
-                        if (!isSolar) return acc;
-                        const v = (r?.area_size ?? r?.area_sqft) as any;
-                        const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-                        return acc + (Number.isFinite(n) ? n : 0);
-                      }, 0);
-                      return (total || 0) > 0 ? total : null;
-                    })(),
-                    // Derive pool from improvements if not present on primary_improvements
-                    pool: (() => {
-                      if (prev?.pool != null && String(prev.pool).trim() !== '') return prev.pool as any;
-                      const sec: any[] = (detail as any)?.secondary_improvements || [];
-                      const addl: any[] = (detail as any)?.additional_improvements || [];
-                      const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
-                      const hasPool = arr.some((r: any) => {
-                        const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                        const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                        return t.includes('pool') || d.includes('pool');
-                      });
-                      if (hasPool) return 'T';
-                      return 'N/A';
-                    })(),
-                  }));
-                }
-              }
+            const scraperBase = String(
+              import.meta.env.VITE_SCRAPER_BASE
+              || import.meta.env.VITE_SCRAPER_URL
+              || 'https://dcad-scraper-with-api.onrender.com',
+            ).replace(/\/+$/, '');
+            const response = await fetch(
+              `${scraperBase}/detail/${encodeURIComponent(propertyId)}`,
+              { signal: AbortSignal.timeout(15_000) },
+            );
+            if (response.ok) {
+              const payload: unknown = await response.json();
+              const scraperSubject = subjectFromDetailResponse(
+                payload,
+                propertyId,
+                { derivePool: true },
+              );
+              setSubject((current) => mergeSubjectData(current, scraperSubject, propertyId));
             }
-          } catch { /* ignore scraper enrichment failures */ }
-          // Ensure loading state clears
-          setLoading(false);
-          return;
+          } catch { /* optional scraper enrichment failed; keep the DB response */ }
         }
+        return;
       } catch {
         // Fall through to scraper detail
       }
       try {
-        const d = await fetchDetail(propertyId);
-        const detail = d?.detail || d;
-        const mi = detail?.main_improvement || {};
-        const housing = detail?.housing_profile || {};
-        // land size from land_detail
-        const landRows: Array<{ area_sqft?: string | number }>|undefined = detail?.land_detail;
-        const landSize = Array.isArray(landRows)
-          ? landRows.reduce((acc, r) => {
-              const v = r?.area_sqft as any;
-              const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-              return acc + (Number.isFinite(n) ? n : 0);
-            }, 0)
-          : 0;
-        // Compute basement SF from detail (secondary/additional improvements)
-        const _simps2: any[] = (detail as any)?.secondary_improvements || [];
-        const _aimps2: any[] = (detail as any)?.additional_improvements || [];
-        const _allImps2: any[] = Array.isArray(_simps2) && _simps2.length ? _simps2 : (Array.isArray(_aimps2) ? _aimps2 : []);
-        const _basements2 = _allImps2.filter((r: any) => {
-          const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-          const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-          return t.includes('basement') || d.includes('basement') || t.includes('bsmt') || d.includes('bsmt');
-        });
-        const basementSqft = _basements2.reduce((acc: number, r: any) => {
-          const v = (r?.area_size ?? r?.area_sqft) as any;
-          const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-          return acc + (Number.isFinite(n) ? n : 0);
-        }, 0);
-        // Garage/Parking sqft from detail
-        const _garages2 = _allImps2.filter((r: any) => {
-          const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-          const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-          return t.includes('garage') || d.includes('garage') || t.includes('carport') || d.includes('carport');
-        });
-        const garageSqft = _garages2.reduce((acc: number, r: any) => {
-          const v = (r?.area_size ?? r?.area_sqft) as any;
-          const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-          return acc + (Number.isFinite(n) ? n : 0);
-        }, 0);
-
-        setSubject({
-          accountId: propertyId,
-          address: detail?.property_location?.address ?? null,
-          total_living_area: detail?.total_living_area ?? mi?.total_living_area ?? mi?.living_area_sqft ?? null,
-          market_value: detail?.value_summary?.market_value ?? null,
-          nbhd_code:
-            (detail as any)?.neighborhood_code ||
-            (detail as any)?.neighborhood?.code ||
-            (detail as any)?.property_location?.neighborhood ||
-            null,
-          land_size_sqft: (landSize || 0) > 0 ? landSize : null,
-          view: 'Neutral',
-          construction_type: mi?.construction_type ?? null,
-          building_class: mi?.building_class ?? null,
-          actual_age: mi?.actual_age ?? null,
-          bedroom_count: (mi as any)?.bedroom_count ?? (detail as any)?.bedroom_count ?? null,
-          baths_full: (mi as any)?.baths_full ?? null,
-          baths_half: (mi as any)?.baths_half ?? null,
-          bath_count: (mi as any)?.bath_count ?? null,
-          basement: (mi as any)?.basement ?? (detail as any)?.basement ?? null,
-          basement_raw: (mi as any)?.basement_raw ?? null,
-          heating: (mi as any)?.heating ?? (detail as any)?.heating ?? null,
-          air_conditioning: (mi as any)?.air_conditioning ?? (detail as any)?.air_conditioning ?? null,
-          basement_sqft: (basementSqft || 0) > 0 ? basementSqft : null,
-          garage_area_sqft: (garageSqft || 0) > 0 ? garageSqft : null,
-          structural_style: housing?.structural_style ?? null,
-          housing_type: housing?.housing_type ?? null,
-          attachment_type: housing?.attachment_type ?? null,
-          architectural_style: housing?.architectural_style ?? null,
-          solar_panels: (() => {
-            const sec: any[] = (detail as any)?.secondary_improvements || [];
-            const addl: any[] = (detail as any)?.additional_improvements || [];
-            const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
-            return arr.some((r: any) => {
-              const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-              const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-              return t.includes('solar') || d.includes('solar');
-            }) || null;
-          })(),
-          solar_area_sqft: (() => {
-            const sec: any[] = (detail as any)?.secondary_improvements || [];
-            const addl: any[] = (detail as any)?.additional_improvements || [];
-            const arr = (Array.isArray(sec) && sec.length ? sec : []).concat(Array.isArray(addl) ? addl : []);
-            const total = arr.reduce((acc: number, r: any) => {
-              const isSolar = (() => {
-                const t = (r?.imp_type || r?.improvement_type || '').toString().toLowerCase();
-                const d = (r?.imp_desc || r?.improvement_desc || r?.description || '').toString().toLowerCase();
-                return t.includes('solar') || d.includes('solar');
-              })();
-              if (!isSolar) return acc;
-              const v = (r?.area_size ?? r?.area_sqft) as any;
-              const n = typeof v === 'number' ? v : Number(String(v || '').replace(/[^0-9.-]/g, ''));
-              return acc + (Number.isFinite(n) ? n : 0);
-            }, 0);
-            return (total || 0) > 0 ? total : null;
-          })(),
-        });
-      } catch (e: any) {
-        setError(e?.message || 'Failed to load property');
+        const legacyResponse = await fetchDetail(propertyId);
+        setSubject(subjectFromDetailResponse(legacyResponse, propertyId));
+      } catch (loadError: unknown) {
+        setError(boundedErrorMessage(loadError, 'Failed to load property'));
       }
       finally {
         setLoading(false);
@@ -1395,8 +1082,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         `Saved verified housing information for ${saleDisplayAddress(sale)}. The score and current ordering were not changed.`,
       );
       setEditingHousingSale(null);
-    } catch (saveError: any) {
-      const message = String(saveError?.message || '');
+    } catch (saveError: unknown) {
+      const message = boundedErrorMessage(saveError, '');
       if (message.includes('invalid_editor_key')) {
         setHousingEditError('The editor key was not accepted. Check it and try again.');
       } else if (message.includes('housing_profile_editor_not_configured')) {
@@ -1806,10 +1493,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       if (!recommendedSales.length) {
         setSalesError('No sales had both parcel coordinates and living-area data for scoring.');
       }
-    } catch (recommendationError: any) {
+    } catch (recommendationError: unknown) {
       setRecommendationSummary(null);
       setSalesResults([]);
-      const message = String(recommendationError?.message || '');
+      const message = boundedErrorMessage(recommendationError, '');
       if (message.includes('subject_location_unavailable')) {
         setSalesError('The subject parcel could not be located in the DCAD GIS service.');
       } else if (message.includes('subject_living_area_unavailable')) {
@@ -1856,9 +1543,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         if (refreshed) applySaleToSlot(refreshed, slot);
       });
       if (!rows.length) setSalesError('No sales matched these filters.');
-    } catch (searchError: any) {
+    } catch (searchError: unknown) {
       setSalesResults([]);
-      setSalesError(searchError?.message || 'Sales search failed');
+      setSalesError(boundedErrorMessage(searchError, 'Sales search failed'));
     } finally {
       setSalesLoading(false);
     }
@@ -2272,21 +1959,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const netAdjustments = useMemo<number[]>(() => {
     const arr: number[] = [];
     for (let i = 0; i < COMPARABLE_COUNT; i++) {
-      const toNum = (v: any): number => {
-        if (v === null || v === undefined || v === '') return 0;
-        const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-        return Number.isFinite(n) ? n : 0;
-      };
-      const concession = toNum((compConcessions || [])[i]);
-      const timeAdj = toNum((compTimeAdjustments || [])[i]);
-      const roomAdj = toNum((roomCountTotalAdjustments || [])[i]);
-      const glaAdj = toNum((glaAdjustments || [])[i]);
-      const garageAdj = toNum((garageAdjustments || [])[i]);
-      const poolAdj = toNum((poolAdjustments || [])[i]);
-      const conditionAdj = toNum((conditionAdjustments || [])[i]);
-      const qualityAdj = toNum((qualityAdjustments || [])[i]);
-      const landAdj = toNum((siteSizeAdjustments || [])[i]);
-      const ageAdj = toNum((ageAdjustments || [])[i]);
+      const concession = finiteNumber((compConcessions || [])[i]) ?? 0;
+      const timeAdj = finiteNumber((compTimeAdjustments || [])[i]) ?? 0;
+      const roomAdj = finiteNumber((roomCountTotalAdjustments || [])[i]) ?? 0;
+      const glaAdj = finiteNumber((glaAdjustments || [])[i]) ?? 0;
+      const garageAdj = finiteNumber((garageAdjustments || [])[i]) ?? 0;
+      const poolAdj = finiteNumber((poolAdjustments || [])[i]) ?? 0;
+      const conditionAdj = finiteNumber((conditionAdjustments || [])[i]) ?? 0;
+      const qualityAdj = finiteNumber((qualityAdjustments || [])[i]) ?? 0;
+      const landAdj = finiteNumber((siteSizeAdjustments || [])[i]) ?? 0;
+      const ageAdj = finiteNumber((ageAdjustments || [])[i]) ?? 0;
       const total = (concession > 0 ? -concession : 0) + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + conditionAdj + qualityAdj + landAdj + ageAdj;
       arr.push(total);
     }
@@ -2297,21 +1979,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const grossAdjustments = useMemo<number[]>(() => {
     const arr: number[] = [];
     for (let i = 0; i < COMPARABLE_COUNT; i++) {
-      const toNum = (v: any): number => {
-        if (v === null || v === undefined || v === '') return 0;
-        const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-        return Number.isFinite(n) ? n : 0;
-      };
-      const concession = Math.abs(toNum((compConcessions || [])[i]));
-      const timeAdj = Math.abs(toNum((compTimeAdjustments || [])[i]));
-      const roomAdj = Math.abs(toNum((roomCountTotalAdjustments || [])[i]));
-      const glaAdj = Math.abs(toNum((glaAdjustments || [])[i]));
-      const garageAdj = Math.abs(toNum((garageAdjustments || [])[i]));
-      const poolAdj = Math.abs(toNum((poolAdjustments || [])[i]));
-      const conditionAdj = Math.abs(toNum((conditionAdjustments || [])[i]));
-      const qualityAdj = Math.abs(toNum((qualityAdjustments || [])[i]));
-      const landAdj = Math.abs(toNum((siteSizeAdjustments || [])[i]));
-      const ageAdj = Math.abs(toNum((ageAdjustments || [])[i]));
+      const concession = Math.abs(finiteNumber((compConcessions || [])[i]) ?? 0);
+      const timeAdj = Math.abs(finiteNumber((compTimeAdjustments || [])[i]) ?? 0);
+      const roomAdj = Math.abs(finiteNumber((roomCountTotalAdjustments || [])[i]) ?? 0);
+      const glaAdj = Math.abs(finiteNumber((glaAdjustments || [])[i]) ?? 0);
+      const garageAdj = Math.abs(finiteNumber((garageAdjustments || [])[i]) ?? 0);
+      const poolAdj = Math.abs(finiteNumber((poolAdjustments || [])[i]) ?? 0);
+      const conditionAdj = Math.abs(finiteNumber((conditionAdjustments || [])[i]) ?? 0);
+      const qualityAdj = Math.abs(finiteNumber((qualityAdjustments || [])[i]) ?? 0);
+      const landAdj = Math.abs(finiteNumber((siteSizeAdjustments || [])[i]) ?? 0);
+      const ageAdj = Math.abs(finiteNumber((ageAdjustments || [])[i]) ?? 0);
       const total = concession + timeAdj + roomAdj + glaAdj + garageAdj + poolAdj + conditionAdj + qualityAdj + landAdj + ageAdj;
       arr.push(total);
     }
@@ -2322,13 +1999,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const indicatedValues = useMemo<number[]>(() => {
     const arr: number[] = [];
     for (let i = 0; i < COMPARABLE_COUNT; i++) {
-      const toNum = (v: any): number => {
-        if (v === null || v === undefined || v === '') return 0;
-        const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-        return Number.isFinite(n) ? n : 0;
-      };
-      const price = toNum((compPrices || [])[i]);
-      const net = toNum((netAdjustments || [])[i]);
+      const price = finiteNumber((compPrices || [])[i]) ?? 0;
+      const net = finiteNumber((netAdjustments || [])[i]) ?? 0;
       arr.push(price + net);
     }
     return arr;
@@ -2989,9 +2661,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       if (!rows.length) {
         setListingError('No listing records matched this search.');
       }
-    } catch (searchError: any) {
+    } catch (searchError: unknown) {
       setListingResults([]);
-      setListingError(searchError?.message || 'Comparable listing search failed.');
+      setListingError(boundedErrorMessage(searchError, 'Comparable listing search failed.'));
     } finally {
       setListingLoading(false);
     }
@@ -4815,7 +4487,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     'Condition',
                     'Quality',
                   ].map((label) => {
-                    let subjectValue: any = '';
+                    let subjectValue: ReactNode = '';
                     switch (label) {
                       case 'Concessions':
                         subjectValue = 0;
@@ -4940,7 +4612,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                                   />
                                 )
                               : label === 'View'
-                                ? ((subject?.view || 'Neutral') as any)
+                                ? (subject?.view || 'Neutral')
                                 : ''}
                           </td>,
                           <td

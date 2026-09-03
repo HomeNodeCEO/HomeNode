@@ -1,9 +1,9 @@
 // Example component: src/components/PropertyDetail.tsx
 import { useEffect, useState } from 'react';
-import { fetchPropertyDetail } from '@/lib/api';
+import { fetchPropertyDetail, type PropertyDetail as PropertyDetailData } from '@/lib/api';
 
 export default function PropertyDetail({ countyId, accountId }: { countyId: number; accountId: string }) {
-  const [data, setData] = useState<any | null>(null);
+  const [data, setData] = useState<PropertyDetailData | null>(null);
 
   useEffect(() => {
     let stop = false;
@@ -14,24 +14,30 @@ export default function PropertyDetail({ countyId, accountId }: { countyId: numb
   }, [countyId, accountId]);
 
   if (!data) return <div className="p-4">Loading…</div>;
+  const account = data.account;
+  const improvement = data.primary_improvements;
 
   return (
     <div className="p-4 space-y-2">
-      <h1 className="text-xl font-semibold">{data.situs_address}</h1>
-      <div>Year built: {data.year_built ?? '—'}</div>
-      <div>Stories: {data.stories_display ?? '—'}</div>
-      <div>Baths: {data.bath_count_display ?? '—'}</div>
-      <div>Bed: {data.bedroom_count ?? '—'}</div>
-      <div>Sqft: {data.living_area_sqft ?? '—'}</div>
-      <div>Pool: {data.pool_display ?? '—'}</div>
-      <div>Basement: {data.basement_display ?? '—'}</div>
-      <div>AC: {data.air_conditioning_display ?? '—'}</div>
-      <div>Heat: {data.heating_display ?? '—'}</div>
-      <div>Foundation: {data.foundation_display ?? '—'}</div>
-      <div>Roof: {data.roof_material_display ?? '—'} · {data.roof_type_display ?? '—'}</div>
-      <div>Exterior: {data.exterior_material_display ?? '—'}</div>
-      <div>Fence: {data.fence_type_display ?? '—'}</div>
-      <div>Units: {data.number_units ?? '—'}</div>
+      <h1 className="text-xl font-semibold">{account.address || 'Address unavailable'}</h1>
+      <div>Year built: {improvement?.year_built ?? '—'}</div>
+      <div>Stories: {improvement?.stories ?? '—'}</div>
+      <div>Baths: {improvement?.bath_count ?? '—'}</div>
+      <div>Bed: {improvement?.bedroom_count ?? '—'}</div>
+      <div>Sqft: {improvement?.living_area_sqft ?? '—'}</div>
+      <div>Pool: {displayBoolean(improvement?.pool)}</div>
+      <div>Basement: {displayBoolean(improvement?.basement)}</div>
+      <div>AC: {improvement?.air_conditioning ?? '—'}</div>
+      <div>Heat: {improvement?.heating ?? '—'}</div>
+      <div>Foundation: {improvement?.foundation ?? '—'}</div>
+      <div>Roof: {improvement?.roof_material ?? '—'} · {improvement?.roof_type ?? '—'}</div>
+      <div>Exterior: {improvement?.exterior_material ?? '—'}</div>
+      <div>Fence: {improvement?.fence_type ?? '—'}</div>
+      <div>Units: {improvement?.number_units ?? '—'}</div>
     </div>
   );
+}
+
+function displayBoolean(value: boolean | null | undefined): string {
+  return value == null ? '—' : value ? 'Yes' : 'No';
 }

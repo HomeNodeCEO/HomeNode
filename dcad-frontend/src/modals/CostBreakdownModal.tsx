@@ -2,13 +2,25 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 
+type DisplayValue = string | number;
+type ValueSummary = {
+  improvement_value?: DisplayValue;
+  land_value?: DisplayValue;
+  market_value?: DisplayValue;
+};
+type AdditionalImprovement = {
+  improvement_type?: DisplayValue;
+  construction?: DisplayValue;
+  area_sqft?: DisplayValue;
+};
+
 export default function CostBreakdownModal({
   isOpen, onClose, valueSummary, additionalImprovements,
 }: {
   isOpen: boolean; onClose: (open:boolean)=>void;
-  valueSummary?: any; additionalImprovements?: any[];
+  valueSummary?: ValueSummary; additionalImprovements?: AdditionalImprovement[];
 }) {
-  const rows = [
+  const rows: Array<[string, DisplayValue]> = [
     ["Improvement Value", valueSummary?.improvement_value ?? "—"],
     ["Land Value", valueSummary?.land_value ?? "—"],
     ["Market Value", valueSummary?.market_value ?? "—"],

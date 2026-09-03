@@ -5,11 +5,16 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search } from "lucide-react";
+import {
+  normalizeSearchRows,
+  propertySearchErrorMessage,
+  type ApiSearchRow,
+} from "@/features/propertySearch/searchResults";
 
 export default function PropertySearchSection() {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<ApiSearchRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   async function onSearch() {
@@ -17,9 +22,9 @@ export default function PropertySearchSection() {
     setLoading(true); setErr(null);
     try {
       const data = await searchByAddress(q, 5);
-      setResults(data.results || []);
-    } catch (e: any) {
-      setErr(e?.message || "Search failed");
+      setResults(normalizeSearchRows(data.results));
+    } catch (error: unknown) {
+      setErr(propertySearchErrorMessage(error) || "Search failed");
     } finally {
       setLoading(false);
     }
@@ -57,18 +62,15 @@ export default function PropertySearchSection() {
         {Boolean(results.length) && (
           <div className="mt-2 space-y-3">
             {results.map((r, i) => {
-              const a = r.summary || r;
+              const a = r;
               return (
                 <Card key={i}>
                   <CardContent className="pt-4">
                     <div className="font-medium">{a.address}</div>
                     <div className="text-sm text-slate-600">
-                      {a.city} · Owner: {a.owner || "—"} · Total Value: {a.total_value || "—"} · Type: {a.type || "—"}
+                      {a.city} · Owner: {a.owner || "—"} · Total Value: {a.latest_market_value ?? "—"}
                     </div>
                     <div className="mt-2 flex gap-3">
-                      {a.detail_url && (
-                        <a className="underline" href={a.detail_url} target="_blank" rel="noreferrer">DCAD Page</a>
-                      )}
                       {a.account_id && (
                         <Link className="underline" to={`/property?account_id=${encodeURIComponent(a.account_id)}`}>
                           Open in Property Report

@@ -1,5 +1,6 @@
 // src/pages/PropertyDetail.tsx
 import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { fetchProperty, type PropertyDetail } from "../lib/api";
 
@@ -18,8 +19,10 @@ export default function PropertyDetailPage() {
       try {
         const d = await fetchProperty(countyId, accountId);
         if (!cancelled) setData(d);
-      } catch (e: any) {
-        if (!cancelled) setErr(String(e?.message || e));
+      } catch (error: unknown) {
+        if (!cancelled) {
+          setErr(error instanceof Error ? error.message : "Property detail could not be loaded.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -91,7 +94,7 @@ function Row({ k, v }: { k: string; v: string | number | boolean }) {
   );
 }
 
-function Page({ children, chrome = true }: { children: any; chrome?: boolean }) {
+function Page({ children, chrome = true }: { children: ReactNode; chrome?: boolean }) {
   return (
     <div style={{ padding: 16, display: "grid", gap: 16 }}>
       {chrome && <div style={{ fontSize: 12, opacity: 0.6 }}>Property Detail</div>}

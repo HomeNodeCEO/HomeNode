@@ -54,7 +54,7 @@ export default function SearchResults({ query, limit = 25 }: Props) {
         const addr = it.title;                           // from toSearchItems: situs_address || owner || account_id
         const ownerAndId = it.subtitle;                  // "Owner · 17-char id" or just id
         // If your API includes latest_market_value on search rows, show it here.
-        const mv = (it.raw as any)?.latest_market_value;
+        const mv = it.raw.latest_market_value;
         const mvDisplay = mv != null && mv !== "" ? fmtUSD.format(Number(String(mv).replace(/[,$\s]/g, ""))) : "—";
 
         // Link target: adjust to your route (e.g., /property/:countyId/:accountId).

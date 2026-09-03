@@ -1,45 +1,12 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { setApplicationSessionActive } from '@/lib/editorCredential';
-
-type Organization = {
-  organization_id: string;
-  display_name: string | null;
-  roles: string[];
-  permissions: Record<string, { read: boolean; write: boolean; sign: boolean }>;
-};
-
-type Session = {
-  user_id: string;
-  email: string | null;
-  display_name: string | null;
-  organizations: Organization[];
-};
-
-type ReadinessBlocker = {
-  code: string;
-  count: number;
-  group: string;
-  organization_id?: string;
-};
-
-type AuthReadiness = {
-  checked_at: string;
-  activation_ready: boolean;
-  blockers: ReadinessBlocker[];
-  organizations: Array<{
-    organization_id: string;
-    legal_name: string | null;
-    display_name: string | null;
-    active: boolean;
-    active_memberships: number;
-    mapped_identities: number;
-    active_appraiser_profiles: number;
-    valid_appraiser_licenses: number;
-    custom_assignment_files: number;
-    uad_workfiles: number;
-    property_tax_files: number;
-  }>;
-};
+import {
+  authStatusFromResponse,
+  readinessFromResponse,
+  sessionFromResponse,
+  type AuthReadiness,
+  type Session,
+} from './applicationAuthData';
 
 type AuthState = {
   ready: boolean;
@@ -55,7 +22,7 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 const API_BASE = String(
-  (import.meta as any).env?.VITE_API_URL || (import.meta as any).env?.VITE_API_BASE || '',
+  import.meta.env.VITE_API_URL || import.meta.env.VITE_API_BASE || '',
 ).replace(/\/+$/, '');
 const authUrl = (path: string) => `${API_BASE}${path}`;
 const AUTH_REQUEST_TIMEOUT_MS = 10_000;
@@ -110,23 +77,26 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
       try {
         const statusResponse = await fetchAuthBootstrap('/api/auth/status');
         if (!statusResponse.ok) throw new Error('authentication_status_unavailable');
-        const status = await statusResponse.json();
+        const statusBody: unknown = await statusResponse.json();
+        const status = authStatusFromResponse(statusBody);
         if (!active) return;
-        setConfigured(Boolean(status.configured));
-        setRequired(Boolean(status.configured && status.required));
+        setConfigured(status.configured);
+        setRequired(status.required);
         if (status.configured) {
           const sessionResponse = await fetchAuthBootstrap('/api/auth/me');
           if (sessionResponse.ok) {
-            const body = await sessionResponse.json();
-            const nextSession = (body.session || null) as Session | null;
+            const body: unknown = await sessionResponse.json();
+            const nextSession = sessionFromResponse(body);
             if (active) setSession(nextSession);
             const canAuditReadiness = nextSession?.organizations.some((organization) =>
               organization.roles.some((role) => role === 'organization_admin' || role === 'homenode_admin'));
             if (canAuditReadiness) {
               const readinessResponse = await fetchAuthRequest('/api/auth/readiness');
               if (readinessResponse.ok) {
-                const readinessBody = await readinessResponse.json();
-                if (active) setReadiness(readinessBody.readiness || null);
+                const readinessBody: unknown = await readinessResponse.json();
+                const nextReadiness = readinessFromResponse(readinessBody);
+                if (active && nextReadiness) setReadiness(nextReadiness);
+                else if (active) setReadinessError('auth_readiness_unavailable');
               } else if (active) {
                 setReadinessError('auth_readiness_unavailable');
               }

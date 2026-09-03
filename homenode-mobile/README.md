@@ -104,11 +104,12 @@ Create a **first-party public OAuth application** in the WorkOS staging environm
    ```text
    MOBILE_INSPECTION_ENABLED=false
    OIDC_ISSUER=https://<environment>.authkit.app
-   OIDC_AUDIENCE=client_<public-oauth-application-id>
+   OIDC_AUDIENCE=<access-token-aud>
+   OIDC_CLIENT_ID=client_<public-oauth-application-id>
    OIDC_JWKS_URI=https://<environment>.authkit.app/oauth2/jwks
    ```
 
-The issuer and audience must exactly match the WorkOS access token. WorkOS public OAuth access tokens use the application `client_id` as `aud`. The server remains provider-neutral and validates RS256 signatures, expiration, issuer, and audience before it performs HomeNode authorization.
+The issuer and audience must exactly match the WorkOS access token. WorkOS Connect can place its shared API audience in `aud` and the public application identifier in `client_id`; HomeNode validates both claims when `OIDC_CLIENT_ID` is configured. Read `OIDC_AUDIENCE` from a real access token, not the ID token. The server remains provider-neutral and validates RS256 signatures, expiration, issuer, audience, and optional client binding before it performs HomeNode authorization.
 
 After the WorkOS staging user exists, link its WorkOS user ID (`sub`) to the synthetic HomeNode staging appraiser:
 

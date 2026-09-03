@@ -7,6 +7,7 @@ const mobileEnabled = environmentFlag(process.env.MOBILE_INSPECTION_ENABLED);
 const verifier = createOidcAccessTokenVerifier({
   issuer: process.env.OIDC_ISSUER,
   audience: process.env.OIDC_AUDIENCE,
+  clientId: process.env.OIDC_CLIENT_ID,
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
 });

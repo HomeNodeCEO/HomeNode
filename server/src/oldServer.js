@@ -217,6 +217,7 @@ const documentOcrProvider = createDocumentOcrProvider();
 const mobileOidcVerifier = createOidcAccessTokenVerifier({
   issuer: process.env.OIDC_ISSUER,
   audience: process.env.OIDC_AUDIENCE,
+  clientId: process.env.OIDC_CLIENT_ID,
   jwksUri: process.env.OIDC_JWKS_URI,
   clockToleranceSeconds: process.env.OIDC_CLOCK_TOLERANCE_SECONDS,
   fetchTimeoutMilliseconds: process.env.OIDC_HTTP_TIMEOUT_MS,
@@ -241,9 +242,8 @@ const mobileRouter = createMobileRouter({
   security: httpSecurity,
 });
 
-// UAD, Custom Appraisal, Property Tax Protest, and mobile all share the same
-// provisioned OIDC identity and organization membership model. The UAD/mobile
-// routers authenticate themselves above; this optional middleware attaches the
+// All workflows share the provisioned OIDC identity and organization model.
+// UAD/mobile authenticate above; this optional middleware attaches the
 // same identity to the remaining application routes whenever a bearer token is
 // present. The legacy editor key is available only before mandatory unified
 // authentication is activated.

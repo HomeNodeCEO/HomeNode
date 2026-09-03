@@ -100,6 +100,35 @@ const REGISTRY_SQL = `SELECT
      LEFT JOIN app.report_files report_file ON report_file.uad_workfile_id = workfile.id
     WHERE report_file.id IS NULL) AS uad_targets_without_registry,
   (SELECT count(*)::int
+     FROM app.tax_protest_files protest
+     LEFT JOIN app.report_files report_file ON report_file.tax_protest_file_id = protest.id
+    WHERE report_file.id IS NULL) AS property_tax_targets_without_registry,
+  (SELECT count(*)::int
+     FROM app.report_files report_file
+     LEFT JOIN app.tax_protest_files protest ON protest.id = report_file.tax_protest_file_id
+    WHERE report_file.workflow_type = 'property_tax_protest'
+      AND protest.id IS NULL) AS property_tax_registry_without_target,
+  (SELECT count(*)::int
+     FROM app.tax_protest_files protest
+    WHERE NOT EXISTS (
+      SELECT 1 FROM app.tax_protest_file_history history
+       WHERE history.tax_protest_file_id = protest.id
+         AND history.revision = protest.revision
+    )) AS property_tax_files_missing_current_history,
+  (SELECT count(*)::int
+     FROM app.tax_protest_files protest
+     JOIN app.tax_protest_file_history history
+       ON history.tax_protest_file_id = protest.id
+      AND history.revision = protest.revision
+    WHERE history.workfile_data IS DISTINCT FROM protest.workfile_data
+       OR history.status IS DISTINCT FROM protest.status) AS property_tax_current_history_mismatches,
+  (SELECT count(*)::int
+     FROM app.report_file_events event
+     JOIN app.report_files report_file ON report_file.id = event.report_file_id
+    WHERE report_file.workflow_type = 'property_tax_protest'
+      AND event.metadata ->> 'authentication_mode' = 'authenticated'
+      AND event.actor_user_id IS NULL) AS property_tax_authenticated_events_missing_actor,
+  (SELECT count(*)::int
      FROM app.report_files
     WHERE workflow_type IN ('custom_appraisal', 'uad_3_6')
       AND appraisal_case_id IS NULL) AS appraisal_reports_missing_case,

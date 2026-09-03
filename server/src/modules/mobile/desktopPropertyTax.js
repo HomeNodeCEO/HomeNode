@@ -1,19 +1,11 @@
 import { normalizeAccountId, normalizeUuid } from "./reportFiles.js";
-import { canonicalJson } from "./sync.js";
-import { normalizePropertyTaxWorkfileData } from "./targetFields.js";
+import { mergePropertyTaxWorkfileUpdate } from "./propertyTaxWorkfile.js";
 import { activeRooms, sketchResponse } from "./sketches.js";
 import { getReportEvidenceVersion } from "../../services/reportEvidenceVersion.js";
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-
-function normalizeWorkfileData(value) {
-  const normalized = normalizePropertyTaxWorkfileData(value);
-  const serialized = canonicalJson(normalized);
-  if (Buffer.byteLength(serialized, "utf8") > 256 * 1024) throw new Error("invalid_property_tax_protest_workfile");
-  return JSON.parse(serialized);
 }
 
 function response(row, extras = {}) {
@@ -119,7 +111,13 @@ export async function getDesktopPropertyTaxEvidenceVersion(pool, accountIdValue,
   };
 }
 
-export async function saveDesktopPropertyTaxFile(pool, accountIdValue, fileIdValue, input = {}) {
+export async function saveDesktopPropertyTaxFile(
+  pool,
+  accountIdValue,
+  fileIdValue,
+  input = {},
+  { actorUserId = null, actorLabel = null } = {},
+) {
   const accountId = normalizeAccountId(accountIdValue);
   const fileId = normalizeUuid(fileIdValue, "invalid_property_tax_protest_file_id");
   if (!plainObject(input) || Object.keys(input).some((key) => !new Set(["expected_revision", "workfile_data", "reviewer"]).has(key))) {
@@ -127,8 +125,13 @@ export async function saveDesktopPropertyTaxFile(pool, accountIdValue, fileIdVal
   }
   const expectedRevision = Number(input.expected_revision);
   if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new Error("invalid_property_tax_protest_revision");
-  const workfileData = normalizeWorkfileData(input.workfile_data);
-  const reviewer = String(input.reviewer || "HomeNode desktop").trim().slice(0, 200) || "HomeNode desktop";
+  const normalizedActorUserId = actorUserId
+    ? normalizeUuid(actorUserId, "invalid_property_tax_protest_actor")
+    : null;
+  const reviewer = normalizedActorUserId
+    ? String(actorLabel || "Authenticated HomeNode user").trim().slice(0, 200)
+      || "Authenticated HomeNode user"
+    : String(input.reviewer || "HomeNode desktop").trim().slice(0, 200) || "HomeNode desktop";
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -139,18 +142,28 @@ export async function saveDesktopPropertyTaxFile(pool, accountIdValue, fileIdVal
       error.currentRevision = Number(row.revision);
       throw error;
     }
+    const workfileData = mergePropertyTaxWorkfileUpdate(row.workfile_data || {}, input.workfile_data);
     const nextRevision = expectedRevision + 1;
     const updated = await client.query(
       `UPDATE app.tax_protest_files
-          SET workfile_data = $2::jsonb, revision = $3, status = 'in_progress', updated_at = now()
+          SET workfile_data = $2::jsonb, revision = $3, status = 'in_progress',
+              updated_by_user_id = $4, updated_at = now()
         WHERE id = $1 RETURNING *`,
-      [fileId, JSON.stringify(workfileData), nextRevision],
+      [fileId, JSON.stringify(workfileData), nextRevision, normalizedActorUserId],
     );
     await client.query(
       `INSERT INTO app.tax_protest_file_history (
-         tax_protest_file_id, revision, workfile_data, status, change_summary
-       ) VALUES ($1, $2, $3::jsonb, $4, $5)`,
-      [fileId, nextRevision, JSON.stringify(workfileData), updated.rows[0].status, `${reviewer} saved the desktop protest workfile`],
+         tax_protest_file_id, revision, workfile_data, status,
+         changed_by_user_id, change_summary
+       ) VALUES ($1, $2, $3::jsonb, $4, $5, $6)`,
+      [
+        fileId,
+        nextRevision,
+        JSON.stringify(workfileData),
+        updated.rows[0].status,
+        normalizedActorUserId,
+        `${reviewer} saved the desktop protest workfile`,
+      ],
     );
     const registry = await client.query(
       `UPDATE app.report_files
@@ -161,15 +174,20 @@ export async function saveDesktopPropertyTaxFile(pool, accountIdValue, fileIdVal
     const nextRegistryRevision = Number(registry.rows[0].registry_revision);
     await client.query(
       `INSERT INTO app.report_file_events (
-         report_file_id, event_type, prior_registry_revision,
+         report_file_id, actor_user_id, event_type, prior_registry_revision,
          next_registry_revision, changed_fields, metadata
-       ) VALUES ($1, 'property_tax_protest.desktop_saved', $2, $3, $4::text[], $5::jsonb)`,
+       ) VALUES ($1, $2, 'property_tax_protest.desktop_saved', $3, $4, $5::text[], $6::jsonb)`,
       [
         row.report_file_id,
+        normalizedActorUserId,
         nextRegistryRevision - 1,
         nextRegistryRevision,
         ["property_tax_protest.workfile_data"],
-        JSON.stringify({ tax_protest_revision: nextRevision, reviewer }),
+        JSON.stringify({
+          tax_protest_revision: nextRevision,
+          reviewer,
+          authentication_mode: normalizedActorUserId ? "authenticated" : "legacy_editor_key",
+        }),
       ],
     );
     await client.query("COMMIT");

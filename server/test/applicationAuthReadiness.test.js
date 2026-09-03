@@ -33,6 +33,11 @@ const zeroConsistency = Object.freeze({
 const zeroRegistry = Object.freeze({
   custom_targets_without_registry: 0,
   uad_targets_without_registry: 0,
+  property_tax_targets_without_registry: 0,
+  property_tax_registry_without_target: 0,
+  property_tax_files_missing_current_history: 0,
+  property_tax_current_history_mismatches: 0,
+  property_tax_authenticated_events_missing_actor: 0,
   appraisal_reports_missing_case: 0,
   appraisal_reports_missing_snapshot: 0,
 });
@@ -116,6 +121,13 @@ test("readiness passes only when identity, ownership, consistency, and registry 
     /document\.assignment_file_id IS NULL AND document\.uad_workfile_id IS NULL/,
   );
   assert.match(ownershipSql, /workfile\.organization_id IS NULL/);
+  const registrySql = pool.calls.find(({ sql }) =>
+    sql.includes("AS property_tax_targets_without_registry"))?.sql || "";
+  assert.match(registrySql, /app\.tax_protest_file_history history/);
+  assert.match(registrySql, /history\.revision = protest\.revision/);
+  assert.match(registrySql, /history\.workfile_data IS DISTINCT FROM protest\.workfile_data/);
+  assert.match(registrySql, /authentication_mode.*authenticated/);
+  assert.match(registrySql, /event\.actor_user_id IS NULL/);
 });
 
 test("readiness returns bounded blocker codes and counts without database diagnostics", async () => {
@@ -136,4 +148,35 @@ test("readiness returns bounded blocker codes and counts without database diagno
     ],
   );
   assert.doesNotMatch(JSON.stringify(result), /postgres|stack|sql|secret/i);
+});
+
+test("readiness blocks missing Property Tax registry, history, and authenticated actor evidence", async () => {
+  const pool = createPool();
+  const originalQuery = pool.query.bind(pool);
+  pool.query = async (sql, parameters = []) => {
+    const result = await originalQuery(sql, parameters);
+    if (sql.includes("AS custom_targets_without_registry")) {
+      return { rows: [{
+        ...zeroRegistry,
+        property_tax_targets_without_registry: 1,
+        property_tax_current_history_mismatches: 2,
+        property_tax_authenticated_events_missing_actor: 1,
+      }] };
+    }
+    return result;
+  };
+
+  const result = await loadApplicationAuthRolloutReadiness(pool, {
+    organizationIds: [ORGANIZATION_ID],
+  });
+  assert.equal(result.activation_ready, false);
+  assert.deepEqual(
+    result.blockers.filter(({ group }) => group === "registry")
+      .map(({ code, count }) => ({ code, count })),
+    [
+      { code: "property_tax_targets_without_registry", count: 1 },
+      { code: "property_tax_current_history_mismatches", count: 2 },
+      { code: "property_tax_authenticated_events_missing_actor", count: 1 },
+    ],
+  );
 });

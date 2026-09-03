@@ -178,6 +178,15 @@ membership, active appraiser profile, non-expired active license, complete
 file/appraiser ownership and canonical report/history coverage, no cross-table
 organization mismatches, and no unattached legacy document evidence.
 
+Property Tax activation additionally requires every protest target to have one
+canonical report-file row, a current history revision whose status and JSON
+match the live protest file, and authenticated desktop-save events with a
+non-null server-derived actor. Desktop protest updates may change only the
+server allowlist of reviewed case, subject, valuation, analysis, inspection,
+and comparable-grid fields. Unknown legacy fields remain stored unchanged;
+clients cannot create, alter, or delete unknown paths through the generic JSON
+save endpoint.
+
 When enforcement is active, no application route can use the shared editor key.
 The server derives the signer from the authenticated assignment, records an
 immutable signature event with organization/user/request attribution, and

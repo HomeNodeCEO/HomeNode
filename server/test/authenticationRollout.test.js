@@ -53,7 +53,8 @@ test("desktop latest-file lookups remain organization scoped after authenticatio
   assert.match(assignmentMutations, /AND \(\$2::uuid IS NULL OR organization_id = \$2\)/);
   assert.match(propertyTax, /report_file\.organization_id = ANY\(\$3::uuid\[\]\)/);
   assert.match(server, /createDesktopPropertyTaxRouter/);
-  assert.match(propertyTaxRouter, /organizationIds: organizationIdsForRead\(req\)/);
+  assert.match(propertyTaxRouter, /organizationIds: exactFileId \? null : organizationIdsForRead\(req\)/);
+  assert.match(propertyTaxRouter, /Exact-file routes must distinguish an absent file \(404\)/);
   assert.match(assignmentList, /const enforcedIdentity = authenticationRequired && req\.mobileAuth/);
   assert.match(assignmentList, /legacy_assignment_details: enforcedIdentity/);
   assert.match(assignmentList, /queriedRows\.filter\(\(row\) => decideAccess\(req\.mobileAuth, row, "read"\)\)/);
@@ -131,6 +132,11 @@ test("rollout audit covers identity, ownership, and canonical registry consisten
     "uad_workfiles_invalid_appraiser_credentials",
     "custom_targets_without_registry",
     "uad_targets_without_registry",
+    "property_tax_targets_without_registry",
+    "property_tax_registry_without_target",
+    "property_tax_files_missing_current_history",
+    "property_tax_current_history_mismatches",
+    "property_tax_authenticated_events_missing_actor",
     "appraisal_reports_missing_case",
     "appraisal_reports_missing_snapshot",
     "active_appraiser_profiles",

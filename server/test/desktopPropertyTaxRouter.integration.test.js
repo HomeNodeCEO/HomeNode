@@ -8,6 +8,7 @@ import { createDesktopPropertyTaxRouter } from "../src/modules/mobile/desktopPro
 
 const identity = Object.freeze({
   userId: "user-1",
+  displayName: "Taylor Appraiser",
   organizations: [
     { organizationId: "org-allowed", roles: ["appraiser"] },
     { organizationId: "org-denied", roles: ["read_only"] },
@@ -125,12 +126,18 @@ test("Property Tax desktop gates preserve workflow and account validation order"
   const invalidSave = await patchFile(accepted.baseUrl, "bad%20id", "file-1");
   assert.equal(invalidSave.status, 400);
   assert.deepEqual(await invalidSave.json(), { error: "invalid_account_id" });
-  assert.equal(workflowCalls, 2);
+  const deniedSave = await patchFile(denied.baseUrl, "123", "file-1");
+  assert.equal(deniedSave.status, 403);
+  assert.deepEqual(await deniedSave.json(), { error: "workflow_access_denied" });
+  const deniedSketch = await patchSketch(denied.baseUrl, "123", "file-1");
+  assert.equal(deniedSketch.status, 403);
+  assert.deepEqual(await deniedSketch.json(), { error: "workflow_access_denied" });
+  assert.equal(workflowCalls, 5);
   assert.equal(editorCalls, 0);
   assert.equal(resolutionCalls, 0);
 });
 
-test("enforced Property Tax loads prefilter organizations and verify file-level access", async (context) => {
+test("enforced Property Tax latest loads prefilter organizations and exact loads verify file-level access", async (context) => {
   const calls = [];
   const file = {
     tax_protest_file_id: "file-1",
@@ -159,16 +166,14 @@ test("enforced Property Tax loads prefilter organizations and verify file-level 
   const server = await startRouter(options, identity);
   context.after(server.close);
 
-  const response = await fetch(
-    `${server.baseUrl}/api/accounts/legacy_1/property-tax-protest?file_id=file-1`,
-  );
+  const response = await fetch(`${server.baseUrl}/api/accounts/legacy_1/property-tax-protest`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { account_id: "CANONICAL_1", file });
   const get = calls.find((call) => call.type === "get");
   assert.equal(get.pool, options.pool);
   assert.deepEqual({ accountId: get.accountId, fileId: get.fileId, settings: get.settings }, {
     accountId: "CANONICAL_1",
-    fileId: "file-1",
+    fileId: null,
     settings: { organizationIds: ["org-allowed"] },
   });
   const permissions = calls.filter((call) => call.type === "permission");
@@ -181,6 +186,14 @@ test("enforced Property Tax loads prefilter organizations and verify file-level 
     { auth: access.auth, receivedFile: access.receivedFile, permission: access.permission },
     { auth: identity, receivedFile: file, permission: "read" },
   );
+
+  const exactResponse = await fetch(
+    `${server.baseUrl}/api/accounts/legacy_1/property-tax-protest?file_id=file-1`,
+  );
+  assert.equal(exactResponse.status, 200);
+  assert.deepEqual(await exactResponse.json(), { account_id: "CANONICAL_1", file });
+  const gets = calls.filter((call) => call.type === "get");
+  assert.deepEqual(gets[1].settings, { organizationIds: null });
 });
 
 test("rollout Property Tax loads remain unscoped while enforced denials remain bounded", async (context) => {
@@ -209,12 +222,14 @@ test("rollout Property Tax loads remain unscoped while enforced denials remain b
   assert.equal(permissionCalls, 0);
   assert.equal(accessCalls, 0);
 
-  const deniedResponse = await fetch(`${denied.baseUrl}/api/accounts/123/property-tax-protest`);
+  const deniedResponse = await fetch(
+    `${denied.baseUrl}/api/accounts/123/property-tax-protest?file_id=file-1`,
+  );
   assert.equal(deniedResponse.status, 403);
   assert.deepEqual(await deniedResponse.json(), { error: "property_tax_protest_access_denied" });
 });
 
-test("evidence-version reads preserve organization scope, no-store, absence, and denial", async (context) => {
+test("evidence-version reads preserve exact identity, no-store, absence, and denial", async (context) => {
   const serviceCalls = [];
   const version = {
     tax_protest_file_id: "allowed",
@@ -242,7 +257,7 @@ test("evidence-version reads preserve organization scope, no-store, absence, and
   assert.equal(allowed.status, 200);
   assert.equal(allowed.headers.get("cache-control"), "no-store");
   assert.deepEqual(await allowed.json(), { account_id: "123", file: version });
-  assert.deepEqual(serviceCalls[0].settings, { organizationIds: ["org-allowed"] });
+  assert.deepEqual(serviceCalls[0].settings, { organizationIds: null });
 
   const missing = await fetch(
     `${server.baseUrl}/api/accounts/123/property-tax-protest/missing/evidence/version`,
@@ -276,8 +291,8 @@ test("Property Tax saves authorize the existing file before preserving revision 
       calls.push({ type: "access", auth, file, permission });
       return true;
     },
-    saveFile: async (pool, accountId, fileId, input) => {
-      calls.push({ type: "save", pool, accountId, fileId, input });
+    saveFile: async (pool, accountId, fileId, input, actor) => {
+      calls.push({ type: "save", pool, accountId, fileId, input, actor });
       return savedFile;
     },
   });
@@ -299,7 +314,13 @@ test("Property Tax saves authorize the existing file before preserving revision 
     accountId: calls[2].accountId,
     fileId: calls[2].fileId,
     input: calls[2].input,
-  }, { accountId: "LEGACY_1", fileId: "file-1", input: body });
+    actor: calls[2].actor,
+  }, {
+    accountId: "LEGACY_1",
+    fileId: "file-1",
+    input: body,
+    actor: { actorUserId: "user-1", actorLabel: "Taylor Appraiser" },
+  });
 });
 
 test("enforced Property Tax writes conceal missing files and deny unauthorized files before save", async (context) => {
@@ -489,7 +510,7 @@ test("Property Tax document lists use the authenticated canonical file scope", a
       type: "file",
       accountId: "LEGACY_1",
       fileId: "tax-file-1",
-      settings: { organizationIds: ["org-allowed"] },
+      settings: { organizationIds: null },
     },
     { type: "access", receivedFile: file, permission: "read" },
     {

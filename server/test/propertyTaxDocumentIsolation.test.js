@@ -37,7 +37,8 @@ test("Property Tax document routes verify both protest and report identities", (
   assert.match(router, /propertyTaxDocumentScope\(req, requestedId, "read"\)/);
   assert.match(router, /propertyTaxDocumentScope\(req, requestedId, "write"\)/);
   assert.match(router, /requireWorkflowAccess\(req, res, WORKFLOW, "write"\)/);
-  assert.match(router, /permission === "read" \? \{ organizationIds: organizationIdsForRead\(req\) \}/);
+  assert.match(router, /\{ organizationIds: null \}/);
+  assert.match(router, /!decideAccess\(req\.mobileAuth, file, permission\)/);
   assert.doesNotMatch(server, /property-tax-protest\/:fileId\/documents/);
 });
 

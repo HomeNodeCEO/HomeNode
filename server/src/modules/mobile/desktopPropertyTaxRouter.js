@@ -118,11 +118,14 @@ export function createDesktopPropertyTaxRouter({
   async function propertyTaxDocumentScope(req, requestedId, permission) {
     await ensureDocuments();
     const accountId = await resolveAccountId(pool, requestedId);
+    // Exact-file routes must distinguish an absent file (404) from a known file
+    // outside the authenticated assignment boundary (403). The subsequent
+    // assignment decision is authoritative; list/latest reads remain scoped in SQL.
     const file = await getFile(
       pool,
       accountId,
       req.params.fileId,
-      permission === "read" ? { organizationIds: organizationIdsForRead(req) } : undefined,
+      { organizationIds: null },
     );
     if (!file) throw new Error("property_tax_protest_file_not_found");
     if (
@@ -191,12 +194,16 @@ export function createDesktopPropertyTaxRouter({
     try {
       await Promise.all([accountQualityReady, propertyEnrichmentReady]);
       const canonicalId = await resolveAccountId(pool, requestedId);
+      const exactFileId = req.query.file_id || null;
       const file = await getFile(
         pool,
         canonicalId,
-        req.query.file_id || null,
-        { organizationIds: organizationIdsForRead(req) },
+        exactFileId,
+        { organizationIds: exactFileId ? null : organizationIdsForRead(req) },
       );
+      if (exactFileId && !file) {
+        return res.status(404).json({ error: "property_tax_protest_file_not_found" });
+      }
       if (
         authenticationRequired
         && req.mobileAuth
@@ -226,7 +233,7 @@ export function createDesktopPropertyTaxRouter({
         pool,
         canonicalId,
         req.params.fileId,
-        { organizationIds: organizationIdsForRead(req) },
+        { organizationIds: null },
       );
       if (!file) {
         return res.status(404).json({ error: "property_tax_protest_file_not_found" });
@@ -248,6 +255,7 @@ export function createDesktopPropertyTaxRouter({
 
   /** Save a reviewed desktop protest revision without replacing prior history. */
   router.patch("/api/accounts/:id/property-tax-protest/:fileId", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, WORKFLOW, "write")) return undefined;
     const requestedId = requestedAccountId(req, res);
     if (!requestedId) return undefined;
     if (!requireEditor(req, res)) return undefined;
@@ -266,7 +274,16 @@ export function createDesktopPropertyTaxRouter({
             : "property_tax_protest_file_not_found",
         });
       }
-      const file = await saveFile(pool, canonicalId, req.params.fileId, req.body || {});
+      const file = await saveFile(
+        pool,
+        canonicalId,
+        req.params.fileId,
+        req.body || {},
+        {
+          actorUserId: req.mobileAuth?.userId || null,
+          actorLabel: req.mobileAuth?.displayName || req.mobileAuth?.email || null,
+        },
+      );
       return res.json({ ok: true, file });
     } catch (error) {
       if (error?.message === "property_tax_protest_revision_conflict") {
@@ -288,6 +305,7 @@ export function createDesktopPropertyTaxRouter({
 
   /** Revise the Property Tax Protest sketch through the authenticated desktop workflow. */
   router.patch("/api/accounts/:id/property-tax-protest/:fileId/sketch", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, WORKFLOW, "write")) return undefined;
     const requestedId = requestedAccountId(req, res);
     if (!requestedId) return undefined;
     if (!requireEditor(req, res)) return undefined;

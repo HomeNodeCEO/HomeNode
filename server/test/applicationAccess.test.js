@@ -34,6 +34,30 @@ test("office assistants cannot sign and read-only users cannot write", () => {
   assert.equal(hasApplicationPermission(reader, "custom_appraisal", "write", "org-1"), false);
 });
 
+test("Property Tax permissions remain explicit for every application role", () => {
+  const expected = {
+    appraiser: { read: true, write: true, sign: true },
+    supervisory_appraiser: { read: true, write: true, sign: true },
+    reviewer: { read: true, write: false, sign: false },
+    office_assistant: { read: true, write: true, sign: false },
+    read_only: { read: true, write: false, sign: false },
+    organization_admin: { read: true, write: true, sign: false },
+    homenode_admin: { read: true, write: true, sign: false },
+  };
+  for (const [role, permissions] of Object.entries(expected)) {
+    const identity = { ...auth, organizations: [{ organizationId: "org-1", roles: [role] }] };
+    for (const [permission, allowed] of Object.entries(permissions)) {
+      assert.equal(
+        hasApplicationPermission(identity, "property_tax_protest", permission, "org-1"),
+        allowed,
+        `${role} property_tax_protest/${permission}`,
+      );
+    }
+  }
+  assert.equal(hasApplicationPermission({ userId: "user-1", organizations: [] }, "property_tax_protest", "read"), false);
+  assert.equal(hasApplicationPermission({ organizations: auth.organizations }, "property_tax_protest", "read"), false);
+});
+
 test("session response publishes effective permissions without identity-provider claims", () => {
   const session = buildApplicationSession(auth);
   assert.equal(session.user_id, "user-1");

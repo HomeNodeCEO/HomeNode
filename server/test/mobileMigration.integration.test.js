@@ -44,6 +44,8 @@ import {
 import { listPreviousAppraisalFiles } from "../src/services/appraisalHistory.js";
 import { replicateAppraisalFile } from "../src/services/appraisalReplication.js";
 import { importUadMobilePhoto } from "../src/modules/uad/mobileEvidence.js";
+import { syncDcadPropertyContext } from "../src/services/propertyContextSync.js";
+import { ensurePropertyContextSchema } from "../src/services/propertyContextStore.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -1041,6 +1043,47 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     assert.equal(sameReplicationRecord.rows[0].target_case_id, sameReplicationRecord.rows[0].source_case_id);
     assert.equal(sameReplicationRecord.rows[0].target_snapshot_id, sameReplicationRecord.rows[0].source_snapshot_id);
   } finally {
+    await pool.end();
+  }
+});
+
+test("property-context source locks prevent overlapping PostgreSQL sync sessions", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+  const holder = await pool.connect();
+  const lockKey = "homenode:property-context:dcad_parcels";
+  let acquired = false;
+  let fetchCalls = 0;
+  try {
+    await ensurePropertyContextSchema(pool);
+    const lock = await holder.query(
+      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
+      [lockKey],
+    );
+    acquired = lock.rows[0]?.acquired === true;
+    assert.equal(acquired, true);
+
+    const result = await syncDcadPropertyContext(pool, {
+      fetchImpl: async () => {
+        fetchCalls += 1;
+        throw new Error("contended_sync_must_not_fetch");
+      },
+    });
+    assert.deepEqual(result, {
+      source_key: "dcad_parcels",
+      skipped: true,
+      reason: "property_context_sync_already_running",
+    });
+    assert.equal(fetchCalls, 0);
+  } finally {
+    if (acquired) {
+      await holder.query(
+        "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+        [lockKey],
+      );
+    }
+    holder.release();
     await pool.end();
   }
 });

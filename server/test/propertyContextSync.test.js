@@ -11,6 +11,9 @@ import {
   normalizeTrafficVolumeFeature,
   rebuildRoadGraph,
   syncDcadPropertyContext,
+  syncOfficialZoningContext,
+  syncTigerRoadContext,
+  syncTxdotTrafficContext,
   tigerRoadOutFields,
 } from "../src/services/propertyContextSync.js";
 
@@ -192,6 +195,7 @@ test("an implausibly small full DCAD response cannot delete the last good mirror
   const pool = {
     query: async (sql, params) => {
       statements.push({ sql: String(sql), params });
+      if (String(sql).includes("pg_try_advisory_lock")) return { rows: [{ acquired: true }] };
       if (String(sql).includes("SELECT last_success_at")) return { rows: [] };
       return { rows: [], rowCount: 0 };
     },
@@ -218,10 +222,153 @@ test("an implausibly small full DCAD response cannot delete the last good mirror
     true,
   );
   assert.equal(
+    statements.some(({ sql }) => (
+      sql.includes("SET status = 'failed'") && sql.includes("last_run_id = $3")
+    )),
+    true,
+    "a superseded run must not overwrite the active source state",
+  );
+  assert.equal(
+    statements.some(({ sql }) => sql.includes("pg_advisory_unlock")),
+    true,
+  );
+  assert.equal(
     statements.some(({ sql, params }) => (
       params && sql.trim().split(";").filter(Boolean).length > 1
     )),
     false,
     "parameterized sync queries must contain a single PostgreSQL statement",
+  );
+});
+
+test("an overlapping source sync is skipped before it creates a run", async () => {
+  const clientStatements = [];
+  let released = false;
+  const client = {
+    async query(sql) {
+      clientStatements.push(String(sql));
+      if (String(sql).includes("pg_try_advisory_lock")) {
+        return { rows: [{ acquired: false }] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {
+      released = true;
+    },
+  };
+  const pool = {
+    async query() {
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return client;
+    },
+  };
+
+  const result = await syncDcadPropertyContext(pool, {
+    fetchImpl: async () => {
+      throw new Error("source_fetch_must_not_run");
+    },
+  });
+
+  assert.deepEqual(result, {
+    source_key: "dcad_parcels",
+    skipped: true,
+    reason: "property_context_sync_already_running",
+  });
+  assert.equal(
+    clientStatements.some((sql) => sql.includes("INSERT INTO gis.source_sync_runs")),
+    false,
+  );
+  assert.equal(released, true);
+});
+
+test("multi-source sync contention preserves the iterable CLI response contract", async () => {
+  function contendedPool() {
+    return {
+      async query() {
+        return { rows: [], rowCount: 0 };
+      },
+      async connect() {
+        return {
+          async query(sql) {
+            if (String(sql).includes("pg_try_advisory_lock")) {
+              return { rows: [{ acquired: false }] };
+            }
+            return { rows: [], rowCount: 0 };
+          },
+          release() {},
+        };
+      },
+    };
+  }
+
+  const [roads, zoning] = await Promise.all([
+    syncTigerRoadContext(contendedPool()),
+    syncOfficialZoningContext(contendedPool()),
+  ]);
+
+  assert.deepEqual(roads, [{
+    source_key: "tiger_roads",
+    skipped: true,
+    reason: "property_context_sync_already_running",
+  }]);
+  assert.deepEqual(zoning, [{
+    source_key: "official_zoning",
+    skipped: true,
+    reason: "property_context_sync_already_running",
+  }]);
+});
+
+test("a partial full-sync feature response cannot delete the last good mirror", async () => {
+  const statements = [];
+  const pool = {
+    async query(sql, params) {
+      statements.push({ sql: String(sql), params });
+      if (String(sql).includes("pg_try_advisory_lock")) return { rows: [{ acquired: true }] };
+      return { rows: [], rowCount: String(sql).includes("INSERT INTO gis.traffic_volume_segments") ? 1 : 0 };
+    },
+  };
+  const objectIds = Array.from({ length: 1_000 }, (_, index) => index + 1);
+  const fetchImpl = async (_url, options) => {
+    const body = new URLSearchParams(String(options.body));
+    if (body.get("returnIdsOnly") === "true") {
+      return { ok: true, json: async () => ({ objectIds }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        features: [{
+          id: 1,
+          properties: { OBJECTID: 1, AADT_CUR: 12_000 },
+          geometry: {
+            type: "LineString",
+            coordinates: [[-96.7, 32.9], [-96.69, 32.91]],
+          },
+        }],
+      }),
+    };
+  };
+
+  await assert.rejects(
+    syncTxdotTrafficContext(pool, {
+      fetchImpl,
+      batchSize: 1_000,
+      concurrency: 1,
+      logger: { log() {} },
+    }),
+    /full_sync_feature_mismatch_1000_1_1_1/,
+  );
+  assert.equal(
+    statements.some(({ sql }) => sql.includes("DELETE FROM gis.traffic_volume_segments")),
+    false,
+  );
+  assert.equal(
+    statements.some(({ sql }) => sql.includes("SET status = 'failed'")),
+    true,
+  );
+  assert.equal(
+    statements.some(({ sql }) => sql.includes("pg_advisory_unlock")),
+    true,
   );
 });

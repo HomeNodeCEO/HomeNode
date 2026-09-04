@@ -62,6 +62,7 @@ const DALLAS_COUNTY_QUERY_ENVELOPE = Object.freeze({
 });
 const DEFAULT_BATCH_SIZE = 2_000;
 const DEFAULT_FETCH_CONCURRENCY = 3;
+const SYNC_LOCK_PREFIX = "homenode:property-context:";
 
 const ROAD_LAYERS = Object.freeze([
   { id: 0, sourceKey: "tiger_roads_primary", label: "Census TIGER primary roads", roadClass: "primary", outFields: ROAD_FIELDS },
@@ -388,30 +389,66 @@ export function normalizeOfficialZoningFeature(feature, runId, source) {
   return { ...normalized, source_record_hash: recordHash(normalized) };
 }
 
+async function withSourceSyncLock(pool, sourceKey, callback) {
+  const client = typeof pool.connect === "function" ? await pool.connect() : pool;
+  const lockKey = `${SYNC_LOCK_PREFIX}${sourceKey}`;
+  let acquired = false;
+  try {
+    const { rows } = await client.query(
+      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
+      [lockKey],
+    );
+    acquired = rows[0]?.acquired === true;
+    if (!acquired) {
+      return {
+        source_key: sourceKey,
+        skipped: true,
+        reason: "property_context_sync_already_running",
+      };
+    }
+    return await callback(client);
+  } finally {
+    if (acquired) {
+      await client.query(
+        "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+        [lockKey],
+      ).catch(() => {});
+    }
+    if (client !== pool) client.release();
+  }
+}
+
 async function startRun(pool, { sourceKey, sourceLabel, sourceUrl, sourceVintage, mode }) {
   const runId = randomUUID();
-  await pool.query(
-    `INSERT INTO gis.source_sync_runs (id, source_key, mode, status)
-     VALUES ($1,$2,$3,'running')`,
-    [runId, sourceKey, mode],
-  );
-  await pool.query(
-    `INSERT INTO gis.source_sync_state (
-       source_key, source_label, status, source_url, source_vintage,
-       last_attempt_at, last_run_id, last_error
-     ) VALUES ($1,$2,'running',$3,$4,now(),$5,NULL)
-     ON CONFLICT (source_key) DO UPDATE SET
-       source_label = EXCLUDED.source_label,
-       status = 'running',
-       source_url = EXCLUDED.source_url,
-       source_vintage = COALESCE(EXCLUDED.source_vintage, gis.source_sync_state.source_vintage),
-       last_attempt_at = now(),
-       last_run_id = EXCLUDED.last_run_id,
-       last_error = NULL,
-       updated_at = now()`,
-    [sourceKey, sourceLabel, sourceUrl, sourceVintage, runId],
-  );
-  return runId;
+  await pool.query("BEGIN");
+  try {
+    await pool.query(
+      `INSERT INTO gis.source_sync_runs (id, source_key, mode, status)
+       VALUES ($1,$2,$3,'running')`,
+      [runId, sourceKey, mode],
+    );
+    await pool.query(
+      `INSERT INTO gis.source_sync_state (
+         source_key, source_label, status, source_url, source_vintage,
+         last_attempt_at, last_run_id, last_error
+       ) VALUES ($1,$2,'running',$3,$4,now(),$5,NULL)
+       ON CONFLICT (source_key) DO UPDATE SET
+         source_label = EXCLUDED.source_label,
+         status = 'running',
+         source_url = EXCLUDED.source_url,
+         source_vintage = COALESCE(EXCLUDED.source_vintage, gis.source_sync_state.source_vintage),
+         last_attempt_at = now(),
+         last_run_id = EXCLUDED.last_run_id,
+         last_error = NULL,
+         updated_at = now()`,
+      [sourceKey, sourceLabel, sourceUrl, sourceVintage, runId],
+    );
+    await pool.query("COMMIT");
+    return runId;
+  } catch (error) {
+    await pool.query("ROLLBACK").catch(() => {});
+    throw error;
+  }
 }
 
 async function updateRunCheckpoint(pool, runId, sourceKey, checkpoint, seen, written) {
@@ -424,8 +461,8 @@ async function updateRunCheckpoint(pool, runId, sourceKey, checkpoint, seen, wri
   await pool.query(
     `UPDATE gis.source_sync_state
      SET checkpoint = $2::jsonb, updated_at = now()
-     WHERE source_key = $1`,
-    [sourceKey, JSON.stringify(checkpoint)],
+     WHERE source_key = $1 AND last_run_id = $3`,
+    [sourceKey, JSON.stringify(checkpoint), runId],
   );
 }
 
@@ -439,44 +476,59 @@ async function completeRun(pool, {
   lastSourceUpdateAt = null,
   metadata = {},
 }) {
-  await pool.query(
-    `UPDATE gis.source_sync_runs
-     SET status = 'complete', records_seen = $2, records_written = $3,
-         records_deleted = $4, completed_at = now(), error_message = NULL
-     WHERE id = $1`,
-    [runId, seen, written, deleted],
-  );
-  await pool.query(
-    `UPDATE gis.source_sync_state
-     SET status = 'current', row_count = $2, last_success_at = now(),
-         last_source_update_at = COALESCE($3::timestamptz, last_source_update_at),
-         checkpoint = '{}'::jsonb, last_error = NULL,
-         metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
-         updated_at = now()
-     WHERE source_key = $1`,
-    [
-      sourceKey,
-      rowCount,
-      lastSourceUpdateAt,
-      JSON.stringify(metadata),
-    ],
-  );
+  await pool.query("BEGIN");
+  try {
+    await pool.query(
+      `UPDATE gis.source_sync_runs
+       SET status = 'complete', records_seen = $2, records_written = $3,
+           records_deleted = $4, completed_at = now(), error_message = NULL
+       WHERE id = $1`,
+      [runId, seen, written, deleted],
+    );
+    await pool.query(
+      `UPDATE gis.source_sync_state
+       SET status = 'current', row_count = $2, last_success_at = now(),
+           last_source_update_at = COALESCE($3::timestamptz, last_source_update_at),
+           checkpoint = '{}'::jsonb, last_error = NULL,
+           metadata = COALESCE(metadata, '{}'::jsonb) || $4::jsonb,
+           updated_at = now()
+       WHERE source_key = $1 AND last_run_id = $5`,
+      [
+        sourceKey,
+        rowCount,
+        lastSourceUpdateAt,
+        JSON.stringify(metadata),
+        runId,
+      ],
+    );
+    await pool.query("COMMIT");
+  } catch (error) {
+    await pool.query("ROLLBACK").catch(() => {});
+    throw error;
+  }
 }
 
 async function failRun(pool, { runId, sourceKey, error }) {
   const message = String(error?.message || error || "property_context_sync_failed").slice(0, 4_000);
-  await pool.query(
-    `UPDATE gis.source_sync_runs
-     SET status = 'failed', error_message = $2, completed_at = now()
-     WHERE id = $1`,
-    [runId, message],
-  );
-  await pool.query(
-    `UPDATE gis.source_sync_state
-     SET status = 'failed', last_error = $2, updated_at = now()
-     WHERE source_key = $1`,
-    [sourceKey, message],
-  );
+  await pool.query("BEGIN");
+  try {
+    await pool.query(
+      `UPDATE gis.source_sync_runs
+       SET status = 'failed', error_message = $2, completed_at = now()
+       WHERE id = $1`,
+      [runId, message],
+    );
+    await pool.query(
+      `UPDATE gis.source_sync_state
+       SET status = 'failed', last_error = $2, updated_at = now()
+       WHERE source_key = $1 AND last_run_id = $3`,
+      [sourceKey, message, runId],
+    );
+    await pool.query("COMMIT");
+  } catch (failure) {
+    await pool.query("ROLLBACK").catch(() => {});
+    throw failure;
+  }
 }
 
 async function upsertDcadParcels(pool, parcels) {
@@ -780,6 +832,8 @@ async function fetchAndWriteBatches({
 }) {
   const batches = chunks(objectIds, batchSize);
   let seen = 0;
+  let fetched = 0;
+  let normalized = 0;
   let written = 0;
   for (let index = 0; index < batches.length; index += concurrency) {
     const group = batches.slice(index, index + concurrency);
@@ -788,6 +842,8 @@ async function fetchAndWriteBatches({
       const ids = group[offset];
       const records = featureGroups[offset].map(normalizeFeature).filter(Boolean);
       seen += ids.length;
+      fetched += featureGroups[offset].length;
+      normalized += records.length;
       written += await writeBatch(records);
       await onCheckpoint({
         seen,
@@ -798,7 +854,21 @@ async function fetchAndWriteBatches({
       });
     }
   }
-  return { seen, written };
+  return { seen, fetched, normalized, written };
+}
+
+function assertCompleteFeatureSet(sourceKey, expected, progress) {
+  if (
+    progress.seen !== expected
+    || progress.fetched !== expected
+    || progress.normalized !== expected
+    || progress.written !== expected
+  ) {
+    throw new Error(
+      `property_context_${sourceKey}_full_sync_feature_mismatch_`
+      + `${expected}_${progress.fetched}_${progress.normalized}_${progress.written}`,
+    );
+  }
 }
 
 function incrementalDcadWhere(lastSuccessAt) {
@@ -810,14 +880,13 @@ function incrementalDcadWhere(lastSuccessAt) {
   return `LASTUPDATE > TIMESTAMP '${sqlTimestamp}'`;
 }
 
-export async function syncDcadPropertyContext(pool, {
+async function syncDcadPropertyContextUnlocked(pool, {
   mode = "incremental",
   fetchImpl = fetch,
   batchSize = DEFAULT_BATCH_SIZE,
   concurrency = DEFAULT_FETCH_CONCURRENCY,
   logger = console,
 } = {}) {
-  await ensurePropertyContextSchema(pool);
   const sourceKey = "dcad_parcels";
   const { rows: stateRows } = await pool.query(
     "SELECT last_success_at FROM gis.source_sync_state WHERE source_key = $1",
@@ -862,6 +931,7 @@ export async function syncDcadPropertyContext(pool, {
     });
     let deleted = 0;
     if (effectiveMode === "full") {
+      assertCompleteFeatureSet(sourceKey, objectIds.length, progress);
       const deletedResult = await pool.query(
         "DELETE FROM gis.dcad_parcels WHERE sync_run_id IS DISTINCT FROM $1",
         [runId],
@@ -886,6 +956,15 @@ export async function syncDcadPropertyContext(pool, {
     await failRun(pool, { runId, sourceKey, error }).catch(() => {});
     throw error;
   }
+}
+
+export async function syncDcadPropertyContext(pool, options = {}) {
+  await ensurePropertyContextSchema(pool);
+  return withSourceSyncLock(
+    pool,
+    "dcad_parcels",
+    (client) => syncDcadPropertyContextUnlocked(client, options),
+  );
 }
 
 async function syncTigerRoadLayer(pool, layer, {
@@ -937,6 +1016,7 @@ async function syncTigerRoadLayer(pool, layer, {
         checkpoint.written,
       ),
     });
+    assertCompleteFeatureSet(layer.sourceKey, objectIds.length, progress);
     const deletedResult = await pool.query(
       "DELETE FROM gis.road_segments WHERE source_layer = $1 AND sync_run_id IS DISTINCT FROM $2",
       [layer.sourceKey, runId],
@@ -967,14 +1047,13 @@ async function syncTigerRoadLayer(pool, layer, {
   }
 }
 
-export async function syncTigerRoadContext(pool, {
+async function syncTigerRoadContextUnlocked(pool, {
   fetchImpl = fetch,
   batchSize = 5_000,
   concurrency = DEFAULT_FETCH_CONCURRENCY,
   sourceVintage = process.env.TIGER_ROAD_VINTAGE || String(new Date().getFullYear() - 1),
   logger = console,
 } = {}) {
-  await ensurePropertyContextSchema(pool);
   const results = [];
   for (const layer of ROAD_LAYERS) {
     results.push(await syncTigerRoadLayer(pool, layer, {
@@ -985,13 +1064,23 @@ export async function syncTigerRoadContext(pool, {
       logger,
     }));
   }
-  const graph = await rebuildRoadGraph(pool);
+  const graph = await rebuildRoadGraph(pool, { ensureSchema: false });
   results.push({ source_key: "road_graph", mode: "rebuild", ...graph });
   return results;
 }
 
-export async function rebuildRoadGraph(pool) {
+export async function syncTigerRoadContext(pool, options = {}) {
   await ensurePropertyContextSchema(pool);
+  const result = await withSourceSyncLock(
+    pool,
+    "tiger_roads",
+    (client) => syncTigerRoadContextUnlocked(client, options),
+  );
+  return result?.skipped ? [result] : result;
+}
+
+export async function rebuildRoadGraph(pool, { ensureSchema = true } = {}) {
+  if (ensureSchema) await ensurePropertyContextSchema(pool);
   const client = typeof pool.connect === "function" ? await pool.connect() : null;
   const queryable = client || pool;
   try {
@@ -1069,14 +1158,13 @@ export async function rebuildRoadGraph(pool) {
   }
 }
 
-export async function syncTxdotTrafficContext(pool, {
+async function syncTxdotTrafficContextUnlocked(pool, {
   fetchImpl = fetch,
   batchSize = 1_000,
   concurrency = DEFAULT_FETCH_CONCURRENCY,
   sourceVintage = "current",
   logger = console,
 } = {}) {
-  await ensurePropertyContextSchema(pool);
   const sourceKey = "txdot_aadt";
   const runId = await startRun(pool, {
     sourceKey,
@@ -1109,6 +1197,7 @@ export async function syncTxdotTrafficContext(pool, {
         pool, runId, sourceKey, checkpoint, checkpoint.seen, checkpoint.written,
       ),
     });
+    assertCompleteFeatureSet(sourceKey, objectIds.length, progress);
     const deletedResult = await pool.query(
       "DELETE FROM gis.traffic_volume_segments WHERE source_key = $1 AND sync_run_id IS DISTINCT FROM $2",
       [sourceKey, runId],
@@ -1135,7 +1224,16 @@ export async function syncTxdotTrafficContext(pool, {
   }
 }
 
-export async function syncFemaFloodContext(pool, {
+export async function syncTxdotTrafficContext(pool, options = {}) {
+  await ensurePropertyContextSchema(pool);
+  return withSourceSyncLock(
+    pool,
+    "txdot_aadt",
+    (client) => syncTxdotTrafficContextUnlocked(client, options),
+  );
+}
+
+async function syncFemaFloodContextUnlocked(pool, {
   fetchImpl = fetch,
   // NFHL polygons can be extremely detailed. Smaller batches avoid transient
   // ArcGIS HTTP 500 responses caused by oversized geometry payloads.
@@ -1144,7 +1242,6 @@ export async function syncFemaFloodContext(pool, {
   sourceVintage = process.env.FEMA_NFHL_VINTAGE || "effective-current",
   logger = console,
 } = {}) {
-  await ensurePropertyContextSchema(pool);
   const sourceKey = "fema_nfhl";
   const runId = await startRun(pool, {
     sourceKey,
@@ -1182,6 +1279,7 @@ export async function syncFemaFloodContext(pool, {
         checkpoint.written,
       ),
     });
+    assertCompleteFeatureSet(sourceKey, objectIds.length, progress);
     const deletedResult = await pool.query(
       "DELETE FROM gis.flood_hazard_areas WHERE source_key = $1 AND sync_run_id IS DISTINCT FROM $2",
       [sourceKey, runId],
@@ -1204,6 +1302,15 @@ export async function syncFemaFloodContext(pool, {
     await failRun(pool, { runId, sourceKey, error }).catch(() => {});
     throw error;
   }
+}
+
+export async function syncFemaFloodContext(pool, options = {}) {
+  await ensurePropertyContextSchema(pool);
+  return withSourceSyncLock(
+    pool,
+    "fema_nfhl",
+    (client) => syncFemaFloodContextUnlocked(client, options),
+  );
 }
 
 async function syncOfficialZoningSource(pool, source, {
@@ -1233,7 +1340,7 @@ async function syncOfficialZoningSource(pool, source, {
       throw new Error(`property_context_${source.sourceKey}_full_sync_empty`);
     }
     logger.log(`[property-context] ${source.label} sync found ${totalObjectIds.toLocaleString()} object ids`);
-    const progress = { seen: 0, written: 0 };
+    const progress = { seen: 0, fetched: 0, normalized: 0, written: 0 };
     for (const layer of sourceLayers) {
       const completedBefore = { ...progress };
       const layerProgress = await fetchAndWriteBatches({
@@ -1266,8 +1373,11 @@ async function syncOfficialZoningSource(pool, source, {
         ),
       });
       progress.seen += layerProgress.seen;
+      progress.fetched += layerProgress.fetched;
+      progress.normalized += layerProgress.normalized;
       progress.written += layerProgress.written;
     }
+    assertCompleteFeatureSet(source.sourceKey, totalObjectIds, progress);
     const deletedResult = await pool.query(
       "DELETE FROM gis.zoning_districts WHERE provider_key = $1 AND sync_run_id IS DISTINCT FROM $2",
       [source.providerKey, runId],
@@ -1304,7 +1414,7 @@ async function syncOfficialZoningSource(pool, source, {
   }
 }
 
-export async function syncOfficialZoningContext(pool, {
+async function syncOfficialZoningContextUnlocked(pool, {
   fetchImpl = fetch,
   batchSize = 1_000,
   concurrency = 2,
@@ -1312,7 +1422,6 @@ export async function syncOfficialZoningContext(pool, {
   continueOnError = true,
   jurisdictions = null,
 } = {}) {
-  await ensurePropertyContextSchema(pool);
   const results = [];
   for (const source of selectOfficialZoningSources(jurisdictions)) {
     try {
@@ -1334,4 +1443,14 @@ export async function syncOfficialZoningContext(pool, {
     }
   }
   return results;
+}
+
+export async function syncOfficialZoningContext(pool, options = {}) {
+  await ensurePropertyContextSchema(pool);
+  const result = await withSourceSyncLock(
+    pool,
+    "official_zoning",
+    (client) => syncOfficialZoningContextUnlocked(client, options),
+  );
+  return result?.skipped ? [result] : result;
 }

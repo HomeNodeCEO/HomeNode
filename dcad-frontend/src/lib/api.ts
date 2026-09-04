@@ -1046,6 +1046,8 @@ export interface ComparableSearchProfile {
 
 export interface ComparableRecommendationParams {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
+  propertyTaxFileId?: string | null;
   analysisAsOf?: string;
   periodMonths?: 12 | 24 | 36;
   dateFrom?: string;
@@ -3515,6 +3517,8 @@ export async function getComparableRecommendations(
 ): Promise<ComparableRecommendationsResponse> {
   const url = makeUrl('/api/sales/recommendations', {
     subject_account_id: params.subjectAccountId.trim(),
+    assignment_file_id: params.assignmentFileId ?? undefined,
+    property_tax_file_id: params.propertyTaxFileId ?? undefined,
     analysis_as_of: params.analysisAsOf,
     period_months: params.periodMonths,
     date_from: params.dateFrom,

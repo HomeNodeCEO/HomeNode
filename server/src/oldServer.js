@@ -145,9 +145,7 @@ app.use(createCorsMiddleware(httpSecurity));
 const globalApiRateLimiterOptions = {
   windowMs: httpSecurity.apiRateLimitWindowMs,
   limit: httpSecurity.apiRateLimitMax,
-  // UAD and mobile own stricter limiters and response contracts inside their
-  // routers. Applying the global limiter as well would create two counters and
-  // overwrite the advertised route policy headers.
+  // UAD and mobile own stricter route-local limiters and response headers.
   skip: (req) => shouldSkipGlobalApiRateLimit(req, httpSecurity),
   standardHeaders: "draft-8",
   legacyHeaders: false,
@@ -295,6 +293,7 @@ const {
   requirePlatformAdministrator,
   requireCustomAssignmentAccess,
   requireCustomAccountScope,
+  requirePropertyTaxAccountScope,
   requireWorkflowAccess,
 } = createApplicationAccessGuards({
   pool,
@@ -487,6 +486,8 @@ app.use(createComparableRecommendationsRouter({
   enrichmentReady: propertyEnrichmentReady,
   backfillReady: locationBackfillReady,
   distanceSqlBuilder: greatCircleDistanceMilesSql,
+  requireCustomAccountScope,
+  requirePropertyTaxAccountScope,
 }));
 
 app.use(createSalesListRouter({

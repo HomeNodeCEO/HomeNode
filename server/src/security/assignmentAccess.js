@@ -48,3 +48,21 @@ export async function authorizeCustomAssignmentFile(pool, auth, input) {
   }
   return rows[0];
 }
+
+export async function authorizePropertyTaxProtestFile(pool, auth, input) {
+  const { rows } = await pool.query(
+    `SELECT report_file.id AS report_file_id, report_file.account_id,
+            report_file.organization_id, protest.assigned_appraiser_user_id,
+            NULL::uuid AS supervisory_appraiser_user_id
+       FROM app.report_files report_file
+       JOIN app.tax_protest_files protest ON protest.id = report_file.tax_protest_file_id
+      WHERE protest.id = $1 AND report_file.account_id = $2
+        AND report_file.workflow_type = 'property_tax_protest'`,
+    [input.propertyTaxFileId, input.accountId],
+  );
+  if (!rows.length) throw new Error("property_tax_protest_file_not_found");
+  if (!decideAssignmentAccess(auth, rows[0], input.permission)) {
+    throw new Error("property_tax_protest_file_access_denied");
+  }
+  return rows[0];
+}

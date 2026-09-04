@@ -44,6 +44,7 @@ function createGuards(overrides = {}) {
     roleChecker: () => false,
     editorKeyChecker: () => false,
     assignmentAuthorizer: async () => {},
+    propertyTaxAuthorizer: async () => {},
     ...overrides,
   });
 }
@@ -381,6 +382,84 @@ test("custom account scope binds workflow permission to the normalized assignmen
   ]);
 });
 
+test("property tax account scope requires a valid exact protest file", async () => {
+  let authorizerCalls = 0;
+  const guards = createGuards({
+    permissionChecker: () => true,
+    propertyTaxAuthorizer: async () => { authorizerCalls += 1; },
+  });
+  for (const [value, error] of [
+    [undefined, "property_tax_protest_file_required"],
+    ["not-a-file", "invalid_property_tax_protest_file_id"],
+  ]) {
+    const response = createResponse();
+    assert.equal(await guards.requirePropertyTaxAccountScope(
+      createRequest({ mobileAuth: { userId: "user-1" } }),
+      response,
+      "account-1",
+      value,
+      "read",
+    ), false);
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.payload, { error });
+    assert.equal(response.headers["cache-control"], "no-store");
+  }
+  assert.equal(authorizerCalls, 0);
+});
+
+test("property tax account scope binds workflow permission to the normalized file", async () => {
+  const calls = [];
+  const pool = { query: async () => ({ rows: [] }) };
+  const auth = { userId: "user-1" };
+  const guards = createGuards({
+    pool,
+    permissionChecker: (_auth, workflow, permission) => {
+      calls.push(["workflow", workflow, permission]);
+      return true;
+    },
+    propertyTaxAuthorizer: async (...values) => calls.push(["file", ...values]),
+  });
+  assert.equal(await guards.requirePropertyTaxAccountScope(
+    createRequest({ mobileAuth: auth }),
+    createResponse(),
+    "account-1",
+    "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    "read",
+  ), true);
+  assert.deepEqual(calls, [
+    ["workflow", "property_tax_protest", "read"],
+    ["file", pool, auth, {
+      accountId: "account-1",
+      propertyTaxFileId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      permission: "read",
+    }],
+  ]);
+});
+
+test("property tax account scope maps missing and denied files without diagnostics", async () => {
+  for (const [message, statusCode, errorCode] of [
+    ["property_tax_protest_file_not_found", 404, "property_tax_protest_file_not_found"],
+    ["postgresql://secret@internal", 403, "property_tax_protest_file_access_denied"],
+  ]) {
+    const guards = createGuards({
+      permissionChecker: () => true,
+      propertyTaxAuthorizer: async () => { throw new Error(message); },
+    });
+    const response = createResponse();
+    assert.equal(await guards.requirePropertyTaxAccountScope(
+      createRequest({ mobileAuth: { userId: "user-1" } }),
+      response,
+      "account-1",
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "read",
+    ), false);
+    assert.equal(response.statusCode, statusCode);
+    assert.deepEqual(response.payload, { error: errorCode });
+    assert.equal(response.headers["cache-control"], "no-store");
+    assert.doesNotMatch(JSON.stringify(response.payload), /postgres|secret|internal/i);
+  }
+});
+
 test("access guards reject incomplete application composition", () => {
   assert.throws(
     () => createApplicationAccessGuards(),
@@ -403,7 +482,7 @@ test("the entrypoint composes shared guards once and removes inline copies", () 
   );
   assert.match(
     entrypoint,
-    /requireEditor,[\s\S]*?requirePlatformAdministrator,[\s\S]*?requireCustomAssignmentAccess,[\s\S]*?requireWorkflowAccess,/,
+    /requireEditor,[\s\S]*?requirePlatformAdministrator,[\s\S]*?requireCustomAssignmentAccess,[\s\S]*?requirePropertyTaxAccountScope,[\s\S]*?requireWorkflowAccess,/,
   );
   assert.doesNotMatch(entrypoint, /function require(?:Editor|WorkflowAccess|CustomAssignmentAccess)/);
 });

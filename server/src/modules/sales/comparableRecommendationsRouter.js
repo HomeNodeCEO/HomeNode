@@ -70,6 +70,8 @@ export function createComparableRecommendationsRouter({
   analyzeOutliers = analyzeComparableOutliers,
   summarizeResults = summarizeComparableResults,
   currentDate = () => new Date().toISOString().slice(0, 10),
+  requireCustomAccountScope,
+  requirePropertyTaxAccountScope,
   logger = console,
 } = {}) {
   if (!pool || typeof pool.query !== "function") {
@@ -77,6 +79,12 @@ export function createComparableRecommendationsRouter({
   }
   if (typeof accountIdAllowed !== "function") {
     throw new TypeError("comparable_recommendations_account_policy_required");
+  }
+  if (
+    typeof requireCustomAccountScope !== "function"
+    || typeof requirePropertyTaxAccountScope !== "function"
+  ) {
+    throw new TypeError("comparable_recommendations_access_policy_required");
   }
   for (const readiness of [locationsReady, enrichmentReady, backfillReady]) {
     if (!readiness || typeof readiness.then !== "function") {
@@ -120,9 +128,6 @@ export function createComparableRecommendationsRouter({
    */
   router.get("/api/sales/recommendations", async (req, res) => {
     try {
-      await locationsReady;
-      await enrichmentReady;
-
       const subjectAccountId = String(
         req.query.subject_account_id || "",
       ).trim();
@@ -156,6 +161,29 @@ export function createComparableRecommendationsRouter({
       if (!accountIdAllowed(subjectAccountId)) {
         return res.status(400).json({ error: "invalid_subject_account_id" });
       }
+      const assignmentFileId = String(req.query.assignment_file_id || "").trim();
+      const propertyTaxFileId = String(req.query.property_tax_file_id || "").trim();
+      if (assignmentFileId && propertyTaxFileId) {
+        return res.status(400).json({ error: "ambiguous_recommendation_scope" });
+      }
+      const accessGranted = propertyTaxFileId
+        ? await requirePropertyTaxAccountScope(
+          req,
+          res,
+          subjectAccountId,
+          propertyTaxFileId,
+          "read",
+        )
+        : await requireCustomAccountScope(
+          req,
+          res,
+          subjectAccountId,
+          assignmentFileId || null,
+          "read",
+        );
+      if (!accessGranted) return undefined;
+      await locationsReady;
+      await enrichmentReady;
       if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
         return res.status(400).json({ error: "invalid_date_from" });
       }

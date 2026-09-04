@@ -1,7 +1,12 @@
 import { editorKeyMatches } from "../util/housingProfileEdit.js";
 import { normalizeAssignmentFileId } from "../services/assignmentFiles.js";
-import { authorizeCustomAssignmentFile } from "./assignmentAccess.js";
+import {
+  authorizeCustomAssignmentFile,
+  authorizePropertyTaxProtestFile,
+} from "./assignmentAccess.js";
 import { hasApplicationPermission, hasApplicationRole } from "./applicationAccess.js";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function assertGuardOptions(pool, authenticationRequired) {
   if (!pool || typeof pool.query !== "function") {
@@ -20,10 +25,14 @@ export function createApplicationAccessGuards({
   roleChecker = hasApplicationRole,
   editorKeyChecker = editorKeyMatches,
   assignmentAuthorizer = authorizeCustomAssignmentFile,
+  propertyTaxAuthorizer = authorizePropertyTaxProtestFile,
 } = {}) {
   assertGuardOptions(pool, authenticationRequired);
   if (typeof roleChecker !== "function") {
     throw new TypeError("application_access_guards_role_checker_required");
+  }
+  if (typeof propertyTaxAuthorizer !== "function") {
+    throw new TypeError("application_access_guards_property_tax_authorizer_required");
   }
 
   function requirePlatformAdministrator(req, res) {
@@ -158,11 +167,53 @@ export function createApplicationAccessGuards({
     );
   }
 
+  async function requirePropertyTaxAccountScope(
+    req,
+    res,
+    accountId,
+    propertyTaxFileIdValue,
+    permission = "read",
+  ) {
+    if (!requireWorkflowAccess(req, res, "property_tax_protest", permission)) return false;
+    const rawFileId = String(propertyTaxFileIdValue || "").trim();
+    const propertyTaxFileId = UUID_PATTERN.test(rawFileId) ? rawFileId.toLowerCase() : null;
+    if (rawFileId && !propertyTaxFileId) {
+      res.set("cache-control", "no-store")
+        .status(400)
+        .json({ error: "invalid_property_tax_protest_file_id" });
+      return false;
+    }
+    if (authenticationRequired && !propertyTaxFileId) {
+      res.set("cache-control", "no-store")
+        .status(400)
+        .json({ error: "property_tax_protest_file_required" });
+      return false;
+    }
+    if (!propertyTaxFileId || !authenticationRequired) return true;
+    try {
+      await propertyTaxAuthorizer(pool, req.mobileAuth, {
+        accountId,
+        propertyTaxFileId,
+        permission,
+      });
+      return true;
+    } catch (error) {
+      const notFound = error?.message === "property_tax_protest_file_not_found";
+      res.set("cache-control", "no-store").status(notFound ? 404 : 403).json({
+        error: notFound
+          ? "property_tax_protest_file_not_found"
+          : "property_tax_protest_file_access_denied",
+      });
+      return false;
+    }
+  }
+
   return Object.freeze({
     requireEditor,
     requirePlatformAdministrator,
     requireCustomAssignmentAccess,
     requireCustomAccountScope,
+    requirePropertyTaxAccountScope,
     requireWorkflowAccess,
   });
 }

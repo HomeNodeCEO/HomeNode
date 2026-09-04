@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decideAssignmentAccess } from "../src/security/assignmentAccess.js";
+import {
+  authorizePropertyTaxProtestFile,
+  decideAssignmentAccess,
+} from "../src/security/assignmentAccess.js";
 
 const assignment = {
   organization_id: "org-1",
@@ -51,4 +54,53 @@ test("administrators cannot sign unless separately assigned as a licensed signin
     ...assignment,
     supervisory_appraiser_user_id: "supervisor-1",
   }, "sign"), true);
+});
+
+test("property tax authorization binds the exact account, file, organization, and assignee", async () => {
+  const observed = [];
+  const row = {
+    report_file_id: "report-1",
+    account_id: "account-1",
+    organization_id: "org-1",
+    assigned_appraiser_user_id: "appraiser-1",
+    supervisory_appraiser_user_id: null,
+  };
+  const pool = {
+    query: async (sql, parameters) => {
+      observed.push({ sql, parameters });
+      return { rows: [row] };
+    },
+  };
+  assert.equal(await authorizePropertyTaxProtestFile(
+    pool,
+    actor("appraiser-1", ["appraiser"]),
+    {
+      accountId: "account-1",
+      propertyTaxFileId: "tax-file-1",
+      permission: "read",
+    },
+  ), row);
+  assert.match(observed[0].sql, /JOIN app\.tax_protest_files/);
+  assert.match(observed[0].sql, /report_file\.account_id = \$2/);
+  assert.match(observed[0].sql, /workflow_type = 'property_tax_protest'/);
+  assert.deepEqual(observed[0].parameters, ["tax-file-1", "account-1"]);
+});
+
+test("property tax authorization denies absent and cross-organization files", async () => {
+  await assert.rejects(
+    authorizePropertyTaxProtestFile(
+      { query: async () => ({ rows: [] }) },
+      actor("appraiser-1", ["appraiser"]),
+      { accountId: "account-1", propertyTaxFileId: "missing", permission: "read" },
+    ),
+    /property_tax_protest_file_not_found/,
+  );
+  await assert.rejects(
+    authorizePropertyTaxProtestFile(
+      { query: async () => ({ rows: [{ ...assignment, organization_id: "org-2" }] }) },
+      actor("appraiser-1", ["appraiser"]),
+      { accountId: "account-1", propertyTaxFileId: "other", permission: "read" },
+    ),
+    /property_tax_protest_file_access_denied/,
+  );
 });

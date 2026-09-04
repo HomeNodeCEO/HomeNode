@@ -84,6 +84,25 @@ export function garageSpacesFromArea(value: unknown): number | null {
   return Math.max(1, Math.min(12, Math.round(area / 225)));
 }
 
+export function normalizeConstructionType(stories: unknown, construction: unknown): string {
+  const text = (value: unknown) => String(value ?? '').trim().toLowerCase();
+  const storiesText = text(stories);
+  const constructionText = text(construction);
+  if (storiesText) {
+    const numericStories = Number(storiesText.replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(numericStories) && numericStories > 0) {
+      return numericStories >= 2 ? '2 Story' : '1 Story';
+    }
+    if (storiesText.includes('two') || storiesText.includes('2')) return '2 Story';
+    if (storiesText.includes('one and one half')) return '2 Story';
+    if (storiesText.includes('one') || storiesText.includes('1')) return '1 Story';
+  }
+  if (constructionText.includes('one and one half')) return '2 Story';
+  if (constructionText.includes('two') || constructionText.includes('2')) return '2 Story';
+  if (constructionText.includes('one') || constructionText.includes('1')) return '1 Story';
+  return '';
+}
+
 export function calculatePoolGroupedAdjustment(
   adjustments: AppliedGroupedAdjustment[],
   subjectValue: boolean | null,

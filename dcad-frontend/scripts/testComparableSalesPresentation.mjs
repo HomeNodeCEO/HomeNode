@@ -9,6 +9,7 @@ import {
   finiteNumber,
   garageSpacesFromArea,
   monthsBeforeDate,
+  normalizeConstructionType,
   swapArrayItems,
 } from '../src/lib/comparableSalesPresentation.ts';
 
@@ -34,6 +35,10 @@ test('property value normalization retains existing grid semantics', () => {
   assert.equal(booleanValue('unknown'), null);
   assert.equal(garageSpacesFromArea(450), 2);
   assert.equal(garageSpacesFromArea(0), null);
+  assert.equal(normalizeConstructionType('1.5', ''), '1 Story');
+  assert.equal(normalizeConstructionType('ONE AND ONE HALF STORIES', ''), '2 Story');
+  assert.equal(normalizeConstructionType('', 'Two Story Traditional'), '2 Story');
+  assert.equal(normalizeConstructionType(null, null), '');
 });
 
 test('grouped adjustment direction and rounding remain unchanged', () => {

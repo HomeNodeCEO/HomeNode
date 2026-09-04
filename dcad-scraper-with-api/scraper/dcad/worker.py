@@ -32,6 +32,14 @@ def _identifier(value: str, label: str) -> str:
     return value
 
 
+def _qualified_table(schema_value: str, table_value: str, label: str) -> str:
+    """Build one quoted table reference only from locally validated identifiers."""
+
+    schema = _identifier(schema_value, f"{label} schema")
+    table = _identifier(table_value, f"{label} table")
+    return f'"{schema}"."{table}"'
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -107,45 +115,60 @@ class WorkerConfig:
 
 
 def _state_table(config: WorkerConfig) -> str:
-    return f'"{config.state_schema}"."dcad_scrape_state"'
+    return _qualified_table(config.state_schema, "dcad_scrape_state", "scrape state")
 
 
 def _accounts_table(config: WorkerConfig) -> str:
-    return f'"{config.data_schema}"."accounts"'
+    return _qualified_table(config.data_schema, "accounts", "accounts")
+
+
+def _owner_summary_table(config: WorkerConfig) -> str:
+    return _qualified_table(config.data_schema, "owner_summary", "owner summary")
 
 
 def _raw_table(config: WorkerConfig) -> str:
-    return f'"{config.data_schema}"."dcad_json_raw"'
+    return _qualified_table(config.data_schema, "dcad_json_raw", "raw data")
 
 
 def _targets_table(config: WorkerConfig) -> str:
-    return f'"{config.state_schema}"."dcad_residential_targets"'
+    return _qualified_table(
+        config.state_schema, "dcad_residential_targets", "campaign targets"
+    )
 
 
 def _campaign_table(config: WorkerConfig) -> str:
-    return f'"{config.state_schema}"."dcad_residential_campaign"'
+    return _qualified_table(config.state_schema, "dcad_residential_campaign", "campaign")
 
 
 def _events_table(config: WorkerConfig) -> str:
-    return f'"{config.state_schema}"."dcad_campaign_events"'
+    return _qualified_table(
+        config.state_schema, "dcad_campaign_events", "campaign events"
+    )
 
 
 def _reconciliations_table(config: WorkerConfig) -> str:
-    return f'"{config.state_schema}"."dcad_account_reconciliations"'
+    return _qualified_table(
+        config.state_schema, "dcad_account_reconciliations", "reconciliations"
+    )
 
 
 def _owner_recovery_table(config: WorkerConfig) -> str:
-    return f'"{config.state_schema}"."dcad_owner_recovery_queue"'
+    return _qualified_table(
+        config.state_schema, "dcad_owner_recovery_queue", "owner recovery"
+    )
 
 
 def _field_repair_table(config: WorkerConfig) -> str:
-    return f'"{config.state_schema}"."dcad_field_repair_queue"'
+    return _qualified_table(
+        config.state_schema, "dcad_field_repair_queue", "field repair"
+    )
 
 
 def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
+    state_schema = _identifier(config.state_schema, "scrape state schema")
     state = _state_table(config)
     ddl = f"""
-        CREATE SCHEMA IF NOT EXISTS "{config.state_schema}";
+        CREATE SCHEMA IF NOT EXISTS "{state_schema}";
         CREATE TABLE IF NOT EXISTS {state} (
             account_id       text PRIMARY KEY,
             status           text NOT NULL DEFAULT 'pending',
@@ -739,12 +762,13 @@ def claim_next_owner_recovery(
 def owner_name_is_complete(
     engine: Engine, config: WorkerConfig, account_id: str
 ) -> bool:
+    owner_summary = _owner_summary_table(config)
     with engine.connect() as conn:
         owner_name = conn.execute(
             text(
                 f"""
                 SELECT owner_name
-                FROM \"{config.data_schema}\".\"owner_summary\"
+                FROM {owner_summary}
                 WHERE account_id = :account_id
                 ORDER BY tax_year DESC
                 LIMIT 1

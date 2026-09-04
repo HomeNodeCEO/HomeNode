@@ -14,7 +14,7 @@ export function createSalesReconciliationRouter({
   pool,
   salesReconciliationReady,
   locationBackfillReady,
-  requireEditor,
+  requirePlatformAdministrator,
   ensurePropertyContextAvailable,
   listQueue = listSalesReconciliationQueue,
   reconcileSourceRecord = reconcileSalesSourceRecord,
@@ -32,8 +32,8 @@ export function createSalesReconciliationRouter({
   if (!locationBackfillReady || typeof locationBackfillReady.then !== "function") {
     throw new TypeError("sales_reconciliation_location_readiness_required");
   }
-  if (typeof requireEditor !== "function") {
-    throw new TypeError("sales_reconciliation_editor_policy_required");
+  if (typeof requirePlatformAdministrator !== "function") {
+    throw new TypeError("sales_reconciliation_platform_admin_policy_required");
   }
   if (
     typeof ensurePropertyContextAvailable !== "function"
@@ -50,6 +50,7 @@ export function createSalesReconciliationRouter({
 
   /** Unmatched closed sales remain visible until a user verifies their CAD account. */
   router.get("/api/sales/reconciliation-queue", async (req, res) => {
+    if (!requirePlatformAdministrator(req, res)) return undefined;
     try {
       await salesReconciliationReady;
       const queue = await listQueue(pool, {
@@ -65,7 +66,7 @@ export function createSalesReconciliationRouter({
 
   /** Explicitly verify a sale-to-account link and upsert the canonical sale. */
   router.patch("/api/sales/:sourceRecordId/reconcile", async (req, res) => {
-    if (!requireEditor(req, res)) return undefined;
+    if (!requirePlatformAdministrator(req, res)) return undefined;
     try {
       await salesReconciliationReady;
       const result = await reconcileSourceRecord(

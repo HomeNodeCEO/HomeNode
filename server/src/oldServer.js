@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import pg from "pg";
+import { greatCircleDistanceMilesSql } from "./services/geospatialSql.js";
 import { TrestleClient } from "./services/trestleClient.js";
 import {
   assertNonDallasEnrichmentCounty,
@@ -295,29 +296,13 @@ const {
 });
 const {
   requireEditor,
+  requirePlatformAdministrator,
   requireCustomAssignmentAccess,
   requireWorkflowAccess,
 } = createApplicationAccessGuards({
   pool,
   authenticationRequired: applicationAuthenticationRequired,
 });
-
-function greatCircleDistanceMilesSql({
-  subjectLatitude,
-  subjectLongitude,
-  comparableLatitude,
-  comparableLongitude,
-}) {
-  return `3958.7613 * ACOS(
-    LEAST(1, GREATEST(-1,
-      COS(RADIANS(${subjectLatitude})) *
-      COS(RADIANS(${comparableLatitude})) *
-      COS(RADIANS(${comparableLongitude}) - RADIANS(${subjectLongitude})) +
-      SIN(RADIANS(${subjectLatitude})) *
-      SIN(RADIANS(${comparableLatitude}))
-    ))
-  )`;
-}
 
 app.use(createOperationalRouter({
   runtimeHealth,
@@ -435,13 +420,14 @@ app.use(createGeographyOperationsRouter({
   censusGeographyReady,
   accountQualityReady,
   requireEditor,
+  requirePlatformAdministrator,
 }));
 
 app.use(createSalesReconciliationRouter({
   pool,
   salesReconciliationReady,
   locationBackfillReady,
-  requireEditor,
+  requirePlatformAdministrator,
   ensurePropertyContextAvailable,
 }));
 

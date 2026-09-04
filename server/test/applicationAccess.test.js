@@ -5,6 +5,7 @@ import {
   buildApplicationSession,
   createOptionalApplicationAuthenticator,
   hasApplicationPermission,
+  hasApplicationRole,
 } from "../src/security/applicationAccess.js";
 
 const auth = Object.freeze({
@@ -23,6 +24,18 @@ test("unified workflow permissions are organization scoped", () => {
   assert.equal(hasApplicationPermission(auth, "property_tax_protest", "read", "org-1"), true);
   assert.equal(hasApplicationPermission(auth, "custom_appraisal", "write", "org-2"), false);
   assert.equal(hasApplicationPermission(auth, "custom_appraisal", "unknown", "org-1"), false);
+});
+
+test("application roles are derived only from authenticated organization memberships", () => {
+  const administrator = {
+    ...auth,
+    organizations: [{ organizationId: "org-1", roles: ["homenode_admin"] }],
+  };
+  assert.equal(hasApplicationRole(administrator, "homenode_admin"), true);
+  assert.equal(hasApplicationRole(administrator, "homenode_admin", "org-1"), true);
+  assert.equal(hasApplicationRole(administrator, "homenode_admin", "org-2"), false);
+  assert.equal(hasApplicationRole({ ...administrator, userId: "" }, "homenode_admin"), false);
+  assert.equal(hasApplicationRole({ ...administrator, homenode_admin: true }, "organization_admin"), false);
 });
 
 test("office assistants cannot sign and read-only users cannot write", () => {

@@ -41,11 +41,46 @@ function createGuards(overrides = {}) {
     authenticationRequired: true,
     environment: {},
     permissionChecker: () => false,
+    roleChecker: () => false,
     editorKeyChecker: () => false,
     assignmentAuthorizer: async () => {},
     ...overrides,
   });
 }
+
+test("platform operations require an authenticated HomeNode administrator", () => {
+  const observed = [];
+  const guards = createGuards({
+    roleChecker: (auth, role) => {
+      observed.push([auth.userId, role]);
+      return auth.userId === "platform-admin" && role === "homenode_admin";
+    },
+  });
+
+  assert.equal(guards.requirePlatformAdministrator(
+    createRequest({ mobileAuth: { userId: "platform-admin" } }),
+    createResponse(),
+  ), true);
+
+  const memberResponse = createResponse();
+  assert.equal(guards.requirePlatformAdministrator(
+    createRequest({ mobileAuth: { userId: "organization-admin" } }),
+    memberResponse,
+  ), false);
+  assert.equal(memberResponse.statusCode, 403);
+  assert.deepEqual(memberResponse.payload, { error: "application_access_denied" });
+  assert.equal(memberResponse.headers["cache-control"], "no-store");
+
+  const anonymousResponse = createResponse();
+  assert.equal(guards.requirePlatformAdministrator(createRequest(), anonymousResponse), false);
+  assert.equal(anonymousResponse.statusCode, 401);
+  assert.deepEqual(anonymousResponse.payload, { error: "authentication_required" });
+  assert.equal(anonymousResponse.headers["cache-control"], "no-store");
+  assert.deepEqual(observed, [
+    ["platform-admin", "homenode_admin"],
+    ["organization-admin", "homenode_admin"],
+  ]);
+});
 
 test("editor access accepts either authenticated writable workflow", () => {
   const checked = [];
@@ -317,7 +352,7 @@ test("the entrypoint composes shared guards once and removes inline copies", () 
   );
   assert.match(
     entrypoint,
-    /requireEditor,[\s\S]*?requireCustomAssignmentAccess,[\s\S]*?requireWorkflowAccess,/,
+    /requireEditor,[\s\S]*?requirePlatformAdministrator,[\s\S]*?requireCustomAssignmentAccess,[\s\S]*?requireWorkflowAccess,/,
   );
   assert.doesNotMatch(entrypoint, /function require(?:Editor|WorkflowAccess|CustomAssignmentAccess)/);
 });

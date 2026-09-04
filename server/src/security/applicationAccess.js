@@ -20,6 +20,15 @@ function memberships(auth) {
   return Array.isArray(auth?.organizations) ? auth.organizations : [];
 }
 
+export function hasApplicationRole(auth, role, organizationId = null) {
+  const requiredRole = String(role || "").trim();
+  if (!requiredRole || !String(auth?.userId || "").trim()) return false;
+  return memberships(auth).some((membership) => {
+    if (organizationId && membership?.organizationId !== organizationId) return false;
+    return Array.isArray(membership?.roles) && membership.roles.includes(requiredRole);
+  });
+}
+
 export function hasApplicationPermission(auth, workflow, permission, organizationId = null) {
   const allowed = WORKFLOW_PERMISSIONS[workflow]?.[permission];
   if (!allowed || !String(auth?.userId || "").trim()) return false;

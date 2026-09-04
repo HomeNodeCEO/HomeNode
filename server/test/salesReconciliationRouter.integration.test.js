@@ -11,7 +11,7 @@ function baseOptions(overrides = {}) {
     pool: { query: async () => ({ rows: [] }) },
     salesReconciliationReady: Promise.resolve(),
     locationBackfillReady: Promise.resolve(),
-    requireEditor: () => true,
+    requirePlatformAdministrator: () => true,
     ensurePropertyContextAvailable: async () => {},
     listQueue: async () => { throw new Error("unexpected_reconciliation_queue"); },
     reconcileSourceRecord: async () => { throw new Error("unexpected_reconciliation"); },
@@ -75,11 +75,11 @@ test("reconciliation queue forwards pagination and returns the service response"
   assert.deepEqual(calls, [{ pool: options.pool, input: { limit: "25", offset: "50" } }]);
 });
 
-test("reconciliation remains editor-gated before the primary write service", async (context) => {
+test("reconciliation remains platform-admin-gated before the primary write service", async (context) => {
   let reconcileCalls = 0;
   const server = await startRouter(baseOptions({
-    requireEditor(_req, res) {
-      res.status(403).json({ error: "editor_required" });
+    requirePlatformAdministrator(_req, res) {
+      res.status(403).json({ error: "platform_admin_required" });
       return false;
     },
     reconcileSourceRecord: async () => { reconcileCalls += 1; },
@@ -89,6 +89,22 @@ test("reconciliation remains editor-gated before the primary write service", asy
   const response = await reconcile(server.baseUrl, 55, { account_id: "ACCOUNT_1" });
   assert.equal(response.status, 403);
   assert.equal(reconcileCalls, 0);
+});
+
+test("reconciliation queue is platform-admin-gated before database access", async (context) => {
+  let listCalls = 0;
+  const server = await startRouter(baseOptions({
+    requirePlatformAdministrator(_req, res) {
+      res.status(403).json({ error: "platform_admin_required" });
+      return false;
+    },
+    listQueue: async () => { listCalls += 1; },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/sales/reconciliation-queue`);
+  assert.equal(response.status, 403);
+  assert.equal(listCalls, 0);
 });
 
 test("successful reconciliation preserves primary input and both durable queue requests", async (context) => {
@@ -234,8 +250,8 @@ test("sales reconciliation composition is explicit and inline handlers are absen
     /sales_reconciliation_pool_required/,
   );
   assert.throws(
-    () => createSalesReconciliationRouter(baseOptions({ requireEditor: null })),
-    /sales_reconciliation_editor_policy_required/,
+    () => createSalesReconciliationRouter(baseOptions({ requirePlatformAdministrator: null })),
+    /sales_reconciliation_platform_admin_policy_required/,
   );
   assert.throws(
     () => createSalesReconciliationRouter(baseOptions({ ensurePropertyContextAvailable: null })),

@@ -42,7 +42,7 @@ jobs:
         run: npm run --silent verify:redteam:artifact-resilience
       - name: Preserve sanitized artifact resilience evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: uad-redteam-artifact-resilience-${{ github.run_id }}
           path: server/uad-redteam-artifact-resilience

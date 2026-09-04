@@ -328,6 +328,7 @@ app.use(createAccountDetailRouter({
   censusGeographyReady,
   propertyEnrichmentReady,
   ensurePropertyContextAvailable,
+  authenticationRequired: applicationAuthenticationRequired,
 }));
 app.use(createAccountPhotosRouter({
   pool,

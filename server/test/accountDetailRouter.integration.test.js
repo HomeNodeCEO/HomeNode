@@ -34,6 +34,7 @@ function baseOptions(overrides = {}) {
     censusGeographyReady: Promise.resolve(),
     propertyEnrichmentReady: Promise.resolve(),
     ensurePropertyContextAvailable: async () => {},
+    authenticationRequired: false,
     resolveAccountId: async (_pool, value) => value.toUpperCase(),
     loadPropertyActivity: async () => [],
     loadDetailSections: async () => sections(),
@@ -44,8 +45,12 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options) {
+async function startRouter(options, { auth = null } = {}) {
   const app = express();
+  app.use((req, _res, next) => {
+    if (auth) req.mobileAuth = auth;
+    next();
+  });
   app.use(createAccountDetailRouter(options));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -157,6 +162,68 @@ test("account detail returns not found before launching optional loaders", async
   assert.equal(optionalCalls, 0);
 });
 
+test("enforced account detail rejects identities without an application read role before database access", async (context) => {
+  let queries = 0;
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool: {
+      async query() {
+        queries += 1;
+        return { rows: [] };
+      },
+    },
+  }), {
+    auth: {
+      userId: "user-no-role",
+      organizations: [{ organizationId: "org-1", roles: [] }],
+    },
+  });
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/123`);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "application_access_denied" });
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(queries, 0);
+});
+
+test("enforced account detail preserves property discovery but omits unscoped private overlays", async (context) => {
+  const queries = [];
+  let contextLoads = 0;
+  const account = { account_id: "123", address: "100 MAIN ST", county: "Dallas" };
+  const pool = {
+    async query(sql) {
+      queries.push(sql);
+      if (/FROM core\.accounts a/.test(sql)) return { rows: [account] };
+      if (/FROM core\.account_census_geographies/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected_query:${sql}`);
+    },
+  };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool,
+    loadPropertyContext: async () => {
+      contextLoads += 1;
+      return { assessment_id: "private-context" };
+    },
+  }), {
+    auth: {
+      userId: "user-appraiser",
+      organizations: [{ organizationId: "org-1", roles: ["appraiser"] }],
+    },
+  });
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/123`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.account.account_id, "123");
+  assert.deepEqual(body.report_manual_values, {});
+  assert.equal(body.property_context, null);
+  assert.equal(contextLoads, 0);
+  assert.equal(queries.some((sql) => /property_attribute_manual_values/.test(sql)), false);
+});
+
 test("optional account evidence failures preserve a bounded usable response", async (context) => {
   const warnings = [];
   const account = { account_id: "123", address: "100 MAIN ST" };
@@ -240,6 +307,10 @@ test("account detail composition fails fast for missing startup dependencies", (
   assert.throws(
     () => createAccountDetailRouter(baseOptions({ ensurePropertyContextAvailable: null })),
     /account_detail_context_readiness_required/,
+  );
+  assert.throws(
+    () => createAccountDetailRouter(baseOptions({ authenticationRequired: undefined })),
+    /account_detail_authentication_mode_required/,
   );
 });
 

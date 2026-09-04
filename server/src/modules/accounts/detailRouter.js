@@ -5,6 +5,10 @@ import { getAccountPropertyActivityHistory } from "../../services/accountSalesHi
 import { loadAccountDetailSections } from "../../services/accountDetailSections.js";
 import { ensureCensusGeographySchema } from "../../services/censusGeography.js";
 import { getStoredPropertyContext } from "../../services/propertyContext.js";
+import {
+  APPLICATION_WORKFLOWS,
+  hasApplicationPermission,
+} from "../../security/applicationAccess.js";
 
 function requirePromise(value, code) {
   if (!value || typeof value.then !== "function") throw new TypeError(code);
@@ -22,6 +26,8 @@ export function createAccountDetailRouter({
   censusGeographyReady,
   propertyEnrichmentReady,
   ensurePropertyContextAvailable,
+  authenticationRequired,
+  hasPermission = hasApplicationPermission,
   resolveAccountId = resolveCanonicalAccountId,
   loadPropertyActivity = getAccountPropertyActivityHistory,
   loadDetailSections = loadAccountDetailSections,
@@ -41,12 +47,31 @@ export function createAccountDetailRouter({
   requireFunction(loadDetailSections, "account_detail_section_loader_required");
   requireFunction(ensureCensusSchema, "account_detail_census_schema_required");
   requireFunction(loadPropertyContext, "account_detail_context_loader_required");
+  if (typeof authenticationRequired !== "boolean") {
+    throw new TypeError("account_detail_authentication_mode_required");
+  }
+  requireFunction(hasPermission, "account_detail_permission_policy_required");
 
   const router = express.Router();
 
   router.get("/api/accounts/:id", async (req, res) => {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "missing_id" });
+    if (authenticationRequired) {
+      if (!req.mobileAuth) {
+        return res.set("cache-control", "no-store")
+          .status(401)
+          .json({ error: "authentication_required" });
+      }
+      const mayReadApplication = APPLICATION_WORKFLOWS.some((workflow) => (
+        hasPermission(req.mobileAuth, workflow, "read")
+      ));
+      if (!mayReadApplication) {
+        return res.set("cache-control", "no-store")
+          .status(403)
+          .json({ error: "application_access_denied" });
+      }
+    }
     try {
       await accountQualityReady;
       const canonicalId = await resolveAccountId(pool, id);
@@ -125,7 +150,7 @@ export function createAccountDetailRouter({
         logger.warn?.("census geography lookup failed", error?.message || error);
         return null;
       });
-      const reportManualValuesPromise = (async () => {
+      const reportManualValuesPromise = authenticationRequired ? Promise.resolve({}) : (async () => {
         await propertyEnrichmentReady;
         const { rows } = await pool.query(
           `SELECT attribute_key, attribute_value, revision, reviewer, notes, updated_at
@@ -147,7 +172,7 @@ export function createAccountDetailRouter({
         logger.warn?.("report manual values lookup failed", error?.code || "unknown_error");
         return {};
       });
-      const propertyContextPromise = (async () => {
+      const propertyContextPromise = authenticationRequired ? Promise.resolve(null) : (async () => {
         await ensurePropertyContextAvailable();
         return loadPropertyContext(pool, { accountId: canonicalId });
       })().catch((error) => {

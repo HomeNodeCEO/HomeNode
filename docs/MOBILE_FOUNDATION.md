@@ -169,6 +169,13 @@ the verified bytes into the UAD workfile's immutable asset namespace, records
 the mobile photo and report-file provenance, and leaves the retained mobile
 source unchanged.
 
+Import retries are keyed to that provenance. Once a UAD asset is verified, an
+exact retry returns the existing canonical asset without downloading the
+mobile source object again and repairs a missing import audit event
+idempotently. A changed mobile revision, target section, entity, caption, file,
+or content type conflicts before object-storage I/O instead of being mistaken
+for the earlier request.
+
 An appraiser-confirmed mobile sketch can be imported into Section 7. HomeNode
 renders a UAD-safe PNG report image and persists the structured geometry,
 measurements, calculated areas, room labels, measurement method, confirmation

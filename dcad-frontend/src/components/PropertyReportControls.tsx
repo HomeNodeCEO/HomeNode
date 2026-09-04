@@ -80,7 +80,7 @@ export function SummarySection({
               </span>
             ) : null}
           </div>
-          {subtitle ? <p className="mt-1 text-xs text-slate-500">{subtitle}</p> : null}
+          {subtitle ? <p className="hn-custom-section-subtitle mt-1 text-xs">{subtitle}</p> : null}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {(!collapsible || expanded) && (actions || (onEdit ? (

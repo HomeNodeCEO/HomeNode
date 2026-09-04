@@ -143,19 +143,19 @@ export default function UadWorkspaceEntry() {
         )}
 
         <div className="mt-4 grid gap-2 md:grid-cols-3">
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="hn-subtle-panel rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Property type</div>
             <div className="mt-0.5 text-sm font-medium">
               {displayedPropertyType ? PROPERTY_TYPE_LABELS[displayedPropertyType] : "Loading property type…"}
             </div>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="hn-subtle-panel rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">UAD baseline</div>
             <div className="mt-0.5 break-words text-sm font-medium">
               {capabilities?.specification_release_key || "Loading specification…"}
             </div>
           </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <div className="hn-subtle-panel rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cloud assets</div>
             <div className="mt-0.5 text-sm font-medium">
               {capabilities?.object_storage.configured
@@ -195,8 +195,8 @@ export default function UadWorkspaceEntry() {
         )}
 
         {workfiles.length > 0 && (
-          <details className="group mt-4 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-            <summary className="cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
+          <details className="group hn-subtle-panel mt-4 overflow-hidden rounded-xl border">
+            <summary className="hn-action-secondary cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
               <span className="flex flex-wrap items-center justify-between gap-3">
                 <span>
                   <span className="block text-sm font-semibold text-slate-900">UAD workfiles for this subject</span>
@@ -211,9 +211,9 @@ export default function UadWorkspaceEntry() {
                 </span>
               </span>
             </summary>
-            <div className="space-y-3 border-t border-slate-200 bg-white p-3">
+            <div className="hn-subtle-panel space-y-3 border-t p-3">
               {workfiles.map((workfile) => (
-                <article className="rounded-xl border border-slate-200 bg-white p-4" key={workfile.id}>
+                <article className="hn-workspace-surface rounded-xl border p-4" key={workfile.id}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <div className="font-semibold">{workfile.file_number}</div>

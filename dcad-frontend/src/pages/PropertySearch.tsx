@@ -180,7 +180,7 @@ export default function PropertySearchPage() {
   }, [q, city]);
 
   return (
-    <div className="hn-app-shell" style={{ padding: 16, display: "grid", gap: 12 }}>
+    <div className="hn-app-shell hn-search-page" style={{ padding: 16, display: "grid", gap: 16 }}>
       <header className="hn-app-header rounded-2xl px-5 py-4">
         <img
           className="hn-home-logo"
@@ -214,7 +214,7 @@ export default function PropertySearchPage() {
                 }
               }}
               placeholder="e.g. 1909 SNOWMASS LN or a 17-character account ID"
-              className="input"
+              className="hn-search-input"
             />
           </Labeled>
         </div>
@@ -231,12 +231,12 @@ export default function PropertySearchPage() {
                 }
               }}
               placeholder="e.g. Duncanville"
-              className="input"
+              className="hn-search-input"
             />
           </Labeled>
         </div>
 
-        <button type="submit" disabled={loading} className="btn">
+        <button type="submit" disabled={loading} className="hn-action-primary btn">
           {loading ? "Searching…" : "Search"}
         </button>
       </form>
@@ -250,13 +250,7 @@ export default function PropertySearchPage() {
 
       {/* Results */}
       {!loading && !err && (
-        <div
-          style={{
-            display: "grid",
-            gap: 8,
-            gridTemplateColumns: "repeat(auto-fill, minmax(380px, 1fr))",
-          }}
-        >
+        <div className="hn-search-results">
           {results.map((r) => {
             // MOOLAH_TILE_RENDER_PATCH
             const mvRaw = r.raw?.latest_market_value;
@@ -283,7 +277,7 @@ export default function PropertySearchPage() {
                   event.preventDefault();
                   openReportChooser(r);
                 }}
-                className="hn-workspace-surface"
+                className="hn-workspace-surface hn-property-tile"
                 style={{
                   width: "100%",
                   textAlign: "left",
@@ -384,25 +378,6 @@ export default function PropertySearchPage() {
         onClose={() => setSelectedReportSubject(null)}
       />
 
-      <style>{`
-        .input {
-          width: 100%;
-          padding: 8px 10px;
-          border: 1px solid #d1d5db;
-          border-radius: 8px;
-          outline: none;
-        }
-        .input:focus { border-color: var(--hn-violet); box-shadow: 0 0 0 3px var(--hn-focus); }
-        .btn {
-          padding: 10px 14px;
-          border-radius: 10px;
-          border: 1px solid var(--hn-violet);
-          background: var(--hn-violet);
-          color: white;
-          cursor: pointer;
-        }
-        .btn:hover { filter: brightness(1.05); }
-      `}</style>
     </div>
   );
 }
@@ -410,7 +385,7 @@ export default function PropertySearchPage() {
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label style={{ display: "grid", gap: 4 }}>
-      <span style={{ fontSize: 12, opacity: 0.7 }}>{label}</span>
+      <span className="hn-search-label">{label}</span>
       {children}
     </label>
   );

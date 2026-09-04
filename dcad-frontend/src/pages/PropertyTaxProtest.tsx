@@ -326,7 +326,7 @@ export default function PropertyTaxProtest() {
               type="button"
               onClick={generateSummary}
               disabled={!canonicalFile}
-              className="rounded-md border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="hn-action-primary rounded-md border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
             >
               Generate Summary
             </button>
@@ -335,14 +335,14 @@ export default function PropertyTaxProtest() {
                 <button
                   type="button"
                   onClick={printSummary}
-                  className="rounded-md border border-slate-800 bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900"
+                  className="hn-action-gold rounded-md border px-4 py-2 text-sm font-semibold"
                 >
                   Print / Save PDF
                 </button>
                 <button
                   type="button"
                   onClick={() => navigator.clipboard?.writeText(summary)}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  className="hn-action-secondary rounded-md border px-3 py-2 text-sm"
                 >
                   Copy
                 </button>

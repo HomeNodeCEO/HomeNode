@@ -329,22 +329,22 @@ export default function SignUpForm() {
   return (
     <div className="hn-app-shell">
       <div className="max-w-6xl mx-auto p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="hn-app-header flex flex-wrap items-center justify-between gap-3 mb-3 rounded-2xl border px-5 py-4">
           <div>
             <h1 className="text-2xl font-semibold">Sign Up (No Upfront Cost)</h1>
             <div className="text-sm opacity-70">Fill and e‑sign the authorization form below.</div>
           </div>
-          <div className="flex items-center gap-2">
-            <Link to={accountId ? `/report/${encodeURIComponent(accountId)}` : '/'} className="btn px-4 py-2 rounded-md border">Back</Link>
-            <button className="btn px-4 py-2 rounded-md bg-emerald-600 border-emerald-600 text-white" onClick={() => setShowPad(true)}>Draw Signature</button>
-            <button className="btn px-4 py-2 rounded-md bg-blue-600 border-blue-600 text-white" onClick={submit} disabled={!sigUrl}>Submit Enrollment</button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to={accountId ? `/report/${encodeURIComponent(accountId)}` : '/'} className="hn-action-secondary btn px-4 py-2 rounded-md border">Back</Link>
+            <button className="hn-action-primary btn px-4 py-2 rounded-md" onClick={() => setShowPad(true)}>Draw Signature</button>
+            <button className="hn-action-gold btn px-4 py-2 rounded-md" onClick={submit} disabled={!sigUrl}>Submit Enrollment</button>
           </div>
         </div>
 
         {/* Embedded PDF viewer removed per requirement; the HTML form remains below */}
 
         {/* Combined outline wrapper for Steps 1–4 (and subsequent steps) */}
-        <div className="mt-4 bg-white border rounded-xl p-4">
+        <div className="hn-workspace-surface mt-4 border rounded-xl p-4">
 
         {/* HTML Overlay Form - Page 1 (now inside combined wrapper) */}
         <div className="">
@@ -557,7 +557,7 @@ export default function SignUpForm() {
         {/* Signature preview / upload */}
         <div className="mt-3 flex items-center gap-3">
           <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => setSigUrl(e.target.files?.[0] ? URL.createObjectURL(e.target.files[0]) : null)} />
-          <button className="px-3 py-2 rounded-md border" onClick={openFilePicker}>Upload Signature Image</button>
+          <button className="hn-action-secondary px-3 py-2 rounded-md border" onClick={openFilePicker}>Upload Signature Image</button>
           {sigUrl && (
             <div className="flex items-center gap-2">
               <div className="text-sm">Signature ready</div>
@@ -573,9 +573,9 @@ export default function SignUpForm() {
               <div className="font-semibold mb-2">Draw your signature</div>
               <canvas ref={canvasRef} width={520} height={180} className="border rounded" onMouseDown={start} onMouseMove={draw} onMouseUp={end} onMouseLeave={end} />
               <div className="mt-3 flex gap-2 justify-end">
-                <button className="px-3 py-2 rounded-md border" onClick={clearSig}>Clear</button>
-                <button className="px-3 py-2 rounded-md bg-slate-800 text-white" onClick={() => setShowPad(false)}>Cancel</button>
-                <button className="px-3 py-2 rounded-md bg-emerald-600 text-white" onClick={saveSig}>Save Signature</button>
+                <button className="hn-action-secondary px-3 py-2 rounded-md border" onClick={clearSig}>Clear</button>
+                <button className="hn-action-secondary px-3 py-2 rounded-md border" onClick={() => setShowPad(false)}>Cancel</button>
+                <button className="hn-action-primary px-3 py-2 rounded-md border" onClick={saveSig}>Save Signature</button>
               </div>
             </div>
           </div>

@@ -223,7 +223,7 @@ export default function UadCompletionSuggestionPanel({
   }
 
   if (loading && !document) {
-    return <div className="mb-5 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Checking for HomeNode completion suggestions…</div>;
+    return <div className="hn-subtle-panel mb-5 rounded-xl border p-4 text-sm text-slate-600">Checking for HomeNode completion suggestions…</div>;
   }
   if (!document && !error) return null;
 
@@ -238,7 +238,7 @@ export default function UadCompletionSuggestionPanel({
               : "Review-only values from the exact same assignment and subject snapshot. Nothing is selected automatically, and existing UAD values are never replaced by this action."}
           </p>
         </div>
-        <button className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800" onClick={() => setExpanded((value) => !value)} type="button">
+        <button className="hn-action-secondary rounded-lg border px-3 py-2 text-xs font-semibold" onClick={() => setExpanded((value) => !value)} type="button">
           {expanded ? "Hide suggestions" : `Review ${suggestions.length} suggestions`}
         </button>
       </div>
@@ -252,8 +252,8 @@ export default function UadCompletionSuggestionPanel({
             </p>
           )}
           <div className="flex flex-wrap gap-2">
-            <button className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50" disabled={!selectable.length || applying} onClick={() => { setSelected(selectable); setConfirmed(false); }} type="button">Select available</button>
-            <button className="rounded-lg border border-slate-400 bg-white px-3 py-2 text-xs font-semibold text-slate-900 disabled:opacity-50" disabled={!selected.length || applying} onClick={() => { setSelected([]); setConfirmed(false); }} type="button">Clear selection</button>
+            <button className="hn-action-secondary rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50" disabled={!selectable.length || applying} onClick={() => { setSelected(selectable); setConfirmed(false); }} type="button">Select available</button>
+            <button className="hn-action-secondary rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50" disabled={!selected.length || applying} onClick={() => { setSelected([]); setConfirmed(false); }} type="button">Clear selection</button>
           </div>
           <div className="grid gap-2 lg:grid-cols-2">
             {suggestions.map((item) => {
@@ -286,7 +286,7 @@ export default function UadCompletionSuggestionPanel({
             <input checked={confirmed} disabled={!selected.length || dirty || applying} onChange={(event) => setConfirmed(event.target.checked)} type="checkbox" />
             I reviewed the selected values and omissions and confirm that these suggestions may be added to this UAD workfile. Existing UAD values must be preserved.
           </label>
-          <button className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50" disabled={!selected.length || !confirmed || dirty || applying} onClick={() => void handleApply()} type="button">
+          <button className="hn-action-primary rounded-lg px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50" disabled={!selected.length || !confirmed || dirty || applying} onClick={() => void handleApply()} type="button">
             {applying ? "Applying reviewed suggestions…" : `Apply ${selected.length || "selected"} suggestion${selected.length === 1 ? "" : "s"}`}
           </button>
         </div>

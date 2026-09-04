@@ -239,17 +239,17 @@ export default function FinalReconciliation() {
   return (
     <main className="hn-app-shell px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
-        <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <header className="hn-app-header rounded-xl border p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="text-xs font-bold uppercase tracking-[0.18em] text-violet-700">Custom Appraisal</div>
+              <div className="hn-eyebrow text-xs font-bold uppercase tracking-[0.18em]">Custom Appraisal</div>
               <h1 className="mt-1 text-2xl font-bold">Final Reconciliation</h1>
               <p className="mt-1 text-slate-600">{detail.account.address || propertyId} · Parcel {detail.account.account_id}</p>
               <p className="text-sm text-slate-500">{assignmentFile ? `File ${assignmentFile.file_number}` : 'Create an appraisal file before saving.'}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <a className="btn normal-case rounded-md border-slate-900 bg-white text-slate-900" href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
-              <a className="btn normal-case rounded-md border-slate-900 bg-slate-900 text-white" href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${assignmentFile ? `&assignmentFileId=${assignmentFile.id}` : ''}`}>Full Report</a>
+              <a className="hn-action-secondary btn normal-case rounded-md" href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
+              <a className="hn-action-primary btn normal-case rounded-md" href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${assignmentFile ? `&assignmentFileId=${assignmentFile.id}` : ''}`}>Full Report</a>
             </div>
           </div>
         </header>
@@ -259,7 +259,7 @@ export default function FinalReconciliation() {
         {sourceChanged ? <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-950"><strong>Approach data changed.</strong> The calculation below uses the newest saved Sales, Income, and Cost indications. Review and save this reconciliation again before finalizing.</div> : null}
 
         <fieldset disabled={signed} className="contents">
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 className="text-lg font-bold">Approach Indications and Weight</h2>
@@ -293,13 +293,13 @@ export default function FinalReconciliation() {
               })}
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
-              <button type="button" className="btn btn-sm normal-case rounded-md border-slate-900 bg-slate-900 text-white" onClick={applySalesOnly}>100% Sales Comparison</button>
-              <button type="button" className="btn btn-sm normal-case rounded-md border-slate-400 bg-white text-slate-900" onClick={distributeAcrossDeveloped}>Distribute Across Developed</button>
+              <button type="button" className="hn-action-primary btn btn-sm normal-case rounded-md" onClick={applySalesOnly}>100% Sales Comparison</button>
+              <button type="button" className="hn-action-secondary btn btn-sm normal-case rounded-md" onClick={distributeAcrossDeveloped}>Distribute Across Developed</button>
               <div className={`ml-auto rounded-lg border px-4 py-2 text-sm font-bold ${Math.abs(draft.weight_total - 100) <= 0.01 ? 'border-emerald-300 bg-emerald-50 text-emerald-900' : 'border-red-300 bg-red-50 text-red-900'}`}>Total Weight: {draft.weight_total}%</div>
             </div>
           </section>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
             <h2 className="text-lg font-bold">Final Opinion of Value</h2>
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-lg bg-slate-100 p-4"><div className="text-xs font-bold uppercase text-slate-500">Weighted Indication</div><div className="mt-1 text-xl font-bold">{money(draft.calculated_weighted_value)}</div></div>
@@ -307,16 +307,16 @@ export default function FinalReconciliation() {
               <label className="grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Rounding Increment</span><input type="number" min="1" step="100" className="rounded-md border border-slate-300 px-3 py-2" value={draft.rounding_increment} onChange={(event) => update({ rounding_increment: Number(event.target.value) || 1000 })} /></label>
               <label className="grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Appraiser Concluded Value</span><input type="number" min="0" step="1000" className="rounded-md border border-slate-300 px-3 py-2 font-bold" value={draft.concluded_value_input ?? ''} placeholder={String(draft.rounded_weighted_value || '')} onChange={(event) => update({ concluded_value_input: event.target.value === '' ? null : Number(event.target.value) })} /></label>
             </div>
-            <div className="mt-5 rounded-xl border border-violet-300 bg-violet-950 p-5 text-white">
-              <div className="text-xs font-bold uppercase tracking-wide text-violet-200">Final Opinion of Value</div>
+            <div className="hn-app-header mt-5 rounded-xl border p-5">
+              <div className="hn-eyebrow text-xs font-bold uppercase tracking-wide">Final Opinion of Value</div>
               <div className="mt-1 text-4xl font-bold">{money(draft.final_value)}</div>
-              <div className="mt-2 text-sm text-violet-100">Variance from the calculated weighted indication: {draft.variance_from_weighted_percent.toFixed(2)}%</div>
+              <div className="mt-2 text-sm">Variance from the calculated weighted indication: {draft.variance_from_weighted_percent.toFixed(2)}%</div>
             </div>
             <label className="mt-5 grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Final Reconciliation Explanation</span><textarea rows={6} className="rounded-md border border-slate-300 p-3" value={draft.explanation || ''} onChange={(event) => update({ explanation: event.target.value })} placeholder="Explain the reliability and relative weight given to each developed approach and support the final conclusion." /></label>
             {Math.abs(draft.variance_from_weighted_percent) > 10 ? <label className="mt-4 grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-red-700">Material Variance Explanation Required</span><textarea rows={3} className="rounded-md border border-red-300 bg-red-50 p-3" value={draft.override_explanation || ''} onChange={(event) => update({ override_explanation: event.target.value })} placeholder="Explain why the final opinion differs from the weighted indication by more than 10%." /></label> : null}
           </section>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
             <h2 className="text-lg font-bold">Appraiser Certification</h2>
             <textarea rows={5} className="mt-3 w-full rounded-md border border-slate-300 p-3 text-sm" value={draft.certification} onChange={(event) => update({ certification: event.target.value })} />
             <label className="mt-4 flex items-start gap-3 rounded-lg border border-slate-300 bg-slate-50 p-4 text-sm">
@@ -333,7 +333,7 @@ export default function FinalReconciliation() {
               {errors.length ? <ul className="mt-2 list-disc pl-5 text-sm">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : <p className="text-sm">The final value and approach weighting are ready for the report and E&amp;O preflight.</p>}
               {message ? <p className="mt-2 text-sm font-semibold">{message}</p> : null}
             </div>
-            <button type="button" className="btn normal-case rounded-md border-slate-900 bg-slate-900 px-6 text-white" disabled={!assignmentFile || signed || saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save Final Reconciliation'}</button>
+            <button type="button" className="hn-action-primary btn normal-case rounded-md px-6" disabled={!assignmentFile || signed || saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save Final Reconciliation'}</button>
           </div>
         </section>
 

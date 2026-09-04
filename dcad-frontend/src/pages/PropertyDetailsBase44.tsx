@@ -105,8 +105,8 @@ export default function PropertyDetailsBase44() {
     <div className="hn-app-shell p-4 sm:p-6 lg:p-8">
       <div className="max-w-5xl mx-auto space-y-6">
         {/* Top bar */}
-        <div className="flex items-center justify-between">
-          <Link to="/" className="text-sm underline">
+        <div className="hn-app-header flex items-center justify-between rounded-2xl border px-5 py-4">
+          <Link to="/" className="hn-action-secondary rounded-md border px-3 py-2 text-sm">
             <ArrowLeft className="w-4 h-4 inline -mt-1 mr-1" />
             Back
           </Link>
@@ -115,18 +115,18 @@ export default function PropertyDetailsBase44() {
         </div>
 
         {/* Account + Refresh */}
-        <Card>
+        <Card className="hn-workspace-surface">
           <CardHeader className="grid gap-3 sm:grid-cols-[160px_1fr_auto] items-center">
             <label className="text-sm font-medium text-slate-700">Account ID</label>
             <Input value={property.account_number || ""} readOnly />
-            <Button onClick={loadFromMerged} disabled={loading || !property.account_number}>
+            <Button className="hn-action-primary" onClick={loadFromMerged} disabled={loading || !property.account_number}>
               {loading ? "Loading..." : "Refresh"}
             </Button>
           </CardHeader>
         </Card>
 
         {/* Hero card with photo + address + actions */}
-        <Card className="overflow-hidden shadow-lg rounded-[1%]">
+        <Card className="hn-workspace-surface overflow-hidden shadow-lg rounded-[1%]">
           <CardHeader className="p-0 relative">
             <img
               src={(property.photos && property.photos[currentImageIndex]) || "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?q=80&w=1974&auto=format&fit=crop"}
@@ -157,17 +157,17 @@ export default function PropertyDetailsBase44() {
                 </h2>
                 {/* jurisdiction chips (static examples; wire your tax modal later) */}
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  <Button variant="outline" size="sm" className="bg-blue-100 text-[#185fbc] hover:bg-blue-200 px-4 py-2 rounded-[10%]">
+                  <Button variant="outline" size="sm" className="hn-action-secondary px-4 py-2 rounded-[10%]">
                     <Bind value={property.county} fallback="Dallas" /> County
                   </Button>
-                  <Button variant="outline" size="sm" className="bg-blue-100 text-[#185fbc] hover:bg-blue-200 px-4 py-2 rounded-[10%]">Dallas ISD</Button>
-                  <Button variant="outline" size="sm" className="bg-blue-100 text-[#185fbc] hover:bg-blue-200 px-4 py-2 rounded-[10%]">City of Dallas</Button>
-                  <Button variant="outline" size="sm" className="bg-blue-100 text-[#185fbc] hover:bg-blue-200 px-4 py-2 rounded-[10%]">Parkland Hospital</Button>
+                  <Button variant="outline" size="sm" className="hn-action-secondary px-4 py-2 rounded-[10%]">Dallas ISD</Button>
+                  <Button variant="outline" size="sm" className="hn-action-secondary px-4 py-2 rounded-[10%]">City of Dallas</Button>
+                  <Button variant="outline" size="sm" className="hn-action-secondary px-4 py-2 rounded-[10%]">Parkland Hospital</Button>
                 </div>
               </div>
               <div className="flex gap-2">
-                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-[#ffffff] rounded-[10%] px-4 py-2">Change Log</Button>
-                <Button size="sm" className="bg-red-600 hover:bg-red-700 text-[#ffffff] rounded-[10%] px-4 py-2">Generate PDF
+                <Button size="sm" className="hn-action-secondary rounded-[10%] px-4 py-2">Change Log</Button>
+                <Button size="sm" className="hn-action-gold rounded-[10%] px-4 py-2">Generate PDF
                 </Button>
               </div>
             </div>
@@ -658,7 +658,7 @@ function SectionCard({
   hideHeader?: boolean;
 }) {
   return (
-    <Card className={`shadow-lg overflow-hidden ${className ?? ""}`}>
+    <Card className={`hn-workspace-surface shadow-lg overflow-hidden ${className ?? ""}`}>
       {!hideHeader && (
         <CardHeader className={`flex flex-row items-center justify-between ${className ?? ""}`}>
           <CardTitle>{title}</CardTitle>

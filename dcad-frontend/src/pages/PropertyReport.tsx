@@ -3564,7 +3564,7 @@ function AddressHero({
           </a>
         </div>
 
-        <div className="sticky bottom-3 z-30 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
+        <div className="hn-workspace-surface sticky bottom-3 z-30 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
           <div>
             <div className="text-xs font-semibold text-slate-800">Custom Appraisal file protection</div>
             <div className="mt-0.5 text-xs text-slate-600" aria-live="polite">

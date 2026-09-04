@@ -143,17 +143,17 @@ export default function CostApproach() {
   return (
     <main className="hn-app-shell px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
-        <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <header className="hn-app-header rounded-xl border p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-700">Custom Appraisal</div>
+              <div className="hn-eyebrow text-xs font-bold uppercase tracking-[0.18em]">Custom Appraisal</div>
               <h1 className="mt-1 text-2xl font-bold">Cost Approach</h1>
               <p className="mt-1 text-slate-600">{account.address || propertyId} · Parcel {account.account_id}</p>
               <p className="text-sm text-slate-500">{assignmentFile ? `File ${assignmentFile.file_number}` : 'Create an appraisal file before saving.'}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <a className="btn normal-case rounded-md border-slate-900 bg-white text-slate-900" href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
-              <a className="btn normal-case rounded-md border-slate-900 bg-slate-900 text-white" href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${assignmentFile ? `&assignmentFileId=${assignmentFile.id}` : ''}`}>Full Report</a>
+              <a className="hn-action-secondary btn normal-case rounded-md" href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
+              <a className="hn-action-primary btn normal-case rounded-md" href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${assignmentFile ? `&assignmentFileId=${assignmentFile.id}` : ''}`}>Full Report</a>
             </div>
           </div>
         </header>
@@ -162,7 +162,7 @@ export default function CostApproach() {
         {signed ? <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-emerald-950">This appraisal file is signed and immutable. The saved Cost Approach is read-only.</div> : null}
 
         <fieldset disabled={signed} className="contents">
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
           <h2 className="text-lg font-bold">Cost Source and Replacement Cost New</h2>
           <p className="mb-4 text-sm text-slate-500">Subject data are prefilled where available. Cost-source inputs remain appraiser-controlled.</p>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -176,7 +176,7 @@ export default function CostApproach() {
             <NumericField label="Dwelling Base Cost" prefix="$" value={draft.dwelling_base_cost} readOnly />
           </div>
 
-          <div className="mt-6 flex items-center justify-between"><h3 className="font-bold">Other Improvements</h3><button type="button" className="btn btn-sm normal-case rounded-md border-slate-900 bg-slate-900 text-white" onClick={addLine} disabled={signed}>Add Improvement</button></div>
+          <div className="mt-6 flex items-center justify-between"><h3 className="font-bold">Other Improvements</h3><button type="button" className="hn-action-primary btn btn-sm normal-case rounded-md" onClick={addLine} disabled={signed}>Add Improvement</button></div>
           <div className="mt-2 overflow-x-auto">
             <table className="w-full min-w-[760px] border-collapse text-sm">
               <thead><tr className="bg-slate-100 text-left text-xs uppercase text-slate-600"><th className="p-2">Description</th><th className="p-2">Quantity</th><th className="p-2">Unit</th><th className="p-2">Unit Cost</th><th className="p-2 text-right">Total</th><th className="p-2"></th></tr></thead>
@@ -198,7 +198,7 @@ export default function CostApproach() {
           </div>
         </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
           <h2 className="text-lg font-bold">Accrued Depreciation</h2>
           <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <NumericField label="Effective Age" value={draft.effective_age} onChange={(value) => update({ effective_age: value })} />
@@ -213,7 +213,7 @@ export default function CostApproach() {
           <div className="mt-4 grid gap-3 md:grid-cols-3"><div className="rounded-lg bg-slate-100 p-3"><div className="text-xs uppercase text-slate-500">Physical Depreciation</div><strong>{money(draft.physical_depreciation)}</strong></div><div className="rounded-lg bg-slate-100 p-3"><div className="text-xs uppercase text-slate-500">Total Depreciation</div><strong>{money(draft.total_depreciation)}</strong></div><div className="rounded-lg bg-emerald-50 p-3"><div className="text-xs uppercase text-emerald-700">Depreciated Improvements</div><strong>{money(draft.depreciated_improvement_value)}</strong></div></div>
         </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
           <h2 className="text-lg font-bold">Site and Cost Approach Indication</h2>
           <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <NumericField label="Site Value" prefix="$" value={draft.site_value} onChange={(value) => update({ site_value: value || 0 })} />
@@ -221,7 +221,7 @@ export default function CostApproach() {
             <NumericField label="Rounding Increment" prefix="$" value={draft.rounding_increment} onChange={(value) => update({ rounding_increment: value || 1_000 })} />
             <NumericField label="Reconciliation Weight %" value={draft.weight} onChange={(value) => update({ weight: value || 0 })} />
           </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2"><div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5"><div className="text-xs font-bold uppercase text-emerald-700">Calculated Indication</div><div className="text-3xl font-bold">{money(draft.indicated_value)}</div></div><div className="rounded-lg border border-slate-300 bg-slate-900 p-5 text-white"><div className="text-xs font-bold uppercase text-slate-300">Rounded Cost Approach</div><div className="text-3xl font-bold">{money(draft.rounded_indicated_value)}</div></div></div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2"><div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5"><div className="text-xs font-bold uppercase text-emerald-700">Calculated Indication</div><div className="text-3xl font-bold">{money(draft.indicated_value)}</div></div><div className="hn-app-header rounded-lg border p-5"><div className="hn-eyebrow text-xs font-bold uppercase">Rounded Cost Approach</div><div className="text-3xl font-bold">{money(draft.rounded_indicated_value)}</div></div></div>
           <label className="mt-5 grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Methodology and Support</span><textarea rows={5} className="rounded-md border border-slate-300 p-3" value={draft.methodology || ''} onChange={(e) => update({ methodology: e.target.value })} /></label>
           <label className="mt-4 grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Cost Approach Summary</span><textarea rows={3} className="rounded-md border border-slate-300 p-3" value={draft.summary || ''} onChange={(e) => update({ summary: e.target.value })} placeholder="Explain the final indication and relevance of the approach." /></label>
         </section>
@@ -230,7 +230,7 @@ export default function CostApproach() {
         <section className={`rounded-xl border p-5 ${errors.length ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div><h2 className="font-bold">{errors.length ? 'Cost Approach Draft — Review Required' : 'Cost Approach Ready'}</h2>{errors.length ? <ul className="mt-2 list-disc pl-5 text-sm">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : <p className="text-sm">The developed indication will populate the appraisal report and final reconciliation.</p>}{message ? <p className="mt-2 text-sm font-semibold">{message}</p> : null}</div>
-            <button type="button" className="btn normal-case rounded-md border-slate-900 bg-slate-900 px-6 text-white" disabled={!assignmentFile || signed || saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save Cost Approach'}</button>
+            <button type="button" className="hn-action-primary btn normal-case rounded-md px-6" disabled={!assignmentFile || signed || saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save Cost Approach'}</button>
           </div>
         </section>
 

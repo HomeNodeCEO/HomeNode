@@ -154,7 +154,7 @@ export default function SubjectConditionConformitySection({
         <button
           type="button"
           onClick={onSave}
-          className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+          className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
           disabled={saveDisabled}
         >
           {saving ? "Saving..." : "Save Condition & Conformity"}

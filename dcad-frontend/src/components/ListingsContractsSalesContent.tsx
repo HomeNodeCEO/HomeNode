@@ -274,7 +274,7 @@ export default function ListingsContractsSalesContent({
         ) : null}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
           <span className="text-xs text-slate-500">{assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}</span>
-          <button type="button" onClick={onSave} className="btn btn-primary btn-sm normal-case rounded-lg shadow-sm" disabled={assignmentSaveDisabled}>
+          <button type="button" onClick={onSave} className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm" disabled={assignmentSaveDisabled}>
             {savingAssignmentFile ? "Saving..." : "Save Contract Analysis"}
           </button>
         </div>

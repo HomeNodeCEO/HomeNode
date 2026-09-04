@@ -2014,7 +2014,7 @@ function AddressHero({
                       </button>
                       <button
                         type="button"
-                        className="btn btn-sm normal-case border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
+                        className="hn-action-secondary btn btn-sm normal-case"
                         onClick={() => void downloadCustomAppraisalPdf(file)}
                         disabled={Boolean(downloadInProgress)}
                       >
@@ -2035,7 +2035,7 @@ function AddressHero({
                       {isActiveFile && file.workfile?.status !== "signed" ? (
                         <button
                           type="button"
-                          className="btn btn-sm normal-case border-amber-600 bg-amber-600 text-white hover:bg-amber-700"
+                          className="hn-action-gold btn btn-sm normal-case"
                           onClick={() => void finalizeCustomAppraisalFile()}
                           disabled={savingAssignmentFile}
                         >
@@ -2309,7 +2309,7 @@ function AddressHero({
             </div>
             <button
               type="button"
-              className="btn btn-sm normal-case border-amber-300 bg-white text-slate-800 hover:border-amber-400 hover:bg-amber-100"
+              className="hn-action-secondary btn btn-sm normal-case"
               disabled={relatedParcelsLoading || !accountId}
               onClick={() => void refreshRelatedParcels()}
             >
@@ -2493,7 +2493,7 @@ function AddressHero({
                     ) : null}
                     <button
                       type="button"
-                      className="btn btn-ghost btn-xs -ml-2 mt-1 normal-case text-blue-700"
+                      className="btn btn-ghost btn-xs -ml-2 mt-1 normal-case"
                       onClick={() => void lookUpCensusTractNow()}
                       disabled={censusLookupLoading || !accountId}
                     >
@@ -3555,8 +3555,8 @@ function AddressHero({
             className={`btn normal-case rounded-md px-4 py-2 ${
               accountId
                 ? neighborhoodBoundaryErrors.length
-                  ? "border-amber-500 bg-amber-100 text-amber-950 hover:bg-amber-200"
-                  : "border-slate-900 bg-slate-900 text-white hover:border-slate-950 hover:bg-slate-950"
+                  ? "hn-action-gold"
+                  : "hn-action-primary"
                 : "pointer-events-none border-slate-200 bg-slate-200 text-slate-500"
             }`}
           >

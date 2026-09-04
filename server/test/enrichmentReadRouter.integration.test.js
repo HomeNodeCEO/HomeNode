@@ -26,6 +26,7 @@ function baseOptions(database, overrides = {}) {
     propertyEnrichmentReady: Promise.resolve(),
     trestleClient: { status: () => ({ configured: true, endpoint: "test" }) },
     getNonDallasAccount: async () => { throw new Error("unexpected_account_load"); },
+    requirePlatformAdministrator: () => true,
     supportedCounties: ["Collin", "Denton"],
     getGisConfiguration: () => ({ configured: false }),
     getReplicationStatus: async () => { throw new Error("unexpected_replication_status"); },
@@ -122,6 +123,31 @@ test("account enrichment validates identifiers before readiness and account look
   assert.equal(database.queries.length, 0);
 });
 
+test("account enrichment denies non-administrators before account or database access", async (context) => {
+  const database = createPool(async () => { throw new Error("unexpected_query"); });
+  let accountCalls = 0;
+  let authorizationCalls = 0;
+  const server = await startRouter(baseOptions(database, {
+    requirePlatformAdministrator(_req, res) {
+      authorizationCalls += 1;
+      res.set("cache-control", "no-store")
+        .status(403)
+        .json({ error: "application_access_denied" });
+      return false;
+    },
+    getNonDallasAccount: async () => { accountCalls += 1; return null; },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/A-1/enrichment`);
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { error: "application_access_denied" });
+  assert.equal(authorizationCalls, 1);
+  assert.equal(accountCalls, 0);
+  assert.equal(database.queries.length, 0);
+});
+
 test("account enrichment loads manual values, review flags, and GIS suggestions in parallel", async (context) => {
   const manualValues = [{ attribute_key: "living_area", revision: 2 }];
   const reviewQueue = [{ attribute_key: "year_built", status: "open" }];
@@ -195,6 +221,10 @@ test("enrichment read composition is explicit and inline routes are absent", () 
     () => createEnrichmentReadRouter(baseOptions(database, { getNonDallasAccount: null })),
     /enrichment_read_dependency_required/,
   );
+  assert.throws(
+    () => createEnrichmentReadRouter(baseOptions(database, { requirePlatformAdministrator: null })),
+    /enrichment_read_admin_policy_required/,
+  );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const ratings = source.indexOf("app.use(createAppraisalRatingsRouter(");
@@ -202,6 +232,10 @@ test("enrichment read composition is explicit and inline routes are absent", () 
   const verifiedWrite = source.indexOf("app.use(createEnrichmentMutationRouter(");
   assert.ok(enrichment > ratings);
   assert.ok(verifiedWrite > enrichment);
+  assert.match(
+    source,
+    /createEnrichmentReadRouter\(\{[\s\S]*?requirePlatformAdministrator,[\s\S]*?\}\)\)/,
+  );
   assert.equal(source.includes('app.get("/api/enrichment/status"'), false);
   assert.equal(source.includes('app.get("/api/accounts/:id/enrichment"'), false);
 });

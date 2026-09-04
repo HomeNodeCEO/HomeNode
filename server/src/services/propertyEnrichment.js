@@ -1,3 +1,17 @@
+import { assertNonDallasEnrichmentCounty } from "../util/nonDallasEnrichment.js";
+
+export async function getNonDallasAccount(client, accountId) {
+  const { rows } = await client.query(
+    "SELECT account_id, county FROM core.accounts WHERE account_id = $1",
+    [accountId],
+  );
+  if (!rows.length) return null;
+  return {
+    ...rows[0],
+    normalized_county: assertNonDallasEnrichmentCounty(rows[0].county),
+  };
+}
+
 export async function ensurePropertyEnrichmentSchema(pool) {
   await pool.query(`
     CREATE SCHEMA IF NOT EXISTS app;

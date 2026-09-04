@@ -6,9 +6,7 @@ import helmet from "helmet";
 import pg from "pg";
 import { greatCircleDistanceMilesSql } from "./services/geospatialSql.js";
 import { TrestleClient } from "./services/trestleClient.js";
-import {
-  assertNonDallasEnrichmentCounty,
-} from "./util/nonDallasEnrichment.js";
+import { getNonDallasAccount } from "./services/propertyEnrichment.js";
 import { createDocumentOcrProvider } from "./services/documentOcr.js";
 import {
   createCachedScraperStatusLoader,
@@ -446,23 +444,12 @@ app.use(createAppraisalRatingsRouter({
   requireEditor,
 }));
 
-async function getNonDallasAccount(client, accountId) {
-  const { rows } = await client.query(
-    `SELECT account_id, county FROM core.accounts WHERE account_id = $1`,
-    [accountId],
-  );
-  if (!rows.length) return null;
-  return {
-    ...rows[0],
-    normalized_county: assertNonDallasEnrichmentCounty(rows[0].county),
-  };
-}
-
 app.use(createEnrichmentReadRouter({
   pool,
   propertyEnrichmentReady,
   trestleClient,
   getNonDallasAccount,
+  requirePlatformAdministrator,
 }));
 
 app.use(createEnrichmentMutationRouter({

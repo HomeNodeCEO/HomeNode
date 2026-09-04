@@ -11,6 +11,7 @@ export function createEnrichmentReadRouter({
   propertyEnrichmentReady,
   trestleClient,
   getNonDallasAccount,
+  requirePlatformAdministrator,
   supportedCounties = NON_DALLAS_ENRICHMENT_COUNTIES,
   getGisConfiguration = countyGisConfiguration,
   getReplicationStatus = getTrestleReplicationStatus,
@@ -34,6 +35,9 @@ export function createEnrichmentReadRouter({
   }
   if (!Array.isArray(supportedCounties)) {
     throw new TypeError("enrichment_read_supported_counties_required");
+  }
+  if (typeof requirePlatformAdministrator !== "function") {
+    throw new TypeError("enrichment_read_admin_policy_required");
   }
 
   const router = express.Router();
@@ -66,6 +70,7 @@ export function createEnrichmentReadRouter({
     if (!ACCOUNT_ID_PATTERN.test(id)) {
       return res.status(400).json({ error: "invalid_account_id" });
     }
+    if (!requirePlatformAdministrator(req, res)) return undefined;
     try {
       await propertyEnrichmentReady;
       const account = await getNonDallasAccount(pool, id);
@@ -93,7 +98,7 @@ export function createEnrichmentReadRouter({
           [id],
         ),
       ]);
-      return res.json({
+      return res.set("cache-control", "no-store").json({
         account_id: id,
         county: account.normalized_county,
         manual_values: manualResult.rows,

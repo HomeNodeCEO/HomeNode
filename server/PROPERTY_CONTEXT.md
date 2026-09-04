@@ -24,7 +24,15 @@ source failed but does not delete the last successful local data. The API
 reports source freshness and the UI warns the appraiser when stale data is in
 use. Property reports, present-land-use analysis, and comparable search remain
 available from the last local snapshot. A full Dallas CAD refresh must return
-at least 100,000 object IDs before old records can be removed.
+at least 100,000 object IDs before old records can be removed. Every full
+refresh must also fetch, normalize, and write one valid feature for every
+advertised object ID before cleanup is allowed.
+
+Each source refresh holds a PostgreSQL advisory lock on one dedicated
+connection. A second invocation for the same source exits successfully with a
+bounded `property_context_sync_already_running` result instead of overlapping
+the active refresh. Checkpoint, success, and failure updates are bound to the
+active run ID so an older worker cannot replace a newer source status.
 
 Boundary land-use results are cached both in memory and in PostgreSQL. If the
 live fallback fails before the local mirror has been initialized, the most

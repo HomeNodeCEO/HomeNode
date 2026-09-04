@@ -3,6 +3,10 @@ import test from "node:test";
 
 import { MobileApi, ApiError } from "../src/api/client";
 import {
+  canUseCachedIdentityAfterMeFailure,
+  recoverCachedIdentityAfterMeFailure,
+} from "../src/auth/offlineAccessPolicy";
+import {
   canReplayAfterAuthenticationFailure,
   classifyRefreshFailure,
   type AccessTokenRequest,
@@ -26,6 +30,55 @@ test("only a confirmed invalid_grant terminally expires the mobile session", () 
     { confirmedTokenError: true },
   ), "temporary");
   assert.equal(classifyRefreshFailure(new TypeError("Network request failed")), "temporary");
+});
+
+test("cached identity fallback is limited to explicit temporary failures", () => {
+  assert.equal(canUseCachedIdentityAfterMeFailure(new ApiError(0, "network_request_failed")), true);
+  assert.equal(canUseCachedIdentityAfterMeFailure(new ApiError(408, "request_timeout")), true);
+  assert.equal(canUseCachedIdentityAfterMeFailure(new ApiError(429, "rate_limited")), true);
+  assert.equal(canUseCachedIdentityAfterMeFailure(new ApiError(503, "service_unavailable")), true);
+  assert.equal(canUseCachedIdentityAfterMeFailure({ code: "token_refresh_temporarily_unavailable" }), true);
+  assert.equal(canUseCachedIdentityAfterMeFailure(new ApiError(401, "authentication_required")), false);
+  assert.equal(canUseCachedIdentityAfterMeFailure(new ApiError(403, "mobile_identity_not_provisioned")), false);
+  assert.equal(canUseCachedIdentityAfterMeFailure(new Error("unexpected_failure")), false);
+});
+
+test("a definitive authorization denial locks cached access without deleting evidence", async () => {
+  const denial = new ApiError(403, "mobile_organization_membership_required");
+  let loadCalls = 0;
+  let lockCalls = 0;
+  await assert.rejects(recoverCachedIdentityAfterMeFailure(denial, {
+    loadCachedIdentity: async () => {
+      loadCalls += 1;
+      return { userId: "cached-user" };
+    },
+    lockCachedIdentity: async () => {
+      lockCalls += 1;
+    },
+  }), (reason: unknown) => reason === denial);
+  assert.equal(loadCalls, 0);
+  assert.equal(lockCalls, 1);
+});
+
+test("a temporary outage may recover the cached identity without locking it", async () => {
+  let loadCalls = 0;
+  let lockCalls = 0;
+  const cachedUser = { userId: "cached-user" };
+  const recovered = await recoverCachedIdentityAfterMeFailure(
+    new ApiError(503, "service_unavailable"),
+    {
+      loadCachedIdentity: async () => {
+        loadCalls += 1;
+        return cachedUser;
+      },
+      lockCachedIdentity: async () => {
+        lockCalls += 1;
+      },
+    },
+  );
+  assert.equal(recovered, cachedUser);
+  assert.equal(loadCalls, 1);
+  assert.equal(lockCalls, 0);
 });
 
 test("authentication replay is restricted to read-only methods", () => {

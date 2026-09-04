@@ -46,8 +46,12 @@ storage rather than being duplicated inside the JSON snapshot.
    must acknowledge. The server reruns the same checks while signing so a stale
    browser cannot bypass a new blocker or warning.
 6. The signed snapshot records the appraiser, exact acknowledged warning codes,
-   E&O evaluation, checksum, and immutable PDF. Later assignment/section/mobile
-   edits are rejected; corrections belong in a new appraisal file.
+   E&O evaluation, checksum, and immutable PDF. The browser retains one opaque
+   signature event ID until the server confirms success. An exact retry after a
+   timeout or reload is serialized in PostgreSQL and returns the original
+   committed snapshot and PDF; reusing the event for another assignment or
+   signer is rejected. Later assignment/section/mobile edits are rejected;
+   corrections belong in a new appraisal file.
 7. The Assignment Log can download either the current database draft or the
    immutable signed snapshot using its canonical filename.
 

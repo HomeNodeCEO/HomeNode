@@ -15,6 +15,7 @@ const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
 const MAX_SECTION_BYTES = 850_000;
 const READINESS_WARNING_CODE_PATTERN = /^[a-z][a-z0-9_]{1,95}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const schemaReadyByPool = new WeakMap();
 
 function jsonBytes(value) {
@@ -67,6 +68,14 @@ export function normalizeCustomAppraisalWarningCodes(value) {
   return [...new Set(codes)];
 }
 
+export function normalizeCustomAppraisalSignatureEventId(value = null) {
+  const eventId = String(value || randomUUID()).trim().toLowerCase();
+  if (!UUID_PATTERN.test(eventId)) {
+    throw new Error("invalid_custom_appraisal_signature_event");
+  }
+  return eventId;
+}
+
 function stableJson(value) {
   if (Array.isArray(value)) return value.map(stableJson);
   if (value && typeof value.toJSON === "function") return stableJson(value.toJSON());
@@ -93,11 +102,13 @@ export function customAppraisalSignatureHmac(signingSecretValue, input) {
 }
 
 export function verifyCustomAppraisalSignedSnapshot(row, signingSecretValue) {
-  if (!row?.signature_hmac_sha256) return true;
-  const snapshotChecksum = customAppraisalSnapshotChecksum(row.snapshot);
-  if (snapshotChecksum !== row.checksum_sha256) {
+  if (
+    row?.checksum_sha256
+    && customAppraisalSnapshotChecksum(row.snapshot) !== row.checksum_sha256
+  ) {
     throw new Error("custom_appraisal_signed_snapshot_integrity_failed");
   }
+  if (!row?.signature_hmac_sha256) return true;
   const expected = customAppraisalSignatureHmac(signingSecretValue, {
     signatureEventId: row.signature_event_id,
     organizationId: row.organization_id,
@@ -293,6 +304,20 @@ function workfileResponse(workfile, sections, signedSnapshot = null) {
       updated_by: section.updated_by,
       updated_at: section.updated_at,
     }])),
+  };
+}
+
+function signedWorkfileResponse(snapshot, checksum, artifact) {
+  return {
+    ...snapshot,
+    checksum_sha256: checksum,
+    report_pdf: {
+      canonical_file_name: artifact.canonical_file_name,
+      checksum_sha256: artifact.content_sha256,
+      page_count: Number(artifact.page_count),
+      byte_size: Number(artifact.byte_size),
+      generated_at: artifact.generated_at,
+    },
   };
 }
 
@@ -607,10 +632,7 @@ export async function signCustomAppraisalWorkfile(pool, {
   if (signerUserId && signingSecret.length < 32) {
     throw new Error("custom_appraisal_signing_secret_not_configured");
   }
-  const signatureEventId = String(signatureEventIdValue || randomUUID()).trim().toLowerCase();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(signatureEventId)) {
-    throw new Error("invalid_custom_appraisal_signature_event");
-  }
+  const signatureEventId = normalizeCustomAppraisalSignatureEventId(signatureEventIdValue);
   const signedFromIp = String(signedFromIpValue || "").trim().slice(0, 200) || null;
   const signedUserAgent = String(signedUserAgentValue || "").trim().slice(0, 1_000) || null;
   const acknowledgedWarningCodes = normalizeCustomAppraisalWarningCodes(
@@ -621,6 +643,52 @@ export async function signCustomAppraisalWorkfile(pool, {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+      [`homenode:custom-appraisal-signature:${signatureEventId}`],
+    );
+    const existingEventResult = await client.query(
+      `SELECT snapshot.id, snapshot.assignment_file_id, snapshot.snapshot,
+              snapshot.checksum_sha256, snapshot.signed_by,
+              snapshot.organization_id, snapshot.signed_by_user_id,
+              snapshot.signature_event_id, snapshot.signature_hmac_sha256,
+              snapshot.signed_at, assignment_file.account_id,
+              assignment_file.organization_id AS current_organization_id
+         FROM app.custom_appraisal_signed_snapshots snapshot
+         JOIN app.assignment_files assignment_file
+           ON assignment_file.id = snapshot.assignment_file_id
+        WHERE snapshot.signature_event_id = $1`,
+      [signatureEventId],
+    );
+    const existingEvent = existingEventResult.rows[0];
+    if (existingEvent) {
+      const sameSigner = signerUserId
+        ? String(existingEvent.signed_by_user_id || "") === String(signerUserId)
+        : !existingEvent.signed_by_user_id && existingEvent.signed_by === signedBy;
+      const sameRequest = Number(existingEvent.assignment_file_id) === Number(assignmentFileId)
+        && existingEvent.account_id === accountId
+        && String(existingEvent.organization_id || "")
+          === String(existingEvent.current_organization_id || "")
+        && sameSigner;
+      if (!sameRequest) {
+        throw new Error("custom_appraisal_signature_event_conflict");
+      }
+      verifyCustomAppraisalSignedSnapshot(existingEvent, signingSecret);
+      const artifact = await ensureSignedCustomAppraisalReportArtifact(client, {
+        accountId,
+        assignmentFileId,
+        snapshot: existingEvent.snapshot,
+        signedSnapshotId: existingEvent.id,
+        workfileChecksum: existingEvent.checksum_sha256,
+        objectStorage,
+      });
+      await client.query("COMMIT");
+      return signedWorkfileResponse(
+        existingEvent.snapshot,
+        existingEvent.checksum_sha256,
+        artifact,
+      );
+    }
     await ensureWorkfileRow(client, accountId, assignmentFileId);
     const metaResult = await client.query(
       `SELECT workfile.*, assignment_file.file_number,
@@ -746,18 +814,7 @@ export async function signCustomAppraisalWorkfile(pool, {
       objectStorage,
     });
     await client.query("COMMIT");
-    const reportPdf = {
-      canonical_file_name: artifact.canonical_file_name,
-      checksum_sha256: artifact.content_sha256,
-      page_count: Number(artifact.page_count),
-      byte_size: Number(artifact.byte_size),
-      generated_at: artifact.generated_at,
-    };
-    return {
-      ...snapshot,
-      checksum_sha256: checksum,
-      report_pdf: reportPdf,
-    };
+    return signedWorkfileResponse(snapshot, checksum, artifact);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

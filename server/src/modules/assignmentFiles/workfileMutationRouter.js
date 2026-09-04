@@ -138,6 +138,7 @@ export function createAssignmentWorkfileMutationRouter({
         assignmentFileId,
         signedBy: req.mobileAuth?.displayName || req.body?.signed_by || req.body?.reviewer,
         signerUserId: req.mobileAuth?.userId || null,
+        signatureEventId: req.body?.signature_event_id,
         signedFromIp: req.ip,
         signedUserAgent: req.get("user-agent"),
         signingSecret: getSigningSecret(),
@@ -149,7 +150,11 @@ export function createAssignmentWorkfileMutationRouter({
       if (error?.message === "assignment_file_not_found") {
         return res.status(404).json({ error: error.message });
       }
-      if (["custom_appraisal_workfile_signed", "custom_appraisal_workfile_empty"].includes(
+      if ([
+        "custom_appraisal_workfile_signed",
+        "custom_appraisal_workfile_empty",
+        "custom_appraisal_signature_event_conflict",
+      ].includes(
         error?.message,
       )) {
         return res.status(409).json({ error: error.message });

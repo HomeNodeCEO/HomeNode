@@ -282,6 +282,8 @@ export function createDesktopPropertyTaxRouter({
         {
           actorUserId: req.mobileAuth?.userId || null,
           actorLabel: req.mobileAuth?.displayName || req.mobileAuth?.email || null,
+          actorAuth: req.mobileAuth || null,
+          authorizationRequired: authenticationRequired,
         },
       );
       return res.json({ ok: true, file });
@@ -297,6 +299,9 @@ export function createDesktopPropertyTaxRouter({
       }
       if (error?.message === "property_tax_protest_file_not_found") {
         return res.status(404).json({ error: error.message });
+      }
+      if (error?.message === "property_tax_protest_access_denied") {
+        return res.status(403).json({ error: error.message });
       }
       if (String(error?.message || "").startsWith("invalid_")) {
         return res.status(400).json({ error: error.message });

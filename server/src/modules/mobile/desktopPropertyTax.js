@@ -5,6 +5,7 @@ import { mergePropertyTaxWorkfileUpdate } from "./propertyTaxWorkfile.js";
 import { activeRooms, sketchResponse } from "./sketches.js";
 import { canonicalJson } from "./sync.js";
 import { getReportEvidenceVersion } from "../../services/reportEvidenceVersion.js";
+import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -56,6 +57,37 @@ async function selectFile(queryable, accountId, fileId = null, {
     [accountId, fileId, organizationIds],
   );
   return result.rows[0] || null;
+}
+
+async function requireCurrentWriteAccess(client, row, actorAuth, actorUserId) {
+  if (!actorAuth || actorAuth.userId !== actorUserId) {
+    throw new Error("property_tax_protest_access_denied");
+  }
+  const { rows } = await client.query(
+    `SELECT membership_role.role_code
+       FROM app_auth.users app_user
+       JOIN app_auth.organization_memberships membership
+         ON membership.user_id = app_user.id
+       JOIN app_auth.membership_roles membership_role
+         ON membership_role.organization_id = membership.organization_id
+        AND membership_role.user_id = membership.user_id
+      WHERE app_user.id = $1
+        AND app_user.active = true
+        AND membership.organization_id = $2
+        AND membership.status = 'active'
+      FOR SHARE OF app_user, membership, membership_role`,
+    [actorUserId, row.organization_id],
+  );
+  const currentAuth = {
+    userId: actorUserId,
+    organizations: [{
+      organizationId: row.organization_id,
+      roles: [...new Set(rows.map(({ role_code: roleCode }) => roleCode))],
+    }],
+  };
+  if (!decideAssignmentAccess(currentAuth, row, "write")) {
+    throw new Error("property_tax_protest_access_denied");
+  }
 }
 
 export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValue = null, {
@@ -119,7 +151,12 @@ export async function saveDesktopPropertyTaxFile(
   accountIdValue,
   fileIdValue,
   input = {},
-  { actorUserId = null, actorLabel = null } = {},
+  {
+    actorUserId = null,
+    actorLabel = null,
+    actorAuth = null,
+    authorizationRequired = false,
+  } = {},
 ) {
   const accountId = normalizeAccountId(accountIdValue);
   const fileId = normalizeUuid(fileIdValue, "invalid_property_tax_protest_file_id");
@@ -159,6 +196,9 @@ export async function saveDesktopPropertyTaxFile(
     await client.query("BEGIN");
     const row = await selectFile(client, accountId, fileId, { lock: true });
     if (!row) throw new Error("property_tax_protest_file_not_found");
+    if (authorizationRequired) {
+      await requireCurrentWriteAccess(client, row, actorAuth, normalizedActorUserId);
+    }
     if (clientOperationId) {
       const prior = await client.query(
         `SELECT request_sha256, base_revision, applied_revision, result, actor_user_id

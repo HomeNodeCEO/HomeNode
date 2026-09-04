@@ -319,7 +319,12 @@ test("Property Tax saves authorize the existing file before preserving revision 
     accountId: "LEGACY_1",
     fileId: "file-1",
     input: body,
-    actor: { actorUserId: "user-1", actorLabel: "Taylor Appraiser" },
+    actor: {
+      actorUserId: "user-1",
+      actorLabel: "Taylor Appraiser",
+      actorAuth: identity,
+      authorizationRequired: true,
+    },
   });
 });
 
@@ -357,6 +362,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
         conflict: "property_tax_protest_revision_conflict",
         operation: "property_tax_protest_save_operation_conflict",
         missing: "property_tax_protest_file_not_found",
+        denied: "property_tax_protest_access_denied",
         invalid: "invalid_property_tax_protest_update",
         failed: "database_password=secret",
       };
@@ -372,6 +378,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
     ["conflict", 409, { error: "property_tax_protest_revision_conflict", current_revision: 9 }],
     ["operation", 409, { error: "property_tax_protest_save_operation_conflict" }],
     ["missing", 404, { error: "property_tax_protest_file_not_found" }],
+    ["denied", 403, { error: "property_tax_protest_access_denied" }],
     ["invalid", 400, { error: "invalid_property_tax_protest_update" }],
     ["failed", 500, { error: "property_tax_protest_save_failed" }],
   ]) {

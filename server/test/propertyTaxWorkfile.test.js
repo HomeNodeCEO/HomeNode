@@ -154,6 +154,9 @@ test("authenticated desktop saves record the server identity on every audit reco
     async query(sql, values = []) {
       calls.push({ sql, values });
       if (sql.includes("SELECT report_file.id")) return { rows: [row] };
+      if (sql.includes("FROM app_auth.users app_user")) {
+        return { rows: [{ role_code: "appraiser" }] };
+      }
       if (sql.includes("UPDATE app.tax_protest_files")) {
         return { rows: [{ ...row, revision: 2, status: "in_progress", workfile_data: JSON.parse(values[1]) }] };
       }
@@ -173,10 +176,20 @@ test("authenticated desktop saves record the server identity on every audit reco
       workfile_data: { subject: { condition_rating: "C3" } },
       reviewer: "Browser supplied identity",
     },
-    { actorUserId: ACTOR_ID, actorLabel: "Taylor Appraiser" },
+    {
+      actorUserId: ACTOR_ID,
+      actorLabel: "Taylor Appraiser",
+      actorAuth: { userId: ACTOR_ID },
+      authorizationRequired: true,
+    },
   );
 
+  const authorization = calls.find(({ sql }) => sql.includes("FROM app_auth.users app_user"));
+  assert.match(authorization.sql, /membership\.status = 'active'/);
+  assert.match(authorization.sql, /FOR SHARE OF app_user, membership, membership_role/);
+  assert.deepEqual(authorization.values, [ACTOR_ID, row.organization_id]);
   const update = calls.find(({ sql }) => sql.includes("UPDATE app.tax_protest_files"));
+  assert.ok(calls.indexOf(authorization) < calls.indexOf(update));
   assert.match(update.sql, /updated_by_user_id = \$4/);
   assert.equal(update.values[3], ACTOR_ID);
   const history = calls.find(({ sql }) => sql.includes("INSERT INTO app.tax_protest_file_history"));
@@ -192,6 +205,63 @@ test("authenticated desktop saves record the server identity on every audit reco
     reviewer: "Taylor Appraiser",
     authentication_mode: "authenticated",
   });
+});
+
+test("desktop Property Tax saves deny revoked membership or reassignment inside the transaction", async () => {
+  const baseRow = {
+    report_file_id: REPORT_ID,
+    registry_revision: 1,
+    is_current: true,
+    organization_id: "00000000-0000-4000-8000-000000000714",
+    tax_protest_file_id: FILE_ID,
+    account_id: "ACCOUNT-1",
+    file_number: "PT-2026-1",
+    previous_file_id: null,
+    workfile_data: {},
+    assigned_appraiser_user_id: ACTOR_ID,
+    status: "draft",
+    revision: 1,
+    completed_at: null,
+    created_at: new Date("2026-01-01T00:00:00Z"),
+    updated_at: new Date("2026-01-01T00:00:00Z"),
+  };
+
+  for (const scenario of [
+    { name: "revoked membership", row: baseRow, roles: [] },
+    {
+      name: "reassigned file",
+      row: { ...baseRow, assigned_appraiser_user_id: "00000000-0000-4000-8000-000000000799" },
+      roles: [{ role_code: "appraiser" }],
+    },
+  ]) {
+    const calls = [];
+    const client = {
+      async query(sql) {
+        calls.push(sql);
+        if (sql.includes("SELECT report_file.id")) return { rows: [scenario.row] };
+        if (sql.includes("FROM app_auth.users app_user")) return { rows: scenario.roles };
+        return { rows: [] };
+      },
+      release() {},
+    };
+    await assert.rejects(
+      saveDesktopPropertyTaxFile(
+        { connect: async () => client },
+        "ACCOUNT-1",
+        FILE_ID,
+        { expected_revision: 1, workfile_data: {} },
+        {
+          actorUserId: ACTOR_ID,
+          actorAuth: { userId: ACTOR_ID },
+          authorizationRequired: true,
+        },
+      ),
+      /property_tax_protest_access_denied/,
+      scenario.name,
+    );
+    assert.ok(calls.some((sql) => sql === "ROLLBACK"), scenario.name);
+    assert.equal(calls.some((sql) => sql.includes("UPDATE app.tax_protest_files")), false);
+  }
 });
 
 test("desktop Property Tax save retries do not create a second revision", async () => {

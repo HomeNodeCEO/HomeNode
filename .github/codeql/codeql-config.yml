@@ -9,6 +9,7 @@ paths:
   - dcad-frontend/src
   - dcad-frontend/scripts
   - homenode-mobile/src
+  - dcad-backend/app
   - dcad-scraper-with-api/scraper
   - dcad-scraper-with-api/tools
 

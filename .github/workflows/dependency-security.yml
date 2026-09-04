@@ -123,7 +123,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r "${{ matrix.requirements }}"
       - name: Compile active scraper and maintenance modules
         if: matrix.run_tests
-        run: python -m compileall -q dcad-scraper-with-api/scraper dcad-scraper-with-api/tools
+        run: python -m compileall -q dcad-backend/app dcad-scraper-with-api/scraper dcad-scraper-with-api/tools
       - name: Run scraper regression tests
         if: matrix.run_tests
         env:

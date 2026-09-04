@@ -76,11 +76,11 @@ function caughtErrorMessage(error: unknown) {
 }
 
 export default function SalesReconciliationQueue() {
-  const { required, session } = useApplicationAuth();
+  const { session } = useApplicationAuth();
   const authenticated = Boolean(session);
   const platformAdministrator = Boolean(session?.organizations.some((organization) =>
     organization.roles.includes("homenode_admin")));
-  const queueAccessible = !required || platformAdministrator;
+  const queueAccessible = platformAdministrator;
   const [queue, setQueue] = useState<SalesReconciliationQueueResponse | null>(null);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);

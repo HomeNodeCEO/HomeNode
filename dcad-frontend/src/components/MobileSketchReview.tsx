@@ -196,9 +196,12 @@ export default function MobileSketchReview({
     } catch (error: unknown) {
       const errorText = error instanceof Error
         ? error.message : "Sketch save failed";
-      setMessage(errorText.endsWith("sketch_revision_conflict")
+      setMessage(
+        errorText.endsWith("sketch_revision_conflict")
+        || errorText.endsWith("sketch_operation_conflict")
         ? "A newer sketch exists. Reload before saving."
-        : errorText.replaceAll("_", " "));
+        : errorText.replaceAll("_", " "),
+      );
     } finally {
       setSaving(false);
     }

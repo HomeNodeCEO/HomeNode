@@ -3,6 +3,9 @@ import {
   clearCustomAppraisalSignatureEventId,
   getOrCreateCustomAppraisalSignatureEventId,
 } from '@/lib/customAppraisalSigning';
+import {
+  withDesktopSketchSaveOperation,
+} from '@/lib/desktopSketchSaveOperation';
 import { createTimedRequestCache } from '@/lib/timedRequestCache';
 import type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
 export type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
@@ -3286,22 +3289,34 @@ export async function updateMobileInspectionSketch(
   report_registry_revision: number;
 }> {
   const id = (accountId || '').trim();
-  return fetchJSON(
-    makeUrl(
-      '/api/accounts/'
-        + encodeURIComponent(id)
-        + '/assignment-files/'
-        + encodeURIComponent(String(assignmentFileId))
-        + '/mobile-sketch',
-    ),
-    {
-      method: 'PATCH',
-      headers: {
-        'content-type': 'application/json',
-        'x-homenode-editor-key': editorKey,
+  return withDesktopSketchSaveOperation(
+    'custom-appraisal',
+    id,
+    assignmentFileId,
+    input.expected_revision,
+    (operationId) => fetchJSON<{
+      ok: true;
+      sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
+      report_registry_revision: number;
+    }>(
+      makeUrl(
+        '/api/accounts/'
+          + encodeURIComponent(id)
+          + '/assignment-files/'
+          + encodeURIComponent(String(assignmentFileId))
+          + '/mobile-sketch',
+      ),
+      {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json',
+          'x-homenode-editor-key': editorKey,
+        },
+        body: JSON.stringify({ ...input, client_operation_id: operationId }),
+        retryTransient: true,
       },
-      body: JSON.stringify(input),
-    },
+    ),
+    input.client_operation_id,
   );
 }
 
@@ -3312,23 +3327,32 @@ export async function updatePropertyTaxInspectionSketch(
   sketch: EditableInspectionSketch,
   document: EditableInspectionSketch['document'],
 ): Promise<EditableInspectionSketch> {
-  const response = await fetchJSON<{ sketch: EditableInspectionSketch }>(
-    makeUrl(
-      `/api/accounts/${encodeURIComponent(accountId)}`
-        + `/property-tax-protest/${encodeURIComponent(fileId)}/sketch`,
-    ),
-    {
-      method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        client_operation_id: globalThis.crypto.randomUUID(),
-        expected_revision: sketch.revision,
-        sketch: document,
-        reviewer: 'HomeNode appraiser',
-      }),
+  return withDesktopSketchSaveOperation(
+    'property-tax-protest',
+    accountId,
+    fileId,
+    sketch.revision,
+    async (operationId) => {
+      const response = await fetchJSON<{ sketch: EditableInspectionSketch }>(
+        makeUrl(
+          `/api/accounts/${encodeURIComponent(accountId)}`
+            + `/property-tax-protest/${encodeURIComponent(fileId)}/sketch`,
+        ),
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            client_operation_id: operationId,
+            expected_revision: sketch.revision,
+            sketch: document,
+            reviewer: 'HomeNode appraiser',
+          }),
+          retryTransient: true,
+        },
+      );
+      return response.sketch;
     },
   );
-  return response.sketch;
 }
 
 /** Load background coordinate coverage for matched sale accounts. */

@@ -16,6 +16,9 @@ canonical workflows stay separate:
 - Custom Appraisal continues to use `app.assignment_files`.
 - UAD 3.6 continues to use `appraisal.uad_workfiles` and its UAD-specific rules.
 - Property Tax Protest receives `app.tax_protest_files` and its own lifecycle.
+- Desktop Custom Appraisal and Property Tax sketch saves retain one client
+  operation UUID across uncertain network retries, matching the server's
+  transactional sketch-operation replay boundary.
 
 `app.report_files` is a typed registry over those three targets. Its database
 constraint requires exactly the target that matches the workflow type; it does

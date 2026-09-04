@@ -1,4 +1,9 @@
-import { listReportFiles, normalizeAccountId } from "./reportFiles.js";
+import {
+  buildMobileReportFileReadScope,
+  listReportFiles,
+  mobileReportFileReadAllowed,
+  normalizeAccountId,
+} from "./reportFiles.js";
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -59,21 +64,20 @@ function attachFile(property, row) {
   }
 }
 
-function organizationScope(auth) {
-  return {
-    organizationIds: auth.organizations.map((item) => item.organizationId),
-  };
-}
-
 export async function searchMobileProperties(pool, auth, { query: value, limit: limitValue } = {}) {
   const query = normalizePropertySearch(value);
   const limit = boundedLimit(limitValue);
-  const { organizationIds } = organizationScope(auth);
+  const readScope = buildMobileReportFileReadScope(auth);
   const { rows } = await pool.query(
     `WITH accessible_files AS (
        SELECT report_file.*
         FROM app.report_files report_file
-       WHERE report_file.organization_id = ANY($3::uuid[])
+       WHERE EXISTS (
+         SELECT 1
+           FROM unnest($3::uuid[], $4::text[]) AS allowed_scope(organization_id, workflow_type)
+          WHERE allowed_scope.organization_id = report_file.organization_id
+            AND allowed_scope.workflow_type = report_file.workflow_type
+       )
      ), matching_accounts AS (
        SELECT account.account_id, account.address, account.city, account.postal_code,
               account.county, account.neighborhood_code, account.subdivision,
@@ -103,21 +107,32 @@ export async function searchMobileProperties(pool, auth, { query: value, limit: 
                 AND file.file_number ILIKE $2 ESCAPE '\\'
            )
         ORDER BY match_rank, account.address NULLS LAST, account.account_id
-        LIMIT $4
+        LIMIT $5
      )
      SELECT matching_accounts.*,
-            file.id AS report_file_id, file.workflow_type, file.file_number,
+            file.id AS report_file_id, file.organization_id AS report_file_organization_id,
+            file.workflow_type, file.file_number,
             file.is_current, file.updated_at AS report_file_updated_at
        FROM matching_accounts
        LEFT JOIN accessible_files file ON file.account_id = matching_accounts.account_id
       ORDER BY matching_accounts.match_rank, matching_accounts.address NULLS LAST,
                matching_accounts.account_id, file.is_current DESC, file.updated_at DESC`,
-    [query, searchPattern(query), organizationIds, limit],
+    [
+      query,
+      searchPattern(query),
+      readScope.organizationIds,
+      readScope.workflowTypes,
+      limit,
+    ],
   );
   const properties = new Map();
   for (const row of rows) {
     const property = properties.get(row.account_id) || propertyFromRow(row);
-    attachFile(property, row);
+    if (!row.report_file_id || mobileReportFileReadAllowed(
+      readScope,
+      row.report_file_organization_id,
+      row.workflow_type,
+    )) attachFile(property, row);
     properties.set(row.account_id, property);
   }
   return Object.freeze({ query, results: [...properties.values()] });

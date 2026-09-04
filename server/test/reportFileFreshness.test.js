@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { listReportFiles } from "../src/modules/mobile/reportFiles.js";
+import {
+  buildMobileReportFileReadScope,
+  listReportFiles,
+} from "../src/modules/mobile/reportFiles.js";
 
 const organizationId = "11111111-1111-4111-8111-111111111111";
 
@@ -81,9 +84,63 @@ test("report-file discovery returns canonical activity time for every appraisal 
     ],
   );
   assert.equal(queryCalls.length, 1);
-  assert.deepEqual(queryCalls[0].params, ["10909-SNOWMASS", null, [organizationId], 365]);
+  assert.deepEqual(queryCalls[0].params, [
+    "10909-SNOWMASS",
+    null,
+    [organizationId, organizationId, organizationId],
+    ["custom_appraisal", "uad_3_6", "property_tax_protest"],
+    365,
+  ]);
   assert.match(queryCalls[0].sql, /GREATEST\([\s\S]*report_file\.updated_at[\s\S]*custom_assignment\.updated_at[\s\S]*custom_workfile\.updated_at[\s\S]*uad_workfile\.updated_at[\s\S]*tax_protest\.updated_at[\s\S]*\) AS activity_updated_at/);
+  assert.match(queryCalls[0].sql, /unnest\(\$3::uuid\[\], \$4::text\[\]\)/);
   assert.match(queryCalls[0].sql, /ORDER BY report_file\.is_current DESC, activity_updated_at DESC/);
+});
+
+test("report-file discovery requires workflow read roles in addition to organization membership", async () => {
+  const queryCalls = [];
+  const pool = {
+    async query(sql, params) {
+      queryCalls.push({ sql, params });
+      return {
+        rows: [row({
+          id: "81111111-1111-4111-8111-111111111111",
+          workflow_type: "custom_appraisal",
+          file_number: "CA-2026-0002",
+          custom_assignment_file_id: 102,
+          activity_updated_at: "2026-09-01T14:01:00.000Z",
+        })],
+      };
+    },
+  };
+  const membershipWithoutRole = {
+    userId: "71111111-1111-4111-8111-111111111111",
+    organizations: [{ organizationId, roles: [] }],
+  };
+  const denied = await listReportFiles(pool, membershipWithoutRole, {
+    accountId: "10909-SNOWMASS",
+  });
+  assert.deepEqual(denied.files, []);
+  assert.deepEqual(queryCalls[0].params, ["10909-SNOWMASS", null, [], [], 30]);
+
+  const readOnly = {
+    ...membershipWithoutRole,
+    organizations: [{ organizationId, roles: ["read_only"] }],
+  };
+  const scope = buildMobileReportFileReadScope(readOnly, "custom_appraisal");
+  assert.deepEqual(scope.organizationIds, [organizationId]);
+  assert.deepEqual(scope.workflowTypes, ["custom_appraisal"]);
+  const allowed = await listReportFiles(pool, readOnly, {
+    accountId: "10909-SNOWMASS",
+    workflowType: "custom_appraisal",
+  });
+  assert.equal(allowed.files.length, 1);
+  assert.deepEqual(queryCalls[1].params, [
+    "10909-SNOWMASS",
+    "custom_appraisal",
+    [organizationId],
+    ["custom_appraisal"],
+    30,
+  ]);
 });
 
 test("report-file discovery falls back to the registry clock for legacy callers", async () => {
@@ -100,7 +157,10 @@ test("report-file discovery falls back to the registry clock for legacy callers"
       };
     },
   };
-  const auth = { organizations: [{ organizationId, roles: ["appraiser"] }] };
+  const auth = {
+    userId: "71111111-1111-4111-8111-111111111111",
+    organizations: [{ organizationId, roles: ["appraiser"] }],
+  };
 
   const result = await listReportFiles(pool, auth, { accountId: "10909-SNOWMASS" });
 

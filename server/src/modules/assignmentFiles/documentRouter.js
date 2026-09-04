@@ -116,6 +116,11 @@ export function createAssignmentDocumentRouter({
     return true;
   }
 
+  function authenticatedReviewer(req) {
+    if (!req.mobileAuth) return req.body?.reviewer;
+    return req.mobileAuth.displayName || req.mobileAuth.email || req.mobileAuth.userId;
+  }
+
   /** List assignment PDFs and their machine-review status for a property file. */
   router.get("/api/accounts/:id/documents", async (req, res) => {
     const requestedId = String(req.params.id || "").trim();
@@ -301,10 +306,11 @@ export function createAssignmentDocumentRouter({
     if (!requireEditor(req, res)) return;
     try {
       await ensureAvailable();
-      if (!await requireDocumentAccess(req, res, req.params.id, "write")) return;
+      if (!await requireDocumentAccess(req, res, req.params.id, "sign")) return;
       const result = await confirmDespiteMismatch(pool, {
         documentId: req.params.id,
-        reviewer: req.body?.reviewer,
+        reviewer: authenticatedReviewer(req),
+        actorUserId: req.mobileAuth?.userId || null,
         reportSubjectAddress: req.body?.report_subject_address,
         candidateValues: req.body?.candidate_values,
       });

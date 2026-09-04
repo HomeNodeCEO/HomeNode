@@ -1549,6 +1549,7 @@ export async function confirmAssignmentDocumentCandidates(pool, {
 export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
   documentId,
   reviewer,
+  actorUserId,
   reportSubjectAddress,
   candidateValues = {},
 } = {}) {
@@ -1612,6 +1613,8 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
       subject_address_override: {
         acknowledged: true,
         reviewer: reviewerName,
+        reviewer_user_id: cleanText(actorUserId, 200) || null,
+        document_checksum_sha256: cleanText(sourceDocument.checksum_sha256, 128) || null,
         acknowledged_at: acknowledgedAt,
         reason: "Appraiser confirmed this engagement letter belongs to the open assignment despite the address comparison.",
         document_subject_address: cleanText(

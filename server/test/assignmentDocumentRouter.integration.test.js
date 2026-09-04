@@ -382,7 +382,7 @@ test("document review routes preserve exact appraiser decisions", async (context
     candidateValues: { client_name: "Client" },
   };
   assert.deepEqual(calls, [
-    ["override", pool, serviceInput],
+    ["override", pool, { ...serviceInput, actorUserId: null }],
     ["get", pool, 5],
     ["confirm", pool, serviceInput],
     ["get", pool, 5],
@@ -393,6 +393,75 @@ test("document review routes preserve exact appraiser decisions", async (context
       confirmedValue: "Client",
       reviewer: "Appraiser One",
     }],
+  ]);
+});
+
+test("subject mismatch override requires signing authority and ignores a forged reviewer", async (context) => {
+  const serviceInputs = [];
+  const accessChecks = [];
+  const pool = createPool(async () => ({ rows: [{
+    id: 5,
+    assignment_file_id: 7,
+    organization_id: "org-1",
+    assigned_appraiser_user_id: "appraiser-1",
+    supervisory_appraiser_user_id: null,
+  }] }));
+  const routerOptions = options({
+    pool,
+    authenticationRequired: true,
+    decideAccess: (auth, _assignment, permission) => {
+      accessChecks.push([auth.userId, permission]);
+      return auth.userId === "appraiser-1" && permission === "sign";
+    },
+    confirmDespiteMismatch: async (_pool, input) => {
+      serviceInputs.push(input);
+      return { document_id: 5 };
+    },
+    getDocument: async () => ({ id: 5 }),
+  });
+  const officeAssistant = await startRouter(
+    createAssignmentDocumentRouter(routerOptions),
+    { mobileAuth: { userId: "assistant-1", displayName: "Office Assistant" } },
+  );
+  context.after(officeAssistant.close);
+  const denied = await fetch(
+    `${officeAssistant.baseUrl}/api/documents/5/subject-address-override`,
+    jsonRequest("POST", {
+      reviewer: "Assigned Appraiser",
+      report_subject_address: "123 Main St",
+    }),
+  );
+  assert.equal(denied.status, 403);
+  assert.deepEqual(await denied.json(), { error: "assignment_document_access_denied" });
+  assert.equal(serviceInputs.length, 0);
+
+  const assignedAppraiser = await startRouter(
+    createAssignmentDocumentRouter(routerOptions),
+    { mobileAuth: {
+      userId: "appraiser-1",
+      displayName: "Authenticated Appraiser",
+      email: "appraiser@example.test",
+    } },
+  );
+  context.after(assignedAppraiser.close);
+  const allowed = await fetch(
+    `${assignedAppraiser.baseUrl}/api/documents/5/subject-address-override`,
+    jsonRequest("POST", {
+      reviewer: "Forged Reviewer",
+      report_subject_address: "123 Main St",
+    }),
+  );
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(serviceInputs, [{
+    documentId: "5",
+    reviewer: "Authenticated Appraiser",
+    actorUserId: "appraiser-1",
+    reportSubjectAddress: "123 Main St",
+    candidateValues: undefined,
+  }]);
+  assert.deepEqual(accessChecks, [
+    ["assistant-1", "sign"],
+    ["appraiser-1", "sign"],
   ]);
 });
 

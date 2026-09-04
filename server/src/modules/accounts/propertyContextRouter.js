@@ -19,18 +19,24 @@ function requirePool(pool) {
 export function createPropertyContextStatusRouter({
   pool,
   ensureAvailable,
+  requirePlatformAdministrator,
   getStatus = getPropertyContextStatus,
   logger = console,
 } = {}) {
   requirePool(pool);
-  if (typeof ensureAvailable !== "function" || typeof getStatus !== "function") {
+  if (
+    typeof ensureAvailable !== "function"
+    || typeof requirePlatformAdministrator !== "function"
+    || typeof getStatus !== "function"
+  ) {
     throw new TypeError("property_context_status_dependency_required");
   }
 
   const router = express.Router();
 
   /** Report local mirror freshness without contacting an external service. */
-  router.get("/api/property-context/status", async (_req, res) => {
+  router.get("/api/property-context/status", async (req, res) => {
+    if (!requirePlatformAdministrator(req, res)) return undefined;
     try {
       await ensureAvailable();
       return res.json(await getStatus(pool));
@@ -46,6 +52,9 @@ export function createPropertyContextStatusRouter({
 export function createAccountPropertyContextRouter({
   pool,
   ensureAvailable,
+  requireWorkflowAccess,
+  requireAssignmentAccess,
+  authenticationRequired,
   resolveAccountId = resolveCanonicalAccountId,
   normalizeFileId = normalizeAssignmentFileId,
   getStoredContext = getStoredPropertyContext,
@@ -57,6 +66,8 @@ export function createAccountPropertyContextRouter({
   requirePool(pool);
   const dependencies = [
     ensureAvailable,
+    requireWorkflowAccess,
+    requireAssignmentAccess,
     resolveAccountId,
     normalizeFileId,
     getStoredContext,
@@ -67,16 +78,27 @@ export function createAccountPropertyContextRouter({
   if (dependencies.some((dependency) => typeof dependency !== "function")) {
     throw new TypeError("account_property_context_dependency_required");
   }
+  if (typeof authenticationRequired !== "boolean") {
+    throw new TypeError("account_property_context_authentication_mode_required");
+  }
 
   const router = express.Router();
 
   /** Load the latest saved property-context and complexity assessment. */
   router.get("/api/accounts/:id/property-context", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return undefined;
     const requestedId = String(req.params.id || "").trim();
     try {
+      const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
+      if (authenticationRequired && !assignmentFileId) {
+        return res.status(400).json({ error: "assignment_file_required" });
+      }
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
-      const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
+      if (assignmentFileId
+          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "read")) {
+        return undefined;
+      }
       const assessment = await getStoredContext(pool, {
         accountId,
         assignmentFileId,
@@ -90,11 +112,19 @@ export function createAccountPropertyContextRouter({
 
   /** Analyze locally stored CAD, property-characteristic, and road data. */
   router.post("/api/accounts/:id/property-context/analyze", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return undefined;
     const requestedId = String(req.params.id || "").trim();
     try {
+      const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
+      if (authenticationRequired && !assignmentFileId) {
+        return res.status(400).json({ error: "assignment_file_required" });
+      }
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
-      const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
+      if (assignmentFileId
+          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "write")) {
+        return undefined;
+      }
       const assessment = await analyzeContext(pool, {
         accountId,
         assignmentFileId,
@@ -111,15 +141,29 @@ export function createAccountPropertyContextRouter({
 
   /** Save an appraiser confirmation or override without rewriting source data. */
   router.patch("/api/accounts/:id/property-context", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "sign")) return undefined;
     const requestedId = String(req.params.id || "").trim();
     try {
+      const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
+      if (authenticationRequired && !assignmentFileId) {
+        return res.status(400).json({ error: "assignment_file_required" });
+      }
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
-      const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
+      if (assignmentFileId
+          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "sign")) {
+        return undefined;
+      }
+      const review = authenticationRequired ? {
+        ...req.body,
+        reviewer: req.mobileAuth?.displayName
+          || req.mobileAuth?.email
+          || req.mobileAuth?.userId,
+      } : req.body;
       const assessment = await saveContextReview(pool, {
         accountId,
         assignmentFileId,
-        review: req.body,
+        review,
       });
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {

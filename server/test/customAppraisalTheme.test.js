@@ -13,7 +13,8 @@ test("Custom Appraisal sections share the HomeNode purple and gold selected-stat
 
   assert.match(css, /\.hn-custom-section\s*\{/);
   assert.match(css, /\.hn-custom-section-header-active\s*\{/);
-  assert.match(css, /linear-gradient\(100deg, var\(--hn-gold-soft\), var\(--hn-violet-soft\) 72%\)/);
+  assert.match(css, /linear-gradient\(118deg, var\(--hn-deep-purple\), #44305e\)/);
+  assert.match(css, /\.hn-custom-section-title \{ color: var\(--hn-champagne\) !important; \}/);
   assert.match(css, /\.hn-custom-selection\s*\{/);
   assert.match(controls, /hn-custom-section-active/);
   assert.match(controls, /hn-custom-section-header-active/);
@@ -64,7 +65,7 @@ test("the Custom Appraisal editor and print output retain legible themed surface
   assert.match(css, /@media print[\s\S]*\.hn-custom-section-header-active/);
 });
 
-test("dark purple headers and actions keep white text in every interaction state", () => {
+test("dark headers and actions keep champagne text without overriding session status colors", () => {
   const css = read("../../dcad-frontend/src/index.css");
   const report = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
   const photos = read("../../dcad-frontend/src/components/AssignmentPhotoCenter.tsx");
@@ -72,10 +73,10 @@ test("dark purple headers and actions keep white text in every interaction state
   const history = read("../../dcad-frontend/src/components/PreviousAppraisalFiles.tsx");
   const uadEditor = read("../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx");
 
-  assert.match(css, /\.hn-app-header :where\([^)]*strong[^)]*\) \{ color: inherit !important; \}/);
-  assert.match(css, /\.hn-action-primary:hover:not\(:disabled\)[\s\S]*color: #fff !important;/);
+  assert.match(css, /\.hn-app-header:not\(aside\) :where\([^)]*strong[^)]*\) \{ color: inherit !important; \}/);
+  assert.match(css, /\.hn-action-primary:hover:not\(:disabled\)[\s\S]*color: #fffdf6 !important;/);
   assert.match(css, /\.hn-action-primary :where\([^)]*span[^)]*\) \{ color: inherit !important; \}/);
-  assert.match(css, /\.hn-custom-file-status[\s\S]*color: #fff !important;/);
+  assert.match(css, /\.hn-custom-file-status[\s\S]*color: var\(--hn-champagne\) !important;/);
   assert.match(report, /hn-custom-file-status/);
   assert.match(uadEditor, /hn-app-header[\s\S]*editor\.workfile\.file_number/);
 
@@ -84,12 +85,12 @@ test("dark purple headers and actions keep white text in every interaction state
   }
 });
 
-test("Custom Appraisal section headers animate their gradient only on hover", () => {
+test("Custom Appraisal headers remain still while reduced-motion and print rules protect readability", () => {
   const css = read("../../dcad-frontend/src/index.css");
 
-  assert.match(css, /@keyframes hn-custom-gradient-flow/);
-  assert.match(css, /\.hn-custom-section-header:hover[\s\S]*background-size: 200% 100%/);
-  assert.match(css, /\.hn-custom-section-header:hover[\s\S]*animation: hn-custom-gradient-flow 2\.2s linear infinite/);
+  assert.doesNotMatch(css, /hn-custom-gradient-flow/);
+  assert.match(css, /\.hn-custom-section-header:hover[\s\S]*border-left-color: var\(--hn-gold\)/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*animation: none/);
   assert.match(css, /@media print[\s\S]*animation: none !important/);
+  assert.match(css, /@media print[\s\S]*\.hn-custom-section-header \.hn-custom-verified\s*\{\s*color: #000 !important;/);
 });

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { deflateSync } from "node:zlib";
+import PDFDocument from "pdfkit";
 
 import { createUadAssetUpload, verifyUadAssetUpload } from "../src/modules/uad/assets.js";
 import { buildDeterministicZip } from "../src/modules/uad/uadDeliveryPackage.js";
-import { inspectUadAssetPayload } from "../src/modules/uad/uadFileSecurity.js";
+import { inspectUadAssetPayload, inspectUadPdfSafety } from "../src/modules/uad/uadFileSecurity.js";
 import { validateUadSubschema } from "../src/modules/uad/uadSubschema.js";
 import { runUadArtifactSecurityChecks } from "../src/modules/uad/uadArtifactSecurity.js";
 
@@ -14,6 +16,73 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+
+async function staticPdf() {
+  return new Promise((resolve, reject) => {
+    const document = new PDFDocument({ compress: true, info: { Title: "Static measurement source" } });
+    const chunks = [];
+    document.on("data", (chunk) => chunks.push(chunk));
+    document.on("error", reject);
+    document.on("end", () => resolve(Buffer.concat(chunks)));
+    document.text("Static measurement source");
+    document.end();
+  });
+}
+
+function compressedActivePdf() {
+  const chunks = [Buffer.from("%PDF-1.7\n%\x80\x81\x82\x83\n", "latin1")];
+  const offsets = new Map();
+  let length = chunks[0].length;
+  const append = (value) => {
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value, "latin1");
+    chunks.push(chunk);
+    length += chunk.length;
+  };
+  const appendObject = (number, body) => {
+    offsets.set(number, length);
+    append(`${number} 0 obj\n`);
+    append(body);
+    append("\nendobj\n");
+  };
+
+  appendObject(2, "<< /Type /Pages /Count 1 /Kids [3 0 R] >>");
+  appendObject(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>");
+
+  const catalog = "<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R >>";
+  const action = "<< /S /JavaScript /JS (app.alert\\(1\\)) >>";
+  const objectHeader = `1 0 4 ${Buffer.byteLength(catalog, "latin1") + 1} `;
+  const objectStream = deflateSync(Buffer.from(`${objectHeader}${catalog} ${action}`, "latin1"));
+  appendObject(5, Buffer.concat([
+    Buffer.from(`<< /Type /ObjStm /N 2 /First ${Buffer.byteLength(objectHeader)} /Length ${objectStream.length} /Filter /FlateDecode >>\nstream\n`, "latin1"),
+    objectStream,
+    Buffer.from("\nendstream", "latin1"),
+  ]));
+
+  const xrefOffset = length;
+  const xrefEntry = (type, field2, field3) => {
+    const entry = Buffer.alloc(7);
+    entry.writeUInt8(type, 0);
+    entry.writeUInt32BE(field2, 1);
+    entry.writeUInt16BE(field3, 5);
+    return entry;
+  };
+  const xref = deflateSync(Buffer.concat([
+    xrefEntry(0, 0, 65_535),
+    xrefEntry(2, 5, 0),
+    xrefEntry(1, offsets.get(2), 0),
+    xrefEntry(1, offsets.get(3), 0),
+    xrefEntry(2, 5, 1),
+    xrefEntry(1, offsets.get(5), 0),
+    xrefEntry(1, xrefOffset, 0),
+  ]));
+  appendObject(6, Buffer.concat([
+    Buffer.from(`<< /Type /XRef /Size 7 /Root 1 0 R /W [1 4 2] /Length ${xref.length} /Filter /FlateDecode >>\nstream\n`, "latin1"),
+    xref,
+    Buffer.from("\nendstream", "latin1"),
+  ]));
+  append(`startxref\n${xrefOffset}\n%%EOF\n`);
+  return Buffer.concat(chunks);
+}
 
 function assetRow(overrides = {}) {
   return {
@@ -48,9 +117,25 @@ test("verified asset inspection rejects MIME spoofing, unsafe PDFs, and image bo
     () => inspectUadAssetPayload(Buffer.from("%PDF-1.7\n1 0 obj <</OpenAction 2 0 R>>", "ascii"), "application/pdf"),
     /pdf_active_content/,
   );
+  assert.throws(
+    () => inspectUadAssetPayload(Buffer.from("%PDF-1.7\n1 0 obj <</Open#41ction 2 0 R>>", "ascii"), "application/pdf"),
+    /pdf_active_content/,
+  );
   const oversizedDimensions = Buffer.from(PNG);
   oversizedDimensions.writeUInt32BE(20_001, 16);
   assert.throws(() => inspectUadAssetPayload(oversizedDimensions, "image/png"), /image_dimensions/);
+});
+
+test("parser-aware PDF inspection accepts static documents and rejects malformed structures", async () => {
+  await inspectUadPdfSafety(await staticPdf());
+  await assert.rejects(
+    () => inspectUadPdfSafety(compressedActivePdf()),
+    /pdf_active_content/,
+  );
+  await assert.rejects(
+    () => inspectUadPdfSafety(Buffer.from("%PDF-1.7\nnot-a-valid-pdf", "ascii")),
+    /pdf_structure/,
+  );
 });
 
 test("new UAD uploads reject active SVG documents before issuing a storage URL", async () => {
@@ -126,6 +211,43 @@ test("asset verification rejects and removes a same-size MIME-spoofed upload", a
     putObject: async () => assert.fail("spoofed bytes must never be copied"),
     deleteObject: async ({ objectKey }) => deleted.push(objectKey),
   };
+  await assert.rejects(
+    () => verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID),
+    /invalid_uad_uploaded_asset/,
+  );
+  assert.equal(rejected, true);
+  assert.deepEqual(deleted, [source.object_key]);
+});
+
+test("asset verification rejects and removes structurally invalid PDF bytes", async () => {
+  const malformed = Buffer.from("%PDF-1.7\nnot-a-valid-pdf", "ascii");
+  const source = assetRow({
+    status: "pending_upload",
+    byte_size: null,
+    content_type: "application/pdf",
+    original_file_name: "probe.pdf",
+    object_key: `organizations/${ORGANIZATION_ID}/uad/${WORKFILE_ID}/assets/${ASSET_ID}/probe.pdf`,
+    capture_metadata: { expected_byte_size: malformed.length },
+  });
+  let rejected = false;
+  const pool = {
+    async query(sql) {
+      if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
+      if (/SET status = 'rejected'/.test(sql)) {
+        rejected = true;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected_query:${sql}`);
+    },
+  };
+  const deleted = [];
+  const storage = {
+    inspectObject: async () => ({ byte_size: malformed.length, content_type: "application/pdf" }),
+    getObject: async () => ({ body: malformed, byte_size: malformed.length, content_type: "application/pdf" }),
+    putObject: async () => assert.fail("invalid PDF bytes must never be copied"),
+    deleteObject: async ({ objectKey }) => deleted.push(objectKey),
+  };
+
   await assert.rejects(
     () => verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID),
     /invalid_uad_uploaded_asset/,

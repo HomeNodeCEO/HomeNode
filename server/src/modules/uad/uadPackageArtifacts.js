@@ -13,7 +13,7 @@ import {
   writeDeterministicZipToFile,
 } from "./uadDeliveryPackage.js";
 import { buildUadValidationInputDigest } from "./validation.js";
-import { inspectUadAssetPayload } from "./uadFileSecurity.js";
+import { inspectUadAssetPayload, inspectUadPdfSafety } from "./uadFileSecurity.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { runUadArtifactOperation } from "./uadArtifactExecution.js";
 
@@ -261,7 +261,9 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
         Math.min(MAX_PACKAGE_BYTES, Number(entry.byte_size || MAX_PACKAGE_BYTES)),
       );
       try {
-        inspectUadAssetPayload(await readFile(downloaded.file_path), entry.content_type);
+        const body = await readFile(downloaded.file_path);
+        const inspected = inspectUadAssetPayload(body, entry.content_type);
+        if (inspected.content_type === "application/pdf") await inspectUadPdfSafety(body);
       } catch {
         throw new Error("uad_package_asset_payload_invalid");
       }

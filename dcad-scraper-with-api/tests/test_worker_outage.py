@@ -110,7 +110,7 @@ class OutageCircuitDecisionTests(unittest.TestCase):
             config = WorkerConfig.from_env()
         self.assertEqual(config.outage_failure_threshold, 5)
         self.assertEqual(config.outage_pause_seconds, 300)
-        self.assertEqual(config.field_repair_every_accounts, 100)
+        self.assertEqual(config.field_repair_every_accounts, 5)
 
         with patch.dict(
             os.environ,

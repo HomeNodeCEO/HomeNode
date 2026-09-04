@@ -159,6 +159,41 @@ test("R2 file downloads and uploads stream through disk with exact size and chec
   }
 });
 
+test("R2 file upload retries rewind the already-validated file handle", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "uad-r2-retry-test-"));
+  try {
+    const uploadPath = path.join(directory, "upload.bin");
+    const expected = Buffer.from("retryable-streamed-uad-package");
+    await writeFile(uploadPath, expected);
+    const attempts = [];
+    const storage = createUadObjectStorage(ENVIRONMENT, {
+      sleep: async () => undefined,
+      fetchImpl: async (_url, init) => {
+        let uploaded = Buffer.alloc(0);
+        for await (const chunk of init.body) uploaded = Buffer.concat([uploaded, chunk]);
+        attempts.push(uploaded);
+        return attempts.length === 1
+          ? new Response(null, { status: 503 })
+          : new Response(null, { status: 200, headers: { etag: '"retried"' } });
+      },
+    });
+
+    const result = await storage.putFile({
+      objectKey: "private/upload.zip",
+      contentType: "application/zip",
+      filePath: uploadPath,
+      byteSize: expected.length,
+    });
+
+    assert.equal(attempts.length, 2);
+    assert.deepEqual(attempts[0], expected);
+    assert.deepEqual(attempts[1], expected);
+    assert.equal(result.etag, '"retried"');
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("R2 disk operations reject paths outside the process temporary directory", async () => {
   const storage = createUadObjectStorage(ENVIRONMENT, {
     fetchImpl: async () => {

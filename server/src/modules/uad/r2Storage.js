@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { realpath, rm, stat } from "node:fs/promises";
+import { constants, createWriteStream } from "node:fs";
+import { open, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -36,6 +36,31 @@ function temporaryFilePath(value) {
 
 async function existingTemporaryFilePath(value) {
   return temporaryFilePath(await realpath(temporaryFilePath(value)));
+}
+
+async function openExistingTemporaryFile(value) {
+  let fileHandle = null;
+  try {
+    const safeFilePath = await existingTemporaryFilePath(value);
+    const noFollow = Number(constants.O_NOFOLLOW || 0);
+    fileHandle = await open(safeFilePath, constants.O_RDONLY | noFollow);
+    const [file, confirmedFilePath, currentFile] = await Promise.all([
+      fileHandle.stat(),
+      existingTemporaryFilePath(safeFilePath),
+      stat(safeFilePath),
+    ]);
+    if (confirmedFilePath !== safeFilePath
+        || !file.isFile()
+        || file.dev !== currentFile.dev
+        || file.ino !== currentFile.ino) {
+      throw new Error("uad_object_file_path_invalid");
+    }
+    return { fileHandle, file };
+  } catch (error) {
+    await fileHandle?.close().catch(() => undefined);
+    if (String(error?.message || "").startsWith("uad_object_")) throw error;
+    throw new Error("uad_object_file_path_invalid");
+  }
 }
 
 function retryableStatus(status) {
@@ -355,26 +380,29 @@ export function createUadObjectStorage(env = process.env, {
     },
     async putFile({ objectKey, contentType, filePath, byteSize }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
-      const safeFilePath = await existingTemporaryFilePath(filePath);
-      const file = await stat(safeFilePath);
-      const size = Number(byteSize ?? file.size);
-      if (!Number.isSafeInteger(size) || size < 0 || file.size !== size) {
-        throw new Error("uad_object_upload_size_mismatch");
+      const { fileHandle, file } = await openExistingTemporaryFile(filePath);
+      try {
+        const size = Number(byteSize ?? file.size);
+        if (!Number.isSafeInteger(size) || size < 0 || file.size !== size) {
+          throw new Error("uad_object_upload_size_mismatch");
+        }
+        const upload = this.createUploadUrl({ objectKey, contentType });
+        const response = await request("upload", upload.url, {
+          method: upload.method,
+          headers: { ...upload.headers, "content-length": String(size) },
+          duplex: "half",
+        }, {
+          bodyFactory: () => fileHandle.createReadStream({ autoClose: false, start: 0 }),
+          timeoutMs: config.streamTimeoutMs,
+        });
+        return {
+          etag: response.headers.get("etag"),
+          byte_size: size,
+          content_type: contentType,
+        };
+      } finally {
+        await fileHandle.close();
       }
-      const upload = this.createUploadUrl({ objectKey, contentType });
-      const response = await request("upload", upload.url, {
-        method: upload.method,
-        headers: { ...upload.headers, "content-length": String(size) },
-        duplex: "half",
-      }, {
-        bodyFactory: () => createReadStream(safeFilePath),
-        timeoutMs: config.streamTimeoutMs,
-      });
-      return {
-        etag: response.headers.get("etag"),
-        byte_size: size,
-        content_type: contentType,
-      };
     },
     async inspectObject({ objectKey }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");

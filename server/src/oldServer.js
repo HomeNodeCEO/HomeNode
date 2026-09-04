@@ -294,6 +294,7 @@ const {
   requireEditor,
   requirePlatformAdministrator,
   requireCustomAssignmentAccess,
+  requireCustomAccountScope,
   requireWorkflowAccess,
 } = createApplicationAccessGuards({
   pool,
@@ -503,21 +504,25 @@ app.use(createGroupedAnalysisRouter({
 app.use(createComparisonStudyRouter({
   pool,
   accountIdAllowed: legacyAccountIdAllowed,
+  requireCustomAccountScope,
 }));
 
 app.use(createRelatedParcelsRouter({
   pool,
   accountIdAllowed: legacyAccountIdAllowed,
+  requireCustomAccountScope,
 }));
 
 app.use(createValuationStudyRouter({
   pool,
   accountIdAllowed: legacyAccountIdAllowed,
+  requireCustomAccountScope,
 }));
 
 app.use(createNeighborhoodAnalysisRouter({
   pool,
   accountIdAllowed: legacyAccountIdAllowed,
+  requireCustomAccountScope,
 }));
 
 app.use(createPropertyContextStatusRouter({

@@ -1442,6 +1442,7 @@ export interface MarketConditionsResponse {
 
 export interface MarketConditionsRequest {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   areaKeys: MarketConditionsAreaKey[];
   asOf?: string;
   periodMonths: 12 | 24 | 36;
@@ -3539,9 +3540,11 @@ export async function getComparableRecommendations(
 /** Load the subject location used to center the independent market-study map. */
 export async function getMarketConditionsContext(
   subjectAccountId: string,
+  assignmentFileId?: number | null,
 ): Promise<{ subject: MarketConditionsSubject }> {
   const url = makeUrl('/api/sales/market-context', {
     subject_account_id: subjectAccountId.trim(),
+    assignment_file_id: assignmentFileId || undefined,
   });
   return fetchJSON<{ subject: MarketConditionsSubject }>(url, {
     timeoutMs: 90000,
@@ -3552,9 +3555,11 @@ export async function getMarketConditionsContext(
 export async function getRelatedParcels(
   subjectAccountId: string,
   address?: string,
+  assignmentFileId?: number | null,
 ): Promise<RelatedParcelsResponse> {
   const url = makeUrl(`/api/accounts/${encodeURIComponent(subjectAccountId.trim())}/related-parcels`, {
     address: address?.trim() || undefined,
+    assignment_file_id: assignmentFileId || undefined,
   });
   return fetchJSON<RelatedParcelsResponse>(url, { timeoutMs: 90000 });
 }
@@ -3571,6 +3576,7 @@ export async function runMarketConditionsAnalysis(
     },
     body: JSON.stringify({
       subject_account_id: request.subjectAccountId.trim(),
+      assignment_file_id: request.assignmentFileId || undefined,
       area_keys: request.areaKeys,
       as_of: request.asOf,
       period_months: request.periodMonths,
@@ -3591,6 +3597,7 @@ export async function getNeighborhoodProfile(
   const url = makeUrl('/api/sales/neighborhood-profile');
   const payload = {
     subject_account_id: request.subjectAccountId.trim(),
+    assignment_file_id: request.assignmentFileId || undefined,
     as_of: request.asOf,
     period_months: request.periodMonths,
     custom_geometry: request.customGeometry || null,
@@ -3611,6 +3618,7 @@ export async function getNeighborhoodProfile(
 export async function runNeighborhoodLandUseAnalysis(
   subjectAccountId: string,
   customGeometry: GeoJsonPolygon,
+  assignmentFileId?: number | null,
 ): Promise<NeighborhoodLandUseAnalysisResponse> {
   return fetchJSON<NeighborhoodLandUseAnalysisResponse>(
     makeUrl('/api/sales/neighborhood-land-use'),
@@ -3619,6 +3627,7 @@ export async function runNeighborhoodLandUseAnalysis(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         subject_account_id: subjectAccountId.trim(),
+        assignment_file_id: assignmentFileId || undefined,
         custom_geometry: customGeometry,
       }),
       timeoutMs: 180000,
@@ -3845,6 +3854,7 @@ export async function getGroupedAdjustmentAnalyses(
 /** Build a paired-sales study inside one selected market area. */
 export async function runPairedSalesAnalysis(request: {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   marketKey: MarketConditionsAreaKey;
   asOf?: string;
   customGeometry?: GeoJsonPolygon | null;
@@ -3857,6 +3867,7 @@ export async function runPairedSalesAnalysis(request: {
     },
     body: JSON.stringify({
       subject_account_id: request.subjectAccountId.trim(),
+      assignment_file_id: request.assignmentFileId || undefined,
       market_key: request.marketKey,
       as_of: request.asOf,
       custom_geometry: request.customGeometry || null,
@@ -4018,6 +4029,7 @@ export type EditableInspectionSketch = NonNullable<AppraisalAssignmentFile['mobi
 /** Fit an auditable same-housing-type OLS model inside one selected market area. */
 export async function runRegressionAnalysis(request: {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   marketKey: MarketConditionsAreaKey;
   asOf?: string;
   customGeometry?: GeoJsonPolygon | null;
@@ -4027,6 +4039,7 @@ export async function runRegressionAnalysis(request: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       subject_account_id: request.subjectAccountId.trim(),
+      assignment_file_id: request.assignmentFileId || undefined,
       market_key: request.marketKey,
       as_of: request.asOf,
       custom_geometry: request.customGeometry || null,
@@ -4069,6 +4082,7 @@ export async function calculateDepreciatedCostAdjustment(request: {
 /** Run an allocation-method site valuation inside one selected market area. */
 export async function runSiteValuation(request: {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   marketKey: MarketConditionsAreaKey;
   asOf?: string;
   customGeometry?: GeoJsonPolygon | null;
@@ -4078,6 +4092,7 @@ export async function runSiteValuation(request: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       subject_account_id: request.subjectAccountId.trim(),
+      assignment_file_id: request.assignmentFileId || undefined,
       market_key: request.marketKey,
       as_of: request.asOf,
       custom_geometry: request.customGeometry || null,

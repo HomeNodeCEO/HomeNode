@@ -119,6 +119,7 @@ type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
 
 type Props = {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   initialDraft?: MarketConditionsDraft | null;
   onCompletionChange?: (draft: MarketConditionsDraft | null) => void;
   initialCustomGeometry?: GeoJsonPolygon | null;
@@ -1023,6 +1024,7 @@ function RecommendedDetermination({
 
 export default function MarketConditionsAnalysis({
   subjectAccountId,
+  assignmentFileId = null,
   initialDraft = null,
   onCompletionChange,
   initialCustomGeometry = null,
@@ -1400,10 +1402,10 @@ export default function MarketConditionsAnalysis({
 
   useEffect(() => {
     let cancelled = false;
-    if (!subjectAccountId) return () => undefined;
+    if (!subjectAccountId || !assignmentFileId) return () => undefined;
     setLoadingContext(true);
     void api
-      .getMarketConditionsContext(subjectAccountId)
+      .getMarketConditionsContext(subjectAccountId, assignmentFileId)
       .then((response) => {
         if (!cancelled) {
           setSubject(response.subject);
@@ -1427,7 +1429,7 @@ export default function MarketConditionsAnalysis({
     return () => {
       cancelled = true;
     };
-  }, [subjectAccountId]);
+  }, [assignmentFileId, subjectAccountId]);
 
   useEffect(() => {
     if (studyIsCurrent && analysisResult) {
@@ -1898,6 +1900,7 @@ export default function MarketConditionsAnalysis({
       const response = await api.getRelatedParcels(
         subjectAccountId,
         parcelSearchAddress,
+        assignmentFileId,
       );
       setRelatedParcels(response);
       setNotice(
@@ -1950,6 +1953,7 @@ export default function MarketConditionsAnalysis({
     try {
       const response = await api.runMarketConditionsAnalysis({
         subjectAccountId,
+        assignmentFileId,
         areaKeys: selectedAreaKeys,
         asOf: asOfDate,
         periodMonths,

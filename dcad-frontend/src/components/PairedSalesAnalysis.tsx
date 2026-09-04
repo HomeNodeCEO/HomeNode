@@ -351,6 +351,7 @@ function PairEvidenceTable({
 
 export default function PairedSalesAnalysis({
   subjectAccountId,
+  assignmentFileId,
   appraiserDefinedArea,
   appliedAdjustments,
   getImpactPreview,
@@ -358,6 +359,7 @@ export default function PairedSalesAnalysis({
   onRemoveAdjustment,
 }: {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   appraiserDefinedArea?: AppraiserDefinedAdjustmentArea | null;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
   getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
@@ -407,6 +409,7 @@ export default function PairedSalesAnalysis({
     try {
       setAnalysisResult(await api.runPairedSalesAnalysis({
         subjectAccountId,
+        assignmentFileId,
         marketKey,
         asOf: asOfDate,
         customGeometry: marketKey === 'custom'

@@ -39,6 +39,7 @@ function dateDisplay(value: string | null) {
 
 export default function SiteValuationAnalysis({
   subjectAccountId,
+  assignmentFileId,
   appraiserDefinedArea,
   appliedAdjustments,
   getImpactPreview,
@@ -46,6 +47,7 @@ export default function SiteValuationAnalysis({
   onRemoveAdjustment,
 }: {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   appraiserDefinedArea?: AppraiserDefinedAdjustmentArea | null;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
   getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
@@ -72,6 +74,7 @@ export default function SiteValuationAnalysis({
     try {
       setResult(await api.runSiteValuation({
         subjectAccountId,
+        assignmentFileId,
         marketKey,
         asOf: asOfDate,
         customGeometry: marketKey === 'custom' ? appraiserDefinedArea?.geometry : null,

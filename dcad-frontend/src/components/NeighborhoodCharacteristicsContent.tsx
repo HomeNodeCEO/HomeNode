@@ -370,6 +370,7 @@ export default function NeighborhoodCharacteristicsContent({
       const result = await runNeighborhoodLandUseAnalysis(
         accountId,
         assignmentDraft.neighborhood_boundary_geometry,
+        assignmentFileId,
       );
       setLandUseAnalysis(result);
       applyPresentLandUse(result);
@@ -1743,6 +1744,7 @@ export default function NeighborhoodCharacteristicsContent({
           <MarketConditionsAnalysis
             key={`property-report-market-conditions-${accountId}-${assignmentFileId || "unfiled"}`}
             subjectAccountId={accountId}
+            assignmentFileId={assignmentFileId}
             initialDraft={marketConditionsDraft}
             onCompletionChange={onMarketConditionsChange}
             initialCustomGeometry={assignmentDraft.neighborhood_boundary_geometry}

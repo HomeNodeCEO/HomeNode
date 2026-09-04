@@ -12,6 +12,7 @@ import {
 export function createComparisonStudyRouter({
   pool,
   accountIdAllowed,
+  requireCustomAccountScope,
   buildPairedStudy = buildPairedSalesStudy,
   pairedErrorStatus = pairedSalesErrorStatus,
   loadMarketContext = getMarketContext,
@@ -25,7 +26,8 @@ export function createComparisonStudyRouter({
     throw new TypeError("comparison_study_account_policy_required");
   }
   if (
-    typeof buildPairedStudy !== "function"
+    typeof requireCustomAccountScope !== "function"
+    || typeof buildPairedStudy !== "function"
     || typeof pairedErrorStatus !== "function"
     || typeof loadMarketContext !== "function"
     || typeof marketErrorStatus !== "function"
@@ -36,9 +38,16 @@ export function createComparisonStudyRouter({
   const router = express.Router();
 
   router.post("/api/sales/paired-analysis", async (req, res) => {
+    const subjectAccountId = String(req.body?.subject_account_id || "").trim();
+    if (!accountIdAllowed(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (!await requireCustomAccountScope(
+      req, res, subjectAccountId, req.body?.assignment_file_id, "read",
+    )) return undefined;
     try {
       const result = await buildPairedStudy(pool, {
-        subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+        subjectAccountId,
         marketKey: String(req.body?.market_key || "city").trim(),
         asOfDate: String(req.body?.as_of || "").trim(),
         customGeometry: req.body?.custom_geometry || null,
@@ -54,6 +63,12 @@ export function createComparisonStudyRouter({
 
   router.get("/api/sales/market-context", async (req, res) => {
     const subjectAccountId = String(req.query.subject_account_id || "").trim();
+    if (!accountIdAllowed(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (!await requireCustomAccountScope(
+      req, res, subjectAccountId, req.query.assignment_file_id, "read",
+    )) return undefined;
     try {
       const subject = await loadMarketContext(pool, subjectAccountId, {
         accountIdAllowed,

@@ -234,6 +234,19 @@ test("completed or unknown delivery attempts return a conflict without exposing 
   });
 });
 
+test("UAD subject summaries reject authenticated identities without a UAD role", async () => {
+  const pool = securityPool({ roleCode: "property_tax_agent" });
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/uad/accounts/SYNTHETIC-ACCOUNT/subject-summary`,
+      { headers: { authorization: "Bearer synthetic-token" } },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "uad_access_denied" });
+    assert.equal(pool.accessQueries.length, 0);
+  });
+});
+
 test("private UAD PDF uploads pass the bounded binary parser but still require authentication", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

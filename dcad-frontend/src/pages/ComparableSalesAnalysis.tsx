@@ -5215,7 +5215,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             })}
           </div>
 
-          {/* Property Location Analysis (Comparable Sales Map) */}
           <div className="mt-6 rounded-2xl border border-slate-200 bg-white">
             <div className="p-6">
               <div className="text-xl font-semibold text-slate-900">Property Location Analysis</div>
@@ -5225,12 +5224,12 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
               <ComparableSalesMap
                 subjectAccountId={propertyId}
+                assignmentFileId={activeAssignmentFile?.id || null}
                 subjectAddress={subject?.address}
                 sales={selectedSales}
                 onOpenSale={(sale) => void openSaleGallery(sale)}
               />
           
-          {/* Location Analysis callout */}
           <div className="mt-4 rounded-xl bg-amber-50 border border-amber-200 p-4 text-sm text-slate-800">
             <div className="font-medium mb-1">Location Analysis</div>
             The map follows the current primary grid. Adding, removing, or reordering a comparable updates its numbered marker, MLS thumbnail, and subject distance automatically. Any sale without usable parcel coordinates remains in the grid and is flagged beneath the map instead of being silently omitted.

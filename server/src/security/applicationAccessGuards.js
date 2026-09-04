@@ -1,6 +1,6 @@
 import { editorKeyMatches } from "../util/housingProfileEdit.js";
 import { authorizeCustomAssignmentFile } from "./assignmentAccess.js";
-import { hasApplicationPermission } from "./applicationAccess.js";
+import { hasApplicationPermission, hasApplicationRole } from "./applicationAccess.js";
 
 function assertGuardOptions(pool, authenticationRequired) {
   if (!pool || typeof pool.query !== "function") {
@@ -16,10 +16,23 @@ export function createApplicationAccessGuards({
   authenticationRequired,
   environment = process.env,
   permissionChecker = hasApplicationPermission,
+  roleChecker = hasApplicationRole,
   editorKeyChecker = editorKeyMatches,
   assignmentAuthorizer = authorizeCustomAssignmentFile,
 } = {}) {
   assertGuardOptions(pool, authenticationRequired);
+  if (typeof roleChecker !== "function") {
+    throw new TypeError("application_access_guards_role_checker_required");
+  }
+
+  function requirePlatformAdministrator(req, res) {
+    if (req.mobileAuth && roleChecker(req.mobileAuth, "homenode_admin")) return true;
+    const authenticated = Boolean(req.mobileAuth);
+    res.set("cache-control", "no-store")
+      .status(authenticated ? 403 : 401)
+      .json({ error: authenticated ? "application_access_denied" : "authentication_required" });
+    return false;
+  }
 
   function requireEditor(req, res) {
     if (req.mobileAuth) {
@@ -113,6 +126,7 @@ export function createApplicationAccessGuards({
 
   return Object.freeze({
     requireEditor,
+    requirePlatformAdministrator,
     requireCustomAssignmentAccess,
     requireWorkflowAccess,
   });

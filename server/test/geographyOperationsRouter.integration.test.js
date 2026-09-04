@@ -13,6 +13,7 @@ function baseOptions(overrides = {}) {
     censusGeographyReady: Promise.resolve(),
     accountQualityReady: Promise.resolve(),
     requireEditor: () => true,
+    requirePlatformAdministrator: () => true,
     ensureLocationSchema: async () => {},
     getLocationStatus: async () => { throw new Error("unexpected_location_status"); },
     seedLocationQueue: async () => { throw new Error("unexpected_location_seed"); },
@@ -83,7 +84,7 @@ test("location and census status routes ensure schemas before loading status", a
   assert.ok(calls.every(({ pool }) => pool === options.pool));
 });
 
-test("location maintenance remains editor-gated and preserves queue controls", async (context) => {
+test("location maintenance remains platform-admin-gated and preserves queue controls", async (context) => {
   const calls = [];
   let deniedSeedCalls = 0;
   const options = baseOptions({
@@ -100,8 +101,8 @@ test("location maintenance remains editor-gated and preserves queue controls", a
   });
   const accepted = await startRouter(options);
   const denied = await startRouter(baseOptions({
-    requireEditor(_req, res) {
-      res.status(403).json({ error: "editor_required" });
+    requirePlatformAdministrator(_req, res) {
+      res.status(403).json({ error: "platform_admin_required" });
       return false;
     },
     seedLocationQueue: async () => { deniedSeedCalls += 1; },
@@ -130,7 +131,7 @@ test("location maintenance remains editor-gated and preserves queue controls", a
   ]);
 });
 
-test("census maintenance remains editor-gated and preserves queue controls", async (context) => {
+test("census maintenance remains platform-admin-gated and preserves queue controls", async (context) => {
   const calls = [];
   const options = baseOptions({
     ensureCensusSchema: async (pool) => { calls.push({ type: "schema", pool }); },
@@ -299,6 +300,10 @@ test("geography operations composition is explicit and inline routes are absent"
   assert.throws(
     () => createGeographyOperationsRouter(baseOptions({ requireEditor: null })),
     /geography_operations_editor_policy_required/,
+  );
+  assert.throws(
+    () => createGeographyOperationsRouter(baseOptions({ requirePlatformAdministrator: null })),
+    /geography_operations_platform_admin_policy_required/,
   );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");

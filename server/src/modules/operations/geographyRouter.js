@@ -27,6 +27,7 @@ export function createGeographyOperationsRouter({
   censusGeographyReady,
   accountQualityReady,
   requireEditor,
+  requirePlatformAdministrator,
   ensureLocationSchema = ensureLocationBackfillQueueSchema,
   getLocationStatus = getLocationBackfillStatus,
   seedLocationQueue = seedLocationBackfillQueue,
@@ -57,6 +58,9 @@ export function createGeographyOperationsRouter({
   }
   if (typeof requireEditor !== "function") {
     throw new TypeError("geography_operations_editor_policy_required");
+  }
+  if (typeof requirePlatformAdministrator !== "function") {
+    throw new TypeError("geography_operations_platform_admin_policy_required");
   }
   if ([
     ensureLocationSchema,
@@ -93,7 +97,7 @@ export function createGeographyOperationsRouter({
 
   /** Explicit maintenance run; ordinary imports and sweeps remain automatic. */
   router.post("/api/location-backfill/run", async (req, res) => {
-    if (!requireEditor(req, res)) return undefined;
+    if (!requirePlatformAdministrator(req, res)) return undefined;
     try {
       await locationBackfillReady;
       await ensureLocationSchema(pool);
@@ -175,7 +179,7 @@ export function createGeographyOperationsRouter({
 
   /** Explicit maintenance run; the normal low-impact worker remains automatic. */
   router.post("/api/census-geography/run", async (req, res) => {
-    if (!requireEditor(req, res)) return undefined;
+    if (!requirePlatformAdministrator(req, res)) return undefined;
     try {
       await censusGeographyReady;
       await ensureCensusSchema(pool);

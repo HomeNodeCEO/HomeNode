@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import { createApplicationAuthenticationPolicy } from "./applicationAuthenticationPolicy.js";
 
 const SESSION_COOKIE = "__Host-homenode_session";
@@ -284,8 +285,19 @@ export function createWebAuthRouter({
   authenticationPolicy = createApplicationAuthenticationPolicy(environment),
   fetchImpl = globalThis.fetch,
   logger = console,
+  rateLimiterOptions = {
+    windowMs: 60_000,
+    limit: 600,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+  },
 }) {
   const router = express.Router();
+  // Keep the limiter on the router that owns these handlers. Besides making
+  // the protection explicit to static analysis, this prevents a later mount
+  // reordering from silently placing token exchange and session revocation
+  // outside the application-wide API limiter.
+  router.use(rateLimit(rateLimiterOptions));
   const clientId = String(environment.OIDC_WEB_CLIENT_ID || "").trim();
   const clientSecret = String(environment.OIDC_WEB_CLIENT_SECRET || "").trim();
   const redirectUri = String(environment.OIDC_WEB_REDIRECT_URI || "").trim();

@@ -117,6 +117,10 @@ test("global rate limiting leaves router policies and auth bootstrap checks inde
   ]) {
     assert.equal(shouldSkipGlobalApiRateLimit({ path }, enabled), true, path);
   }
+  assert.equal(shouldSkipGlobalApiRateLimit({
+    path: "/status",
+    originalUrl: "/api/auth/status?fresh=1",
+  }, enabled), true, "mounted routers must retain application-level exclusions");
   assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/properties/search" }, enabled), false);
   assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/uad-legacy" }, enabled), false);
   assert.equal(shouldSkipGlobalApiRateLimit({ path: "/api/auth/login" }, enabled), false);

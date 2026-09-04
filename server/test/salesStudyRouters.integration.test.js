@@ -15,6 +15,7 @@ function comparisonOptions(overrides = {}) {
   return {
     pool: createPool(),
     accountIdAllowed: () => true,
+    requireCustomAccountScope: async () => true,
     buildPairedStudy: async () => { throw new Error("unexpected_paired_study"); },
     pairedErrorStatus: () => 400,
     loadMarketContext: async () => { throw new Error("unexpected_market_context"); },
@@ -28,6 +29,7 @@ function valuationOptions(overrides = {}) {
   return {
     pool: createPool(),
     accountIdAllowed: () => true,
+    requireCustomAccountScope: async () => true,
     buildMarketAnalyses: async () => { throw new Error("unexpected_market_analysis"); },
     marketErrorStatus: () => 400,
     buildRegression: async () => { throw new Error("unexpected_regression"); },
@@ -121,6 +123,56 @@ test("market context trims the subject and retains account-policy injection", as
     accountId: "A-1",
     settings: { accountIdAllowed: options.accountIdAllowed },
   }]);
+});
+
+test("subject-backed sales studies stop when exact assignment scope is denied", async (context) => {
+  const accessCalls = [];
+  let serviceCalls = 0;
+  const deny = async (_req, res, ...scope) => {
+    accessCalls.push(scope);
+    res.status(403).json({ error: "assignment_file_access_denied" });
+    return false;
+  };
+  const comparison = await startRouter(createComparisonStudyRouter(comparisonOptions({
+    requireCustomAccountScope: deny,
+    buildPairedStudy: async () => { serviceCalls += 1; },
+    loadMarketContext: async () => { serviceCalls += 1; },
+  })));
+  const valuation = await startRouter(createValuationStudyRouter(valuationOptions({
+    requireCustomAccountScope: deny,
+    buildMarketAnalyses: async () => { serviceCalls += 1; },
+    buildRegression: async () => { serviceCalls += 1; },
+    buildSiteValuation: async () => { serviceCalls += 1; },
+  })));
+  context.after(comparison.close);
+  context.after(valuation.close);
+
+  const requests = [
+    post(comparison.baseUrl, "/api/sales/paired-analysis", {
+      subject_account_id: "A-1", assignment_file_id: 42,
+    }),
+    fetch(`${comparison.baseUrl}/api/sales/market-context?subject_account_id=A-1&assignment_file_id=42`),
+    post(valuation.baseUrl, "/api/sales/market-analysis", {
+      subject_account_id: "A-1", assignment_file_id: 42,
+    }),
+    post(valuation.baseUrl, "/api/sales/regression-analysis", {
+      subject_account_id: "A-1", assignment_file_id: 42,
+    }),
+    post(valuation.baseUrl, "/api/sales/site-valuation", {
+      subject_account_id: "A-1", assignment_file_id: 42,
+    }),
+  ];
+  for (const response of await Promise.all(requests)) {
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  }
+  assert.equal(accessCalls.length, 5);
+  for (const [accountId, assignmentFileId, permission] of accessCalls) {
+    assert.equal(accountId, "A-1");
+    assert.equal(String(assignmentFileId), "42");
+    assert.equal(permission, "read");
+  }
+  assert.equal(serviceCalls, 0);
 });
 
 test("comparison study failures retain domain status mapping, detail, and diagnostics", async (context) => {

@@ -24,6 +24,7 @@ import {
 export function createValuationStudyRouter({
   pool,
   accountIdAllowed,
+  requireCustomAccountScope,
   buildMarketAnalyses = buildMarketConditionsAnalyses,
   marketErrorStatus = marketConditionsErrorStatus,
   buildRegression = buildRegressionStudy,
@@ -43,7 +44,8 @@ export function createValuationStudyRouter({
     throw new TypeError("valuation_study_account_policy_required");
   }
   if (
-    typeof buildMarketAnalyses !== "function"
+    typeof requireCustomAccountScope !== "function"
+    || typeof buildMarketAnalyses !== "function"
     || typeof marketErrorStatus !== "function"
     || typeof buildRegression !== "function"
     || typeof regressionErrorStatus !== "function"
@@ -60,9 +62,16 @@ export function createValuationStudyRouter({
   const router = express.Router();
 
   router.post("/api/sales/market-analysis", async (req, res) => {
+    const subjectAccountId = String(req.body?.subject_account_id || "").trim();
+    if (!accountIdAllowed(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (!await requireCustomAccountScope(
+      req, res, subjectAccountId, req.body?.assignment_file_id, "read",
+    )) return undefined;
     try {
       const result = await buildMarketAnalyses(pool, {
-        subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+        subjectAccountId,
         areaKeys: req.body?.area_keys,
         asOfDate: String(req.body?.as_of || "").trim(),
         periodMonths: req.body?.period_months ?? 24,
@@ -82,9 +91,16 @@ export function createValuationStudyRouter({
   });
 
   router.post("/api/sales/regression-analysis", async (req, res) => {
+    const subjectAccountId = String(req.body?.subject_account_id || "").trim();
+    if (!accountIdAllowed(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (!await requireCustomAccountScope(
+      req, res, subjectAccountId, req.body?.assignment_file_id, "read",
+    )) return undefined;
     try {
       const result = await buildRegression(pool, {
-        subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+        subjectAccountId,
         marketKey: String(req.body?.market_key || "city").trim(),
         asOfDate: String(req.body?.as_of || "").trim(),
         customGeometry: req.body?.custom_geometry || null,
@@ -108,9 +124,16 @@ export function createValuationStudyRouter({
   });
 
   router.post("/api/sales/site-valuation", async (req, res) => {
+    const subjectAccountId = String(req.body?.subject_account_id || "").trim();
+    if (!accountIdAllowed(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (!await requireCustomAccountScope(
+      req, res, subjectAccountId, req.body?.assignment_file_id, "read",
+    )) return undefined;
     try {
       const result = await buildSiteValuation(pool, {
-        subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+        subjectAccountId,
         marketKey: String(req.body?.market_key || "city").trim(),
         asOfDate: String(req.body?.as_of || "").trim(),
         customGeometry: req.body?.custom_geometry || null,

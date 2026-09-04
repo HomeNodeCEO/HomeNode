@@ -6,6 +6,7 @@ import { markMaterialParcelDifferences } from "../../util/relatedParcelDifferenc
 export function createRelatedParcelsRouter({
   pool,
   accountIdAllowed,
+  requireCustomAccountScope,
   findParcelsByAddress = findDcadParcelsByAddress,
   markDifferences = markMaterialParcelDifferences,
   logger = console,
@@ -16,7 +17,11 @@ export function createRelatedParcelsRouter({
   if (typeof accountIdAllowed !== "function") {
     throw new TypeError("related_parcels_account_policy_required");
   }
-  if (typeof findParcelsByAddress !== "function" || typeof markDifferences !== "function") {
+  if (
+    typeof requireCustomAccountScope !== "function"
+    || typeof findParcelsByAddress !== "function"
+    || typeof markDifferences !== "function"
+  ) {
     throw new TypeError("related_parcels_dependency_required");
   }
 
@@ -32,6 +37,13 @@ export function createRelatedParcelsRouter({
     if (!accountIdAllowed(accountId)) {
       return res.status(400).json({ error: "invalid_account_id" });
     }
+    if (!await requireCustomAccountScope(
+      req,
+      res,
+      accountId,
+      req.query.assignment_file_id,
+      "read",
+    )) return undefined;
     try {
       const { rows: accountRows } = await pool.query(
         `SELECT account_id, address, city, postal_code, county

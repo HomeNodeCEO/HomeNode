@@ -1,4 +1,5 @@
 import { editorKeyMatches } from "../util/housingProfileEdit.js";
+import { normalizeAssignmentFileId } from "../services/assignmentFiles.js";
 import { authorizeCustomAssignmentFile } from "./assignmentAccess.js";
 import { hasApplicationPermission, hasApplicationRole } from "./applicationAccess.js";
 
@@ -124,10 +125,44 @@ export function createApplicationAccessGuards({
     return false;
   }
 
+  async function requireCustomAccountScope(
+    req,
+    res,
+    accountId,
+    assignmentFileIdValue,
+    permission = "read",
+  ) {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", permission)) return false;
+    let assignmentFileId;
+    try {
+      assignmentFileId = normalizeAssignmentFileId(assignmentFileIdValue);
+    } catch {
+      res.set("cache-control", "no-store")
+        .status(400)
+        .json({ error: "invalid_assignment_file_id" });
+      return false;
+    }
+    if (authenticationRequired && !assignmentFileId) {
+      res.set("cache-control", "no-store")
+        .status(400)
+        .json({ error: "assignment_file_required" });
+      return false;
+    }
+    if (!assignmentFileId) return true;
+    return requireCustomAssignmentAccess(
+      req,
+      res,
+      accountId,
+      assignmentFileId,
+      permission,
+    );
+  }
+
   return Object.freeze({
     requireEditor,
     requirePlatformAdministrator,
     requireCustomAssignmentAccess,
+    requireCustomAccountScope,
     requireWorkflowAccess,
   });
 }

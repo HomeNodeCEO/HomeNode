@@ -319,6 +319,10 @@ export function createUadRouter({
 
   router.get("/accounts/:accountId/subject-summary", async (req, res) => {
     try {
+      // The summary is public cadastral source data used before a first UAD
+      // workfile exists, but only identities with an authorized UAD role may
+      // enumerate it. Tenant-owned workfiles remain separately object-scoped.
+      if (authenticationRequired) buildUadAccessScope(req.mobileAuth);
       const subject = await getUadSubjectSummary(pool, req.params.accountId);
       res.json({ subject });
     } catch (error) {

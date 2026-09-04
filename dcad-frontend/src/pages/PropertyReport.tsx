@@ -531,6 +531,7 @@ function AddressHero({
     resetProfileTracking,
   } = useNeighborhoodProfile({
     accountId,
+    assignmentFileId: activeAssignmentFile?.id || null,
     assignmentDraft,
     setAssignmentDraft,
     customMarketStudy,
@@ -549,8 +550,9 @@ function AddressHero({
     refreshRelatedParcels,
   } = useRelatedParcels({
     accountId,
+    assignmentFileId: activeAssignmentFile?.id || null,
     address: exactAddress,
-    enabled: detailLoaded,
+    enabled: detailLoaded && Boolean(activeAssignmentFile?.id),
   });
 
 

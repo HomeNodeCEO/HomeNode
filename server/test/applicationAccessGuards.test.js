@@ -330,6 +330,57 @@ test("assignment access maps missing, denied, and anonymous cases without diagno
   assert.equal(anonymousResponse.headers["cache-control"], "no-store");
 });
 
+test("custom account scope requires a valid assignment before data access", async () => {
+  let authorizerCalls = 0;
+  const guards = createGuards({
+    permissionChecker: () => true,
+    assignmentAuthorizer: async () => { authorizerCalls += 1; },
+  });
+  for (const [value, error] of [
+    [undefined, "assignment_file_required"],
+    ["not-a-file", "invalid_assignment_file_id"],
+  ]) {
+    const response = createResponse();
+    assert.equal(await guards.requireCustomAccountScope(
+      createRequest({ mobileAuth: { userId: "user-1" } }),
+      response,
+      "account-1",
+      value,
+      "read",
+    ), false);
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.payload, { error });
+    assert.equal(response.headers["cache-control"], "no-store");
+  }
+  assert.equal(authorizerCalls, 0);
+});
+
+test("custom account scope binds workflow permission to the normalized assignment", async () => {
+  const calls = [];
+  const guards = createGuards({
+    permissionChecker: (_auth, workflow, permission) => {
+      calls.push(["workflow", workflow, permission]);
+      return true;
+    },
+    assignmentAuthorizer: async (_pool, _auth, input) => calls.push(["assignment", input]),
+  });
+  assert.equal(await guards.requireCustomAccountScope(
+    createRequest({ mobileAuth: { userId: "user-1" } }),
+    createResponse(),
+    "account-1",
+    "42",
+    "read",
+  ), true);
+  assert.deepEqual(calls, [
+    ["workflow", "custom_appraisal", "read"],
+    ["assignment", {
+      accountId: "account-1",
+      assignmentFileId: 42,
+      permission: "read",
+    }],
+  ]);
+});
+
 test("access guards reject incomplete application composition", () => {
   assert.throws(
     () => createApplicationAccessGuards(),

@@ -14,6 +14,7 @@ function routerOptions(overrides = {}) {
   return {
     pool: createPool(),
     accountIdAllowed: () => true,
+    requireCustomAccountScope: async () => true,
     buildMarketAnalyses: async () => { throw new Error("unexpected_market_analysis"); },
     marketErrorStatus: () => 400,
     loadBoundaryStreets: async () => { throw new Error("unexpected_boundary_streets"); },
@@ -136,6 +137,39 @@ test("neighborhood profile preserves every analysis, gate, and boundary input", 
       },
     },
   ]);
+});
+
+test("neighborhood analyses stop before services when assignment scope is denied", async (context) => {
+  const accessCalls = [];
+  let serviceCalls = 0;
+  const server = await startRouter(createNeighborhoodAnalysisRouter(routerOptions({
+    requireCustomAccountScope: async (_req, res, ...scope) => {
+      accessCalls.push(scope);
+      res.status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+    runProfileOperation: async () => { serviceCalls += 1; },
+    buildLandUseAnalysis: async () => { serviceCalls += 1; },
+  })));
+  context.after(server.close);
+
+  const responses = await Promise.all([
+    post(server.baseUrl, "/api/sales/neighborhood-profile", {
+      subject_account_id: "A-1", assignment_file_id: 42,
+    }),
+    post(server.baseUrl, "/api/sales/neighborhood-land-use", {
+      subject_account_id: "A-1", assignment_file_id: 42,
+    }),
+  ]);
+  for (const response of responses) {
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  }
+  assert.deepEqual(accessCalls, [
+    ["A-1", 42, "read"],
+    ["A-1", 42, "read"],
+  ]);
+  assert.equal(serviceCalls, 0);
 });
 
 test("street lookup failure degrades the profile without discarding market evidence", async (context) => {

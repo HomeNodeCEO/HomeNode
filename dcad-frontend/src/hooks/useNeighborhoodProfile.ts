@@ -21,6 +21,7 @@ type BoundarySuggestions = NonNullable<
 
 type UseNeighborhoodProfileOptions = {
   accountId?: string;
+  assignmentFileId?: number | null;
   assignmentDraft: AssignmentDetailsPayload;
   setAssignmentDraft: Dispatch<SetStateAction<AssignmentDetailsPayload>>;
   customMarketStudy: MarketStudy | null;
@@ -37,6 +38,7 @@ function profileSignature(accountId: string, version: string, geometry: unknown)
 
 export function useNeighborhoodProfile({
   accountId,
+  assignmentFileId,
   assignmentDraft,
   setAssignmentDraft,
   customMarketStudy,
@@ -91,7 +93,7 @@ export function useNeighborhoodProfile({
   const refreshProfile = useCallback(async (force = false) => {
     const geometry = assignmentDraft.neighborhood_boundary_geometry ||
       customMarketStudy?.market.custom_geometry;
-    if (!accountId || !geometry || loadingRef.current) {
+    if (!accountId || !assignmentFileId || !geometry || loadingRef.current) {
       if (!geometry) {
         setProfileMessage("Generate or draw a neighborhood boundary before refreshing area data.");
       }
@@ -111,6 +113,7 @@ export function useNeighborhoodProfile({
       const profile = await getNeighborhoodProfile(
         {
           subjectAccountId: accountId,
+          assignmentFileId,
           asOf: profileAsOf,
           periodMonths: profilePeriodMonths,
           customGeometry: geometry,
@@ -200,11 +203,11 @@ export function useNeighborhoodProfile({
         setProfileLoading(false);
       }
     }
-  }, [accountId, assignmentDraft.neighborhood_boundary_geometry, customMarketStudy, detailCity, marketConditionsDraft, setAssignmentDraft]);
+  }, [accountId, assignmentDraft.neighborhood_boundary_geometry, assignmentFileId, customMarketStudy, detailCity, marketConditionsDraft, setAssignmentDraft]);
 
   useEffect(() => {
     const geometry = assignmentDraft.neighborhood_boundary_geometry || customMarketStudy?.market.custom_geometry;
-    if (!sectionReady || !geometry || !accountId || assignmentFilesLoading || !assignmentFilesLoaded) return;
+    if (!sectionReady || !geometry || !accountId || !assignmentFileId || assignmentFilesLoading || !assignmentFilesLoaded) return;
     const structuredBoundariesPresent = [assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west]
       .every((value) => String(value || "").trim());
     const profileValuesPresent = structuredBoundariesPresent && [assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_sale_count]
@@ -215,7 +218,7 @@ export function useNeighborhoodProfile({
     if (attemptedSignature.current === signature) return;
     attemptedSignature.current = signature;
     void refreshProfile(false);
-  }, [accountId, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_geometry, assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_sale_count, assignmentFilesLoaded, assignmentFilesLoading, customMarketStudy, marketConditionsDraft, refreshProfile, retryNonce, sectionReady]);
+  }, [accountId, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_geometry, assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_sale_count, assignmentFileId, assignmentFilesLoaded, assignmentFilesLoading, customMarketStudy, marketConditionsDraft, refreshProfile, retryNonce, sectionReady]);
 
   useEffect(() => () => {
     requestGeneration.current += 1;

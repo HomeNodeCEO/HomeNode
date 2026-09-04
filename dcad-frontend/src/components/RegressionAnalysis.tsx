@@ -46,6 +46,7 @@ function unitLabel(key: RegressionFeatureKey) {
 
 export default function RegressionAnalysis({
   subjectAccountId,
+  assignmentFileId,
   appraiserDefinedArea,
   appliedAdjustments,
   getImpactPreview,
@@ -53,6 +54,7 @@ export default function RegressionAnalysis({
   onRemoveAdjustment,
 }: {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   appraiserDefinedArea?: AppraiserDefinedAdjustmentArea | null;
   appliedAdjustments: Record<string, AppliedGroupedAdjustment>;
   getImpactPreview: (adjustment: AppliedGroupedAdjustment) => GroupedAdjustmentImpactPreview;
@@ -76,6 +78,7 @@ export default function RegressionAnalysis({
     try {
       setResult(await api.runRegressionAnalysis({
         subjectAccountId,
+        assignmentFileId,
         marketKey,
         asOf: asOfDate,
         customGeometry: marketKey === 'custom' ? appraiserDefinedArea?.geometry : null,

@@ -19,6 +19,7 @@ import {
 export function createNeighborhoodAnalysisRouter({
   pool,
   accountIdAllowed,
+  requireCustomAccountScope,
   buildMarketAnalyses = buildMarketConditionsAnalyses,
   marketErrorStatus = marketConditionsErrorStatus,
   loadBoundaryStreets = loadBoundaryStreetNames,
@@ -37,7 +38,8 @@ export function createNeighborhoodAnalysisRouter({
     throw new TypeError("neighborhood_analysis_account_policy_required");
   }
   if (
-    typeof buildMarketAnalyses !== "function"
+    typeof requireCustomAccountScope !== "function"
+    || typeof buildMarketAnalyses !== "function"
     || typeof marketErrorStatus !== "function"
     || typeof loadBoundaryStreets !== "function"
     || typeof compactProfileResponse !== "function"
@@ -65,6 +67,12 @@ export function createNeighborhoodAnalysisRouter({
       marketContextOverride: req.body?.context_override || null,
       forceRefresh: req.body?.force_refresh === true,
     };
+    if (!accountIdAllowed(request.subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (!await requireCustomAccountScope(
+      req, res, request.subjectAccountId, req.body?.assignment_file_id, "read",
+    )) return undefined;
     try {
       const response = await runProfileOperation(
         profileRequestKey(request),
@@ -114,9 +122,16 @@ export function createNeighborhoodAnalysisRouter({
    * intersecting the saved appraiser-defined polygon.
    */
   router.post("/api/sales/neighborhood-land-use", async (req, res) => {
+    const subjectAccountId = String(req.body?.subject_account_id || "").trim();
+    if (!accountIdAllowed(subjectAccountId)) {
+      return res.status(400).json({ error: "invalid_subject_account_id" });
+    }
+    if (!await requireCustomAccountScope(
+      req, res, subjectAccountId, req.body?.assignment_file_id, "read",
+    )) return undefined;
     try {
       const result = await buildLandUseAnalysis(pool, {
-        subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+        subjectAccountId,
         customGeometry: req.body?.custom_geometry || null,
       });
       return res.json(result);

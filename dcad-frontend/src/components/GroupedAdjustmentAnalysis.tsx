@@ -732,6 +732,7 @@ export default function GroupedAdjustmentAnalysis({
       {activeMethod === 'paired_sales' && (
         <PairedSalesAnalysis
           subjectAccountId={subjectAccountId}
+          assignmentFileId={assignmentFileId}
           appraiserDefinedArea={appraiserDefinedArea}
           appliedAdjustments={appliedAdjustments}
           getImpactPreview={getImpactPreview}
@@ -743,6 +744,7 @@ export default function GroupedAdjustmentAnalysis({
       {activeMethod === 'regression' && (
         <RegressionAnalysis
           subjectAccountId={subjectAccountId}
+          assignmentFileId={assignmentFileId}
           appraiserDefinedArea={appraiserDefinedArea}
           appliedAdjustments={appliedAdjustments}
           getImpactPreview={getImpactPreview}
@@ -765,6 +767,7 @@ export default function GroupedAdjustmentAnalysis({
       {activeMethod === 'site_valuation' && (
         <SiteValuationAnalysis
           subjectAccountId={subjectAccountId}
+          assignmentFileId={assignmentFileId}
           appraiserDefinedArea={appraiserDefinedArea}
           appliedAdjustments={appliedAdjustments}
           getImpactPreview={getImpactPreview}

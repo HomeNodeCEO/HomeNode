@@ -9,6 +9,7 @@ const relatedParcelCache = createTimedRequestCache<RelatedParcelsResponse>(
 
 type UseRelatedParcelsOptions = {
   accountId?: string;
+  assignmentFileId?: number | null;
   address?: string;
   enabled: boolean;
   initialDelayMs?: number;
@@ -16,6 +17,7 @@ type UseRelatedParcelsOptions = {
 
 export function useRelatedParcels({
   accountId,
+  assignmentFileId,
   address,
   enabled,
   initialDelayMs = 900,
@@ -27,7 +29,7 @@ export function useRelatedParcels({
   const automaticLookupTimer = useRef<number | null>(null);
 
   const loadRelatedParcels = useCallback(async (force = false) => {
-    if (!enabled || !accountId?.trim()) return;
+    if (!enabled || !accountId?.trim() || !assignmentFileId) return;
     if (automaticLookupTimer.current !== null) {
       window.clearTimeout(automaticLookupTimer.current);
       automaticLookupTimer.current = null;
@@ -37,10 +39,10 @@ export function useRelatedParcels({
     setRelatedParcelsLoading(true);
     setRelatedParcelsError("");
     try {
-      const cacheKey = `${accountId.trim().toUpperCase()}:${String(address || "").trim().toUpperCase()}`;
+      const cacheKey = `${accountId.trim().toUpperCase()}:${assignmentFileId}:${String(address || "").trim().toUpperCase()}`;
       const response = await relatedParcelCache.load(
         cacheKey,
-        () => getRelatedParcels(accountId, address || undefined),
+        () => getRelatedParcels(accountId, address || undefined, assignmentFileId),
         { force },
       );
       if (requestGeneration.current === generation) setRelatedParcels(response);
@@ -53,14 +55,14 @@ export function useRelatedParcels({
     } finally {
       if (requestGeneration.current === generation) setRelatedParcelsLoading(false);
     }
-  }, [accountId, address, enabled]);
+  }, [accountId, address, assignmentFileId, enabled]);
 
   useEffect(() => {
     requestGeneration.current += 1;
     setRelatedParcels(null);
     setRelatedParcelsError("");
     setRelatedParcelsLoading(false);
-    if (!enabled || !accountId?.trim()) return;
+    if (!enabled || !accountId?.trim() || !assignmentFileId) return;
 
     // The check is helpful but not required for first paint, so automatic
     // loading yields briefly while an explicit refresh starts immediately.
@@ -75,7 +77,7 @@ export function useRelatedParcels({
         automaticLookupTimer.current = null;
       }
     };
-  }, [accountId, address, enabled, initialDelayMs, loadRelatedParcels]);
+  }, [accountId, address, assignmentFileId, enabled, initialDelayMs, loadRelatedParcels]);
 
   useEffect(() => () => {
     requestGeneration.current += 1;

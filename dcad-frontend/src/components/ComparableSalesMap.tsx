@@ -8,6 +8,7 @@ const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/bright';
 
 type Props = {
   subjectAccountId: string;
+  assignmentFileId?: number | null;
   subjectAddress?: string | null;
   sales: Array<SaleRow | null>;
   onOpenSale?: (sale: SaleRow) => void;
@@ -281,6 +282,7 @@ function makeComparableMarker(
 
 export default function ComparableSalesMap({
   subjectAccountId,
+  assignmentFileId,
   subjectAddress,
   sales,
   onOpenSale,
@@ -301,9 +303,9 @@ export default function ComparableSalesMap({
     let cancelled = false;
     setSubject(null);
     setMapError(null);
-    if (!subjectAccountId) return () => { cancelled = true; };
+    if (!subjectAccountId || !assignmentFileId) return () => { cancelled = true; };
     setContextLoading(true);
-    void api.getMarketConditionsContext(subjectAccountId)
+    void api.getMarketConditionsContext(subjectAccountId, assignmentFileId)
       .then((response) => {
         if (!cancelled) setSubject(response.subject);
       })
@@ -314,7 +316,7 @@ export default function ComparableSalesMap({
         if (!cancelled) setContextLoading(false);
       });
     return () => { cancelled = true; };
-  }, [subjectAccountId]);
+  }, [assignmentFileId, subjectAccountId]);
 
   const mappedComparables = useMemo<MappedComparable[]>(() => {
     const subjectLatitude = numberValue(subject?.latitude);

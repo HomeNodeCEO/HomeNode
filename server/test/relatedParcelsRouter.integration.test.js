@@ -10,6 +10,7 @@ function options(overrides = {}) {
   return {
     pool: { query: async () => ({ rows: [] }) },
     accountIdAllowed: () => true,
+    requireCustomAccountScope: async () => true,
     findParcelsByAddress: async () => ({ query_address: "", parcels: [] }),
     logger: { error() {} },
     ...overrides,
@@ -46,6 +47,28 @@ test("related parcel lookup rejects invalid account identifiers before database 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "invalid_account_id" });
   assert.deepEqual(policyCalls, ["not-allowed"]);
+  assert.equal(queryCount, 0);
+});
+
+test("related parcel lookup stops before data access when assignment scope is denied", async (context) => {
+  const accessCalls = [];
+  let queryCount = 0;
+  const server = await startRouter(createRelatedParcelsRouter(options({
+    requireCustomAccountScope: async (_req, res, ...scope) => {
+      accessCalls.push(scope);
+      res.status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+    pool: { query: async () => { queryCount += 1; return { rows: [] }; } },
+  })));
+  context.after(server.close);
+
+  const response = await fetch(
+    `${server.baseUrl}/api/accounts/A-1/related-parcels?assignment_file_id=42`,
+  );
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  assert.deepEqual(accessCalls, [["A-1", "42", "read"]]);
   assert.equal(queryCount, 0);
 });
 

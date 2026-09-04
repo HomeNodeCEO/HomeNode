@@ -618,7 +618,7 @@ export async function signCustomAppraisalWorkfile(pool, {
   accountId,
   assignmentFileId,
   signedBy: signedByValue,
-  signerUserId = null,
+  signerUserId: signerUserIdValue = null,
   signatureEventId: signatureEventIdValue = null,
   signedFromIp: signedFromIpValue = null,
   signedUserAgent: signedUserAgentValue = null,
@@ -626,10 +626,12 @@ export async function signCustomAppraisalWorkfile(pool, {
   acknowledgedWarningCodes: acknowledgedWarningCodesValue,
   objectStorage = null,
 }) {
-  const signedBy = String(signedByValue || "HomeNode editor").trim().slice(0, 200);
+  const signedBy = String(signedByValue || "").trim().slice(0, 200);
   if (!signedBy) throw new Error("invalid_custom_appraisal_signer");
+  const signerUserId = String(signerUserIdValue || "").trim();
+  if (!signerUserId) throw new Error("custom_appraisal_signer_identity_required");
   const signingSecret = String(signingSecretValue || "");
-  if (signerUserId && signingSecret.length < 32) {
+  if (signingSecret.length < 32) {
     throw new Error("custom_appraisal_signing_secret_not_configured");
   }
   const signatureEventId = normalizeCustomAppraisalSignatureEventId(signatureEventIdValue);
@@ -662,9 +664,7 @@ export async function signCustomAppraisalWorkfile(pool, {
     );
     const existingEvent = existingEventResult.rows[0];
     if (existingEvent) {
-      const sameSigner = signerUserId
-        ? String(existingEvent.signed_by_user_id || "") === String(signerUserId)
-        : !existingEvent.signed_by_user_id && existingEvent.signed_by === signedBy;
+      const sameSigner = String(existingEvent.signed_by_user_id || "") === signerUserId;
       const sameRequest = Number(existingEvent.assignment_file_id) === Number(assignmentFileId)
         && existingEvent.account_id === accountId
         && String(existingEvent.organization_id || "")
@@ -704,7 +704,7 @@ export async function signCustomAppraisalWorkfile(pool, {
     const workfile = metaResult.rows[0];
     if (!workfile) throw new Error("assignment_file_not_found");
     if (workfile.status === "signed") throw new Error("custom_appraisal_workfile_signed");
-    if (signerUserId && ![
+    if (![
       workfile.assigned_appraiser_user_id,
       workfile.supervisory_appraiser_user_id,
     ].includes(signerUserId)) {
@@ -730,7 +730,7 @@ export async function signCustomAppraisalWorkfile(pool, {
     snapshot.signature = {
       event_id: signatureEventId,
       organization_id: workfile.organization_id || null,
-      signer_user_id: signerUserId || null,
+      signer_user_id: signerUserId,
       signed_from_ip: signedFromIp,
       signed_user_agent: signedUserAgent,
     };
@@ -764,15 +764,13 @@ export async function signCustomAppraisalWorkfile(pool, {
     };
     const serialized = JSON.stringify(snapshot);
     const checksum = customAppraisalSnapshotChecksum(snapshot);
-    const signatureHmac = signingSecret
-      ? customAppraisalSignatureHmac(signingSecret, {
-        signatureEventId,
-        organizationId: workfile.organization_id,
-        signerUserId,
-        signedAt,
-        snapshotChecksumSha256: checksum,
-      })
-      : null;
+    const signatureHmac = customAppraisalSignatureHmac(signingSecret, {
+      signatureEventId,
+      organizationId: workfile.organization_id,
+      signerUserId,
+      signedAt,
+      snapshotChecksumSha256: checksum,
+    });
     const signedResult = await client.query(
       `INSERT INTO app.custom_appraisal_signed_snapshots (
          assignment_file_id, canonical_file_name, schema_version,
@@ -791,7 +789,7 @@ export async function signCustomAppraisalWorkfile(pool, {
         signedBy,
         signedAt,
         workfile.organization_id || null,
-        signerUserId || null,
+        signerUserId,
         signatureEventId,
         signedFromIp,
         signedUserAgent,

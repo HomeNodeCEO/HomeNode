@@ -101,6 +101,33 @@ test("authenticates a signed snapshot with a server-held deterministic HMAC", ()
   );
 });
 
+test("signing requires an authenticated signer identity and server-held HMAC secret", async () => {
+  const pool = {
+    async query() {
+      throw new Error("database_must_not_be_reached");
+    },
+    async connect() {
+      throw new Error("database_must_not_be_reached");
+    },
+  };
+  const input = {
+    accountId: "ACCOUNT_1",
+    assignmentFileId: 41,
+    signedBy: "Authenticated Appraiser",
+    signatureEventId: "10000000-0000-4000-8000-000000000001",
+    acknowledgedWarningCodes: [],
+  };
+
+  await assert.rejects(
+    signCustomAppraisalWorkfile(pool, { ...input, signingSecret: "s".repeat(32) }),
+    /custom_appraisal_signer_identity_required/,
+  );
+  await assert.rejects(
+    signCustomAppraisalWorkfile(pool, { ...input, signerUserId: "user-1" }),
+    /custom_appraisal_signing_secret_not_configured/,
+  );
+});
+
 test("verifies HMAC-protected signed snapshots and rejects database tampering", () => {
   const signingSecret = "v".repeat(32);
   const snapshot = {

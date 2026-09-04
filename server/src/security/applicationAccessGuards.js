@@ -86,7 +86,9 @@ export function createApplicationAccessGuards({
     assignmentFileId,
     permission,
   ) {
-    if (!authenticationRequired) return true;
+    // An authenticated request must retain its exact assignment scope even while
+    // the rest of a non-production environment permits legacy access.
+    if (!authenticationRequired && !req.mobileAuth) return true;
     if (req.mobileAuth) {
       try {
         await assignmentAuthorizer(pool, req.mobileAuth, {

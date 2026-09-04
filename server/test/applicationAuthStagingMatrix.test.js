@@ -96,9 +96,20 @@ function configuration(overrides = {}) {
 }
 
 test("staging configuration requires HTTPS, distinct identities, and exact fixture identifiers", () => {
+  const normalized = normalizeApplicationAuthStagingConfiguration(configuration());
+  assert.equal(normalized.baseUrl, "https://staging.example.test");
+  assert.equal(normalized.timeoutMs, 10_000);
   assert.equal(
-    normalizeApplicationAuthStagingConfiguration(configuration()).baseUrl,
-    "https://staging.example.test",
+    normalizeApplicationAuthStagingConfiguration(configuration({ timeoutMs: null })).timeoutMs,
+    10_000,
+  );
+  assert.equal(
+    normalizeApplicationAuthStagingConfiguration(configuration({ timeoutMs: "" })).timeoutMs,
+    10_000,
+  );
+  assert.equal(
+    normalizeApplicationAuthStagingConfiguration(configuration({ timeoutMs: "15000" })).timeoutMs,
+    15_000,
   );
   assert.throws(
     () => normalizeApplicationAuthStagingConfiguration(configuration({ baseUrl: "http://staging.example.test" })),

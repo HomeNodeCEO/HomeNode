@@ -50,6 +50,9 @@ function baseUrl(value) {
 }
 
 function timeout(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return DEFAULT_TIMEOUT_MS;
+  }
   const parsed = Number(value);
   if (!Number.isInteger(parsed)) return DEFAULT_TIMEOUT_MS;
   return Math.max(1_000, Math.min(parsed, 30_000));

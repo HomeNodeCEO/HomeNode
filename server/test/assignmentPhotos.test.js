@@ -209,6 +209,36 @@ test("same-application fallback rejects MIME-spoofed photo bytes before storage"
   }), /invalid_assignment_photo_upload/);
 });
 
+test("same-application fallback cannot overwrite verified appraisal evidence", async () => {
+  let objectQuery = "";
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+      }
+      if (/FROM app\.inspection_photo_objects photo_object/.test(sql)) {
+        objectQuery = sql;
+        return { rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  await assert.rejects(() => uploadAssignmentPhotoObject(pool, {
+    configured: true,
+    bucket: "private",
+    putObject: async () => assert.fail("verified evidence must be immutable"),
+  }, {
+    accountId: "26355500170360000",
+    assignmentFileId: 91,
+    photoId: "20000000-0000-4000-8000-000000000002",
+    objectId: "20000000-0000-4000-8000-000000000003",
+    contentType: "image/png",
+    content: PNG,
+  }), /assignment_photo_object_not_found/);
+  assert.match(objectQuery, /photo\.status NOT IN \('verified', 'excluded', 'deleted'\)/);
+  assert.match(objectQuery, /photo_object\.status IN \('pending_upload', 'rejected'\)/);
+});
+
 test("photo verification decodes bytes, records a checksum, and promotes an immutable object key", async () => {
   const photoId = "21000000-0000-4000-8000-000000000002";
   const objectId = "21000000-0000-4000-8000-000000000003";

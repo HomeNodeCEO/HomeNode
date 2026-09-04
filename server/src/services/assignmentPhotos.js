@@ -441,7 +441,8 @@ export async function uploadAssignmentPhotoObject(pool, storage, {
       WHERE photo_object.id = $1
         AND photo.id = $2
         AND photo.report_file_id = $3
-        AND photo.status NOT IN ('excluded', 'deleted')`,
+        AND photo.status NOT IN ('verified', 'excluded', 'deleted')
+        AND photo_object.status IN ('pending_upload', 'rejected')`,
     [objectId, photoId, report.id],
   );
   const object = rows[0];

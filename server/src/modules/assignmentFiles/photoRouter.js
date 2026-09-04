@@ -14,11 +14,8 @@ import {
 } from "../../services/assignmentPhotos.js";
 
 const PHOTO_CONTENT_TYPES = [
-  "image/avif",
-  "image/bmp",
   "image/jpeg",
   "image/png",
-  "image/tiff",
   "image/webp",
 ];
 

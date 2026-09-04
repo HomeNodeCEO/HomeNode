@@ -148,6 +148,7 @@ export default function PropertyTaxComparableGrid({
     try {
       const response = await getComparableRecommendations({
         subjectAccountId: accountId,
+        propertyTaxFileId: file.tax_protest_file_id,
         analysisAsOf: subject.valuationDate,
         periodMonths: 24,
         limit: 50,
@@ -181,7 +182,7 @@ export default function PropertyTaxComparableGrid({
     } finally {
       setLoadingRecommendations(false);
     }
-  }, [accountId, subject]);
+  }, [accountId, file.tax_protest_file_id, subject]);
 
   useEffect(() => {
     const savedContextComplete = Boolean(workspace.taxYear && caseData.neighborhoodCode);

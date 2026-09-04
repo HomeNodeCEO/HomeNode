@@ -170,6 +170,7 @@ function StudyGroupsTable({
 
 export default function ConditionQualityStudy({
   subjectAccountId,
+  assignmentFileId,
   subjectCondition,
   subjectQuality,
   ratingAssignments,
@@ -182,6 +183,7 @@ export default function ConditionQualityStudy({
   onSalesLoaded,
 }: {
   subjectAccountId: string;
+  assignmentFileId: number | null;
   subjectCondition: string;
   subjectQuality: string;
   ratingAssignments: Record<string, ConditionQualityRatingAssignment>;
@@ -234,6 +236,10 @@ export default function ConditionQualityStudy({
       setError('A subject property is required before this study can run.');
       return;
     }
+    if (!assignmentFileId) {
+      setError('Select an appraisal assignment before this study can run.');
+      return;
+    }
     if (!subjectCondition || !subjectQuality) {
       setError('Apply the subject’s condition and quality ratings before starting the study.');
       return;
@@ -249,6 +255,7 @@ export default function ConditionQualityStudy({
     try {
       const response = await api.getComparableRecommendations({
         subjectAccountId,
+        assignmentFileId,
         analysisAsOf: asOfDate,
         periodMonths: 12,
         limit: 100,

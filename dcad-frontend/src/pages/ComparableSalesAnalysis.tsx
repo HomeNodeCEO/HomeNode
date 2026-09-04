@@ -72,6 +72,7 @@ import {
   garageSpacesFromArea,
   localDateString,
   monthsBeforeDate,
+  normalizeConstructionType as normalizeConstType,
   swapArrayItems,
   type CostToCureLine,
   type SalesAnalysisPeriodMonths,
@@ -186,35 +187,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [costToCureItems, setCostToCureItems] = useState<CostToCureLine[]>(
     () => [createCostToCureLine()],
   );
-  // Normalizes the subject's construction/stories into a label for the grid.
-  // NOTE: Per request, if Const Type contains "ONE AND ONE HALF STORIES",
-  //       we display it as "2 Story".
-  const normalizeConstType = (stories: unknown, construction: unknown): string => {
-    const toStr = (value: unknown) => (
-      value === null || value === undefined ? '' : String(value)
-    ).trim();
-    const sStr = toStr(stories).toLowerCase();
-    const cStr = toStr(construction).toLowerCase();
-
-    // Try stories first (number or text)
-    if (sStr) {
-      const n = Number(sStr.replace(/[^0-9.]/g, ''));
-      if (Number.isFinite(n) && n > 0) {
-        return n >= 2 ? '2 Story' : '1 Story';
-      }
-      if (sStr.includes('two') || sStr.includes('2')) return '2 Story';
-      if (sStr.includes('one and one half')) return '2 Story';
-      if (sStr.includes('one') || sStr.includes('1')) return '1 Story';
-    }
-
-    // Fall back to construction type text
-    if (cStr) {
-      if (cStr.includes('one and one half')) return '2 Story';
-      if (cStr.includes('two') || cStr.includes('2')) return '2 Story';
-      if (cStr.includes('one') || cStr.includes('1')) return '1 Story';
-    }
-    return '';
-  };
   // Test/Run controls and sample comparables
   const [subjectCondition, setSubjectCondition] = useState(() =>
     normalizeUadConditionRating(conditionCode),
@@ -1465,6 +1437,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesError('A subject property is required before comparable sales can be recommended.');
       return;
     }
+    if (!activeAssignmentFile?.id) {
+      setSalesError('Select an appraisal assignment before comparable sales can be recommended.');
+      return;
+    }
     if (!comparableSearchProfile) {
       setSalesError('Select the comparable-search complexity before recommending sales.');
       return;
@@ -1475,6 +1451,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     try {
       const response = await api.getComparableRecommendations({
         subjectAccountId: propertyId,
+        assignmentFileId: activeAssignmentFile.id,
         analysisAsOf: salesAnalysisAsOf,
         periodMonths: salesPeriodMonths,
         limit: 50,
@@ -5045,6 +5022,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         <ConditionQualityStudy
           key={`condition-quality-${propertyId}`}
           subjectAccountId={propertyId}
+          assignmentFileId={activeAssignmentFile?.id || null}
           subjectCondition={subjectCondition}
           subjectQuality={subjectQuality}
           ratingAssignments={conditionQualityRatings}

@@ -125,10 +125,76 @@ function routerOptions(overrides = {}) {
       olderThanTwoYearsCount: 0,
     }),
     currentDate: () => "2026-09-02",
+    requireCustomAccountScope: async () => true,
+    requirePropertyTaxAccountScope: async () => true,
     logger: { error() {}, warn() {} },
     ...overrides,
   };
 }
+
+test("recommendations require exact custom or property-tax workfile scope before readiness", async (context) => {
+  let readinessReleased = false;
+  let customScope;
+  let propertyTaxScope;
+  const options = routerOptions({
+    locationsReady: {
+      then() {
+        readinessReleased = true;
+      },
+    },
+    requireCustomAccountScope: async (...values) => {
+      customScope = values;
+      values[1].status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+    requirePropertyTaxAccountScope: async (...values) => {
+      propertyTaxScope = values;
+      values[1].status(403).json({ error: "property_tax_protest_file_access_denied" });
+      return false;
+    },
+  });
+  const server = await startRouter(createComparableRecommendationsRouter(options));
+  context.after(server.close);
+
+  const custom = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    assignment_file_id: "42",
+  });
+  assert.equal(custom.status, 403);
+  assert.deepEqual(await custom.json(), { error: "assignment_file_access_denied" });
+  assert.equal(customScope[2], "A-1");
+  assert.equal(customScope[3], "42");
+  assert.equal(customScope[4], "read");
+
+  const propertyTax = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    property_tax_file_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  });
+  assert.equal(propertyTax.status, 403);
+  assert.deepEqual(await propertyTax.json(), { error: "property_tax_protest_file_access_denied" });
+  assert.equal(propertyTaxScope[2], "A-1");
+  assert.equal(propertyTaxScope[3], "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  assert.equal(propertyTaxScope[4], "read");
+  assert.equal(readinessReleased, false);
+});
+
+test("recommendations reject ambiguous workfile scope before authorization", async (context) => {
+  let accessCalls = 0;
+  const options = routerOptions({
+    requireCustomAccountScope: async () => { accessCalls += 1; return true; },
+    requirePropertyTaxAccountScope: async () => { accessCalls += 1; return true; },
+  });
+  const server = await startRouter(createComparableRecommendationsRouter(options));
+  context.after(server.close);
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    assignment_file_id: "42",
+    property_tax_file_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "ambiguous_recommendation_scope" });
+  assert.equal(accessCalls, 0);
+});
 
 async function startRouter(router) {
   const app = express();
@@ -463,7 +529,7 @@ test("recommendation composition is explicit and replaces the final inline route
   assert.ok(salesList > recommendations);
   assert.match(
     source,
-    /createComparableRecommendationsRouter\(\{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed,[\s\S]*?locationsReady: accountLocationsReady,[\s\S]*?enrichmentReady: propertyEnrichmentReady,[\s\S]*?backfillReady: locationBackfillReady,[\s\S]*?distanceSqlBuilder: greatCircleDistanceMilesSql/,
+    /createComparableRecommendationsRouter\(\{[\s\S]*?accountIdAllowed: legacyAccountIdAllowed,[\s\S]*?locationsReady: accountLocationsReady,[\s\S]*?enrichmentReady: propertyEnrichmentReady,[\s\S]*?backfillReady: locationBackfillReady,[\s\S]*?distanceSqlBuilder: greatCircleDistanceMilesSql,[\s\S]*?requireCustomAccountScope,[\s\S]*?requirePropertyTaxAccountScope/,
   );
   assert.equal(source.includes('app.get("/api/sales/recommendations"'), false);
   assert.doesNotMatch(source, /app\.(get|post|put|patch|delete)\(/);

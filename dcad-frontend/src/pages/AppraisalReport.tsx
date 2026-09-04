@@ -438,7 +438,7 @@ export default function AppraisalReport() {
 
   useEffect(() => {
     let cancelled = false;
-    if (!propertyId || draft?.comparables?.length) {
+    if (!propertyId || !assignmentFile?.id || draft?.comparables?.length) {
       setRecommended([]);
       return () => {
         cancelled = true;
@@ -448,6 +448,7 @@ export default function AppraisalReport() {
     void api
       .getComparableRecommendations({
         subjectAccountId: propertyId,
+        assignmentFileId: assignmentFile.id,
         limit: 6,
       })
       .then((response) => {
@@ -467,7 +468,7 @@ export default function AppraisalReport() {
     return () => {
       cancelled = true;
     };
-  }, [draft, propertyId]);
+  }, [assignmentFile?.id, draft, propertyId]);
 
   useEffect(() => {
     const previous = document.title;

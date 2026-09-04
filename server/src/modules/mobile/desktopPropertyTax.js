@@ -88,6 +88,7 @@ async function requireCurrentWriteAccess(client, row, actorAuth, actorUserId) {
   if (!decideAssignmentAccess(currentAuth, row, "write")) {
     throw new Error("property_tax_protest_access_denied");
   }
+  return currentAuth;
 }
 
 export async function getDesktopPropertyTaxFile(pool, accountIdValue, fileIdValue = null, {
@@ -196,8 +197,9 @@ export async function saveDesktopPropertyTaxFile(
     await client.query("BEGIN");
     const row = await selectFile(client, accountId, fileId, { lock: true });
     if (!row) throw new Error("property_tax_protest_file_not_found");
+    let currentAuth = null;
     if (authorizationRequired) {
-      await requireCurrentWriteAccess(client, row, actorAuth, normalizedActorUserId);
+      currentAuth = await requireCurrentWriteAccess(client, row, actorAuth, normalizedActorUserId);
     }
     if (clientOperationId) {
       const prior = await client.query(
@@ -226,7 +228,14 @@ export async function saveDesktopPropertyTaxFile(
       error.currentRevision = Number(row.revision);
       throw error;
     }
-    const workfileData = mergePropertyTaxWorkfileUpdate(row.workfile_data || {}, input.workfile_data);
+    const workfileData = mergePropertyTaxWorkfileUpdate(
+      row.workfile_data || {},
+      input.workfile_data,
+      {
+        canAttestComparables: !authorizationRequired
+          || decideAssignmentAccess(currentAuth, row, "sign"),
+      },
+    );
     const nextRevision = expectedRevision + 1;
     const updated = await client.query(
       `UPDATE app.tax_protest_files

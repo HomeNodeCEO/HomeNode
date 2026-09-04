@@ -207,6 +207,54 @@ test("authenticated desktop saves record the server identity on every audit reco
   });
 });
 
+test("non-signers can stage draft comparables but cannot create or alter attestations", () => {
+  const grid = (rows) => ({
+    analysis: {
+      comparable_grid: {
+        version: 1,
+        rows,
+        updated_at: "2026-09-04T12:00:00.000Z",
+        recommendation_policy: "policy-1",
+      },
+    },
+  });
+  const verified = comparable();
+  const draft = comparable({
+    id: "district:41:draft",
+    saleId: "SALE-DRAFT",
+    reviewStatus: "needs_review",
+    armsLength: false,
+    adjustmentAmount: 0,
+  });
+  const stored = grid([verified]);
+
+  const staged = mergePropertyTaxWorkfileUpdate(
+    stored,
+    grid([verified, draft]),
+    { canAttestComparables: false },
+  );
+  assert.equal(staged.analysis.comparable_grid.rows.length, 2);
+  assert.throws(
+    () => mergePropertyTaxWorkfileUpdate(stored, grid([
+      { ...verified, address: "Forged address" },
+    ]), { canAttestComparables: false }),
+    /property_tax_comparable_attestation_required/,
+  );
+  assert.throws(
+    () => mergePropertyTaxWorkfileUpdate(stored, grid([]), { canAttestComparables: false }),
+    /property_tax_comparable_attestation_required/,
+  );
+  assert.throws(
+    () => mergePropertyTaxWorkfileUpdate({}, grid([verified]), { canAttestComparables: false }),
+    /property_tax_comparable_attestation_required/,
+  );
+  assert.doesNotThrow(() => mergePropertyTaxWorkfileUpdate(
+    stored,
+    grid([{ ...verified, address: "Appraiser-corrected address" }]),
+    { canAttestComparables: true },
+  ));
+});
+
 test("desktop Property Tax saves deny revoked membership or reassignment inside the transaction", async () => {
   const baseRow = {
     report_file_id: REPORT_ID,
@@ -262,6 +310,67 @@ test("desktop Property Tax saves deny revoked membership or reassignment inside 
     assert.ok(calls.some((sql) => sql === "ROLLBACK"), scenario.name);
     assert.equal(calls.some((sql) => sql.includes("UPDATE app.tax_protest_files")), false);
   }
+});
+
+test("organization writers cannot self-attest a comparable inside the save transaction", async () => {
+  const row = {
+    report_file_id: REPORT_ID,
+    registry_revision: 1,
+    is_current: true,
+    organization_id: "00000000-0000-4000-8000-000000000714",
+    tax_protest_file_id: FILE_ID,
+    account_id: "ACCOUNT-1",
+    file_number: "PT-2026-1",
+    previous_file_id: null,
+    workfile_data: {},
+    assigned_appraiser_user_id: "00000000-0000-4000-8000-000000000799",
+    status: "draft",
+    revision: 1,
+    completed_at: null,
+    created_at: new Date("2026-01-01T00:00:00Z"),
+    updated_at: new Date("2026-01-01T00:00:00Z"),
+  };
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql.includes("SELECT report_file.id")) return { rows: [row] };
+      if (sql.includes("FROM app_auth.users app_user")) {
+        return { rows: [{ role_code: "office_assistant" }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+
+  await assert.rejects(
+    saveDesktopPropertyTaxFile(
+      { connect: async () => client },
+      "ACCOUNT-1",
+      FILE_ID,
+      {
+        expected_revision: 1,
+        workfile_data: {
+          analysis: {
+            comparable_grid: {
+              version: 1,
+              rows: [comparable()],
+              updated_at: null,
+              recommendation_policy: "policy-1",
+            },
+          },
+        },
+      },
+      {
+        actorUserId: ACTOR_ID,
+        actorAuth: { userId: ACTOR_ID },
+        authorizationRequired: true,
+      },
+    ),
+    /property_tax_comparable_attestation_required/,
+  );
+  assert.ok(calls.some((sql) => sql === "ROLLBACK"));
+  assert.equal(calls.some((sql) => sql.includes("UPDATE app.tax_protest_files")), false);
 });
 
 test("desktop Property Tax save retries do not create a second revision", async () => {

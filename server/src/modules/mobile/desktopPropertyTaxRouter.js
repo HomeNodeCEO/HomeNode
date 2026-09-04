@@ -303,6 +303,9 @@ export function createDesktopPropertyTaxRouter({
       if (error?.message === "property_tax_protest_access_denied") {
         return res.status(403).json({ error: error.message });
       }
+      if (error?.message === "property_tax_comparable_attestation_required") {
+        return res.status(403).json({ error: error.message });
+      }
       if (String(error?.message || "").startsWith("invalid_")) {
         return res.status(400).json({ error: error.message });
       }

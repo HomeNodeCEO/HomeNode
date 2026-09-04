@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
+import sharp from "sharp";
 
 import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
+import {
+  MAX_UAD_IMAGE_DIMENSION,
+  inspectUadAssetPayload,
+} from "../modules/uad/uadFileSecurity.js";
 import { normalizeUuid } from "../modules/mobile/reportFiles.js";
 import { canonicalJson } from "../modules/mobile/sync.js";
 import { getReportEvidenceVersion } from "./reportEvidenceVersion.js";
@@ -12,14 +17,64 @@ export const ASSIGNMENT_PHOTO_CATEGORIES = Object.freeze([
 ]);
 
 const ALLOWED_CONTENT_TYPES = new Set([
-  "image/avif", "image/bmp", "image/jpeg", "image/png", "image/tiff", "image/webp",
+  "image/jpeg", "image/png", "image/webp",
 ]);
 const DISPLAY_CONTENT_TYPES = new Set(["image/jpeg", "image/webp"]);
 const MAX_PHOTO_BYTES = 50 * 1024 * 1024;
 const MAX_PHOTOS_PER_FILE = 100;
+const MAX_ASSIGNMENT_PHOTO_PIXELS = 60_000_000;
+const SHARP_FORMATS_BY_CONTENT_TYPE = new Map([
+  ["image/jpeg", new Set(["jpeg"])],
+  ["image/png", new Set(["png"])],
+  ["image/webp", new Set(["webp"])],
+]);
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function inspectAssignmentPhotoPayload(bodyValue, contentType) {
+  let baseline;
+  try {
+    if (!Buffer.isBuffer(bodyValue)) throw new Error("invalid_assignment_photo_upload");
+    const body = bodyValue;
+    baseline = inspectUadAssetPayload(body, contentType);
+    const acceptedFormats = SHARP_FORMATS_BY_CONTENT_TYPE.get(contentType);
+    if (!acceptedFormats) throw new Error("invalid_assignment_photo_upload");
+    const decoder = sharp(body, {
+      failOn: "error",
+      limitInputPixels: MAX_ASSIGNMENT_PHOTO_PIXELS,
+      sequentialRead: true,
+    });
+    try {
+      const metadata = await decoder.metadata();
+      const width = Number(metadata.width);
+      const height = Number(metadata.height);
+      if (!acceptedFormats.has(String(metadata.format || ""))
+          || !Number.isInteger(width) || !Number.isInteger(height)
+          || width < 1 || height < 1
+          || width > MAX_UAD_IMAGE_DIMENSION || height > MAX_UAD_IMAGE_DIMENSION
+          || width * height > MAX_ASSIGNMENT_PHOTO_PIXELS
+          || Number(metadata.pages || 1) !== 1) {
+        throw new Error("invalid_assignment_photo_upload");
+      }
+      // Metadata parsing alone does not prove the pixel stream is decodable.
+      // Computing channel statistics forces libvips to decode the complete image.
+      await decoder.stats();
+      return Object.freeze({
+        ...baseline,
+        dimensions: Object.freeze({ width, height, pixels: width * height }),
+      });
+    } finally {
+      decoder.destroy();
+    }
+  } catch {
+    throw new Error("invalid_assignment_photo_upload");
+  }
+}
+
+function buildVerifiedAssignmentPhotoObjectKey(objectKey, checksumSha256) {
+  return `${objectKey}.verified-${randomUUID()}-${checksumSha256}`;
 }
 
 function boundedText(value, code, maximum, { nullable = false } = {}) {
@@ -395,6 +450,7 @@ export async function uploadAssignmentPhotoObject(pool, storage, {
   if (contentType !== object.content_type || byteSize !== Number(object.expected_byte_size)) {
     throw new Error("invalid_assignment_photo_upload");
   }
+  const verified = await inspectAssignmentPhotoPayload(contentBuffer, object.content_type);
   const uploaded = await storage.putObject({
     objectKey: object.object_key,
     contentType: object.content_type,
@@ -402,9 +458,10 @@ export async function uploadAssignmentPhotoObject(pool, storage, {
   });
   await pool.query(
     `UPDATE app.inspection_photo_objects
-        SET storage_etag = $2, uploaded_at = COALESCE(uploaded_at, now()), updated_at = now()
+        SET storage_etag = $2, checksum_sha256 = $4,
+            uploaded_at = COALESCE(uploaded_at, now()), updated_at = now()
       WHERE id = $1 AND photo_id = $3`,
-    [object.id, uploaded?.etag || null, photoId],
+    [object.id, uploaded?.etag || null, photoId, verified.checksum_sha256],
   );
   return {
     object_id: object.id,
@@ -428,17 +485,74 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
   const photo = photoResult.rows[0];
   const objects = await photoObjects(pool, photo.id);
   if (photo.status === "verified") return photoPayload(storage, photo, objects);
+  if (!objects.length) throw new Error("invalid_assignment_photo_upload");
   const inspected = [];
-  for (const object of objects) {
-    const result = await storage.inspectObject({ objectKey: object.object_key });
-    const contentType = String(result.content_type || "").split(";", 1)[0].trim().toLowerCase();
-    if (Number(result.byte_size) !== Number(object.expected_byte_size)
-        || (contentType && contentType !== object.content_type)) {
-      throw new Error("invalid_assignment_photo_upload");
+  try {
+    for (const object of objects) {
+      const result = await storage.inspectObject({ objectKey: object.object_key });
+      const contentType = String(result.content_type || "").split(";", 1)[0].trim().toLowerCase();
+      if (Number(result.byte_size) !== Number(object.expected_byte_size)
+          || Number(result.byte_size) < 1 || Number(result.byte_size) > MAX_PHOTO_BYTES
+          || (contentType && contentType !== object.content_type)) {
+        throw new Error("invalid_assignment_photo_upload");
+      }
+      const downloaded = await storage.getObject({
+        objectKey: object.object_key,
+        maxBytes: MAX_PHOTO_BYTES,
+      });
+      const downloadedType = String(downloaded.content_type || "").split(";", 1)[0].trim().toLowerCase();
+      if (Number(downloaded.byte_size) !== Number(result.byte_size)
+          || Number(downloaded.byte_size) !== Number(object.expected_byte_size)
+          || (downloadedType && downloadedType !== object.content_type)) {
+        throw new Error("invalid_assignment_photo_upload");
+      }
+      const verified = await inspectAssignmentPhotoPayload(downloaded.body, object.content_type);
+      if (object.checksum_sha256 && object.checksum_sha256 !== verified.checksum_sha256) {
+        throw new Error("invalid_assignment_photo_upload");
+      }
+      const verifiedObjectKey = buildVerifiedAssignmentPhotoObjectKey(
+        object.object_key,
+        verified.checksum_sha256,
+      );
+      let copied;
+      try {
+        copied = await storage.putObject({
+          objectKey: verifiedObjectKey,
+          contentType: object.content_type,
+          body: downloaded.body,
+        });
+      } catch (error) {
+        await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
+        throw error;
+      }
+      if (Number(copied?.byte_size) !== verified.byte_size) {
+        await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
+        throw new Error("invalid_assignment_photo_upload");
+      }
+      inspected.push({
+        id: object.id,
+        byteSize: verified.byte_size,
+        etag: copied.etag || result.etag || null,
+        checksumSha256: verified.checksum_sha256,
+        dimensions: verified.dimensions,
+        sourceObjectKey: object.object_key,
+        verifiedObjectKey,
+      });
     }
-    inspected.push({ id: object.id, byteSize: Number(result.byte_size), etag: result.etag || null });
+  } catch (error) {
+    await Promise.all(inspected.map((item) => storage.deleteObject?.({
+      objectKey: item.verifiedObjectKey,
+    }).catch(() => undefined)));
+    if (String(error?.message || "") === "invalid_assignment_photo_upload") {
+      await Promise.all(objects.map((object) => storage.deleteObject?.({
+        objectKey: object.object_key,
+      }).catch(() => undefined)));
+    }
+    throw error;
   }
   const client = await pool.connect();
+  let verifiedPayload = null;
+  let verificationCommitted = false;
   try {
     await client.query("BEGIN");
     const lockedReport = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
@@ -448,13 +562,30 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
       [photoId, lockedReport.id],
     );
     if (!locked.rows.length) throw new Error("assignment_photo_not_found");
+    if (locked.rows[0].status === "verified") {
+      const currentObjects = await photoObjects(client, photoId);
+      verifiedPayload = photoPayload(storage, locked.rows[0], currentObjects);
+      await client.query("COMMIT");
+      return verifiedPayload;
+    }
     for (const item of inspected) {
       await client.query(
         `UPDATE app.inspection_photo_objects
             SET status = 'verified', byte_size = $2, storage_etag = $3,
+                checksum_sha256 = $4, object_key = $5, upload_expires_at = NULL,
+                pixel_width = COALESCE($6, pixel_width),
+                pixel_height = COALESCE($7, pixel_height),
                 uploaded_at = COALESCE(uploaded_at, now()), verified_at = now(), updated_at = now()
           WHERE id = $1`,
-        [item.id, item.byteSize, item.etag],
+        [
+          item.id,
+          item.byteSize,
+          item.etag,
+          item.checksumSha256,
+          item.verifiedObjectKey,
+          item.dimensions?.width || null,
+          item.dimensions?.height || null,
+        ],
       );
     }
     const priorRevision = Number(locked.rows[0].revision);
@@ -469,7 +600,12 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
       `INSERT INTO app.inspection_photo_events (
          photo_id, inspection_session_id, event_type, prior_revision, next_revision, metadata
        ) VALUES ($1, NULL, 'photo.verified', $2, $3, $4::jsonb)`,
-      [photoId, priorRevision, priorRevision + 1, JSON.stringify({ origin: "desktop", object_count: inspected.length })],
+      [photoId, priorRevision, priorRevision + 1, JSON.stringify({
+        origin: "desktop",
+        object_count: inspected.length,
+        checksum_bound: true,
+        immutable_object_keys: true,
+      })],
     );
     const registry = await client.query(
       `UPDATE app.report_files SET registry_revision = registry_revision + 1, updated_at = now()
@@ -485,14 +621,24 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
         Number(registry.rows[0].registry_revision), JSON.stringify({ photo_id: photoId })],
     );
     const verifiedObjects = await photoObjects(client, photoId);
+    verifiedPayload = photoPayload(storage, updated.rows[0], verifiedObjects);
     await client.query("COMMIT");
-    return photoPayload(storage, updated.rows[0], verifiedObjects);
+    verificationCommitted = true;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();
+    if (!verificationCommitted) {
+      await Promise.all(inspected.map((item) => storage.deleteObject?.({
+        objectKey: item.verifiedObjectKey,
+      }).catch(() => undefined)));
+    }
   }
+  await Promise.all(inspected.map((item) => storage.deleteObject?.({
+    objectKey: item.sourceObjectKey,
+  }).catch(() => undefined)));
+  return verifiedPayload;
 }
 
 export async function removeAssignmentPhoto(pool, { accountId, assignmentFileId, photoId: value }) {

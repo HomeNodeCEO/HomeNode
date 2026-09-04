@@ -11,9 +11,14 @@ import {
   normalizeAssignmentPhotoUpload,
   uploadAssignmentPhotoObject,
   updateAssignmentPhotoMetadata,
+  verifyAssignmentPhoto,
 } from "../src/services/assignmentPhotos.js";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 test("normalizes a desktop appraisal photo with original and display objects", () => {
   const normalized = normalizeAssignmentPhotoUpload({
@@ -57,6 +62,22 @@ test("requires an original and rejects an unsafe display content type", () => {
       byte_size: 100,
     }],
   }), /invalid_assignment_photo_display_content_type/);
+});
+
+test("desktop photo registration matches the JPEG, PNG, and WebP browser allowlist", () => {
+  for (const contentType of ["image/avif", "image/bmp", "image/tiff"]) {
+    assert.throws(() => normalizeAssignmentPhotoUpload({
+      client_photo_id: "10000000-0000-4000-8000-000000000001",
+      category: "Front",
+      objects: [{
+        client_object_id: "10000000-0000-4000-8000-000000000002",
+        variant: "original",
+        file_name: "unsupported-image",
+        content_type: contentType,
+        byte_size: 100,
+      }],
+    }), /invalid_assignment_photo_content_type/);
+  }
 });
 
 test("normalizes appraiser photo labels with optimistic revision protection", () => {
@@ -106,7 +127,7 @@ test("builds a stable photo change token that reacts to mobile updates", () => {
 });
 
 test("same-application photo fallback uploads only the registered file-scoped object", async () => {
-  const content = Buffer.from("verified-photo-bytes");
+  const content = PNG;
   const writes = [];
   const pool = {
     async query(sql, values = []) {
@@ -118,8 +139,8 @@ test("same-application photo fallback uploads only the registered file-scoped ob
           id: "20000000-0000-4000-8000-000000000003",
           photo_id: "20000000-0000-4000-8000-000000000002",
           variant: "original",
-          object_key: "private/photo.jpg",
-          content_type: "image/jpeg",
+          object_key: "private/photo.png",
+          content_type: "image/png",
           expected_byte_size: content.length,
         }] };
       }
@@ -143,14 +164,199 @@ test("same-application photo fallback uploads only the registered file-scoped ob
     assignmentFileId: 91,
     photoId: "20000000-0000-4000-8000-000000000002",
     objectId: "20000000-0000-4000-8000-000000000003",
-    contentType: "image/jpeg",
+    contentType: "image/png",
     content,
   });
   assert.equal(result.uploaded, true);
   assert.equal(result.byte_size, content.length);
-  assert.equal(stored[0].objectKey, "private/photo.jpg");
+  assert.equal(stored[0].objectKey, "private/photo.png");
   assert.equal(stored[0].body, content);
   assert.equal(writes.length, 1);
+  assert.match(writes[0][3], /^[a-f0-9]{64}$/);
+});
+
+test("same-application fallback rejects MIME-spoofed photo bytes before storage", async () => {
+  const spoof = Buffer.alloc(PNG.length, 0x41);
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+      }
+      if (/FROM app\.inspection_photo_objects photo_object/.test(sql)) {
+        return { rows: [{
+          id: "20000000-0000-4000-8000-000000000003",
+          photo_id: "20000000-0000-4000-8000-000000000002",
+          variant: "original",
+          object_key: "private/photo.png",
+          content_type: "image/png",
+          expected_byte_size: spoof.length,
+        }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  await assert.rejects(() => uploadAssignmentPhotoObject(pool, {
+    configured: true,
+    bucket: "private",
+    putObject: async () => assert.fail("spoofed bytes must not reach object storage"),
+  }, {
+    accountId: "26355500170360000",
+    assignmentFileId: 91,
+    photoId: "20000000-0000-4000-8000-000000000002",
+    objectId: "20000000-0000-4000-8000-000000000003",
+    contentType: "image/png",
+    content: spoof,
+  }), /invalid_assignment_photo_upload/);
+});
+
+test("photo verification decodes bytes, records a checksum, and promotes an immutable object key", async () => {
+  const photoId = "21000000-0000-4000-8000-000000000002";
+  const objectId = "21000000-0000-4000-8000-000000000003";
+  const sourceObjectKey = "private/pending/photo.png";
+  const photo = {
+    id: photoId,
+    client_photo_id: "21000000-0000-4000-8000-000000000001",
+    origin_channel: "desktop",
+    category: "Front",
+    caption: "Subject front",
+    position: 1,
+    status: "pending_upload",
+    revision: 1,
+    required_retention_years: 5,
+  };
+  const object = {
+    id: objectId,
+    photo_id: photoId,
+    variant: "original",
+    object_key: sourceObjectKey,
+    original_file_name: "photo.png",
+    content_type: "image/png",
+    expected_byte_size: PNG.length,
+    status: "pending_upload",
+  };
+  let verifiedObject = object;
+  let objectUpdate = null;
+  const client = {
+    async query(sql, values = []) {
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: "report-1", organization_id: "org-1", workfile_status: "draft" }] };
+      }
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [photo] };
+      }
+      if (/UPDATE app\.inspection_photo_objects/.test(sql)) {
+        objectUpdate = values;
+        verifiedObject = {
+          ...object,
+          status: "verified",
+          byte_size: values[1],
+          storage_etag: values[2],
+          checksum_sha256: values[3],
+          object_key: values[4],
+          pixel_width: values[5],
+          pixel_height: values[6],
+        };
+        return { rows: [] };
+      }
+      if (/UPDATE app\.inspection_photos/.test(sql)) {
+        return { rows: [{ ...photo, status: "verified", revision: 2 }] };
+      }
+      if (/UPDATE app\.report_files/.test(sql)) return { rows: [{ registry_revision: 2 }] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [verifiedObject] };
+      if (/INSERT INTO app\.(inspection_photo_events|report_file_events)/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: "report-1", organization_id: "org-1", workfile_status: "draft" }] };
+      }
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql)) return { rows: [photo] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [object] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  const operations = [];
+  const result = await verifyAssignmentPhoto(pool, {
+    configured: true,
+    bucket: "private",
+    inspectObject: async ({ objectKey }) => {
+      operations.push(["inspect", objectKey]);
+      return { byte_size: PNG.length, content_type: "image/png", etag: "pending-etag" };
+    },
+    getObject: async ({ objectKey, maxBytes }) => {
+      operations.push(["get", objectKey, maxBytes]);
+      return { body: PNG, byte_size: PNG.length, content_type: "image/png" };
+    },
+    putObject: async ({ objectKey, contentType, body }) => {
+      operations.push(["put", objectKey, contentType, body.length]);
+      return { byte_size: body.length, etag: "verified-etag" };
+    },
+    deleteObject: async ({ objectKey }) => {
+      operations.push(["delete", objectKey]);
+      return { deleted: true };
+    },
+    createDownloadUrl: ({ objectKey }) => ({ url: `https://storage.invalid/${objectKey}`, expires_in_seconds: 300 }),
+  }, {
+    accountId: "26355500170360000",
+    assignmentFileId: 91,
+    photoId,
+  });
+  assert.equal(result.status, "verified");
+  assert.equal(operations.find(([name]) => name === "get")[2], 50 * 1024 * 1024);
+  assert.notEqual(objectUpdate[4], sourceObjectKey);
+  assert.match(objectUpdate[4], /\.verified-[0-9a-f-]+-[a-f0-9]{64}$/);
+  assert.match(objectUpdate[3], /^[a-f0-9]{64}$/);
+  assert.deepEqual(objectUpdate.slice(5, 7), [1, 1]);
+  assert.ok(operations.some(([name, key]) => name === "delete" && key === sourceObjectKey));
+  assert.ok(!operations.some(([name, key]) => name === "delete" && key === objectUpdate[4]));
+});
+
+test("photo verification rejects and removes same-size non-image bytes", async () => {
+  const spoof = Buffer.alloc(PNG.length, 0x41);
+  const photoId = "22000000-0000-4000-8000-000000000002";
+  const sourceObjectKey = "private/pending/spoof.png";
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+      }
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql)) {
+        return { rows: [{ id: photoId, status: "pending_upload", revision: 1 }] };
+      }
+      if (/FROM app\.inspection_photo_objects/.test(sql)) {
+        return { rows: [{
+          id: "22000000-0000-4000-8000-000000000003",
+          photo_id: photoId,
+          variant: "original",
+          object_key: sourceObjectKey,
+          content_type: "image/png",
+          expected_byte_size: spoof.length,
+          status: "pending_upload",
+        }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    async connect() { return assert.fail("invalid photo bytes must not reach the verification transaction"); },
+  };
+  const deleted = [];
+  await assert.rejects(() => verifyAssignmentPhoto(pool, {
+    configured: true,
+    bucket: "private",
+    inspectObject: async () => ({ byte_size: spoof.length, content_type: "image/png", etag: "spoof" }),
+    getObject: async () => ({ body: spoof, byte_size: spoof.length, content_type: "image/png" }),
+    putObject: async () => assert.fail("invalid photo bytes must never be promoted"),
+    deleteObject: async ({ objectKey }) => deleted.push(objectKey),
+  }, {
+    accountId: "26355500170360000",
+    assignmentFileId: 91,
+    photoId,
+  }), /invalid_assignment_photo_upload/);
+  assert.deepEqual(deleted, [sourceObjectKey]);
 });
 
 test("appraiser label edits are file-scoped, revision-checked, and audited", async () => {
@@ -217,6 +423,16 @@ test("desktop photo migration preserves mobile rows while enabling file-scoped d
   assert.match(source, /origin_channel text NOT NULL DEFAULT 'mobile'/);
   assert.match(source, /inspection_session_id DROP NOT NULL/);
   assert.match(source, /inspection_photos_report_client_uidx/);
+  assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
+});
+
+test("photo verification migration records a constrained server-computed checksum", () => {
+  const source = fs.readFileSync(
+    path.resolve(directory, "../migrations/20261008_assignment_photo_content_verification.sql"),
+    "utf8",
+  );
+  assert.match(source, /ADD COLUMN IF NOT EXISTS checksum_sha256 text/);
+  assert.match(source, /checksum_sha256 ~ '\^\[a-f0-9\]\{64\}\$'/);
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE|COLUMN)/i);
 });
 

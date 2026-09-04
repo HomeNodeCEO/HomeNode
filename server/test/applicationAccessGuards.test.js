@@ -281,7 +281,7 @@ test("property discovery requires an authenticated application read role", () =>
   ]);
 });
 
-test("assignment access bypasses only rollout mode and forwards enforced scope", async () => {
+test("assignment access bypasses only anonymous rollout requests and scopes authenticated requests", async () => {
   let authorizerCalls = 0;
   const rolloutGuards = createGuards({
     authenticationRequired: false,
@@ -300,6 +300,19 @@ test("assignment access bypasses only rollout mode and forwards enforced scope",
     true,
   );
   assert.equal(authorizerCalls, 0);
+
+  const rolloutAuth = { userId: "rollout-user" };
+  assert.equal(
+    await rolloutGuards.requireCustomAssignmentAccess(
+      createRequest({ mobileAuth: rolloutAuth }),
+      createResponse(),
+      "account-1",
+      "file-1",
+      "sign",
+    ),
+    true,
+  );
+  assert.equal(authorizerCalls, 1);
 
   const observed = [];
   const pool = { query: async () => ({ rows: [] }) };

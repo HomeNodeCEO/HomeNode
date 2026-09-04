@@ -103,7 +103,7 @@ test("workfile mutation gates account, editor, signer identity, and file ID befo
   const invalidFile = await signWorkfile(authenticated.baseUrl, "A-1", "bad", {});
   assert.equal(invalidFile.status, 400);
   assert.deepEqual(await invalidFile.json(), { error: "invalid_assignment_file_id" });
-  assert.equal(editorCalls, 3);
+  assert.equal(editorCalls, 2);
   assert.equal(schemaCalls, 0);
 });
 
@@ -209,11 +209,11 @@ test("section save failures preserve not-found, conflict, validation, and bounde
   assert.deepEqual(logs, [["custom appraisal workfile section save failed", diagnostic]]);
 });
 
-test("enforced signing derives identity and audit inputs exclusively from the session", async (context) => {
+test("signing derives identity and audit inputs exclusively from the session in every mode", async (context) => {
   const calls = [];
   const workfile = { assignment_file_id: 41, status: "signed" };
   const options = baseOptions({
-    authenticationRequired: true,
+    authenticationRequired: false,
     getSigningSecret: () => "secret-1",
     requireAssignmentAccess: async (req, res, accountId, fileId, permission) => {
       calls.push({ type: "access", req, res, accountId, fileId, permission });
@@ -251,10 +251,12 @@ test("enforced signing derives identity and audit inputs exclusively from the se
   assert.equal(sign.input.objectStorage, options.objectStorage);
 });
 
-test("rollout signing preserves the legacy signer-name fallback without inventing a user ID", async (context) => {
-  const inputs = [];
+test("rollout signing rejects an editor key without an authenticated signer", async (context) => {
+  let editorCalls = 0;
+  let signCalls = 0;
   const server = await startRouter(baseOptions({
-    signWorkfile: async (_pool, input) => { inputs.push(input); return { status: "signed" }; },
+    requireEditor: () => { editorCalls += 1; return true; },
+    signWorkfile: async () => { signCalls += 1; return { status: "signed" }; },
   }));
   context.after(server.close);
 
@@ -262,9 +264,11 @@ test("rollout signing preserves the legacy signer-name fallback without inventin
     signed_by: "Legacy Appraiser",
     reviewer: "Fallback Reviewer",
   });
-  assert.equal(response.status, 200);
-  assert.equal(inputs[0].signedBy, "Legacy Appraiser");
-  assert.equal(inputs[0].signerUserId, null);
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { error: "authenticated_signer_required" });
+  assert.equal(editorCalls, 0);
+  assert.equal(signCalls, 0);
 });
 
 test("sign assignment denial stops immutable snapshot creation", async (context) => {

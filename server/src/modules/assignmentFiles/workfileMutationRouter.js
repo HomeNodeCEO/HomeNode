@@ -118,10 +118,13 @@ export function createAssignmentWorkfileMutationRouter({
   router.post("/api/accounts/:id/assignment-files/:fileId/workfile/sign", async (req, res) => {
     const accountId = requestedAccountId(req, res);
     if (!accountId) return undefined;
-    if (!requireEditor(req, res)) return undefined;
-    if (authenticationRequired && !req.mobileAuth) {
-      return res.status(401).json({ error: "authenticated_signer_required" });
+    // Finalization is irreversible and must never inherit the editor-key rollout fallback.
+    if (!req.mobileAuth?.userId) {
+      return res.set("cache-control", "no-store")
+        .status(401)
+        .json({ error: "authenticated_signer_required" });
     }
+    if (!requireEditor(req, res)) return undefined;
     try {
       const assignmentFileId = normalizeFileId(req.params.fileId, { required: true });
       await ensureCustomAppraisalWorkfilesAvailable();
@@ -136,8 +139,8 @@ export function createAssignmentWorkfileMutationRouter({
       const workfile = await signWorkfile(pool, {
         accountId: canonicalId,
         assignmentFileId,
-        signedBy: req.mobileAuth?.displayName || req.body?.signed_by || req.body?.reviewer,
-        signerUserId: req.mobileAuth?.userId || null,
+        signedBy: req.mobileAuth.displayName || req.mobileAuth.email || req.mobileAuth.userId,
+        signerUserId: req.mobileAuth.userId,
         signatureEventId: req.body?.signature_event_id,
         signedFromIp: req.ip,
         signedUserAgent: req.get("user-agent"),

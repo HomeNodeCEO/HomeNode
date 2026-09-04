@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 const chooser = fs.readFileSync(new URL("../src/components/ReportTypeChooser.tsx", import.meta.url), "utf8");
+const applicationCss = fs.readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 const destinations = fs.readFileSync(new URL("../src/lib/reportDestinations.ts", import.meta.url), "utf8");
 const report = fs.readFileSync(new URL("../src/pages/PropertyReport.tsx", import.meta.url), "utf8");
 const appraisalHistory = fs.readFileSync(
@@ -15,6 +16,18 @@ test("the home report chooser lists existing assignments before creating a new o
   assert.match(chooser, /Start New Assignment/);
   assert.match(chooser, /createCanonicalReportFile/);
   assert.match(chooser, /getCanonicalReportFiles/);
+});
+
+test("the report chooser uses one accessible purple and gold modal palette", () => {
+  assert.match(chooser, /hn-report-chooser-backdrop/);
+  assert.match(chooser, /hn-report-type-option/);
+  assert.match(chooser, /hn-report-existing-file__action/);
+  assert.doesNotMatch(chooser, /item\.accent/);
+  assert.match(applicationCss, /\.hn-report-chooser\s*\{/);
+  assert.match(applicationCss, /linear-gradient\(145deg, #7551a2, #5f3f89\)/);
+  assert.match(applicationCss, /\.hn-report-type-option:hover:not\(:disabled\)/);
+  assert.match(applicationCss, /\.hn-report-type-option:focus-visible/);
+  assert.match(applicationCss, /\.hn-report-existing-file__action/);
 });
 
 test("every report destination carries its canonical target identifier", () => {

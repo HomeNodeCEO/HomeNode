@@ -456,6 +456,7 @@ test("an engagement address override is audited and confirms visible suggestions
           rows: [{
             id: 44,
             document_type: "engagement_letter",
+            checksum_sha256: "engagement-checksum",
             extraction_summary: { candidate_count: 3 },
           }],
         };
@@ -492,6 +493,7 @@ test("an engagement address override is audited and confirms visible suggestions
   const result = await confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
     documentId: 44,
     reviewer: "Jordan Freeman",
+    actorUserId: "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1",
     reportSubjectAddress: "1909 SNOWMASS LN, GARLAND, TX 75044",
     candidateValues: { 501: "Bank of America" },
   });
@@ -499,6 +501,11 @@ test("an engagement address override is audited and confirms visible suggestions
   assert.equal(result.confirmed_candidates.length, 2);
   assert.equal(result.subject_address_override.acknowledged, true);
   assert.equal(result.subject_address_override.reviewer, "Jordan Freeman");
+  assert.equal(
+    result.subject_address_override.reviewer_user_id,
+    "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1",
+  );
+  assert.equal(result.subject_address_override.document_checksum_sha256, "engagement-checksum");
   assert.equal(
     result.subject_address_override.document_subject_address,
     "513 HARDY DR, Garland, TX 75041-3536",

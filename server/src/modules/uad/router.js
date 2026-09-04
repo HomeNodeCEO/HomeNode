@@ -665,10 +665,16 @@ export function createUadRouter({
 
   router.post("/workfiles/:workfileId/documents/:documentId/subject-address-override", async (req, res) => {
     try {
+      if (authenticationRequired) {
+        authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
+      }
       await requireUadDocument(req.params.workfileId, req.params.documentId);
       await confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
         documentId: req.params.documentId,
-        reviewer: req.body?.reviewer,
+        reviewer: authenticationRequired
+          ? req.mobileAuth?.displayName || req.mobileAuth?.email || req.mobileAuth?.userId
+          : req.body?.reviewer,
+        actorUserId: req.mobileAuth?.userId || null,
         reportSubjectAddress: req.body?.report_subject_address,
         candidateValues: req.body?.candidate_values,
       });

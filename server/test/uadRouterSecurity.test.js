@@ -217,6 +217,25 @@ test("UAD completion confirmation is limited to the assigned appraiser and recor
   assert.equal(deniedApplyCalls, 0);
 });
 
+test("UAD subject mismatch override rejects organization administrators", async () => {
+  const pool = securityPool({ roleCode: "organization_admin" });
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/documents/44/subject-address-override`,
+      {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          reviewer: "Forged Appraiser",
+          report_subject_address: "123 Main St",
+        }),
+      },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "uad_appraiser_confirmation_access_denied" });
+  });
+});
+
 test("completed or unknown delivery attempts return a conflict without exposing persistence details", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

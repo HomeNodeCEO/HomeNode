@@ -10,6 +10,8 @@ import {
 
 const identity = Object.freeze({
   userId: "user-1",
+  email: "appraiser@example.com",
+  displayName: "Authenticated Appraiser",
   organizations: [
     { organizationId: "org-1", roles: ["appraiser"] },
     { organizationId: "org-2", roles: ["appraiser"] },
@@ -57,6 +59,7 @@ function baseOptions(database, overrides = {}) {
     requireEditor: () => true,
     requireAssignmentAccess: async () => true,
     authenticationRequired: false,
+    decideAccess: () => true,
     resolveAccountId: async (_client, value) => value.toUpperCase(),
     hasPermission: () => false,
     presentAssignmentFile: (row) => row,
@@ -174,6 +177,12 @@ function successfulUpdateHandler(existing) {
     if (sql.includes("FOR UPDATE OF assignment_file")) {
       return { rows: existing ? [existing] : [], rowCount: existing ? 1 : 0 };
     }
+    if (sql.includes("FROM app.custom_appraisal_workfiles") && sql.includes("FOR UPDATE")) {
+      return {
+        rows: existing ? [{ status: existing.workfile_status }] : [],
+        rowCount: existing ? 1 : 0,
+      };
+    }
     if (sql.includes("UPDATE app.assignment_files")) return { rows: [], rowCount: 1 };
     if (sql.includes("INSERT INTO app.assignment_file_history")) return { rows: [], rowCount: 1 };
     if (sql.includes("SELECT revision FROM app.property_attribute_manual_values")) {
@@ -247,7 +256,7 @@ test("enforced creation selects one writable organization and attributes the aut
   assert.equal((await response.json()).assignment_file.id, 41);
   const insert = database.queries.find(({ sql }) => sql.includes("INSERT INTO app.assignment_files ("));
   assert.deepEqual(insert.params, [
-    "ACCOUNT_1", "F-1", "{}", null, "Reviewer", "org-1", "user-1",
+    "ACCOUNT_1", "F-1", "{}", null, "Authenticated Appraiser", "org-1", "user-1",
   ]);
   assert.equal(permissionCalls.length, 2);
   assert.ok(permissionCalls.every(({ auth, workflow, permission }) => (
@@ -300,7 +309,7 @@ test("inherited creation scopes the source and registry lineage to the selected 
   assert.deepEqual(source.params, [7, "ACCOUNT_1", "org-2"]);
   const insert = database.queries.find(({ sql }) => sql.includes("INSERT INTO app.assignment_files ("));
   assert.deepEqual(insert.params.slice(0, 7), [
-    "ACCOUNT_1", "F-2", '{"inherited":true}', 7, "HomeNode editor", "org-2", "user-1",
+    "ACCOUNT_1", "F-2", '{"inherited":true}', 7, "Authenticated Appraiser", "org-2", "user-1",
   ]);
   const registryInsert = database.queries.find(({ sql }) => sql.includes("INSERT INTO app.report_files ("));
   assert.deepEqual(registryInsert.params, ["ACCOUNT_1", "F-2", 301, 41, "org-2", "user-1"]);
@@ -414,6 +423,67 @@ test("assignment updates authorize the canonical file before locking and retain 
   ]);
   assert.equal(database.queries.at(-1).sql, "COMMIT");
   assert.equal(database.releaseCalls, 1);
+});
+
+test("enforced assignment updates derive the reviewer and do not mutate the legacy global mirror", async (context) => {
+  const database = createDatabase(successfulUpdateHandler({
+    id: 41,
+    file_number: "F-1",
+    revision: 2,
+    workfile_status: "draft",
+  }));
+  const server = await startRouter(baseOptions(database, {
+    authenticationRequired: true,
+  }), identity);
+  context.after(server.close);
+
+  const response = await patchFile(server.baseUrl, "account_1", 41, {
+    assignment_details: { changed: true },
+    expected_revision: 2,
+    reviewer: "Spoofed Browser Reviewer",
+  });
+  assert.equal(response.status, 200);
+  const update = database.queries.find(({ sql }) => sql.includes("UPDATE app.assignment_files"));
+  assert.deepEqual(update.params, [
+    '{"changed":true}', "Authenticated Appraiser", 3, 41,
+  ]);
+  const history = database.queries.find(({ sql }) => (
+    sql.includes("INSERT INTO app.assignment_file_history")
+  ));
+  assert.deepEqual(history.params, [
+    41, "ACCOUNT_1", "F-1", '{"changed":true}', "Authenticated Appraiser", 3,
+  ]);
+  assert.equal(database.queries.some(({ sql }) => (
+    sql.includes("property_attribute_manual_values")
+    || sql.includes("property_attribute_manual_history")
+  )), false);
+});
+
+test("enforced assignment updates recheck ownership after locking the file", async (context) => {
+  const database = createDatabase(successfulUpdateHandler({
+    id: 41,
+    file_number: "F-1",
+    revision: 2,
+    organization_id: "changed-org",
+    workfile_status: "draft",
+  }));
+  const server = await startRouter(baseOptions(database, {
+    authenticationRequired: true,
+    decideAccess: () => false,
+  }), identity);
+  context.after(server.close);
+
+  const response = await patchFile(server.baseUrl, "account_1", 41, {
+    assignment_details: { changed: true },
+    expected_revision: 2,
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  assert.equal(database.queries.some(({ sql }) => (
+    sql.includes("FROM app.custom_appraisal_workfiles")
+    || sql.includes("UPDATE app.assignment_files")
+  )), false);
+  assert.equal(database.queries.at(-1).sql, "ROLLBACK");
 });
 
 test("denied updates stop before transactions and still release the borrowed client", async (context) => {

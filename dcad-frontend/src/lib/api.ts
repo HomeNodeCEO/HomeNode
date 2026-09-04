@@ -3006,9 +3006,12 @@ export async function updatePropertyReportSections(
   accountId: string,
   sections: Partial<Record<ReportManualSectionKey, unknown>>,
   editorKey: string,
+  assignmentFileId?: number | null,
+  expectedRevisions?: Partial<Record<ReportManualSectionKey, number>>,
 ): Promise<{
   ok: true;
   account_id: string;
+  assignment_file_id?: number;
   manual_values: Partial<Record<ReportManualSectionKey, ReportManualValue>>;
 }> {
   const id = (accountId || '').trim();
@@ -3019,7 +3022,11 @@ export async function updatePropertyReportSections(
       'content-type': 'application/json',
       'x-homenode-editor-key': editorKey,
     },
-    body: JSON.stringify({ sections }),
+    body: JSON.stringify({
+      sections,
+      assignment_file_id: assignmentFileId || undefined,
+      expected_revisions: expectedRevisions,
+    }),
   });
 }
 

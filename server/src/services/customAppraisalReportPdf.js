@@ -454,14 +454,29 @@ export async function loadCustomAppraisalPropertySnapshot(client, { accountId, a
     optionalRows(client, "core.account_locations", "SELECT * FROM core.account_locations WHERE account_id = $1", [accountId]),
     client.query(
       `SELECT id, account_id, file_number, revision, assignment_details, reviewer,
-              created_at, updated_at FROM app.assignment_files
+              organization_id, created_at, updated_at FROM app.assignment_files
         WHERE id = $1 AND account_id = $2`,
       [assignmentFileId, accountId],
     ),
-    optionalRows(client, "app.property_attribute_manual_values", `SELECT attribute_key, attribute_value, revision, reviewer, updated_at
-       FROM app.property_attribute_manual_values WHERE account_id = $1 AND attribute_key LIKE 'report.%'`, [accountId]),
+    optionalRows(client, "app.custom_appraisal_sections", `SELECT section_key AS attribute_key,
+              section_value AS attribute_value, revision, NULL::text AS reviewer, updated_at
+       FROM app.custom_appraisal_sections WHERE assignment_file_id = $1`, [assignmentFileId]),
   ]);
   if (!accountResult.rows.length || !assignmentResult.rows.length) throw new Error("assignment_file_not_found");
+  let reportManualRows = manualRows;
+  if (!assignmentResult.rows[0].organization_id) {
+    const legacyRows = await optionalRows(
+      client,
+      "app.property_attribute_manual_values",
+      `SELECT attribute_key, attribute_value, revision, reviewer, updated_at
+         FROM app.property_attribute_manual_values
+        WHERE account_id = $1 AND attribute_key LIKE 'report.%'`,
+      [accountId],
+    );
+    reportManualRows = [
+      ...new Map([...legacyRows, ...manualRows].map((row) => [row.attribute_key, row])).values(),
+    ];
+  }
   const activity = await getAccountPropertyActivityHistory(client, accountId).catch(() => []);
   return {
     account: accountResult.rows[0],
@@ -476,7 +491,9 @@ export async function loadCustomAppraisalPropertySnapshot(client, { accountId, a
     assignment: assignmentResult.rows[0],
     property_activity_history: activity,
     sales_history: activity.filter((row) => row.record_type === "closed_sale"),
-    report_manual_values: Object.fromEntries(manualRows.map((row) => [row.attribute_key, row])),
+    report_manual_values: Object.fromEntries(
+      reportManualRows.map((row) => [row.attribute_key, row]),
+    ),
     captured_at: new Date().toISOString(),
   };
 }

@@ -30,6 +30,7 @@ const MIGRATIONS = Object.freeze([
   "20261003_assignment_document_scope_history.sql",
   "20261004_assignment_document_property_tax_evidence.sql",
   "20261006_property_tax_save_operations.sql",
+  "20261007_assignment_scoped_report_sections.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

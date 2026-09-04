@@ -35,7 +35,7 @@ import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
 import { usePropertyContext } from "@/hooks/usePropertyContext";
 import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
-import { useManualReportSections } from "@/hooks/useManualReportSections";
+import { useAssignmentScopedReportSections } from "@/hooks/useAssignmentScopedReportSections";
 import { useCustomAppraisalDownloads } from "@/hooks/useCustomAppraisalDownloads";
 import SubjectConditionConformitySection from "@/components/SubjectConditionConformitySection";
 import SketchWorkspaceEmptyState from "@/components/SketchWorkspaceEmptyState";
@@ -63,6 +63,7 @@ import {
   SummarySection,
 } from "@/components/PropertyReportControls";
 import { hasSnapshotValue, mergeNonBlankSnapshot } from "@/lib/reportSnapshotMerge";
+import type { LegacyDcadDetail } from "@/lib/legacyDcadDetail";
 import {
   CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
   CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS,
@@ -281,7 +282,7 @@ type DcadDetail = {
 };
 
 function AddressHero({
-  detail,
+  detail: baseDetail,
   accountId,
   requestedAssignmentFileId,
   onReload,
@@ -294,18 +295,6 @@ function AddressHero({
   const editorKeyForSave = useCallback((): string => {
     return requestEditorCredential("Enter the HomeNode editor key to save verified changes:");
   }, []);
-  const {
-    editingSection,
-    savingSection,
-    editSection,
-    cancelEditingSection,
-    saveEditedSection,
-  } = useManualReportSections({
-    accountId,
-    getEditorKey: editorKeyForSave,
-    onReload,
-    onCredentialRejected: forgetEditorCredential,
-  });
   const [photoIndex, setPhotoIndex] = useState(0);
   const [photoModalOpen, setPhotoModalOpen] = useState(false);
   const [assignmentPhotos, setAssignmentPhotos] = useState<AssignmentPhoto[]>([]);
@@ -407,7 +396,7 @@ function AddressHero({
     saveCurrentPropertyComplexity: savePropertyComplexityReview,
   } = usePropertyContext({
     accountId,
-    initialAssessment: detail?.property_context || null,
+    initialAssessment: baseDetail?.property_context || null,
   });
   const handleSelectedAssignmentFile = useCallback(async (
     selectedFile: AppraisalAssignmentFile,
@@ -462,10 +451,29 @@ function AddressHero({
     setActiveAssignmentFile,
   } = useAssignmentFiles({
     accountId,
-    enabled: Boolean(detail),
+    enabled: Boolean(baseDetail),
     requestedAssignmentFileId,
     onSelectedFile: handleSelectedAssignmentFile,
   });
+
+  const {
+    detail: scopedDetail,
+    editingSection,
+    savingSection,
+    editSection,
+    cancelEditingSection,
+    saveEditedSection,
+  } = useAssignmentScopedReportSections({
+    accountId,
+    baseDetail: baseDetail as LegacyDcadDetail | null,
+    activeAssignmentFile,
+    setActiveAssignmentFile,
+    setAssignmentFiles,
+    getEditorKey: editorKeyForSave,
+    onReload,
+    onCredentialRejected: forgetEditorCredential,
+  });
+  const detail = scopedDetail as DcadDetail | null;
 
   useEffect(() => {
     assignmentDraftRef.current = assignmentDraft;

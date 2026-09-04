@@ -1,9 +1,20 @@
 import { createHash } from "node:crypto";
+import { getDocumentProxy } from "unpdf";
 
 export const MAX_UAD_VERIFIED_ASSET_BYTES = 50 * 1024 * 1024;
 export const MAX_UAD_JSON_ASSET_BYTES = 5 * 1024 * 1024;
 export const MAX_UAD_IMAGE_DIMENSION = 20_000;
 export const MAX_UAD_IMAGE_PIXELS = 100_000_000;
+export const MAX_UAD_PDF_PAGES = 200;
+export const MAX_UAD_PDF_ANNOTATIONS = 10_000;
+const ACTIVE_PDF_ANNOTATION_SUBTYPES = new Set([
+  "FileAttachment",
+  "RichMedia",
+  "Screen",
+  "Movie",
+  "Sound",
+  "3D",
+]);
 
 function invalid(reason = "payload") {
   throw new Error(`invalid_uad_asset_${reason}`);
@@ -67,9 +78,81 @@ function validateIsoBaseMedia(body, expectedType) {
 
 function validatePdf(body) {
   if (!body.subarray(0, 5).equals(Buffer.from("%PDF-", "ascii"))) invalid("content_type_mismatch");
-  const source = body.toString("latin1");
-  if (/(?:\/JavaScript\b|\/JS\s*(?:\(|<)|\/Launch\b|\/OpenAction\b|\/AA\b|\/EmbeddedFile\b|\/RichMedia\b|\/Encrypt\b)/i.test(source)) {
+  const source = body.toString("latin1").replace(
+    /\/[^\s<>{}\[\]()%/]+/g,
+    (name) => name.replace(/#([0-9a-f]{2})/gi, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16))),
+  );
+  if (/\/(?:JavaScript|JS|Launch|OpenAction|AA|EmbeddedFile|RichMedia|Encrypt|XFA)\b/i.test(source)) {
     invalid("pdf_active_content");
+  }
+}
+
+function hasEntries(value) {
+  if (!value) return false;
+  if (value instanceof Map || value instanceof Set) return value.size > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return Boolean(value);
+}
+
+function annotationHasActiveContent(annotation) {
+  if (!annotation || typeof annotation !== "object") return false;
+  if (annotation.unsafeUrl || annotation.action || annotation.attachment || annotation.richMedia) return true;
+  if (hasEntries(annotation.actions)) return true;
+  return ACTIVE_PDF_ANNOTATION_SUBTYPES.has(String(annotation.subtype || ""));
+}
+
+export async function inspectUadPdfSafety(bodyValue) {
+  const body = Buffer.isBuffer(bodyValue) ? bodyValue : Buffer.from(bodyValue || "");
+  if (!body.length || body.length > MAX_UAD_VERIFIED_ASSET_BYTES) invalid("byte_size");
+  validatePdf(body);
+
+  let pdf = null;
+  try {
+    pdf = await getDocumentProxy(new Uint8Array(body), {
+      disableAutoFetch: true,
+      disableFontFace: true,
+      disableStream: true,
+      isEvalSupported: false,
+      stopAtErrors: true,
+      useSystemFonts: false,
+    });
+    if (!Number.isInteger(pdf.numPages) || pdf.numPages < 1 || pdf.numPages > MAX_UAD_PDF_PAGES) {
+      invalid("pdf_page_count");
+    }
+
+    const xfa = pdf.isPureXfa ? await pdf.getXfa() : null;
+    const [hasJavaScript, javaScriptActions, openAction, attachments] = await Promise.all([
+      pdf.hasJSActions(),
+      pdf.getJSActions(),
+      pdf.getOpenAction(),
+      pdf.getAttachments(),
+    ]);
+    if (hasJavaScript || hasEntries(javaScriptActions) || openAction || hasEntries(attachments) || xfa) {
+      invalid("pdf_active_content");
+    }
+
+    let annotationCount = 0;
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      const page = await pdf.getPage(pageNumber);
+      try {
+        const [annotations, pageJavaScript] = await Promise.all([
+          page.getAnnotations({ intent: "display" }),
+          page.getJSActions(),
+        ]);
+        if (hasEntries(pageJavaScript)) invalid("pdf_active_content");
+        annotationCount += Array.isArray(annotations) ? annotations.length : 0;
+        if (annotationCount > MAX_UAD_PDF_ANNOTATIONS) invalid("pdf_annotation_count");
+        if (annotations?.some(annotationHasActiveContent)) invalid("pdf_active_content");
+      } finally {
+        page.cleanup?.();
+      }
+    }
+  } catch (error) {
+    if (String(error?.message || "").startsWith("invalid_uad_asset_")) throw error;
+    invalid("pdf_structure");
+  } finally {
+    await pdf?.destroy?.().catch(() => undefined);
   }
 }
 

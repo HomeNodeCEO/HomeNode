@@ -41,6 +41,10 @@ export async function runUadArtifactSecurityChecks({ checkedAt = new Date().toIS
     () => inspectUadAssetPayload(Buffer.from("%PDF-1.7\n1 0 obj <</OpenAction 2 0 R>>", "ascii"), "application/pdf"),
     "invalid_uad_asset_pdf_active_content",
   );
+  const escapedActivePdfRejected = rejects(
+    () => inspectUadAssetPayload(Buffer.from("%PDF-1.7\n1 0 obj <</Open#41ction 2 0 R>>", "ascii"), "application/pdf"),
+    "invalid_uad_asset_pdf_active_content",
+  );
   const safeZip = buildDeterministicZip([
     { path: "report.xml", body: "<MESSAGE/>" },
     { path: "Images/front.png", body: PNG_PROBE },
@@ -68,11 +72,13 @@ export async function runUadArtifactSecurityChecks({ checkedAt = new Date().toIS
         && validPng.dimensions?.pixels === 1
         && mimeSpoofRejected
         && imageBombRejected
-        && activePdfRejected,
+        && activePdfRejected
+        && escapedActivePdfRejected,
       valid_png_identified: validPng.dimensions?.pixels === 1,
       mime_spoof_rejected: mimeSpoofRejected,
       image_bomb_rejected: imageBombRejected,
       active_pdf_rejected: activePdfRejected,
+      escaped_active_pdf_rejected: escapedActivePdfRejected,
     }),
     deterministic_package: Object.freeze({
       ready: safeZip.entry_count === 2 && unsafePathsRejected && portableCollisionRejected,

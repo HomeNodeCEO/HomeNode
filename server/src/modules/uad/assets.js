@@ -6,7 +6,7 @@ import {
   UAD_CERTIFICATION_SIGNATURE_CONTENT_TYPES,
 } from "./certificationsCatalog.js";
 import { buildUadObjectKey, buildUadVerifiedAssetObjectKey } from "./r2Storage.js";
-import { inspectUadAssetPayload } from "./uadFileSecurity.js";
+import { inspectUadAssetPayload, inspectUadPdfSafety } from "./uadFileSecurity.js";
 import {
   UAD_DWELLING_EXTERIOR_CAPTION_TYPES,
   UAD_DWELLING_EXTERIOR_IMAGE_CONTENT_TYPES,
@@ -482,6 +482,7 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     const downloadedType = String(downloaded.content_type || "").split(";", 1)[0].trim().toLowerCase();
     if (downloadedType && downloadedType !== asset.content_type) throw new Error("invalid_uad_asset_content_type");
     verified = inspectUadAssetPayload(downloaded.body, asset.content_type);
+    if (verified.content_type === "application/pdf") await inspectUadPdfSafety(downloaded.body);
   } catch (error) {
     await pool.query(
       `UPDATE appraisal.uad_assets

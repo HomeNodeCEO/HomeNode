@@ -8,6 +8,7 @@ export function createPropertySearchRouter({
   pool,
   accountQualityReady,
   salesReconciliationReady,
+  requireApplicationReader,
   normalizeCity = normalizePropertyCity,
   parseSearch = parsePropertySearch,
   findCountyAccount = findAccountByCountyIdentifier,
@@ -23,6 +24,9 @@ export function createPropertySearchRouter({
   if (!salesReconciliationReady || typeof salesReconciliationReady.then !== "function") {
     throw new TypeError("property_search_sales_readiness_required");
   }
+  if (typeof requireApplicationReader !== "function") {
+    throw new TypeError("property_search_reader_policy_required");
+  }
   if (
     typeof normalizeCity !== "function"
     || typeof parseSearch !== "function"
@@ -36,6 +40,7 @@ export function createPropertySearchRouter({
 
   /** Search Dallas and reconciled non-Dallas accounts by identifiers or indexed address data. */
   router.get("/api/search", async (req, res) => {
+    if (!requireApplicationReader(req, res)) return undefined;
     try {
       await accountQualityReady;
       await salesReconciliationReady;

@@ -25,6 +25,7 @@ function baseOptions(database, overrides = {}) {
     pool: database.pool,
     accountQualityReady: Promise.resolve(),
     salesReconciliationReady: Promise.resolve(),
+    requireApplicationReader: () => true,
     normalizeCity: (value) => String(value || "").trim().toUpperCase(),
     parseSearch: () => { throw new Error("unexpected_search_parse"); },
     findCountyAccount: async () => null,
@@ -59,6 +60,28 @@ test("empty property searches return before parsing or querying", async (context
   const response = await fetch(`${server.baseUrl}/api/search`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), []);
+  assert.equal(database.queries.length, 0);
+});
+
+test("property searches require an authorized application reader before data access", async (context) => {
+  const database = createPool(async () => { throw new Error("authorization_must_run_first"); });
+  const calls = [];
+  const server = await startRouter(baseOptions(database, {
+    requireApplicationReader: (req, res) => {
+      calls.push(req.path);
+      res.set("cache-control", "no-store")
+        .status(403)
+        .json({ error: "application_access_denied" });
+      return false;
+    },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/search?city=plano`);
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { error: "application_access_denied" });
+  assert.deepEqual(calls, ["/api/search"]);
   assert.equal(database.queries.length, 0);
 });
 
@@ -246,6 +269,10 @@ test("property search composition is explicit and its inline handler is absent",
     () => createPropertySearchRouter(baseOptions(database, { parseSearch: null })),
     /property_search_dependency_required/,
   );
+  assert.throws(
+    () => createPropertySearchRouter(baseOptions(database, { requireApplicationReader: null })),
+    /property_search_reader_policy_required/,
+  );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const history = source.indexOf("app.use(createMarketValueHistoryRouter(");
@@ -253,5 +280,6 @@ test("property search composition is explicit and its inline handler is absent",
   const recommendations = source.indexOf("app.use(createComparableRecommendationsRouter(");
   assert.ok(search > history);
   assert.ok(recommendations > search);
+  assert.match(source.slice(search, recommendations), /requireApplicationReader,/);
   assert.equal(source.includes('app.get("/api/search"'), false);
 });

@@ -295,6 +295,7 @@ const {
   requireCustomAccountScope,
   requirePropertyTaxAccountScope,
   requireWorkflowAccess,
+  requireApplicationReader,
 } = createApplicationAccessGuards({
   pool,
   authenticationRequired: applicationAuthenticationRequired,
@@ -466,6 +467,7 @@ app.use(createPropertySearchRouter({
   pool,
   accountQualityReady,
   salesReconciliationReady,
+  requireApplicationReader,
 }));
 
 app.use(createComparableRecommendationsRouter({

@@ -4,7 +4,11 @@ import {
   authorizeCustomAssignmentFile,
   authorizePropertyTaxProtestFile,
 } from "./assignmentAccess.js";
-import { hasApplicationPermission, hasApplicationRole } from "./applicationAccess.js";
+import {
+  APPLICATION_WORKFLOWS,
+  hasApplicationPermission,
+  hasApplicationRole,
+} from "./applicationAccess.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -134,6 +138,23 @@ export function createApplicationAccessGuards({
     return false;
   }
 
+  function requireApplicationReader(req, res) {
+    if (!req.mobileAuth) {
+      if (!authenticationRequired) return true;
+      res.set("cache-control", "no-store")
+        .status(401)
+        .json({ error: "authentication_required" });
+      return false;
+    }
+    if (APPLICATION_WORKFLOWS.some((workflow) => (
+      permissionChecker(req.mobileAuth, workflow, "read")
+    ))) return true;
+    res.set("cache-control", "no-store")
+      .status(403)
+      .json({ error: "application_access_denied" });
+    return false;
+  }
+
   async function requireCustomAccountScope(
     req,
     res,
@@ -215,5 +236,6 @@ export function createApplicationAccessGuards({
     requireCustomAccountScope,
     requirePropertyTaxAccountScope,
     requireWorkflowAccess,
+    requireApplicationReader,
   });
 }

@@ -240,6 +240,47 @@ test("workflow access preserves enforced anonymous denial and temporary rollout 
   assert.equal(editorChecks, 1);
 });
 
+test("property discovery requires an authenticated application read role", () => {
+  const checked = [];
+  const guards = createGuards({
+    permissionChecker: (auth, workflow, permission) => {
+      checked.push([auth.userId, workflow, permission]);
+      return auth.userId === "reader" && workflow === "uad_3_6" && permission === "read";
+    },
+  });
+  assert.equal(guards.requireApplicationReader(
+    createRequest({ mobileAuth: { userId: "reader" } }),
+    createResponse(),
+  ), true);
+
+  const deniedResponse = createResponse();
+  assert.equal(guards.requireApplicationReader(
+    createRequest({ mobileAuth: { userId: "roleless" } }),
+    deniedResponse,
+  ), false);
+  assert.equal(deniedResponse.statusCode, 403);
+  assert.equal(deniedResponse.headers["cache-control"], "no-store");
+  assert.deepEqual(deniedResponse.payload, { error: "application_access_denied" });
+
+  const anonymousResponse = createResponse();
+  assert.equal(guards.requireApplicationReader(createRequest(), anonymousResponse), false);
+  assert.equal(anonymousResponse.statusCode, 401);
+  assert.equal(anonymousResponse.headers["cache-control"], "no-store");
+  assert.deepEqual(anonymousResponse.payload, { error: "authentication_required" });
+
+  assert.equal(createGuards({ authenticationRequired: false }).requireApplicationReader(
+    createRequest(),
+    createResponse(),
+  ), true);
+  assert.deepEqual(checked, [
+    ["reader", "custom_appraisal", "read"],
+    ["reader", "uad_3_6", "read"],
+    ["roleless", "custom_appraisal", "read"],
+    ["roleless", "uad_3_6", "read"],
+    ["roleless", "property_tax_protest", "read"],
+  ]);
+});
+
 test("assignment access bypasses only rollout mode and forwards enforced scope", async () => {
   let authorizerCalls = 0;
   const rolloutGuards = createGuards({
@@ -482,7 +523,7 @@ test("the entrypoint composes shared guards once and removes inline copies", () 
   );
   assert.match(
     entrypoint,
-    /requireEditor,[\s\S]*?requirePlatformAdministrator,[\s\S]*?requireCustomAssignmentAccess,[\s\S]*?requirePropertyTaxAccountScope,[\s\S]*?requireWorkflowAccess,/,
+    /requireEditor,[\s\S]*?requirePlatformAdministrator,[\s\S]*?requireCustomAssignmentAccess,[\s\S]*?requirePropertyTaxAccountScope,[\s\S]*?requireWorkflowAccess,[\s\S]*?requireApplicationReader,/,
   );
   assert.doesNotMatch(entrypoint, /function require(?:Editor|WorkflowAccess|CustomAssignmentAccess)/);
 });

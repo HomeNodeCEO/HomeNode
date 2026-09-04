@@ -17,11 +17,21 @@ const normalizedHousing = Object.freeze({
   notes: "Review notes",
 });
 
+const authenticatedIdentity = Object.freeze({
+  userId: "user-1",
+  email: "appraiser@example.com",
+  displayName: "Authenticated Appraiser",
+});
+
 function baseOptions(overrides = {}) {
   return {
     pool: { connect: async () => { throw new Error("unexpected_connect"); } },
     propertyEnrichmentReady: Promise.resolve(),
+    ensureCustomAppraisalWorkfilesAvailable: async () => {},
     requireEditor: () => true,
+    requireAssignmentAccess: async () => true,
+    authenticationRequired: false,
+    decideAccess: () => true,
     resolveAccountId: async (_client, value) => value.toUpperCase(),
     validateSection: () => {},
     normalizeHousingProfile: () => normalizedHousing,
@@ -30,9 +40,15 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options) {
+async function startRouter(options, auth = null) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+  if (auth) {
+    app.use((req, _res, next) => {
+      req.mobileAuth = auth;
+      next();
+    });
+  }
   app.use(createReportManualValuesRouter(options));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -265,6 +281,283 @@ test("manual-value saves preserve canonicalization, housing sync, revisions, his
   assert.deepEqual(valueCalls.map(({ params }) => params[5]), [3, 1]);
 });
 
+test("enforced saves require an assignment and reject assignment-detail mirroring before connecting", async (context) => {
+  let connectCalls = 0;
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool: { connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); } },
+  }), authenticatedIdentity);
+  context.after(server.close);
+
+  const missing = await patchManualValues(server.baseUrl, "A-1", {
+    sections: { "report.subject_identification": { county: "Dallas" } },
+  });
+  assert.equal(missing.status, 400);
+  assert.deepEqual(await missing.json(), { error: "assignment_file_required" });
+
+  const invalid = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: "not-a-file",
+    sections: { "report.subject_identification": { county: "Dallas" } },
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await invalid.json(), { error: "invalid_assignment_file_id" });
+
+  const assignmentDetails = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.assignment_details": {} },
+  });
+  assert.equal(assignmentDetails.status, 400);
+  assert.deepEqual(await assignmentDetails.json(), {
+    error: "assignment_details_require_assignment_file_api",
+  });
+  const missingRevision = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+  });
+  assert.equal(missingRevision.status, 400);
+  assert.deepEqual(await missingRevision.json(), { error: "report_section_revision_required" });
+  assert.equal(connectCalls, 0);
+});
+
+test("enforced saves authorize, lock, revision, and audit the exact assignment only", async (context) => {
+  const calls = [];
+  const accessCalls = [];
+  let schemaChecks = 0;
+  let releases = 0;
+  const sectionValue = { county: "Dallas" };
+  const client = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [], rowCount: 0 };
+      if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [{}], rowCount: 1 };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: 41 }], rowCount: 1 };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) {
+        return { rows: [{ status: "draft" }], rowCount: 1 };
+      }
+      if (/SELECT section_key, revision/.test(sql)) {
+        return {
+          rows: [{ section_key: "report.subject_identification", revision: 3 }],
+          rowCount: 1,
+        };
+      }
+      if (/INSERT INTO app\.custom_appraisal_sections/.test(sql)) {
+        return {
+          rows: [{
+            section_key: params[1],
+            section_value: JSON.parse(params[2]),
+            revision: 4,
+            updated_at: "2026-09-04T10:00:00Z",
+          }],
+          rowCount: 1,
+        };
+      }
+      if (/INSERT INTO app\.custom_appraisal_section_history/.test(sql)) {
+        return { rows: [], rowCount: 1 };
+      }
+      throw new Error(`unexpected_query:${sql}`);
+    },
+    release() { releases += 1; },
+  };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool: { connect: async () => client },
+    ensureCustomAppraisalWorkfilesAvailable: async () => { schemaChecks += 1; },
+    resolveAccountId: async (_client, value) => value.toUpperCase(),
+    requireAssignmentAccess: async (...args) => { accessCalls.push(args); return true; },
+  }), authenticatedIdentity);
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "account_1", {
+    assignment_file_id: 41,
+    reviewer: "Spoofed Browser Reviewer",
+    notes: "Authenticated desktop correction",
+    sections: { "report.subject_identification": sectionValue },
+    expected_revisions: { "report.subject_identification": 3 },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    account_id: "ACCOUNT_1",
+    assignment_file_id: 41,
+    manual_values: {
+      "report.subject_identification": {
+        value: sectionValue,
+        revision: 4,
+        reviewer: "Authenticated Appraiser",
+        notes: "Authenticated desktop correction",
+        updated_at: "2026-09-04T10:00:00Z",
+      },
+    },
+  });
+  assert.equal(schemaChecks, 1);
+  assert.equal(releases, 1);
+  assert.deepEqual(accessCalls.map(([, , accountId, fileId, permission]) => ({
+    accountId, fileId, permission,
+  })), [{ accountId: "ACCOUNT_1", fileId: 41, permission: "write" }]);
+
+  const sectionInsert = calls.find(({ sql }) => /INSERT INTO app\.custom_appraisal_sections/.test(sql));
+  assert.deepEqual(sectionInsert.params, [
+    41,
+    "report.subject_identification",
+    JSON.stringify(sectionValue),
+    "user-1",
+  ]);
+  const historyInsert = calls.find(({ sql }) => (
+    /INSERT INTO app\.custom_appraisal_section_history/.test(sql)
+  ));
+  assert.deepEqual(historyInsert.params, [
+    41,
+    "report.subject_identification",
+    JSON.stringify(sectionValue),
+    4,
+    "user-1",
+  ]);
+  assert.equal(calls.some(({ sql }) => /property_attribute_manual|account_housing_profiles/.test(sql)), false);
+  assert.equal(calls.at(-1).sql, "COMMIT");
+});
+
+test("enforced assignment denial stops before a transaction or section write", async (context) => {
+  const calls = [];
+  let releases = 0;
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [{}], rowCount: 1 };
+      throw new Error(`unexpected_query:${sql}`);
+    },
+    release() { releases += 1; },
+  };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool: { connect: async () => client },
+    async requireAssignmentAccess(_req, res) {
+      res.status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+  }), authenticatedIdentity);
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(calls, ["SELECT 1 FROM core.accounts WHERE account_id = $1"]);
+  assert.equal(releases, 1);
+});
+
+test("enforced saves recheck assignment ownership under the database lock", async (context) => {
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+      if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [{}], rowCount: 1 };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: 41, organization_id: "changed-org" }], rowCount: 1 };
+      }
+      throw new Error(`unexpected_query:${sql}`);
+    },
+    release() {},
+  };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool: { connect: async () => client },
+    decideAccess: () => false,
+  }), authenticatedIdentity);
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  assert.equal(calls.some((sql) => /FROM app\.custom_appraisal_workfiles/.test(sql)), false);
+  assert.equal(calls.at(-1), "ROLLBACK");
+});
+
+test("enforced saves reject signed workfiles without changing section history", async (context) => {
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+      if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [{}], rowCount: 1 };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: 41 }], rowCount: 1 };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) {
+        return { rows: [{ status: "signed" }], rowCount: 1 };
+      }
+      throw new Error(`unexpected_query:${sql}`);
+    },
+    release() {},
+  };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool: { connect: async () => client },
+  }), authenticatedIdentity);
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
+  assert.equal(calls.some((sql) => /INSERT INTO app\.custom_appraisal_section/.test(sql)), false);
+  assert.equal(calls.at(-1), "ROLLBACK");
+});
+
+test("enforced saves return the current assignment revision instead of overwriting a race", async (context) => {
+  const calls = [];
+  const client = {
+    async query(sql) {
+      calls.push(sql);
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [], rowCount: 0 };
+      if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [{}], rowCount: 1 };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: 41 }], rowCount: 1 };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) {
+        return { rows: [{ status: "draft" }], rowCount: 1 };
+      }
+      if (/SELECT section_key, revision/.test(sql)) {
+        return {
+          rows: [{ section_key: "report.subject_identification", revision: 5 }],
+          rowCount: 1,
+        };
+      }
+      throw new Error(`unexpected_query:${sql}`);
+    },
+    release() {},
+  };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    pool: { connect: async () => client },
+  }), authenticatedIdentity);
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 4 },
+  });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "report_section_revision_conflict",
+    current_revisions: { "report.subject_identification": 5 },
+  });
+  assert.equal(calls.some((sql) => /INSERT INTO app\.custom_appraisal_section/.test(sql)), false);
+  assert.equal(calls.at(-1), "ROLLBACK");
+});
+
 test("manual-value missing accounts roll back and release without value or history writes", async (context) => {
   const calls = [];
   let releases = 0;
@@ -331,7 +624,11 @@ test("manual-value composition and route position remain explicit", () => {
   );
   assert.throws(
     () => createReportManualValuesRouter(baseOptions({ requireEditor: null })),
-    /report_manual_values_editor_policy_required/,
+    /report_manual_values_access_policy_required/,
+  );
+  assert.throws(
+    () => createReportManualValuesRouter(baseOptions({ authenticationRequired: null })),
+    /report_manual_values_authentication_mode_required/,
   );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
@@ -340,4 +637,8 @@ test("manual-value composition and route position remain explicit", () => {
   const assignmentFiles = source.indexOf("app.use(createAssignmentFileListRouter(");
   assert.ok(reportManualValues > housingProfile);
   assert.ok(assignmentFiles > reportManualValues);
+  const mount = source.slice(reportManualValues, assignmentFiles);
+  assert.match(mount, /ensureCustomAppraisalWorkfilesAvailable/);
+  assert.match(mount, /requireAssignmentAccess: requireCustomAssignmentAccess/);
+  assert.match(mount, /authenticationRequired: applicationAuthenticationRequired/);
 });

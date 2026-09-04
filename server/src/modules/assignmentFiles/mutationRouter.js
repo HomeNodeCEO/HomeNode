@@ -12,6 +12,7 @@ import {
   canonicalCustomAppraisalFileName,
 } from "../../services/customAppraisalWorkfiles.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
+import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
 import { validateReportManualSection } from "../../util/reportManualValues.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
@@ -68,6 +69,17 @@ function requestedAccountId(req, res) {
   return value;
 }
 
+function assignmentReviewer(req, authenticationRequired) {
+  const authenticatedReviewer = req.mobileAuth?.displayName
+    || req.mobileAuth?.email
+    || req.mobileAuth?.userId;
+  return String(
+    authenticationRequired ? authenticatedReviewer : req.body?.reviewer || "HomeNode editor",
+  )
+    .trim()
+    .slice(0, 200) || "HomeNode editor";
+}
+
 async function mirrorLatestAssignmentDetails(
   client,
   accountId,
@@ -115,6 +127,7 @@ export function createAssignmentFileMutationRouter({
   authenticationRequired,
   resolveAccountId = resolveCanonicalAccountId,
   hasPermission = hasApplicationPermission,
+  decideAccess = decideAssignmentAccess,
   normalizeFileId = normalizeAssignmentFileId,
   normalizeFileNumber = normalizeAssignmentFileNumber,
   validateAssignmentDetails = (value) => (
@@ -150,6 +163,7 @@ export function createAssignmentFileMutationRouter({
   if (
     typeof resolveAccountId !== "function"
     || typeof hasPermission !== "function"
+    || typeof decideAccess !== "function"
     || typeof normalizeFileId !== "function"
     || typeof normalizeFileNumber !== "function"
     || typeof validateAssignmentDetails !== "function"
@@ -197,9 +211,7 @@ export function createAssignmentFileMutationRouter({
     } catch (error) {
       return res.status(400).json({ error: error?.message || "invalid_assignment_file" });
     }
-    const reviewer = String(req.body?.reviewer || "HomeNode editor")
-      .trim()
-      .slice(0, 200) || "HomeNode editor";
+    const reviewer = assignmentReviewer(req, authenticationRequired);
     const client = await pool.connect();
     try {
       await Promise.all([
@@ -386,9 +398,7 @@ export function createAssignmentFileMutationRouter({
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
       return res.status(400).json({ error: "invalid_expected_revision" });
     }
-    const reviewer = String(req.body?.reviewer || "HomeNode editor")
-      .trim()
-      .slice(0, 200) || "HomeNode editor";
+    const reviewer = assignmentReviewer(req, authenticationRequired);
     const assignmentDetails = req.body.assignment_details;
     const client = await pool.connect();
     try {
@@ -409,10 +419,10 @@ export function createAssignmentFileMutationRouter({
       await client.query("BEGIN");
       const existingResult = await client.query(
         `SELECT assignment_file.id, assignment_file.file_number, assignment_file.revision,
-                workfile.status AS workfile_status
+                assignment_file.organization_id,
+                assignment_file.assigned_appraiser_user_id,
+                assignment_file.supervisory_appraiser_user_id
          FROM app.assignment_files assignment_file
-         LEFT JOIN app.custom_appraisal_workfiles workfile
-           ON workfile.assignment_file_id = assignment_file.id
          WHERE assignment_file.id = $1 AND assignment_file.account_id = $2
          FOR UPDATE OF assignment_file`,
         [assignmentFileId, canonicalId],
@@ -422,7 +432,22 @@ export function createAssignmentFileMutationRouter({
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "assignment_file_not_found" });
       }
-      if (existing.workfile_status === "signed") {
+      if (
+        authenticationRequired
+        && req.mobileAuth
+        && !decideAccess(req.mobileAuth, existing, "write")
+      ) {
+        await client.query("ROLLBACK");
+        return res.set("cache-control", "no-store")
+          .status(403)
+          .json({ error: "assignment_file_access_denied" });
+      }
+      const workfileResult = await client.query(
+        `SELECT status FROM app.custom_appraisal_workfiles
+          WHERE assignment_file_id = $1 FOR UPDATE`,
+        [assignmentFileId],
+      );
+      if (workfileResult.rows[0]?.status === "signed") {
         await client.query("ROLLBACK");
         return res.status(409).json({ error: "custom_appraisal_workfile_signed" });
       }
@@ -453,13 +478,15 @@ export function createAssignmentFileMutationRouter({
           revision,
         ],
       );
-      await mirrorLatestAssignmentDetails(
-        client,
-        canonicalId,
-        assignmentDetails,
-        reviewer,
-        existing.file_number,
-      );
+      if (!authenticationRequired || !req.mobileAuth) {
+        await mirrorLatestAssignmentDetails(
+          client,
+          canonicalId,
+          assignmentDetails,
+          reviewer,
+          existing.file_number,
+        );
+      }
       const { rows } = await client.query(
         `${assignmentFileSelect} WHERE f.id = $1`,
         [assignmentFileId],

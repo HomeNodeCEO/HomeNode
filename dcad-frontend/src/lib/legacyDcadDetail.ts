@@ -383,6 +383,110 @@ function manualValue(manualValues: JsonRecord, key: string): unknown {
   return record(manualValues[key])?.value;
 }
 
+export function applyReportManualValues(
+  sourceDetail: LegacyDcadDetail,
+  value: unknown,
+): LegacyDcadDetail {
+  const manualValues = record(value) || {};
+  const detail: LegacyDcadDetail = {
+    ...sourceDetail,
+    property_location: { ...sourceDetail.property_location },
+    owner: sourceDetail.owner ? {
+      ...sourceDetail.owner,
+      parties: sourceDetail.owner.parties.map((party) => ({ ...party })),
+    } : undefined,
+    value_summary: { ...sourceDetail.value_summary },
+    main_improvement: { ...sourceDetail.main_improvement },
+    housing_profile: sourceDetail.housing_profile ? { ...sourceDetail.housing_profile } : null,
+    additional_improvements: sourceDetail.additional_improvements.map((row) => ({ ...row })),
+    secondary_improvements: sourceDetail.secondary_improvements.map((row) => ({ ...row })),
+    land_detail: sourceDetail.land_detail.map((row) => ({ ...row })),
+    exemptions: sourceDetail.exemptions
+      ? Object.fromEntries(Object.entries(sourceDetail.exemptions).map(([key, row]) => (
+          [key, { ...row }]
+        )))
+      : undefined,
+    legal_description: {
+      ...sourceDetail.legal_description,
+      lines: [...sourceDetail.legal_description.lines],
+    },
+    sales_history: sourceDetail.sales_history.map((row) => ({ ...row })),
+    property_activity_history: sourceDetail.property_activity_history.map((row) => ({ ...row })),
+    photos: [...sourceDetail.photos],
+    assignment_details: { ...sourceDetail.assignment_details },
+    report_manual_values: manualValues,
+  };
+
+  const subjectOverride = record(manualValue(manualValues, 'report.subject_identification'));
+  if (subjectOverride) {
+    detail.property_location = mergeNonBlankSnapshot(
+      detail.property_location,
+      location(subjectOverride.property_location),
+    );
+    detail.owner = mergeNonBlankSnapshot(detail.owner || { parties: [] }, owner(subjectOverride.owner));
+    detail.legal_description = mergeNonBlankSnapshot(
+      detail.legal_description,
+      legalDescription(subjectOverride.legal_description),
+    );
+  }
+
+  const exemptionOverride = record(manualValue(manualValues, 'report.exemptions'));
+  if (exemptionOverride) {
+    const normalized = exemptionsMap(exemptionOverride.exemptions);
+    if (Object.keys(normalized).length) detail.exemptions = normalized;
+    if (typeof exemptionOverride.homestead_yes === 'boolean') {
+      detail.homestead_yes = exemptionOverride.homestead_yes;
+    }
+  }
+
+  const salesOverride = record(manualValue(manualValues, 'report.sales_history'));
+  if (salesOverride) {
+    if (Array.isArray(salesOverride.property_activity_history)) {
+      detail.property_activity_history = activityRows(salesOverride.property_activity_history);
+      detail.sales_history = detail.property_activity_history.filter(
+        (row) => row.record_type === 'closed_sale',
+      );
+    }
+    if (Array.isArray(salesOverride.sales_history)) {
+      detail.sales_history = activityRows(salesOverride.sales_history);
+    }
+  }
+
+  const characteristicsOverride = record(manualValue(manualValues, 'report.property_characteristics'));
+  if (characteristicsOverride) {
+    detail.main_improvement = mergeNonBlankSnapshot(
+      detail.main_improvement,
+      mainImprovement(characteristicsOverride.main_improvement),
+    );
+    detail.housing_profile = mergeNonBlankSnapshot(
+      detail.housing_profile || {},
+      housingProfile(characteristicsOverride.housing_profile),
+    );
+    if (hasSnapshotValue(characteristicsOverride.additional_improvements)) {
+      const normalized = records(characteristicsOverride.additional_improvements);
+      if (normalized.length) detail.additional_improvements = normalized;
+    }
+  }
+
+  const landOverride = record(manualValue(manualValues, 'report.land_details'));
+  if (landOverride && hasSnapshotValue(landOverride.land_detail)) {
+    const normalized = records(landOverride.land_detail);
+    if (normalized.length) detail.land_detail = normalized;
+  }
+
+  const valuesOverride = record(manualValue(manualValues, 'report.appraisal_values'));
+  if (valuesOverride) {
+    detail.value_summary = mergeNonBlankSnapshot(
+      detail.value_summary,
+      valueSummary(valuesOverride.value_summary),
+    );
+  }
+
+  const assignmentOverride = record(manualValue(manualValues, 'report.assignment_details'));
+  if (assignmentOverride) detail.assignment_details = assignmentOverride;
+  return detail;
+}
+
 export function mapAccountDetailToLegacy(value: unknown): LegacyDcadResponse {
   const data = record(value) || {};
   const account = record(data.account) || {};
@@ -457,73 +561,5 @@ export function mapAccountDetailToLegacy(value: unknown): LegacyDcadResponse {
     report_manual_values: {},
   };
 
-  const manualValues = record(data.report_manual_values) || {};
-  const subjectOverride = record(manualValue(manualValues, 'report.subject_identification'));
-  if (subjectOverride) {
-    detail.property_location = mergeNonBlankSnapshot(
-      detail.property_location,
-      location(subjectOverride.property_location),
-    );
-    detail.owner = mergeNonBlankSnapshot(detail.owner || { parties: [] }, owner(subjectOverride.owner));
-    detail.legal_description = mergeNonBlankSnapshot(
-      detail.legal_description,
-      legalDescription(subjectOverride.legal_description),
-    );
-  }
-
-  const exemptionOverride = record(manualValue(manualValues, 'report.exemptions'));
-  if (exemptionOverride) {
-    const normalized = exemptionsMap(exemptionOverride.exemptions);
-    if (Object.keys(normalized).length) detail.exemptions = normalized;
-    if (typeof exemptionOverride.homestead_yes === 'boolean') {
-      detail.homestead_yes = exemptionOverride.homestead_yes;
-    }
-  }
-
-  const salesOverride = record(manualValue(manualValues, 'report.sales_history'));
-  if (salesOverride) {
-    if (Array.isArray(salesOverride.property_activity_history)) {
-      detail.property_activity_history = activityRows(salesOverride.property_activity_history);
-      detail.sales_history = detail.property_activity_history.filter(
-        (row) => row.record_type === 'closed_sale',
-      );
-    }
-    if (Array.isArray(salesOverride.sales_history)) {
-      detail.sales_history = activityRows(salesOverride.sales_history);
-    }
-  }
-
-  const characteristicsOverride = record(manualValue(manualValues, 'report.property_characteristics'));
-  if (characteristicsOverride) {
-    detail.main_improvement = mergeNonBlankSnapshot(
-      detail.main_improvement,
-      mainImprovement(characteristicsOverride.main_improvement),
-    );
-    detail.housing_profile = mergeNonBlankSnapshot(
-      detail.housing_profile || {},
-      housingProfile(characteristicsOverride.housing_profile),
-    );
-    if (hasSnapshotValue(characteristicsOverride.additional_improvements)) {
-      const normalized = records(characteristicsOverride.additional_improvements);
-      if (normalized.length) detail.additional_improvements = normalized;
-    }
-  }
-
-  const landOverride = record(manualValue(manualValues, 'report.land_details'));
-  if (landOverride && hasSnapshotValue(landOverride.land_detail)) {
-    const normalized = records(landOverride.land_detail);
-    if (normalized.length) detail.land_detail = normalized;
-  }
-
-  const valuesOverride = record(manualValue(manualValues, 'report.appraisal_values'));
-  if (valuesOverride) {
-    detail.value_summary = mergeNonBlankSnapshot(
-      detail.value_summary,
-      valueSummary(valuesOverride.value_summary),
-    );
-  }
-
-  detail.assignment_details = record(manualValue(manualValues, 'report.assignment_details')) || {};
-  detail.report_manual_values = manualValues;
-  return { detail };
+  return { detail: applyReportManualValues(detail, data.report_manual_values) };
 }

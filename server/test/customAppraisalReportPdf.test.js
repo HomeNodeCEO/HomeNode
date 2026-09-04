@@ -205,3 +205,93 @@ test("property snapshot supports legacy account-location rows without provenance
   assert.equal(snapshot.location.latitude, 32.9);
   assert.equal(snapshot.location.longitude, -96.8);
 });
+
+test("organization-owned property snapshots use only assignment-scoped report sections", async () => {
+  const queries = [];
+  const client = {
+    async query(sql, params = []) {
+      queries.push(sql);
+      if (sql.includes("to_regclass")) return { rows: [{ name: params[0] }] };
+      if (sql.includes("FROM core.accounts a")) {
+        return { rows: [{ account_id: "ACCOUNT_1", address: "1 Main St" }] };
+      }
+      if (sql.includes("FROM app.assignment_files")) {
+        return {
+          rows: [{
+            id: 7,
+            account_id: "ACCOUNT_1",
+            organization_id: "org-1",
+            assignment_details: {},
+          }],
+        };
+      }
+      if (sql.includes("FROM app.custom_appraisal_sections")) {
+        return {
+          rows: [{
+            attribute_key: "report.subject_identification",
+            attribute_value: { property_location: { address: "2 Reviewed St" } },
+            revision: 3,
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const snapshot = await loadCustomAppraisalPropertySnapshot(client, {
+    accountId: "ACCOUNT_1",
+    assignmentFileId: 7,
+  });
+  assert.equal(
+    snapshot.report_manual_values["report.subject_identification"].revision,
+    3,
+  );
+  assert.equal(queries.some((sql) => sql.includes("property_attribute_manual_values")), false);
+});
+
+test("organization-less property snapshots retain legacy fallback with scoped precedence", async () => {
+  const client = {
+    async query(sql, params = []) {
+      if (sql.includes("to_regclass")) return { rows: [{ name: params[0] }] };
+      if (sql.includes("FROM core.accounts a")) {
+        return { rows: [{ account_id: "LEGACY_1", address: "1 Main St" }] };
+      }
+      if (sql.includes("FROM app.assignment_files")) {
+        return { rows: [{ id: 9, account_id: "LEGACY_1", organization_id: null, assignment_details: {} }] };
+      }
+      if (sql.includes("FROM app.custom_appraisal_sections")) {
+        return {
+          rows: [{
+            attribute_key: "report.property_characteristics",
+            attribute_value: { main_improvement: { living_area_sqft: 1_250 } },
+            revision: 4,
+          }],
+        };
+      }
+      if (sql.includes("FROM app.property_attribute_manual_values")) {
+        return {
+          rows: [
+            {
+              attribute_key: "report.subject_identification",
+              attribute_value: { property_location: { address: "Legacy reviewed" } },
+              revision: 2,
+            },
+            {
+              attribute_key: "report.property_characteristics",
+              attribute_value: { main_improvement: { living_area_sqft: 999 } },
+              revision: 1,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const snapshot = await loadCustomAppraisalPropertySnapshot(client, {
+    accountId: "LEGACY_1",
+    assignmentFileId: 9,
+  });
+  assert.equal(snapshot.report_manual_values["report.subject_identification"].revision, 2);
+  assert.equal(snapshot.report_manual_values["report.property_characteristics"].revision, 4);
+});

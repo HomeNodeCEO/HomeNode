@@ -243,11 +243,7 @@ const mobileRouter = createMobileRouter({
   security: httpSecurity,
 });
 
-// All workflows share the provisioned OIDC identity and organization model.
-// UAD/mobile authenticate above; this optional middleware attaches the
-// same identity to the remaining application routes whenever a bearer token is
-// present. The legacy editor key is available only before mandatory unified
-// authentication is activated.
+// Attach the shared OIDC identity to remaining routes before enforcing access.
 const authenticateApplicationUser = createMobileAuthenticator({
   pool,
   verifier: mobileOidcVerifier,
@@ -342,7 +338,10 @@ app.use(createHousingProfileRouter({
 app.use(createReportManualValuesRouter({
   pool,
   propertyEnrichmentReady,
+  ensureCustomAppraisalWorkfilesAvailable,
   requireEditor,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
+  authenticationRequired: applicationAuthenticationRequired,
 }));
 app.use(createAssignmentFileListRouter({
   pool,

@@ -30,6 +30,7 @@ function fixture(overrides = {}) {
   let shutdownOptions = null;
   let recoveryDisposals = 0;
   let artifactClosures = 0;
+  let performanceDisposals = 0;
   const options = {
     app,
     pool,
@@ -39,6 +40,9 @@ function fixture(overrides = {}) {
       dispose() { recoveryDisposals += 1; },
     },
     closeArtifactExecution() { artifactClosures += 1; },
+    requestPerformance: {
+      dispose() { performanceDisposals += 1; },
+    },
     environment: { PORT: "4321" },
     logger: { log(message) { logs.push(message); } },
     createHttpServer(listener, configuration) {
@@ -65,6 +69,7 @@ function fixture(overrides = {}) {
     shutdownOptions: () => shutdownOptions,
     recoveryDisposals: () => recoveryDisposals,
     artifactClosures: () => artifactClosures,
+    performanceDisposals: () => performanceDisposals,
   };
 }
 
@@ -96,9 +101,11 @@ test("HTTP lifecycle preserves final middleware, listen, and shutdown compositio
   assert.equal(shutdown.logger, state.options.logger);
   assert.equal(state.recoveryDisposals(), 0);
   assert.equal(state.artifactClosures(), 0);
+  assert.equal(state.performanceDisposals(), 0);
   shutdown.onBegin();
   assert.equal(state.recoveryDisposals(), 1);
   assert.equal(state.artifactClosures(), 1);
+  assert.equal(state.performanceDisposals(), 1);
 });
 
 test("HTTP lifecycle rejects incomplete composition dependencies before listening", () => {
@@ -109,6 +116,7 @@ test("HTTP lifecycle rejects incomplete composition dependencies before listenin
     ["finalErrorHandler", null, /application_http_error_handler_required/],
     ["artifactRecoveryMonitor", null, /application_artifact_recovery_monitor_required/],
     ["closeArtifactExecution", null, /application_artifact_execution_closer_required/],
+    ["requestPerformance", null, /application_request_performance_monitor_required/],
   ];
   for (const [key, value, pattern] of required) {
     const state = fixture({ [key]: value });

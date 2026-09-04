@@ -14,6 +14,7 @@ export function startApplicationHttpLifecycle({
   finalErrorHandler,
   artifactRecoveryMonitor,
   closeArtifactExecution,
+  requestPerformance,
   environment = process.env,
   logger = console,
   createHttpServer = createResilientHttpServer,
@@ -37,6 +38,9 @@ export function startApplicationHttpLifecycle({
   if (typeof closeArtifactExecution !== "function") {
     throw new TypeError("application_artifact_execution_closer_required");
   }
+  if (!requestPerformance || typeof requestPerformance.dispose !== "function") {
+    throw new TypeError("application_request_performance_monitor_required");
+  }
 
   const port = resolveApplicationPort(environment);
   app.use(finalErrorHandler);
@@ -48,6 +52,7 @@ export function startApplicationHttpLifecycle({
     graceMs: runtimeResilience.shutdownGraceMs,
     logger,
     onBegin: () => {
+      requestPerformance.dispose();
       artifactRecoveryMonitor.dispose();
       closeArtifactExecution();
     },

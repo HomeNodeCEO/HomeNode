@@ -587,5 +587,6 @@ const applicationHttpLifecycle = startApplicationHttpLifecycle({
   finalErrorHandler: jsonErrorHandler,
   artifactRecoveryMonitor,
   closeArtifactExecution: closeUadArtifactExecution,
+  requestPerformance,
 });
 gracefulShutdown = applicationHttpLifecycle.gracefulShutdown;

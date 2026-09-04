@@ -158,3 +158,29 @@ test("R2 file downloads and uploads stream through disk with exact size and chec
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("R2 disk operations reject paths outside the process temporary directory", async () => {
+  const storage = createUadObjectStorage(ENVIRONMENT, {
+    fetchImpl: async () => {
+      throw new Error("network_must_not_be_reached");
+    },
+  });
+  const outsidePath = path.resolve("uad-package-outside-temporary-directory.zip");
+  await assert.rejects(
+    () => storage.putFile({
+      objectKey: "private/upload.zip",
+      contentType: "application/zip",
+      filePath: outsidePath,
+      byteSize: 0,
+    }),
+    (error) => error.message === "uad_object_file_path_invalid",
+  );
+  await assert.rejects(
+    () => storage.downloadObjectToFile({
+      objectKey: "private/download.zip",
+      filePath: outsidePath,
+      maxBytes: 1024,
+    }),
+    (error) => error.message === "uad_object_file_path_invalid",
+  );
+});

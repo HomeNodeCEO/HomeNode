@@ -14,10 +14,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of your app
 COPY . .
 
+RUN groupadd --system homenode \
+    && useradd --system --gid homenode --home-dir /home/homenode --create-home --shell /usr/sbin/nologin homenode \
+    && mkdir -p /app/storage \
+    && chown -R homenode:homenode /app/storage
+
 ENV PYTHONPATH=/app:/app/scraper
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PORT=8080
 ENV RUN_DCAD_WORKER=true
 EXPOSE 8080
+
+USER homenode
 
 # Keep the public API/health check and continuous scraper alive together on the
 # existing Render web-service instance.

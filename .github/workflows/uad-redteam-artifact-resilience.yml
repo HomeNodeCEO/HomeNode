@@ -30,6 +30,8 @@ jobs:
       UAD_REDTEAM_OIDC_SUBJECTS_JSON: ${{ secrets.UAD_REDTEAM_OIDC_SUBJECTS_JSON }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22

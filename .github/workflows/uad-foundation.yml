@@ -30,6 +30,8 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -45,6 +47,8 @@ jobs:
         working-directory: dcad-frontend
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -81,6 +85,8 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/homenode_staging_test
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22
@@ -152,6 +158,8 @@ jobs:
       CENSUS_GEOGRAPHY_ENABLED: "false"
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 22

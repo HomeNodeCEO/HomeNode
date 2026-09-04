@@ -4,6 +4,31 @@ const DEFAULT_WARN_MS = 750;
 const DEFAULT_SLOW_MS = 1_500;
 const DEFAULT_WINDOW_SIZE = 500;
 const DEFAULT_EVENT_LOOP_RESOLUTION_MS = 20;
+const CLIENT_ERROR_SOURCE = "root_error_boundary";
+const CLIENT_ERROR_TYPES = new Set([
+  "aggregate_error",
+  "chunk_load_error",
+  "generic_error",
+  "range_error",
+  "reference_error",
+  "syntax_error",
+  "type_error",
+  "uri_error",
+]);
+const CLIENT_ROUTE_CODES = new Set([
+  "appraisal_report",
+  "comparable_sales_analysis",
+  "cost_approach",
+  "final_reconciliation",
+  "income_approach",
+  "property_details",
+  "property_report",
+  "property_search",
+  "property_tax_protest",
+  "signup",
+  "uad_workspace",
+  "unknown",
+]);
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -108,6 +133,7 @@ export function createRequestPerformanceMonitor({
   }
   eventLoopDelay.enable();
   const samples = [];
+  const clientErrorSamples = [];
 
   function poolSnapshot() {
     if (!pool) return null;
@@ -121,6 +147,34 @@ export function createRequestPerformanceMonitor({
   function record(sample) {
     samples.push(sample);
     if (samples.length > windowSize) samples.splice(0, samples.length - windowSize);
+  }
+
+  function recordClientError(event) {
+    if (!event || typeof event !== "object" || Array.isArray(event)) return false;
+    if (event.source !== CLIENT_ERROR_SOURCE) return false;
+    const keys = Object.keys(event).sort();
+    if (keys.join(",") !== "error_type,route_code,source") return false;
+    if (!CLIENT_ERROR_TYPES.has(event.error_type) || !CLIENT_ROUTE_CODES.has(event.route_code)) {
+      return false;
+    }
+    const errorType = event.error_type;
+    const routeCode = event.route_code;
+    const sample = {
+      source: CLIENT_ERROR_SOURCE,
+      error_type: errorType,
+      route_code: routeCode,
+      recorded_at: new Date().toISOString(),
+    };
+    clientErrorSamples.push(sample);
+    if (clientErrorSamples.length > windowSize) {
+      clientErrorSamples.splice(0, clientErrorSamples.length - windowSize);
+    }
+    logger.error?.("[frontend] application render failure", {
+      code: "application_render_failure",
+      error_type: errorType,
+      route_code: routeCode,
+    });
+    return true;
   }
 
   function middleware(req, res, next) {
@@ -183,6 +237,27 @@ export function createRequestPerformanceMonitor({
     };
   }
 
+  function clientErrorSnapshot() {
+    const byRoute = new Map();
+    const byType = new Map();
+    for (const sample of clientErrorSamples) {
+      byRoute.set(sample.route_code, Number(byRoute.get(sample.route_code) || 0) + 1);
+      byType.set(sample.error_type, Number(byType.get(sample.error_type) || 0) + 1);
+    }
+    const counts = (values, key) => [...values.entries()]
+      .map(([code, events]) => ({ [key]: code, events }))
+      .sort((left, right) => right.events - left.events || String(left[key]).localeCompare(right[key]));
+    return {
+      window: {
+        capacity: windowSize,
+        events: clientErrorSamples.length,
+        last_recorded_at: clientErrorSamples.at(-1)?.recorded_at || null,
+      },
+      by_route: counts(byRoute, "route_code"),
+      by_error_type: counts(byType, "error_type"),
+    };
+  }
+
   function snapshot() {
     const durations = samples.map((sample) => sample.duration_ms);
     const byRoute = new Map();
@@ -235,6 +310,7 @@ export function createRequestPerformanceMonitor({
       },
       database_pool: poolSnapshot(),
       event_loop: eventLoopSnapshot(),
+      browser_recovery: clientErrorSnapshot(),
       slowest_routes: slowestRoutes,
     };
   }
@@ -243,5 +319,5 @@ export function createRequestPerformanceMonitor({
     eventLoopDelay.disable?.();
   }
 
-  return Object.freeze({ middleware, snapshot, dispose });
+  return Object.freeze({ middleware, snapshot, recordClientError, dispose });
 }

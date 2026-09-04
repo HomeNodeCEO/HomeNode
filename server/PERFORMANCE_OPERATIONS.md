@@ -122,6 +122,8 @@ has passed this inventory reconciliation.
   normalized slow routes, including requests whose connections close before a
   response completes;
 - event-loop utilization plus bounded mean, p50, p95, p99, and maximum delay;
+- authenticated root-browser recovery events grouped by stable route and error
+  category codes;
 - current PostgreSQL pool totals, idle connections, and waiters;
 - recent scheduled-maintenance results.
 
@@ -145,6 +147,11 @@ from 10 to 1,000 milliseconds and defaults to 20. The monitor is disabled
 during graceful shutdown. Operational snapshots expose aggregate timing and
 normalized route templates only; they do not include request bodies, query
 parameters, user identifiers, access tokens, or dependency error messages.
+The root React recovery boundary reports to the authenticated, globally
+rate-limited `POST /api/system/client-errors` endpoint with a stable source,
+route code, and error category. Exception messages, component stacks, browser
+URLs, and account, assignment, workfile, or user identifiers remain in the
+browser and are never accepted into the operational snapshot.
 
 Final appraisal E&O preflight is intentionally on-demand. It loads the durable
 workfile and current property evidence only when the appraiser selects Finalize

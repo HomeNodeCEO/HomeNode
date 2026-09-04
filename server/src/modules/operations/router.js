@@ -13,6 +13,15 @@ function requireSnapshotProvider(value, code) {
   return value;
 }
 
+function requireRequestPerformance(value) {
+  if (!value
+      || typeof value.snapshot !== "function"
+      || typeof value.recordClientError !== "function") {
+    throw new TypeError("operational_request_performance_required");
+  }
+  return value;
+}
+
 export function createOperationalRouter({
   runtimeHealth,
   pool,
@@ -30,10 +39,7 @@ export function createOperationalRouter({
   const liveness = requireFunction(runtimeHealth?.liveness, "operational_liveness_handler_required");
   const readiness = requireFunction(runtimeHealth?.readiness, "operational_readiness_handler_required");
   if (!pool || typeof pool !== "object") throw new TypeError("operational_pool_required");
-  const performance = requireSnapshotProvider(
-    requestPerformance,
-    "operational_request_performance_required",
-  );
+  const performance = requireRequestPerformance(requestPerformance);
   const recovery = requireSnapshotProvider(
     artifactRecoveryMonitor,
     "operational_artifact_recovery_required",
@@ -67,6 +73,17 @@ export function createOperationalRouter({
   const router = express.Router();
   router.get("/health", liveness);
   router.get("/ready", readiness);
+
+  router.post("/api/system/client-errors", (req, res) => {
+    res.set("cache-control", "no-store");
+    if (!req.mobileAuth) {
+      return res.status(401).json({ error: "authentication_required" });
+    }
+    if (!performance.recordClientError(req.body)) {
+      return res.status(400).json({ error: "invalid_client_error_event" });
+    }
+    return res.status(202).json({ ok: true });
+  });
 
   router.get("/api/system/performance", async (_req, res) => {
     let recentMaintenance = [];

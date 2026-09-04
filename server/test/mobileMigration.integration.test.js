@@ -36,6 +36,7 @@ import {
   verifyInspectionPhoto,
 } from "../src/modules/mobile/photos.js";
 import { getInspectionSketch, saveInspectionSketch } from "../src/modules/mobile/sketches.js";
+import { saveDesktopPropertyTaxFile } from "../src/modules/mobile/desktopPropertyTax.js";
 import {
   getInspectionSnapshot,
   syncInspectionOperations,
@@ -359,6 +360,60 @@ test("mobile report files preserve prior versions and allocate one daily assignm
       [tax.reportFile.target_id],
     );
     assert.equal(Number(conflictPreservedCanonical.rows[0].revision), 3);
+
+    const saveOperationId = randomUUID();
+    const durableSaveInput = {
+      client_operation_id: saveOperationId,
+      expected_revision: 3,
+      workfile_data: {
+        subject: { condition_rating: "C5" },
+        valuation: { tax_year: 2026 },
+      },
+    };
+    const durableSave = await saveDesktopPropertyTaxFile(
+      pool,
+      accountId,
+      tax.reportFile.target_id,
+      durableSaveInput,
+      { actorUserId: userId, actorLabel: "Mobile Test Appraiser" },
+    );
+    const durableReplay = await saveDesktopPropertyTaxFile(
+      pool,
+      accountId,
+      tax.reportFile.target_id,
+      durableSaveInput,
+      { actorUserId: userId, actorLabel: "Mobile Test Appraiser" },
+    );
+    assert.equal(durableSave.revision, 4);
+    assert.equal(durableReplay.revision, 4);
+    await assert.rejects(
+      saveDesktopPropertyTaxFile(
+        pool,
+        accountId,
+        tax.reportFile.target_id,
+        {
+          ...durableSaveInput,
+          workfile_data: {
+            subject: { condition_rating: "C5" },
+            valuation: { tax_year: 2025 },
+          },
+        },
+        { actorUserId: userId, actorLabel: "Mobile Test Appraiser" },
+      ),
+      /property_tax_protest_save_operation_conflict/,
+    );
+    const durableCounts = await pool.query(
+      `SELECT
+         (SELECT count(*)::integer FROM app.tax_protest_file_history
+           WHERE tax_protest_file_id = $1 AND revision = 4) AS history,
+         (SELECT count(*)::integer FROM app.tax_protest_save_operations
+           WHERE tax_protest_file_id = $1 AND client_operation_id = $2) AS operations,
+         (SELECT count(*)::integer FROM app.report_file_events
+           WHERE report_file_id = $3
+             AND event_type = 'property_tax_protest.desktop_saved') AS events`,
+      [tax.reportFile.target_id, saveOperationId, tax.reportFile.id],
+    );
+    assert.deepEqual(durableCounts.rows[0], { history: 1, operations: 1, events: 1 });
 
     const discovery = await listReportFiles(pool, auth, { accountId });
     assert.equal(discovery.files.length, 4);

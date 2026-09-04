@@ -292,6 +292,9 @@ export function createDesktopPropertyTaxRouter({
           current_revision: error.currentRevision,
         });
       }
+      if (error?.message === "property_tax_protest_save_operation_conflict") {
+        return res.status(409).json({ error: error.message });
+      }
       if (error?.message === "property_tax_protest_file_not_found") {
         return res.status(404).json({ error: error.message });
       }

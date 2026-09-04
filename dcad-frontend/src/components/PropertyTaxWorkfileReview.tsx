@@ -307,7 +307,10 @@ export default function PropertyTaxWorkfileReview({
       setNotice(`Saved revision ${current.revision}. Earlier revisions remain in the audit history.`);
     } catch (saveError: unknown) {
       const message = saveError instanceof Error ? saveError.message : 'The canonical protest file could not be saved.';
-      if (message === 'property_tax_protest_revision_conflict') {
+      if (
+        message === 'property_tax_protest_revision_conflict'
+        || message === 'property_tax_protest_save_operation_conflict'
+      ) {
         setError('A newer revision exists. The latest canonical values were reloaded; review them before saving again.');
         await load();
       } else {

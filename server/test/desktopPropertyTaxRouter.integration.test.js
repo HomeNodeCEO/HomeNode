@@ -355,6 +355,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
     saveFile: async (_pool, _accountId, fileId) => {
       const messages = {
         conflict: "property_tax_protest_revision_conflict",
+        operation: "property_tax_protest_save_operation_conflict",
         missing: "property_tax_protest_file_not_found",
         invalid: "invalid_property_tax_protest_update",
         failed: "database_password=secret",
@@ -369,6 +370,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
 
   for (const [fileId, status, body] of [
     ["conflict", 409, { error: "property_tax_protest_revision_conflict", current_revision: 9 }],
+    ["operation", 409, { error: "property_tax_protest_save_operation_conflict" }],
     ["missing", 404, { error: "property_tax_protest_file_not_found" }],
     ["invalid", 400, { error: "invalid_property_tax_protest_update" }],
     ["failed", 500, { error: "property_tax_protest_save_failed" }],

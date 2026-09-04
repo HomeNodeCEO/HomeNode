@@ -258,6 +258,7 @@ export default function PropertyTaxComparableGrid({
     } catch (error) {
       const text = error instanceof Error ? error.message : 'The comparable grid could not be saved.';
       setMessage(text === 'property_tax_protest_revision_conflict'
+        || text === 'property_tax_protest_save_operation_conflict'
         ? 'A newer protest revision exists. Refresh the canonical file before saving this grid.'
         : text);
     } finally {

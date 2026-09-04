@@ -14,6 +14,12 @@ a writable workfile. Similar analysis does not imply shared record ownership.
 | UAD 3.6 | selected UAD workfile and its repeatable entities |
 | Property Tax Protest | selected `app.tax_protest_files` record and `workfile_data` |
 
+Desktop Property Tax saves use a client operation UUID in addition to optimistic
+revision checks. The server records the request hash and applied revision in the
+same transaction as the workfile, history, and report-registry event. Replaying
+the same request is read-only; reusing its UUID for a different payload or
+authenticated actor is rejected with a conflict.
+
 ## Enforced invariants
 
 - The Property Tax Protest page may read and write only the selected protest

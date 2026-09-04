@@ -11,6 +11,7 @@ delete inheritedEnvironment.APPLICATION_AUTHENTICATION_REQUIRED;
 delete inheritedEnvironment.LEGACY_AUTH_ROLLOUT_UNTIL;
 delete inheritedEnvironment.OIDC_ISSUER;
 delete inheritedEnvironment.OIDC_AUDIENCE;
+delete inheritedEnvironment.OIDC_CLIENT_ID;
 delete inheritedEnvironment.OIDC_JWKS_URI;
 delete inheritedEnvironment.OIDC_WEB_ISSUER;
 delete inheritedEnvironment.OIDC_WEB_CLIENT_ID;

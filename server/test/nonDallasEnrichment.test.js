@@ -11,6 +11,7 @@ import {
   TrestleClient,
   trestleConfiguration,
 } from "../src/services/trestleClient.js";
+import { getNonDallasAccount } from "../src/services/propertyEnrichment.js";
 
 test("Dallas is hard-isolated from non-Dallas enrichment", () => {
   assert.throws(() => assertNonDallasEnrichmentCounty("Dallas County"), /dallas_enrichment_isolated/);
@@ -18,6 +19,26 @@ test("Dallas is hard-isolated from non-Dallas enrichment", () => {
   // address recorded with county = Dallas County is protected the same way.
   assert.throws(() => assertNonDallasEnrichmentCounty("DALLAS"), /dallas_enrichment_isolated/);
   assert.equal(assertNonDallasEnrichmentCounty("Collin County"), "COLLIN");
+});
+
+test("non-Dallas account loading is parameterized and normalizes county", async () => {
+  const calls = [];
+  const account = await getNonDallasAccount({
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rows: [{ account_id: "A-1", county: "Collin County" }] };
+    },
+  }, "A-1");
+  assert.deepEqual(account, {
+    account_id: "A-1",
+    county: "Collin County",
+    normalized_county: "COLLIN",
+  });
+  assert.equal(calls[0].sql.includes("account_id = $1"), true);
+  assert.deepEqual(calls[0].params, ["A-1"]);
+  assert.equal(await getNonDallasAccount({
+    async query() { return { rows: [] }; },
+  }, "missing"), null);
 });
 
 test("manual then Trestle then CAD resolution preserves zero and false", () => {

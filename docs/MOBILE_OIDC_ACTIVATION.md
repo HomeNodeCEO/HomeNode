@@ -32,8 +32,9 @@ Official references:
 - Disable public signup and use invitations only.
 - Require TOTP MFA for non-SSO users.
 - Store access and rotating refresh tokens only through `expo-secure-store`.
-- The API accepts only RS256 tokens with the exact configured issuer and audience.
-- For WorkOS public OAuth applications, `OIDC_AUDIENCE` is the application's public `client_id`.
+- The API accepts only RS256 tokens with the exact configured issuer and access-token audience.
+- When configured, `OIDC_CLIENT_ID` must also match the access token's `client_id` claim. This binds the shared WorkOS API audience to the specific public Connect application.
+- For WorkOS Connect, read `OIDC_AUDIENCE` from a real access token's `aud` claim and set `OIDC_CLIENT_ID` to the public Connect application's `client_id`. Do not copy the ID token's `aud` claim into `OIDC_AUDIENCE`.
 - A verified token still grants no HomeNode access until `(issuer, sub)` is explicitly mapped to an active internal user with active organization membership.
 - WorkOS roles do not replace HomeNode authorization. `app_auth.membership_roles` remains authoritative.
 
@@ -51,7 +52,7 @@ In the WorkOS staging environment:
 6. Enable TOTP MFA.
 7. Keep the WorkOS-hosted AuthKit domain; do not configure a paid custom domain.
 
-Record only the non-secret AuthKit issuer and public OAuth `client_id`. Never copy an API key or client secret into the mobile project.
+Record only the non-secret AuthKit issuer, the access-token `aud`, and the public OAuth `client_id`. Never copy an API key or client secret into the mobile project.
 
 ### 2. Configure the internal mobile build
 
@@ -71,7 +72,8 @@ Set these on `homenode-api-staging` while retaining `MOBILE_INSPECTION_ENABLED=f
 
 ```text
 OIDC_ISSUER=https://<environment>.authkit.app
-OIDC_AUDIENCE=client_<public-oauth-application-id>
+OIDC_AUDIENCE=<access-token-aud>
+OIDC_CLIENT_ID=client_<public-oauth-application-id>
 OIDC_JWKS_URI=https://<environment>.authkit.app/oauth2/jwks
 OIDC_CLOCK_TOLERANCE_SECONDS=60
 MOBILE_INSPECTION_ENABLED=false

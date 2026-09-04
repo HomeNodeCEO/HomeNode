@@ -68,12 +68,21 @@ function audienceMatches(claim, expected) {
   return Array.isArray(claim) && claim.includes(expected);
 }
 
-function validateClaims(payload, { issuer, audience, nowSeconds, clockToleranceSeconds }) {
+function validateClaims(payload, {
+  issuer,
+  audience,
+  clientId,
+  nowSeconds,
+  clockToleranceSeconds,
+}) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw accessTokenError("payload_not_object");
   }
   if (payload.iss !== issuer) throw accessTokenError("issuer_mismatch");
   if (!audienceMatches(payload.aud, audience)) throw accessTokenError("audience_mismatch");
+  if (clientId && payload.client_id !== clientId) {
+    throw accessTokenError("client_id_mismatch");
+  }
   if (typeof payload.sub !== "string" || !payload.sub.trim() || payload.sub.length > 500) {
     throw accessTokenError("subject_missing_or_invalid");
   }
@@ -94,6 +103,7 @@ function validateClaims(payload, { issuer, audience, nowSeconds, clockToleranceS
 export function createOidcAccessTokenVerifier({
   issuer: issuerValue,
   audience: audienceValue,
+  clientId: clientIdValue,
   jwksUri: jwksUriValue,
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
@@ -119,6 +129,8 @@ export function createOidcAccessTokenVerifier({
   const issuer = normalizeOidcIssuer(issuerValue);
   const audience = String(audienceValue).trim();
   if (!audience || audience.length > 500) throw new Error("invalid_oidc_audience");
+  const clientId = String(clientIdValue || "").trim();
+  if (clientId.length > 500) throw new Error("invalid_oidc_client_id");
   if (typeof fetchImpl !== "function") throw new Error("oidc_fetch_unavailable");
   const configuredJwksUri = jwksUriValue
     ? httpsUrl(jwksUriValue, "invalid_oidc_jwks_uri")
@@ -246,6 +258,7 @@ export function createOidcAccessTokenVerifier({
     validateClaims(payload, {
       issuer,
       audience,
+      clientId,
       nowSeconds: Math.floor(now() / 1000),
       clockToleranceSeconds: tolerance,
     });

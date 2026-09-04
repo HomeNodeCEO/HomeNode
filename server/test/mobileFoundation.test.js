@@ -50,6 +50,7 @@ import {
 } from "../src/modules/mobile/uadEntities.js";
 const ISSUER = "https://identity.example.test";
 const AUDIENCE = "https://api.homenode.test/mobile";
+const CLIENT_ID = "client_homenode_mobile";
 const NOW = Date.parse("2026-08-21T12:00:00.000Z");
 const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const publicJwk = { ...publicKey.export({ format: "jwk" }), kid: "mobile-test-key", alg: "RS256", use: "sig" };
@@ -63,6 +64,7 @@ function token(overrides = {}, headerOverrides = {}) {
   const payload = encoded({
     iss: ISSUER,
     aud: AUDIENCE,
+    client_id: CLIENT_ID,
     sub: "user_123",
     iat: Math.floor(NOW / 1000) - 30,
     exp: Math.floor(NOW / 1000) + 300,
@@ -77,6 +79,7 @@ function verifier() {
   return createOidcAccessTokenVerifier({
     issuer: ISSUER,
     audience: AUDIENCE,
+    clientId: CLIENT_ID,
     jwksUri: `${ISSUER}/.well-known/jwks.json`,
     now: () => NOW,
     fetchImpl: async () => new Response(JSON.stringify({ keys: [publicJwk] }), {
@@ -736,7 +739,7 @@ test("production mobile-user provisioning is transactional and fail-closed", () 
   assert.doesNotMatch(source, /DELETE\s+FROM/i);
 });
 
-test("rejects expired, wrong-audience, and tampered OIDC tokens", async () => {
+test("rejects expired, wrong-audience, wrong-client, and tampered OIDC tokens", async () => {
   const oidc = verifier();
   await assert.rejects(
     () => oidc.verify(token({ exp: Math.floor(NOW / 1000) - 120 })),
@@ -745,6 +748,10 @@ test("rejects expired, wrong-audience, and tampered OIDC tokens", async () => {
   await assert.rejects(
     () => oidc.verify(token({ aud: "wrong-audience" })),
     (error) => error.message === "invalid_access_token" && error.diagnostic === "audience_mismatch",
+  );
+  await assert.rejects(
+    () => oidc.verify(token({ client_id: "client_untrusted" })),
+    (error) => error.message === "invalid_access_token" && error.diagnostic === "client_id_mismatch",
   );
   const valid = token();
   const parts = valid.split(".");
@@ -759,12 +766,12 @@ test("rejects adversarial OIDC claim and algorithm combinations", async () => {
   const oidc = verifier();
   const nowSeconds = Math.floor(NOW / 1000);
   const cases = [
-    [token({ iss: "https://attacker.example" }), "issuer_mismatch"],
-    [token({ nbf: nowSeconds + 301 }), "not_yet_valid"],
-    [token({ iat: nowSeconds + 301 }), "issued_in_future"],
-    [token({ aud: [AUDIENCE, "another-audience"] }), "authorized_party_mismatch"],
-    [token({}, { alg: "none" }), "jwt_header_unsupported"],
-    [token({}, { kid: "attacker-key" }), "signing_key_not_found"],
+    [token({ iss: "https://attacker.example", client_id: CLIENT_ID }), "issuer_mismatch"],
+    [token({ client_id: CLIENT_ID, nbf: nowSeconds + 301 }), "not_yet_valid"],
+    [token({ client_id: CLIENT_ID, iat: nowSeconds + 301 }), "issued_in_future"],
+    [token({ client_id: CLIENT_ID, aud: [AUDIENCE, "another-audience"] }), "authorized_party_mismatch"],
+    [token({ client_id: CLIENT_ID }, { alg: "none" }), "jwt_header_unsupported"],
+    [token({ client_id: CLIENT_ID }, { kid: "attacker-key" }), "signing_key_not_found"],
   ];
   for (const [candidate, diagnostic] of cases) {
     await assert.rejects(
@@ -775,6 +782,7 @@ test("rejects adversarial OIDC claim and algorithm combinations", async () => {
   const multiAudience = await oidc.verify(token({
     aud: [AUDIENCE, "another-audience"],
     azp: AUDIENCE,
+    client_id: CLIENT_ID,
   }));
   assert.equal(multiAudience.azp, AUDIENCE);
 });

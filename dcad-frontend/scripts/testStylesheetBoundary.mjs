@@ -26,3 +26,14 @@ test('property-detail compatibility rules survive removal of the duplicate bundl
   assert.match(applicationCss, /\.ownership-grid \.addl-info-section \.space-y-3 > div:last-child\s*\{/);
   assert.match(applicationCss, /display:\s*none/);
 });
+
+test('Custom Appraisal button variants retain the HomeNode palette and hover contrast', async () => {
+  const applicationCss = await readFile(applicationCssUrl, 'utf8');
+
+  assert.match(applicationCss, /\.hn-custom-report :where\(\.btn\.btn-primary, \.btn\.btn-neutral\)/);
+  assert.match(applicationCss, /background:\s*linear-gradient\(135deg, #7c3aed, var\(--hn-violet\)\)/);
+  assert.match(applicationCss, /\.hn-custom-report :where\(\.btn\.btn-outline\):hover:not\(:disabled\)/);
+  assert.match(applicationCss, /background:\s*var\(--hn-gold-soft\)/);
+  assert.match(applicationCss, /\.hn-action-secondary :where\(span, strong, small\)/);
+  assert.match(applicationCss, /\.hn-action-gold:hover:not\(:disabled\)/);
+});

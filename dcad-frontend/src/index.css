@@ -149,6 +149,53 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   box-shadow: var(--hn-shadow) !important;
 }
 
+/* Keep the legacy button variant names used throughout Custom Appraisal on the
+ * current HomeNode palette. The retired generated stylesheet used to supply
+ * these states, so defining them here prevents utility colors from drifting. */
+.hn-custom-report :where(.btn.btn-primary, .btn.btn-neutral) {
+  border-color: var(--hn-violet);
+  background: linear-gradient(135deg, #7c3aed, var(--hn-violet));
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(109, 40, 217, 0.22);
+}
+
+.hn-custom-report :where(.btn.btn-primary, .btn.btn-neutral):hover:not(:disabled) {
+  border-color: var(--hn-violet-hover);
+  background: linear-gradient(135deg, var(--hn-violet), var(--hn-violet-hover));
+  color: #fff;
+}
+
+.hn-custom-report :where(.btn.btn-outline) {
+  border-color: var(--hn-border);
+  background: var(--hn-surface);
+  color: var(--hn-deep-purple);
+  box-shadow: none;
+}
+
+.hn-custom-report :where(.btn.btn-outline):hover:not(:disabled) {
+  border-color: var(--hn-gold);
+  background: var(--hn-gold-soft);
+  color: var(--hn-deep-purple);
+}
+
+.hn-custom-report :where(.btn.btn-ghost) {
+  border-color: transparent;
+  background: transparent;
+  color: var(--hn-violet-hover);
+  box-shadow: none;
+}
+
+.hn-custom-report :where(.btn.btn-ghost):hover:not(:disabled) {
+  border-color: rgba(109, 40, 217, 0.16);
+  background: var(--hn-violet-soft);
+  color: var(--hn-violet-hover);
+}
+
+.hn-custom-report :where(.btn.btn-primary, .btn.btn-neutral, .btn.btn-outline, .btn.btn-ghost)
+  :where(span, strong, small) {
+  color: inherit;
+}
+
 .hn-app-header {
   border-color: rgba(198, 161, 91, 0.4) !important;
   background: linear-gradient(118deg, var(--hn-midnight), var(--hn-deep-purple)) !important;
@@ -200,7 +247,10 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
 .hn-action-secondary:hover:not(:disabled) {
   border-color: var(--hn-gold) !important;
   background: var(--hn-gold-soft) !important;
+  color: var(--hn-deep-purple) !important;
 }
+
+.hn-action-secondary :where(span, strong, small) { color: inherit !important; }
 
 .hn-action-gold {
   border-color: var(--hn-gold) !important;
@@ -208,6 +258,15 @@ img, video, canvas, iframe { max-width: 100%; height: auto; }
   color: var(--hn-midnight) !important;
   box-shadow: 0 6px 18px rgba(170, 130, 62, 0.2) !important;
 }
+
+.hn-action-gold:hover:not(:disabled) {
+  border-color: var(--hn-gold-hover) !important;
+  background: linear-gradient(135deg, var(--hn-gold), var(--hn-gold-hover)) !important;
+  color: var(--hn-midnight) !important;
+  box-shadow: 0 8px 20px rgba(170, 130, 62, 0.28) !important;
+}
+
+.hn-action-gold :where(span, strong, small) { color: inherit !important; }
 
 .hn-navigation-button {
   border-color: transparent !important;

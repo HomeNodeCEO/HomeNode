@@ -60,7 +60,7 @@ export default function PropertyContextSection({
           type="button"
           onClick={onAnalyze}
           disabled={loading}
-          className="btn btn-sm normal-case rounded-lg border-slate-900 bg-slate-900 text-white hover:bg-black disabled:opacity-60"
+          className="hn-action-primary btn btn-sm normal-case rounded-lg disabled:opacity-60"
         >
           {loading ? "Analyzing..." : context ? "Refresh Context" : "Analyze Context"}
         </button>
@@ -151,7 +151,7 @@ export default function PropertyContextSection({
               type="button"
               onClick={onSave}
               disabled={saving}
-              className="btn btn-sm normal-case rounded-lg border-slate-900 bg-slate-900 text-white hover:bg-black disabled:opacity-60"
+              className="hn-action-primary btn btn-sm normal-case rounded-lg disabled:opacity-60"
             >
               {saving ? "Saving..." : "Save Complexity Review"}
             </button>

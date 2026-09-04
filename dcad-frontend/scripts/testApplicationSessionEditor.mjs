@@ -100,3 +100,13 @@ test("remaining reviewed-data saves use the authenticated session path", () => {
   assert.doesNotMatch(propertyTaxReview, /window\.prompt\([^)]*editor key/i);
   assert.match(reconciliation, /Saves use your signed-in HomeNode identity\./);
 });
+
+test("the global sales queue is role-aware without weakening its server policy", () => {
+  const reconciliation = read("../src/components/SalesReconciliationQueue.tsx");
+
+  assert.match(reconciliation, /organization\.roles\.includes\("homenode_admin"\)/);
+  assert.match(reconciliation, /const queueAccessible = !required \|\| platformAdministrator/);
+  assert.match(reconciliation, /if \(!queueAccessible\)[\s\S]*?setQueue\(null\)/);
+  assert.match(reconciliation, /This queue contains countywide records across organizations/);
+  assert.doesNotMatch(reconciliation, /organization_admin/);
+});

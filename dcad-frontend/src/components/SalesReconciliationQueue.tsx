@@ -76,11 +76,14 @@ function caughtErrorMessage(error: unknown) {
 }
 
 export default function SalesReconciliationQueue() {
-  const { session } = useApplicationAuth();
+  const { required, session } = useApplicationAuth();
   const authenticated = Boolean(session);
+  const platformAdministrator = Boolean(session?.organizations.some((organization) =>
+    organization.roles.includes("homenode_admin")));
+  const queueAccessible = !required || platformAdministrator;
   const [queue, setQueue] = useState<SalesReconciliationQueueResponse | null>(null);
   const [offset, setOffset] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [locationStatus, setLocationStatus] = useState<LocationBackfillStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
@@ -119,10 +122,16 @@ export default function SalesReconciliationQueue() {
   }, []);
 
   useEffect(() => {
+    if (!queueAccessible) {
+      setLoading(false);
+      setQueue(null);
+      setError(null);
+      return;
+    }
     void loadQueue(0);
     void loadLocationStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [queueAccessible]);
 
   function updateDraft(sourceRecordId: string | number, update: Partial<Draft>) {
     const key = String(sourceRecordId);
@@ -214,11 +223,13 @@ export default function SalesReconciliationQueue() {
           </p>
         </div>
         <div className="sales-reconciliation__count">
-          {queue?.total.toLocaleString() ?? "—"} awaiting review
+          {queueAccessible
+            ? `${queue?.total.toLocaleString() ?? "—"} awaiting review`
+            : "Platform administrator access"}
         </div>
       </div>
 
-      {locationStatus && (
+      {queueAccessible && locationStatus && (
         <div className="sales-reconciliation__location-status">
           <div>
             <span>Mapped sales-account coverage</span>
@@ -247,7 +258,15 @@ export default function SalesReconciliationQueue() {
         </div>
       )}
 
-      {authenticated ? (
+      {!queueAccessible ? (
+        <div className="sales-reconciliation__access-notice" role="status">
+          <strong>Sales reconciliation is protected.</strong>
+          <span>
+            This queue contains countywide records across organizations, so the signed-in account
+            needs the HomeNode platform administrator role. No sales data has been removed.
+          </span>
+        </div>
+      ) : authenticated ? (
         <div className="sales-reconciliation__status">
           Saves use your signed-in HomeNode identity.
         </div>
@@ -264,9 +283,9 @@ export default function SalesReconciliationQueue() {
         </label>
       )}
 
-      {loading && <div className="sales-reconciliation__status">Loading reconciliation queue…</div>}
-      {error && <div className="sales-reconciliation__error">{error}</div>}
-      {!loading && !error && queue?.items.length === 0 && (
+      {queueAccessible && loading && <div className="sales-reconciliation__status">Loading reconciliation queue…</div>}
+      {queueAccessible && error && <div className="sales-reconciliation__error">{error}</div>}
+      {queueAccessible && !loading && !error && queue?.items.length === 0 && (
         <div className="sales-reconciliation__empty">No unresolved closed sales remain.</div>
       )}
 
@@ -397,7 +416,7 @@ export default function SalesReconciliationQueue() {
         })}
       </div>
 
-      {queue && queue.total > PAGE_SIZE && (
+      {queueAccessible && queue && queue.total > PAGE_SIZE && (
         <div className="sales-reconciliation__pagination">
           <button type="button" disabled={offset === 0 || loading} onClick={() => void loadQueue(Math.max(0, offset - PAGE_SIZE))}>Previous</button>
           <span>{offset + 1}–{Math.min(offset + queue.items.length, queue.total)} of {queue.total.toLocaleString()}</span>
@@ -406,19 +425,25 @@ export default function SalesReconciliationQueue() {
       )}
 
       <style>{`
-        .sales-reconciliation { margin-top: 22px; border: 1px solid #cbd5e1; border-radius: 16px; background: #f8fafc; padding: 16px; display: grid; gap: 14px; }
+        .sales-reconciliation { margin-top: 22px; border: 1px solid var(--hn-border); border-radius: 16px; background: var(--hn-surface-muted); padding: 16px; display: grid; gap: 14px; box-shadow: 0 8px 24px rgba(36, 20, 63, .07); }
         .sales-reconciliation__header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
-        .sales-reconciliation__header h2 { margin: 0; font-size: 20px; color: #0f172a; }
-        .sales-reconciliation__header p { margin: 6px 0 0; max-width: 820px; color: #475569; font-size: 13px; line-height: 1.5; }
-        .sales-reconciliation__count { white-space: nowrap; border-radius: 999px; background: #fef3c7; color: #92400e; padding: 6px 10px; font-size: 12px; font-weight: 700; }
-        .sales-reconciliation__location-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; border: 1px solid #bfdbfe; border-radius: 12px; background: #eff6ff; padding: 10px; }
+        .sales-reconciliation__header h2 { margin: 0; font-size: 20px; color: var(--hn-deep-purple); }
+        .sales-reconciliation__header p { margin: 6px 0 0; max-width: 820px; color: var(--hn-muted); font-size: 13px; line-height: 1.5; }
+        .sales-reconciliation__count { white-space: nowrap; border: 1px solid rgba(198, 161, 91, .42); border-radius: 999px; background: var(--hn-gold-soft); color: var(--hn-gold-ink); padding: 6px 10px; font-size: 12px; font-weight: 700; }
+        .sales-reconciliation__location-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; border: 1px solid rgba(109, 40, 217, .2); border-radius: 12px; background: var(--hn-violet-soft); padding: 10px; }
         .sales-reconciliation__location-status div { display: grid; gap: 2px; }
-        .sales-reconciliation__location-status span { color: #475569; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
-        .sales-reconciliation__location-status strong { color: #1e3a8a; font-size: 15px; }
-        .sales-reconciliation__editor { display: grid; gap: 5px; max-width: 360px; font-size: 12px; font-weight: 700; color: #334155; }
-        .sales-reconciliation input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 10px; background: white; }
-        .sales-reconciliation button { border: 1px solid #2563eb; border-radius: 8px; padding: 8px 11px; background: #2563eb; color: white; font-weight: 700; cursor: pointer; }
+        .sales-reconciliation__location-status span { color: var(--hn-muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+        .sales-reconciliation__location-status strong { color: var(--hn-deep-purple); font-size: 15px; }
+        .sales-reconciliation__editor { display: grid; gap: 5px; max-width: 360px; font-size: 12px; font-weight: 700; color: var(--hn-deep-purple); }
+        .sales-reconciliation input { width: 100%; box-sizing: border-box; border: 1px solid var(--hn-border); border-radius: 8px; padding: 8px 10px; background: white; }
+        .sales-reconciliation button { border: 1px solid var(--hn-violet); border-radius: 8px; padding: 8px 11px; background: linear-gradient(135deg, #7c3aed, var(--hn-violet)); color: white; font-weight: 700; cursor: pointer; box-shadow: 0 5px 14px rgba(109, 40, 217, .16); transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease; }
+        .sales-reconciliation button:hover:not(:disabled) { border-color: var(--hn-violet-hover); background: linear-gradient(135deg, var(--hn-violet), var(--hn-violet-hover)); color: white; box-shadow: 0 8px 20px rgba(85, 33, 174, .2); transform: translateY(-1px); }
+        .sales-reconciliation button:focus-visible { outline: 3px solid var(--hn-focus); outline-offset: 2px; }
+        .sales-reconciliation button :where(span, strong, small) { color: inherit; }
         .sales-reconciliation button:disabled { cursor: not-allowed; opacity: .55; }
+        .sales-reconciliation__access-notice { display: grid; gap: 4px; border: 1px solid rgba(198, 161, 91, .55); border-radius: 12px; background: var(--hn-gold-soft); color: var(--hn-deep-purple); padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+        .sales-reconciliation__access-notice strong { color: var(--hn-deep-purple); }
+        .sales-reconciliation__access-notice span { color: var(--hn-muted); }
         .sales-reconciliation__list { display: grid; gap: 12px; }
         .sales-reconciliation__card { border: 1px solid #e2e8f0; border-radius: 12px; background: white; padding: 14px; display: grid; gap: 12px; }
         .sales-reconciliation__facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
@@ -430,14 +455,16 @@ export default function SalesReconciliationQueue() {
         .sales-reconciliation__controls { display: grid; gap: 9px; border-top: 1px solid #e2e8f0; padding-top: 12px; }
         .sales-reconciliation__controls label { display: grid; gap: 5px; color: #334155; font-size: 12px; font-weight: 700; }
         .sales-reconciliation__search-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
-        .sales-reconciliation__results { display: grid; gap: 6px; border: 1px solid #dbeafe; border-radius: 10px; padding: 7px; background: #eff6ff; }
-        .sales-reconciliation__results button { display: grid; gap: 3px; text-align: left; background: white; color: #1e3a8a; border-color: #bfdbfe; }
+        .sales-reconciliation__results { display: grid; gap: 6px; border: 1px solid rgba(109, 40, 217, .18); border-radius: 10px; padding: 7px; background: var(--hn-violet-soft); }
+        .sales-reconciliation__results button { display: grid; gap: 3px; text-align: left; background: white; color: var(--hn-deep-purple); border-color: var(--hn-border); box-shadow: none; }
+        .sales-reconciliation__results button:hover:not(:disabled) { border-color: var(--hn-gold); background: var(--hn-gold-soft); color: var(--hn-deep-purple); box-shadow: none; transform: none; }
         .sales-reconciliation__results span { font-size: 11px; font-weight: 500; color: #475569; }
         .sales-reconciliation__save-grid { display: grid; grid-template-columns: minmax(210px, .8fr) minmax(260px, 1.2fr) auto; gap: 8px; align-items: end; }
         .sales-reconciliation__error { border-radius: 8px; background: #fef2f2; color: #b91c1c; padding: 8px 10px; font-size: 12px; }
         .sales-reconciliation__status, .sales-reconciliation__empty { color: #475569; font-size: 13px; }
         .sales-reconciliation__pagination { display: flex; justify-content: flex-end; align-items: center; gap: 10px; color: #475569; font-size: 12px; }
-        .sales-reconciliation__pagination button { background: white; color: #1d4ed8; }
+        .sales-reconciliation__pagination button { border-color: var(--hn-border); background: white; color: var(--hn-deep-purple); box-shadow: none; }
+        .sales-reconciliation__pagination button:hover:not(:disabled) { border-color: var(--hn-gold); background: var(--hn-gold-soft); color: var(--hn-deep-purple); box-shadow: none; transform: none; }
         @media (max-width: 760px) {
           .sales-reconciliation__header { display: grid; }
           .sales-reconciliation__count { width: fit-content; }

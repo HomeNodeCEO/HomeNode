@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
+
 import { normalizeAccountId, normalizeUuid } from "./reportFiles.js";
 import { mergePropertyTaxWorkfileUpdate } from "./propertyTaxWorkfile.js";
 import { activeRooms, sketchResponse } from "./sketches.js";
+import { canonicalJson } from "./sync.js";
 import { getReportEvidenceVersion } from "../../services/reportEvidenceVersion.js";
 
 function plainObject(value) {
@@ -120,11 +123,19 @@ export async function saveDesktopPropertyTaxFile(
 ) {
   const accountId = normalizeAccountId(accountIdValue);
   const fileId = normalizeUuid(fileIdValue, "invalid_property_tax_protest_file_id");
-  if (!plainObject(input) || Object.keys(input).some((key) => !new Set(["expected_revision", "workfile_data", "reviewer"]).has(key))) {
+  if (!plainObject(input) || Object.keys(input).some((key) => !new Set([
+    "expected_revision",
+    "workfile_data",
+    "reviewer",
+    "client_operation_id",
+  ]).has(key))) {
     throw new Error("invalid_property_tax_protest_update");
   }
   const expectedRevision = Number(input.expected_revision);
   if (!Number.isInteger(expectedRevision) || expectedRevision < 1) throw new Error("invalid_property_tax_protest_revision");
+  const clientOperationId = input.client_operation_id == null
+    ? null
+    : normalizeUuid(input.client_operation_id, "invalid_property_tax_protest_client_operation_id");
   const normalizedActorUserId = actorUserId
     ? normalizeUuid(actorUserId, "invalid_property_tax_protest_actor")
     : null;
@@ -132,11 +143,44 @@ export async function saveDesktopPropertyTaxFile(
     ? String(actorLabel || "Authenticated HomeNode user").trim().slice(0, 200)
       || "Authenticated HomeNode user"
     : String(input.reviewer || "HomeNode desktop").trim().slice(0, 200) || "HomeNode desktop";
+  let requestSha256 = null;
+  if (clientOperationId) {
+    try {
+      requestSha256 = createHash("sha256").update(canonicalJson({
+        expected_revision: expectedRevision,
+        workfile_data: input.workfile_data,
+      })).digest("hex");
+    } catch {
+      throw new Error("invalid_property_tax_protest_workfile");
+    }
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const row = await selectFile(client, accountId, fileId, { lock: true });
     if (!row) throw new Error("property_tax_protest_file_not_found");
+    if (clientOperationId) {
+      const prior = await client.query(
+        `SELECT request_sha256, base_revision, applied_revision, result, actor_user_id
+           FROM app.tax_protest_save_operations
+          WHERE tax_protest_file_id = $1 AND client_operation_id = $2`,
+        [fileId, clientOperationId],
+      );
+      if (prior.rows.length) {
+        const operation = prior.rows[0];
+        if (
+          operation.request_sha256 !== requestSha256
+          || Number(operation.base_revision) !== expectedRevision
+          || (operation.actor_user_id || null) !== normalizedActorUserId
+        ) {
+          throw new Error("property_tax_protest_save_operation_conflict");
+        }
+        await client.query("COMMIT");
+        // Return the current locked file, which can be newer than the original
+        // result when another reviewed save followed the retried operation.
+        return response(row);
+      }
+    }
     if (Number(row.revision) !== expectedRevision) {
       const error = new Error("property_tax_protest_revision_conflict");
       error.currentRevision = Number(row.revision);
@@ -190,14 +234,32 @@ export async function saveDesktopPropertyTaxFile(
         }),
       ],
     );
-    await client.query("COMMIT");
-    return response({
+    const result = response({
       ...row,
       ...updated.rows[0],
       report_file_id: row.report_file_id,
       tax_protest_file_id: fileId,
       registry_revision: nextRegistryRevision,
     });
+    if (clientOperationId) {
+      await client.query(
+        `INSERT INTO app.tax_protest_save_operations (
+           tax_protest_file_id, client_operation_id, request_sha256,
+           base_revision, applied_revision, result, actor_user_id
+         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`,
+        [
+          fileId,
+          clientOperationId,
+          requestSha256,
+          expectedRevision,
+          nextRevision,
+          JSON.stringify(result),
+          normalizedActorUserId,
+        ],
+      );
+    }
+    await client.query("COMMIT");
+    return result;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

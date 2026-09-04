@@ -193,3 +193,89 @@ test("authenticated desktop saves record the server identity on every audit reco
     authentication_mode: "authenticated",
   });
 });
+
+test("desktop Property Tax save retries do not create a second revision", async () => {
+  const operationId = "00000000-0000-4000-8000-000000000715";
+  const row = {
+    report_file_id: REPORT_ID,
+    registry_revision: 1,
+    is_current: true,
+    organization_id: "00000000-0000-4000-8000-000000000714",
+    tax_protest_file_id: FILE_ID,
+    account_id: "ACCOUNT-1",
+    file_number: "PT-2026-1",
+    previous_file_id: null,
+    workfile_data: { subject: { condition_rating: "C4" } },
+    assigned_appraiser_user_id: ACTOR_ID,
+    status: "draft",
+    revision: 1,
+    completed_at: null,
+    created_at: new Date("2026-01-01T00:00:00Z"),
+    updated_at: new Date("2026-01-01T00:00:00Z"),
+  };
+  let current = { ...row };
+  let operation = null;
+  const calls = [];
+  const client = {
+    async query(sql, values = []) {
+      calls.push({ sql, values });
+      if (sql.includes("SELECT report_file.id")) return { rows: [current] };
+      if (sql.includes("FROM app.tax_protest_save_operations")) {
+        return { rows: operation ? [operation] : [] };
+      }
+      if (sql.includes("UPDATE app.tax_protest_files")) {
+        current = {
+          ...current,
+          revision: 2,
+          status: "in_progress",
+          workfile_data: JSON.parse(values[1]),
+        };
+        return { rows: [current] };
+      }
+      if (sql.includes("UPDATE app.report_files")) {
+        current = { ...current, registry_revision: 2 };
+        return { rows: [{ registry_revision: 2 }] };
+      }
+      if (sql.includes("INSERT INTO app.tax_protest_save_operations")) {
+        operation = {
+          request_sha256: values[2],
+          base_revision: values[3],
+          applied_revision: values[4],
+          result: JSON.parse(values[5]),
+          actor_user_id: values[6],
+        };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = { connect: async () => client };
+  const input = {
+    client_operation_id: operationId,
+    expected_revision: 1,
+    workfile_data: { subject: { condition_rating: "C3" } },
+  };
+
+  const first = await saveDesktopPropertyTaxFile(
+    pool, "ACCOUNT-1", FILE_ID, input, { actorUserId: ACTOR_ID },
+  );
+  const replay = await saveDesktopPropertyTaxFile(
+    pool, "ACCOUNT-1", FILE_ID, input, { actorUserId: ACTOR_ID },
+  );
+
+  assert.equal(first.revision, 2);
+  assert.equal(replay.revision, 2);
+  assert.equal(calls.filter(({ sql }) => sql.includes("UPDATE app.tax_protest_files")).length, 1);
+  assert.equal(calls.filter(({ sql }) => sql.includes("INSERT INTO app.tax_protest_file_history")).length, 1);
+  assert.equal(calls.filter(({ sql }) => sql.includes("INSERT INTO app.tax_protest_save_operations")).length, 1);
+  await assert.rejects(
+    saveDesktopPropertyTaxFile(
+      pool,
+      "ACCOUNT-1",
+      FILE_ID,
+      { ...input, workfile_data: { subject: { condition_rating: "C2" } } },
+      { actorUserId: ACTOR_ID },
+    ),
+    /property_tax_protest_save_operation_conflict/,
+  );
+});

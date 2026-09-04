@@ -6,6 +6,10 @@ import {
   type EvidenceVersion,
   type PropertyTaxProtestFile,
 } from '@/lib/api';
+import {
+  clearPropertyTaxSaveOperationId,
+  getOrCreatePropertyTaxSaveOperationId,
+} from '@/lib/propertyTaxSaveOperation';
 
 function propertyTaxPath(accountId: string, fileId?: string): string {
   const accountPath = `/api/accounts/${encodeURIComponent(accountId)}/property-tax-protest`;
@@ -40,18 +44,36 @@ export async function updatePropertyTaxProtestFile(
   input: { expected_revision: number; workfile_data: Record<string, unknown>; reviewer?: string },
   editorKey: string,
 ): Promise<PropertyTaxProtestFile> {
-  const response = await fetchJSON<{ ok: true; file: PropertyTaxProtestFile }>(
-    makeUrl(propertyTaxPath(accountId, fileId)),
-    {
-      method: 'PATCH',
-      headers: {
-        'content-type': 'application/json',
-        'x-homenode-editor-key': editorKey,
-      },
-      body: JSON.stringify(input),
-    },
+  const operationId = getOrCreatePropertyTaxSaveOperationId(
+    accountId,
+    fileId,
+    input.expected_revision,
   );
-  return response.file;
+  try {
+    const response = await fetchJSON<{ ok: true; file: PropertyTaxProtestFile }>(
+      makeUrl(propertyTaxPath(accountId, fileId)),
+      {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json',
+          'x-homenode-editor-key': editorKey,
+        },
+        body: JSON.stringify({ ...input, client_operation_id: operationId }),
+        retryTransient: true,
+      },
+    );
+    clearPropertyTaxSaveOperationId(accountId, fileId, input.expected_revision, operationId);
+    return response.file;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (
+      message === 'property_tax_protest_revision_conflict'
+      || message === 'property_tax_protest_save_operation_conflict'
+    ) {
+      clearPropertyTaxSaveOperationId(accountId, fileId, input.expected_revision, operationId);
+    }
+    throw error;
+  }
 }
 
 export async function getPropertyTaxDocuments(

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import express from "express";
+import helmet from "helmet";
 
 import {
   authenticatedApiRateLimitKey,
   createCorsMiddleware,
+  createHelmetConfiguration,
   createHttpSecurityConfiguration,
   jsonErrorHandler,
   securityHeaders,
@@ -185,17 +187,33 @@ test("CORS policy permits same-origin and allowlisted origins while rejecting ot
   }
 });
 
-test("security headers remove browser interpretation and embedding ambiguity", () => {
-  const headers = new Map();
-  let continued = false;
-  securityHeaders({}, { setHeader: (name, value) => headers.set(name, value) }, () => {
-    continued = true;
+test("security headers remove browser interpretation and embedding ambiguity", async () => {
+  const app = express();
+  app.use(helmet(createHelmetConfiguration()));
+  app.use(securityHeaders);
+  app.get("/probe", (_req, res) => res.json({ ok: true }));
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
   });
-  assert.equal(continued, true);
-  assert.equal(headers.get("x-content-type-options"), "nosniff");
-  assert.equal(headers.get("x-frame-options"), "DENY");
-  assert.match(headers.get("content-security-policy"), /frame-ancestors 'none'/);
-  assert.match(headers.get("strict-transport-security"), /max-age=31536000/);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/probe`);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(response.headers.get("x-frame-options"), "DENY");
+    assert.equal(response.headers.get("x-powered-by"), null);
+    assert.equal(response.headers.get("referrer-policy"), "no-referrer");
+    assert.equal(response.headers.get("cross-origin-resource-policy"), "same-site");
+    assert.equal(
+      response.headers.get("permissions-policy"),
+      "camera=(), geolocation=(), microphone=(), payment=(), usb=()",
+    );
+    assert.match(response.headers.get("content-security-policy"), /default-src 'none'/);
+    assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+    assert.match(response.headers.get("strict-transport-security"), /max-age=31536000/);
+    assert.equal(response.headers.get("cross-origin-opener-policy"), null);
+    assert.equal(response.headers.get("cross-origin-embedder-policy"), null);
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("global JSON errors remain bounded and do not reach route handlers", async () => {

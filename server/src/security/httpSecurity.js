@@ -200,14 +200,39 @@ export function createCorsMiddleware(configuration) {
   };
 }
 
+export function createHelmetConfiguration() {
+  return {
+    // Preserve the API's intentionally restrictive policy instead of adopting
+    // Helmet's document-oriented defaults. The frontend is served separately.
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'none'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+    crossOriginOpenerPolicy: false,
+    crossOriginResourcePolicy: { policy: "same-site" },
+    // Changing browsing-context isolation can disrupt OIDC popup/callback
+    // flows. Keep the deployed behavior while Helmet owns the applicable
+    // response-header protections.
+    originAgentCluster: false,
+    referrerPolicy: { policy: "no-referrer" },
+    strictTransportSecurity: {
+      maxAge: 31_536_000,
+      includeSubDomains: true,
+      preload: false,
+    },
+    frameguard: { action: "deny" },
+  };
+}
+
 export function securityHeaders(_req, res, next) {
-  res.setHeader("content-security-policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
-  res.setHeader("cross-origin-resource-policy", "same-site");
+  // Helmet intentionally does not set Permissions-Policy. Keep this explicit
+  // deny-by-default policy alongside the Helmet middleware.
   res.setHeader("permissions-policy", "camera=(), geolocation=(), microphone=(), payment=(), usb=()");
-  res.setHeader("referrer-policy", "no-referrer");
-  res.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
-  res.setHeader("x-content-type-options", "nosniff");
-  res.setHeader("x-frame-options", "DENY");
   next();
 }
 

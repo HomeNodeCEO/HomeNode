@@ -43,6 +43,7 @@ import {
 } from "../src/modules/mobile/sync.js";
 import { listPreviousAppraisalFiles } from "../src/services/appraisalHistory.js";
 import { replicateAppraisalFile } from "../src/services/appraisalReplication.js";
+import { importUadMobilePhoto } from "../src/modules/uad/mobileEvidence.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -559,6 +560,102 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     assert.equal(verifiedPhoto.required_retention_years, 5);
     assert.ok(verifiedPhoto.retention_until);
     assert.ok(verifiedPhoto.objects.every((object) => object.status === "verified"));
+
+    const uadPhotoRequest = {
+      photos: [{
+        ...photoRequest.photos[0],
+        client_photo_id: randomUUID(),
+        category_source: "manual",
+        room_ref: null,
+        room_label: null,
+        objects: photoRequest.photos[0].objects.map((object) => ({
+          ...object,
+          client_object_id: randomUUID(),
+        })),
+      }],
+    };
+    const uadPhotoBatch = await createPhotoUploadBatch(
+      pool,
+      photoStorage,
+      auth,
+      uadSession.session.id,
+      uadPhotoRequest,
+    );
+    const uadVerifiedPhoto = await verifyInspectionPhoto(
+      pool,
+      photoStorage,
+      auth,
+      uadSession.session.id,
+      uadPhotoBatch.photos[0].photo.id,
+    );
+    const importedAssetId = randomUUID();
+    await pool.query(
+      `INSERT INTO appraisal.uad_assets (
+         id, workfile_id, asset_kind, section_number, caption_type, caption,
+         storage_provider, storage_bucket, object_key, original_file_name,
+         content_type, byte_size, status, capture_metadata, uploaded_at, verified_at
+       ) VALUES (
+         $1, $2, 'photo', 10, 'Kitchen', 'Kitchen',
+         'r2', 'mobile-photo-test', $3, 'kitchen-display.jpg',
+         'image/jpeg', 1200, 'verified', $4::jsonb, now(), now()
+       )`,
+      [
+        importedAssetId,
+        uad.reportFile.target_id,
+        `organizations/${organizationId}/uad/${importedAssetId}/kitchen-display.jpg`,
+        JSON.stringify({
+          mobile_photo_id: uadVerifiedPhoto.id,
+          mobile_photo_revision: uadVerifiedPhoto.revision,
+        }),
+      ],
+    );
+    let importedSourceReads = 0;
+    const importStorage = {
+      async getObject() {
+        importedSourceReads += 1;
+        throw new Error("unexpected_mobile_source_read");
+      },
+    };
+    const importInput = {
+      section_number: 10,
+      caption_type: "Kitchen",
+      caption: "Kitchen",
+    };
+    const importedRetry = await importUadMobilePhoto(
+      pool,
+      importStorage,
+      uad.reportFile.target_id,
+      uadVerifiedPhoto.id,
+      importInput,
+      userId,
+    );
+    assert.equal(importedRetry.idempotent, true);
+    assert.equal(importedRetry.asset.id, importedAssetId);
+    assert.equal(importedSourceReads, 0);
+    await importUadMobilePhoto(
+      pool,
+      importStorage,
+      uad.reportFile.target_id,
+      uadVerifiedPhoto.id,
+      importInput,
+      userId,
+    );
+    const importAudit = await pool.query(
+      `SELECT asset.created_by_user_id,
+              count(audit.id)::integer AS audit_count
+         FROM appraisal.uad_assets asset
+         LEFT JOIN appraisal.uad_audit_events audit
+           ON audit.workfile_id = asset.workfile_id
+          AND audit.event_type = 'uad_asset.mobile_photo_imported'
+          AND audit.entity_id = asset.id::text
+          AND audit.metadata ->> 'provenance_key' = 'mobile_photo_id'
+          AND audit.metadata ->> 'provenance_value' = $2
+        WHERE asset.id = $1
+        GROUP BY asset.created_by_user_id`,
+      [importedAssetId, uadVerifiedPhoto.id],
+    );
+    assert.equal(importAudit.rows[0].created_by_user_id, userId);
+    assert.equal(importAudit.rows[0].audit_count, 1);
 
     const captionOperationId = randomUUID();
     const updatedPhoto = await updateInspectionPhoto(

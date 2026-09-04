@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import PDFDocument from "pdfkit";
 
+import { loadRemoteImage } from "../security/remoteImageLoader.js";
 import { getAccountPropertyActivityHistory } from "./accountSalesHistory.js";
 import { finalReconciliationReadinessErrors } from "./finalReconciliation.js";
 
@@ -498,40 +499,6 @@ export async function loadCustomAppraisalPropertySnapshot(client, { accountId, a
   };
 }
 
-function safeMediaUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    if (url.protocol !== "https:") return null;
-    const hostname = url.hostname.toLowerCase();
-    if (hostname === "localhost" || hostname === "::1" || hostname.endsWith(".local")) return null;
-    if (/^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(hostname)) return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-async function loadReportImage(urlValue) {
-  const url = safeMediaUrl(urlValue);
-  if (!url) return null;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5_000);
-  try {
-    const response = await fetch(url, { signal: controller.signal, redirect: "follow" });
-    if (!response.ok) return null;
-    const contentType = String(response.headers.get("content-type") || "").split(";", 1)[0].toLowerCase();
-    if (!["image/jpeg", "image/png"].includes(contentType)) return null;
-    const declared = Number(response.headers.get("content-length") || 0);
-    if (declared > MAX_MEDIA_BYTES) return null;
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return buffer.length > 0 && buffer.length <= MAX_MEDIA_BYTES ? buffer : null;
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 async function reportImages(client, snapshot, property) {
   const sales = sectionValue(snapshot, "sales_comparison");
   const comparableIds = (sales.comparables || [])
@@ -553,7 +520,7 @@ async function reportImages(client, snapshot, property) {
                media.order_number NULLS LAST, media.id`,
     [accountIds],
   );
-  const buffers = await Promise.all(mediaRows.map((row) => loadReportImage(row.media_url)));
+  const buffers = await Promise.all(mediaRows.map((row) => loadRemoteImage(row.media_url, { maxBytes: MAX_MEDIA_BYTES })));
   return Object.fromEntries(mediaRows.map((row, index) => [row.account_id, buffers[index]]).filter(([, buffer]) => buffer));
 }
 

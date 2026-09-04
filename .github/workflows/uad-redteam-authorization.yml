@@ -46,7 +46,7 @@ jobs:
           npm run --silent verify:redteam:authorization | tee uad-redteam-authorization.json
       - name: Preserve sanitized evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: uad-redteam-authorization-${{ github.run_id }}
           path: server/uad-redteam-authorization.json

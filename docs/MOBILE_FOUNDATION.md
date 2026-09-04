@@ -71,14 +71,14 @@ Required environment settings after provider approval:
 MOBILE_INSPECTION_ENABLED=true
 OIDC_ISSUER=https://provider-issuer.example
 OIDC_AUDIENCE=<expected access-token audience>
-OIDC_CLIENT_ID=<expected access-token client_id> # optional provider-specific binding
+OIDC_CLIENT_ID=<expected access-token client_id> # required when unified application authentication is enforced
 OIDC_JWKS_URI=                     # optional when discovery publishes jwks_uri
 OIDC_CLOCK_TOLERANCE_SECONDS=60
 ```
 
 For the selected WorkOS public OAuth application, the issuer is its AuthKit
-domain, the audience comes from a real access token's `aud` claim, the optional
-client binding is the public Connect application's `client_id`, and the JWKS is
+domain, the audience comes from a real access token's `aud` claim, the client
+binding is the public Connect application's `client_id`, and the JWKS is
 `https://<authkit-domain>/oauth2/jwks`. Do not use the ID token audience as the
 access-token audience. Render staging runs an OIDC discovery
 and supported-key preflight whenever mobile inspection is enabled; an invalid or

@@ -114,6 +114,7 @@ export function assertApplicationAuthenticationStartup({
   if (redTeamBearerOnlyConfigured(environment)) return authenticationPolicy;
   if (
     !webOidcConfigured
+    || !String(environment.OIDC_CLIENT_ID || "").trim()
     || !String(environment.OIDC_WEB_CLIENT_ID || "").trim()
     || !String(environment.OIDC_WEB_CLIENT_SECRET || "").trim()
     || !String(environment.OIDC_WEB_REDIRECT_URI || "").trim()

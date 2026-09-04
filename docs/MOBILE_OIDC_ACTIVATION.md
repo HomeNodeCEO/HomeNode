@@ -33,7 +33,7 @@ Official references:
 - Require TOTP MFA for non-SSO users.
 - Store access and rotating refresh tokens only through `expo-secure-store`.
 - The API accepts only RS256 tokens with the exact configured issuer and access-token audience.
-- When configured, `OIDC_CLIENT_ID` must also match the access token's `client_id` claim. This binds the shared WorkOS API audience to the specific public Connect application.
+- `OIDC_CLIENT_ID` must match the access token's `client_id` claim when unified application authentication is enforced. This binds the shared WorkOS API audience to the specific public Connect application, and enforced production startup fails closed when the setting is absent.
 - For WorkOS Connect, read `OIDC_AUDIENCE` from a real access token's `aud` claim and set `OIDC_CLIENT_ID` to the public Connect application's `client_id`. Do not copy the ID token's `aud` claim into `OIDC_AUDIENCE`.
 - A verified token still grants no HomeNode access until `(issuer, sub)` is explicitly mapped to an active internal user with active organization membership.
 - WorkOS roles do not replace HomeNode authorization. `app_auth.membership_roles` remains authoritative.

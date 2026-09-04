@@ -9,6 +9,7 @@ import {
 
 const NOW = () => new Date("2026-09-01T12:00:00.000Z");
 const COMPLETE_WORKOS = Object.freeze({
+  OIDC_CLIENT_ID: "mobile-client-id",
   OIDC_WEB_CLIENT_ID: "client-id",
   OIDC_WEB_CLIENT_SECRET: "client-secret",
   OIDC_WEB_REDIRECT_URI: "https://api.example.test/api/auth/callback",
@@ -129,6 +130,7 @@ test("production true fails startup for incomplete WorkOS configuration", () => 
     APPLICATION_AUTHENTICATION_REQUIRED: "true",
   }), { now: NOW });
   const requiredValues = [
+    "OIDC_CLIENT_ID",
     "OIDC_WEB_CLIENT_ID",
     "OIDC_WEB_CLIENT_SECRET",
     "OIDC_WEB_REDIRECT_URI",

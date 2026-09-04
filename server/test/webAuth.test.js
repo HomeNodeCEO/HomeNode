@@ -22,6 +22,7 @@ async function withAuthServer(environment, callback, {
   fetchImpl = async () => { throw new Error("unexpected_discovery_request"); },
   logger = { warn() {} },
   pool = { query: async () => ({ rows: [] }) },
+  rateLimiterOptions,
   verifier = { configured: true, issuer: "https://identity.example.test" },
 } = {}) {
   const app = express();
@@ -31,6 +32,7 @@ async function withAuthServer(environment, callback, {
     environment,
     fetchImpl,
     logger,
+    rateLimiterOptions,
   }));
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
@@ -43,6 +45,40 @@ async function withAuthServer(environment, callback, {
     )));
   }
 }
+
+function strictTestRateLimiter() {
+  return {
+    windowMs: 60_000,
+    limit: 1,
+    standardHeaders: false,
+    legacyHeaders: false,
+    keyGenerator: () => "web-auth-test-client",
+    skip: (req) => req.path === "/status",
+    handler: (_req, res) => res.status(429).json({ error: "api_rate_limit_exceeded" }),
+  };
+}
+
+test("web auth callback and logout handlers enforce their router-owned limiter", async () => {
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const statusOne = await fetch(`${baseUrl}/api/auth/status`);
+    const statusTwo = await fetch(`${baseUrl}/api/auth/status`);
+    assert.equal(statusOne.status, 200);
+    assert.equal(statusTwo.status, 200, "the read-only bootstrap status remains exempt");
+
+    const first = await fetch(`${baseUrl}/api/auth/callback?code=invalid&state=invalid`);
+    const limited = await fetch(`${baseUrl}/api/auth/callback?code=invalid&state=invalid`);
+    assert.equal(first.status, 401);
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: "api_rate_limit_exceeded" });
+  }, { rateLimiterOptions: strictTestRateLimiter() });
+
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const first = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST" });
+    const limited = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST" });
+    assert.equal(first.status, 204);
+    assert.equal(limited.status, 429);
+  }, { rateLimiterOptions: strictTestRateLimiter() });
+});
 
 test("configured WorkOS remains optional until unified authentication is activated", async () => {
   await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {

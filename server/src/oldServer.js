@@ -261,13 +261,13 @@ mountApplicationRouteBoundary(app, {
   optionalApplicationAuthenticator: createOptionalApplicationAuthenticator(
     authenticateApplicationUser,
   ),
-  // Browser report pages load several independent analyses in parallel. The
-  // broad limiter follows authentication so users receive independent counters.
+  // Browser reports load in parallel; limit authenticated users independently.
   globalApiRateLimiterOptions,
   webAuthRouter: createWebAuthRouter({
     pool,
     verifier: webOidcVerifier,
     authenticationPolicy: applicationAuthenticationPolicy,
+    rateLimiterOptions: globalApiRateLimiterOptions,
   }),
   buildSession: buildApplicationSession,
   loadAuthReadiness: (identity) => getApplicationAuthReadiness(pool, identity),

@@ -94,7 +94,9 @@ export function mountApplicationRouteBoundary(app, {
   // Browser bootstrap routes and the remaining legacy API surface are each
   // rate-limited exactly once. Keep the protected audit handlers explicit so
   // automated security review can verify their authorization boundary.
-  app.use("/api/auth", rateLimit, routeWebAuth);
+  // The web-auth router owns its limiter so its token-exchange and session
+  // handlers cannot be separated from that control by mount-order changes.
+  app.use("/api/auth", routeWebAuth);
   app.use("/api", rateLimit);
   app.use("/api", createLegacyApplicationAuthenticationGate(authenticationPolicy));
   return app;

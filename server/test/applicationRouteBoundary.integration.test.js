@@ -105,7 +105,6 @@ test("application route boundary preserves UAD, mobile, web auth, and legacy ord
   });
   assert.equal(authenticatedLegacy.status, 200);
   assert.deepEqual(server.rateLimitedRequests, [
-    "/api/auth/status",
     "/api/legacy",
     "/api/legacy",
   ]);

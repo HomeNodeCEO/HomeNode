@@ -41,8 +41,31 @@ jobs:
       - name: Reject moderate, high, or critical known vulnerabilities
         # Audit the immutable dependency graph from source control. This avoids
         # npm's legacy "quick" endpoint rejecting an otherwise valid installed
-        # tree while preserving the same moderate-or-higher release gate.
-        run: npm audit --package-lock-only --audit-level=moderate
+        # tree while preserving the same moderate-or-higher release gate. Retry
+        # only recognized registry/network failures; vulnerability findings stay
+        # fail-closed on the first response that reaches the advisory service.
+        run: |
+          set -o pipefail
+          for attempt in 1 2 3; do
+            audit_log="${RUNNER_TEMP}/npm-audit-${{ matrix.project }}-${attempt}.log"
+            if npm audit --package-lock-only --audit-level=moderate \
+              --fetch-retries=1 \
+              --fetch-retry-mintimeout=1000 \
+              --fetch-retry-maxtimeout=5000 \
+              --fetch-timeout=120000 2>&1 | tee "${audit_log}"; then
+              exit 0
+            fi
+            if ! grep -Eq \
+              'audit endpoint returned an error|Service Unavailable|Bad Gateway|Gateway Timeout|Too Many Requests|ECONN|ETIMEDOUT|EAI_AGAIN' \
+              "${audit_log}"; then
+              exit 1
+            fi
+            if [ "${attempt}" -lt 3 ]; then
+              echo "npm audit registry attempt ${attempt}/3 failed; retrying."
+              sleep "$((attempt * 10))"
+            fi
+          done
+          exit 1
 
   pnpm-audit:
     runs-on: ubuntu-latest

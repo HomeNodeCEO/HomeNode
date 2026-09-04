@@ -131,7 +131,9 @@ export function createHttpSecurityConfiguration(environment = process.env, {
 
 export function shouldSkipGlobalApiRateLimit(req, configuration) {
   if (!configuration.apiRateLimitEnabled) return true;
-  const path = String(req?.path || req?.originalUrl || req?.url || "").split("?", 1)[0];
+  // Express strips a router's mount prefix from req.path/req.url. originalUrl
+  // keeps the application-level route used by these exclusions.
+  const path = String(req?.originalUrl || req?.path || req?.url || "").split("?", 1)[0];
   return path === "/api/uad"
     || path.startsWith("/api/uad/")
     || path === "/api/mobile"

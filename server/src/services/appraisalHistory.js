@@ -47,6 +47,13 @@ function isoDate(value, code) {
   return normalized;
 }
 
+function optionalUuid(value, code) {
+  if (value === undefined || value === null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!UUID_PATTERN.test(normalized)) throw new Error(code);
+  return normalized;
+}
+
 export function normalizeReplicationRequest(input = {}) {
   const mode = normalizeReplicationMode(input.mode);
   const targetWorkflow = normalizeAppraisalWorkflow(input.target_workflow_type);
@@ -58,6 +65,7 @@ export function normalizeReplicationRequest(input = {}) {
   if (fileNumber.length > 100 || /[\u0000-\u001f\u007f]/.test(fileNumber)) {
     throw new Error("invalid_file_number");
   }
+  const clientRequestId = optionalUuid(input.client_request_id, "invalid_client_request_id");
   return Object.freeze({
     mode,
     targetWorkflow,
@@ -65,6 +73,7 @@ export function normalizeReplicationRequest(input = {}) {
     effectiveDate: isoDate(input.effective_date, "invalid_effective_date"),
     inspectionDate: isoDate(input.inspection_date, "invalid_inspection_date"),
     sameAssignmentConfirmed,
+    clientRequestId,
   });
 }
 

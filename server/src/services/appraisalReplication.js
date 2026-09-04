@@ -11,8 +11,42 @@ import {
   normalizeAppraisalReportFileId,
   normalizeReplicationRequest,
   registerOriginalAppraisalReport,
+  summarizeAppraisalHistoryRow,
 } from "./appraisalHistory.js";
 import { normalizeAssignmentFileNumber } from "./assignmentFiles.js";
+
+function replicationRequestMatches(row, {
+  accountId,
+  sourceReportFileId,
+  request,
+  actorUserId,
+  organizationId,
+}) {
+  const attestation = row.attestation && typeof row.attestation === "object"
+    ? row.attestation
+    : {};
+  return row.account_id === accountId
+    && row.source_report_file_id === sourceReportFileId
+    && row.workflow_type === request.targetWorkflow
+    && row.recorded_replication_mode === request.mode
+    && (organizationId == null || row.organization_id === organizationId)
+    && String(row.created_by_user_id || "") === String(actorUserId || "")
+    && (attestation.requested_file_number ?? null) === request.fileNumber
+    && (attestation.effective_date ?? null) === request.effectiveDate
+    && (attestation.inspection_date ?? null) === request.inspectionDate
+    && attestation.same_assignment_confirmed === request.sameAssignmentConfirmed;
+}
+
+function fallbackReplicationTarget(row) {
+  return summarizeAppraisalHistoryRow({
+    ...row,
+    replication_mode: row.recorded_replication_mode || row.replication_mode,
+    effective_date: row.effective_date || row.attestation?.effective_date || null,
+    inspection_date: row.inspection_date || row.attestation?.inspection_date || null,
+    photo_count: row.photo_count || 0,
+    has_confirmed_sketch: row.has_confirmed_sketch || false,
+  });
+}
 
 function baseReplicationFileNumber(sourceFileNumber, targetWorkflow) {
   const suffix = targetWorkflow === "custom_appraisal" ? "CUSTOM" : "UAD";
@@ -126,6 +160,7 @@ export async function replicateAppraisalFile(pool, {
   input = {},
   actorUserId = null,
   organizationId = null,
+  logger = console,
 }) {
   const accountId = String(accountIdValue || "").trim();
   if (!accountId || accountId.length > 100) throw new Error("invalid_account_id");
@@ -133,8 +168,60 @@ export async function replicateAppraisalFile(pool, {
   const request = normalizeReplicationRequest(input);
   const client = await pool.connect();
   let targetReportFileId;
+  let committedTarget;
   try {
     await client.query("BEGIN");
+    let replayed = false;
+    if (request.clientRequestId) {
+      await client.query(
+        "SELECT pg_advisory_xact_lock(hashtext('appraisal_replication'), hashtext($1))",
+        [request.clientRequestId],
+      );
+      const existingResult = await client.query(
+        `SELECT target.*, replication.source_report_file_id,
+                replication.replication_mode AS recorded_replication_mode,
+                replication.change_review_required, replication.attestation,
+                source.file_number AS source_file_number,
+                case_record.effective_date, case_record.inspection_date,
+                custom_workfile.status AS custom_status,
+                custom_assignment.revision AS custom_revision,
+                uad_workfile.status AS uad_status,
+                uad_workfile.current_revision AS uad_revision
+           FROM app.report_files target
+           LEFT JOIN app.appraisal_file_replications replication
+             ON replication.target_report_file_id = target.id
+           LEFT JOIN app.report_files source ON source.id = replication.source_report_file_id
+           LEFT JOIN app.appraisal_cases case_record ON case_record.id = target.appraisal_case_id
+           LEFT JOIN app.custom_appraisal_workfiles custom_workfile
+             ON custom_workfile.assignment_file_id = target.custom_assignment_file_id
+           LEFT JOIN app.assignment_files custom_assignment
+             ON custom_assignment.id = target.custom_assignment_file_id
+           LEFT JOIN appraisal.uad_workfiles uad_workfile
+             ON uad_workfile.id = target.uad_workfile_id
+          WHERE target.creation_request_id = $1
+          FOR UPDATE OF target`,
+        [request.clientRequestId],
+      );
+      if (existingResult.rows.length) {
+        if (
+          existingResult.rows.length !== 1
+          || !replicationRequestMatches(existingResult.rows[0], {
+            accountId,
+            sourceReportFileId,
+            request,
+            actorUserId,
+            organizationId,
+          })
+        ) {
+          throw new Error("replication_request_conflict");
+        }
+        targetReportFileId = existingResult.rows[0].id;
+        committedTarget = fallbackReplicationTarget(existingResult.rows[0]);
+        replayed = true;
+      }
+    }
+
+    if (!replayed) {
     const sourceResult = await client.query(
       `SELECT report_file.*, uad_workfile.assignment_purpose,
               COALESCE(assignment.assigned_appraiser_user_id, uad_workfile.assigned_appraiser_user_id) AS assigned_appraiser_user_id,
@@ -230,12 +317,13 @@ export async function replicateAppraisalFile(pool, {
       [accountId, request.targetWorkflow, source.organization_id || null],
     );
     targetReportFileId = randomUUID();
-    await client.query(
+    const insertedReportFile = await client.query(
       `INSERT INTO app.report_files (
          id, organization_id, account_id, workflow_type, file_number, sequence_number,
          previous_report_file_id, custom_assignment_file_id, uad_workfile_id,
-         is_current, registry_revision, replication_mode, created_by_user_id
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, 1, $10, $11)`,
+         is_current, registry_revision, replication_mode, created_by_user_id, creation_request_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, 1, $10, $11, $12)
+       RETURNING *`,
       [
         targetReportFileId,
         source.organization_id || null,
@@ -248,6 +336,7 @@ export async function replicateAppraisalFile(pool, {
         target.uadWorkfileId || null,
         request.mode,
         actorUserId,
+        request.clientRequestId,
       ],
     );
 
@@ -288,6 +377,7 @@ export async function replicateAppraisalFile(pool, {
         request.mode === "new_assignment_template",
         JSON.stringify({
           same_assignment_confirmed: request.sameAssignmentConfirmed,
+          requested_file_number: request.fileNumber,
           effective_date: request.effectiveDate,
           inspection_date: request.inspectionDate,
           mutable_subject_data_copied_to_target: false,
@@ -308,6 +398,22 @@ export async function replicateAppraisalFile(pool, {
         subject_snapshot_id: targetSnapshotId,
       })],
     );
+    committedTarget = fallbackReplicationTarget({
+      ...insertedReportFile.rows[0],
+      appraisal_case_id: targetCaseId,
+      subject_snapshot_id: targetSnapshotId,
+      recorded_replication_mode: request.mode,
+      source_report_file_id: source.id,
+      source_file_number: source.file_number,
+      change_review_required: request.mode === "new_assignment_template",
+      attestation: {
+        same_assignment_confirmed: request.sameAssignmentConfirmed,
+        requested_file_number: request.fileNumber,
+        effective_date: request.effectiveDate,
+        inspection_date: request.inspectionDate,
+      },
+    });
+    }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -316,8 +422,20 @@ export async function replicateAppraisalFile(pool, {
     client.release();
   }
 
-  const history = await listPreviousAppraisalFiles(pool, accountId, sourceOrganizationScope(organizationId));
-  const targetFile = history.files.find((file) => file.id === targetReportFileId);
+  let targetFile = null;
+  let enrichmentFailed = false;
+  try {
+    const history = await listPreviousAppraisalFiles(pool, accountId, sourceOrganizationScope(organizationId));
+    targetFile = history.files.find((file) => file.id === targetReportFileId) || null;
+  } catch {
+    enrichmentFailed = true;
+  }
+  if (!targetFile) {
+    logger.error?.(enrichmentFailed
+      ? "[appraisal-replication] response_enrichment_failed"
+      : "[appraisal-replication] response_enrichment_unavailable");
+    targetFile = committedTarget;
+  }
   if (!targetFile) throw new Error("replicated_report_file_not_found");
   return {
     source_report_file_id: sourceReportFileId,

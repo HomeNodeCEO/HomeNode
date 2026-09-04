@@ -24,6 +24,7 @@ test("replication requests require an explicit same-assignment attestation", () 
       same_assignment_confirmed: true,
       effective_date: "2026-08-19",
       inspection_date: "2026-08-18",
+      client_request_id: "b88045af-10b3-4da2-8b23-c20b394e454d",
     }),
     {
       mode: "same_assignment_alternate",
@@ -32,6 +33,7 @@ test("replication requests require an explicit same-assignment attestation", () 
       effectiveDate: "2026-08-19",
       inspectionDate: "2026-08-18",
       sameAssignmentConfirmed: true,
+      clientRequestId: "b88045af-10b3-4da2-8b23-c20b394e454d",
     },
   );
   assert.throws(
@@ -48,6 +50,14 @@ test("replication requests require an explicit same-assignment attestation", () 
       effective_date: "2026-02-30",
     }),
     /invalid_effective_date/,
+  );
+  assert.throws(
+    () => normalizeReplicationRequest({
+      mode: "new_assignment_template",
+      target_workflow_type: "custom_appraisal",
+      client_request_id: "not-a-uuid",
+    }),
+    /invalid_client_request_id/,
   );
 });
 

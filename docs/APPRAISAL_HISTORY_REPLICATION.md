@@ -30,6 +30,15 @@ This mode establishes safe identity and lineage. Full field-by-field transformat
 - `GET /api/accounts/:accountId/appraisal-history` lists Custom and UAD files, snapshot summaries, prior/current differences, and lineage.
 - `POST /api/accounts/:accountId/appraisal-history/:reportFileId/replicate` creates a guarded replication target. It uses the existing editor-key protection.
 
+The desktop client assigns each replication attempt a UUID `client_request_id` and
+reuses it for an uncertain retry. The server serializes that identifier, binds it
+to the source file and normalized replication request, and stores it in the
+canonical report registry. An exact replay returns the original target; using the
+same identifier with different inputs returns `replication_request_conflict`.
+If optional history enrichment is unavailable after commit, the endpoint still
+returns the committed target with a stable server-side diagnostic instead of
+reporting a false failure that could prompt duplicate creation.
+
 New Custom and UAD files created through mobile or desktop entry points are registered automatically. History summaries include condition, quality, GLA, aggregate site size, parcels and legal descriptions, verified photos, and sketch availability when those values exist in the source workflow.
 
 ## Deployment

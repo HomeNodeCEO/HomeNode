@@ -632,7 +632,7 @@ export default function AssignmentDocumentCenter({
           <span className="hn-custom-section-title block text-sm font-semibold uppercase tracking-[0.12em]">
             Document Evidence Center
           </span>
-          <span className="mt-1 block text-xs text-slate-500">
+          <span className="hn-custom-section-subtitle mt-1 block text-xs">
             {isUad
               ? 'Private PDFs with page-cited suggestions that require appraiser confirmation before UAD fields change'
               : 'Zoning records, contracts, engagement letters, MLS sheets, maps, and other assignment PDFs'}

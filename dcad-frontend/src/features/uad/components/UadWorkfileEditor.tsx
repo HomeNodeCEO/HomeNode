@@ -812,7 +812,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
     );
   }
 
-  if (loading && !editor) return <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-600">Loading the UAD workfile editor…</div>;
+  if (loading && !editor) return <div className="hn-subtle-panel mt-6 rounded-xl border p-5 text-sm text-slate-600">Loading the UAD workfile editor…</div>;
   if (!editor || !section) return <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-900">{error || "The UAD editor is unavailable."}</div>;
 
   return (
@@ -839,7 +839,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
       </header>
 
       <div className="lg:grid lg:grid-cols-[20%_78%] lg:items-start lg:justify-between">
-        <nav className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 lg:grid-cols-1 lg:border-b-0 lg:border-r" aria-label="UAD workfile sections">
+        <nav className="hn-subtle-panel grid grid-cols-2 border-b md:grid-cols-3 lg:grid-cols-1 lg:border-b-0 lg:border-r" aria-label="UAD workfile sections">
           {editor.sections.filter((item) => item.applicable !== false).map((item) => {
             const completion = editor.completion[item.key];
             const active = activeSection === item.key;
@@ -867,21 +867,21 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
         </nav>
 
         <div className="min-w-0 p-3 sm:p-4">
-          <details className="group mb-5 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
-            <summary className="cursor-pointer list-none px-4 py-3 transition hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
+          <details className="group mb-5 hn-subtle-panel overflow-hidden rounded-xl border shadow-sm">
+            <summary className="hn-action-secondary cursor-pointer list-none px-4 py-3 transition [&::-webkit-details-marker]:hidden">
               <span className="flex flex-wrap items-center justify-between gap-3">
                 <span>
                   <span className="block text-sm font-semibold text-slate-900">Workfile tools &amp; Section {section.officialSectionNumber} guidance</span>
                   <span className="mt-1 block text-xs text-slate-500">Completion suggestions, validation, PDF, XML, signing, delivery package, and section instructions</span>
                 </span>
-                <span className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                <span className="hn-subtle-panel flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold text-slate-700">
                   <span className="group-open:hidden">Open when needed</span>
                   <span className="hidden group-open:inline">Close tools</span>
                   <span aria-hidden="true" className="transition-transform group-open:rotate-180">⌄</span>
                 </span>
               </span>
             </summary>
-            <div className="border-t border-slate-200 p-4">
+            <div className="hn-subtle-panel border-t p-4">
         <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
           Fields and IDs follow UAD 3.6 Appendix A-1 v1.4 and the Appendix C URAR layout. HomeNode data and automated location evidence remain suggestions until the appraiser saves them.
         </div>
@@ -1335,7 +1335,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
                             ))}
                             {!children.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added for this structure.</div>}
                             {parentGroupEnabled && group.createEnabled !== false && (
-                              <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy || children.length >= Number(group.maxItems || Number.POSITIVE_INFINITY)} onClick={() => void handleEntityAdd(group.entityType!, parent.id, group.createData)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
+                              <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={entityBusy || children.length >= Number(group.maxItems || Number.POSITIVE_INFINITY)} onClick={() => void handleEntityAdd(group.entityType!, parent.id, group.createData)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>
                             )}
                           </div>
                         </div>
@@ -1370,7 +1370,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
                     </div>
                   ))}
                   {!displayedEntities.length && <div className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">No {group.name.toLowerCase()} added.</div>}
-                  {groupEnabled && group.createEnabled !== false && <button className="rounded-lg border border-emerald-700 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50" disabled={entityBusy || displayedEntities.length >= Number(group.maxItems || Number.POSITIVE_INFINITY)} onClick={() => void handleEntityAdd(group.entityType!, undefined, group.createData)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>}
+                  {groupEnabled && group.createEnabled !== false && <button className="hn-action-secondary rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" disabled={entityBusy || displayedEntities.length >= Number(group.maxItems || Number.POSITIVE_INFINITY)} onClick={() => void handleEntityAdd(group.entityType!, undefined, group.createData)} type="button">+ {group.addLabel || `Add ${group.name}`}</button>}
                 </div>
               </fieldset>
             );
@@ -1784,7 +1784,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
           ))}
         </div>
 
-        <div className="sticky bottom-3 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
+        <div className="hn-subtle-panel sticky bottom-3 mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 shadow-lg backdrop-blur">
           <div className="text-xs text-slate-600">
             {autosaveState === "saving"
               ? "Protecting changes in PostgreSQL…"
@@ -1796,7 +1796,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
                     ? `All changes saved · ${new Date(lastAutosavedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                     : "All displayed changes saved"}
           </div>
-          <button className="rounded-lg bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60" disabled={saving || autosaveState === "conflict"} onClick={() => void handleSave()} type="button">
+          <button className="hn-action-primary rounded-lg px-5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60" disabled={saving || autosaveState === "conflict"} onClick={() => void handleSave()} type="button">
             {saving ? "Saving…" : `Review & save ${section.title}`}
           </button>
         </div>

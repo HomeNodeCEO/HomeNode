@@ -11,13 +11,40 @@ test("the shared HomeNode theme uses the approved purple and gold design tokens"
   const css = read("../../dcad-frontend/src/index.css");
 
   assert.match(css, /--hn-midnight: #120d24/);
-  assert.match(css, /--hn-violet: #6d28d9/);
+  assert.match(css, /--hn-violet: #7551a2/);
   assert.match(css, /--hn-gold: #c6a15b/);
-  assert.match(css, /--hn-app-bg: #f7f6fa/);
+  assert.match(css, /--hn-app-bg: #f3eff7/);
+  assert.match(css, /--hn-champagne: #fff8e8/);
   assert.match(css, /\.hn-action-primary/);
   assert.match(css, /\.hn-action-gold/);
   assert.match(css, /\.hn-navigation-button-active/);
   assert.doesNotMatch(css, /#e32ff7|#c71bd9|HomeNode magenta/i);
+});
+
+test("shared theme foregrounds retain readable contrast on their light and dark surfaces", () => {
+  const css = read("../../dcad-frontend/src/index.css");
+  const token = (name) => {
+    const match = css.match(new RegExp(`--hn-${name}:\\s*(#[0-9a-f]{6})`, "i"));
+    assert.ok(match, `Missing color token ${name}`);
+    return match[1];
+  };
+  const luminance = (hex) => {
+    const channels = hex.slice(1).match(/../g).map((value) => {
+      const channel = parseInt(value, 16) / 255;
+      return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  for (const [foreground, background] of [
+    ["champagne", "violet"], ["champagne", "violet-hover"],
+    ["champagne", "lavender-hover"], ["champagne-muted", "deep-purple"],
+    ["midnight", "gold"], ["text", "surface"], ["muted", "surface-muted"],
+  ]) {
+    const light = luminance(token(foreground));
+    const dark = luminance(token(background));
+    const ratio = (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05);
+    assert.ok(ratio >= 4.5, `${foreground} on ${background}: ${ratio.toFixed(2)}:1`);
+  }
 });
 
 test("the application frame and primary workflow entry points share the theme", () => {

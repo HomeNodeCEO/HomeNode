@@ -452,7 +452,7 @@ export default function AssignmentPhotoCenter({
       <button type="button" className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 ${compact ? 'px-4 py-3' : 'px-5 py-4'} text-left`} onClick={() => setOpen((value) => !value)}>
         <span>
           <span className="hn-custom-section-title block text-sm font-semibold uppercase tracking-[0.16em]">{compact ? 'Subject Photos' : 'Appraisal Photo Evidence'}</span>
-          <span className="mt-1 block text-xs text-slate-500">
+          <span className="hn-custom-section-subtitle mt-1 block text-xs">
             {assignmentFileNumber ? `File ${assignmentFileNumber} · ` : ''}{compact ? 'Add, review, or remove photos shown in the carousel' : 'Shared mobile and desktop photos saved to this appraisal file'}
           </span>
         </span>

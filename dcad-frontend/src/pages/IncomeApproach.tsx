@@ -142,17 +142,17 @@ export default function IncomeApproach() {
   return (
     <main className="hn-app-shell px-4 py-6 sm:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
-        <header className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <header className="hn-app-header rounded-xl border p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700">Custom Appraisal</div>
+              <div className="hn-eyebrow text-xs font-bold uppercase tracking-[0.18em]">Custom Appraisal</div>
               <h1 className="mt-1 text-2xl font-bold">Income Approach</h1>
               <p className="mt-1 text-slate-600">{account.address || propertyId} · Parcel {account.account_id}</p>
               <p className="text-sm text-slate-500">{assignmentFile ? `File ${assignmentFile.file_number}` : 'Create an appraisal file before saving.'}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <a className="btn normal-case rounded-md border-slate-900 bg-white text-slate-900" href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
-              <a className="btn normal-case rounded-md border-slate-900 bg-slate-900 text-white" href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${assignmentFile ? `&assignmentFileId=${assignmentFile.id}` : ''}`}>Full Report</a>
+              <a className="hn-action-secondary btn normal-case rounded-md" href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
+              <a className="hn-action-primary btn normal-case rounded-md" href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${assignmentFile ? `&assignmentFileId=${assignmentFile.id}` : ''}`}>Full Report</a>
             </div>
           </div>
         </header>
@@ -161,7 +161,7 @@ export default function IncomeApproach() {
         {signed ? <div className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 text-emerald-950">This appraisal file is signed and immutable. The saved Income Approach is read-only.</div> : null}
 
         <fieldset disabled={signed} className="contents">
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
             <h2 className="text-lg font-bold">Rental Market Support</h2>
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <label className="grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Rental Data Source</span><input className="rounded-md border border-slate-300 px-3 py-2" value={draft.rent_source_name || ''} onChange={(event) => update({ rent_source_name: event.target.value })} /></label>
@@ -170,7 +170,7 @@ export default function IncomeApproach() {
               <label className="grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Analysis Methods</span><select className="rounded-md border border-slate-300 px-3 py-2" value={draft.analysis_method} onChange={(event) => update({ analysis_method: event.target.value as IncomeApproachDraft['analysis_method'] })}><option value="both">GRM + Direct Capitalization</option><option value="grm">Gross Rent Multiplier</option><option value="direct_capitalization">Direct Capitalization</option></select></label>
             </div>
 
-            <div className="mt-6 flex items-center justify-between"><div><h3 className="font-bold">Rental Comparables</h3><p className="text-sm text-slate-500">Select the rentals relied upon for the median and average support.</p></div><button type="button" className="btn btn-sm normal-case rounded-md border-slate-900 bg-slate-900 text-white" onClick={addRental}>Add Rental</button></div>
+            <div className="mt-6 flex items-center justify-between"><div><h3 className="font-bold">Rental Comparables</h3><p className="text-sm text-slate-500">Select the rentals relied upon for the median and average support.</p></div><button type="button" className="hn-action-primary btn btn-sm normal-case rounded-md" onClick={addRental}>Add Rental</button></div>
             <div className="mt-2 overflow-x-auto">
               <table className="w-full min-w-[1100px] border-collapse text-sm">
                 <thead><tr className="bg-slate-100 text-left text-xs uppercase text-slate-600"><th className="p-2">Use</th><th className="p-2">Address</th><th className="p-2">MLS #</th><th className="p-2">Lease Date</th><th className="p-2">Monthly Rent</th><th className="p-2">GLA</th><th className="p-2">Rent / SF</th><th className="p-2">Distance</th><th className="p-2">Source</th><th className="p-2"></th></tr></thead>
@@ -196,7 +196,7 @@ export default function IncomeApproach() {
             </div>
           </section>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
             <h2 className="text-lg font-bold">Income and Operating Expenses</h2>
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <NumericField label="Monthly Market Rent" prefix="$" value={draft.market_rent} onChange={(value) => update({ market_rent: value || 0 })} />
@@ -208,7 +208,7 @@ export default function IncomeApproach() {
               <NumericField label="Operating Expenses" prefix="$" value={draft.operating_expenses} readOnly />
               <NumericField label="Net Operating Income" prefix="$" value={draft.net_operating_income} readOnly />
             </div>
-            <div className="mt-6 flex items-center justify-between"><h3 className="font-bold">Annual Operating Expenses</h3><button type="button" className="btn btn-sm normal-case rounded-md border-slate-900 bg-slate-900 text-white" onClick={addExpense}>Add Expense</button></div>
+            <div className="mt-6 flex items-center justify-between"><h3 className="font-bold">Annual Operating Expenses</h3><button type="button" className="hn-action-primary btn btn-sm normal-case rounded-md" onClick={addExpense}>Add Expense</button></div>
             <div className="mt-2 overflow-hidden rounded-lg border border-slate-200">
               {draft.expense_lines.map((row, index) => <div key={row.id} className="grid grid-cols-[1fr_180px_80px] items-center gap-3 border-b border-slate-200 p-2 last:border-b-0">
                 <input className="rounded border border-slate-300 px-2 py-1" value={row.description} onChange={(event) => setExpense(index, { description: event.target.value })} />
@@ -218,7 +218,7 @@ export default function IncomeApproach() {
             </div>
           </section>
 
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="hn-workspace-surface rounded-xl border p-5 shadow-sm">
             <h2 className="text-lg font-bold">Valuation and Reconciliation</h2>
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
               <NumericField label="Gross Rent Multiplier" step="0.1" value={draft.grm} onChange={(value) => update({ grm: value })} />
@@ -230,7 +230,7 @@ export default function IncomeApproach() {
               <NumericField label="Rounding Increment" prefix="$" value={draft.rounding_increment} onChange={(value) => update({ rounding_increment: value || 1_000 })} />
               <NumericField label="Reconciliation Weight" suffix="%" value={draft.weight} onChange={(value) => update({ weight: value || 0 })} />
             </div>
-            <div className="mt-5 grid gap-3 md:grid-cols-2"><div className="rounded-lg border border-blue-200 bg-blue-50 p-5"><div className="text-xs font-bold uppercase text-blue-700">Calculated Indication</div><div className="text-3xl font-bold">{money(draft.indicated_value)}</div></div><div className="rounded-lg border border-slate-300 bg-slate-900 p-5 text-white"><div className="text-xs font-bold uppercase text-slate-300">Rounded Income Approach</div><div className="text-3xl font-bold">{money(draft.rounded_indicated_value)}</div></div></div>
+            <div className="mt-5 grid gap-3 md:grid-cols-2"><div className="rounded-lg border border-blue-200 bg-blue-50 p-5"><div className="text-xs font-bold uppercase text-blue-700">Calculated Indication</div><div className="text-3xl font-bold">{money(draft.indicated_value)}</div></div><div className="hn-app-header rounded-lg border p-5"><div className="hn-eyebrow text-xs font-bold uppercase">Rounded Income Approach</div><div className="text-3xl font-bold">{money(draft.rounded_indicated_value)}</div></div></div>
             <label className="mt-5 grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Methodology and Support</span><textarea rows={5} className="rounded-md border border-slate-300 p-3" value={draft.methodology || ''} onChange={(event) => update({ methodology: event.target.value })} /></label>
             <label className="mt-4 grid gap-1 text-sm"><span className="text-xs font-semibold uppercase text-slate-500">Income Approach Summary</span><textarea rows={3} className="rounded-md border border-slate-300 p-3" value={draft.summary || ''} onChange={(event) => update({ summary: event.target.value })} placeholder="Explain the selected indication and relevance of the approach." /></label>
           </section>
@@ -239,7 +239,7 @@ export default function IncomeApproach() {
         <section className={`rounded-xl border p-5 ${errors.length ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div><h2 className="font-bold">{errors.length ? 'Income Approach Draft — Review Required' : 'Income Approach Ready'}</h2>{errors.length ? <ul className="mt-2 list-disc pl-5 text-sm">{errors.map((error) => <li key={error}>{error}</li>)}</ul> : <p className="text-sm">The developed indication will populate the appraisal report and final reconciliation.</p>}{message ? <p className="mt-2 text-sm font-semibold">{message}</p> : null}</div>
-            <button type="button" className="btn normal-case rounded-md border-slate-900 bg-slate-900 px-6 text-white" disabled={!assignmentFile || signed || saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save Income Approach'}</button>
+            <button type="button" className="hn-action-primary btn normal-case rounded-md px-6" disabled={!assignmentFile || signed || saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save Income Approach'}</button>
           </div>
         </section>
 

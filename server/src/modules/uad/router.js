@@ -50,6 +50,7 @@ import {
 import { listDeliveryPlatforms, resolveDeliveryDestination } from "../delivery/platformCatalog.js";
 import { createMobileAuthenticator } from "../mobile/auth.js";
 import {
+  authorizeUadAppraiserConfirmation,
   authorizeUadCreation,
   buildUadAccessScope,
   createUadWorkfileAuthorizer,
@@ -182,6 +183,7 @@ export function createUadRouter({
   verifier,
   compliance = { enabled: false, providers: {} },
   documentOcrProvider = null,
+  applyCompletionSuggestions = applyUadCompletionSuggestions,
   enabled = false,
   authenticationRequired = false,
   security = {},
@@ -822,10 +824,14 @@ export function createUadRouter({
 
   router.post("/workfiles/:workfileId/completion-suggestions/apply", async (req, res) => {
     try {
-      res.json(await applyUadCompletionSuggestions(
+      if (authenticationRequired) {
+        authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
+      }
+      res.json(await applyCompletionSuggestions(
         pool,
         req.params.workfileId,
         req.body || {},
+        req.mobileAuth?.userId || null,
       ));
     } catch (error) {
       sendError(res, error);

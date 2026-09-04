@@ -440,6 +440,39 @@ test("Property Tax sketch saves bind the authenticated actor and retain sketch e
   assert.equal(errors.length, 1);
 });
 
+test("appraiser-confirmed Property Tax sketches require sign authority before saving", async (context) => {
+  const permissions = [];
+  let saveCalls = 0;
+  const existingFile = {
+    tax_protest_file_id: "file-1",
+    organization_id: "org-allowed",
+    assigned_appraiser_user_id: "another-user",
+  };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    getFile: async () => existingFile,
+    decideAccess: (_auth, file, permission) => {
+      assert.equal(file, existingFile);
+      permissions.push(permission);
+      return false;
+    },
+    saveSketch: async () => {
+      saveCalls += 1;
+      return { sketch: { id: "unexpected" } };
+    },
+  }), identity);
+  context.after(server.close);
+
+  const response = await patchSketch(server.baseUrl, "123", "file-1", {
+    expected_revision: 1,
+    sketch: { review_status: "appraiser_confirmed" },
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "property_tax_protest_access_denied" });
+  assert.deepEqual(permissions, ["sign"]);
+  assert.equal(saveCalls, 0);
+});
+
 test("Property Tax read failures remain validation-aware and diagnostic-safe", async (context) => {
   const errors = [];
   const server = await startRouter(baseOptions({

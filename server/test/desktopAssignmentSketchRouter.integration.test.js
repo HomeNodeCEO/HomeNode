@@ -277,6 +277,35 @@ test("desktop sketch saves bind canonical assignment, request body, and authenti
   });
 });
 
+test("appraiser-confirmed assignment sketches require sign authority before saving", async (context) => {
+  const permissions = [];
+  let saveCalls = 0;
+  const server = await startRouter(baseOptions({
+    requireAssignmentAccess: async (_req, res, _accountId, _fileId, permission) => {
+      permissions.push(permission);
+      if (permission === "sign") {
+        res.status(403).json({ error: "assignment_file_access_denied" });
+        return false;
+      }
+      return true;
+    },
+    saveSketch: async () => {
+      saveCalls += 1;
+      return { sketch: { id: "unexpected" } };
+    },
+  }), identity);
+  context.after(server.close);
+
+  const response = await patchSketch(server.baseUrl, "123", 1, {
+    expected_revision: 1,
+    sketch: { review_status: "appraiser_confirmed" },
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  assert.deepEqual(permissions, ["sign"]);
+  assert.equal(saveCalls, 0);
+});
+
 test("desktop sketch save errors retain revision, operation, validation, and bounded responses", async (context) => {
   const errors = [];
   const server = await startRouter(baseOptions({

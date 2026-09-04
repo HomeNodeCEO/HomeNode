@@ -142,12 +142,15 @@ export function createDesktopAssignmentSketchRouter({
         ensureAssignmentFilesAvailable(),
       ]);
       const canonicalId = await resolveAccountId(pool, requestedId);
+      const permission = req.body?.sketch?.review_status === "appraiser_confirmed"
+        ? "sign"
+        : "write";
       if (!await requireAssignmentAccess(
         req,
         res,
         canonicalId,
         assignmentFileId,
-        "write",
+        permission,
       )) return undefined;
       const result = await saveSketch(
         pool,

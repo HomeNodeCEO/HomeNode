@@ -2,6 +2,7 @@ import asyncio
 import base64
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -14,7 +15,19 @@ from scraper.api.main import (
     signup_submit,
 )
 from scraper.api.routes.history import _validated_account_id, history
-from scraper.dcad.worker import _identifier
+from scraper.dcad.worker import (
+    _accounts_table,
+    _campaign_table,
+    _events_table,
+    _field_repair_table,
+    _identifier,
+    _owner_recovery_table,
+    _owner_summary_table,
+    _raw_table,
+    _reconciliations_table,
+    _state_table,
+    _targets_table,
+)
 
 
 class ScraperSecurityContractTests(unittest.TestCase):
@@ -95,6 +108,29 @@ class ScraperSecurityContractTests(unittest.TestCase):
             with self.subTest(candidate=candidate):
                 with self.assertRaisesRegex(ValueError, "Invalid test"):
                     _identifier(candidate, "test")
+
+    def test_worker_table_helpers_revalidate_directly_constructed_configs(self):
+        malicious = 'app"; DROP TABLE core.accounts;--'
+        config = SimpleNamespace(data_schema=malicious, state_schema=malicious)
+        for table_helper in (
+            _accounts_table,
+            _campaign_table,
+            _events_table,
+            _field_repair_table,
+            _owner_recovery_table,
+            _owner_summary_table,
+            _raw_table,
+            _reconciliations_table,
+            _state_table,
+            _targets_table,
+        ):
+            with self.subTest(table_helper=table_helper.__name__):
+                with self.assertRaisesRegex(ValueError, "Invalid .* schema"):
+                    table_helper(config)
+
+        safe = SimpleNamespace(data_schema="core", state_schema="app")
+        self.assertEqual(_accounts_table(safe), '"core"."accounts"')
+        self.assertEqual(_state_table(safe), '"app"."dcad_scrape_state"')
 
 
 if __name__ == "__main__":

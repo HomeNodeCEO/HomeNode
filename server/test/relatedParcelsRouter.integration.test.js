@@ -174,13 +174,14 @@ test("Dallas lookup combines GIS and local parcels without merging records", asy
   context.after(server.close);
 
   const response = await fetch(
-    `${server.baseUrl}/api/accounts/SUBJECT/related-parcels?address=%20123%20Main%20St,%20Dallas%20`,
+    `${server.baseUrl}/api/accounts/SUBJECT/related-parcels?address=999%20Target%20St`,
   );
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.deepEqual(lookupCalls, ["123 Main St, Dallas"]);
+  assert.deepEqual(lookupCalls, ["123 Main St, Dallas, TX"]);
   assert.deepEqual(queries[0].params, ["SUBJECT"]);
   assert.deepEqual(queries[1].params, [["SUBJECT", "REMOTE-3"], "123 MAIN ST"]);
+  assert.doesNotMatch(JSON.stringify({ lookupCalls, queries, body }), /999 Target/i);
   assert.equal(body.subject_account_id, "SUBJECT");
   assert.equal(body.query_address, "123 MAIN ST");
   assert.equal(body.live_query_status, "complete");

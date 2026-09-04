@@ -52,7 +52,7 @@ export function createRelatedParcelsRouter({
       );
       const account = accountRows[0];
       if (!account) return res.status(404).json({ error: "account_not_found" });
-      const requestedAddress = String(req.query.address || account.address || "")
+      const requestedAddress = String(account.address || "")
         .trim()
         .slice(0, 200);
       if (!requestedAddress) {

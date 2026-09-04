@@ -50,19 +50,10 @@ test("the real server entrypoint rejects a malformed production setting", () => 
   assert.match(result.stderr, /application_authentication_setting_invalid/);
 });
 
-test("the real server entrypoint rejects indefinite production rollout mode", () => {
+test("the real server entrypoint rejects disabled production authentication", () => {
   const result = startWith({ APPLICATION_AUTHENTICATION_REQUIRED: "false" });
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /legacy_auth_rollout_until_required/);
-});
-
-test("the real server entrypoint rejects expired production rollout mode", () => {
-  const result = startWith({
-    APPLICATION_AUTHENTICATION_REQUIRED: "false",
-    LEGACY_AUTH_ROLLOUT_UNTIL: "2000-01-01",
-  });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /legacy_auth_rollout_expired/);
+  assert.match(result.stderr, /application_authentication_required_in_production/);
 });
 
 test("the real server entrypoint preserves enforced-mode configuration failure", () => {

@@ -53,58 +53,16 @@ test("production rejects a missing, blank, or invalid authentication setting", (
   }
 });
 
-test("production rollout mode requires a strict, valid, future ISO date", () => {
-  for (const value of [undefined, null, "", "   "]) {
+test("production can no longer disable application authentication", () => {
+  for (const rolloutUntil of [undefined, "2099-12-31"]) {
     assert.throws(
       () => createApplicationAuthenticationPolicy(production({
         APPLICATION_AUTHENTICATION_REQUIRED: "false",
-        LEGACY_AUTH_ROLLOUT_UNTIL: value,
+        LEGACY_AUTH_ROLLOUT_UNTIL: rolloutUntil,
       }), { now: NOW }),
-      { message: "legacy_auth_rollout_until_required" },
+      { message: "application_authentication_required_in_production" },
     );
   }
-  for (const value of [
-    "09/30/2026",
-    "2026-9-30",
-    "2026-02-29",
-    "2026-09-31",
-    " 2026-09-30 ",
-    "later",
-  ]) {
-    assert.throws(
-      () => createApplicationAuthenticationPolicy(production({
-        APPLICATION_AUTHENTICATION_REQUIRED: "false",
-        LEGACY_AUTH_ROLLOUT_UNTIL: value,
-      }), { now: NOW }),
-      { message: "legacy_auth_rollout_until_invalid" },
-    );
-  }
-  for (const value of ["2026-08-31", "2026-09-01"]) {
-    assert.throws(
-      () => createApplicationAuthenticationPolicy(production({
-        APPLICATION_AUTHENTICATION_REQUIRED: "false",
-        LEGACY_AUTH_ROLLOUT_UNTIL: value,
-      }), { now: NOW }),
-      { message: "legacy_auth_rollout_expired" },
-    );
-  }
-});
-
-test("production false with a future date enters temporary rollout mode", () => {
-  const authenticationPolicy = createApplicationAuthenticationPolicy(production({
-    APPLICATION_AUTHENTICATION_REQUIRED: "false",
-    LEGACY_AUTH_ROLLOUT_UNTIL: "2026-09-30",
-  }), { now: NOW });
-  assert.deepEqual(authenticationPolicy, {
-    mode: "production_rollout",
-    authenticationRequired: false,
-    legacyRolloutUntil: "2026-09-30",
-  });
-  assert.equal(Object.isFrozen(authenticationPolicy), true);
-  assert.equal(
-    assertApplicationAuthenticationStartup({ authenticationPolicy, environment: {} }),
-    authenticationPolicy,
-  );
 });
 
 test("production true with complete WorkOS configuration enters enforced mode", () => {
@@ -224,32 +182,19 @@ test("development and tests retain the existing missing-value behavior", () => {
   }, { now: NOW }).authenticationRequired, false);
 });
 
-test("operational state exposes stable rollout warnings without configuration values", () => {
-  const authenticationPolicy = createApplicationAuthenticationPolicy(production({
-    APPLICATION_AUTHENTICATION_REQUIRED: "false",
-    LEGACY_AUTH_ROLLOUT_UNTIL: "2026-09-10",
+test("operational state distinguishes enforced production from local development", () => {
+  const developmentPolicy = createApplicationAuthenticationPolicy({}, { now: NOW });
+  assert.deepEqual(applicationAuthenticationOperationalState(developmentPolicy), {
+    status: "development",
+    mode: "development_legacy",
+    warnings: [],
+  });
+  const enforcedPolicy = createApplicationAuthenticationPolicy(production({
+    APPLICATION_AUTHENTICATION_REQUIRED: "true",
   }), { now: NOW });
-  assert.deepEqual(applicationAuthenticationOperationalState(authenticationPolicy, { now: NOW }), {
-    status: "degraded",
-    mode: "production_rollout",
-    warnings: ["legacy_auth_rollout_active"],
+  assert.deepEqual(applicationAuthenticationOperationalState(enforcedPolicy), {
+    status: "ready",
+    mode: "enforced",
+    warnings: [],
   });
-  assert.deepEqual(applicationAuthenticationOperationalState(authenticationPolicy, {
-    now: () => new Date("2026-09-05T00:00:00.000Z"),
-  }), {
-    status: "degraded",
-    mode: "production_rollout",
-    warnings: ["legacy_auth_rollout_active", "legacy_auth_rollout_expiring"],
-  });
-  assert.deepEqual(applicationAuthenticationOperationalState(authenticationPolicy, {
-    now: () => new Date("2026-09-11T00:00:00.000Z"),
-  }), {
-    status: "degraded",
-    mode: "production_rollout",
-    warnings: ["legacy_auth_rollout_active", "legacy_auth_rollout_expired"],
-  });
-  assert.doesNotMatch(
-    JSON.stringify(applicationAuthenticationOperationalState(authenticationPolicy, { now: NOW })),
-    /2026|client|secret/i,
-  );
 });

@@ -89,29 +89,24 @@ test("configured WorkOS remains optional until unified authentication is activat
   });
 });
 
-test("production web auth consumes the strict temporary rollout policy", async () => {
-  await withAuthServer({
-    ...CONFIGURED_ENVIRONMENT,
-    NODE_ENV: "production",
-    APPLICATION_AUTHENTICATION_REQUIRED: "false",
-    LEGACY_AUTH_ROLLOUT_UNTIL: "2099-12-31",
-  }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/api/auth/status`);
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { configured: true, required: false });
-  });
-  assert.throws(
-    () => createWebAuthRouter({
-      pool: { query: async () => ({ rows: [] }) },
-      verifier: { configured: true, issuer: "https://identity.example.test" },
-      environment: {
-        ...CONFIGURED_ENVIRONMENT,
-        NODE_ENV: "production",
-        APPLICATION_AUTHENTICATION_REQUIRED: "flase",
-      },
-    }),
-    { message: "application_authentication_setting_invalid" },
-  );
+test("production web auth rejects disabled or malformed authentication", () => {
+  for (const value of ["false", "flase"]) {
+    const message = value === "false"
+      ? "application_authentication_required_in_production"
+      : "application_authentication_setting_invalid";
+    assert.throws(
+      () => createWebAuthRouter({
+        pool: { query: async () => ({ rows: [] }) },
+        verifier: { configured: true, issuer: "https://identity.example.test" },
+        environment: {
+          ...CONFIGURED_ENVIRONMENT,
+          NODE_ENV: "production",
+          APPLICATION_AUTHENTICATION_REQUIRED: value,
+        },
+      }),
+      { message },
+    );
+  }
 });
 
 test("auth status reports enforcement only after explicit activation", async () => {

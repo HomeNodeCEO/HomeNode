@@ -57,27 +57,20 @@ application has its own confidential-client ID and audience. Merely configuring
 these values does not show the login gate or disable editor-key access; explicit
 activation does both.
 
-Production must always declare its authentication mode explicitly. During the
-temporary preparation stage, set both values below and choose a reviewed future
-UTC date for the rollout deadline:
+Production must always declare and enforce authentication explicitly:
 
 ```text
-APPLICATION_AUTHENTICATION_REQUIRED=false
-LEGACY_AUTH_ROLLOUT_UNTIL=YYYY-MM-DD
+APPLICATION_AUTHENTICATION_REQUIRED=true
 ```
 
 Production startup rejects a missing, blank, or non-literal authentication
-value. Only the exact lowercase strings `true` and `false` are accepted. A
-production `false` value also fails startup when the rollout date is missing,
-malformed, today, or in the past. Development and tests retain the historical
-default when the setting is absent.
-
-Valid rollout mode remains ready so an approved migration window does not take
-desktop or mobile synchronization offline. `/ready` exposes only stable
-`legacy_auth_rollout_*` warning codes and no configured values; monitoring must
-alert on the active, expiring, or expired posture. A process that crosses the
-deadline continues serving until its next restart or deployment, when startup
-fails closed. Extend the deadline only through a reviewed configuration change.
+value. Only the exact lowercase strings `true` and `false` are recognized, and
+production now rejects `false` with
+`application_authentication_required_in_production`. Development and tests
+retain the historical local behavior when the setting is absent. Production
+rollback must use a previously verified authenticated release or maintenance
+mode; it must never reopen private workflows through the legacy anonymous or
+shared editor-key path.
 
 The browser authorization-code flow uses state, PKCE, and a signed,
 short-lived transaction cookie. HomeNode verifies the returned OpenID Connect

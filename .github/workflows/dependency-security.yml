@@ -65,8 +65,9 @@ jobs:
         # exact advisories below have no published fixed version as of
         # 2026-08-24, so pnpm applies the reviewed patch pinned in the lockfile.
         # Keep this list narrow; all other Moderate/High/Critical findings remain
-        # blocking. See docs/UAD_SECURITY_TESTING.md.
-        run: pnpm audit --audit-level=moderate
+        # blocking. The longer request timeout tolerates slow advisory responses
+        # without ignoring registry errors. See docs/UAD_SECURITY_TESTING.md.
+        run: pnpm audit --fetch-timeout=300000 --audit-level=moderate
 
   pip-audit:
     runs-on: ubuntu-latest

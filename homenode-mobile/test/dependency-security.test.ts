@@ -93,7 +93,7 @@ test('dependency security gates reject moderate or higher findings', () => {
     1,
   );
   assert.equal(
-    (workflow.match(/^\s*run:\s+pnpm audit --audit-level=moderate\s*$/gm) ?? []).length,
+    (workflow.match(/^\s*run:\s+pnpm audit --fetch-timeout=300000 --audit-level=moderate\s*$/gm) ?? []).length,
     1,
   );
   assert.doesNotMatch(workflow, /audit-level=high|fail-on-severity:\s*high/);

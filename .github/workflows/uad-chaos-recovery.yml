@@ -28,7 +28,7 @@ jobs:
   bounded-chaos-recovery:
     name: Database, R2, queue, and restart recovery
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: server

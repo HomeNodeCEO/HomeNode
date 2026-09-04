@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { createUadWorkfileWithClient } from "../uad/workfiles.js";
 import { registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
 import { canonicalCustomAppraisalFileName } from "../../services/customAppraisalWorkfiles.js";
-import { allocateReportFileNumber, normalizeWorkflowType } from "./fileNumbers.js";
+import { hasApplicationPermission } from "../../security/applicationAccess.js";
+import {
+  allocateReportFileNumber,
+  MOBILE_WORKFLOW_TYPES,
+  normalizeWorkflowType,
+} from "./fileNumbers.js";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RECENT_FILE_DAYS = 30;
@@ -84,6 +89,36 @@ export function sessionResponse(row) {
   };
 }
 
+export function buildMobileReportFileReadScope(auth, workflowTypeValue = null) {
+  const workflows = workflowTypeValue
+    ? [normalizeWorkflowType(workflowTypeValue)]
+    : MOBILE_WORKFLOW_TYPES;
+  const organizationIds = [];
+  const workflowTypes = [];
+  for (const organization of (Array.isArray(auth?.organizations) ? auth.organizations : [])) {
+    for (const workflow of workflows) {
+      if (!hasApplicationPermission(
+        auth,
+        workflow,
+        "read",
+        organization.organizationId,
+      )) continue;
+      organizationIds.push(organization.organizationId);
+      workflowTypes.push(workflow);
+    }
+  }
+  return Object.freeze({
+    organizationIds: Object.freeze(organizationIds),
+    workflowTypes: Object.freeze(workflowTypes),
+  });
+}
+
+export function mobileReportFileReadAllowed(scope, organizationId, workflowType) {
+  return scope.organizationIds.some((candidate, index) => (
+    candidate === organizationId && scope.workflowTypes[index] === workflowType
+  ));
+}
+
 export async function listReportFiles(pool, auth, {
   accountId: accountIdValue,
   workflowType: workflowTypeValue,
@@ -91,7 +126,7 @@ export async function listReportFiles(pool, auth, {
 }) {
   const accountId = normalizeAccountId(accountIdValue);
   const workflowType = workflowTypeValue ? normalizeWorkflowType(workflowTypeValue) : null;
-  const organizationIds = auth.organizations.map((item) => item.organizationId);
+  const readScope = buildMobileReportFileReadScope(auth, workflowType);
   const boundedRecentDays = Math.max(1, Math.min(365, Number(recentDays) || RECENT_FILE_DAYS));
   const { rows } = await pool.query(
     `SELECT report_file.*, account.address, account.city, account.postal_code,
@@ -102,7 +137,7 @@ export async function listReportFiles(pool, auth, {
               uad_workfile.updated_at,
               tax_protest.updated_at
             ) AS activity_updated_at,
-            report_file.created_at >= now() - ($4::integer * interval '1 day') AS is_recent
+            report_file.created_at >= now() - ($5::integer * interval '1 day') AS is_recent
        FROM app.report_files report_file
        JOIN core.accounts account ON account.account_id = report_file.account_id
        LEFT JOIN app.assignment_files custom_assignment
@@ -115,11 +150,28 @@ export async function listReportFiles(pool, auth, {
          ON tax_protest.id = report_file.tax_protest_file_id
       WHERE report_file.account_id = $1
         AND ($2::text IS NULL OR report_file.workflow_type = $2)
-        AND report_file.organization_id = ANY($3::uuid[])
+        AND EXISTS (
+          SELECT 1
+            FROM unnest($3::uuid[], $4::text[]) AS allowed_scope(organization_id, workflow_type)
+           WHERE allowed_scope.organization_id = report_file.organization_id
+             AND allowed_scope.workflow_type = report_file.workflow_type
+        )
       ORDER BY report_file.is_current DESC, activity_updated_at DESC, report_file.id`,
-    [accountId, workflowType, organizationIds, boundedRecentDays],
+    [
+      accountId,
+      workflowType,
+      readScope.organizationIds,
+      readScope.workflowTypes,
+      boundedRecentDays,
+    ],
   );
-  const files = rows.map((row) => ({ ...reportFileResponse(row), is_recent: Boolean(row.is_recent) }));
+  const files = rows
+    .filter((row) => mobileReportFileReadAllowed(
+      readScope,
+      row.organization_id,
+      row.workflow_type,
+    ))
+    .map((row) => ({ ...reportFileResponse(row), is_recent: Boolean(row.is_recent) }));
   const recommended = files.find((file) => file.is_current && file.is_recent && file.ready_for_inspection)
     || files.find((file) => file.is_current && file.ready_for_inspection)
     || null;

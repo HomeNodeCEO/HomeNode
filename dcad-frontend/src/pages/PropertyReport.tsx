@@ -3094,7 +3094,6 @@ function AddressHero({
                             sketch: draft,
                             expected_revision: expectedRevision,
                             reviewer: "HomeNode appraiser",
-                            client_operation_id: globalThis.crypto.randomUUID(),
                           },
                           editorKey,
                         );

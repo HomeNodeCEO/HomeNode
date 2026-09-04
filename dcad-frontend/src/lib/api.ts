@@ -624,6 +624,7 @@ export async function replicatePreviousAppraisalFile(
   input: {
     mode: AppraisalReplicationMode;
     target_workflow_type: AppraisalHistoryWorkflow;
+    client_request_id?: string;
     file_number?: string;
     effective_date?: string;
     inspection_date?: string;

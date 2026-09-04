@@ -73,6 +73,7 @@ function ReplicationForm({
   onReplicate: (input: {
     mode: AppraisalReplicationMode;
     target_workflow_type: AppraisalHistoryWorkflow;
+    client_request_id?: string;
     file_number?: string;
     effective_date?: string;
     inspection_date?: string;
@@ -87,6 +88,7 @@ function ReplicationForm({
   const [effectiveDate, setEffectiveDate] = useState(file.effective_date || '');
   const [inspectionDate, setInspectionDate] = useState(file.inspection_date || '');
   const [confirmed, setConfirmed] = useState(false);
+  const [clientRequestId] = useState(() => globalThis.crypto.randomUUID());
 
   const setReplicationMode = (next: AppraisalReplicationMode) => {
     setMode(next);
@@ -184,6 +186,7 @@ function ReplicationForm({
           onClick={() => void onReplicate({
             mode,
             target_workflow_type: targetWorkflow,
+            client_request_id: clientRequestId,
             file_number: fileNumber.trim() || undefined,
             effective_date: effectiveDate || undefined,
             inspection_date: inspectionDate || undefined,

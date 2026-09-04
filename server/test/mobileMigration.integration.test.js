@@ -865,15 +865,18 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     assert.ok(appraisalHistory.files.find((file) => file.id === secondCustom.reportFile.id)?.subject_snapshot_id);
     assert.ok(appraisalHistory.files.find((file) => file.id === uad.reportFile.id)?.appraisal_case_id);
 
+    const replicationRequestId = randomUUID();
+    const newAssignmentReplicationInput = {
+      mode: "new_assignment_template",
+      target_workflow_type: "uad_3_6",
+      effective_date: "2026-08-19",
+      inspection_date: "2026-08-18",
+      client_request_id: replicationRequestId,
+    };
     const newAssignmentReplication = await replicateAppraisalFile(pool, {
       accountId,
       sourceReportFileId: secondCustom.reportFile.id,
-      input: {
-        mode: "new_assignment_template",
-        target_workflow_type: "uad_3_6",
-        effective_date: "2026-08-19",
-        inspection_date: "2026-08-18",
-      },
+      input: newAssignmentReplicationInput,
     });
     assert.equal(newAssignmentReplication.change_review_required, true);
     assert.equal(newAssignmentReplication.report_file.workflow_type, "uad_3_6");
@@ -895,6 +898,27 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     assert.equal(newReplicationRecord.rows[0].change_review_required, true);
     assert.equal(newReplicationRecord.rows[0].mutable_copied, "false");
     assert.notEqual(newReplicationRecord.rows[0].source_case_id, newReplicationRecord.rows[0].target_case_id);
+    const replayedReplication = await replicateAppraisalFile(pool, {
+      accountId,
+      sourceReportFileId: secondCustom.reportFile.id,
+      input: newAssignmentReplicationInput,
+    });
+    assert.equal(replayedReplication.report_file.id, newAssignmentReplication.report_file.id);
+    const replicationCount = await pool.query(
+      `SELECT count(*)::integer AS count
+         FROM app.report_files
+        WHERE creation_request_id = $1`,
+      [replicationRequestId],
+    );
+    assert.equal(replicationCount.rows[0].count, 1);
+    await assert.rejects(
+      () => replicateAppraisalFile(pool, {
+        accountId,
+        sourceReportFileId: secondCustom.reportFile.id,
+        input: { ...newAssignmentReplicationInput, inspection_date: "2026-08-17" },
+      }),
+      /replication_request_conflict/,
+    );
 
     const sameAssignmentReplication = await replicateAppraisalFile(pool, {
       accountId,

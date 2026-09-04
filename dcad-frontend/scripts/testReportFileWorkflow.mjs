@@ -5,6 +5,10 @@ import test from "node:test";
 const chooser = fs.readFileSync(new URL("../src/components/ReportTypeChooser.tsx", import.meta.url), "utf8");
 const destinations = fs.readFileSync(new URL("../src/lib/reportDestinations.ts", import.meta.url), "utf8");
 const report = fs.readFileSync(new URL("../src/pages/PropertyReport.tsx", import.meta.url), "utf8");
+const appraisalHistory = fs.readFileSync(
+  new URL("../src/components/PreviousAppraisalFiles.tsx", import.meta.url),
+  "utf8",
+);
 
 test("the home report chooser lists existing assignments before creating a new one", () => {
   assert.match(chooser, /Continue an existing file/);
@@ -31,4 +35,9 @@ test("the Custom Appraisal uses the same protected autosave pattern as UAD", () 
   assert.match(report, /Save Everything/);
   assert.match(report, /Keep My Values/);
   assert.match(report, /Use Newer Saved Values/);
+});
+
+test("appraisal replication reuses one client request id across uncertain retries", () => {
+  assert.match(appraisalHistory, /useState\(\(\) => globalThis\.crypto\.randomUUID\(\)\)/);
+  assert.match(appraisalHistory, /client_request_id: clientRequestId/);
 });

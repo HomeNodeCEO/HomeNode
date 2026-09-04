@@ -119,7 +119,9 @@ has passed this inventory reconciliation.
 
 - whether either inline bulk worker is enabled;
 - a bounded rolling request window with p50, p95, maximum, error count, and
-  normalized slow routes;
+  normalized slow routes, including requests whose connections close before a
+  response completes;
+- event-loop utilization plus bounded mean, p50, p95, p99, and maximum delay;
 - current PostgreSQL pool totals, idle connections, and waiters;
 - recent scheduled-maintenance results.
 
@@ -137,6 +139,12 @@ Production acceptance targets for the stabilization pass:
    Appraisal PDF route continues to render its complete report and E&O checks.
 6. Server tests, frontend checks, and a production frontend build pass before
    deployment.
+
+`PERFORMANCE_EVENT_LOOP_RESOLUTION_MS` controls the delay sampler resolution
+from 10 to 1,000 milliseconds and defaults to 20. The monitor is disabled
+during graceful shutdown. Operational snapshots expose aggregate timing and
+normalized route templates only; they do not include request bodies, query
+parameters, user identifiers, access tokens, or dependency error messages.
 
 Final appraisal E&O preflight is intentionally on-demand. It loads the durable
 workfile and current property evidence only when the appraiser selects Finalize

@@ -18,7 +18,7 @@ from datetime import datetime
 import os, base64, io
 from pathlib import Path
 try:
-    from PyPDF2 import PdfReader, PdfWriter  # type: ignore
+    from pypdf import PdfReader, PdfWriter  # type: ignore
     from reportlab.pdfgen import canvas  # type: ignore
     from reportlab.lib.pagesizes import letter  # type: ignore
     from reportlab.lib.utils import ImageReader  # type: ignore

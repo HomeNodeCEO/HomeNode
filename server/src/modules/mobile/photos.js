@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
+import sharp from "sharp";
 
 import { sanitizeUadFileName } from "../uad/r2Storage.js";
+import {
+  MAX_UAD_IMAGE_DIMENSION,
+  inspectUadAssetPayload,
+} from "../uad/uadFileSecurity.js";
 import { normalizeUuid } from "./reportFiles.js";
 import { validateSketchRoom } from "./sketches.js";
 import { canonicalJson } from "./sync.js";
@@ -50,12 +55,19 @@ const ALLOWED_CONTENT_TYPES = new Set([
   "image/webp",
 ]);
 const DISPLAY_CONTENT_TYPES = new Set(["image/jpeg", "image/webp"]);
-const HEIC_CONTENT_TYPES = new Set(["image/heic", "image/heif"]);
 const CATEGORY_SOURCES = new Set(["custom_catalog", "uad_catalog", "sketch_room", "manual"]);
 const PHOTO_SOURCES = new Set(["camera", "library"]);
 const PHOTO_VARIANTS = new Set(["original", "display"]);
 const MAX_PHOTO_BYTES = 50 * 1024 * 1024;
 const MAX_CAPTURE_METADATA_BYTES = 16 * 1024;
+const MAX_MOBILE_PHOTO_PIXELS = 60_000_000;
+const SHARP_FORMATS_BY_CONTENT_TYPE = new Map([
+  ["image/avif", new Set(["heif"])],
+  ["image/jpeg", new Set(["jpeg"])],
+  ["image/png", new Set(["png"])],
+  ["image/tiff", new Set(["tiff"])],
+  ["image/webp", new Set(["webp"])],
+]);
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -78,6 +90,52 @@ function optionalInteger(value, code) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function buildVerifiedMobilePhotoObjectKey(objectKey, checksumSha256) {
+  return `${objectKey}.verified-${randomUUID()}-${checksumSha256}`;
+}
+
+export async function inspectMobilePhotoPayload(bodyValue, contentType) {
+  try {
+    if (!Buffer.isBuffer(bodyValue)) throw new Error("invalid_mobile_photo_upload");
+    const baseline = inspectUadAssetPayload(bodyValue, contentType);
+    const acceptedFormats = SHARP_FORMATS_BY_CONTENT_TYPE.get(contentType);
+    // The native client always supplies a fully decodable JPEG display object.
+    // Preserve the original HEIC/HEIF/BMP evidence after strict container and
+    // dimension validation because the deployment's libvips build cannot
+    // consistently decode those camera/library formats.
+    if (!acceptedFormats) return baseline;
+    const decoder = sharp(bodyValue, {
+      failOn: "error",
+      limitInputPixels: MAX_MOBILE_PHOTO_PIXELS,
+      sequentialRead: true,
+    });
+    try {
+      const metadata = await decoder.metadata();
+      const width = Number(metadata.width);
+      const height = Number(metadata.height);
+      if (!acceptedFormats.has(String(metadata.format || ""))
+          || !Number.isInteger(width) || !Number.isInteger(height)
+          || width < 1 || height < 1
+          || width > MAX_UAD_IMAGE_DIMENSION || height > MAX_UAD_IMAGE_DIMENSION
+          || width * height > MAX_MOBILE_PHOTO_PIXELS
+          || Number(metadata.pages || 1) !== 1) {
+        throw new Error("invalid_mobile_photo_upload");
+      }
+      // Force libvips to consume the complete pixel stream; metadata alone can
+      // be present on a truncated or otherwise undecodable image.
+      await decoder.stats();
+      return Object.freeze({
+        ...baseline,
+        dimensions: Object.freeze({ width, height, pixels: width * height }),
+      });
+    } finally {
+      decoder.destroy();
+    }
+  } catch {
+    throw new Error("invalid_mobile_photo_upload");
+  }
 }
 
 function normalizedCapturedAt(value) {
@@ -153,7 +211,7 @@ function normalizePhoto(input) {
     throw new Error("invalid_mobile_photo_objects");
   }
   const original = objects.find((object) => object.variant === "original");
-  if (original && HEIC_CONTENT_TYPES.has(original.contentType) && !variants.has("display")) {
+  if (original && !variants.has("display")) {
     throw new Error("mobile_photo_display_derivative_required");
   }
   const normalized = {
@@ -538,28 +596,81 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
     for (const object of objects) {
       const result = await storage.inspectObject({ objectKey: object.object_key });
       const inspectedType = String(result.content_type || "").split(";", 1)[0].trim().toLowerCase();
-      const item = {
-        id: object.id,
-        byteSize: Number(result.byte_size || 0),
-        etag: result.etag || null,
-        contentType: inspectedType,
-      };
-      inspected.push(item);
-      if (item.byteSize !== Number(object.expected_byte_size)
-          || item.byteSize <= 0 || item.byteSize > MAX_PHOTO_BYTES
+      const advertisedByteSize = Number(result.byte_size || 0);
+      if (advertisedByteSize !== Number(object.expected_byte_size)
+          || advertisedByteSize <= 0 || advertisedByteSize > MAX_PHOTO_BYTES
           || (inspectedType && inspectedType !== object.content_type)) {
-        await recordVerificationFailure(pool, auth, photo, "uploaded_object_does_not_match_request", inspected);
         throw new Error("invalid_mobile_photo_upload");
       }
+      const downloaded = await storage.getObject({
+        objectKey: object.object_key,
+        maxBytes: MAX_PHOTO_BYTES,
+      });
+      const downloadedType = String(downloaded.content_type || "").split(";", 1)[0].trim().toLowerCase();
+      if (!Buffer.isBuffer(downloaded.body)
+          || Number(downloaded.byte_size) !== advertisedByteSize
+          || Number(downloaded.byte_size) !== Number(object.expected_byte_size)
+          || (downloadedType && downloadedType !== object.content_type)) {
+        throw new Error("invalid_mobile_photo_upload");
+      }
+      const verified = await inspectMobilePhotoPayload(downloaded.body, object.content_type);
+      if (object.checksum_sha256 && object.checksum_sha256 !== verified.checksum_sha256) {
+        throw new Error("invalid_mobile_photo_upload");
+      }
+      const verifiedObjectKey = buildVerifiedMobilePhotoObjectKey(
+        object.object_key,
+        verified.checksum_sha256,
+      );
+      let copied;
+      try {
+        copied = await storage.putObject({
+          objectKey: verifiedObjectKey,
+          contentType: object.content_type,
+          body: downloaded.body,
+        });
+      } catch (error) {
+        await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
+        throw error;
+      }
+      if (Number(copied?.byte_size) !== verified.byte_size) {
+        await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
+        throw new Error("invalid_mobile_photo_upload");
+      }
+      inspected.push({
+        id: object.id,
+        byteSize: verified.byte_size,
+        etag: copied.etag || result.etag || null,
+        checksumSha256: verified.checksum_sha256,
+        dimensions: verified.dimensions,
+        sourceObjectKey: object.object_key,
+        verifiedObjectKey,
+      });
     }
   } catch (error) {
-    if (String(error?.message || "") === "invalid_mobile_photo_upload") throw error;
-    await recordVerificationFailure(pool, auth, photo, "object_storage_verification_failed", inspected);
+    await Promise.all(inspected.map((item) => storage.deleteObject?.({
+      objectKey: item.verifiedObjectKey,
+    }).catch(() => undefined)));
+    const invalidUpload = String(error?.message || "") === "invalid_mobile_photo_upload";
+    if (invalidUpload) {
+      await Promise.all(objects.map((object) => storage.deleteObject?.({
+        objectKey: object.object_key,
+      }).catch(() => undefined)));
+    }
+    await recordVerificationFailure(
+      pool,
+      auth,
+      photo,
+      invalidUpload ? "uploaded_object_does_not_match_request" : "object_storage_verification_failed",
+      inspected,
+    );
+    if (invalidUpload) throw error;
     if (String(error?.message || "").endsWith(":404")) throw new Error("mobile_photo_upload_not_found");
     throw new Error("mobile_photo_verification_failed");
   }
 
   const client = await pool.connect();
+  let verificationCommitted = false;
+  let verifiedPhoto = null;
   try {
     await client.query("BEGIN");
     await lockSession(client, auth, sessionId);
@@ -577,9 +688,20 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
       await client.query(
         `UPDATE app.inspection_photo_objects
             SET status = 'verified', byte_size = $2, storage_etag = $3,
+                checksum_sha256 = $4, object_key = $5, upload_expires_at = NULL,
+                pixel_width = COALESCE($6, pixel_width),
+                pixel_height = COALESCE($7, pixel_height),
                 uploaded_at = COALESCE(uploaded_at, now()), verified_at = now(), updated_at = now()
           WHERE id = $1`,
-        [object.id, object.byteSize, object.etag],
+        [
+          object.id,
+          object.byteSize,
+          object.etag,
+          object.checksumSha256,
+          object.verifiedObjectKey,
+          object.dimensions?.width || null,
+          object.dimensions?.height || null,
+        ],
       );
     }
     const priorRevision = Number(locked.rows[0].revision);
@@ -599,6 +721,9 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
       [photoId, sessionId, auth.userId, priorRevision, priorRevision + 1, JSON.stringify({
         object_count: inspected.length,
         retention_years: 5,
+        checksum_bound: true,
+        immutable_object_keys: true,
+        display_derivative_required: true,
       })],
     );
     await client.query(
@@ -610,13 +735,23 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
     );
     const currentObjects = await objectRows(client, photoId);
     await client.query("COMMIT");
-    return photoResponse(updated.rows[0], currentObjects);
+    verificationCommitted = true;
+    verifiedPhoto = photoResponse(updated.rows[0], currentObjects);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
     client.release();
+    if (!verificationCommitted) {
+      await Promise.all(inspected.map((item) => storage.deleteObject?.({
+        objectKey: item.verifiedObjectKey,
+      }).catch(() => undefined)));
+    }
   }
+  await Promise.all(inspected.map((item) => storage.deleteObject?.({
+    objectKey: item.sourceObjectKey,
+  }).catch(() => undefined)));
+  return verifiedPhoto;
 }
 
 function normalizeMetadataOperation(input, { removal = false } = {}) {

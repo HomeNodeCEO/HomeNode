@@ -6,6 +6,7 @@ import {
   type PropertyTaxProtestFile,
 } from '@/lib/api';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
+import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import { readPropertyTaxCase } from '@/lib/propertyTaxCase';
 import {
   getPropertyTaxProtestFile,
@@ -99,6 +100,7 @@ export default function PropertyTaxComparableGrid({
   databaseDefaults: PropertyTaxDatabaseDefaults;
   onFileSaved: (file: PropertyTaxProtestFile) => void;
 }) {
+  const { required: authenticationRequired, session } = useApplicationAuth();
   const storedGrid = useMemo(() => readPropertyTaxComparableGrid(file.workfile_data), [file.workfile_data]);
   const [rows, setRows] = useState<PropertyTaxComparableGridRow[]>(storedGrid.rows);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
@@ -112,6 +114,13 @@ export default function PropertyTaxComparableGrid({
     [databaseDefaults, file.workfile_data],
   );
   const subject = useMemo(() => comparableSubject(file, analysisContext), [analysisContext, file]);
+  const canAttestComparables = !authenticationRequired || Boolean(
+    session?.user_id === file.assigned_appraiser_user_id
+      && session.organizations.some((organization) => (
+        organization.organization_id === file.organization_id
+        && organization.permissions.property_tax_protest?.sign
+      )),
+  );
 
   useEffect(() => {
     setRows(readPropertyTaxComparableGrid(file.workfile_data).rows);
@@ -294,6 +303,11 @@ export default function PropertyTaxComparableGrid({
         </div>
       ))}
       {message && <div className="mt-3 rounded-lg border border-emerald-100 bg-white px-3 py-2 text-sm text-slate-700">{message}</div>}
+      {!canAttestComparables && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          You may stage unverified sale facts. Only the assigned appraiser can verify a sale, attest arm&apos;s-length status, approve an adjustment, or alter a previously attested row.
+        </div>
+      )}
 
       <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="min-w-[1500px] w-full border-collapse text-left text-xs">
@@ -307,6 +321,11 @@ export default function PropertyTaxComparableGrid({
           <tbody>
             {rows.map((row) => {
               const decision = decisions.get(row.id);
+              const rowAttestationLocked = !canAttestComparables && (
+                row.reviewStatus === 'verified'
+                || row.armsLength
+                || row.adjustmentAmount !== 0
+              );
               return (
                 <tr key={row.id} className="border-b border-slate-100 align-top last:border-0">
                   <td className="px-2 py-2">
@@ -314,24 +333,24 @@ export default function PropertyTaxComparableGrid({
                     <div className="mt-1 max-w-32 truncate text-[10px] text-slate-500" title={row.sourceReference}>{row.sourceLabel}</div>
                   </td>
                   <td className="px-2 py-2">
-                    <label className="flex items-center gap-1 whitespace-nowrap"><input type="checkbox" checked={row.reviewStatus === 'verified'} onChange={(event) => updateRow(row.id, { reviewStatus: event.target.checked ? 'verified' : 'needs_review' })} /> Verified</label>
-                    <label className="mt-1 flex items-center gap-1 whitespace-nowrap"><input type="checkbox" checked={row.armsLength} onChange={(event) => updateRow(row.id, { armsLength: event.target.checked })} /> Arm&apos;s length</label>
+                    <label className="flex items-center gap-1 whitespace-nowrap"><input type="checkbox" disabled={!canAttestComparables} checked={row.reviewStatus === 'verified'} onChange={(event) => updateRow(row.id, { reviewStatus: event.target.checked ? 'verified' : 'needs_review' })} /> Verified</label>
+                    <label className="mt-1 flex items-center gap-1 whitespace-nowrap"><input type="checkbox" disabled={!canAttestComparables} checked={row.armsLength} onChange={(event) => updateRow(row.id, { armsLength: event.target.checked })} /> Arm&apos;s length</label>
                   </td>
-                  <td className="px-2 py-2"><input aria-label="Comparable address" className="w-44 rounded border border-slate-300 px-2 py-1" value={row.address} onChange={(event) => updateRow(row.id, { address: event.target.value })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable sale date" type="date" className="w-32 rounded border border-slate-300 px-2 py-1" value={row.saleDate} onChange={(event) => updateRow(row.id, { saleDate: event.target.value })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable sale price" type="number" className="w-28 rounded border border-slate-300 px-2 py-1" value={row.salePrice ?? ''} onChange={(event) => updateRow(row.id, { salePrice: finite(event.target.value) })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable address" disabled={rowAttestationLocked} className="w-44 rounded border border-slate-300 px-2 py-1" value={row.address} onChange={(event) => updateRow(row.id, { address: event.target.value })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable sale date" disabled={rowAttestationLocked} type="date" className="w-32 rounded border border-slate-300 px-2 py-1" value={row.saleDate} onChange={(event) => updateRow(row.id, { saleDate: event.target.value })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable sale price" disabled={rowAttestationLocked} type="number" className="w-28 rounded border border-slate-300 px-2 py-1" value={row.salePrice ?? ''} onChange={(event) => updateRow(row.id, { salePrice: finite(event.target.value) })} /></td>
                   <td className="px-2 py-2 font-medium text-violet-800">{currency(row.districtAdjustedValue)}</td>
-                  <td className="px-2 py-2"><input aria-label="Comparable living area" type="number" className="w-20 rounded border border-slate-300 px-2 py-1" value={row.livingAreaSqft ?? ''} onChange={(event) => updateRow(row.id, { livingAreaSqft: finite(event.target.value) })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable year built" type="number" className="w-20 rounded border border-slate-300 px-2 py-1" value={row.yearBuilt ?? ''} onChange={(event) => updateRow(row.id, { yearBuilt: finite(event.target.value) })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable bedrooms" type="number" className="w-16 rounded border border-slate-300 px-2 py-1" value={row.bedroomCount ?? ''} onChange={(event) => updateRow(row.id, { bedroomCount: finite(event.target.value) })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable bathrooms" type="number" step="0.5" className="w-16 rounded border border-slate-300 px-2 py-1" value={row.bathCount ?? ''} onChange={(event) => updateRow(row.id, { bathCount: finite(event.target.value) })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable garage spaces" type="number" className="w-16 rounded border border-slate-300 px-2 py-1" value={row.garageSpaces ?? ''} onChange={(event) => updateRow(row.id, { garageSpaces: finite(event.target.value) })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable neighborhood" className="w-28 rounded border border-slate-300 px-2 py-1" value={row.neighborhoodCode} onChange={(event) => updateRow(row.id, { neighborhoodCode: event.target.value })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable building class" className="w-20 rounded border border-slate-300 px-2 py-1" value={row.buildingClass} onChange={(event) => updateRow(row.id, { buildingClass: event.target.value })} /></td>
-                  <td className="px-2 py-2"><input aria-label="Comparable adjustment" type="number" className="w-28 rounded border border-slate-300 px-2 py-1" value={row.adjustmentAmount || ''} onChange={(event) => updateRow(row.id, { adjustmentAmount: finite(event.target.value) || 0 })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable living area" disabled={rowAttestationLocked} type="number" className="w-20 rounded border border-slate-300 px-2 py-1" value={row.livingAreaSqft ?? ''} onChange={(event) => updateRow(row.id, { livingAreaSqft: finite(event.target.value) })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable year built" disabled={rowAttestationLocked} type="number" className="w-20 rounded border border-slate-300 px-2 py-1" value={row.yearBuilt ?? ''} onChange={(event) => updateRow(row.id, { yearBuilt: finite(event.target.value) })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable bedrooms" disabled={rowAttestationLocked} type="number" className="w-16 rounded border border-slate-300 px-2 py-1" value={row.bedroomCount ?? ''} onChange={(event) => updateRow(row.id, { bedroomCount: finite(event.target.value) })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable bathrooms" disabled={rowAttestationLocked} type="number" step="0.5" className="w-16 rounded border border-slate-300 px-2 py-1" value={row.bathCount ?? ''} onChange={(event) => updateRow(row.id, { bathCount: finite(event.target.value) })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable garage spaces" disabled={rowAttestationLocked} type="number" className="w-16 rounded border border-slate-300 px-2 py-1" value={row.garageSpaces ?? ''} onChange={(event) => updateRow(row.id, { garageSpaces: finite(event.target.value) })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable neighborhood" disabled={rowAttestationLocked} className="w-28 rounded border border-slate-300 px-2 py-1" value={row.neighborhoodCode} onChange={(event) => updateRow(row.id, { neighborhoodCode: event.target.value })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable building class" disabled={rowAttestationLocked} className="w-20 rounded border border-slate-300 px-2 py-1" value={row.buildingClass} onChange={(event) => updateRow(row.id, { buildingClass: event.target.value })} /></td>
+                  <td className="px-2 py-2"><input aria-label="Comparable adjustment" disabled={!canAttestComparables} type="number" className="w-28 rounded border border-slate-300 px-2 py-1" value={row.adjustmentAmount || ''} onChange={(event) => updateRow(row.id, { adjustmentAmount: finite(event.target.value) || 0 })} /></td>
                   <td className="px-2 py-2 font-semibold text-slate-900">{currency(rowAdjustedValue(row))}</td>
                   <td className="max-w-48 px-2 py-2 text-[10px] leading-4 text-slate-600">{decision?.eligible ? `Eligible · similarity ${decision.similarityScore}` : decision?.exclusionCodes.join(', ').replaceAll('_', ' ') || 'Needs complete sale data'}</td>
-                  <td className="px-2 py-2"><button type="button" className="text-rose-700 underline" onClick={() => setRows((current) => current.filter((candidate) => candidate.id !== row.id))}>Remove</button></td>
+                  <td className="px-2 py-2"><button type="button" disabled={rowAttestationLocked} className="text-rose-700 underline disabled:cursor-not-allowed disabled:text-slate-400" onClick={() => setRows((current) => current.filter((candidate) => candidate.id !== row.id))}>Remove</button></td>
                 </tr>
               );
             })}

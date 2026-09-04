@@ -363,6 +363,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
         operation: "property_tax_protest_save_operation_conflict",
         missing: "property_tax_protest_file_not_found",
         denied: "property_tax_protest_access_denied",
+        attestation: "property_tax_comparable_attestation_required",
         invalid: "invalid_property_tax_protest_update",
         failed: "database_password=secret",
       };
@@ -379,6 +380,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
     ["operation", 409, { error: "property_tax_protest_save_operation_conflict" }],
     ["missing", 404, { error: "property_tax_protest_file_not_found" }],
     ["denied", 403, { error: "property_tax_protest_access_denied" }],
+    ["attestation", 403, { error: "property_tax_comparable_attestation_required" }],
     ["invalid", 400, { error: "invalid_property_tax_protest_update" }],
     ["failed", 500, { error: "property_tax_protest_save_failed" }],
   ]) {

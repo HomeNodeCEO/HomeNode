@@ -55,10 +55,13 @@ test("desktop latest-file lookups remain organization scoped after authenticatio
   assert.match(propertyTax, /requireCurrentWriteAccess\(client, row, actorAuth, normalizedActorUserId\)/);
   assert.match(propertyTax, /membership\.status = 'active'/);
   assert.match(propertyTax, /FOR SHARE OF app_user, membership, membership_role/);
+  assert.match(propertyTax, /canAttestComparables: !authorizationRequired/);
+  assert.match(propertyTax, /decideAssignmentAccess\(currentAuth, row, "sign"\)/);
   assert.match(server, /createDesktopPropertyTaxRouter/);
   assert.match(propertyTaxRouter, /organizationIds: exactFileId \? null : organizationIdsForRead\(req\)/);
   assert.match(propertyTaxRouter, /Exact-file routes must distinguish an absent file \(404\)/);
   assert.match(propertyTaxRouter, /authorizationRequired: authenticationRequired/);
+  assert.match(propertyTaxRouter, /property_tax_comparable_attestation_required/);
   assert.match(assignmentList, /const enforcedIdentity = authenticationRequired && req\.mobileAuth/);
   assert.match(assignmentList, /legacy_assignment_details: enforcedIdentity/);
   assert.match(assignmentList, /queriedRows\.filter\(\(row\) => decideAccess\(req\.mobileAuth, row, "read"\)\)/);

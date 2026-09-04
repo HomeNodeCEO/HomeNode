@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 
 import {
@@ -9,6 +10,11 @@ import {
   recommendedSaleGridRow,
   writePropertyTaxComparableGrid,
 } from '../src/lib/propertyTaxComparableGrid.ts';
+
+const componentSource = fs.readFileSync(
+  new URL('../src/components/PropertyTaxComparableGrid.tsx', import.meta.url),
+  'utf8',
+);
 
 test('recommended sales retain source identity and use the protest workflow subject', () => {
   const row = recommendedSaleGridRow({
@@ -133,4 +139,13 @@ test('shared analysis candidates use grid-row identity so district and MLS versi
   const candidate = gridRowComparableCandidate(base, subject);
   assert.equal(candidate.saleId, 'district:44:500');
   assert.equal(candidate.manualAdjustments?.[0].amount, -5000);
+});
+
+test('comparable attestation controls are limited to the assigned signing appraiser', () => {
+  assert.match(componentSource, /!authenticationRequired \|\| Boolean/);
+  assert.match(componentSource, /session\?\.user_id === file\.assigned_appraiser_user_id/);
+  assert.match(componentSource, /organization\.permissions\.property_tax_protest\?\.sign/);
+  assert.match(componentSource, /disabled=\{!canAttestComparables\}/);
+  assert.match(componentSource, /disabled=\{rowAttestationLocked\}/);
+  assert.match(componentSource, /Only the assigned appraiser can verify a sale/);
 });

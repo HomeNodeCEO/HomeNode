@@ -187,6 +187,35 @@ function normalizeComparableGrid(value) {
   };
 }
 
+function comparableRows(workfile) {
+  const analysis = plainObject(workfile?.analysis) ? workfile.analysis : {};
+  const grid = plainObject(analysis.comparable_grid) ? analysis.comparable_grid : {};
+  return Array.isArray(grid.rows) ? grid.rows.filter(plainObject) : [];
+}
+
+function carriesComparableAttestation(row) {
+  return row.reviewStatus === "verified"
+    || row.armsLength === true
+    || Number(row.adjustmentAmount) !== 0;
+}
+
+function requireUnchangedComparableAttestations(stored, proposed) {
+  const storedRows = comparableRows(stored);
+  const proposedRows = comparableRows(proposed);
+  const storedById = new Map(storedRows.map((row) => [row.id, row]));
+  const proposedById = new Map(proposedRows.map((row) => [row.id, row]));
+  for (const row of storedRows) {
+    if (carriesComparableAttestation(row) && !sameJson(row, proposedById.get(row.id))) {
+      throw new Error("property_tax_comparable_attestation_required");
+    }
+  }
+  for (const row of proposedRows) {
+    if (carriesComparableAttestation(row) && !sameJson(row, storedById.get(row.id))) {
+      throw new Error("property_tax_comparable_attestation_required");
+    }
+  }
+}
+
 function sameJson(left, right) {
   try {
     return canonicalJson(left) === canonicalJson(right);
@@ -222,7 +251,11 @@ function assertUnknownFieldsUnchanged(stored, submitted) {
  * stored remain byte-for-byte canonical, while clients cannot create, modify,
  * or remove future server-owned fields through this generic JSON endpoint.
  */
-export function mergePropertyTaxWorkfileUpdate(storedValue, submittedValue) {
+export function mergePropertyTaxWorkfileUpdate(
+  storedValue,
+  submittedValue,
+  { canAttestComparables = true } = {},
+) {
   if (!plainObject(storedValue) || !plainObject(submittedValue)) invalid();
   assertUnknownFieldsUnchanged(storedValue, submittedValue);
   const merged = clone(storedValue);
@@ -237,6 +270,8 @@ export function mergePropertyTaxWorkfileUpdate(storedValue, submittedValue) {
     if (Object.keys(mergedGroup).length) merged[group] = mergedGroup;
     else delete merged[group];
   }
+
+  if (!canAttestComparables) requireUnchangedComparableAttestations(storedValue, merged);
 
   const serialized = canonicalJson(merged);
   if (Buffer.byteLength(serialized, "utf8") > MAX_WORKFILE_BYTES) invalid();

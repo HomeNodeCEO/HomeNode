@@ -3996,6 +3996,7 @@ export interface PropertyTaxProtestFile {
   report_file_id: string;
   tax_protest_file_id: string;
   organization_id: string;
+  assigned_appraiser_user_id: string | null;
   account_id: string;
   file_number: string;
   previous_file_id: string | null;

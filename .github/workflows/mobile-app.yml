@@ -23,7 +23,9 @@ jobs:
         working-directory: homenode-mobile
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
         with:
           version: 11.19.0
       - uses: actions/setup-node@v7

@@ -174,7 +174,7 @@ export async function runUadRedTeamProtocolFuzz({
     && Number.isInteger(beforeRevision);
 
   const tokenInputs = {
-    basic_scheme: "Basic c3ludGhldGljOnJlZHRlYW0=",
+    basic_scheme: `Basic ${Buffer.from("synthetic:redteam", "utf8").toString("base64")}`,
     malformed_segments: bearer("invalid.invalid"),
     corrupted_signature: bearer(corruptSignature(validToken)),
     algorithm_confusion: bearer(await getAccessToken("homenode_admin", {

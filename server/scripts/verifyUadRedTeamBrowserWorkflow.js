@@ -10,6 +10,18 @@ const FIXTURE_ACCOUNT_ID = "UAD-REDTEAM-SFR-0001";
 const FIXTURE_FILE_NUMBER = "HN-REDTEAM-DELIVERY-A-0001";
 const outputDirectory = path.resolve(process.env.UAD_REDTEAM_BROWSER_OUTPUT_DIRECTORY || "uad-redteam-browser");
 
+function safeArtifactDownloadUrl(value) {
+  const parsed = new URL(String(value || ""));
+  if (parsed.protocol !== "https:"
+      || parsed.username
+      || parsed.password
+      || parsed.port
+      || !parsed.hostname.endsWith(".r2.cloudflarestorage.com")) {
+    throw new Error("redteam_artifact_download_url_invalid");
+  }
+  return parsed.href;
+}
+
 function requiredRedTeamOrigin(value, expected, code) {
   const parsed = new URL(String(value || expected));
   if (parsed.origin !== expected || !parsed.hostname.includes("redteam")) throw new Error(code);
@@ -92,7 +104,10 @@ try {
     if (!artifact?.ready_for_download || !artifact.download?.url) {
       throw new Error(`redteam_${label}_download_not_ready`);
     }
-    const response = await fetch(artifact.download.url);
+    const response = await fetch(safeArtifactDownloadUrl(artifact.download.url), {
+      redirect: "error",
+      signal: AbortSignal.timeout(30_000),
+    });
     if (!response.ok) throw new Error(`redteam_${label}_download_${response.status}`);
     const body = Buffer.from(await response.arrayBuffer());
     const checksum = createHash("sha256").update(body).digest("hex");

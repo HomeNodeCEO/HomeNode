@@ -1,6 +1,8 @@
 import { createHash, createHmac } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { rm, stat } from "node:fs/promises";
+import { realpath, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -14,6 +16,26 @@ function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
   if (!Number.isInteger(parsed)) return fallback;
   return Math.max(minimum, Math.min(parsed, maximum));
+}
+
+function temporaryFilePath(value) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error("uad_object_file_path_invalid");
+  }
+  const temporaryRoot = path.resolve(tmpdir());
+  const candidate = path.resolve(value);
+  const relative = path.relative(temporaryRoot, candidate);
+  if (!relative
+      || relative === ".."
+      || relative.startsWith(`..${path.sep}`)
+      || path.isAbsolute(relative)) {
+    throw new Error("uad_object_file_path_invalid");
+  }
+  return candidate;
+}
+
+async function existingTemporaryFilePath(value) {
+  return temporaryFilePath(await realpath(temporaryFilePath(value)));
 }
 
 function retryableStatus(status) {
@@ -333,7 +355,8 @@ export function createUadObjectStorage(env = process.env, {
     },
     async putFile({ objectKey, contentType, filePath, byteSize }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
-      const file = await stat(filePath);
+      const safeFilePath = await existingTemporaryFilePath(filePath);
+      const file = await stat(safeFilePath);
       const size = Number(byteSize ?? file.size);
       if (!Number.isSafeInteger(size) || size < 0 || file.size !== size) {
         throw new Error("uad_object_upload_size_mismatch");
@@ -344,7 +367,7 @@ export function createUadObjectStorage(env = process.env, {
         headers: { ...upload.headers, "content-length": String(size) },
         duplex: "half",
       }, {
-        bodyFactory: () => createReadStream(filePath),
+        bodyFactory: () => createReadStream(safeFilePath),
         timeoutMs: config.streamTimeoutMs,
       });
       return {
@@ -392,12 +415,13 @@ export function createUadObjectStorage(env = process.env, {
     },
     async downloadObjectToFile({ objectKey, filePath, maxBytes }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
+      const safeFilePath = temporaryFilePath(filePath);
       const maximum = boundedInteger(maxBytes, 512 * 1024 * 1024, 1, 512 * 1024 * 1024);
       const download = this.createDownloadUrl({ objectKey, expiresInSeconds: 60 });
       let lastError = null;
       for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
         try {
-          await rm(filePath, { force: true }).catch(() => undefined);
+          await rm(safeFilePath, { force: true }).catch(() => undefined);
           const response = await request("download", download.url, {
             method: download.method,
           }, { attempts: 1, timeoutMs: config.streamTimeoutMs });
@@ -425,20 +449,20 @@ export function createUadObjectStorage(env = process.env, {
           await pipeline(
             Readable.fromWeb(response.body),
             meter,
-            createWriteStream(filePath, { flags: "w" }),
+            createWriteStream(safeFilePath, { flags: "wx" }),
           );
           if (advertisedKnown && bytes !== advertised) {
             throw new Error("uad_object_download_size_mismatch");
           }
           return {
-            file_path: filePath,
+            file_path: safeFilePath,
             byte_size: bytes,
             checksum_sha256: digest.digest("hex"),
             etag: response.headers.get("etag"),
             content_type: response.headers.get("content-type"),
           };
         } catch (error) {
-          await rm(filePath, { force: true }).catch(() => undefined);
+          await rm(safeFilePath, { force: true }).catch(() => undefined);
           lastError = normalizedStorageError("download", error);
           if (attempt >= config.maxAttempts || !transientStorageError(lastError)) throw lastError;
           await sleep(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))));

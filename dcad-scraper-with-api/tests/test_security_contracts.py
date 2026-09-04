@@ -14,6 +14,7 @@ from scraper.api.main import (
     signup_submit,
 )
 from scraper.api.routes.history import _validated_account_id, history
+from scraper.dcad.worker import _identifier
 
 
 class ScraperSecurityContractTests(unittest.TestCase):
@@ -80,6 +81,20 @@ class ScraperSecurityContractTests(unittest.TestCase):
         self.assertEqual(result["error"], "history_unavailable")
         self.assertEqual(result["history_url"], "https://www.dallascad.org/AcctHistory.aspx")
         self.assertNotIn("password", str(result).lower())
+
+    def test_worker_dynamic_sql_identifiers_are_strictly_validated(self):
+        self.assertEqual(_identifier("scrape_state_2026", "test"), "scrape_state_2026")
+        for candidate in (
+            "app.scrape_state",
+            'scrape_state"; DROP TABLE core.accounts;--',
+            "scrape-state",
+            "../../scrape_state",
+            "1scrape_state",
+            "",
+        ):
+            with self.subTest(candidate=candidate):
+                with self.assertRaisesRegex(ValueError, "Invalid test"):
+                    _identifier(candidate, "test")
 
 
 if __name__ == "__main__":

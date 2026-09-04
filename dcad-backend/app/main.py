@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import json
+import re
 from typing import Any, Dict, List
 
 app = FastAPI()
@@ -18,6 +19,36 @@ app.add_middleware(
 
 DATA_DIR = Path(__file__).parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
+ACCOUNT_ID_PATTERN = re.compile(r"^[0-9]{17}$", re.ASCII)
+
+
+def _detail_file_paths(data_dir: Path) -> Dict[str, Path]:
+    """Index only direct, numeric fixture files contained by the data directory."""
+    paths: Dict[str, Path] = {}
+    base_dir = data_dir.resolve()
+    for entry in base_dir.iterdir():
+        if not entry.is_file() or entry.suffix.lower() != ".json":
+            continue
+        account_id = entry.stem
+        if not ACCOUNT_ID_PATTERN.fullmatch(account_id):
+            continue
+        candidate = entry.resolve()
+        try:
+            relative = candidate.relative_to(base_dir)
+        except ValueError:
+            continue
+        if candidate.parent == base_dir and relative.name == entry.name:
+            paths[account_id] = candidate
+    return paths
+
+
+def _detail_file_path(account_id: str, data_dir: Path) -> Path | None:
+    """Select one server-indexed Dallas parcel fixture by exact account identifier."""
+    normalized_account_id = str(account_id)
+    if not ACCOUNT_ID_PATTERN.fullmatch(normalized_account_id):
+        raise ValueError("invalid_account_id")
+    return _detail_file_paths(data_dir).get(normalized_account_id)
+
 
 def _load_detail_obj(raw: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -60,8 +91,11 @@ def get_detail(account_id: str):
     Returns: { "account_id": "...", "detail": {...} }
     The `detail` shape matches your scraper JSON.
     """
-    fp = DATA_DIR / f"{account_id}.json"
-    if not fp.exists():
+    try:
+        fp = _detail_file_path(account_id, DATA_DIR)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="Invalid account ID") from error
+    if fp is None or not fp.is_file():
         raise HTTPException(status_code=404, detail="Not Found")
 
     raw = json.loads(fp.read_text(encoding="utf-8"))

@@ -1,4 +1,8 @@
 import { isAuthenticatedSessionEditorCredential } from '@/lib/editorCredential';
+import {
+  clearCustomAppraisalSignatureEventId,
+  getOrCreateCustomAppraisalSignatureEventId,
+} from '@/lib/customAppraisalSigning';
 import { createTimedRequestCache } from '@/lib/timedRequestCache';
 import type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
 export type { NeighborhoodRelevanceAssessment } from '@/lib/neighborhoodRelevanceTypes';
@@ -3172,7 +3176,12 @@ export async function signCustomAppraisalWorkfile(
   editorKey: string,
 ): Promise<{ ok: true; account_id: string; workfile: CustomAppraisalWorkfile }> {
   const id = (accountId || '').trim();
-  return fetchJSON(
+  const signatureEventId = getOrCreateCustomAppraisalSignatureEventId(id, assignmentFileId);
+  const response = await fetchJSON<{
+    ok: true;
+    account_id: string;
+    workfile: CustomAppraisalWorkfile;
+  }>(
     makeUrl(
       `/api/accounts/${encodeURIComponent(id)}/assignment-files/${encodeURIComponent(String(assignmentFileId))}/workfile/sign`,
     ),
@@ -3182,9 +3191,11 @@ export async function signCustomAppraisalWorkfile(
         'content-type': 'application/json',
         'x-homenode-editor-key': editorKey,
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({ ...input, signature_event_id: signatureEventId }),
     },
   );
+  clearCustomAppraisalSignatureEventId(id, assignmentFileId, signatureEventId);
+  return response;
 }
 
 /** Fetch the named database workfile (a live draft or immutable signed snapshot). */

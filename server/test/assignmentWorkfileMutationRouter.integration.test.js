@@ -230,6 +230,7 @@ test("enforced signing derives identity and audit inputs exclusively from the se
   const response = await signWorkfile(server.baseUrl, "account_1", 41, {
     signed_by: "Spoofed Browser Signer",
     reviewer: "Spoofed Reviewer",
+    signature_event_id: "10000000-0000-4000-8000-000000000001",
     acknowledged_warning_codes: ["warning-1"],
   }, { "user-agent": "HomeNode-Test-Agent" });
   assert.equal(response.status, 200);
@@ -242,6 +243,7 @@ test("enforced signing derives identity and audit inputs exclusively from the se
   assert.equal(sign.pool, options.pool);
   assert.equal(sign.input.signedBy, "Authenticated Appraiser");
   assert.equal(sign.input.signerUserId, "user-1");
+  assert.equal(sign.input.signatureEventId, "10000000-0000-4000-8000-000000000001");
   assert.match(sign.input.signedFromIp, /127\.0\.0\.1/);
   assert.equal(sign.input.signedUserAgent, "HomeNode-Test-Agent");
   assert.equal(sign.input.signingSecret, "secret-1");
@@ -296,6 +298,7 @@ test("sign failures retain signer, readiness, conflict, availability, and diagno
     { error: new Error("assignment_file_not_found"), status: 404, body: { error: "assignment_file_not_found" } },
     { error: new Error("custom_appraisal_workfile_signed"), status: 409, body: { error: "custom_appraisal_workfile_signed" } },
     { error: new Error("custom_appraisal_workfile_empty"), status: 409, body: { error: "custom_appraisal_workfile_empty" } },
+    { error: new Error("custom_appraisal_signature_event_conflict"), status: 409, body: { error: "custom_appraisal_signature_event_conflict" } },
     { error: new Error("custom_appraisal_signer_not_assigned"), status: 403, body: { error: "custom_appraisal_signer_not_assigned" } },
     { error: new Error("custom_appraisal_signing_secret_not_configured"), status: 503, body: { error: "custom_appraisal_signing_secret_not_configured" } },
     {

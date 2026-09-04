@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 
@@ -46,6 +46,12 @@ import { replicateAppraisalFile } from "../src/services/appraisalReplication.js"
 import { importUadMobilePhoto } from "../src/modules/uad/mobileEvidence.js";
 import { syncDcadPropertyContext } from "../src/services/propertyContextSync.js";
 import { ensurePropertyContextSchema } from "../src/services/propertyContextStore.js";
+import {
+  customAppraisalSignatureHmac,
+  customAppraisalSnapshotChecksum,
+  ensureCustomAppraisalWorkfileSchema,
+  signCustomAppraisalWorkfile,
+} from "../src/services/customAppraisalWorkfiles.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -1084,6 +1090,141 @@ test("property-context source locks prevent overlapping PostgreSQL sync sessions
       );
     }
     holder.release();
+    await pool.end();
+  }
+});
+
+test("Custom Appraisal signature retries return one committed snapshot and artifact", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+  const organizationId = randomUUID();
+  const signerUserId = randomUUID();
+  const signatureEventId = randomUUID();
+  const accountId = `sign-retry-${randomUUID()}`;
+  const signingSecret = "integration-signing-secret-value-0001";
+  const signedAt = "2026-09-04T12:00:00.000Z";
+  try {
+    await pool.query(
+      `INSERT INTO app_auth.organizations (id, legal_name, display_name)
+       VALUES ($1, 'Signing Retry Organization', 'Signing Retry Organization')`,
+      [organizationId],
+    );
+    await pool.query(
+      `INSERT INTO app_auth.users (id, email, display_name)
+       VALUES ($1, $2, 'Signing Retry Appraiser')`,
+      [signerUserId, `${signerUserId}@example.test`],
+    );
+    await pool.query(
+      `INSERT INTO core.accounts (account_id, address, city, postal_code)
+       VALUES ($1, '200 Retry Street', 'Dallas', '75201')`,
+      [accountId],
+    );
+    const assignment = await pool.query(
+      `INSERT INTO app.assignment_files (
+         account_id, file_number, assignment_details,
+         organization_id, assigned_appraiser_user_id
+       ) VALUES ($1, $2, '{}'::jsonb, $3, $4)
+       RETURNING id`,
+      [accountId, `RETRY-${signatureEventId.slice(0, 8)}`, organizationId, signerUserId],
+    );
+    const assignmentFileId = Number(assignment.rows[0].id);
+    await ensureCustomAppraisalWorkfileSchema(pool);
+    const workfile = await pool.query(
+      `SELECT canonical_file_name, schema_version
+         FROM app.custom_appraisal_workfiles
+        WHERE assignment_file_id = $1`,
+      [assignmentFileId],
+    );
+    const snapshot = {
+      record_kind: "homenode_custom_appraisal_signed_snapshot",
+      assignment_file_id: assignmentFileId,
+      status: "signed",
+      signed_at: signedAt,
+      signed_by: "Signing Retry Appraiser",
+      signature: {
+        event_id: signatureEventId,
+        organization_id: organizationId,
+        signer_user_id: signerUserId,
+      },
+    };
+    const checksum = customAppraisalSnapshotChecksum(snapshot);
+    const signatureHmac = customAppraisalSignatureHmac(signingSecret, {
+      signatureEventId,
+      organizationId,
+      signerUserId,
+      signedAt,
+      snapshotChecksumSha256: checksum,
+    });
+    const signed = await pool.query(
+      `INSERT INTO app.custom_appraisal_signed_snapshots (
+         assignment_file_id, canonical_file_name, schema_version,
+         snapshot, checksum_sha256, signed_by, signed_at,
+         organization_id, signed_by_user_id, signature_event_id,
+         signature_hmac_sha256
+       ) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::timestamptz,$8,$9,$10,$11)
+       RETURNING id`,
+      [
+        assignmentFileId,
+        workfile.rows[0].canonical_file_name,
+        Number(workfile.rows[0].schema_version),
+        JSON.stringify(snapshot),
+        checksum,
+        "Signing Retry Appraiser",
+        signedAt,
+        organizationId,
+        signerUserId,
+        signatureEventId,
+        signatureHmac,
+      ],
+    );
+    await pool.query(
+      `UPDATE app.custom_appraisal_workfiles
+          SET status = 'signed', signed_at = $2, signed_by = $3
+        WHERE assignment_file_id = $1`,
+      [assignmentFileId, signedAt, "Signing Retry Appraiser"],
+    );
+    const content = Buffer.from("%PDF-1.4\n% HomeNode retry fixture\n", "utf8");
+    const contentChecksum = createHash("sha256").update(content).digest("hex");
+    await pool.query(
+      `INSERT INTO app.custom_appraisal_report_artifacts (
+         assignment_file_id, signed_snapshot_id, canonical_file_name,
+         report_version, workfile_checksum_sha256, content_sha256,
+         content, byte_size, page_count, generated_by
+       ) VALUES ($1,$2,$3,2,$4,$5,$6,$7,9,'HomeNode test')`,
+      [
+        assignmentFileId,
+        signed.rows[0].id,
+        `retry-${assignmentFileId}.pdf`,
+        checksum,
+        contentChecksum,
+        content,
+        content.length,
+      ],
+    );
+
+    const retried = await signCustomAppraisalWorkfile(pool, {
+      accountId,
+      assignmentFileId,
+      signedBy: "Signing Retry Appraiser",
+      signerUserId,
+      signatureEventId,
+      signingSecret,
+      acknowledgedWarningCodes: [],
+    });
+    assert.equal(retried.signature.event_id, signatureEventId);
+    assert.equal(retried.checksum_sha256, checksum);
+    assert.equal(retried.report_pdf.checksum_sha256, contentChecksum);
+    const counts = await pool.query(
+      `SELECT
+         (SELECT count(*)::integer FROM app.custom_appraisal_signed_snapshots
+           WHERE signature_event_id = $1) AS snapshots,
+         (SELECT count(*)::integer FROM app.custom_appraisal_report_artifacts
+           WHERE assignment_file_id = $2) AS artifacts`,
+      [signatureEventId, assignmentFileId],
+    );
+    assert.deepEqual(counts.rows[0], { snapshots: 1, artifacts: 1 });
+  } finally {
     await pool.end();
   }
 });

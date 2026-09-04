@@ -5,11 +5,13 @@ import {
   canonicalCustomAppraisalFileName,
   customAppraisalSnapshotChecksum,
   customAppraisalSignatureHmac,
+  normalizeCustomAppraisalSignatureEventId,
   normalizeCustomAppraisalSaveReason,
   normalizeCustomAppraisalSectionKey,
   normalizeCustomAppraisalSectionRevision,
   normalizeCustomAppraisalSectionValue,
   normalizeCustomAppraisalWarningCodes,
+  signCustomAppraisalWorkfile,
   verifyCustomAppraisalSignedSnapshot,
 } from "../src/services/customAppraisalWorkfiles.js";
 
@@ -63,6 +65,18 @@ test("normalizes an exact bounded set of acknowledged E&O warning codes", () => 
   assert.throws(
     () => normalizeCustomAppraisalWarningCodes("subject_gla_missing"),
     /invalid_custom_appraisal_warning_codes/,
+  );
+});
+
+test("normalizes a client signature event or creates a valid fallback", () => {
+  assert.equal(
+    normalizeCustomAppraisalSignatureEventId(" 10000000-0000-4000-8000-000000000001 "),
+    "10000000-0000-4000-8000-000000000001",
+  );
+  assert.match(normalizeCustomAppraisalSignatureEventId(), /^[0-9a-f-]{36}$/);
+  assert.throws(
+    () => normalizeCustomAppraisalSignatureEventId("not-an-event"),
+    /invalid_custom_appraisal_signature_event/,
   );
 });
 
@@ -126,5 +140,132 @@ test("verifies HMAC-protected signed snapshots and rejects database tampering", 
     () => verifyCustomAppraisalSignedSnapshot({ ...row, signature_hmac_sha256: "0".repeat(64) }, signingSecret),
     /custom_appraisal_signed_snapshot_integrity_failed/,
   );
+  assert.throws(
+    () => verifyCustomAppraisalSignedSnapshot({
+      snapshot: { legacy: "tampered" },
+      checksum_sha256: "0".repeat(64),
+    }, null),
+    /custom_appraisal_signed_snapshot_integrity_failed/,
+  );
   assert.equal(verifyCustomAppraisalSignedSnapshot({ snapshot: { legacy: true } }, null), true);
+});
+
+test("an exact signature retry returns the committed snapshot without signing again", async () => {
+  const signatureEventId = "10000000-0000-4000-8000-000000000001";
+  const organizationId = "20000000-0000-4000-8000-000000000001";
+  const signerUserId = "30000000-0000-4000-8000-000000000001";
+  const signingSecret = "r".repeat(32);
+  const signedAt = "2026-09-04T12:00:00.000Z";
+  const snapshot = {
+    record_kind: "homenode_custom_appraisal_signed_snapshot",
+    assignment_file_id: 41,
+    status: "signed",
+    signed_at: signedAt,
+    signed_by: "Authenticated Appraiser",
+    signature: {
+      event_id: signatureEventId,
+      organization_id: organizationId,
+      signer_user_id: signerUserId,
+    },
+  };
+  const checksum = customAppraisalSnapshotChecksum(snapshot);
+  const existingEvent = {
+    id: "40000000-0000-4000-8000-000000000001",
+    assignment_file_id: 41,
+    account_id: "ACCOUNT_1",
+    snapshot,
+    checksum_sha256: checksum,
+    signed_by: "Authenticated Appraiser",
+    organization_id: organizationId,
+    current_organization_id: organizationId,
+    signed_by_user_id: signerUserId,
+    signature_event_id: signatureEventId,
+    signed_at: new Date(signedAt),
+  };
+  existingEvent.signature_hmac_sha256 = customAppraisalSignatureHmac(signingSecret, {
+    signatureEventId,
+    organizationId,
+    signerUserId,
+    signedAt,
+    snapshotChecksumSha256: checksum,
+  });
+  const artifact = {
+    canonical_file_name: "file-41.pdf",
+    content_sha256: "b".repeat(64),
+    page_count: 9,
+    byte_size: 12_345,
+    generated_at: new Date("2026-09-04T12:00:01.000Z"),
+  };
+  const statements = [];
+  const client = {
+    async query(sql) {
+      const statement = String(sql);
+      statements.push(statement);
+      if (statement.includes("WHERE snapshot.signature_event_id = $1")) {
+        return { rows: [existingEvent] };
+      }
+      if (statement.includes("FROM app.custom_appraisal_report_artifacts WHERE")) {
+        return { rows: [artifact] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  const pool = {
+    async query() {
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return client;
+    },
+  };
+
+  const result = await signCustomAppraisalWorkfile(pool, {
+    accountId: "ACCOUNT_1",
+    assignmentFileId: 41,
+    signedBy: "Authenticated Appraiser",
+    signerUserId,
+    signatureEventId,
+    signingSecret,
+    acknowledgedWarningCodes: [],
+  });
+
+  assert.equal(result.checksum_sha256, checksum);
+  assert.equal(result.report_pdf.canonical_file_name, "file-41.pdf");
+  assert.equal(result.report_pdf.byte_size, 12_345);
+  assert.equal(statements.some((sql) => sql.includes("pg_advisory_xact_lock")), true);
+  assert.equal(
+    statements.some((sql) => sql.includes("INSERT INTO app.custom_appraisal_signed_snapshots")),
+    false,
+  );
+  assert.equal(
+    statements.some((sql) => sql.includes("UPDATE app.custom_appraisal_workfiles")),
+    false,
+  );
+  assert.equal(statements.at(-1), "COMMIT");
+
+  const renamedRetry = await signCustomAppraisalWorkfile(pool, {
+    accountId: "ACCOUNT_1",
+    assignmentFileId: 41,
+    signedBy: "Updated WorkOS Display Name",
+    signerUserId,
+    signatureEventId,
+    signingSecret,
+    acknowledgedWarningCodes: [],
+  });
+  assert.equal(renamedRetry.signature.event_id, signatureEventId);
+
+  await assert.rejects(
+    signCustomAppraisalWorkfile(pool, {
+      accountId: "ACCOUNT_1",
+      assignmentFileId: 41,
+      signedBy: "Another Account User",
+      signerUserId: "30000000-0000-4000-8000-000000000002",
+      signatureEventId,
+      signingSecret,
+      acknowledgedWarningCodes: [],
+    }),
+    /custom_appraisal_signature_event_conflict/,
+  );
+  assert.equal(statements.at(-1), "ROLLBACK");
 });

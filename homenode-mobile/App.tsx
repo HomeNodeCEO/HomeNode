@@ -21,6 +21,7 @@ import {
   type ReportDiscovery,
   type ReportFile,
 } from "./src/api/client";
+import { recoverCachedIdentityAfterMeFailure } from "./src/auth/offlineAccessPolicy";
 import { AuthProvider, useAuth } from "./src/auth/session";
 import { loadMobileConfig, type MobileConfig } from "./src/config";
 import { InspectionCompletionPanel } from "./src/completion/InspectionCompletionPanel";
@@ -29,6 +30,7 @@ import { WORKFLOWS, type WorkflowType, workflowTitle } from "./src/domain/workfl
 import type { FieldState } from "./src/offline/model";
 import { useOfflineSync } from "./src/offline/syncEngine";
 import {
+  clearActiveOfflineUser,
   OfflineStore,
   type CachedInspection,
   type LocalConflict,
@@ -675,7 +677,10 @@ function SignedInApp({ config }: { config: MobileConfig }) {
           nextUser = await api.me();
           await nextStore.cacheUser(nextUser);
         } catch (reason) {
-          nextUser = await nextStore.activeCachedUser();
+          nextUser = await recoverCachedIdentityAfterMeFailure(reason, {
+            loadCachedIdentity: () => nextStore.activeCachedUser(),
+            lockCachedIdentity: clearActiveOfflineUser,
+          });
           if (!nextUser) throw reason;
         }
         const inspections = await nextStore.cachedInspections(nextUser.userId);

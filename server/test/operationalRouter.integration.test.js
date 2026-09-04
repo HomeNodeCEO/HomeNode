@@ -13,7 +13,10 @@ function options(overrides = {}) {
       readiness(_req, res) { res.json({ ok: true, status: "ready" }); },
     },
     pool: { totalCount: 4, idleCount: 3, waitingCount: 1 },
-    requestPerformance: { snapshot: () => ({ requests: 7 }) },
+    requestPerformance: {
+      snapshot: () => ({ requests: 7 }),
+      recordClientError: () => true,
+    },
     artifactRecoveryMonitor: { snapshot: () => ({ recovered: 2 }) },
     getArtifactExecutorSnapshot: () => ({ active: 1 }),
     loadDcadScraperStatus: async () => ({ payload: { status: "complete" }, stale: false }),
@@ -38,8 +41,15 @@ function options(overrides = {}) {
   };
 }
 
-async function startRouter(routerOptions) {
+async function startRouter(routerOptions, { authenticated = true } = {}) {
   const app = express();
+  app.use(express.json());
+  if (authenticated) {
+    app.use((req, _res, next) => {
+      req.mobileAuth = { userId: "authenticated-test-user" };
+      next();
+    });
+  }
   app.use(createOperationalRouter(routerOptions));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -84,6 +94,68 @@ test("operational router preserves liveness, readiness, and aggregate performanc
     artifact_recovery: { recovered: 2 },
     maintenance: { status: "available", recent_runs: [{ id: 8 }] },
   });
+});
+
+test("client render failures accept only the bounded operational event contract", async (context) => {
+  const recorded = [];
+  const server = await startRouter(options({
+    requestPerformance: {
+      snapshot: () => ({ requests: 0 }),
+      recordClientError(event) {
+        if (event?.source !== "root_error_boundary") return false;
+        recorded.push(event);
+        return true;
+      },
+    },
+  }));
+  context.after(server.close);
+
+  const accepted = await fetch(`${server.baseUrl}/api/system/client-errors`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      source: "root_error_boundary",
+      route_code: "property_report",
+      error_type: "type_error",
+    }),
+  });
+  assert.equal(accepted.status, 202);
+  assert.equal(accepted.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await accepted.json(), { ok: true });
+  assert.deepEqual(recorded, [{
+    source: "root_error_boundary",
+    route_code: "property_report",
+    error_type: "type_error",
+  }]);
+
+  const rejected = await fetch(`${server.baseUrl}/api/system/client-errors`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source: "untrusted_source", message: "database password" }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.deepEqual(await rejected.json(), { error: "invalid_client_error_event" });
+  assert.equal(recorded.length, 1);
+
+  const anonymousServer = await startRouter(options({
+    requestPerformance: {
+      snapshot: () => ({ requests: 0 }),
+      recordClientError(event) { recorded.push(event); return true; },
+    },
+  }), { authenticated: false });
+  context.after(anonymousServer.close);
+  const anonymous = await fetch(`${anonymousServer.baseUrl}/api/system/client-errors`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      source: "root_error_boundary",
+      route_code: "property_report",
+      error_type: "type_error",
+    }),
+  });
+  assert.equal(anonymous.status, 401);
+  assert.deepEqual(await anonymous.json(), { error: "authentication_required" });
+  assert.equal(recorded.length, 1);
 });
 
 test("data-repair diagnostics stay bounded when maintenance and scraper status fail", async (context) => {

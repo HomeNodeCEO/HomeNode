@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { reportApplicationRenderFailure } from '@/lib/applicationErrorTelemetry';
 
 type Props = {
   children: ReactNode;
@@ -15,8 +16,9 @@ export default class ApplicationErrorBoundary extends Component<Props, State> {
     return { failed: true };
   }
 
-  componentDidCatch(): void {
+  componentDidCatch(error: Error): void {
     console.error('[application] uncaught render error');
+    void reportApplicationRenderFailure(error);
   }
 
   render() {

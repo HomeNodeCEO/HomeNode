@@ -117,8 +117,73 @@ test("request monitor records bounded, aggregated samples", () => {
     },
     utilization_percent: 27.6,
   });
+  assert.deepEqual(status.browser_recovery, {
+    window: { capacity: 25, events: 0, last_recorded_at: null },
+    by_route: [],
+    by_error_type: [],
+  });
   monitor.dispose();
   assert.equal(monitorDisabled, 1);
+});
+
+test("client error telemetry retains only allowlisted aggregate codes", () => {
+  const errors = [];
+  const monitor = createRequestPerformanceMonitor({
+    env: { PERFORMANCE_WINDOW_SIZE: "25" },
+    logger: { error(message, payload) { errors.push({ message, payload }); } },
+    createEventLoopDelayMonitor: () => ({ count: 0, enable() {}, disable() {} }),
+    eventLoopUtilization: () => ({ utilization: 0 }),
+  });
+  assert.equal(monitor.recordClientError(null), false);
+  assert.equal(monitor.recordClientError({ source: "unknown" }), false);
+  assert.equal(monitor.recordClientError({
+    source: "root_error_boundary",
+    route_code: "report/secret-account-id",
+    error_type: "database password",
+    message: "token=must-not-leak",
+    stack: "postgresql://secret@sensitive/internal",
+  }), false);
+  assert.equal(monitor.recordClientError({
+    source: "root_error_boundary",
+    route_code: "unknown",
+    error_type: "generic_error",
+  }), true);
+  assert.equal(monitor.recordClientError({
+    source: "root_error_boundary",
+    route_code: "uad_workspace",
+    error_type: "chunk_load_error",
+  }), true);
+
+  const snapshot = monitor.snapshot().browser_recovery;
+  assert.equal(snapshot.window.events, 2);
+  assert.equal(typeof snapshot.window.last_recorded_at, "string");
+  assert.deepEqual(snapshot.by_route, [
+    { route_code: "uad_workspace", events: 1 },
+    { route_code: "unknown", events: 1 },
+  ]);
+  assert.deepEqual(snapshot.by_error_type, [
+    { error_type: "chunk_load_error", events: 1 },
+    { error_type: "generic_error", events: 1 },
+  ]);
+  assert.deepEqual(errors.map(({ message, payload }) => ({ message, payload })), [
+    {
+      message: "[frontend] application render failure",
+      payload: {
+        code: "application_render_failure",
+        error_type: "generic_error",
+        route_code: "unknown",
+      },
+    },
+    {
+      message: "[frontend] application render failure",
+      payload: {
+        code: "application_render_failure",
+        error_type: "chunk_load_error",
+        route_code: "uad_workspace",
+      },
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify({ snapshot, errors }), /password|token|postgres|secret|sensitive/i);
 });
 
 test("request monitor records a response close before finish exactly once", () => {

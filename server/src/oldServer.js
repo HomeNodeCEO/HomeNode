@@ -2,6 +2,7 @@ import "dotenv/config";
 import { isIP } from "node:net";
 import express from "express";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
+import helmet from "helmet";
 import pg from "pg";
 import { greatCircleDistanceMilesSql } from "./services/geospatialSql.js";
 import { TrestleClient } from "./services/trestleClient.js";
@@ -69,6 +70,7 @@ import { createDesktopPropertyTaxRouter } from "./modules/mobile/desktopProperty
 import {
   authenticatedApiRateLimitKey,
   createCorsMiddleware,
+  createHelmetConfiguration,
   createHttpSecurityConfiguration,
   jsonErrorHandler,
   securityHeaders,
@@ -121,7 +123,6 @@ const legacyAccountIdAllowed = (value) => isLegacyAccountIdAllowed(value, {
 });
 const runtimeResilience = createRuntimeResilienceConfiguration();
 const startupInitialization = createStartupInitializationRegistry();
-app.disable("x-powered-by");
 if (httpSecurity.trustProxyHops > 0) app.set("trust proxy", httpSecurity.trustProxyHops);
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
@@ -140,6 +141,7 @@ const loadDcadScraperStatus = redTeamIsolation.external_status_enabled
       error: "redteam_external_status_disabled",
     });
 app.use(requestPerformance.middleware);
+app.use(helmet(createHelmetConfiguration()));
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));
 const globalApiRateLimiterOptions = {

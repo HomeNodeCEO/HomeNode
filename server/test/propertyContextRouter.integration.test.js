@@ -11,9 +11,13 @@ import {
 
 const pool = { query: async () => ({ rows: [] }) };
 
-async function startRouter(router) {
+async function startRouter(router, { mobileAuth = null } = {}) {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    if (mobileAuth) req.mobileAuth = mobileAuth;
+    next();
+  });
   app.use(router);
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -33,6 +37,9 @@ function accountOptions(overrides = {}) {
   return {
     pool,
     ensureAvailable: async () => {},
+    requireWorkflowAccess: () => true,
+    requireAssignmentAccess: async () => true,
+    authenticationRequired: false,
     resolveAccountId: async (_pool, accountId) => `canonical-${accountId}`,
     normalizeFileId: (value) => value ? `file-${value}` : null,
     getStoredContext: async () => null,
@@ -50,6 +57,7 @@ test("property-context status waits for schema readiness and returns mirror stat
   const server = await startRouter(createPropertyContextStatusRouter({
     pool,
     ensureAvailable: async () => { calls.push("ensure"); },
+    requirePlatformAdministrator: () => true,
     getStatus: async (receivedPool) => {
       assert.equal(receivedPool, pool);
       calls.push("status");
@@ -70,6 +78,7 @@ test("property-context status keeps failures bounded and server-side", async (co
   const server = await startRouter(createPropertyContextStatusRouter({
     pool,
     ensureAvailable: async () => { throw failure; },
+    requirePlatformAdministrator: () => true,
     logger: { error: (...args) => logs.push(args) },
   }));
   context.after(server.close);
@@ -78,6 +87,24 @@ test("property-context status keeps failures bounded and server-side", async (co
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "property_context_status_failed" });
   assert.deepEqual(logs, [["/api/property-context/status failed", failure]]);
+});
+
+test("property-context status is administrator-only before readiness work", async (context) => {
+  let readinessCalls = 0;
+  const server = await startRouter(createPropertyContextStatusRouter({
+    pool,
+    ensureAvailable: async () => { readinessCalls += 1; },
+    requirePlatformAdministrator: (_req, res) => {
+      res.status(403).json({ error: "application_access_denied" });
+      return false;
+    },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/property-context/status`);
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "application_access_denied" });
+  assert.equal(readinessCalls, 0);
 });
 
 test("stored property context preserves canonical account and assignment scope", async (context) => {
@@ -109,9 +136,9 @@ test("stored property context preserves canonical account and assignment scope",
     assessment,
   });
   assert.deepEqual(calls, [
+    ["normalize", "7"],
     "ensure",
     ["resolve", pool, "42"],
-    ["normalize", "7"],
     ["load", pool, { accountId: "canonical-42", assignmentFileId: "file-7" }],
   ]);
 });
@@ -184,6 +211,147 @@ test("property-context review passes the complete appraiser body unchanged", asy
   }]]);
 });
 
+test("enforced property-context routes require an authorized assignment for each operation", async (context) => {
+  const accessCalls = [];
+  const workflowCalls = [];
+  const serviceCalls = [];
+  const mobileAuth = {
+    userId: "appraiser-1",
+    email: "appraiser@example.test",
+    displayName: "Authenticated Appraiser",
+  };
+  const server = await startRouter(createAccountPropertyContextRouter(accountOptions({
+    authenticationRequired: true,
+    requireWorkflowAccess: (_req, _res, workflow, permission) => {
+      workflowCalls.push({ workflow, permission });
+      return true;
+    },
+    requireAssignmentAccess: async (
+      _req,
+      _res,
+      accountId,
+      assignmentFileId,
+      permission,
+    ) => {
+      accessCalls.push({ accountId, assignmentFileId, permission });
+      return true;
+    },
+    getStoredContext: async () => { serviceCalls.push("read"); return { id: 1 }; },
+    analyzeContext: async () => { serviceCalls.push("analyze"); return { id: 2 }; },
+    saveContextReview: async (_pool, input) => {
+      serviceCalls.push(["review", input.review]);
+      return { id: 3 };
+    },
+  })), { mobileAuth });
+  context.after(server.close);
+
+  const read = await fetch(
+    `${server.baseUrl}/api/accounts/42/property-context?assignment_file_id=7`,
+  );
+  const analyze = await fetch(`${server.baseUrl}/api/accounts/42/property-context/analyze`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ assignment_file_id: "7" }),
+  });
+  const review = await fetch(`${server.baseUrl}/api/accounts/42/property-context`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      assignment_file_id: "7",
+      complexity: "moderate",
+      reviewer: "Spoofed Reviewer",
+    }),
+  });
+  assert.equal(read.status, 200);
+  assert.equal(analyze.status, 200);
+  assert.equal(review.status, 200);
+  assert.deepEqual(workflowCalls, [
+    { workflow: "custom_appraisal", permission: "read" },
+    { workflow: "custom_appraisal", permission: "write" },
+    { workflow: "custom_appraisal", permission: "sign" },
+  ]);
+  assert.deepEqual(accessCalls, [
+    { accountId: "canonical-42", assignmentFileId: "file-7", permission: "read" },
+    { accountId: "canonical-42", assignmentFileId: "file-7", permission: "write" },
+    { accountId: "canonical-42", assignmentFileId: "file-7", permission: "sign" },
+  ]);
+  assert.deepEqual(serviceCalls, [
+    "read",
+    "analyze",
+    ["review", {
+      assignment_file_id: "7",
+      complexity: "moderate",
+      reviewer: "Authenticated Appraiser",
+    }],
+  ]);
+});
+
+test("enforced property-context rejects missing assignment scope before readiness or services", async (context) => {
+  let readinessCalls = 0;
+  let serviceCalls = 0;
+  const server = await startRouter(createAccountPropertyContextRouter(accountOptions({
+    authenticationRequired: true,
+    ensureAvailable: async () => { readinessCalls += 1; },
+    getStoredContext: async () => { serviceCalls += 1; },
+    analyzeContext: async () => { serviceCalls += 1; },
+    saveContextReview: async () => { serviceCalls += 1; },
+  })));
+  context.after(server.close);
+
+  const requests = [
+    fetch(`${server.baseUrl}/api/accounts/42/property-context`),
+    fetch(`${server.baseUrl}/api/accounts/42/property-context/analyze`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+    fetch(`${server.baseUrl}/api/accounts/42/property-context`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+  ];
+  const responses = await Promise.all(requests);
+  for (const response of responses) {
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "assignment_file_required" });
+  }
+  assert.equal(readinessCalls, 0);
+  assert.equal(serviceCalls, 0);
+});
+
+test("property-context stops after workflow or assignment denial", async (context) => {
+  let resolutionCalls = 0;
+  let serviceCalls = 0;
+  const workflowDenied = await startRouter(createAccountPropertyContextRouter(accountOptions({
+    requireWorkflowAccess: (_req, res) => {
+      res.status(403).json({ error: "workflow_forbidden" });
+      return false;
+    },
+    resolveAccountId: async () => { resolutionCalls += 1; },
+  })));
+  context.after(workflowDenied.close);
+  const workflowResponse = await fetch(
+    `${workflowDenied.baseUrl}/api/accounts/42/property-context?assignment_file_id=7`,
+  );
+  assert.equal(workflowResponse.status, 403);
+  assert.equal(resolutionCalls, 0);
+
+  const assignmentDenied = await startRouter(createAccountPropertyContextRouter(accountOptions({
+    requireAssignmentAccess: async (_req, res) => {
+      res.status(403).json({ error: "assignment_forbidden" });
+      return false;
+    },
+    getStoredContext: async () => { serviceCalls += 1; },
+  })));
+  context.after(assignmentDenied.close);
+  const assignmentResponse = await fetch(
+    `${assignmentDenied.baseUrl}/api/accounts/42/property-context?assignment_file_id=7`,
+  );
+  assert.equal(assignmentResponse.status, 403);
+  assert.equal(serviceCalls, 0);
+});
+
 test("account property-context routes preserve error mapping and logging", async (context) => {
   const failure = new Error("account_not_found");
   const logs = [];
@@ -232,6 +400,10 @@ test("property-context routers validate composition and retain both mount positi
       resolveAccountId: null,
     }),
     /account_property_context_dependency_required/,
+  );
+  assert.throws(
+    () => createAccountPropertyContextRouter(accountOptions({ authenticationRequired: undefined })),
+    /account_property_context_authentication_mode_required/,
   );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");

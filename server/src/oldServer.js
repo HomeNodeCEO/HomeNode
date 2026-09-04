@@ -524,6 +524,7 @@ app.use(createNeighborhoodAnalysisRouter({
 app.use(createPropertyContextStatusRouter({
   pool,
   ensureAvailable: ensurePropertyContextAvailable,
+  requirePlatformAdministrator,
 }));
 
 app.use(createNeighborhoodRouter({
@@ -534,6 +535,9 @@ app.use(createNeighborhoodRouter({
 app.use(createAccountPropertyContextRouter({
   pool,
   ensureAvailable: ensurePropertyContextAvailable,
+  requireWorkflowAccess,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
+  authenticationRequired: applicationAuthenticationRequired,
 }));
 
 app.use(createZoningRouter({

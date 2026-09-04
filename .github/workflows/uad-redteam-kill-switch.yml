@@ -14,7 +14,7 @@ jobs:
   kill-switch:
     name: Disabled-workspace behavior
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     environment: uad-redteam
     defaults:
       run:

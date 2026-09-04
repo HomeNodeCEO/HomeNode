@@ -55,6 +55,10 @@ import {
 } from "../src/services/customAppraisalWorkfiles.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+const MOBILE_PHOTO_JPEG = Buffer.from(
+  "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAj/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKpAB//Z",
+  "base64",
+);
 
 function syncOperation(operationKind, baseSessionRevision, payload, clientOperationId = randomUUID()) {
   return {
@@ -506,13 +510,23 @@ test("mobile report files preserve prior versions and allocate one daily assignm
         };
       },
       async inspectObject({ objectKey }) {
-        const original = objectKey.includes("/original/");
         return {
-          byte_size: original ? 4_000 : 1_200,
-          etag: original ? "original-etag" : "display-etag",
+          byte_size: MOBILE_PHOTO_JPEG.length,
+          etag: objectKey.includes("/original/") ? "original-etag" : "display-etag",
           content_type: "image/jpeg",
         };
       },
+      async getObject() {
+        return {
+          body: MOBILE_PHOTO_JPEG,
+          byte_size: MOBILE_PHOTO_JPEG.length,
+          content_type: "image/jpeg",
+        };
+      },
+      async putObject({ body }) {
+        return { byte_size: body.length, etag: "verified-etag", content_type: "image/jpeg" };
+      },
+      async deleteObject() { return { deleted: true }; },
     };
     const photoRequest = {
       photos: [{
@@ -530,18 +544,18 @@ test("mobile report files preserve prior versions and allocate one daily assignm
             variant: "original",
             file_name: "kitchen.jpg",
             content_type: "image/jpeg",
-            byte_size: 4_000,
-            width: 3000,
-            height: 2000,
+            byte_size: MOBILE_PHOTO_JPEG.length,
+            width: 1,
+            height: 1,
           },
           {
             client_object_id: randomUUID(),
             variant: "display",
             file_name: "kitchen-display.jpg",
             content_type: "image/jpeg",
-            byte_size: 1_200,
-            width: 2048,
-            height: 1365,
+            byte_size: MOBILE_PHOTO_JPEG.length,
+            width: 1,
+            height: 1,
           },
         ],
       }],

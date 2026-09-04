@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  authorizeUadAppraiserConfirmation,
   authorizeUadCreation,
   authorizeUadWorkfileAccess,
   buildUadAccessScope,
@@ -144,5 +145,37 @@ test("legacy organization-less workfiles fail closed in authenticated mode", asy
   await assert.rejects(
     () => authorizeUadWorkfileAccess(pool({ organization_id: null }), auth(), WORKFILE_ID),
     /uad_workfile_access_denied/,
+  );
+});
+
+test("only the assigned appraiser or assigned supervisor can confirm UAD evidence", () => {
+  const workfile = {
+    organization_id: ORGANIZATION_ID,
+    assigned_appraiser_user_id: USER_ID,
+    supervisory_appraiser_user_id: OTHER_USER_ID,
+  };
+  assert.deepEqual(authorizeUadAppraiserConfirmation(auth("appraiser"), workfile), {
+    actorUserId: USER_ID,
+    signerRole: "appraiser",
+  });
+  assert.deepEqual(authorizeUadAppraiserConfirmation(
+    auth("supervisory_appraiser"),
+    { ...workfile, assigned_appraiser_user_id: OTHER_USER_ID, supervisory_appraiser_user_id: USER_ID },
+  ), {
+    actorUserId: USER_ID,
+    signerRole: "supervisory_appraiser",
+  });
+  for (const role of ["organization_admin", "homenode_admin", "office_assistant", "reviewer"]) {
+    assert.throws(
+      () => authorizeUadAppraiserConfirmation(auth(role), workfile),
+      /uad_appraiser_confirmation_access_denied/,
+    );
+  }
+  assert.throws(
+    () => authorizeUadAppraiserConfirmation(
+      auth("appraiser"),
+      { ...workfile, assigned_appraiser_user_id: OTHER_USER_ID },
+    ),
+    /uad_appraiser_confirmation_access_denied/,
   );
 });

@@ -141,13 +141,36 @@ export async function authorizeUadWorkfileAccess(pool, auth, workfileIdValue, { 
   return workfile;
 }
 
+export function authorizeUadAppraiserConfirmation(auth, workfile) {
+  const userId = String(auth?.userId || "").trim();
+  const organizationId = String(workfile?.organization_id || "").trim();
+  if (!userId || !organizationId) throw new Error("uad_appraiser_confirmation_access_denied");
+  const roles = rolesFor(auth, organizationId);
+  const assignedAppraiser = workfile.assigned_appraiser_user_id === userId
+    && roles.has("appraiser");
+  const assignedSupervisor = workfile.supervisory_appraiser_user_id === userId
+    && roles.has("supervisory_appraiser");
+  if (!assignedAppraiser && !assignedSupervisor) {
+    throw new Error("uad_appraiser_confirmation_access_denied");
+  }
+  return Object.freeze({
+    actorUserId: userId,
+    signerRole: assignedAppraiser ? "appraiser" : "supervisory_appraiser",
+  });
+}
+
 export function createUadWorkfileAuthorizer({ pool, authenticationRequired }) {
   if (!authenticationRequired) return (_req, _res, next) => next();
   return async function uadWorkfileAuthorizer(req, res, next) {
     try {
-      await authorizeUadWorkfileAccess(pool, req.mobileAuth, req.params.workfileId, {
-        write: !["GET", "HEAD", "OPTIONS"].includes(req.method),
-      });
+      req.uadAuthorizedWorkfile = await authorizeUadWorkfileAccess(
+        pool,
+        req.mobileAuth,
+        req.params.workfileId,
+        {
+          write: !["GET", "HEAD", "OPTIONS"].includes(req.method),
+        },
+      );
       return next();
     } catch (error) {
       const message = String(error?.message || "");

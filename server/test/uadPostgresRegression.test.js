@@ -21,5 +21,5 @@ test("keeps completion-apply audit parameters on their PostgreSQL UUID type", ()
     path.resolve(directory, "../src/modules/uad/completionApply.js"),
     "utf8",
   );
-  assert.match(source, /\$1::uuid,[\s\S]*\(\$1::uuid\)::text/);
+  assert.match(source, /\$1::uuid, \$2::uuid,[\s\S]*\(\$1::uuid\)::text/);
 });

@@ -31,6 +31,9 @@ async function withServer(pool, callback, securityOverrides = {}, routerOverride
       rateLimitMax: 300,
       ...securityOverrides,
     },
+    ...(routerOverrides.applyCompletionSuggestions
+      ? { applyCompletionSuggestions: routerOverrides.applyCompletionSuggestions }
+      : {}),
   }));
   app.use("/api/uad", uadBodyParserErrorHandler);
   const server = await new Promise((resolve) => {
@@ -72,7 +75,7 @@ test("disabled UAD workspace keeps diagnostics public and fails protected routes
   }, {}, { enabled: false });
 });
 
-function securityPool({ membershipOrganizationId = ORGANIZATION_ID } = {}) {
+function securityPool({ membershipOrganizationId = ORGANIZATION_ID, roleCode = "appraiser" } = {}) {
   const accessQueries = [];
   return {
     accessQueries,
@@ -84,7 +87,7 @@ function securityPool({ membershipOrganizationId = ORGANIZATION_ID } = {}) {
           display_name: "Synthetic Appraiser",
           organization_id: membershipOrganizationId,
           organization_display_name: "Synthetic Organization",
-          role_code: "appraiser",
+          role_code: roleCode,
         }] };
       }
       if (sql.includes("UPDATE app_auth.oidc_identities")) return { rows: [] };
@@ -169,6 +172,49 @@ test("strict UAD routes return a bounded generic response after the configured r
     assert.deepEqual(await blocked.json(), { error: "rate_limit_exceeded" });
     assert.ok(blocked.headers.get("retry-after"));
   }, { rateLimitMax: 2 });
+});
+
+test("UAD completion confirmation is limited to the assigned appraiser and records the actor", async () => {
+  const allowedPool = securityPool();
+  const calls = [];
+  const applyCompletionSuggestions = async (...args) => {
+    calls.push(args);
+    return { applied_suggestion_count: 1 };
+  };
+  await withServer(allowedPool, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/completion-suggestions/apply`,
+      {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ expected_revision: 1, suggestion_ids: ["suggestion-1"] }),
+      },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { applied_suggestion_count: 1 });
+  }, {}, { applyCompletionSuggestions });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], allowedPool);
+  assert.equal(calls[0][1], WORKFILE_ID);
+  assert.deepEqual(calls[0][2], { expected_revision: 1, suggestion_ids: ["suggestion-1"] });
+  assert.equal(calls[0][3], USER_ID);
+
+  let deniedApplyCalls = 0;
+  await withServer(securityPool({ roleCode: "organization_admin" }), async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/completion-suggestions/apply`,
+      {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ expected_revision: 1, suggestion_ids: ["suggestion-1"] }),
+      },
+    );
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "uad_appraiser_confirmation_access_denied" });
+  }, {}, {
+    applyCompletionSuggestions: async () => { deniedApplyCalls += 1; },
+  });
+  assert.equal(deniedApplyCalls, 0);
 });
 
 test("completed or unknown delivery attempts return a conflict without exposing persistence details", async () => {

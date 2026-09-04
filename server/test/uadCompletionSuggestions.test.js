@@ -16,6 +16,7 @@ const SNAPSHOT_ID = "1d6aad8b-f9b0-46d4-b1e7-9d024d37df04";
 const CUSTOM_REPORT_ID = "95401bd2-05e2-45ca-80bf-ce7b03608264";
 const UAD_REPORT_ID = "0f349b77-c91c-4ca7-829c-5edbe71b5a60";
 const UAD_WORKFILE_ID = "57f26fb0-0ed7-42dc-a7dd-54a87f2b7ab5";
+const ACTOR_USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
 
 function fixtureParts() {
   const { snapshot, property } = customAppraisalReportFixture();
@@ -1077,6 +1078,7 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
   const insertedRows = [];
   let revisionInserts = 0;
   let auditInserts = 0;
+  let auditParams = null;
   let releases = 0;
   const client = {
     async query(sql, params = []) {
@@ -1113,7 +1115,11 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
         return { rows: [] };
       }
       if (sql.includes("INSERT INTO appraisal.uad_revisions")) { revisionInserts += 1; return { rows: [] }; }
-      if (sql.includes("INSERT INTO appraisal.uad_audit_events")) { auditInserts += 1; return { rows: [] }; }
+      if (sql.includes("INSERT INTO appraisal.uad_audit_events")) {
+        auditInserts += 1;
+        auditParams = params;
+        return { rows: [] };
+      }
       if (sql.includes("UPDATE appraisal.uad_workfiles")) return { rows: [] };
       throw new Error(`Unexpected query: ${sql}`);
     },
@@ -1124,6 +1130,7 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
     pool,
     UAD_WORKFILE_ID,
     applyInput(suggestions, [selected.suggestion_id, selectedGla.suggestion_id]),
+    ACTOR_USER_ID,
   );
 
   assert.equal(result.current_revision, 5);
@@ -1132,5 +1139,6 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
   assert.equal(insertedRows.find((row) => row.uad_uid === "0700.0140").entity_id, "unit-id");
   assert.equal(revisionInserts, 1);
   assert.equal(auditInserts, 1);
+  assert.equal(auditParams[1], ACTOR_USER_ID);
   assert.equal(releases, 1);
 });

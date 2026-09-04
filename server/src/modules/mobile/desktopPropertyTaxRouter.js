@@ -316,10 +316,13 @@ export function createDesktopPropertyTaxRouter({
       await Promise.all([accountQualityReady, propertyEnrichmentReady]);
       const canonicalId = await resolveAccountId(pool, requestedId);
       const existingFile = await getFile(pool, canonicalId, req.params.fileId);
+      const permission = req.body?.sketch?.review_status === "appraiser_confirmed"
+        ? "sign"
+        : "write";
       if (
         authenticationRequired
         && req.mobileAuth
-        && (!existingFile || !decideAccess(req.mobileAuth, existingFile, "write"))
+        && (!existingFile || !decideAccess(req.mobileAuth, existingFile, permission))
       ) {
         return res.status(existingFile ? 403 : 404).json({
           error: existingFile

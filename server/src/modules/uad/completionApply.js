@@ -277,7 +277,12 @@ async function loadValues(queryable, workfileId, suffix = "") {
   return rows;
 }
 
-export async function applyUadCompletionSuggestions(pool, workfileIdValue, input = {}) {
+export async function applyUadCompletionSuggestions(
+  pool,
+  workfileIdValue,
+  input = {},
+  actorUserId = null,
+) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const client = await pool.connect();
   try {
@@ -355,13 +360,14 @@ export async function applyUadCompletionSuggestions(pool, workfileIdValue, input
     );
     await client.query(
       `INSERT INTO appraisal.uad_audit_events (
-         workfile_id, event_type, entity_type, entity_id, after_data, metadata
+         workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data, metadata
        ) VALUES (
-         $1::uuid, 'uad_completion_suggestions.applied', 'uad_workfile',
-         ($1::uuid)::text, $2::jsonb, $3::jsonb
+         $1::uuid, $2::uuid, 'uad_completion_suggestions.applied', 'uad_workfile',
+         ($1::uuid)::text, $3::jsonb, $4::jsonb
        )`,
       [
         workfileId,
+        actorUserId,
         JSON.stringify({
           applied_suggestion_ids: [
             ...plan.fields.map((item) => item.suggestion.suggestion_id),

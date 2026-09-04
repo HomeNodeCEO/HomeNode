@@ -5,6 +5,7 @@ import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import requests
@@ -15,6 +16,19 @@ sys.path.insert(0, str(SCRAPER_ROOT))
 
 from dcad.worker import (  # noqa: E402
     WorkerConfig,
+    _accounts_table,
+    _campaign_table,
+    _events_table,
+    _field_repair_table,
+    _land_detail_table,
+    _owner_recovery_table,
+    _owner_summary_table,
+    _primary_improvements_table,
+    _raw_table,
+    _reconciliations_table,
+    _state_table,
+    _targets_table,
+    _value_summary_current_table,
     fields_still_missing,
     is_upstream_outage_error,
     record_upstream_failure,
@@ -67,6 +81,32 @@ class FakeEngine:
 
 
 class UpstreamOutageClassificationTests(unittest.TestCase):
+    def test_table_helpers_revalidate_directly_constructed_configs(self) -> None:
+        malicious = 'app"; DROP TABLE core.accounts;--'
+        config = SimpleNamespace(data_schema=malicious, state_schema=malicious)
+        for table_helper in (
+            _accounts_table,
+            _campaign_table,
+            _events_table,
+            _field_repair_table,
+            _land_detail_table,
+            _owner_recovery_table,
+            _owner_summary_table,
+            _primary_improvements_table,
+            _raw_table,
+            _reconciliations_table,
+            _state_table,
+            _targets_table,
+            _value_summary_current_table,
+        ):
+            with self.subTest(table_helper=table_helper.__name__):
+                with self.assertRaisesRegex(ValueError, "Invalid .* schema"):
+                    table_helper(config)
+
+        safe = SimpleNamespace(data_schema="core", state_schema="app")
+        self.assertEqual(_accounts_table(safe), '"core"."accounts"')
+        self.assertEqual(_state_table(safe), '"app"."dcad_scrape_state"')
+
     def test_connection_and_timeout_failures_are_upstream_outages(self) -> None:
         self.assertTrue(is_upstream_outage_error(requests.Timeout("timed out")))
         self.assertTrue(is_upstream_outage_error(requests.ConnectionError("offline")))

@@ -326,6 +326,7 @@ app.use(createAccountDetailRouter({
   propertyEnrichmentReady,
   ensurePropertyContextAvailable,
   authenticationRequired: applicationAuthenticationRequired,
+  requireCustomAccountScope,
 }));
 app.use(createAccountPhotosRouter({
   pool,

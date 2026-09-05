@@ -45,6 +45,7 @@ export function neighborhoodAssessmentFixture() {
       { id: "predominant-sale-price", population_id: "sales-a", measurement: "predominant_sale_price", unit: "USD", estimator: "unsupported", estimator_parameters: {}, value: null, status: "unsupported", reason: "no_supported_modal_estimator", observed_count: 3, missing_count: 0, denominator_count: 3, denominator_basis: "population_members", assessment_tax_year: null, uncertainty: { status: "not_estimated" }, source_refs: ["fixture-source"] },
     ],
     required_statistic_ids: ["median-sale-price"],
+    required_population_ids: ["stock-a", "sales-a"],
     development_evidence: { status: "incomplete", profile_refs: [], reasons: ["builder_research_unavailable"] },
     diagnostics: { physical_similarity: { status: "supported" }, transaction_sufficiency: { status: "not_estimated" }, omissions: ["predominant-sale-price"] },
   };
@@ -55,7 +56,8 @@ export function neighborhoodTargetFixture(workflow = "uad_3_6") {
     attachment_id: workflow === "uad_3_6" ? "50000000-0000-4000-8000-000000000001" : "50000000-0000-4000-8000-000000000002",
     attachment_revision: 1,
     effective_date: "2024-06-30", data_cutoff: "2024-06-30",
-    scope: { ...ASSESSMENT_SCOPE }, report_file_id: "60000000-0000-4000-8000-000000000001",
+    scope: { ...ASSESSMENT_SCOPE },
+    report_file_id: workflow === "uad_3_6" ? "60000000-0000-4000-8000-000000000001" : "60000000-0000-4000-8000-000000000002",
     workflow_type: workflow,
     custom_assignment_file_id: workflow === "custom_appraisal" ? 1 : null,
     uad_workfile_id: workflow === "uad_3_6" ? "70000000-0000-4000-8000-000000000001" : null,

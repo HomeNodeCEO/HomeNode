@@ -12,6 +12,24 @@ const freeze = value => {
 };
 const snapshot = value => freeze(JSON.parse(canonicalAssessmentJson(value)));
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+const isRevision = value => Number.isSafeInteger(value) && value >= 0;
+const isDigest = value => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+
+/** Construct a receipt to persist INSIDE the owner's successful transaction.
+ * This function does not save, sign, authorize, or prove that a write happened.
+ * Preflight accepts receipts only from the owner's trusted persistence lookup.
+ */
+export function buildNeighborhoodApplicationReceipt(prepared, accepted_editor_revision) {
+  const plan = snapshot(prepared);
+  const manifest = plan.acceptance_manifest;
+  if (plan.status !== "ready" || plan.conflicts.length || !manifest ||
+      !isRevision(accepted_editor_revision) || !isRevision(manifest.base_editor_revision) ||
+      accepted_editor_revision <= manifest.base_editor_revision) {
+    throw new TypeError("invalid_neighborhood_application_receipt");
+  }
+  const receipt = { receipt_version: 1, accepted_editor_revision, acceptance_manifest: manifest };
+  return snapshot({ ...receipt, receipt_digest_sha256: assessmentEvidenceDigest(receipt) });
+}
 
 export function neighborhoodMappedManifestDigest(suggestions) {
   return assessmentEvidenceDigest(suggestions.map(item => ({ ...item,
@@ -27,18 +45,25 @@ export function prepareNeighborhoodApplicationGroup(input) {
 
 function prepare({
   attachment, expected_binding_digest, group, suggestions, selected_ids,
-  existing_values, validate_final_group,
+  current_application_identity_sha256, current_editor_revision,
+  accepted_application = null, existing_values, validate_final_group,
 }) {
   attachment = snapshot(attachment);
   group = snapshot(group);
   const conflicts = [];
   const add = (code, target_key = null) => conflicts.push({ code, target_key });
   const rejected = () => ({ status: "conflict", http_status: 409, conflicts, writes: [], acceptance_manifest: null });
-  if (!attachment || attachment.binding_digest_sha256 !== expected_binding_digest) {
-    add("stale_attachment"); return rejected();
-  }
+  if (!attachment) { add("missing_attachment"); return rejected(); }
   const { binding_digest_sha256: digest, review_status: _reviewStatus, ...binding } = attachment;
   if (assessmentEvidenceDigest(binding) !== digest) { add("changed_attachment"); return rejected(); }
+  const { application_identity_sha256: applicationIdentity, editor_revision: _editorRevision,
+    attachment_revision: _attachmentRevision, ...stableBinding } = binding;
+  const minimumEditorRevision = attachment.workflow_type === "uad_3_6" ? 1 : 0;
+  if (assessmentEvidenceDigest(stableBinding) !== applicationIdentity ||
+      applicationIdentity !== current_application_identity_sha256 || !isRevision(current_editor_revision) ||
+      current_editor_revision < minimumEditorRevision) {
+    add("stale_application_identity"); return rejected();
+  }
   if (!group || group.application_mode !== "atomic" || group.status !== "ready" ||
       group.id !== attachment.application_group_id || group.revision !== attachment.application_group_revision ||
       group.effective_date !== attachment.effective_date || group.data_cutoff !== attachment.data_cutoff ||
@@ -94,6 +119,11 @@ function prepare({
     old.set(item.target_key, item);
   }
   const provenance = {
+    application_identity_sha256: applicationIdentity,
+    attachment_id: attachment.attachment_id,
+    report_file_id: attachment.report_file_id, workflow_type: attachment.workflow_type,
+    custom_assignment_file_id: attachment.custom_assignment_file_id, uad_workfile_id: attachment.uad_workfile_id,
+    mapped_manifest_sha256: attachment.mapped_manifest_sha256, source_digest_sha256: attachment.source_digest_sha256,
     assessment_id: attachment.assessment_id, assessment_revision: attachment.assessment_revision,
     assessment_digest: attachment.evidence_digest_sha256,
     application_group_id: group.id, application_group_revision: group.revision,
@@ -102,6 +132,35 @@ function prepare({
     mapper_version: attachment.mapper_version, specification_release: attachment.specification_release,
   };
   const provenanceDigest = assessmentEvidenceDigest(provenance);
+  // Receipt lookup precedes ordinary optimistic binding checks: the first save
+  // advances the editor revision itself. Only that exact accepted revision may
+  // replay. A later unrelated edit is still a conflict, even if these values match.
+  let acceptedManifest = null;
+  if (accepted_application !== null) {
+    const { receipt_digest_sha256: receiptDigest, ...receipt } = snapshot(accepted_application);
+    const saved = receipt.acceptance_manifest;
+    if (receipt.receipt_version !== 1 || !isDigest(receiptDigest) || assessmentEvidenceDigest(receipt) !== receiptDigest ||
+        !saved || saved.application_identity_sha256 !== applicationIdentity ||
+        saved.attachment_id !== attachment.attachment_id || !isRevision(saved.attachment_revision) || saved.attachment_revision < 1 ||
+        !isDigest(saved.binding_digest_sha256) || !isRevision(saved.base_editor_revision) ||
+        saved.base_editor_revision < minimumEditorRevision ||
+        assessmentEvidenceDigest({ ...binding, editor_revision: saved.base_editor_revision,
+          attachment_revision: saved.attachment_revision }) !== saved.binding_digest_sha256 ||
+        !isRevision(receipt.accepted_editor_revision) || receipt.accepted_editor_revision <= saved.base_editor_revision ||
+        saved.mapped_manifest_sha256 !== attachment.mapped_manifest_sha256 ||
+        saved.provenance_digest !== provenanceDigest || assessmentEvidenceDigest(saved.provenance) !== provenanceDigest ||
+        !Array.isArray(saved.applied) || !Array.isArray(saved.reused) ||
+        canonicalAssessmentJson([...saved.applied, ...saved.reused].sort((a, b) => compare(a.id, b.id))) !==
+          canonicalAssessmentJson(suggestions.map(({ id, target_key, value }) => ({ id, target_key, value })))) {
+      add("incompatible_application_receipt"); return rejected();
+    }
+    if (receipt.accepted_editor_revision !== current_editor_revision) {
+      add("stale_accepted_application"); return rejected();
+    }
+    acceptedManifest = saved;
+  } else if (attachment.binding_digest_sha256 !== expected_binding_digest || attachment.editor_revision !== current_editor_revision) {
+    add("stale_attachment"); return rejected();
+  }
   const writes = [], reused = [], finalValues = [];
   for (const item of byId.values()) {
     const previous = old.get(item.target_key);
@@ -122,14 +181,19 @@ function prepare({
     } else { add("unknown_existing_value_state", item.target_key); continue; }
     finalValues.push({ target_key: item.target_key, value: item.value });
   }
+  if (acceptedManifest && (writes.length || acceptedManifest.prepared_values_sha256 !== assessmentEvidenceDigest(finalValues))) {
+    add("changed_accepted_values");
+  }
+  if (!acceptedManifest && !writes.length && reused.length) add("missing_application_receipt");
   if (conflicts.length) return rejected();
   const validation = validate_final_group(snapshot(finalValues));
   if (!validation || validation.valid !== true || !Array.isArray(validation.issues) || validation.issues.length) {
     add("invalid_final_group"); return rejected();
   }
   return {
-    status: writes.length ? "ready" : "already_applied", http_status: 200, conflicts: [], writes,
-    acceptance_manifest: {
+    status: acceptedManifest ? "already_applied" : "ready", http_status: 200, conflicts: [], writes,
+    acceptance_manifest: acceptedManifest ?? {
+      application_identity_sha256: applicationIdentity, base_editor_revision: current_editor_revision,
       attachment_id: attachment.attachment_id, attachment_revision: attachment.attachment_revision,
       binding_digest_sha256: digest, provenance, provenance_digest: provenanceDigest,
       mapped_manifest_sha256: attachment.mapped_manifest_sha256,

@@ -86,6 +86,13 @@ export function createDesktopPropertyTaxRouter({
 
   const router = express.Router();
 
+  // Workfiles and evidence remain private even when their source bytes are immutable.
+  // Apply before guards so success, denial, and error responses share the policy.
+  router.use("/api/accounts/:id/property-tax-protest", (_req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  });
+
   function organizationIdsForRead(req) {
     if (!req.mobileAuth) return [];
     return (req.mobileAuth.organizations || [])
@@ -480,7 +487,7 @@ export function createDesktopPropertyTaxRouter({
           "Content-Type": "application/pdf",
           "Content-Disposition": `inline; filename="${fileName}"`,
           ETag: `"${document.checksum_sha256}"`,
-          "Cache-Control": "private, max-age=86400, immutable",
+          "Cache-Control": "no-store",
           "X-Content-Type-Options": "nosniff",
         }).send(document.content);
       } catch (error) {

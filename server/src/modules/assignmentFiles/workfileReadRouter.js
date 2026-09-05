@@ -62,6 +62,13 @@ export function createAssignmentWorkfileReadRouter({
 
   const router = express.Router();
 
+  // Signed bytes are immutable, but permission to retrieve them is revocable.
+  // Scope this policy to workfiles so unrelated public routes retain their cache policy.
+  router.use("/api/accounts/:id/assignment-files/:fileId/workfile", (_req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  });
+
   /** Load all database-backed sections for one Custom Appraisal file. */
   router.get("/api/accounts/:id/assignment-files/:fileId/workfile", async (req, res) => {
     if (!requireWorkflowAccess(req, res, CUSTOM_APPRAISAL_WORKFLOW, "read")) return undefined;
@@ -154,7 +161,7 @@ export function createAssignmentWorkfileReadRouter({
       res.set({
         "Content-Type": "application/json; charset=utf-8",
         "Content-Disposition": `attachment; filename="${fileName}"`,
-        "Cache-Control": download.immutable ? "private, max-age=86400, immutable" : "no-store",
+        "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "X-HomeNode-Immutable": String(download.immutable),
       });
@@ -204,7 +211,7 @@ export function createAssignmentWorkfileReadRouter({
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${fileName}"`,
         "Content-Length": String(report.content.length),
-        "Cache-Control": report.immutable ? "private, max-age=86400, immutable" : "no-store",
+        "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "X-HomeNode-Immutable": String(report.immutable),
         "X-HomeNode-Report-Pages": String(report.page_count),

@@ -107,11 +107,13 @@ test("workfile and readiness reads bind canonical account, assignment, and acces
 
   const loadResponse = await fetch(endpoint(server.baseUrl));
   assert.equal(loadResponse.status, 200);
+  assert.equal(loadResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await loadResponse.json(), {
     ok: true, account_id: "CANONICAL_1", workfile,
   });
   const readinessResponse = await fetch(endpoint(server.baseUrl, "/readiness"));
   assert.equal(readinessResponse.status, 200);
+  assert.equal(readinessResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await readinessResponse.json(), {
     ok: true, account_id: "CANONICAL_1", readiness,
   });
@@ -151,6 +153,7 @@ test("assignment denials stop all four workfile services", async (context) => {
   for (const suffix of ["", "/readiness", "/download", "/report.pdf"]) {
     const response = await fetch(endpoint(server.baseUrl, suffix));
     assert.equal(response.status, 403);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), {
       error: "custom_appraisal_assignment_access_denied",
     });
@@ -158,7 +161,7 @@ test("assignment denials stop all four workfile services", async (context) => {
   assert.deepEqual(serviceCalls, []);
 });
 
-test("snapshot downloads preserve immutable headers, checksum, and safe filenames", async (context) => {
+test("signed snapshot downloads are no-store while preserving immutability, checksum, and filenames", async (context) => {
   const calls = [];
   const options = baseOptions({
     getSigningSecret: () => "secret-1",
@@ -182,7 +185,7 @@ test("snapshot downloads preserve immutable headers, checksum, and safe filename
     response.headers.get("content-disposition"),
     'attachment; filename="unsafe___file.json"',
   );
-  assert.equal(response.headers.get("cache-control"), "private, max-age=86400, immutable");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.equal(response.headers.get("x-homenode-immutable"), "true");
   assert.equal(response.headers.get("etag"), '"abc123"');
@@ -239,7 +242,7 @@ test("PDF reads pass the authorized snapshot and storage into fixed-layout gener
   assert.equal(response.headers.get("content-type"), "application/pdf");
   assert.equal(response.headers.get("content-disposition"), 'attachment; filename="report__.pdf"');
   assert.equal(response.headers.get("content-length"), "4");
-  assert.equal(response.headers.get("cache-control"), "private, max-age=86400, immutable");
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.equal(response.headers.get("x-content-type-options"), "nosniff");
   assert.equal(response.headers.get("x-homenode-immutable"), "true");
   assert.equal(response.headers.get("x-homenode-report-pages"), "7");
@@ -282,25 +285,100 @@ test("workfile read error contracts remain bounded and diagnostic-safe", async (
 
   const missingResponse = await fetch(endpoint(missing.baseUrl));
   assert.equal(missingResponse.status, 404);
+  assert.equal(missingResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await missingResponse.json(), { error: "assignment_file_not_found" });
   const invalidResponse = await fetch(endpoint(missing.baseUrl, "/readiness"));
   assert.equal(invalidResponse.status, 400);
+  assert.equal(invalidResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await invalidResponse.json(), { error: "invalid_readiness_state" });
   for (const suffix of ["/download", "/report.pdf"]) {
     const response = await fetch(endpoint(unavailable.baseUrl, suffix));
     assert.equal(response.status, 503);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), {
       error: "custom_appraisal_signing_secret_not_configured",
     });
   }
   const failedLoad = await fetch(endpoint(failed.baseUrl));
   assert.equal(failedLoad.status, 500);
+  assert.equal(failedLoad.headers.get("cache-control"), "no-store");
   assert.deepEqual(await failedLoad.json(), { error: "custom_appraisal_workfile_load_failed" });
   const failedReport = await fetch(endpoint(failed.baseUrl, "/report.pdf"));
   assert.equal(failedReport.status, 500);
+  assert.equal(failedReport.headers.get("cache-control"), "no-store");
   assert.deepEqual(await failedReport.json(), { error: "custom_appraisal_report_pdf_failed" });
   assert.equal(logs.length, 2);
   assert.ok(logs.every(([, error]) => error === diagnostic));
+});
+
+test("workfile conditional requests reauthorize after access changes and HEAD remains no-store", async (context) => {
+  let accessAllowed = true;
+  let authenticated = true;
+  let serviceCalls = 0;
+  const server = await startRouter(baseOptions({
+    requireWorkflowAccess(_req, res) {
+      if (authenticated) return true;
+      res.status(401).json({ error: "authentication_required" });
+      return false;
+    },
+    async requireAssignmentAccess(_req, res) {
+      if (accessAllowed) return true;
+      res.status(403).json({ error: "custom_appraisal_assignment_access_denied" });
+      return false;
+    },
+    getWorkfile: async () => { serviceCalls += 1; return { status: "signed" }; },
+    getReadiness: async () => { serviceCalls += 1; return { ready: true }; },
+    getDownload: async () => {
+      serviceCalls += 1;
+      return {
+        canonical_file_name: "signed.json", immutable: true,
+        checksum_sha256: "signed-checksum", snapshot: { status: "signed" },
+      };
+    },
+    getReportPdf: async () => {
+      serviceCalls += 1;
+      return {
+        canonical_file_name: "signed.pdf", immutable: true,
+        content: Buffer.from("%PDF-signed"), content_sha256: "pdf-checksum", page_count: 1,
+      };
+    },
+  }));
+  context.after(server.close);
+
+  for (const suffix of ["", "/readiness", "/download", "/report.pdf"]) {
+    accessAllowed = true;
+    authenticated = true;
+    const allowed = await fetch(endpoint(server.baseUrl, suffix));
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.headers.get("cache-control"), "no-store");
+    const etag = allowed.headers.get("etag");
+    assert.ok(etag);
+    await allowed.arrayBuffer();
+    const head = await fetch(endpoint(server.baseUrl, suffix), { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("cache-control"), "no-store");
+    assert.equal(await head.text(), "");
+    const authorizedCalls = serviceCalls;
+    accessAllowed = false;
+    for (const method of ["GET", "HEAD"]) {
+      const denied = await fetch(endpoint(server.baseUrl, suffix), {
+        method, headers: { "if-none-match": etag },
+      });
+      assert.equal(denied.status, 403);
+      assert.equal(denied.headers.get("cache-control"), "no-store");
+      await denied.arrayBuffer();
+    }
+    authenticated = false;
+    const anonymous = await fetch(endpoint(server.baseUrl, suffix), {
+      headers: { "if-none-match": etag },
+    });
+    assert.equal(anonymous.status, 401);
+    assert.equal(anonymous.headers.get("cache-control"), "no-store");
+    await anonymous.arrayBuffer();
+    assert.equal(serviceCalls, authorizedCalls);
+  }
+  const unrelated = await fetch(`${server.baseUrl}/api/accounts/account_1/assignment-files/41/workfile-public`);
+  assert.equal(unrelated.headers.get("cache-control"), null);
 });
 
 test("workfile read composition is explicit and inline handlers are absent", () => {

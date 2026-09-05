@@ -122,6 +122,12 @@ function sketchPool(options = {}) {
       if (/^(INSERT INTO|UPDATE) appraisal\.uad_sketches\b/.test(statement)) {
         at("save");
         assert.equal(parameters.length, 12);
+        const referencedParameters = [...new Set([...statement.matchAll(/\$(\d+)/g)].map((match) => Number(match[1])))].sort((a, b) => a - b);
+        assert.deepEqual(referencedParameters, parameters.map((_, index) => index + 1),
+          "every supplied SQL parameter must have a typed use; omitted slots can fail in PostgreSQL");
+        if (statement.startsWith("UPDATE")) {
+          assert.match(statement, /WHERE id = \$1 AND workfile_id = \$2 AND entity_id IS NOT DISTINCT FROM \$3::uuid RETURNING \*$/);
+        }
         savedRow = {
           id: parameters[0],
           workfile_id: parameters[1],
@@ -322,6 +328,15 @@ test("canonical sketch update preserves the existing optional expected-revision 
   const harness = sketchPool({ existing });
   const result = await saveUadSketch(harness.pool, WORKFILE_ID, input, ACTOR_ID);
   assertSavedContent(harness, result, input, { existing });
+});
+
+test("canonical root sketch update binds its null entity without changing sketch ownership", async () => {
+  const existing = existingSketch({ entity_id: null });
+  const input = sketchInput({ entity_id: null, expected_revision: existing.revision });
+  const harness = sketchPool({ existing, rootSketch: true });
+  const result = await saveUadSketch(harness.pool, WORKFILE_ID, input, ACTOR_ID);
+  assertSavedContent(harness, result, input, { existing });
+  assert.equal(harness.calls.some((call) => call.stage === "entity"), false);
 });
 
 test("a root sketch retains default payload, actor and source behavior and ignores other-workfile signatures", async () => {

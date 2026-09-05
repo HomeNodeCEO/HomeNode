@@ -139,7 +139,7 @@ export async function saveUadSketch(pool, workfileIdValue, input = {}, actorUser
                   calculated_areas = $7::jsonb, area_overrides = $8::jsonb,
                   rendered_asset_id = $9, source = $10, updated_by_user_id = $11,
                   revision = $12, updated_at = now()
-            WHERE id = $1 AND workfile_id = $2
+            WHERE id = $1 AND workfile_id = $2 AND entity_id IS NOT DISTINCT FROM $3::uuid
             RETURNING *`,
           parameters,
         )

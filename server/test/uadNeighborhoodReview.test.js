@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assessmentEvidenceDigest, buildNeighborhoodAssessment } from "../src/services/neighborhoodAssessment/contract.js";
+import { assessmentEvidenceDigest, buildNeighborhoodAssessment,
+  buildNeighborhoodAttachment } from "../src/services/neighborhoodAssessment/contract.js";
+import { buildNeighborhoodApplicationReceipt, neighborhoodMappedManifestDigest,
+  prepareNeighborhoodApplicationGroup } from "../src/services/neighborhoodAssessment/applicationGroup.js";
 import { buildUadNeighborhoodCandidate, prepareUadNeighborhoodApply, buildUadNeighborhoodReceipt,
   projectUadNeighborhoodExport } from "../src/modules/uad/neighborhoodReview.js";
 import { uadNeighborhoodReviewFixture } from "./fixtures/uadNeighborhoodReviewFixture.js";
@@ -34,6 +37,86 @@ function acceptedFixture(options) {
   input.target.attachment_revision++;
   input.accepted_receipt = receipt;
   return input;
+}
+
+function smallSampleFixture(count, low, median, high) {
+  const input = uadNeighborhoodReviewFixture();
+  rebind(input, assessment => {
+    const population = assessment.populations.find(item => item.id === "sales-a");
+    Object.assign(population, { member_count: count, property_link_count: count, unique_property_count: count,
+      member_set_sha256: assessmentEvidenceDigest(Array.from({ length: count }, (_, index) => `sale-${index}`)) });
+    for (const statistic of assessment.statistics) {
+      statistic.observed_count = count; statistic.denominator_count = count;
+      statistic.value = { "sale-count": count, "lowest-price": low,
+        "median-sale-price": median, "highest-price": high }[statistic.id];
+    }
+  });
+  input.market_context.population_ref.member_set_sha256 = input.assessment.populations.find(item => item.id === "sales-a").member_set_sha256;
+  return input;
+}
+
+// Reconstruct a historical receipt with all shared bindings intact, rather than
+// corrupting an outer checksum. This test-only fixture models the former UAD
+// order-only price check; it does not bypass or replace any production validator.
+function historicalSmallSampleFixture(count, low, median, high) {
+  const input = smallSampleFixture(count, low, median, high);
+  const candidate = clone(input.candidate);
+  candidate.group = input.assessment.application_group;
+  const values = { "market_total_sales:3000.0026": count, "market_total_sales:3000.0028": low,
+    "market_total_sales:3000.0029": median, "market_total_sales:3000.0027": high };
+  candidate.suggestions = candidate.suggestions.map(item => ({ ...item,
+    application_group_id: candidate.group.id, value: values[item.target_key] ?? item.value }));
+  Object.assign(candidate.evidence, { assessment_digest_sha256: input.assessment.evidence_digest_sha256,
+    market_context: clone(input.market_context),
+    populations: input.assessment.populations.filter(item => input.assessment.required_population_ids.includes(item.id)),
+    statistics: candidate.evidence.statistics.map(item => input.assessment.statistics.find(statistic => statistic.id === item.id)),
+    sources: input.assessment.source_snapshots.filter(item => candidate.group.source_refs.includes(item.id)) });
+  candidate.attachment = buildNeighborhoodAttachment(input.assessment, { ...input.target,
+    source_digest_sha256: assessmentEvidenceDigest(candidate.evidence),
+    mapped_manifest_sha256: neighborhoodMappedManifestDigest(candidate.suggestions),
+    mapper_version: candidate.mapper_version });
+  candidate.candidate_digest_sha256 = assessmentEvidenceDigest({
+    application_identity_sha256: candidate.attachment.application_identity_sha256, mapper_version: candidate.mapper_version });
+  input.candidate = candidate;
+  Object.assign(input.request, { expected_candidate_digest_sha256: candidate.candidate_digest_sha256,
+    expected_binding_digest_sha256: candidate.attachment.binding_digest_sha256 });
+  const historicalValidator = finalValues => {
+    const mapped = Object.fromEntries(finalValues.map(item => [item.target_key, item.value]));
+    assert.equal(finalValues.length, 7);
+    assert.ok(mapped["market_total_sales:3000.0028"] <= mapped["market_total_sales:3000.0029"]);
+    assert.ok(mapped["market_total_sales:3000.0029"] <= mapped["market_total_sales:3000.0027"]);
+    return { valid: true, issues: [] };
+  };
+  const sharedInput = { attachment: candidate.attachment, group: candidate.group, suggestions: candidate.suggestions,
+    selected_ids: candidate.suggestions.map(item => item.id),
+    expected_binding_digest: candidate.attachment.binding_digest_sha256,
+    current_application_identity_sha256: candidate.attachment.application_identity_sha256,
+    current_editor_revision: input.target.editor_revision, existing_values: input.existing_values };
+  const plan = prepareNeighborhoodApplicationGroup({ ...sharedInput, validate_final_group: historicalValidator });
+  assert.equal(plan.status, "ready", JSON.stringify(plan));
+  const acceptedRevision = input.target.editor_revision + 1;
+  const body = { receipt_version: 1, candidate,
+    core_receipt: buildNeighborhoodApplicationReceipt(plan, acceptedRevision) };
+  input.accepted_receipt = { ...body, receipt_digest_sha256: assessmentEvidenceDigest(body) };
+  input.existing_values = candidate.suggestions.map(item => ({ target_key: item.target_key,
+    target_exists: true, populated: true, value: item.value,
+    provenance_digest: plan.acceptance_manifest.provenance_digest }));
+  input.target.editor_revision = acceptedRevision;
+  input.target.attachment_revision++;
+  let reachedFinalValidator = false;
+  const sharedReplay = prepareNeighborhoodApplicationGroup({ ...sharedInput,
+    current_editor_revision: acceptedRevision, existing_values: input.existing_values,
+    accepted_application: body.core_receipt, validate_final_group: finalValues => {
+      reachedFinalValidator = true;
+      return historicalValidator(finalValues);
+    } });
+  // These assertions prove that checksums, provenance, identities, occupancy and
+  // receipt replay all pass before the format-specific arithmetic is considered.
+  assert.equal(reachedFinalValidator, true);
+  assert.equal(sharedReplay.status, "already_applied", JSON.stringify(sharedReplay));
+  assert.deepEqual(sharedReplay.writes, []);
+  assert.deepEqual(sharedReplay.acceptance_manifest, plan.acceptance_manifest);
+  return { input, plan, acceptedRevision };
 }
 
 test("maps seven canonical Section 17 fields with no preselection, no unrelated conclusions", () => {
@@ -344,17 +427,7 @@ test("one-sale and two-sale price summaries must obey exact sample arithmetic", 
     [2, 300000.01, 300000.02, 300000.02, false],
     [2, 300000.01, (300000.01 + 300000.02) / 2, 300000.02, true],
   ]) {
-    const input = uadNeighborhoodReviewFixture();
-    rebind(input, a => {
-      const population = a.populations.find(p => p.id === "sales-a");
-      Object.assign(population, { member_count: count, property_link_count: count, unique_property_count: count,
-        member_set_sha256: assessmentEvidenceDigest(Array.from({ length: count }, (_, index) => `sale-${index}`)) });
-      for (const stat of a.statistics) {
-        stat.observed_count = count; stat.denominator_count = count;
-        stat.value = { "sale-count": count, "lowest-price": low, "median-sale-price": median, "highest-price": high }[stat.id];
-      }
-    });
-    input.market_context.population_ref.member_set_sha256 = input.assessment.populations.find(p => p.id === "sales-a").member_set_sha256;
+    const input = smallSampleFixture(count, low, median, high);
     const candidate = buildUadNeighborhoodCandidate(input);
     assert.equal(candidate.status, valid ? "ready" : "incomplete", JSON.stringify({ count, low, median, high, candidate }));
     if (!valid) {
@@ -365,5 +438,54 @@ test("one-sale and two-sale price summaries must obey exact sample arithmetic", 
       input.request.expected_binding_digest_sha256 = candidate.attachment.binding_digest_sha256;
       assert.equal(prepareUadNeighborhoodApply(input).status, "ready");
     }
+  }
+});
+
+test("fully bound historical one-sale and two-sale receipts fail current receipt construction, export and replay", () => {
+  for (const [count, low, median, high] of [
+    [1, 300000, 330000, 390000], [2, 300000, 330000, 390000],
+    [2, 300000.01, 300000.02, 300000.02],
+  ]) {
+    const { input, plan, acceptedRevision } = historicalSmallSampleFixture(count, low, median, high);
+    const before = clone(input);
+    assert.throws(() => buildUadNeighborhoodReceipt(input.candidate, plan, acceptedRevision),
+      /invalid_uad_neighborhood_receipt/);
+    const exported = projectUadNeighborhoodExport({ receipt: input.accepted_receipt,
+      target: input.target, existing_values: input.existing_values });
+    assert.equal(exported.status, "conflict");
+    // Not changed_uad_neighborhood_receipt: all receipt/manifest checks passed;
+    // the shared replay can no longer satisfy the current UAD final-group rule.
+    assert.deepEqual(exported.issues, [{ code: "export_values_or_receipt_changed" }]);
+    assert.deepEqual(exported.fields, []);
+    assert.equal(exported.provenance, null);
+    rejected(prepareUadNeighborhoodApply(input), "neighborhood_candidate_incomplete");
+    assert.deepEqual(input, before);
+  }
+});
+
+test("valid historical small-sample receipts retain exact current construction, replay and export", () => {
+  for (const [count, low, median, high] of [
+    [1, 330000, 330000, 330000], [2, 300000, 345000, 390000],
+    [2, 300000.01, (300000.01 + 300000.02) / 2, 300000.02],
+  ]) {
+    const { input, plan, acceptedRevision } = historicalSmallSampleFixture(count, low, median, high);
+    const constructed = buildUadNeighborhoodReceipt(input.candidate, plan, acceptedRevision);
+    assert.deepEqual(constructed, input.accepted_receipt);
+    const replay = prepareUadNeighborhoodApply(input);
+    assert.equal(replay.status, "already_applied", JSON.stringify(replay));
+    assert.deepEqual(replay.writes, []);
+    assert.deepEqual(replay.acceptance_manifest, plan.acceptance_manifest);
+    const exported = projectUadNeighborhoodExport({ receipt: input.accepted_receipt,
+      target: input.target, existing_values: input.existing_values });
+    assert.equal(exported.status, "ready", JSON.stringify(exported));
+    assert.equal(exported.accepted_revision, acceptedRevision);
+    assert.equal(exported.revision, acceptedRevision);
+    assert.equal(exported.fields.length, 7);
+    const values = Object.fromEntries(exported.fields.map(item => [item.field_key, item.value]));
+    assert.equal(values["market_total_sales:3000.0026"], count);
+    assert.equal(values["market_total_sales:3000.0028"], low);
+    assert.equal(values["market_total_sales:3000.0029"], median);
+    assert.equal(values["market_total_sales:3000.0027"], high);
+    assert.equal(exported.receipt_digest_sha256, constructed.receipt_digest_sha256);
   }
 });

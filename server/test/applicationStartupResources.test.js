@@ -67,6 +67,10 @@ test("application startup resources register the complete readiness inventory", 
 
   assert.equal(databaseCalls.length, 1);
   assert.match(databaseCalls[0], /CREATE TABLE IF NOT EXISTS app\.signups/);
+  assert.match(databaseCalls[0], /ADD COLUMN IF NOT EXISTS submission_id uuid/);
+  assert.match(databaseCalls[0], /ADD COLUMN IF NOT EXISTS property_tax_file_id uuid/);
+  assert.match(databaseCalls[0], /ADD COLUMN IF NOT EXISTS signature_png bytea/);
+  assert.match(databaseCalls[0], /signups_submission_id_uidx/);
   assert.deepEqual(startupInitialization.snapshot(), {
     status: "ready",
     required: {

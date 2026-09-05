@@ -80,5 +80,19 @@ test('the signup form boundary contains no explicit any or raw submission fetch'
   assert.doesNotMatch(source, /\bas any\b|:\s*any\b|<any>|Record<string,\s*any>/);
   assert.doesNotMatch(source, /fetch\(api\.makeUrl\('\/api\/signup\/email'/);
   assert.match(source, /api\.fetchJSON/);
+  assert.match(source, /propertyTaxFileId/);
+  assert.match(source, /clientSubmissionId/);
+  assert.match(source, /signatureAttestation: true/);
+  assert.match(source, /signatureDataUrl: sigUrl/);
+  assert.match(source, /authorization: fields/);
+  assert.match(source, /pending_manual_verification/);
+  assert.doesNotMatch(source, /URL\.createObjectURL/);
   assert.match(source, /legalDescriptionFromDetail\(det\) \|\| legalFromDetail/);
+});
+
+test('authorization navigation binds the selected Property Tax workfile', async () => {
+  const source = await readFile(new URL('../src/pages/PropertyTaxProtest.tsx', import.meta.url), 'utf8');
+  assert.match(source, /canonicalFile\.tax_protest_file_id/);
+  assert.match(source, /propertyTaxFileId=/);
+  assert.match(source, /Open a protest file before authorization/);
 });

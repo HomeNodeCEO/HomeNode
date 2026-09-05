@@ -207,7 +207,31 @@ test("rejects missing, tampered, expired, or weakly signed acknowledgment tokens
     /uad_signature_acknowledgment_required/,
   );
   assert.throws(
-    () => verifyUadSignatureAcknowledgmentToken(`${token.slice(0, -1)}x`, expected, secret, { now }),
+    () => verifyUadSignatureAcknowledgmentToken(
+      `${token.slice(0, -1)}${token.endsWith("x") ? "y" : "x"}`,
+      expected,
+      secret,
+      { now },
+    ),
+    /uad_signature_acknowledgment_invalid/,
+  );
+  const [body, signature] = token.split(".");
+  const base64UrlAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const signatureLastIndex = base64UrlAlphabet.indexOf(signature.at(-1));
+  assert.ok(signatureLastIndex >= 0);
+  assert.equal(signatureLastIndex % 4, 0);
+  const equivalentNonCanonicalSignature = `${signature.slice(0, -1)}${base64UrlAlphabet[signatureLastIndex + 1]}`;
+  assert.deepEqual(
+    Buffer.from(equivalentNonCanonicalSignature, "base64url"),
+    Buffer.from(signature, "base64url"),
+  );
+  assert.throws(
+    () => verifyUadSignatureAcknowledgmentToken(
+      `${body}.${equivalentNonCanonicalSignature}`,
+      expected,
+      secret,
+      { now },
+    ),
     /uad_signature_acknowledgment_invalid/,
   );
   assert.throws(

@@ -34,6 +34,9 @@ async function withServer(pool, callback, securityOverrides = {}, routerOverride
     ...(routerOverrides.applyCompletionSuggestions
       ? { applyCompletionSuggestions: routerOverrides.applyCompletionSuggestions }
       : {}),
+    ...(routerOverrides.createWorkfile
+      ? { createWorkfile: routerOverrides.createWorkfile }
+      : {}),
   }));
   app.use("/api/uad", uadBodyParserErrorHandler);
   const server = await new Promise((resolve) => {
@@ -277,6 +280,45 @@ test("UAD subject summaries reject authenticated identities without a UAD role",
     assert.equal(response.status, 403);
     assert.deepEqual(await response.json(), { error: "uad_access_denied" });
     assert.equal(pool.accessQueries.length, 0);
+  });
+});
+
+test("UAD creation binds the public URL account to authenticated organization scope", async () => {
+  const pool = securityPool();
+  const creationCalls = [];
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/uad/accounts/${encodeURIComponent("PUBLIC-ACCOUNT-1")}/workfiles`,
+      {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          organization_id: ORGANIZATION_ID,
+          account_id: "forged-body-account",
+          account_scope: "forged_private_scope",
+        }),
+      },
+    );
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).workfile.account_id, "PUBLIC-ACCOUNT-1");
+  }, {}, {
+    createWorkfile: async (receivedPool, input) => {
+      creationCalls.push({ receivedPool, input });
+      return { id: WORKFILE_ID, account_id: input.account_id };
+    },
+  });
+  assert.equal(creationCalls.length, 1);
+  assert.equal(creationCalls[0].receivedPool, pool);
+  assert.deepEqual({
+    account_id: creationCalls[0].input.account_id,
+    account_scope: creationCalls[0].input.account_scope,
+    organization_id: creationCalls[0].input.organization_id,
+    actor_user_id: creationCalls[0].input.actor_user_id,
+  }, {
+    account_id: "PUBLIC-ACCOUNT-1",
+    account_scope: "public_cadastral_catalog",
+    organization_id: ORGANIZATION_ID,
+    actor_user_id: USER_ID,
   });
 });
 

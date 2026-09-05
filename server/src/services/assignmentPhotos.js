@@ -426,10 +426,14 @@ export async function uploadAssignmentPhotoObject(pool, storage, {
   ensureStorage(storage);
   const photoId = normalizeUuid(photoValue, "invalid_assignment_photo_id");
   const objectId = normalizeUuid(objectValue, "invalid_assignment_photo_object_id");
-  const contentBuffer = Buffer.isBuffer(content) ? content : null;
-  if (!contentBuffer) {
+  if (
+    typeof content !== "object"
+    || Array.isArray(content)
+    || !Buffer.isBuffer(content)
+  ) {
     throw new Error("invalid_assignment_photo_upload_body");
   }
+  const contentBuffer = content;
   const byteSize = Buffer.byteLength(contentBuffer);
   if (byteSize < 1 || byteSize > MAX_PHOTO_BYTES) throw new Error("invalid_assignment_photo_upload_body");
   const report = await assignmentReport(pool, accountId, assignmentFileId);

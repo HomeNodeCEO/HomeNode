@@ -171,12 +171,20 @@ export function createAssignmentPhotoRouter({
       try {
         const assignment = await resolveAssignment(req, res, "write");
         if (!assignment) return;
+        const content = req.body;
+        if (
+          typeof content !== "object"
+          || Array.isArray(content)
+          || !Buffer.isBuffer(content)
+        ) {
+          return res.status(400).json({ error: "invalid_assignment_photo_upload_body" });
+        }
         const uploaded = await uploadPhotoObject(pool, objectStorage, {
           ...assignment,
           photoId: req.params.photoId,
           objectId: req.params.objectId,
           contentType: req.get("content-type"),
-          content: req.body,
+          content,
         });
         return res.json({ ok: true, uploaded });
       } catch (error) {

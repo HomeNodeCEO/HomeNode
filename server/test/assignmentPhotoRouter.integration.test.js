@@ -237,6 +237,28 @@ test("same-application object uploads retain the bounded raw image contract", as
   assert.deepEqual([...inputs[0][2].content], [...content]);
 });
 
+test("same-application object uploads reject JSON body type confusion before mutation", async (context) => {
+  let uploads = 0;
+  const server = await startRouter(createAssignmentPhotoRouter(options({
+    uploadPhotoObject: async () => {
+      uploads += 1;
+      return { object_id: "object-1" };
+    },
+  })));
+  context.after(server.close);
+  const url = `${server.baseUrl}/api/accounts/42/assignment-files/7/photos/photo-1/objects/object-1/content`;
+  for (const body of [[], { type: "Buffer", data: [1, 2, 3, 4] }]) {
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "invalid_assignment_photo_upload_body" });
+  }
+  assert.equal(uploads, 0);
+});
+
 test("verify, metadata, and removal routes preserve exact mutation inputs", async (context) => {
   const calls = [];
   const server = await startRouter(createAssignmentPhotoRouter(options({

@@ -209,6 +209,32 @@ test("same-application fallback rejects MIME-spoofed photo bytes before storage"
   }), /invalid_assignment_photo_upload/);
 });
 
+test("same-application fallback rejects non-Buffer bodies before data or storage access", async () => {
+  const pool = {
+    async query() {
+      assert.fail("parser-confused bodies must not reach PostgreSQL");
+    },
+  };
+  const storage = {
+    configured: true,
+    bucket: "private",
+    putObject: async () => assert.fail("parser-confused bodies must not reach object storage"),
+  };
+  const baseInput = {
+    accountId: "26355500170360000",
+    assignmentFileId: 91,
+    photoId: "20000000-0000-4000-8000-000000000002",
+    objectId: "20000000-0000-4000-8000-000000000003",
+    contentType: "image/png",
+  };
+  for (const content of [PNG.toString("base64"), [...PNG], new Uint8Array(PNG), { body: PNG }]) {
+    await assert.rejects(
+      () => uploadAssignmentPhotoObject(pool, storage, { ...baseInput, content }),
+      /invalid_assignment_photo_upload_body/,
+    );
+  }
+});
+
 test("same-application fallback cannot overwrite verified appraisal evidence", async () => {
   let objectQuery = "";
   const pool = {

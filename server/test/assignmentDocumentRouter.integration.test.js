@@ -8,13 +8,29 @@ import { createAssignmentDocumentRouter } from "../src/modules/assignmentFiles/d
 
 const objectStorage = { configured: true };
 const ocrProvider = { configured: true, provider: async () => ({ text: "" }) };
+const identity = {
+  userId: "appraiser-1",
+  displayName: "Appraiser One",
+  email: "appraiser@example.test",
+};
 
 function createPool(query = async () => ({ rows: [] })) {
   return { query };
 }
 
+function accessibleDocumentPool() {
+  return createPool(async () => ({ rows: [{
+    id: 1,
+    assignment_file_id: 7,
+    account_id: "canonical-42",
+    organization_id: "org-1",
+    assigned_appraiser_user_id: "appraiser-1",
+    supervisory_appraiser_user_id: null,
+  }] }));
+}
+
 function options(overrides = {}) {
-  const pool = overrides.pool || createPool();
+  const pool = overrides.pool || accessibleDocumentPool();
   return {
     pool,
     objectStorage,
@@ -42,7 +58,7 @@ function options(overrides = {}) {
   };
 }
 
-async function startRouter(router, { mobileAuth } = {}) {
+async function startRouter(router, { mobileAuth = identity } = {}) {
   const app = express();
   if (mobileAuth !== undefined) {
     app.use((req, _res, next) => {
@@ -74,7 +90,7 @@ function jsonRequest(method, body = {}) {
   };
 }
 
-test("document listing preserves rollout and enforced assignment scope", async (context) => {
+test("document listing requires an exact assignment scope in every authentication mode", async (context) => {
   const rolloutInputs = [];
   const rollout = await startRouter(createAssignmentDocumentRouter(options({
     listDocuments: async (pool, input) => {
@@ -84,7 +100,12 @@ test("document listing preserves rollout and enforced assignment scope", async (
   })));
   context.after(rollout.close);
 
-  const rolloutResponse = await fetch(`${rollout.baseUrl}/api/accounts/%2042%20/documents`);
+  const missingRolloutScope = await fetch(`${rollout.baseUrl}/api/accounts/%2042%20/documents`);
+  assert.equal(missingRolloutScope.status, 400);
+  assert.deepEqual(await missingRolloutScope.json(), { error: "assignment_file_required" });
+  const rolloutResponse = await fetch(
+    `${rollout.baseUrl}/api/accounts/%2042%20/documents?assignment_file_id=7`,
+  );
   assert.equal(rolloutResponse.status, 200);
   assert.deepEqual(await rolloutResponse.json(), {
     ok: true,
@@ -93,8 +114,8 @@ test("document listing preserves rollout and enforced assignment scope", async (
   });
   assert.deepEqual(rolloutInputs[0][1], {
     accountId: "canonical-42",
-    assignmentFileId: null,
-    includePropertyEvidence: true,
+    assignmentFileId: "file-7",
+    includePropertyEvidence: false,
   });
 
   const enforcedInputs = [];
@@ -223,7 +244,10 @@ test("document access fails closed before reads in enforced mode", async (contex
     },
   });
 
-  const anonymous = await startRouter(createAssignmentDocumentRouter(routerOptions));
+  const anonymous = await startRouter(
+    createAssignmentDocumentRouter(routerOptions),
+    { mobileAuth: null },
+  );
   context.after(anonymous.close);
   const anonymousResponse = await fetch(`${anonymous.baseUrl}/api/documents/3`);
   assert.equal(anonymousResponse.status, 401);
@@ -251,7 +275,7 @@ test("document access fails closed before reads in enforced mode", async (contex
 test("document content retains immutable PDF headers and private storage input", async (context) => {
   const inputs = [];
   const content = Buffer.from("%PDF-private-evidence");
-  const pool = createPool();
+  const pool = accessibleDocumentPool();
   const server = await startRouter(createAssignmentDocumentRouter(options({
     pool,
     getDocument: async (receivedPool, id, input) => {
@@ -282,7 +306,7 @@ test("document content retains immutable PDF headers and private storage input",
 
 test("delete and reprocess preserve storage, OCR, and no-store contracts", async (context) => {
   const calls = [];
-  const pool = createPool();
+  const pool = accessibleDocumentPool();
   const server = await startRouter(createAssignmentDocumentRouter(options({
     pool,
     deleteDocument: async (...args) => {
@@ -317,7 +341,7 @@ test("delete and reprocess preserve storage, OCR, and no-store contracts", async
 
 test("document review routes preserve exact appraiser decisions", async (context) => {
   const calls = [];
-  const pool = createPool();
+  const pool = accessibleDocumentPool();
   const reviewedDocument = { id: 5, candidates: [] };
   const server = await startRouter(createAssignmentDocumentRouter(options({
     pool,
@@ -381,7 +405,7 @@ test("document review routes preserve exact appraiser decisions", async (context
     candidateValues: { client_name: "Client" },
   };
   assert.deepEqual(calls, [
-    ["override", pool, { ...serviceInput, actorUserId: null }],
+    ["override", pool, { ...serviceInput, actorUserId: "appraiser-1" }],
     ["get", pool, 5],
     ["confirm", pool, serviceInput],
     ["get", pool, 5],
@@ -480,10 +504,14 @@ test("document routes retain stable client, conflict, unavailable, and bounded e
   context.after(server.close);
 
   const cases = [
-    [fetch(`${server.baseUrl}/api/accounts/42/documents`), 404, "account_not_found"],
+    [fetch(`${server.baseUrl}/api/accounts/42/documents?assignment_file_id=7`), 404,
+      "account_not_found"],
     [fetch(`${server.baseUrl}/api/accounts/42/documents`, {
       method: "POST",
-      headers: { "content-type": "application/pdf" },
+      headers: {
+        "content-type": "application/pdf",
+        "x-assignment-file-id": "7",
+      },
       body: Uint8Array.from([1]),
     }), 400, "document_not_pdf"],
     [fetch(`${server.baseUrl}/api/documents/5`), 500, "assignment_document_lookup_failed"],

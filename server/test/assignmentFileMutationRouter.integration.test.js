@@ -56,12 +56,13 @@ function baseOptions(database, overrides = {}) {
     propertyEnrichmentReady: Promise.resolve(),
     ensureAssignmentFilesAvailable: async () => {},
     ensureCustomAppraisalWorkfilesAvailable: async () => {},
+    requireWorkflowAccess: () => true,
     requireEditor: () => true,
     requireAssignmentAccess: async () => true,
     authenticationRequired: false,
     decideAccess: () => true,
     resolveAccountId: async (_client, value) => value.toUpperCase(),
-    hasPermission: () => false,
+    hasPermission: (_auth, _workflow, _permission, organizationId) => organizationId === "org-1",
     presentAssignmentFile: (row) => row,
     registerOriginalReport: async () => {
       throw new Error("unexpected_original_report_registration");
@@ -71,7 +72,7 @@ function baseOptions(database, overrides = {}) {
   };
 }
 
-async function startRouter(options, auth = null) {
+async function startRouter(options, auth = identity) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   if (auth) {
@@ -320,7 +321,7 @@ test("inherited creation scopes the source and registry lineage to the selected 
   }]);
 });
 
-test("rollout creation preserves latest and legacy inheritance plus manual-value mirroring", async (context) => {
+test("rollout creation remains organization-scoped and does not mirror legacy values", async (context) => {
   const database = createDatabase(successfulCreateHandler({ legacyDetails: { legacy: true } }));
   const server = await startRouter(baseOptions(database));
   context.after(server.close);
@@ -329,19 +330,12 @@ test("rollout creation preserves latest and legacy inheritance plus manual-value
   assert.equal(response.status, 201);
   const insert = database.queries.find(({ sql }) => sql.includes("INSERT INTO app.assignment_files ("));
   assert.deepEqual(insert.params.slice(0, 5), [
-    "ACCOUNT_1", "F-3", '{"legacy":true}', null, "HomeNode editor",
+    "ACCOUNT_1", "F-3", "{}", null, "Authenticated Appraiser",
   ]);
   const mirror = database.queries.find(({ sql }) => (
     sql.includes("INSERT INTO app.property_attribute_manual_values")
   ));
-  assert.deepEqual(mirror.params, [
-    "ACCOUNT_1",
-    "report.assignment_details",
-    '{"legacy":true}',
-    "Current assignment file F-3",
-    "HomeNode editor",
-    3,
-  ]);
+  assert.equal(mirror, undefined);
 });
 
 test("creation rolls back missing accounts, invalid inheritance, duplicate numbers, and validation errors", async (context) => {
@@ -389,7 +383,7 @@ test("creation rolls back missing accounts, invalid inheritance, duplicate numbe
   }
 });
 
-test("assignment updates authorize the canonical file before locking and retain audit mirrors", async (context) => {
+test("assignment updates authorize the canonical file and derive audit identity", async (context) => {
   const database = createDatabase(successfulUpdateHandler({
     id: 41,
     file_number: "F-1",
@@ -416,10 +410,10 @@ test("assignment updates authorize the canonical file before locking and retain 
   const beginIndex = database.queries.findIndex(({ sql }) => sql === "BEGIN");
   assert.ok(beginIndex >= 0);
   const update = database.queries.find(({ sql }) => sql.includes("UPDATE app.assignment_files"));
-  assert.deepEqual(update.params, ['{"changed":true}', "Reviewer", 3, 41]);
+  assert.deepEqual(update.params, ['{"changed":true}', "Authenticated Appraiser", 3, 41]);
   const history = database.queries.find(({ sql }) => sql.includes("INSERT INTO app.assignment_file_history"));
   assert.deepEqual(history.params, [
-    41, "ACCOUNT_1", "F-1", '{"changed":true}', "Reviewer", 3,
+    41, "ACCOUNT_1", "F-1", '{"changed":true}', "Authenticated Appraiser", 3,
   ]);
   assert.equal(database.queries.at(-1).sql, "COMMIT");
   assert.equal(database.releaseCalls, 1);

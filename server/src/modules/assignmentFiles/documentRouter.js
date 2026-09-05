@@ -83,7 +83,6 @@ export function createAssignmentDocumentRouter({
   const router = express.Router();
 
   async function requireDocumentAccess(req, res, documentIdValue, permission) {
-    if (!authenticationRequired) return true;
     if (!req.mobileAuth) {
       res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
       return false;
@@ -117,7 +116,6 @@ export function createAssignmentDocumentRouter({
   }
 
   function authenticatedReviewer(req) {
-    if (!req.mobileAuth) return req.body?.reviewer;
     return req.mobileAuth.displayName || req.mobileAuth.email || req.mobileAuth.userId;
   }
 
@@ -129,15 +127,14 @@ export function createAssignmentDocumentRouter({
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
-      if (authenticationRequired && req.mobileAuth && !assignmentFileId) {
+      if (!assignmentFileId) {
         return res.status(400).json({ error: "assignment_file_required" });
       }
-      if (assignmentFileId
-          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
+      if (!await requireAssignmentAccess(req, res, accountId, assignmentFileId, "read")) return;
       const documents = await listDocuments(pool, {
         accountId,
         assignmentFileId,
-        includePropertyEvidence: !(authenticationRequired && req.mobileAuth),
+        includePropertyEvidence: false,
       });
       return res.json({ ok: true, account_id: accountId, documents });
     } catch (error) {
@@ -155,30 +152,28 @@ export function createAssignmentDocumentRouter({
     }),
     async (req, res) => {
       const requestedId = String(req.params.id || "").trim();
+      if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
       if (!requireEditor(req, res)) return;
       try {
         await ensureAvailable();
         const accountId = await resolveAccountId(pool, requestedId);
         const assignmentFileId = normalizeFileId(req.get("x-assignment-file-id"));
-        if (authenticationRequired && req.mobileAuth && !assignmentFileId) {
+        if (!assignmentFileId) {
           return res.status(400).json({ error: "assignment_file_required" });
         }
-        let documentOrganizationId = null;
-        if (assignmentFileId) {
-          const { rows } = await pool.query(
-            "SELECT organization_id FROM app.assignment_files WHERE id = $1 AND account_id = $2",
-            [assignmentFileId, accountId],
-          );
-          if (!rows.length) return res.status(400).json({ error: "invalid_assignment_file" });
-          if (!await requireAssignmentAccess(
-            req,
-            res,
-            accountId,
-            assignmentFileId,
-            "write",
-          )) return;
-          documentOrganizationId = rows[0].organization_id || null;
-        }
+        const { rows } = await pool.query(
+          "SELECT organization_id FROM app.assignment_files WHERE id = $1 AND account_id = $2",
+          [assignmentFileId, accountId],
+        );
+        if (!rows.length) return res.status(400).json({ error: "invalid_assignment_file" });
+        if (!await requireAssignmentAccess(
+          req,
+          res,
+          accountId,
+          assignmentFileId,
+          "write",
+        )) return;
+        const documentOrganizationId = rows[0].organization_id || null;
         const document = await createDocument(pool, {
           organizationId: documentOrganizationId,
           accountId,
@@ -256,6 +251,7 @@ export function createAssignmentDocumentRouter({
 
   /** Permanently remove an assignment PDF and its extracted private evidence. */
   router.delete("/api/documents/:id", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
     if (!requireEditor(req, res)) return;
     try {
       await ensureAvailable();
@@ -277,6 +273,7 @@ export function createAssignmentDocumentRouter({
 
   /** Retry text extraction after a worker interruption or parser improvement. */
   router.post("/api/documents/:id/reprocess", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
     if (!requireEditor(req, res)) return;
     try {
       await ensureAvailable();
@@ -303,6 +300,7 @@ export function createAssignmentDocumentRouter({
 
   /** Record a subject mismatch override and confirm visible engagement suggestions. */
   router.post("/api/documents/:id/subject-address-override", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "sign")) return;
     if (!requireEditor(req, res)) return;
     try {
       await ensureAvailable();
@@ -337,13 +335,14 @@ export function createAssignmentDocumentRouter({
 
   /** Confirm every visible machine suggestion in one audited document review. */
   router.post("/api/documents/:id/confirm-all", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
     if (!requireEditor(req, res)) return;
     try {
       await ensureAvailable();
       if (!await requireDocumentAccess(req, res, req.params.id, "write")) return;
       const result = await confirmCandidates(pool, {
         documentId: req.params.id,
-        reviewer: req.body?.reviewer,
+        reviewer: authenticatedReviewer(req),
         candidateValues: req.body?.candidate_values,
       });
       const document = await getDocument(pool, result.document_id);
@@ -369,6 +368,7 @@ export function createAssignmentDocumentRouter({
 
   /** Confirm or reject one machine suggestion without mutating the source PDF. */
   router.patch("/api/documents/:documentId/candidates/:candidateId", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
     if (!requireEditor(req, res)) return;
     try {
       await ensureAvailable();
@@ -378,7 +378,7 @@ export function createAssignmentDocumentRouter({
         candidateId: req.params.candidateId,
         reviewStatus: req.body?.review_status,
         confirmedValue: req.body?.confirmed_value,
-        reviewer: req.body?.reviewer,
+        reviewer: authenticatedReviewer(req),
       });
       return res.json({ ok: true, candidate });
     } catch (error) {

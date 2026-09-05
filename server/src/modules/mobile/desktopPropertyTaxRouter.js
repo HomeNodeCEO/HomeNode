@@ -17,6 +17,7 @@ import {
   saveDesktopPropertyTaxFile,
 } from "./desktopPropertyTax.js";
 import { savePropertyTaxInspectionSketch } from "./desktopSketches.js";
+import { normalizeSketchReviewStatus } from "./sketches.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const WORKFLOW = "property_tax_protest";
@@ -86,7 +87,7 @@ export function createDesktopPropertyTaxRouter({
   const router = express.Router();
 
   function organizationIdsForRead(req) {
-    if (!authenticationRequired || !req.mobileAuth) return null;
+    if (!req.mobileAuth) return [];
     return (req.mobileAuth.organizations || [])
       .filter((organization) => hasPermission(
         req.mobileAuth,
@@ -128,11 +129,9 @@ export function createDesktopPropertyTaxRouter({
       { organizationIds: null },
     );
     if (!file) throw new Error("property_tax_protest_file_not_found");
-    if (
-      authenticationRequired
-      && req.mobileAuth
-      && !decideAccess(req.mobileAuth, file, permission)
-    ) throw new Error("property_tax_protest_access_denied");
+    if (!decideAccess(req.mobileAuth, file, permission)) {
+      throw new Error("property_tax_protest_access_denied");
+    }
     return { accountId, file };
   }
 
@@ -204,12 +203,7 @@ export function createDesktopPropertyTaxRouter({
       if (exactFileId && !file) {
         return res.status(404).json({ error: "property_tax_protest_file_not_found" });
       }
-      if (
-        authenticationRequired
-        && req.mobileAuth
-        && file
-        && !decideAccess(req.mobileAuth, file, "read")
-      ) {
+      if (file && !decideAccess(req.mobileAuth, file, "read")) {
         return res.status(403).json({ error: "property_tax_protest_access_denied" });
       }
       return res.json({ account_id: canonicalId, file });
@@ -238,11 +232,9 @@ export function createDesktopPropertyTaxRouter({
       if (!file) {
         return res.status(404).json({ error: "property_tax_protest_file_not_found" });
       }
-      if (
-        authenticationRequired
-        && req.mobileAuth
-        && !decideAccess(req.mobileAuth, file, "read")
-      ) return res.status(403).json({ error: "property_tax_protest_access_denied" });
+      if (!decideAccess(req.mobileAuth, file, "read")) {
+        return res.status(403).json({ error: "property_tax_protest_access_denied" });
+      }
       return res.set("cache-control", "no-store").json({ account_id: canonicalId, file });
     } catch (error) {
       if (String(error?.message || "").startsWith("invalid_")) {
@@ -263,11 +255,7 @@ export function createDesktopPropertyTaxRouter({
       await Promise.all([accountQualityReady, propertyEnrichmentReady]);
       const canonicalId = await resolveAccountId(pool, requestedId);
       const existingFile = await getFile(pool, canonicalId, req.params.fileId);
-      if (
-        authenticationRequired
-        && req.mobileAuth
-        && (!existingFile || !decideAccess(req.mobileAuth, existingFile, "write"))
-      ) {
+      if (!existingFile || !decideAccess(req.mobileAuth, existingFile, "write")) {
         return res.status(existingFile ? 403 : 404).json({
           error: existingFile
             ? "property_tax_protest_access_denied"
@@ -283,7 +271,7 @@ export function createDesktopPropertyTaxRouter({
           actorUserId: req.mobileAuth?.userId || null,
           actorLabel: req.mobileAuth?.displayName || req.mobileAuth?.email || null,
           actorAuth: req.mobileAuth || null,
-          authorizationRequired: authenticationRequired,
+          authorizationRequired: true,
         },
       );
       return res.json({ ok: true, file });
@@ -330,14 +318,11 @@ export function createDesktopPropertyTaxRouter({
       await Promise.all([accountQualityReady, propertyEnrichmentReady]);
       const canonicalId = await resolveAccountId(pool, requestedId);
       const existingFile = await getFile(pool, canonicalId, req.params.fileId);
-      const permission = req.body?.sketch?.review_status === "appraiser_confirmed"
+      const reviewStatus = normalizeSketchReviewStatus(req.body?.sketch?.review_status);
+      const permission = reviewStatus === "appraiser_confirmed"
         ? "sign"
         : "write";
-      if (
-        authenticationRequired
-        && req.mobileAuth
-        && (!existingFile || !decideAccess(req.mobileAuth, existingFile, permission))
-      ) {
+      if (!existingFile || !decideAccess(req.mobileAuth, existingFile, permission)) {
         return res.status(existingFile ? 403 : 404).json({
           error: existingFile
             ? "property_tax_protest_access_denied"

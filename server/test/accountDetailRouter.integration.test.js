@@ -35,6 +35,7 @@ function baseOptions(overrides = {}) {
     propertyEnrichmentReady: Promise.resolve(),
     ensurePropertyContextAvailable: async () => {},
     authenticationRequired: false,
+    hasPermission: () => true,
     resolveAccountId: async (_pool, value) => value.toUpperCase(),
     loadPropertyActivity: async () => [],
     loadDetailSections: async () => sections(),
@@ -45,7 +46,7 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options, { auth = null } = {}) {
+async function startRouter(options, { auth = { userId: "reader-1" } } = {}) {
   const app = express();
   app.use((req, _res, next) => {
     if (auth) req.mobileAuth = auth;
@@ -138,8 +139,8 @@ test("account detail preserves canonical resolution, response shape, and sales d
   assert.deepEqual(body.property_activity_history, activity);
   assert.deepEqual(body.sales_history, [activity[1]]);
   assert.deepEqual(body.census_geography, census);
-  assert.deepEqual(body.property_context, propertyContext);
-  assert.equal(body.report_manual_values["report.subject_identification"].revision, 3);
+  assert.equal(body.property_context, null);
+  assert.deepEqual(body.report_manual_values, {});
   const accountQuery = queries.find(({ sql }) => /FROM core\.accounts a/.test(sql));
   assert.deepEqual(accountQuery.params, ["CANONICAL-1"]);
   assert.match(accountQuery.sql, /LEFT JOIN LATERAL/);
@@ -166,6 +167,7 @@ test("enforced account detail rejects identities without an application read rol
   let queries = 0;
   const server = await startRouter(baseOptions({
     authenticationRequired: true,
+    hasPermission: () => false,
     pool: {
       async query() {
         queries += 1;
@@ -265,7 +267,7 @@ test("optional account evidence failures preserve a bounded usable response", as
   assert.equal(body.property_context, null);
   assert.equal(body.owner_summary, null);
   assert.deepEqual(body.owner_parties, []);
-  assert.equal(warnings.length, 4);
+  assert.equal(warnings.length, 2);
   assert.doesNotMatch(JSON.stringify(body), /password|XX000|08006/);
 });
 

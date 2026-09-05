@@ -25,8 +25,8 @@ function baseOptions(overrides = {}) {
     authenticationRequired: false,
     ensureDocuments: async () => {},
     resolveAccountId: async (_pool, value) => value.toUpperCase(),
-    hasPermission: () => { throw new Error("unexpected_permission_check"); },
-    decideAccess: () => { throw new Error("unexpected_access_check"); },
+    hasPermission: () => true,
+    decideAccess: () => true,
     getFile: async () => { throw new Error("unexpected_get_file"); },
     getEvidenceVersion: async () => { throw new Error("unexpected_evidence_version"); },
     saveFile: async () => { throw new Error("unexpected_save_file"); },
@@ -36,7 +36,7 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options, auth = null) {
+async function startRouter(options, auth = identity) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   if (auth) {
@@ -196,17 +196,17 @@ test("enforced Property Tax latest loads prefilter organizations and exact loads
   assert.deepEqual(gets[1].settings, { organizationIds: null });
 });
 
-test("rollout Property Tax loads remain unscoped while enforced denials remain bounded", async (context) => {
+test("Property Tax loads remain tenant-scoped in rollout and enforced modes", async (context) => {
   let accessCalls = 0;
   let permissionCalls = 0;
   const file = { tax_protest_file_id: "file-1", organization_id: "org-denied" };
   const rollout = await startRouter(baseOptions({
     getFile: async (_pool, _accountId, _fileId, settings) => {
-      assert.deepEqual(settings, { organizationIds: null });
+      assert.deepEqual(settings, { organizationIds: ["org-allowed", "org-denied"] });
       return file;
     },
-    hasPermission: () => { permissionCalls += 1; return false; },
-    decideAccess: () => { accessCalls += 1; return false; },
+    hasPermission: () => { permissionCalls += 1; return true; },
+    decideAccess: () => { accessCalls += 1; return true; },
   }), identity);
   const denied = await startRouter(baseOptions({
     authenticationRequired: true,
@@ -219,8 +219,8 @@ test("rollout Property Tax loads remain unscoped while enforced denials remain b
   const rolloutResponse = await fetch(`${rollout.baseUrl}/api/accounts/123/property-tax-protest`);
   assert.equal(rolloutResponse.status, 200);
   assert.deepEqual(await rolloutResponse.json(), { account_id: "123", file });
-  assert.equal(permissionCalls, 0);
-  assert.equal(accessCalls, 0);
+  assert.equal(permissionCalls, 2);
+  assert.equal(accessCalls, 1);
 
   const deniedResponse = await fetch(
     `${denied.baseUrl}/api/accounts/123/property-tax-protest?file_id=file-1`,
@@ -356,7 +356,11 @@ test("enforced Property Tax writes conceal missing files and deny unauthorized f
 test("Property Tax file failures preserve revision status and bounded diagnostics", async (context) => {
   const errors = [];
   const server = await startRouter(baseOptions({
-    getFile: async () => null,
+    getFile: async () => ({
+      tax_protest_file_id: "file-1",
+      organization_id: "org-allowed",
+      assigned_appraiser_user_id: "user-1",
+    }),
     saveFile: async (_pool, _accountId, fileId) => {
       const messages = {
         conflict: "property_tax_protest_revision_conflict",
@@ -398,7 +402,11 @@ test("Property Tax sketch saves bind the authenticated actor and retain sketch e
   const errors = [];
   const body = { expected_revision: 4, sketch: { areas: [], rooms: [] } };
   const options = baseOptions({
-    getFile: async () => null,
+    getFile: async () => ({
+      tax_protest_file_id: "file-1",
+      organization_id: "org-allowed",
+      assigned_appraiser_user_id: "user-1",
+    }),
     saveSketch: async (pool, accountId, fileId, input, actorUserId) => {
       calls.push({ pool, accountId, fileId, input, actorUserId });
       const messages = {
@@ -478,7 +486,15 @@ test("appraiser-confirmed Property Tax sketches require sign authority before sa
   });
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { error: "property_tax_protest_access_denied" });
-  assert.deepEqual(permissions, ["sign"]);
+  const whitespaceResponse = await patchSketch(server.baseUrl, "123", "file-1", {
+    expected_revision: 1,
+    sketch: { review_status: " appraiser_confirmed " },
+  });
+  assert.equal(whitespaceResponse.status, 403);
+  assert.deepEqual(await whitespaceResponse.json(), {
+    error: "property_tax_protest_access_denied",
+  });
+  assert.deepEqual(permissions, ["sign", "sign"]);
   assert.equal(saveCalls, 0);
 });
 

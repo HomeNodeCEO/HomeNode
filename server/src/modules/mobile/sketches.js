@@ -73,6 +73,10 @@ function enumValue(value, allowed, code) {
   return normalized;
 }
 
+export function normalizeSketchReviewStatus(value) {
+  return enumValue(value || "draft", REVIEW_STATUSES, "invalid_sketch_review_status");
+}
+
 function pointInsidePolygon(point, vertices) {
   let inside = false;
   for (let left = 0, right = vertices.length - 1; left < vertices.length; right = left, left += 1) {
@@ -248,7 +252,7 @@ export function normalizeManualSketchDocument(input = {}) {
   if (measurementStandard === "jurisdiction_required_other" && !alternateStandardName) {
     throw new Error("invalid_sketch_alternate_standard");
   }
-  const reviewStatus = enumValue(input.review_status || "draft", REVIEW_STATUSES, "invalid_sketch_review_status");
+  const reviewStatus = normalizeSketchReviewStatus(input.review_status);
   const readyForReview = areas.every((area) => area.calculation.ready_for_area_classification);
   if (reviewStatus === "appraiser_confirmed" && !readyForReview) throw new Error("sketch_not_ready_for_confirmation");
   const summary = sketchSummary(areas, rooms);

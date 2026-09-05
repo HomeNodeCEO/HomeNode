@@ -2,15 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  editorKeyMatches,
   normalizeHousingProfileUpdate,
 } from "../src/util/housingProfileEdit.js";
-
-test("editorKeyMatches requires the complete configured key", () => {
-  assert.equal(editorKeyMatches("correct-key", "correct-key"), true);
-  assert.equal(editorKeyMatches("correct", "correct-key"), false);
-  assert.equal(editorKeyMatches("", ""), false);
-});
 
 test("normalizeHousingProfileUpdate preserves verified classification details", () => {
   assert.deepEqual(

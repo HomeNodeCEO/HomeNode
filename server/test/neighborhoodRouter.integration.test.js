@@ -7,11 +7,18 @@ import express from "express";
 import { createNeighborhoodRouter } from "../src/modules/accounts/neighborhoodRouter.js";
 
 const pool = { query: async () => ({ rows: [] }) };
+const identity = Object.freeze({
+  userId: "appraiser-1",
+  displayName: "Authenticated Appraiser",
+  organizations: [{ organizationId: "org-1", roles: ["appraiser"] }],
+});
 
 function options(overrides = {}) {
   return {
     pool,
     ensureAvailable: async () => {},
+    requirePlatformAdministrator: () => true,
+    requireCustomAccountScope: async () => true,
     resolveAccountId: async (_pool, accountId) => `canonical-${accountId}`,
     normalizeFileId: (value) => value ? `file-${value}` : null,
     getReadiness: async () => ({}),
@@ -25,9 +32,15 @@ function options(overrides = {}) {
   };
 }
 
-async function startRouter(router) {
+async function startRouter(router, auth = identity) {
   const app = express();
   app.use(express.json());
+  if (auth) {
+    app.use((req, _res, next) => {
+      req.mobileAuth = auth;
+      next();
+    });
+  }
   app.use(router);
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -108,6 +121,7 @@ test("boundary reads preserve canonical account and assignment scope", async (co
     `${server.baseUrl}/api/accounts/%2042%20/neighborhood-boundary?assignment_file_id=7`,
   );
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { account_id: "canonical-42", assessment });
   assert.deepEqual(inputs, [[pool, {
     accountId: "canonical-42",
@@ -139,6 +153,7 @@ test("boundary generation preserves the independent discovery-radius control", a
     },
   );
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), {
     ok: true,
     account_id: "canonical-42",
@@ -152,7 +167,7 @@ test("boundary generation preserves the independent discovery-radius control", a
   }]]);
 });
 
-test("boundary review preserves appraiser confirmation inputs", async (context) => {
+test("boundary review derives appraiser confirmation identity from the session", async (context) => {
   const inputs = [];
   const assessment = { review_status: "confirmed" };
   const server = await startRouter(createNeighborhoodRouter(options({
@@ -171,7 +186,7 @@ test("boundary review preserves appraiser confirmation inputs", async (context) 
       body: JSON.stringify({
         assignment_file_id: "7",
         confirmed: true,
-        reviewer: "Appraiser",
+        reviewer: "Forged Reviewer",
         notes: "Verified against market evidence",
       }),
     },
@@ -187,13 +202,14 @@ test("boundary review preserves appraiser confirmation inputs", async (context) 
     assessmentId: "boundary-2",
     assignmentFileId: "file-7",
     confirmed: true,
-    reviewer: "Appraiser",
+    reviewer: "Authenticated Appraiser",
     notes: "Verified against market evidence",
   }]]);
 });
 
 test("relevance read and generation preserve boundary lineage", async (context) => {
   const inputs = [];
+  const accessChecks = [];
   const assessment = { assessment_id: "relevance-1" };
   const server = await startRouter(createNeighborhoodRouter(options({
     getRelevance: async (receivedPool, input) => {
@@ -203,6 +219,10 @@ test("relevance read and generation preserve boundary lineage", async (context) 
     generateRelevance: async (receivedPool, input) => {
       inputs.push(["generate", receivedPool, input]);
       return assessment;
+    },
+    requireCustomAccountScope: async (_req, _res, accountId, assignmentFileId, permission) => {
+      accessChecks.push({ accountId, assignmentFileId, permission });
+      return true;
     },
   })));
   context.after(server.close);
@@ -238,6 +258,46 @@ test("relevance read and generation preserve boundary lineage", async (context) 
       boundaryAssessmentId: "boundary-2",
     }],
   ]);
+  assert.deepEqual(accessChecks, [
+    { accountId: "canonical-42", assignmentFileId: "file-7", permission: "read" },
+    { accountId: "canonical-42", assignmentFileId: "file-7", permission: "write" },
+  ]);
+});
+
+test("cross-organization assignment denial stops neighborhood data services", async (context) => {
+  let serviceCalls = 0;
+  const server = await startRouter(createNeighborhoodRouter(options({
+    requireCustomAccountScope: async (_req, res) => {
+      res.status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+    getBoundary: async () => { serviceCalls += 1; },
+    generateBoundary: async () => { serviceCalls += 1; },
+    reviewBoundary: async () => { serviceCalls += 1; },
+    getRelevance: async () => { serviceCalls += 1; },
+    generateRelevance: async () => { serviceCalls += 1; },
+  })));
+  context.after(server.close);
+
+  const requests = [
+    ["GET", "/api/accounts/42/neighborhood-boundary?assignment_file_id=7"],
+    ["POST", "/api/accounts/42/neighborhood-boundary/generate"],
+    ["PATCH", "/api/accounts/42/neighborhood-boundary/boundary-2"],
+    ["GET", "/api/accounts/42/neighborhood-relevance?assignment_file_id=7"],
+    ["POST", "/api/accounts/42/neighborhood-relevance/generate"],
+  ];
+  for (const [method, path] of requests) {
+    const response = await fetch(`${server.baseUrl}${path}`, {
+      method,
+      ...(method === "GET" ? {} : {
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ assignment_file_id: "7" }),
+      }),
+    });
+    assert.equal(response.status, 403, path);
+    assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  }
+  assert.equal(serviceCalls, 0);
 });
 
 test("neighborhood routes retain stable client, not-found, and unavailable statuses", async (context) => {
@@ -282,6 +342,10 @@ test("neighborhood router validates composition and remains between context moun
   assert.throws(() => createNeighborhoodRouter(), /neighborhood_router_pool_required/);
   assert.throws(
     () => createNeighborhoodRouter(options({ ensureAvailable: null })),
+    /neighborhood_router_dependency_required/,
+  );
+  assert.throws(
+    () => createNeighborhoodRouter(options({ requireCustomAccountScope: null })),
     /neighborhood_router_dependency_required/,
   );
 

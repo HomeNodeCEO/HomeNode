@@ -58,7 +58,8 @@ test("legacy Custom Appraisal document routes exclude other workflow documents",
   const accessStart = customDocumentRouter.indexOf("async function requireDocumentAccess");
   const accessEnd = customDocumentRouter.indexOf("/** List assignment PDFs", accessStart);
   const accessGuard = customDocumentRouter.slice(accessStart, accessEnd);
-  assert.match(accessGuard, /if \(!authenticationRequired\)/);
+  assert.match(accessGuard, /if \(!req\.mobileAuth\)/);
+  assert.doesNotMatch(accessGuard, /if \(!authenticationRequired\)/);
   assert.match(accessGuard, /if \(!rows\[0\]\.assignment_file_id/);
   assert.match(accessGuard, /assignment_document_access_denied/);
 });

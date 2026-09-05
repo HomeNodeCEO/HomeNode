@@ -13,9 +13,19 @@ import {
   getLatestNeighborhoodRelevance,
 } from "../../services/neighborhoodRelevanceEngine.js";
 
+function authenticatedReviewer(req) {
+  const userId = String(req.mobileAuth?.userId || "").trim();
+  if (!userId) throw new Error("authentication_required");
+  return String(
+    req.mobileAuth?.displayName || req.mobileAuth?.email || userId,
+  ).trim() || userId;
+}
+
 export function createNeighborhoodRouter({
   pool,
   ensureAvailable,
+  requirePlatformAdministrator,
+  requireCustomAccountScope,
   resolveAccountId = resolveCanonicalAccountId,
   normalizeFileId = normalizeAssignmentFileId,
   getReadiness = getNeighborhoodEngineReadiness,
@@ -31,6 +41,8 @@ export function createNeighborhoodRouter({
   }
   const dependencies = [
     ensureAvailable,
+    requirePlatformAdministrator,
+    requireCustomAccountScope,
     resolveAccountId,
     normalizeFileId,
     getReadiness,
@@ -45,9 +57,14 @@ export function createNeighborhoodRouter({
   }
 
   const router = express.Router();
+  router.use((_req, res, next) => {
+    res.set("cache-control", "no-store");
+    next();
+  });
 
   /** Audit locally stored inputs for the boundary and relevance engines. */
   router.get("/api/neighborhood-engine/readiness", async (req, res) => {
+    if (!requirePlatformAdministrator(req, res)) return undefined;
     try {
       await ensureAvailable();
       return res.json(await getReadiness(pool, {
@@ -68,6 +85,9 @@ export function createNeighborhoodRouter({
     try {
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
+      if (!await requireCustomAccountScope(
+        req, res, accountId, assignmentFileId, "read",
+      )) return undefined;
       const assessment = await getBoundary(pool, { accountId, assignmentFileId });
       return res.json({ account_id: accountId, assessment });
     } catch (error) {
@@ -85,6 +105,9 @@ export function createNeighborhoodRouter({
     try {
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
+      if (!await requireCustomAccountScope(
+        req, res, accountId, assignmentFileId, "write",
+      )) return undefined;
       const assessment = await generateBoundary(pool, {
         accountId,
         assignmentFileId,
@@ -115,12 +138,15 @@ export function createNeighborhoodRouter({
     try {
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
+      if (!await requireCustomAccountScope(
+        req, res, accountId, assignmentFileId, "write",
+      )) return undefined;
       const assessment = await reviewBoundary(pool, {
         accountId,
         assessmentId: req.params.assessmentId,
         assignmentFileId,
         confirmed: req.body?.confirmed,
-        reviewer: req.body?.reviewer,
+        reviewer: authenticatedReviewer(req),
         notes: req.body?.notes,
       });
       return res.json({ ok: true, account_id: accountId, assessment });
@@ -148,6 +174,9 @@ export function createNeighborhoodRouter({
     try {
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
+      if (!await requireCustomAccountScope(
+        req, res, accountId, assignmentFileId, "read",
+      )) return undefined;
       const assessment = await getRelevance(pool, { accountId, assignmentFileId });
       return res.json({ account_id: accountId, assessment });
     } catch (error) {
@@ -164,6 +193,9 @@ export function createNeighborhoodRouter({
     try {
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
+      if (!await requireCustomAccountScope(
+        req, res, accountId, assignmentFileId, "write",
+      )) return undefined;
       const assessment = await generateRelevance(pool, {
         accountId,
         assignmentFileId,

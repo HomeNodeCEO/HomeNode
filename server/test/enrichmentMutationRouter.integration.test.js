@@ -6,6 +6,11 @@ import express from "express";
 
 import { createEnrichmentMutationRouter } from "../src/modules/operations/enrichmentMutationRouter.js";
 
+const identity = Object.freeze({
+  userId: "appraiser-1",
+  displayName: "Authenticated Appraiser",
+});
+
 function createDatabase({
   query = async () => ({ rows: [] }),
   clientQuery = async () => ({ rows: [] }),
@@ -50,9 +55,15 @@ function baseOptions(database, overrides = {}) {
   };
 }
 
-async function startRouter(options) {
+async function startRouter(options, auth = identity) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+  if (auth) {
+    app.use((req, _res, next) => {
+      req.mobileAuth = auth;
+      next();
+    });
+  }
   app.use(createEnrichmentMutationRouter(options));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -162,7 +173,7 @@ test("verified attribute writes preserve revision, history, resolution, and tran
     "living_area",
     JSON.stringify({ square_feet: 2010 }),
     "Confirmed from plans",
-    "Appraiser One",
+    "Authenticated Appraiser",
     3,
   ]);
   assert.deepEqual(client.queries[3].params, client.queries[2].params);
@@ -312,7 +323,7 @@ test("parcel suggestion approval materializes site size and rejection avoids man
     "A-1",
     JSON.stringify(8750),
     "Approved official county GIS suggestion 17.",
-    "Appraiser One",
+    "Authenticated Appraiser",
     7,
   ]);
   assert.deepEqual(approvedQueries.at(-2).params, ["A-1", "approved"]);

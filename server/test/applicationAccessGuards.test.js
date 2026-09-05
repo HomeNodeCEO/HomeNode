@@ -39,10 +39,8 @@ function createGuards(overrides = {}) {
   return createApplicationAccessGuards({
     pool: { query: async () => ({ rows: [] }) },
     authenticationRequired: true,
-    environment: {},
     permissionChecker: () => false,
     roleChecker: () => false,
-    editorKeyChecker: () => false,
     assignmentAuthorizer: async () => {},
     propertyTaxAuthorizer: async () => {},
     ...overrides,
@@ -125,47 +123,19 @@ test("editor access returns bounded authenticated and anonymous denials", () => 
   assert.equal(anonymousResponse.headers["cache-control"], "no-store");
 });
 
-test("temporary rollout editor access preserves the established editor-key contract", () => {
-  const missingKeyGuards = createGuards({
-    authenticationRequired: false,
-    environment: {},
-  });
-  const missingResponse = createResponse();
-  assert.equal(missingKeyGuards.requireEditor(createRequest(), missingResponse), false);
-  assert.equal(missingResponse.statusCode, 503);
-  assert.deepEqual(missingResponse.payload, { error: "editor_not_configured" });
-
-  const observedKeys = [];
-  const configuredGuards = createGuards({
-    authenticationRequired: false,
-    environment: { HOMENODE_EDITOR_KEY: "configured-key" },
-    editorKeyChecker: (provided, configured) => {
-      observedKeys.push([provided, configured]);
-      return provided === "accepted-key";
-    },
-  });
-  const deniedResponse = createResponse();
+test("shared editor keys cannot authorize anonymous mutations in any mode", () => {
+  const rolloutGuards = createGuards({ authenticationRequired: false });
+  const response = createResponse();
   assert.equal(
-    configuredGuards.requireEditor(
-      createRequest({ editorKey: "rejected-key" }),
-      deniedResponse,
+    rolloutGuards.requireEditor(
+      createRequest({ editorKey: "retired-shared-key" }),
+      response,
     ),
     false,
   );
-  assert.equal(deniedResponse.statusCode, 401);
-  assert.deepEqual(deniedResponse.payload, { error: "invalid_editor_key" });
-
-  assert.equal(
-    configuredGuards.requireEditor(
-      createRequest({ editorKey: "accepted-key" }),
-      createResponse(),
-    ),
-    true,
-  );
-  assert.deepEqual(observedKeys, [
-    ["rejected-key", "configured-key"],
-    ["accepted-key", "configured-key"],
-  ]);
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(response.payload, { error: "authentication_required" });
+  assert.equal(response.headers["cache-control"], "no-store");
 });
 
 test("workflow access enforces authenticated permissions and no-store denials", () => {
@@ -204,7 +174,7 @@ test("workflow access enforces authenticated permissions and no-store denials", 
   ]);
 });
 
-test("workflow access preserves enforced anonymous denial and temporary rollout access", () => {
+test("workflow access rejects anonymous requests in every authentication mode", () => {
   const enforcedResponse = createResponse();
   assert.equal(
     createGuards().requireWorkflowAccess(
@@ -219,25 +189,20 @@ test("workflow access preserves enforced anonymous denial and temporary rollout 
   assert.deepEqual(enforcedResponse.payload, { error: "authentication_required" });
   assert.equal(enforcedResponse.headers["cache-control"], "no-store");
 
-  let editorChecks = 0;
-  const rolloutGuards = createGuards({
-    authenticationRequired: false,
-    environment: { HOMENODE_EDITOR_KEY: "configured-key" },
-    editorKeyChecker: () => {
-      editorChecks += 1;
-      return false;
-    },
-  });
+  const rolloutGuards = createGuards({ authenticationRequired: false });
+  const rolloutResponse = createResponse();
   assert.equal(
     rolloutGuards.requireWorkflowAccess(
       createRequest({ editorKey: "wrong-key" }),
-      createResponse(),
+      rolloutResponse,
       "custom_appraisal",
       "read",
     ),
-    true,
+    false,
   );
-  assert.equal(editorChecks, 1);
+  assert.equal(rolloutResponse.statusCode, 401);
+  assert.deepEqual(rolloutResponse.payload, { error: "authentication_required" });
+  assert.equal(rolloutResponse.headers["cache-control"], "no-store");
 });
 
 test("property discovery requires an authenticated application read role", () => {
@@ -268,10 +233,13 @@ test("property discovery requires an authenticated application read role", () =>
   assert.equal(anonymousResponse.headers["cache-control"], "no-store");
   assert.deepEqual(anonymousResponse.payload, { error: "authentication_required" });
 
+  const rolloutResponse = createResponse();
   assert.equal(createGuards({ authenticationRequired: false }).requireApplicationReader(
     createRequest(),
-    createResponse(),
-  ), true);
+    rolloutResponse,
+  ), false);
+  assert.equal(rolloutResponse.statusCode, 401);
+  assert.deepEqual(rolloutResponse.payload, { error: "authentication_required" });
   assert.deepEqual(checked, [
     ["reader", "custom_appraisal", "read"],
     ["reader", "uad_3_6", "read"],
@@ -281,7 +249,7 @@ test("property discovery requires an authenticated application read role", () =>
   ]);
 });
 
-test("assignment access bypasses only anonymous rollout requests and scopes authenticated requests", async () => {
+test("assignment access fails closed for anonymous rollout requests and scopes authenticated requests", async () => {
   let authorizerCalls = 0;
   const rolloutGuards = createGuards({
     authenticationRequired: false,
@@ -289,16 +257,19 @@ test("assignment access bypasses only anonymous rollout requests and scopes auth
       authorizerCalls += 1;
     },
   });
+  const anonymousResponse = createResponse();
   assert.equal(
     await rolloutGuards.requireCustomAssignmentAccess(
       createRequest(),
-      createResponse(),
+      anonymousResponse,
       "account-1",
       "file-1",
       "read",
     ),
-    true,
+    false,
   );
+  assert.equal(anonymousResponse.statusCode, 401);
+  assert.deepEqual(anonymousResponse.payload, { error: "authentication_required" });
   assert.equal(authorizerCalls, 0);
 
   const rolloutAuth = { userId: "rollout-user" };

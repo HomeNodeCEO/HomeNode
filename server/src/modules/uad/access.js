@@ -159,8 +159,7 @@ export function authorizeUadAppraiserConfirmation(auth, workfile) {
   });
 }
 
-export function createUadWorkfileAuthorizer({ pool, authenticationRequired }) {
-  if (!authenticationRequired) return (_req, _res, next) => next();
+export function createUadWorkfileAuthorizer({ pool }) {
   return async function uadWorkfileAuthorizer(req, res, next) {
     try {
       req.uadAuthorizedWorkfile = await authorizeUadWorkfileAccess(
@@ -179,6 +178,9 @@ export function createUadWorkfileAuthorizer({ pool, authenticationRequired }) {
       }
       if (message === "uad_workfile_not_found") {
         return res.status(404).json({ error: message });
+      }
+      if (message === "uad_authentication_required") {
+        return res.status(401).json({ error: message });
       }
       return res.status(403).json({ error: "uad_workfile_access_denied" });
     }

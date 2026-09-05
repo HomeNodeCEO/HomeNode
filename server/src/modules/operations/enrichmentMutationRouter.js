@@ -7,6 +7,14 @@ const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const SUGGESTION_ID_PATTERN = /^\d+$/;
 const SUGGESTION_DECISIONS = new Set(["approved", "rejected"]);
 
+function auditReviewer(req) {
+  const userId = String(req.mobileAuth?.userId || "").trim();
+  if (!userId) return "HomeNode editor";
+  return String(
+    req.mobileAuth?.displayName || req.mobileAuth?.email || userId,
+  ).trim().slice(0, 200) || userId;
+}
+
 export function createEnrichmentMutationRouter({
   pool,
   propertyEnrichmentReady,
@@ -60,7 +68,7 @@ export function createEnrichmentMutationRouter({
       return res.status(400).json({ error: "missing_attribute_value" });
     }
     const notes = String(req.body?.notes || "").trim().slice(0, 4000) || null;
-    const reviewer = String(req.body?.reviewer || "HomeNode editor").trim().slice(0, 200);
+    const reviewer = auditReviewer(req);
     const expectedRevision = req.body?.expected_revision == null
       ? null
       : Number(req.body.expected_revision);
@@ -201,7 +209,7 @@ export function createEnrichmentMutationRouter({
       return res.status(400).json({ error: "invalid_suggestion_decision" });
     }
     if (!requireEditor(req, res)) return undefined;
-    const reviewer = String(req.body?.reviewer || "HomeNode editor").trim().slice(0, 200);
+    const reviewer = auditReviewer(req);
     const client = await pool.connect();
     try {
       await propertyEnrichmentReady;

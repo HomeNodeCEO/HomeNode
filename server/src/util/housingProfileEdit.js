@@ -1,5 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
-
 export const HOUSING_ATTACHMENT_TYPES = new Set([
   "detached",
   "attached",
@@ -14,13 +12,6 @@ function optionalText(value, maxLength, fieldName) {
     throw new Error(`invalid_${fieldName}`);
   }
   return text;
-}
-
-export function editorKeyMatches(providedKey, configuredKey) {
-  const provided = Buffer.from(String(providedKey ?? ""), "utf8");
-  const configured = Buffer.from(String(configuredKey ?? ""), "utf8");
-  if (!provided.length || provided.length !== configured.length) return false;
-  return timingSafeEqual(provided, configured);
 }
 
 export function normalizeHousingProfileUpdate(input = {}) {

@@ -18,9 +18,9 @@ function baseOptions(overrides = {}) {
     requireEditor: () => true,
     authenticationRequired: false,
     resolveAccountId: async (_pool, value) => value.toUpperCase(),
-    buildAccessScope: () => { throw new Error("unexpected_access_scope"); },
-    authorizeReportFile: async () => { throw new Error("unexpected_authorization"); },
-    hasPermission: () => { throw new Error("unexpected_permission_check"); },
+    buildAccessScope: () => ({ userId: "user-1", organizationIds: ["org-1"] }),
+    authorizeReportFile: async () => ({ organization_id: "org-1" }),
+    hasPermission: () => true,
     listHistory: async () => { throw new Error("unexpected_history_list"); },
     loadCompletion: async () => { throw new Error("unexpected_completion_load"); },
     replicateFile: async () => { throw new Error("unexpected_replication"); },
@@ -29,7 +29,7 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options, auth = null) {
+async function startRouter(options, auth = identity) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   if (auth) {
@@ -140,15 +140,15 @@ test("enforced history listing scopes results after schema readiness", async (co
   assert.equal(calls[3].accountId, "CANONICAL_1");
 });
 
-test("rollout history preserves unscoped access and fails closed when schema is unavailable", async (context) => {
+test("rollout history remains scoped and fails closed when schema is unavailable", async (context) => {
   let scopeCalls = 0;
   let listCalls = 0;
   const rollout = await startRouter(baseOptions({
-    buildAccessScope: () => { scopeCalls += 1; throw new Error("unexpected_scope"); },
+    buildAccessScope: () => { scopeCalls += 1; return { organizationIds: ["org-1"] }; },
     listHistory: async (_pool, accountId, scope) => {
       listCalls += 1;
       assert.equal(accountId, "123");
-      assert.equal(scope, null);
+      assert.deepEqual(scope, { organizationIds: ["org-1"] });
       return { files: [] };
     },
   }), identity);
@@ -161,7 +161,7 @@ test("rollout history preserves unscoped access and fails closed when schema is 
   const rolloutResponse = await fetch(`${rollout.baseUrl}/api/accounts/123/appraisal-history`);
   assert.equal(rolloutResponse.status, 200);
   assert.deepEqual(await rolloutResponse.json(), { files: [] });
-  assert.equal(scopeCalls, 0);
+  assert.equal(scopeCalls, 1);
 
   const unavailableResponse = await fetch(
     `${unavailable.baseUrl}/api/accounts/123/appraisal-history`,
@@ -319,7 +319,7 @@ test("replication denies unauthorized target workflows before creating a report"
   assert.equal(replicationCalls, 0);
 });
 
-test("rollout replication and failures preserve legacy identity and status semantics", async (context) => {
+test("rollout replication preserves authenticated ownership and status semantics", async (context) => {
   const replicationCalls = [];
   const errors = [];
   const server = await startRouter(baseOptions({
@@ -345,8 +345,8 @@ test("rollout replication and failures preserve legacy identity and status seman
     accountId: "123",
     sourceReportFileId: "source",
     input: { mode: "new_assignment_template" },
-    actorUserId: null,
-    organizationId: null,
+    actorUserId: "user-1",
+    organizationId: "org-1",
   });
 
   for (const [reportFileId, status, error] of [

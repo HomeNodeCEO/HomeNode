@@ -84,26 +84,15 @@ export function createAssignmentFileListRouter({
       if (!accountResult.rowCount) {
         return res.status(404).json({ error: "account_not_found" });
       }
-      const enforcedIdentity = authenticationRequired && req.mobileAuth;
-      const [{ rows: queriedRows }, legacyResult] = await Promise.all([
-        pool.query(
-          `${ASSIGNMENT_FILE_SELECT}
-           WHERE f.account_id = $1
-           ORDER BY f.created_at DESC, f.id DESC`,
-          [canonicalId],
-        ),
-        enforcedIdentity
-          ? Promise.resolve({ rows: [] })
-          : pool.query(
-            `SELECT attribute_value
-             FROM app.property_attribute_manual_values
-             WHERE account_id = $1 AND attribute_key = 'report.assignment_details'`,
-            [canonicalId],
-          ),
-      ]);
-      const authorizedRows = enforcedIdentity
-        ? queriedRows.filter((row) => decideAccess(req.mobileAuth, row, "read"))
-        : queriedRows;
+      const { rows: queriedRows } = await pool.query(
+        `${ASSIGNMENT_FILE_SELECT}
+         WHERE f.account_id = $1
+         ORDER BY f.created_at DESC, f.id DESC`,
+        [canonicalId],
+      );
+      const authorizedRows = queriedRows.filter((row) => (
+        decideAccess(req.mobileAuth, row, "read")
+      ));
       const rows = requestedAssignmentFileId
         ? authorizedRows.filter((row) => Number(row.id) === requestedAssignmentFileId)
         : authorizedRows;
@@ -197,9 +186,7 @@ export function createAssignmentFileListRouter({
         account_id: canonicalId,
         files,
         latest_file: files[0] || null,
-        legacy_assignment_details: enforcedIdentity
-          ? null
-          : legacyResult.rows[0]?.attribute_value || null,
+        legacy_assignment_details: null,
       });
     } catch (error) {
       logger.error?.("assignment file list failed", error);

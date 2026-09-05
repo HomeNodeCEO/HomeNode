@@ -340,6 +340,7 @@ app.use(createReportManualValuesRouter({
   pool,
   propertyEnrichmentReady,
   ensureCustomAppraisalWorkfilesAvailable,
+  requireWorkflowAccess,
   requireEditor,
   requireAssignmentAccess: requireCustomAssignmentAccess,
   authenticationRequired: applicationAuthenticationRequired,
@@ -393,6 +394,7 @@ app.use(createAssignmentFileMutationRouter({
   propertyEnrichmentReady,
   ensureAssignmentFilesAvailable,
   ensureCustomAppraisalWorkfilesAvailable,
+  requireWorkflowAccess,
   requireEditor,
   requireAssignmentAccess: requireCustomAssignmentAccess,
   authenticationRequired: applicationAuthenticationRequired,
@@ -526,6 +528,8 @@ app.use(createPropertyContextStatusRouter({
 app.use(createNeighborhoodRouter({
   pool,
   ensureAvailable: ensurePropertyContextAvailable,
+  requirePlatformAdministrator,
+  requireCustomAccountScope,
 }));
 
 app.use(createAccountPropertyContextRouter({

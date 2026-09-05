@@ -90,13 +90,12 @@ export function createAccountPropertyContextRouter({
     const requestedId = String(req.params.id || "").trim();
     try {
       const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
-      if (authenticationRequired && !assignmentFileId) {
+      if (!assignmentFileId) {
         return res.status(400).json({ error: "assignment_file_required" });
       }
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
-      if (assignmentFileId
-          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "read")) {
+      if (!await requireAssignmentAccess(req, res, accountId, assignmentFileId, "read")) {
         return undefined;
       }
       const assessment = await getStoredContext(pool, {
@@ -116,13 +115,12 @@ export function createAccountPropertyContextRouter({
     const requestedId = String(req.params.id || "").trim();
     try {
       const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
-      if (authenticationRequired && !assignmentFileId) {
+      if (!assignmentFileId) {
         return res.status(400).json({ error: "assignment_file_required" });
       }
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
-      if (assignmentFileId
-          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "write")) {
+      if (!await requireAssignmentAccess(req, res, accountId, assignmentFileId, "write")) {
         return undefined;
       }
       const assessment = await analyzeContext(pool, {
@@ -145,21 +143,20 @@ export function createAccountPropertyContextRouter({
     const requestedId = String(req.params.id || "").trim();
     try {
       const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
-      if (authenticationRequired && !assignmentFileId) {
+      if (!assignmentFileId) {
         return res.status(400).json({ error: "assignment_file_required" });
       }
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
-      if (assignmentFileId
-          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "sign")) {
+      if (!await requireAssignmentAccess(req, res, accountId, assignmentFileId, "sign")) {
         return undefined;
       }
-      const review = authenticationRequired ? {
+      const review = {
         ...req.body,
         reviewer: req.mobileAuth?.displayName
           || req.mobileAuth?.email
           || req.mobileAuth?.userId,
-      } : req.body;
+      };
       const assessment = await saveContextReview(pool, {
         accountId,
         assignmentFileId,

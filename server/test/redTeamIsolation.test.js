@@ -351,7 +351,11 @@ test("red-team bootstrap and account reads preserve optional sales availability"
   );
   assert.match(
     accountDetailRouterSource,
-    /reportManualValuesPromise[\s\S]*?\.catch\(\(error\) => \{[\s\S]*?return \{\};[\s\S]*?\}\);/,
+    /const reportManualValuesPromise = Promise\.resolve\(\{\}\);/,
+  );
+  assert.match(
+    accountDetailRouterSource,
+    /const propertyContextPromise = Promise\.resolve\(null\);/,
   );
 });
 

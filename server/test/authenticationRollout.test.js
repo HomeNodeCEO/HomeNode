@@ -60,12 +60,12 @@ test("desktop latest-file lookups remain organization scoped after authenticatio
   assert.match(server, /createDesktopPropertyTaxRouter/);
   assert.match(propertyTaxRouter, /organizationIds: exactFileId \? null : organizationIdsForRead\(req\)/);
   assert.match(propertyTaxRouter, /Exact-file routes must distinguish an absent file \(404\)/);
-  assert.match(propertyTaxRouter, /authorizationRequired: authenticationRequired/);
+  assert.match(propertyTaxRouter, /authorizationRequired: true/);
   assert.match(propertyTaxRouter, /property_tax_comparable_attestation_required/);
-  assert.match(assignmentList, /const enforcedIdentity = authenticationRequired && req\.mobileAuth/);
-  assert.match(assignmentList, /legacy_assignment_details: enforcedIdentity/);
-  assert.match(assignmentList, /queriedRows\.filter\(\(row\) => decideAccess\(req\.mobileAuth, row, "read"\)\)/);
-  assert.match(assignmentMutations, /if \(!authenticationRequired \|\| !req\.mobileAuth\) \{\s+await mirrorLatestAssignmentDetails/);
+  assert.match(assignmentList, /legacy_assignment_details: null/);
+  assert.doesNotMatch(assignmentList, /property_attribute_manual_values/);
+  assert.match(assignmentList, /decideAccess\(req\.mobileAuth, row, "read"\)/);
+  assert.doesNotMatch(assignmentMutations, /mirrorLatestAssignmentDetails|property_attribute_manual_values/);
 });
 
 test("previous-appraisal history, completion, and replication enforce canonical ownership", () => {
@@ -106,6 +106,10 @@ test("assignment photos and documents require assignment-level access after acti
 test("custom appraisal signatures are identity-bound, authenticated, and append-only", () => {
   const server = read("../src/oldServer.js");
   const mutations = read("../src/modules/assignmentFiles/workfileMutationRouter.js");
+  const documents = read("../src/modules/assignmentFiles/documentRouter.js");
+  const uad = read("../src/modules/uad/router.js");
+  const neighborhood = read("../src/modules/accounts/neighborhoodRouter.js");
+  const enrichment = read("../src/modules/operations/enrichmentMutationRouter.js");
   const workfiles = read("../src/services/customAppraisalWorkfiles.js");
   const migration = read("../migrations/20260929_custom_appraisal_signature_hardening.sql");
   assert.match(server, /createAssignmentWorkfileMutationRouter/);
@@ -118,6 +122,9 @@ test("custom appraisal signatures are identity-bound, authenticated, and append-
   assert.match(workfiles, /custom_appraisal_signed_snapshot_integrity_failed/);
   assert.match(migration, /BEFORE UPDATE OR DELETE/);
   assert.match(migration, /custom_appraisal_signed_snapshot_append_only/);
+  for (const source of [mutations, documents, uad, neighborhood, enrichment]) {
+    assert.doesNotMatch(source, /req\.body\?\.reviewer|req\.body\.reviewer/);
+  }
 });
 
 test("rollout audit covers identity, ownership, and canonical registry consistency", () => {
@@ -205,7 +212,7 @@ test("browser authentication bootstrap fails visibly instead of exposing an empt
   assert.match(frontend, /Your appraisal data is unchanged; retry the connection/);
 });
 
-test("legacy property editors accept the authenticated workflow identity before editor-key fallback", () => {
+test("legacy property editors require authenticated workflow identity", () => {
   const server = read("../src/oldServer.js");
   const housingRouter = read("../src/modules/accounts/housingProfileRouter.js");
   const zoningRouter = read("../src/modules/accounts/zoningRouter.js");
@@ -232,7 +239,7 @@ test("legacy property editors accept the authenticated workflow identity before 
   assert.doesNotMatch(zoningRouter, /zoning_editor_not_configured|invalid_editor_key/);
 });
 
-test("the legacy editor key is inert whenever mandatory authentication is active", () => {
+test("sensitive application guards fail closed even during temporary rollout", () => {
   const server = read("../src/oldServer.js");
   const guards = read("../src/security/applicationAccessGuards.js");
   assert.match(
@@ -240,27 +247,22 @@ test("the legacy editor key is inert whenever mandatory authentication is active
     /createApplicationAccessGuards\(\{[\s\S]*?authenticationRequired: applicationAuthenticationRequired/,
   );
   const helpers = [
-    ["function requireEditor(req, res)", "async function requireCustomAssignmentAccess", true],
-    ["async function requireCustomAssignmentAccess", "function requireWorkflowAccess", false],
-    ["function requireWorkflowAccess", "return Object.freeze", true],
+    ["async function requireCustomAssignmentAccess", "function requireWorkflowAccess"],
+    ["function requireWorkflowAccess", "function requireApplicationReader"],
+    ["function requireApplicationReader", "async function requireCustomAccountScope"],
   ];
-  for (const [startMarker, endMarker, retainsPreActivationFallback] of helpers) {
+  for (const [startMarker, endMarker] of helpers) {
     const start = guards.indexOf(startMarker);
     const end = guards.indexOf(endMarker, start);
     assert.ok(start >= 0 && end > start, `missing authorization helper ${startMarker}`);
     const helper = guards.slice(start, end);
-    assert.match(helper, /authenticationRequired/);
-    if (retainsPreActivationFallback) {
-      const enforcementCheck = helper.indexOf("if (authenticationRequired)");
-      const keyFallback = helper.indexOf("configuredEditorKey");
-      assert.ok(enforcementCheck >= 0 && keyFallback > enforcementCheck,
-        `${startMarker} may use the key only after mandatory enforcement is ruled out`);
-    } else {
-      assert.doesNotMatch(helper, /configuredEditorKey|x-homenode-editor-key/);
-    }
+    assert.doesNotMatch(helper, /authenticationRequired|configuredEditorKey|x-homenode-editor-key/);
+    assert.match(helper, /authentication_required|application_access_denied/);
   }
-  assert.match(guards.slice(
-    guards.indexOf("function requireWorkflowAccess"),
-    guards.indexOf("return Object.freeze"),
-  ), /application_access_denied/);
+  const editorStart = guards.indexOf("function requireEditor(req, res)");
+  const editorEnd = guards.indexOf("async function requireCustomAssignmentAccess", editorStart);
+  const editor = guards.slice(editorStart, editorEnd);
+  assert.ok(editorStart >= 0 && editorEnd > editorStart);
+  assert.doesNotMatch(editor, /authenticationRequired|configuredEditorKey|x-homenode-editor-key/);
+  assert.match(editor, /authentication_required/);
 });

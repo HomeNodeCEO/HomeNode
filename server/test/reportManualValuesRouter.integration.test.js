@@ -28,6 +28,7 @@ function baseOptions(overrides = {}) {
     pool: { connect: async () => { throw new Error("unexpected_connect"); } },
     propertyEnrichmentReady: Promise.resolve(),
     ensureCustomAppraisalWorkfilesAvailable: async () => {},
+    requireWorkflowAccess: () => true,
     requireEditor: () => true,
     requireAssignmentAccess: async () => true,
     authenticationRequired: false,
@@ -40,7 +41,7 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options, auth = null) {
+async function startRouter(options, auth = authenticatedIdentity) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   if (auth) {
@@ -122,7 +123,7 @@ test("manual-value validation and authorization finish before database acquisiti
   assert.equal(editorCalls, 5);
 });
 
-test("manual-value size, section, and housing validation remain bounded before connecting", async (context) => {
+test("manual-value size and section validation remain bounded before connecting", async (context) => {
   let connectCalls = 0;
   const pool = { connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); } };
   const sized = await startRouter(baseOptions({ pool }));
@@ -130,70 +131,60 @@ test("manual-value size, section, and housing validation remain bounded before c
     pool,
     validateSection: () => { throw new Error("invalid_subject_value"); },
   }));
-  const invalidHousing = await startRouter(baseOptions({
-    pool,
-    normalizeHousingProfile: () => { throw new Error("invalid_housing_type"); },
-  }));
   context.after(async () => Promise.all([
-    sized.close(), invalidSection.close(), invalidHousing.close(),
+    sized.close(), invalidSection.close(),
   ]));
 
   const tooLarge = await patchManualValues(sized.baseUrl, "123", {
+    assignment_file_id: 41,
     sections: { "report.subject_identification": { notes: "x".repeat(250_001) } },
+    expected_revisions: { "report.subject_identification": 0 },
   });
   assert.equal(tooLarge.status, 413);
   assert.deepEqual(await tooLarge.json(), { error: "report_sections_too_large" });
 
   const invalidSectionResponse = await patchManualValues(invalidSection.baseUrl, "123", {
+    assignment_file_id: 41,
     sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
   });
   assert.equal(invalidSectionResponse.status, 400);
   assert.deepEqual(await invalidSectionResponse.json(), { error: "invalid_subject_value" });
 
-  const invalidHousingResponse = await patchManualValues(invalidHousing.baseUrl, "123", {
-    sections: {
-      "report.property_characteristics": {
-        housing_profile: { housing_type: "invalid" },
-      },
-    },
-  });
-  assert.equal(invalidHousingResponse.status, 400);
-  assert.deepEqual(await invalidHousingResponse.json(), { error: "invalid_housing_type" });
   assert.equal(connectCalls, 0);
 });
 
-test("manual-value saves preserve canonicalization, housing sync, revisions, history, and commit order", async (context) => {
+test("rollout manual-value saves use assignment-scoped revisions and authenticated identity", async (context) => {
   const calls = [];
   const validated = [];
   const normalizedInputs = [];
   let releases = 0;
-  let revisionReads = 0;
   const client = {
     async query(sql, params) {
       calls.push({ sql, params });
       if (sql === "BEGIN" || sql === "COMMIT") return { rows: [], rowCount: 0 };
       if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [{}], rowCount: 1 };
-      if (/INSERT INTO core\.account_housing_profiles/.test(sql)) return { rows: [], rowCount: 1 };
-      if (/SELECT revision FROM app\.property_attribute_manual_values/.test(sql)) {
-        revisionReads += 1;
-        return revisionReads === 1
-          ? { rows: [{ revision: 2 }], rowCount: 1 }
-          : { rows: [], rowCount: 0 };
+      if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+        return { rows: [{ id: 41, organization_id: "org-1" }], rowCount: 1 };
       }
-      if (/INSERT INTO app\.property_attribute_manual_values/.test(sql)) {
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) {
+        return { rows: [{ status: "draft" }], rowCount: 1 };
+      }
+      if (/SELECT section_key, revision/.test(sql)) {
+        return { rows: [{ section_key: "report.subject_identification", revision: 2 }] };
+      }
+      if (/INSERT INTO app\.custom_appraisal_sections/.test(sql)) {
         return {
           rows: [{
             attribute_key: params[1],
-            attribute_value: JSON.parse(params[2]),
-            revision: params[5],
-            reviewer: params[4],
-            notes: params[3],
+            section_value: JSON.parse(params[2]),
+            revision: params[1] === "report.subject_identification" ? 3 : 1,
             updated_at: "2026-09-02T12:00:00Z",
           }],
           rowCount: 1,
         };
       }
-      if (/INSERT INTO app\.property_attribute_manual_history/.test(sql)) {
+      if (/INSERT INTO app\.custom_appraisal_section_history/.test(sql)) {
         return { rows: [], rowCount: 1 };
       }
       throw new Error(`unexpected_query:${sql}`);
@@ -222,63 +213,59 @@ test("manual-value saves preserve canonicalization, housing sync, revisions, his
     },
   };
   const response = await patchManualValues(server.baseUrl, "legacy_1", {
+    assignment_file_id: 41,
     sections: sectionValues,
     reviewer: "  Reviewer Name  ",
     notes: "  Review notes  ",
+    expected_revisions: {
+      "report.subject_identification": 2,
+      "report.property_characteristics": 0,
+    },
   });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
     ok: true,
     account_id: "CANONICAL_1",
+    assignment_file_id: 41,
     manual_values: {
       "report.subject_identification": {
         value: sectionValues["report.subject_identification"],
         revision: 3,
-        reviewer: "Reviewer Name",
+        reviewer: "Authenticated Appraiser",
         notes: "Review notes",
         updated_at: "2026-09-02T12:00:00Z",
       },
       "report.property_characteristics": {
         value: sectionValues["report.property_characteristics"],
         revision: 1,
-        reviewer: "Reviewer Name",
+        reviewer: "Authenticated Appraiser",
         notes: "Review notes",
         updated_at: "2026-09-02T12:00:00Z",
       },
     },
   });
   assert.deepEqual(validated, Object.entries(sectionValues));
-  assert.deepEqual(normalizedInputs, [{
-    housing_type: "Single Family Detached",
-    notes: "Review notes",
-  }]);
+  assert.deepEqual(normalizedInputs, []);
   assert.equal(releases, 1);
 
   const sequence = calls.map(({ sql }) => {
     if (["BEGIN", "COMMIT"].includes(sql)) return sql;
     if (/SELECT 1 FROM core\.accounts/.test(sql)) return "ACCOUNT";
-    if (/INSERT INTO core\.account_housing_profiles/.test(sql)) return "HOUSING";
-    if (/SELECT revision FROM app\.property_attribute_manual_values/.test(sql)) return "REVISION";
-    if (/INSERT INTO app\.property_attribute_manual_values/.test(sql)) return "VALUE";
-    if (/INSERT INTO app\.property_attribute_manual_history/.test(sql)) return "HISTORY";
+    if (/FROM app\.assignment_files assignment_file/.test(sql)) return "ASSIGNMENT";
+    if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return "WORKFILE";
+    if (/SELECT section_key, revision/.test(sql)) return "REVISIONS";
+    if (/INSERT INTO app\.custom_appraisal_sections/.test(sql)) return "VALUE";
+    if (/INSERT INTO app\.custom_appraisal_section_history/.test(sql)) return "HISTORY";
     return "UNKNOWN";
   });
   assert.deepEqual(sequence, [
-    "BEGIN", "ACCOUNT", "HOUSING",
-    "REVISION", "VALUE", "HISTORY",
-    "REVISION", "VALUE", "HISTORY",
+    "ACCOUNT", "BEGIN", "ASSIGNMENT", "WORKFILE", "REVISIONS",
+    "VALUE", "HISTORY", "VALUE", "HISTORY",
     "COMMIT",
   ]);
-  const housingCall = calls.find(({ sql }) => /INSERT INTO core\.account_housing_profiles/.test(sql));
-  assert.deepEqual(housingCall.params, [
-    "CANONICAL_1", "One Story", "Single Family Detached", "Detached", "Ranch", "Review notes",
-  ]);
-  const valueCalls = calls.filter(({ sql }) => /INSERT INTO app\.property_attribute_manual_values/.test(sql));
-  assert.deepEqual(valueCalls.map(({ params }) => params.slice(0, 2)), [
-    ["CANONICAL_1", "report.subject_identification"],
-    ["CANONICAL_1", "report.property_characteristics"],
-  ]);
-  assert.deepEqual(valueCalls.map(({ params }) => params[5]), [3, 1]);
+  assert.equal(calls.some(({ sql }) => (
+    /property_attribute_manual|account_housing_profiles/.test(sql)
+  )), false);
 });
 
 test("enforced saves require an assignment and reject assignment-detail mirroring before connecting", async (context) => {
@@ -558,7 +545,7 @@ test("enforced saves return the current assignment revision instead of overwriti
   assert.equal(calls.at(-1), "ROLLBACK");
 });
 
-test("manual-value missing accounts roll back and release without value or history writes", async (context) => {
+test("manual-value missing accounts release before starting a transaction", async (context) => {
   const calls = [];
   let releases = 0;
   const client = {
@@ -574,11 +561,13 @@ test("manual-value missing accounts roll back and release without value or histo
   context.after(server.close);
 
   const response = await patchManualValues(server.baseUrl, "123", {
+    assignment_file_id: 41,
     sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
   });
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), { error: "account_not_found" });
-  assert.deepEqual(calls, ["BEGIN", "SELECT 1 FROM core.accounts WHERE account_id = $1", "ROLLBACK"]);
+  assert.deepEqual(calls, ["SELECT 1 FROM core.accounts WHERE account_id = $1"]);
   assert.equal(releases, 1);
 });
 
@@ -605,7 +594,9 @@ test("manual-value failures roll back, release, and return no diagnostics", asyn
   context.after(server.close);
 
   const response = await patchManualValues(server.baseUrl, "123", {
+    assignment_file_id: 41,
     sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
   });
   assert.equal(response.status, 500);
   const body = await response.json();

@@ -57,20 +57,18 @@ export function createAccountDetailRouter({
   router.get("/api/accounts/:id", async (req, res) => {
     const id = String(req.params.id || "").trim();
     if (!id) return res.status(400).json({ error: "missing_id" });
-    if (authenticationRequired) {
-      if (!req.mobileAuth) {
-        return res.set("cache-control", "no-store")
-          .status(401)
-          .json({ error: "authentication_required" });
-      }
-      const mayReadApplication = APPLICATION_WORKFLOWS.some((workflow) => (
-        hasPermission(req.mobileAuth, workflow, "read")
-      ));
-      if (!mayReadApplication) {
-        return res.set("cache-control", "no-store")
-          .status(403)
-          .json({ error: "application_access_denied" });
-      }
+    if (!req.mobileAuth) {
+      return res.set("cache-control", "no-store")
+        .status(401)
+        .json({ error: "authentication_required" });
+    }
+    const mayReadApplication = APPLICATION_WORKFLOWS.some((workflow) => (
+      hasPermission(req.mobileAuth, workflow, "read")
+    ));
+    if (!mayReadApplication) {
+      return res.set("cache-control", "no-store")
+        .status(403)
+        .json({ error: "application_access_denied" });
     }
     try {
       await accountQualityReady;
@@ -150,35 +148,8 @@ export function createAccountDetailRouter({
         logger.warn?.("census geography lookup failed", error?.message || error);
         return null;
       });
-      const reportManualValuesPromise = authenticationRequired ? Promise.resolve({}) : (async () => {
-        await propertyEnrichmentReady;
-        const { rows } = await pool.query(
-          `SELECT attribute_key, attribute_value, revision, reviewer, notes, updated_at
-           FROM app.property_attribute_manual_values
-           WHERE account_id = $1 AND attribute_key LIKE 'report.%'
-           ORDER BY attribute_key`,
-          [canonicalId],
-        );
-        return Object.fromEntries(
-          rows.map((row) => [row.attribute_key, {
-            value: row.attribute_value,
-            revision: Number(row.revision || 0),
-            reviewer: row.reviewer,
-            notes: row.notes,
-            updated_at: row.updated_at,
-          }]),
-        );
-      })().catch((error) => {
-        logger.warn?.("report manual values lookup failed", error?.code || "unknown_error");
-        return {};
-      });
-      const propertyContextPromise = authenticationRequired ? Promise.resolve(null) : (async () => {
-        await ensurePropertyContextAvailable();
-        return loadPropertyContext(pool, { accountId: canonicalId });
-      })().catch((error) => {
-        logger.warn?.("property context lookup failed", error?.message || error);
-        return null;
-      });
+      const reportManualValuesPromise = Promise.resolve({});
+      const propertyContextPromise = Promise.resolve(null);
 
       const sections = await loadDetailSections(pool, canonicalId);
       const response = {

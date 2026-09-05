@@ -1,4 +1,3 @@
-import { editorKeyMatches } from "../util/housingProfileEdit.js";
 import { normalizeAssignmentFileId } from "../services/assignmentFiles.js";
 import {
   authorizeCustomAssignmentFile,
@@ -24,10 +23,8 @@ function assertGuardOptions(pool, authenticationRequired) {
 export function createApplicationAccessGuards({
   pool,
   authenticationRequired,
-  environment = process.env,
   permissionChecker = hasApplicationPermission,
   roleChecker = hasApplicationRole,
-  editorKeyChecker = editorKeyMatches,
   assignmentAuthorizer = authorizeCustomAssignmentFile,
   propertyTaxAuthorizer = authorizePropertyTaxProtestFile,
 } = {}) {
@@ -61,22 +58,10 @@ export function createApplicationAccessGuards({
         .json({ error: "application_access_denied" });
       return false;
     }
-    if (authenticationRequired) {
-      res.set("cache-control", "no-store")
-        .status(401)
-        .json({ error: "authentication_required" });
-      return false;
-    }
-    const configuredEditorKey = String(environment.HOMENODE_EDITOR_KEY || "");
-    if (!configuredEditorKey) {
-      res.status(503).json({ error: "editor_not_configured" });
-      return false;
-    }
-    if (!editorKeyChecker(req.get("x-homenode-editor-key"), configuredEditorKey)) {
-      res.status(401).json({ error: "invalid_editor_key" });
-      return false;
-    }
-    return true;
+    res.set("cache-control", "no-store")
+      .status(401)
+      .json({ error: "authentication_required" });
+    return false;
   }
 
   async function requireCustomAssignmentAccess(
@@ -86,29 +71,26 @@ export function createApplicationAccessGuards({
     assignmentFileId,
     permission,
   ) {
-    // An authenticated request must retain its exact assignment scope even while
-    // the rest of a non-production environment permits legacy access.
-    if (!authenticationRequired && !req.mobileAuth) return true;
-    if (req.mobileAuth) {
-      try {
-        await assignmentAuthorizer(pool, req.mobileAuth, {
-          accountId,
-          assignmentFileId,
-          permission,
-        });
-        return true;
-      } catch (error) {
-        const notFound = error?.message === "assignment_file_not_found";
-        res.set("cache-control", "no-store").status(notFound ? 404 : 403).json({
-          error: notFound ? "assignment_file_not_found" : "assignment_file_access_denied",
-        });
-        return false;
-      }
+    if (!req.mobileAuth) {
+      res.set("cache-control", "no-store")
+        .status(401)
+        .json({ error: "authentication_required" });
+      return false;
     }
-    res.set("cache-control", "no-store")
-      .status(401)
-      .json({ error: "authentication_required" });
-    return false;
+    try {
+      await assignmentAuthorizer(pool, req.mobileAuth, {
+        accountId,
+        assignmentFileId,
+        permission,
+      });
+      return true;
+    } catch (error) {
+      const notFound = error?.message === "assignment_file_not_found";
+      res.set("cache-control", "no-store").status(notFound ? 404 : 403).json({
+        error: notFound ? "assignment_file_not_found" : "assignment_file_access_denied",
+      });
+      return false;
+    }
   }
 
   function requireWorkflowAccess(req, res, workflow, permission) {
@@ -119,30 +101,14 @@ export function createApplicationAccessGuards({
         .json({ error: "application_access_denied" });
       return false;
     }
-    if (authenticationRequired) {
-      res.set("cache-control", "no-store")
-        .status(401)
-        .json({ error: "authentication_required" });
-      return false;
-    }
-    const configuredEditorKey = String(environment.HOMENODE_EDITOR_KEY || "");
-    if (
-      configuredEditorKey
-      && editorKeyChecker(req.get("x-homenode-editor-key"), configuredEditorKey)
-    ) {
-      return true;
-    }
-    if (!authenticationRequired) return true;
-    res.set("cache-control", "no-store");
-    res.status(req.mobileAuth ? 403 : 401).json({
-      error: req.mobileAuth ? "application_access_denied" : "authentication_required",
-    });
+    res.set("cache-control", "no-store")
+      .status(401)
+      .json({ error: "authentication_required" });
     return false;
   }
 
   function requireApplicationReader(req, res) {
     if (!req.mobileAuth) {
-      if (!authenticationRequired) return true;
       res.set("cache-control", "no-store")
         .status(401)
         .json({ error: "authentication_required" });
@@ -174,13 +140,12 @@ export function createApplicationAccessGuards({
         .json({ error: "invalid_assignment_file_id" });
       return false;
     }
-    if (authenticationRequired && !assignmentFileId) {
+    if (!assignmentFileId) {
       res.set("cache-control", "no-store")
         .status(400)
         .json({ error: "assignment_file_required" });
       return false;
     }
-    if (!assignmentFileId) return true;
     return requireCustomAssignmentAccess(
       req,
       res,
@@ -206,13 +171,12 @@ export function createApplicationAccessGuards({
         .json({ error: "invalid_property_tax_protest_file_id" });
       return false;
     }
-    if (authenticationRequired && !propertyTaxFileId) {
+    if (!propertyTaxFileId) {
       res.set("cache-control", "no-store")
         .status(400)
         .json({ error: "property_tax_protest_file_required" });
       return false;
     }
-    if (!propertyTaxFileId || !authenticationRequired) return true;
     try {
       await propertyTaxAuthorizer(pool, req.mobileAuth, {
         accountId,

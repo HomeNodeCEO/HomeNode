@@ -22,7 +22,7 @@ async function withServer(pool, callback, securityOverrides = {}, routerOverride
       },
     },
     enabled: routerOverrides.enabled ?? true,
-    authenticationRequired: true,
+    authenticationRequired: routerOverrides.authenticationRequired ?? true,
     security: {
       strict: true,
       corsRestricted: true,
@@ -172,6 +172,20 @@ test("strict UAD routes return a bounded generic response after the configured r
     assert.deepEqual(await blocked.json(), { error: "rate_limit_exceeded" });
     assert.ok(blocked.headers.get("retry-after"));
   }, { rateLimitMax: 2 });
+});
+
+test("UAD workfiles fail closed while the application rollout flag is disabled", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const capabilities = await fetch(`${baseUrl}/api/uad/capabilities`);
+    assert.equal(capabilities.status, 200);
+    assert.equal((await capabilities.json()).authentication.required, true);
+
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}`);
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "invalid_access_token" });
+    assert.equal(pool.accessQueries.length, 0);
+  }, {}, { authenticationRequired: false });
 });
 
 test("UAD completion confirmation is limited to the assigned appraiser and records the actor", async () => {

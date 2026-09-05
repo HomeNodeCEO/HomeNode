@@ -318,9 +318,9 @@ export function createWebAuthRouter({
     && frontendUrl
     && sessionSecret.length >= 32
   );
-  // Configuration and enforcement are deliberately separate rollout stages.
-  // WorkOS can be provisioned and tested without replacing the editor-key
-  // workflow until APPLICATION_AUTHENTICATION_REQUIRED is explicitly enabled.
+  // Local development may still select the explicit legacy composition mode.
+  // Production startup requires enforcement and sensitive routes never accept
+  // the retired shared editor-key credential as an authentication substitute.
   const required = authenticationPolicy.authenticationRequired;
   let discovery = null;
   let discoveryPromise = null;

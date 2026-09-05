@@ -18,6 +18,14 @@ function requestedAccountId(req, res) {
   return value;
 }
 
+function authenticatedReviewer(req) {
+  const userId = String(req.mobileAuth?.userId || "").trim();
+  if (!userId) return null;
+  return String(
+    req.mobileAuth?.displayName || req.mobileAuth?.email || userId,
+  ).trim() || userId;
+}
+
 export function createAssignmentWorkfileMutationRouter({
   pool,
   ensureCustomAppraisalWorkfilesAvailable,
@@ -63,6 +71,12 @@ export function createAssignmentWorkfileMutationRouter({
       const accountId = requestedAccountId(req, res);
       if (!accountId) return undefined;
       if (!requireEditor(req, res)) return undefined;
+      const reviewer = authenticatedReviewer(req);
+      if (!reviewer) {
+        return res.set("cache-control", "no-store")
+          .status(401)
+          .json({ error: "authentication_required" });
+      }
       try {
         const assignmentFileId = normalizeFileId(req.params.fileId, { required: true });
         await ensureCustomAppraisalWorkfilesAvailable();
@@ -81,7 +95,7 @@ export function createAssignmentWorkfileMutationRouter({
           sectionValue: req.body?.value,
           expectedRevision: req.body?.expected_revision,
           saveReason: req.body?.save_reason,
-          reviewer: req.body?.reviewer,
+          reviewer,
         });
         return res.json({
           ok: true,

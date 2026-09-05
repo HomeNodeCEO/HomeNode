@@ -296,7 +296,7 @@ test("enforced assignment-file filtering does not disclose or hydrate a denied r
   assert.equal(legacyQueries, 0);
 });
 
-test("rollout-mode listing preserves legacy details and does not apply identity filtering", async (context) => {
+test("rollout-mode listing still applies identity filtering and hides legacy details", async (context) => {
   let accessChecks = 0;
   const pool = {
     async query(sql) {
@@ -320,9 +320,9 @@ test("rollout-mode listing preserves legacy details and does not apply identity 
   const response = await fetch(`${server.baseUrl}/api/accounts/abc/assignment-files`);
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.files.length, 1);
-  assert.deepEqual(body.legacy_assignment_details, { legacy: true });
-  assert.equal(accessChecks, 0);
+  assert.equal(body.files.length, 0);
+  assert.equal(body.legacy_assignment_details, null);
+  assert.equal(accessChecks, 1);
 });
 
 test("missing optional mobile detail tables leave the assignment list usable", async (context) => {

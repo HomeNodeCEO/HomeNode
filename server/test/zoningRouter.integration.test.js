@@ -207,7 +207,7 @@ test("zoning verification stops before readiness when workflow access is denied"
   const response = await fetch(`${server.baseUrl}/api/accounts/42/zoning-verification`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: "{}",
+    body: JSON.stringify({ assignment_file_id: 7 }),
   });
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { error: "workflow_forbidden" });
@@ -297,7 +297,7 @@ test("zoning verification retains client-error mapping and validates composition
   const response = await fetch(`${server.baseUrl}/api/accounts/42/zoning-verification`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
-    body: "{}",
+    body: JSON.stringify({ assignment_file_id: "file-7" }),
   });
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { error: "zoning_code_required" });

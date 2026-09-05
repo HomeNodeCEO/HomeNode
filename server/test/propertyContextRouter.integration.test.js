@@ -11,7 +11,10 @@ import {
 
 const pool = { query: async () => ({ rows: [] }) };
 
-async function startRouter(router, { mobileAuth = null } = {}) {
+async function startRouter(router, { mobileAuth = {
+  userId: "appraiser-1",
+  displayName: "Authenticated Appraiser",
+} } = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -207,7 +210,7 @@ test("property-context review passes the complete appraiser body unchanged", asy
   assert.deepEqual(inputs, [[pool, {
     accountId: "canonical-42",
     assignmentFileId: "file-7",
-    review,
+    review: { ...review, reviewer: "Authenticated Appraiser" },
   }]]);
 });
 
@@ -362,14 +365,16 @@ test("account property-context routes preserve error mapping and logging", async
   })));
   context.after(server.close);
 
-  const read = await fetch(`${server.baseUrl}/api/accounts/missing/property-context`);
+  const read = await fetch(
+    `${server.baseUrl}/api/accounts/missing/property-context?assignment_file_id=7`,
+  );
   assert.equal(read.status, 404);
   assert.deepEqual(await read.json(), { error: "account_not_found" });
 
   const analyze = await fetch(`${server.baseUrl}/api/accounts/missing/property-context/analyze`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: "{}",
+    body: JSON.stringify({ assignment_file_id: 7 }),
   });
   assert.equal(analyze.status, 404);
   assert.deepEqual(await analyze.json(), { error: "account_not_found" });
@@ -377,7 +382,7 @@ test("account property-context routes preserve error mapping and logging", async
   const review = await fetch(`${server.baseUrl}/api/accounts/missing/property-context`, {
     method: "PATCH",
     headers: { "content-type": "application/json" },
-    body: "{}",
+    body: JSON.stringify({ assignment_file_id: 7 }),
   });
   assert.equal(review.status, 404);
   assert.deepEqual(await review.json(), { error: "account_not_found" });

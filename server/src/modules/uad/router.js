@@ -75,6 +75,14 @@ import {
   reviewAssignmentDocumentCandidate,
 } from "../../services/assignmentDocuments.js";
 
+function authenticatedReviewer(req) {
+  const userId = String(req.mobileAuth?.userId || "").trim();
+  if (!userId) throw new Error("uad_authentication_required");
+  return String(
+    req.mobileAuth?.displayName || req.mobileAuth?.email || userId,
+  ).trim() || userId;
+}
+
 function errorStatus(error) {
   const message = String(error?.message || "");
   if (message === "delivery_attempt_not_found_or_completed") return 409;
@@ -238,7 +246,7 @@ export function createUadRouter({
     compliance,
     security: {
       strict: Boolean(security.strict),
-      authenticationRequired: Boolean(authenticationRequired),
+      authenticationRequired: true,
       corsRestricted: Boolean(security.corsRestricted),
       rateLimitEnabled: Boolean(security.rateLimitEnabled),
     },
@@ -282,7 +290,7 @@ export function createUadRouter({
       },
       authentication: {
         protocol: "oidc",
-        required: Boolean(authenticationRequired),
+        required: true,
         configured: Boolean(verifier?.configured),
       },
       security: {
@@ -310,14 +318,11 @@ export function createUadRouter({
     if (enabled) return next();
     return res.status(503).json({ error: "uad_workspace_disabled" });
   });
-  router.use((req, res, next) => {
-    if (!authenticationRequired) return next();
-    return authenticateIfNeeded(req, res, next);
-  });
+  router.use(authenticateIfNeeded);
 
   router.get("/accounts/:accountId/workfiles", async (req, res) => {
     try {
-      const accessScope = authenticationRequired ? buildUadAccessScope(req.mobileAuth) : null;
+      const accessScope = buildUadAccessScope(req.mobileAuth);
       const workfiles = await listUadWorkfiles(pool, req.params.accountId, accessScope);
       res.json({ account_id: req.params.accountId, workfiles });
     } catch (error) {
@@ -330,7 +335,7 @@ export function createUadRouter({
       // The summary is public cadastral source data used before a first UAD
       // workfile exists, but only identities with an authorized UAD role may
       // enumerate it. Tenant-owned workfiles remain separately object-scoped.
-      if (authenticationRequired) buildUadAccessScope(req.mobileAuth);
+      buildUadAccessScope(req.mobileAuth);
       const subject = await getUadSubjectSummary(pool, req.params.accountId);
       res.json({ subject });
     } catch (error) {
@@ -341,10 +346,8 @@ export function createUadRouter({
   router.post("/accounts/:accountId/workfiles", async (req, res) => {
     try {
       const requestedInput = workfileCreationInput(req.body);
-      let input = authenticationRequired
-        ? authorizeUadCreation(req.mobileAuth, requestedInput)
-        : requestedInput;
-      if (authenticationRequired) input = await verifyUadAssigneeMembership(pool, input);
+      let input = authorizeUadCreation(req.mobileAuth, requestedInput);
+      input = await verifyUadAssigneeMembership(pool, input);
       const workfile = await createUadWorkfile(pool, req.params.accountId, input);
       res.status(201).json({ workfile });
     } catch (error) {
@@ -354,7 +357,7 @@ export function createUadRouter({
 
   router.use(
     "/workfiles/:workfileId",
-    createUadWorkfileAuthorizer({ pool, authenticationRequired }),
+    createUadWorkfileAuthorizer({ pool }),
   );
 
   router.post("/delivery/resolve", (req, res) => {
@@ -689,15 +692,11 @@ export function createUadRouter({
 
   router.post("/workfiles/:workfileId/documents/:documentId/subject-address-override", async (req, res) => {
     try {
-      if (authenticationRequired) {
-        authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
-      }
+      authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
       await requireUadDocument(req.params.workfileId, req.params.documentId);
       await confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
         documentId: req.params.documentId,
-        reviewer: authenticationRequired
-          ? req.mobileAuth?.displayName || req.mobileAuth?.email || req.mobileAuth?.userId
-          : req.body?.reviewer,
+        reviewer: authenticatedReviewer(req),
         actorUserId: req.mobileAuth?.userId || null,
         candidateValues: req.body?.candidate_values,
       });
@@ -715,7 +714,7 @@ export function createUadRouter({
         candidateId: req.params.candidateId,
         reviewStatus: req.body?.review_status,
         confirmedValue: req.body?.confirmed_value,
-        reviewer: req.body?.reviewer,
+        reviewer: authenticatedReviewer(req),
       });
       return res.json({ candidate });
     } catch (error) {
@@ -732,7 +731,7 @@ export function createUadRouter({
       }
       await confirmAssignmentDocumentCandidates(pool, {
         documentId: req.params.documentId,
-        reviewer: req.body?.reviewer,
+        reviewer: authenticatedReviewer(req),
         candidateValues: req.body?.candidate_values,
       });
       const application = await synchronizeUadPurchaseContract(
@@ -856,9 +855,7 @@ export function createUadRouter({
 
   router.post("/workfiles/:workfileId/completion-suggestions/apply", async (req, res) => {
     try {
-      if (authenticationRequired) {
-        authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
-      }
+      authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
       res.json(await applyCompletionSuggestions(
         pool,
         req.params.workfileId,

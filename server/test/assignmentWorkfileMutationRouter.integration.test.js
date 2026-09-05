@@ -152,7 +152,7 @@ test("section saves bind canonical assignment, version input, and write authoriz
       sectionValue: { address: "123 Main" },
       expectedRevision: 3,
       saveReason: "autosave",
-      reviewer: "Reviewer",
+      reviewer: "Authenticated Appraiser",
     },
   });
   assert.deepEqual(calls.map(({ type }) => type), ["schema", "resolve", "access", "save"]);
@@ -269,6 +269,23 @@ test("rollout signing rejects an editor key without an authenticated signer", as
   assert.deepEqual(await response.json(), { error: "authenticated_signer_required" });
   assert.equal(editorCalls, 0);
   assert.equal(signCalls, 0);
+});
+
+test("rollout section save rejects an editor key without an authenticated reviewer", async (context) => {
+  let saveCalls = 0;
+  const server = await startRouter(baseOptions({
+    saveSection: async () => { saveCalls += 1; },
+  }));
+  context.after(server.close);
+
+  const response = await saveSection(server.baseUrl, "A-1", 41, "subject", {
+    value: {},
+    reviewer: "Forged Reviewer",
+  });
+  assert.equal(response.status, 401);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { error: "authentication_required" });
+  assert.equal(saveCalls, 0);
 });
 
 test("sign assignment denial stops immutable snapshot creation", async (context) => {

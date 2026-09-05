@@ -72,9 +72,7 @@ export function createAppraisalHistoryRouter({
       if (!schema.rows[0]?.table_name) {
         return res.status(503).json({ error: "appraisal_history_schema_unavailable" });
       }
-      const accessScope = authenticationRequired && req.mobileAuth
-        ? buildAccessScope(req.mobileAuth)
-        : null;
+      const accessScope = buildAccessScope(req.mobileAuth);
       return res.json(await listHistory(pool, canonicalId, accessScope));
     } catch (error) {
       if (String(error?.message || "").startsWith("invalid_")) {
@@ -94,13 +92,11 @@ export function createAppraisalHistoryRouter({
     }
     try {
       const canonicalId = await resolveAccountId(pool, requestedId);
-      if (authenticationRequired && req.mobileAuth) {
-        await authorizeReportFile(pool, req.mobileAuth, {
-          accountId: canonicalId,
-          reportFileId: req.params.reportFileId,
-          permission: "read",
-        });
-      }
+      await authorizeReportFile(pool, req.mobileAuth, {
+        accountId: canonicalId,
+        reportFileId: req.params.reportFileId,
+        permission: "read",
+      });
       const completion = await loadCompletion(pool, {
         accountId: canonicalId,
         reportFileId: req.params.reportFileId,
@@ -133,25 +129,22 @@ export function createAppraisalHistoryRouter({
     if (!requireEditor(req, res)) return undefined;
     try {
       const canonicalId = await resolveAccountId(pool, requestedId);
-      let sourceAccess = null;
-      if (authenticationRequired && req.mobileAuth) {
-        sourceAccess = await authorizeReportFile(pool, req.mobileAuth, {
-          accountId: canonicalId,
-          reportFileId: req.params.reportFileId,
-          permission: "write",
-        });
-        const targetWorkflow = String(req.body?.target_workflow_type || "").trim();
-        if (
-          ["custom_appraisal", "uad_3_6"].includes(targetWorkflow)
-          && !hasPermission(
-            req.mobileAuth,
-            targetWorkflow,
-            "write",
-            sourceAccess.organization_id,
-          )
-        ) {
-          return res.status(403).json({ error: "appraisal_replication_access_denied" });
-        }
+      const sourceAccess = await authorizeReportFile(pool, req.mobileAuth, {
+        accountId: canonicalId,
+        reportFileId: req.params.reportFileId,
+        permission: "write",
+      });
+      const targetWorkflow = String(req.body?.target_workflow_type || "").trim();
+      if (
+        ["custom_appraisal", "uad_3_6"].includes(targetWorkflow)
+        && !hasPermission(
+          req.mobileAuth,
+          targetWorkflow,
+          "write",
+          sourceAccess.organization_id,
+        )
+      ) {
+        return res.status(403).json({ error: "appraisal_replication_access_denied" });
       }
       const result = await replicateFile(pool, {
         accountId: canonicalId,

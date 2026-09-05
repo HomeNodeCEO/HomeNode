@@ -6,11 +6,22 @@ function requireMiddleware(value, code) {
 }
 
 export function createLegacyApplicationAuthenticationGate(authenticationPolicy) {
-  if (!authenticationPolicy || typeof authenticationPolicy.authenticationRequired !== "boolean") {
+  if (
+    !authenticationPolicy
+    || typeof authenticationPolicy.authenticationRequired !== "boolean"
+    || !["enforced", "development_legacy"].includes(authenticationPolicy.mode)
+    || (authenticationPolicy.mode === "enforced" && !authenticationPolicy.authenticationRequired)
+    || (authenticationPolicy.mode === "development_legacy" && authenticationPolicy.authenticationRequired)
+  ) {
     throw new TypeError("application_authentication_policy_required");
   }
+  if (authenticationPolicy.mode === "development_legacy") {
+    return function localDevelopmentApplicationGate(_req, _res, next) {
+      return next();
+    };
+  }
   return function legacyApplicationAuthenticationGate(req, res, next) {
-    if (!authenticationPolicy.authenticationRequired || req.mobileAuth) return next();
+    if (req.mobileAuth) return next();
     return res.set("cache-control", "no-store")
       .status(401)
       .json({ error: "authentication_required" });

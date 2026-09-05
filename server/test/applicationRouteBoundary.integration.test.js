@@ -15,7 +15,10 @@ async function startApplication({ authenticationRequired = true, readinessError 
   const app = express();
   const rateLimitedRequests = [];
   mountApplicationRouteBoundary(app, {
-    authenticationPolicy: { authenticationRequired },
+    authenticationPolicy: {
+      authenticationRequired,
+      mode: authenticationRequired ? "enforced" : "development_legacy",
+    },
     webSessionAuthenticator(req, _res, next) {
       if (req.get("x-test-web-session") === "active") req.mobileAuth = identity;
       next();
@@ -133,7 +136,7 @@ test("browser session hydration protects session and readiness endpoints", async
   ]);
 });
 
-test("readiness failures remain bounded and rollout mode preserves legacy access", async (context) => {
+test("readiness failures remain bounded and explicit local development preserves legacy access", async (context) => {
   const unavailable = await startApplication({ readinessError: new Error("postgres secret") });
   const deniedError = Object.assign(new Error("private authorization details"), {
     code: "auth_readiness_access_denied",

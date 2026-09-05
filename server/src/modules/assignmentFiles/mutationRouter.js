@@ -69,51 +69,13 @@ function requestedAccountId(req, res) {
   return value;
 }
 
-function assignmentReviewer(req, authenticationRequired) {
+function assignmentReviewer(req) {
   const authenticatedReviewer = req.mobileAuth?.displayName
     || req.mobileAuth?.email
     || req.mobileAuth?.userId;
-  return String(
-    authenticationRequired ? authenticatedReviewer : req.body?.reviewer || "HomeNode editor",
-  )
+  return String(authenticatedReviewer || "")
     .trim()
-    .slice(0, 200) || "HomeNode editor";
-}
-
-async function mirrorLatestAssignmentDetails(
-  client,
-  accountId,
-  assignmentDetails,
-  reviewer,
-  fileNumber,
-) {
-  const attributeKey = "report.assignment_details";
-  const { rows: currentRows } = await client.query(
-    `SELECT revision FROM app.property_attribute_manual_values
-     WHERE account_id = $1 AND attribute_key = $2 FOR UPDATE`,
-    [accountId, attributeKey],
-  );
-  const revision = Number(currentRows[0]?.revision || 0) + 1;
-  const valueJson = JSON.stringify(assignmentDetails);
-  const notes = `Current assignment file ${fileNumber}`;
-  await client.query(
-    `INSERT INTO app.property_attribute_manual_values (
-       account_id, attribute_key, attribute_value, notes, reviewer, revision
-     ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)
-     ON CONFLICT (account_id, attribute_key) DO UPDATE SET
-       attribute_value = EXCLUDED.attribute_value,
-       notes = EXCLUDED.notes,
-       reviewer = EXCLUDED.reviewer,
-       revision = EXCLUDED.revision,
-       updated_at = now()`,
-    [accountId, attributeKey, valueJson, notes, reviewer, revision],
-  );
-  await client.query(
-    `INSERT INTO app.property_attribute_manual_history (
-       account_id, attribute_key, attribute_value, notes, reviewer, revision
-     ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
-    [accountId, attributeKey, valueJson, notes, reviewer, revision],
-  );
+    .slice(0, 200);
 }
 
 export function createAssignmentFileMutationRouter({
@@ -122,6 +84,7 @@ export function createAssignmentFileMutationRouter({
   propertyEnrichmentReady,
   ensureAssignmentFilesAvailable,
   ensureCustomAppraisalWorkfilesAvailable,
+  requireWorkflowAccess,
   requireEditor,
   requireAssignmentAccess,
   authenticationRequired,
@@ -154,7 +117,11 @@ export function createAssignmentFileMutationRouter({
   ) {
     throw new TypeError("assignment_file_mutation_schema_readiness_required");
   }
-  if (typeof requireEditor !== "function" || typeof requireAssignmentAccess !== "function") {
+  if (
+    typeof requireWorkflowAccess !== "function"
+    || typeof requireEditor !== "function"
+    || typeof requireAssignmentAccess !== "function"
+  ) {
     throw new TypeError("assignment_file_mutation_access_policy_required");
   }
   if (typeof authenticationRequired !== "boolean") {
@@ -180,28 +147,25 @@ export function createAssignmentFileMutationRouter({
   router.post("/api/accounts/:id/assignment-files", async (req, res) => {
     const accountId = requestedAccountId(req, res);
     if (!accountId) return undefined;
+    if (!requireWorkflowAccess(req, res, CUSTOM_APPRAISAL_WORKFLOW, "write")) return undefined;
     if (!requireEditor(req, res)) return undefined;
 
-    let creationOrganizationId = null;
-    let creatorUserId = null;
-    if (authenticationRequired && req.mobileAuth) {
-      const requestedOrganizationId = String(req.body?.organization_id || "").trim();
-      const writable = (req.mobileAuth.organizations || []).filter((organization) =>
-        hasPermission(
-          req.mobileAuth,
-          CUSTOM_APPRAISAL_WORKFLOW,
-          "write",
-          organization.organizationId,
-        ));
-      const selected = requestedOrganizationId
-        ? writable.find((organization) => organization.organizationId === requestedOrganizationId)
-        : writable.length === 1 ? writable[0] : null;
-      if (!selected) {
-        return res.status(400).json({ error: "organization_selection_required" });
-      }
-      creationOrganizationId = selected.organizationId;
-      creatorUserId = req.mobileAuth.userId;
+    const requestedOrganizationId = String(req.body?.organization_id || "").trim();
+    const writable = (req.mobileAuth?.organizations || []).filter((organization) =>
+      hasPermission(
+        req.mobileAuth,
+        CUSTOM_APPRAISAL_WORKFLOW,
+        "write",
+        organization.organizationId,
+      ));
+    const selected = requestedOrganizationId
+      ? writable.find((organization) => organization.organizationId === requestedOrganizationId)
+      : writable.length === 1 ? writable[0] : null;
+    if (!selected) {
+      return res.status(400).json({ error: "organization_selection_required" });
     }
+    const creationOrganizationId = selected.organizationId;
+    const creatorUserId = req.mobileAuth.userId;
 
     let fileNumber;
     let inheritedFromFileId;
@@ -211,7 +175,7 @@ export function createAssignmentFileMutationRouter({
     } catch (error) {
       return res.status(400).json({ error: error?.message || "invalid_assignment_file" });
     }
-    const reviewer = assignmentReviewer(req, authenticationRequired);
+    const reviewer = assignmentReviewer(req);
     const client = await pool.connect();
     try {
       await Promise.all([
@@ -264,15 +228,6 @@ export function createAssignmentFileMutationRouter({
           sourceFile = latestResult.rows[0] || null;
           if (sourceFile) inheritedFromFileId = Number(sourceFile.id);
           assignmentDetails = sourceFile?.assignment_details;
-        }
-        if (assignmentDetails === undefined && (!authenticationRequired || !req.mobileAuth)) {
-          const legacyResult = await client.query(
-            `SELECT attribute_value
-             FROM app.property_attribute_manual_values
-             WHERE account_id = $1 AND attribute_key = 'report.assignment_details'`,
-            [canonicalId],
-          );
-          assignmentDetails = legacyResult.rows[0]?.attribute_value || {};
         }
         if (assignmentDetails === undefined) assignmentDetails = {};
       }
@@ -349,15 +304,6 @@ export function createAssignmentFileMutationRouter({
          ) VALUES ($1,$2,$3,$4::jsonb,$5,1)`,
         [assignmentFileId, canonicalId, fileNumber, JSON.stringify(assignmentDetails), reviewer],
       );
-      if (!authenticationRequired || !req.mobileAuth) {
-        await mirrorLatestAssignmentDetails(
-          client,
-          canonicalId,
-          assignmentDetails,
-          reviewer,
-          fileNumber,
-        );
-      }
       const { rows } = await client.query(
         `${assignmentFileSelect} WHERE f.id = $1`,
         [assignmentFileId],
@@ -386,6 +332,7 @@ export function createAssignmentFileMutationRouter({
   router.patch("/api/accounts/:id/assignment-files/:fileId", async (req, res) => {
     const accountId = requestedAccountId(req, res);
     if (!accountId) return undefined;
+    if (!requireWorkflowAccess(req, res, CUSTOM_APPRAISAL_WORKFLOW, "write")) return undefined;
     if (!requireEditor(req, res)) return undefined;
     let assignmentFileId;
     try {
@@ -398,7 +345,7 @@ export function createAssignmentFileMutationRouter({
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
       return res.status(400).json({ error: "invalid_expected_revision" });
     }
-    const reviewer = assignmentReviewer(req, authenticationRequired);
+    const reviewer = assignmentReviewer(req);
     const assignmentDetails = req.body.assignment_details;
     const client = await pool.connect();
     try {
@@ -432,11 +379,7 @@ export function createAssignmentFileMutationRouter({
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "assignment_file_not_found" });
       }
-      if (
-        authenticationRequired
-        && req.mobileAuth
-        && !decideAccess(req.mobileAuth, existing, "write")
-      ) {
+      if (!decideAccess(req.mobileAuth, existing, "write")) {
         await client.query("ROLLBACK");
         return res.set("cache-control", "no-store")
           .status(403)
@@ -478,15 +421,6 @@ export function createAssignmentFileMutationRouter({
           revision,
         ],
       );
-      if (!authenticationRequired || !req.mobileAuth) {
-        await mirrorLatestAssignmentDetails(
-          client,
-          canonicalId,
-          assignmentDetails,
-          reviewer,
-          existing.file_number,
-        );
-      }
       const { rows } = await client.query(
         `${assignmentFileSelect} WHERE f.id = $1`,
         [assignmentFileId],

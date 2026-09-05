@@ -109,11 +109,10 @@ export function createZoningRouter({
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.body?.assignment_file_id);
-      if (authenticationRequired && req.mobileAuth && !assignmentFileId) {
+      if (!assignmentFileId) {
         return res.status(400).json({ error: "assignment_file_required" });
       }
-      if (assignmentFileId
-          && !await requireAssignmentAccess(req, res, accountId, assignmentFileId, "write")) {
+      if (!await requireAssignmentAccess(req, res, accountId, assignmentFileId, "write")) {
         return;
       }
       const verification = await saveVerification(pool, {

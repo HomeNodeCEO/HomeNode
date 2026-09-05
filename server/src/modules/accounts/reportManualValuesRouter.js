@@ -24,6 +24,7 @@ export function createReportManualValuesRouter({
   pool,
   propertyEnrichmentReady,
   ensureCustomAppraisalWorkfilesAvailable,
+  requireWorkflowAccess,
   requireEditor,
   requireAssignmentAccess,
   authenticationRequired,
@@ -43,7 +44,11 @@ export function createReportManualValuesRouter({
   if (typeof ensureCustomAppraisalWorkfilesAvailable !== "function") {
     throw new TypeError("report_manual_values_schema_readiness_required");
   }
-  if (typeof requireEditor !== "function" || typeof requireAssignmentAccess !== "function") {
+  if (
+    typeof requireWorkflowAccess !== "function"
+    || typeof requireEditor !== "function"
+    || typeof requireAssignmentAccess !== "function"
+  ) {
     throw new TypeError("report_manual_values_access_policy_required");
   }
   if (typeof authenticationRequired !== "boolean") {
@@ -69,6 +74,7 @@ export function createReportManualValuesRouter({
     if (!REPORT_ACCOUNT_ID.test(requestedId)) {
       return res.status(400).json({ error: "invalid_account_id" });
     }
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return undefined;
     if (!requireEditor(req, res)) return undefined;
     const sections = req.body?.sections;
     if (!sections || typeof sections !== "object" || Array.isArray(sections)) {
@@ -84,34 +90,31 @@ export function createReportManualValuesRouter({
     ) {
       return res.status(400).json({ error: "invalid_report_sections" });
     }
-    let assignmentFileId = null;
-    let expectedRevisions = null;
-    if (authenticationRequired) {
-      if (req.body?.assignment_file_id === undefined || req.body?.assignment_file_id === null) {
-        return res.status(400).json({ error: "assignment_file_required" });
-      }
-      try {
-        assignmentFileId = normalizeFileId(req.body.assignment_file_id, { required: true });
-      } catch (error) {
-        return res.status(400).json({ error: error?.message || "invalid_assignment_file_id" });
-      }
-      if (entries.some(([key]) => key === ASSIGNMENT_DETAILS_SECTION)) {
-        return res.status(400).json({ error: "assignment_details_require_assignment_file_api" });
-      }
-      expectedRevisions = req.body?.expected_revisions;
-      if (
-        !expectedRevisions
-        || typeof expectedRevisions !== "object"
-        || Array.isArray(expectedRevisions)
-        || Object.keys(expectedRevisions).length !== entries.length
-        || entries.some(([key]) => (
-          !Object.hasOwn(expectedRevisions, key)
-          || !Number.isSafeInteger(expectedRevisions[key])
-          || expectedRevisions[key] < 0
-        ))
-      ) {
-        return res.status(400).json({ error: "report_section_revision_required" });
-      }
+    let assignmentFileId;
+    if (req.body?.assignment_file_id === undefined || req.body?.assignment_file_id === null) {
+      return res.status(400).json({ error: "assignment_file_required" });
+    }
+    try {
+      assignmentFileId = normalizeFileId(req.body.assignment_file_id, { required: true });
+    } catch (error) {
+      return res.status(400).json({ error: error?.message || "invalid_assignment_file_id" });
+    }
+    if (entries.some(([key]) => key === ASSIGNMENT_DETAILS_SECTION)) {
+      return res.status(400).json({ error: "assignment_details_require_assignment_file_api" });
+    }
+    const expectedRevisions = req.body?.expected_revisions;
+    if (
+      !expectedRevisions
+      || typeof expectedRevisions !== "object"
+      || Array.isArray(expectedRevisions)
+      || Object.keys(expectedRevisions).length !== entries.length
+      || entries.some(([key]) => (
+        !Object.hasOwn(expectedRevisions, key)
+        || !Number.isSafeInteger(expectedRevisions[key])
+        || expectedRevisions[key] < 0
+      ))
+    ) {
+      return res.status(400).json({ error: "report_section_revision_required" });
     }
     const serializedSize = Buffer.byteLength(JSON.stringify(sections), "utf8");
     if (serializedSize > MAX_REPORT_SECTIONS_BYTES) {
@@ -128,41 +131,17 @@ export function createReportManualValuesRouter({
     const authenticatedReviewer = req.mobileAuth?.displayName
       || req.mobileAuth?.email
       || req.mobileAuth?.userId;
-    const reviewer = String(
-      authenticationRequired ? authenticatedReviewer : req.body?.reviewer || "HomeNode editor",
-    )
+    const reviewer = String(authenticatedReviewer || "")
       .trim()
-      .slice(0, 200) || "HomeNode editor";
+      .slice(0, 200);
     const notes = String(req.body?.notes || "Property Report manual edit")
       .trim()
       .slice(0, 4000) || null;
-    let housingUpdate = null;
-    const characteristics = sections["report.property_characteristics"];
-    if (
-      !authenticationRequired &&
-      characteristics?.housing_profile?.housing_type &&
-      typeof characteristics.housing_profile === "object"
-    ) {
-      try {
-        housingUpdate = normalizeHousingProfile({
-          ...characteristics.housing_profile,
-          notes,
-        });
-      } catch (error) {
-        return res.status(400).json({
-          error: error?.message || "invalid_housing_profile",
-        });
-      }
-    }
     const client = await pool.connect();
     let transactionStarted = false;
     try {
       await propertyEnrichmentReady;
-      if (authenticationRequired) await ensureCustomAppraisalWorkfilesAvailable();
-      if (!authenticationRequired) {
-        await client.query("BEGIN");
-        transactionStarted = true;
-      }
+      await ensureCustomAppraisalWorkfilesAvailable();
       const canonicalId = await resolveAccountId(client, requestedId);
       const accountResult = await client.query(
         "SELECT 1 FROM core.accounts WHERE account_id = $1",
@@ -176,7 +155,7 @@ export function createReportManualValuesRouter({
         return res.status(404).json({ error: "account_not_found" });
       }
 
-      if (authenticationRequired && !await requireAssignmentAccess(
+      if (!await requireAssignmentAccess(
         req,
         res,
         canonicalId,
@@ -184,175 +163,99 @@ export function createReportManualValuesRouter({
         "write",
       )) return undefined;
 
-      if (authenticationRequired) {
-        await client.query("BEGIN");
-        transactionStarted = true;
-      }
+      await client.query("BEGIN");
+      transactionStarted = true;
 
-      if (authenticationRequired) {
-        const assignmentResult = await client.query(
-          `SELECT assignment_file.id, assignment_file.organization_id,
-                  assignment_file.assigned_appraiser_user_id,
-                  assignment_file.supervisory_appraiser_user_id
-             FROM app.assignment_files assignment_file
-            WHERE assignment_file.id = $1 AND assignment_file.account_id = $2
-            FOR UPDATE OF assignment_file`,
-          [assignmentFileId, canonicalId],
-        );
-        const assignment = assignmentResult.rows[0];
-        if (!assignment) {
-          await client.query("ROLLBACK");
-          transactionStarted = false;
-          return res.status(404).json({ error: "assignment_file_not_found" });
-        }
-        if (!decideAccess(req.mobileAuth, assignment, "write")) {
-          await client.query("ROLLBACK");
-          transactionStarted = false;
-          return res.set("cache-control", "no-store")
-            .status(403)
-            .json({ error: "assignment_file_access_denied" });
-        }
-        const workfileResult = await client.query(
-          `SELECT status FROM app.custom_appraisal_workfiles
-            WHERE assignment_file_id = $1 FOR UPDATE`,
-          [assignmentFileId],
-        );
-        if (workfileResult.rows[0]?.status === "signed") {
-          await client.query("ROLLBACK");
-          transactionStarted = false;
-          return res.status(409).json({ error: "custom_appraisal_workfile_signed" });
-        }
-
-        const currentResult = await client.query(
-          `SELECT section_key, revision
-             FROM app.custom_appraisal_sections
-            WHERE assignment_file_id = $1 AND section_key = ANY($2::text[])
-            FOR UPDATE`,
-          [assignmentFileId, entries.map(([key]) => key)],
-        );
-        const currentRevisions = Object.fromEntries(
-          entries.map(([key]) => [key, 0]),
-        );
-        for (const row of currentResult.rows) {
-          currentRevisions[row.section_key] = Number(row.revision);
-        }
-        if (entries.some(([key]) => currentRevisions[key] !== expectedRevisions[key])) {
-          await client.query("ROLLBACK");
-          transactionStarted = false;
-          return res.status(409).json({
-            error: "report_section_revision_conflict",
-            current_revisions: currentRevisions,
-          });
-        }
-
-        const savedEntries = [];
-        for (const [attributeKey, attributeValue] of entries) {
-          const valueJson = JSON.stringify(attributeValue);
-          const { rows } = await client.query(
-            `INSERT INTO app.custom_appraisal_sections (
-               assignment_file_id, section_key, section_value, revision,
-               last_applied_session_id, last_applied_by_user_id
-             ) VALUES ($1,$2,$3::jsonb,1,NULL,$4)
-             ON CONFLICT (assignment_file_id, section_key) DO UPDATE SET
-               section_value = EXCLUDED.section_value,
-               revision = app.custom_appraisal_sections.revision + 1,
-               last_applied_session_id = NULL,
-               last_applied_by_user_id = EXCLUDED.last_applied_by_user_id,
-               updated_at = now()
-             RETURNING section_key, section_value, revision, updated_at`,
-            [assignmentFileId, attributeKey, valueJson, req.mobileAuth.userId],
-          );
-          await client.query(
-            `INSERT INTO app.custom_appraisal_section_history (
-               assignment_file_id, section_key, section_value, revision,
-               inspection_session_id, actor_user_id, proposal_id, changed_path
-             ) VALUES ($1,$2,$3::jsonb,$4,NULL,$5,NULL,ARRAY[$2]::text[])`,
-            [
-              assignmentFileId,
-              attributeKey,
-              valueJson,
-              Number(rows[0].revision),
-              req.mobileAuth.userId,
-            ],
-          );
-          savedEntries.push([attributeKey, {
-            value: rows[0].section_value,
-            revision: Number(rows[0].revision),
-            reviewer,
-            notes,
-            updated_at: rows[0].updated_at,
-          }]);
-        }
-        await client.query("COMMIT");
+      const assignmentResult = await client.query(
+        `SELECT assignment_file.id, assignment_file.organization_id,
+                assignment_file.assigned_appraiser_user_id,
+                assignment_file.supervisory_appraiser_user_id
+           FROM app.assignment_files assignment_file
+          WHERE assignment_file.id = $1 AND assignment_file.account_id = $2
+          FOR UPDATE OF assignment_file`,
+        [assignmentFileId, canonicalId],
+      );
+      const assignment = assignmentResult.rows[0];
+      if (!assignment) {
+        await client.query("ROLLBACK");
         transactionStarted = false;
-        return res.json({
-          ok: true,
-          account_id: canonicalId,
-          assignment_file_id: assignmentFileId,
-          manual_values: Object.fromEntries(savedEntries),
-        });
+        return res.status(404).json({ error: "assignment_file_not_found" });
+      }
+      if (!decideAccess(req.mobileAuth, assignment, "write")) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+        return res.set("cache-control", "no-store")
+          .status(403)
+          .json({ error: "assignment_file_access_denied" });
+      }
+      const workfileResult = await client.query(
+        `SELECT status FROM app.custom_appraisal_workfiles
+          WHERE assignment_file_id = $1 FOR UPDATE`,
+        [assignmentFileId],
+      );
+      if (workfileResult.rows[0]?.status === "signed") {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+        return res.status(409).json({ error: "custom_appraisal_workfile_signed" });
       }
 
-      if (housingUpdate) {
-        await client.query(
-          `INSERT INTO core.account_housing_profiles (
-             account_id, structural_style, housing_type, attachment_type,
-             architectural_style, source_name, observed_at, confidence, notes
-           ) VALUES ($1,$2,$3,$4,$5,'HomeNode Property Report manual edit',now(),1.000,$6)
-           ON CONFLICT (account_id) DO UPDATE SET
-             structural_style = EXCLUDED.structural_style,
-             housing_type = EXCLUDED.housing_type,
-             attachment_type = EXCLUDED.attachment_type,
-             architectural_style = EXCLUDED.architectural_style,
-             source_name = EXCLUDED.source_name,
-             observed_at = EXCLUDED.observed_at,
-             confidence = EXCLUDED.confidence,
-             notes = EXCLUDED.notes,
-             updated_at = now()`,
-          [
-            canonicalId,
-            housingUpdate.structuralStyle,
-            housingUpdate.housingType,
-            housingUpdate.attachmentType,
-            housingUpdate.architecturalStyle,
-            housingUpdate.notes,
-          ],
-        );
+      const currentResult = await client.query(
+        `SELECT section_key, revision
+           FROM app.custom_appraisal_sections
+          WHERE assignment_file_id = $1 AND section_key = ANY($2::text[])
+          FOR UPDATE`,
+        [assignmentFileId, entries.map(([key]) => key)],
+      );
+      const currentRevisions = Object.fromEntries(
+        entries.map(([key]) => [key, 0]),
+      );
+      for (const row of currentResult.rows) {
+        currentRevisions[row.section_key] = Number(row.revision);
+      }
+      if (entries.some(([key]) => currentRevisions[key] !== expectedRevisions[key])) {
+        await client.query("ROLLBACK");
+        transactionStarted = false;
+        return res.status(409).json({
+          error: "report_section_revision_conflict",
+          current_revisions: currentRevisions,
+        });
       }
 
       const savedEntries = [];
       for (const [attributeKey, attributeValue] of entries) {
-        const { rows: currentRows } = await client.query(
-          `SELECT revision FROM app.property_attribute_manual_values
-           WHERE account_id = $1 AND attribute_key = $2 FOR UPDATE`,
-          [canonicalId, attributeKey],
-        );
-        const revision = Number(currentRows[0]?.revision || 0) + 1;
         const valueJson = JSON.stringify(attributeValue);
         const { rows } = await client.query(
-          `INSERT INTO app.property_attribute_manual_values (
-             account_id, attribute_key, attribute_value, notes, reviewer, revision
-           ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)
-           ON CONFLICT (account_id, attribute_key) DO UPDATE SET
-             attribute_value = EXCLUDED.attribute_value,
-             notes = EXCLUDED.notes,
-             reviewer = EXCLUDED.reviewer,
-             revision = EXCLUDED.revision,
+          `INSERT INTO app.custom_appraisal_sections (
+             assignment_file_id, section_key, section_value, revision,
+             last_applied_session_id, last_applied_by_user_id
+           ) VALUES ($1,$2,$3::jsonb,1,NULL,$4)
+           ON CONFLICT (assignment_file_id, section_key) DO UPDATE SET
+             section_value = EXCLUDED.section_value,
+             revision = app.custom_appraisal_sections.revision + 1,
+             last_applied_session_id = NULL,
+             last_applied_by_user_id = EXCLUDED.last_applied_by_user_id,
              updated_at = now()
-           RETURNING attribute_key, attribute_value, revision, reviewer, notes, updated_at`,
-          [canonicalId, attributeKey, valueJson, notes, reviewer, revision],
+           RETURNING section_key, section_value, revision, updated_at`,
+          [assignmentFileId, attributeKey, valueJson, req.mobileAuth.userId],
         );
         await client.query(
-          `INSERT INTO app.property_attribute_manual_history (
-             account_id, attribute_key, attribute_value, notes, reviewer, revision
-           ) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
-          [canonicalId, attributeKey, valueJson, notes, reviewer, revision],
+          `INSERT INTO app.custom_appraisal_section_history (
+             assignment_file_id, section_key, section_value, revision,
+             inspection_session_id, actor_user_id, proposal_id, changed_path
+           ) VALUES ($1,$2,$3::jsonb,$4,NULL,$5,NULL,ARRAY[$2]::text[])`,
+          [
+            assignmentFileId,
+            attributeKey,
+            valueJson,
+            Number(rows[0].revision),
+            req.mobileAuth.userId,
+          ],
         );
         savedEntries.push([attributeKey, {
-          value: rows[0].attribute_value,
+          value: rows[0].section_value,
           revision: Number(rows[0].revision),
-          reviewer: rows[0].reviewer,
-          notes: rows[0].notes,
+          reviewer,
+          notes,
           updated_at: rows[0].updated_at,
         }]);
       }
@@ -361,6 +264,7 @@ export function createReportManualValuesRouter({
       return res.json({
         ok: true,
         account_id: canonicalId,
+        assignment_file_id: assignmentFileId,
         manual_values: Object.fromEntries(savedEntries),
       });
     } catch (error) {

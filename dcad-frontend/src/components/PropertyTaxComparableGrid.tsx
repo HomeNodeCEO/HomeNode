@@ -164,15 +164,17 @@ export default function PropertyTaxComparableGrid({
         limit: 50,
         searchProfile: 'urban_moderate',
       });
-      const recommendationOrder = [...(response.recommended_sales || []), ...(response.sales || [])];
+      const recommendationOrder = response.recommended_sales || [];
       const seenSales = new Set<string>();
       const candidates = recommendationOrder.filter((sale) => {
         const key = String(sale.source_record_id ?? sale.sale_id ?? '');
         if (!key || seenSales.has(key)) return false;
         seenSales.add(key);
         return (
-        (!subject.neighborhoodCode || sameValue(sale.neighborhood_code || '', subject.neighborhoodCode))
-        && (!subject.buildingClass || sameValue(sale.cad_building_class || '', subject.buildingClass))
+          sale.housingTypeCompatible !== false
+          && sale.recommendationExclusionReason !== 'housing_type_mismatch'
+          && (!subject.neighborhoodCode || sameValue(sale.neighborhood_code || '', subject.neighborhoodCode))
+          && (!subject.buildingClass || sameValue(sale.cad_building_class || '', subject.buildingClass))
         );
       }).slice(0, DALLAS_RESIDENTIAL_COMPARABLE_POLICY.maximumSelectedComparables);
       const incoming = candidates
@@ -272,6 +274,8 @@ export default function PropertyTaxComparableGrid({
       const text = error instanceof Error ? error.message : 'The comparable grid could not be saved.';
       setMessage(text === 'property_tax_comparable_reverification_required'
         ? 'Comparable facts changed after verification. Save them as needing review, then review and attest the saved revision again.'
+        : text === 'property_tax_comparable_housing_type_conflict'
+        ? 'A verified comparable must have the same confirmed housing type as the single-family subject. Keep the row unverified or remove it.'
         : text === 'property_tax_protest_revision_conflict'
         || text === 'property_tax_protest_save_operation_conflict'
         ? 'A newer protest revision exists. Refresh the canonical file before saving this grid.'

@@ -186,6 +186,10 @@ export function recommendedSaleGridRow(
   sale: SaleRow,
   subject: { propertyUse: string; neighborhoodCode: string },
 ): PropertyTaxComparableGridRow | null {
+  if (
+    sale.housingTypeCompatible === false
+    || sale.recommendationExclusionReason === 'housing_type_mismatch'
+  ) return null;
   const salePrice = number(sale.sale_price);
   const address = text(sale.address);
   const saleId = text(sale.source_record_id ?? sale.sale_id, 300);
@@ -204,7 +208,7 @@ export function recommendedSaleGridRow(
     salePrice,
     concessions: number(sale.seller_contributions) || number(sale.concessions),
     adjustmentAmount: 0,
-    propertyUse: subject.propertyUse,
+    propertyUse: sale.comparableHousingType || sale.housing_type || sale.structural_style || 'unknown',
     neighborhoodCode: sale.neighborhood_code || subject.neighborhoodCode,
     buildingClass: sale.cad_building_class || '',
     livingAreaSqft: sale.cad_living_area_sqft || number(sale.mls_living_area),

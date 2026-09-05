@@ -68,6 +68,26 @@ test('Dallas policy requires an objective same-neighborhood eligible universe', 
   assert.match(result.diagnostics[0], /Only 1 eligible/);
 });
 
+test('housing type aliases match but unknown and incompatible types remain ineligible', () => {
+  const result = analyzePropertyTaxComparables({
+    subject,
+    candidates: [
+      candidate({ saleId: 'DETACHED', propertyUse: 'detached' }),
+      candidate({ saleId: 'CONDO', propertyUse: 'condominium' }),
+      candidate({ saleId: 'UNKNOWN', propertyUse: 'unknown' }),
+    ],
+  });
+  assert.equal(result.candidateDecisions.find((item) => item.saleId === 'DETACHED')?.eligible, true);
+  assert.deepEqual(
+    result.candidateDecisions.find((item) => item.saleId === 'CONDO')?.exclusionCodes,
+    ['different_property_use'],
+  );
+  assert.deepEqual(
+    result.candidateDecisions.find((item) => item.saleId === 'UNKNOWN')?.exclusionCodes,
+    ['different_property_use'],
+  );
+});
+
 test('selection rank is independent of sale price', () => {
   const candidates = [
     candidate({ saleId: 'MOST-SIMILAR', salePrice: 600_000, livingAreaSqft: 1_990, ageYears: 30 }),

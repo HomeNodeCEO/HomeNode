@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 import { listUadAssets } from "./assets.js";
 import { getUadEditor } from "./editor.js";
@@ -16,6 +16,11 @@ const LICENSE_TYPES = new Set([
   "TraineeAppraiser",
 ]);
 
+const SIGNATURE_ACKNOWLEDGMENT_PURPOSE = "uad_signature_acknowledgment";
+const SIGNATURE_ACKNOWLEDGMENT_VERSION = 1;
+const SIGNATURE_ACKNOWLEDGMENT_LIFETIME_MILLISECONDS = 15 * 60 * 1000;
+const SIGNATURE_ACKNOWLEDGMENT_MAX_TOKEN_LENGTH = 8_192;
+
 function stableJson(value) {
   if (Array.isArray(value)) return value.map(stableJson);
   if (value && typeof value === "object") {
@@ -26,6 +31,130 @@ function stableJson(value) {
 
 function digest(value) {
   return createHash("sha256").update(JSON.stringify(stableJson(value))).digest("hex");
+}
+
+function signingSecret(value) {
+  const secret = String(value || "");
+  if (Buffer.byteLength(secret, "utf8") < 32) {
+    throw new Error("uad_signature_acknowledgment_unavailable");
+  }
+  return secret;
+}
+
+function authenticationBinding(authentication) {
+  return {
+    issuer: String(authentication?.issuer || "").trim() || null,
+    subject: String(authentication?.subject || "").trim() || null,
+  };
+}
+
+function acknowledgmentError(code = "uad_signature_acknowledgment_invalid") {
+  return new Error(code);
+}
+
+export function createUadSignatureAcknowledgmentToken({
+  workfileId,
+  revisionNumber,
+  inputDigest,
+  signerUserId,
+  signerRole,
+  authentication,
+}, secretValue, {
+  now = new Date(),
+  acknowledgmentId = randomUUID(),
+} = {}) {
+  const issuedAt = new Date(now);
+  if (!Number.isFinite(issuedAt.getTime())) throw acknowledgmentError();
+  const binding = authenticationBinding(authentication);
+  const payload = {
+    version: SIGNATURE_ACKNOWLEDGMENT_VERSION,
+    purpose: SIGNATURE_ACKNOWLEDGMENT_PURPOSE,
+    acknowledgment_id: acknowledgmentId,
+    workfile_id: workfileId,
+    revision_number: Number(revisionNumber),
+    workfile_input_digest_sha256: inputDigest,
+    signer_user_id: signerUserId,
+    signer_role: signerRole,
+    standard_certifications_acknowledged: true,
+    scope_of_work_acknowledged: true,
+    authentication_issuer: binding.issuer,
+    authentication_subject: binding.subject,
+    acknowledged_at: issuedAt.toISOString(),
+    expires_at: new Date(
+      issuedAt.getTime() + SIGNATURE_ACKNOWLEDGMENT_LIFETIME_MILLISECONDS,
+    ).toISOString(),
+  };
+  const body = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createHmac("sha256", signingSecret(secretValue))
+    .update(body)
+    .digest("base64url");
+  return { token: `${body}.${signature}`, payload };
+}
+
+export function verifyUadSignatureAcknowledgmentToken(tokenValue, expected, secretValue, {
+  now = new Date(),
+} = {}) {
+  const token = String(tokenValue || "").trim();
+  if (!token) throw acknowledgmentError("uad_signature_acknowledgment_required");
+  if (token.length > SIGNATURE_ACKNOWLEDGMENT_MAX_TOKEN_LENGTH) throw acknowledgmentError();
+  const parts = token.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) throw acknowledgmentError();
+  const expectedSignature = createHmac("sha256", signingSecret(secretValue))
+    .update(parts[0])
+    .digest();
+  let receivedSignature;
+  let payload;
+  try {
+    receivedSignature = Buffer.from(parts[1], "base64url");
+    payload = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+  } catch {
+    throw acknowledgmentError();
+  }
+  if (
+    receivedSignature.length !== expectedSignature.length
+    || !timingSafeEqual(receivedSignature, expectedSignature)
+    || !payload
+    || typeof payload !== "object"
+    || Array.isArray(payload)
+  ) throw acknowledgmentError();
+
+  const currentTime = new Date(now).getTime();
+  const acknowledgedAt = Date.parse(payload.acknowledged_at);
+  const expiresAt = Date.parse(payload.expires_at);
+  if (
+    !Number.isFinite(currentTime)
+    || !Number.isFinite(acknowledgedAt)
+    || !Number.isFinite(expiresAt)
+    || acknowledgedAt > currentTime + 30_000
+    || expiresAt <= currentTime
+    || expiresAt - acknowledgedAt !== SIGNATURE_ACKNOWLEDGMENT_LIFETIME_MILLISECONDS
+  ) throw acknowledgmentError("uad_signature_acknowledgment_expired");
+
+  const binding = authenticationBinding(expected.authentication);
+  if (
+    payload.version !== SIGNATURE_ACKNOWLEDGMENT_VERSION
+    || payload.purpose !== SIGNATURE_ACKNOWLEDGMENT_PURPOSE
+    || payload.workfile_id !== expected.workfileId
+    || Number(payload.revision_number) !== Number(expected.revisionNumber)
+    || payload.workfile_input_digest_sha256 !== expected.inputDigest
+    || payload.signer_user_id !== expected.signerUserId
+    || payload.signer_role !== expected.signerRole
+    || payload.standard_certifications_acknowledged !== true
+    || payload.scope_of_work_acknowledged !== true
+    || payload.authentication_issuer !== binding.issuer
+    || payload.authentication_subject !== binding.subject
+    || typeof payload.acknowledgment_id !== "string"
+    || !payload.acknowledgment_id
+  ) throw acknowledgmentError("uad_signature_acknowledgment_mismatch");
+
+  return Object.freeze({
+    acknowledgment_id: payload.acknowledgment_id,
+    acknowledged_at: payload.acknowledged_at,
+    standard_certifications_acknowledged: true,
+    scope_of_work_acknowledged: true,
+    authentication_issuer: binding.issuer,
+    authentication_subject: binding.subject,
+  });
 }
 
 function isoDate(value) {
@@ -193,6 +322,106 @@ async function loadSignatureArtifactReadiness(queryable, workfileId, revisionNum
   };
 }
 
+function signerRoleForWorkfile(workfile, actorUserId) {
+  if (actorUserId === workfile.assigned_appraiser_user_id) return "appraiser";
+  if (actorUserId === workfile.supervisory_appraiser_user_id) return "supervisory_appraiser";
+  return null;
+}
+
+export async function acknowledgeUadSignature(pool, workfileIdValue, authentication, input = {}, {
+  signingSecret: signingSecretValue,
+  now = new Date(),
+} = {}) {
+  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  const actorUserId = String(authentication?.userId || "").trim();
+  if (!actorUserId) throw new Error("uad_signature_authentication_required");
+  if (
+    input.standard_certifications_acknowledged !== true
+    || input.scope_of_work_acknowledged !== true
+  ) throw new Error("uad_signature_acknowledgments_required");
+  const expectedRevision = Number(input.expected_revision);
+  if (!Number.isInteger(expectedRevision) || expectedRevision < 1) {
+    throw new Error("invalid_uad_signature_acknowledgment_revision");
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const workfileResult = await client.query(
+      `SELECT id, assigned_appraiser_user_id, supervisory_appraiser_user_id,
+              current_revision, status
+         FROM appraisal.uad_workfiles
+        WHERE id = $1
+        FOR UPDATE`,
+      [workfileId],
+    );
+    if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
+    const workfile = workfileResult.rows[0];
+    if (workfile.status !== "ready") throw new Error("uad_signature_local_validation_required");
+    if (Number(workfile.current_revision) !== expectedRevision) {
+      throw new Error("uad_signature_acknowledgment_stale_revision");
+    }
+    const signerRole = signerRoleForWorkfile(workfile, actorUserId);
+    if (!signerRole) throw new Error("uad_signature_access_denied");
+
+    const editor = await getUadEditor(client, workfileId);
+    const assets = await listUadAssets(client, workfileId);
+    const sketches = await listUadSketches(client, workfileId);
+    const inputDigest = buildUadValidationInputDigest(editor, assets, sketches);
+    const artifactReadiness = await loadSignatureArtifactReadiness(
+      client,
+      workfileId,
+      expectedRevision,
+      inputDigest,
+    );
+    if (!artifactReadiness.pdf_ready) throw new Error("uad_signature_pdf_required");
+
+    const acknowledgment = createUadSignatureAcknowledgmentToken({
+      workfileId,
+      revisionNumber: expectedRevision,
+      inputDigest,
+      signerUserId: actorUserId,
+      signerRole,
+      authentication,
+    }, signingSecretValue, { now });
+    await client.query(
+      `INSERT INTO appraisal.uad_audit_events (
+         workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data, metadata
+       ) VALUES ($1, $2, 'uad_signature.acknowledged', 'uad_signature_acknowledgment',
+                 $3, $4::jsonb, $5::jsonb)`,
+      [
+        workfileId,
+        actorUserId,
+        acknowledgment.payload.acknowledgment_id,
+        JSON.stringify({
+          standard_certifications_acknowledged: true,
+          scope_of_work_acknowledged: true,
+        }),
+        JSON.stringify({
+          revision_number: expectedRevision,
+          workfile_input_digest_sha256: inputDigest,
+          signer_role: signerRole,
+          acknowledged_at: acknowledgment.payload.acknowledged_at,
+          expires_at: acknowledgment.payload.expires_at,
+        }),
+      ],
+    );
+    await client.query("COMMIT");
+    return {
+      acknowledgment_token: acknowledgment.token,
+      acknowledgment_id: acknowledgment.payload.acknowledgment_id,
+      acknowledged_at: acknowledgment.payload.acknowledged_at,
+      expires_at: acknowledgment.payload.expires_at,
+      revision_number: expectedRevision,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function getUadCertificationReadiness(queryable, workfileIdValue) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const workfileResult = await queryable.query(
@@ -260,11 +489,14 @@ export async function getUadCertificationReadiness(queryable, workfileIdValue) {
   };
 }
 
-export async function signUadWorkfile(pool, workfileIdValue, authentication, input = {}) {
+export async function signUadWorkfile(pool, workfileIdValue, authentication, input = {}, {
+  signingSecret: signingSecretValue,
+  now = new Date(),
+} = {}) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const actorUserId = String(authentication?.userId || "").trim();
   if (!actorUserId) throw new Error("uad_signature_authentication_required");
-  const executionDate = isoDate(new Date());
+  const executionDate = isoDate(now);
   const requestedExecutionDate = input.execution_date ? isoDate(input.execution_date) : executionDate;
   if (!requestedExecutionDate) throw new Error("invalid_uad_signature_execution_date");
   if (requestedExecutionDate !== executionDate) throw new Error("uad_signature_execution_date_mismatch");
@@ -280,11 +512,7 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
     const workfile = workfileResult.rows[0];
     if (workfile.status !== "ready") throw new Error("uad_signature_local_validation_required");
 
-    const signerRole = actorUserId === workfile.assigned_appraiser_user_id
-      ? "appraiser"
-      : actorUserId === workfile.supervisory_appraiser_user_id
-        ? "supervisory_appraiser"
-        : null;
+    const signerRole = signerRoleForWorkfile(workfile, actorUserId);
     if (!signerRole) throw new Error("uad_signature_access_denied");
 
     const signerRows = await loadSignerRows(client, workfileId);
@@ -349,12 +577,19 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
     if (!artifactReadiness.pdf_ready) throw new Error("uad_signature_pdf_required");
 
     const credential = buildUadCredentialSnapshot(signerRow);
-    const attestation = {
-      standard_certifications_acknowledged: true,
-      scope_of_work_acknowledged: true,
-      authentication_issuer: authentication.issuer || null,
-      authentication_subject: authentication.subject || null,
-    };
+    const attestation = verifyUadSignatureAcknowledgmentToken(
+      input.acknowledgment_token,
+      {
+        workfileId,
+        revisionNumber: Number(workfile.current_revision),
+        inputDigest,
+        signerUserId: actorUserId,
+        signerRole,
+        authentication,
+      },
+      signingSecretValue,
+      { now },
+    );
     const currentSignatures = await client.query(
       `SELECT id, workfile_id, revision_number, signer_user_id, signer_role,
               signature_asset_id, authentication_method, signed_at, execution_date,

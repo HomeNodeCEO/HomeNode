@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  acknowledgeUadSignature,
   getUadCertificationReadiness,
   signUadWorkfile,
   UAD_WORKFILE_MUTATED_EVENT,
@@ -66,13 +67,19 @@ export default function UadSignaturePanel({
   const signer = readiness?.current_signer;
 
   async function sign() {
-    if (!signer?.signature_policy) return;
+    if (!signer?.signature_policy || !acknowledged) return;
     setSigning(true);
     setError(null);
     try {
+      const acknowledgment = await acknowledgeUadSignature(workfileId, {
+        expected_revision: currentRevision,
+        standard_certifications_acknowledged: true,
+        scope_of_work_acknowledged: true,
+      });
       const result = await signUadWorkfile(workfileId, {
         execution_date: new Date().toISOString().slice(0, 10),
         authentication_method: signer.signature_policy,
+        acknowledgment_token: acknowledgment.acknowledgment_token,
       });
       setAcknowledged(false);
       await onSigned(result);

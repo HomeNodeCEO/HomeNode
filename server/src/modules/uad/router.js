@@ -41,7 +41,7 @@ import {
 import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { getLatestUadValidation, runLocalUadValidation } from "./validation.js";
 import {
-  createUadWorkfile,
+  createPublicCatalogUadWorkfile,
   getUadSubjectSummary,
   getUadWorkfile,
   listUadWorkfiles,
@@ -55,7 +55,7 @@ import { listDeliveryPlatforms, resolveDeliveryDestination } from "../delivery/p
 import { createMobileAuthenticator } from "../mobile/auth.js";
 import {
   authorizeUadAppraiserConfirmation,
-  authorizeUadCreation,
+  authorizeUadPublicAccountCreation,
   buildUadAccessScope,
   createUadWorkfileAuthorizer,
   verifyUadAssigneeMembership,
@@ -199,6 +199,7 @@ export function createUadRouter({
   compliance = { enabled: false, providers: {} },
   documentOcrProvider = null,
   applyCompletionSuggestions = applyUadCompletionSuggestions,
+  createWorkfile = createPublicCatalogUadWorkfile,
   getSigningSecret = () => process.env.APP_SIGNING_SECRET,
   enabled = false,
   authenticationRequired = false,
@@ -346,9 +347,13 @@ export function createUadRouter({
   router.post("/accounts/:accountId/workfiles", async (req, res) => {
     try {
       const requestedInput = workfileCreationInput(req.body);
-      let input = authorizeUadCreation(req.mobileAuth, requestedInput);
+      let input = authorizeUadPublicAccountCreation(
+        req.mobileAuth,
+        req.params.accountId,
+        requestedInput,
+      );
       input = await verifyUadAssigneeMembership(pool, input);
-      const workfile = await createUadWorkfile(pool, req.params.accountId, input);
+      const workfile = await createWorkfile(pool, input);
       res.status(201).json({ workfile });
     } catch (error) {
       sendError(res, error);

@@ -105,8 +105,13 @@ export function verifyUadSignatureAcknowledgmentToken(tokenValue, expected, secr
   let receivedSignature;
   let payload;
   try {
+    const body = Buffer.from(parts[0], "base64url");
     receivedSignature = Buffer.from(parts[1], "base64url");
-    payload = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+    if (
+      body.toString("base64url") !== parts[0]
+      || receivedSignature.toString("base64url") !== parts[1]
+    ) throw acknowledgmentError();
+    payload = JSON.parse(body.toString("utf8"));
   } catch {
     throw acknowledgmentError();
   }

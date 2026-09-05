@@ -9,6 +9,8 @@ import { buildUadPrefillValues, getUadField } from "./fieldCatalog.js";
 import { buildUadPublicRecordOwners } from "./publicRecordOwners.js";
 import { registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
 
+export const UAD_PUBLIC_ACCOUNT_SCOPE = "public_cadastral_catalog";
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function normalizeUadAccountId(value) {
@@ -461,4 +463,12 @@ export async function createUadWorkfile(pool, accountIdValue, input = {}) {
   } finally {
     client.release();
   }
+}
+
+export async function createPublicCatalogUadWorkfile(pool, authorizedInput = {}) {
+  if (authorizedInput?.account_scope !== UAD_PUBLIC_ACCOUNT_SCOPE) {
+    throw new Error("uad_account_scope_required");
+  }
+  const accountId = normalizeUadAccountId(authorizedInput.account_id);
+  return createUadWorkfile(pool, accountId, authorizedInput);
 }

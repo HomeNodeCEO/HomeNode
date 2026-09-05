@@ -1,4 +1,8 @@
-import { normalizeUadWorkfileId } from "./workfiles.js";
+import {
+  normalizeUadAccountId,
+  normalizeUadWorkfileId,
+  UAD_PUBLIC_ACCOUNT_SCOPE,
+} from "./workfiles.js";
 
 const READ_ROLES = new Set([
   "appraiser",
@@ -87,6 +91,15 @@ export function authorizeUadCreation(auth, input = {}) {
     organization_id: organizationId,
     assigned_appraiser_user_id: assignedAppraiserUserId,
     actor_user_id: userId,
+  });
+}
+
+export function authorizeUadPublicAccountCreation(auth, accountIdValue, input = {}) {
+  const authorized = authorizeUadCreation(auth, input);
+  return Object.freeze({
+    ...authorized,
+    account_id: normalizeUadAccountId(accountIdValue),
+    account_scope: UAD_PUBLIC_ACCOUNT_SCOPE,
   });
 }
 

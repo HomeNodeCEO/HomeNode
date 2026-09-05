@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   authorizeUadAppraiserConfirmation,
   authorizeUadCreation,
+  authorizeUadPublicAccountCreation,
   authorizeUadWorkfileAccess,
   buildUadAccessScope,
   verifyUadAssigneeMembership,
@@ -73,6 +74,26 @@ test("creation is organization-scoped and prevents actor or assignee impersonati
   });
   assert.equal(administrator.assigned_appraiser_user_id, OTHER_USER_ID);
   assert.equal(administrator.actor_user_id, USER_ID);
+});
+
+test("public-catalog creation binds the normalized URL account to the authenticated decision", () => {
+  const authorized = authorizeUadPublicAccountCreation(auth(), "  PUBLIC-ACCOUNT-1  ", {
+    organization_id: ORGANIZATION_ID,
+    account_id: "forged-body-account",
+    account_scope: "forged_private_scope",
+  });
+  assert.equal(authorized.account_id, "PUBLIC-ACCOUNT-1");
+  assert.equal(authorized.account_scope, "public_cadastral_catalog");
+  assert.equal(authorized.organization_id, ORGANIZATION_ID);
+  assert.equal(authorized.actor_user_id, USER_ID);
+  assert.throws(
+    () => authorizeUadPublicAccountCreation(
+      auth("appraiser", OTHER_ORGANIZATION_ID),
+      "PUBLIC-ACCOUNT-1",
+      { organization_id: ORGANIZATION_ID },
+    ),
+    /uad_create_access_denied/,
+  );
 });
 
 test("organization administrators can assign only active appraisers in their organization", async () => {

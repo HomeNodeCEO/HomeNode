@@ -117,11 +117,11 @@ export default function PropertyTaxProtest() {
     () => readPropertyTaxWorkspace(canonicalFile?.workfile_data),
     [canonicalFile?.workfile_data],
   );
-  const authorizationUrl = propertyId
-    ? `/signup?accountId=${encodeURIComponent(propertyId)}${
+  const authorizationUrl = propertyId && canonicalFile
+    ? `/signup?accountId=${encodeURIComponent(propertyId)}&propertyTaxFileId=${encodeURIComponent(canonicalFile.tax_protest_file_id)}${
         ownerName ? `&ownerName=${encodeURIComponent(ownerName)}` : ''
       }`
-    : '/signup';
+    : null;
 
   useEffect(() => {
     setCanonicalFile(null);
@@ -235,12 +235,18 @@ export default function PropertyTaxProtest() {
                   Back to Property Report
                 </a>
               )}
-              <a
-                href={authorizationUrl}
-                className="hn-action-gold rounded-md border px-4 py-2 text-sm font-semibold"
-              >
-                Begin Authorization Form
-              </a>
+              {authorizationUrl ? (
+                <a
+                  href={authorizationUrl}
+                  className="hn-action-gold rounded-md border px-4 py-2 text-sm font-semibold"
+                >
+                  Begin Authorization Form
+                </a>
+              ) : (
+                <span className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900">
+                  Open a protest file before authorization
+                </span>
+              )}
               <a href="/" className="hn-action-secondary btn btn-ghost btn-sm normal-case">
                 ← Close Report
               </a>

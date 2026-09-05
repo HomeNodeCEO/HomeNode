@@ -67,6 +67,25 @@ export function createApplicationStartupResources({
         ip              text,
         meta            jsonb
       );
+      ALTER TABLE app.signups
+        ADD COLUMN IF NOT EXISTS submission_id uuid,
+        ADD COLUMN IF NOT EXISTS property_tax_file_id uuid,
+        ADD COLUMN IF NOT EXISTS organization_id uuid,
+        ADD COLUMN IF NOT EXISTS submitted_by_user_id uuid,
+        ADD COLUMN IF NOT EXISTS verification_status text NOT NULL DEFAULT 'legacy_unverified',
+        ADD COLUMN IF NOT EXISTS signer_printed_name text,
+        ADD COLUMN IF NOT EXISTS signer_title text,
+        ADD COLUMN IF NOT EXISTS signer_role text,
+        ADD COLUMN IF NOT EXISTS signature_sha256 text,
+        ADD COLUMN IF NOT EXISTS signature_png bytea,
+        ADD COLUMN IF NOT EXISTS authorization_sha256 text,
+        ADD COLUMN IF NOT EXISTS attestation_accepted_at timestamptz;
+      CREATE UNIQUE INDEX IF NOT EXISTS signups_submission_id_uidx
+        ON app.signups (submission_id)
+        WHERE submission_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS signups_property_tax_file_created_idx
+        ON app.signups (property_tax_file_id, created_at DESC, id DESC)
+        WHERE property_tax_file_id IS NOT NULL;
     `;
     await pool.query(ddl);
   }

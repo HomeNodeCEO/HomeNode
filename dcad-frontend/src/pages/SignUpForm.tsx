@@ -39,6 +39,7 @@ type OverlayFields = {
   communicationsReviewBoard: boolean;
   communicationsAllTaxingUnits: boolean;
   authorityEnds: string;
+  signatureDate: string;
   signerPrintedName: string;
   signerTitle: string;
   signerRole: 'owner'|'authorized-agent'|'other';
@@ -50,6 +51,10 @@ export default function SignUpForm() {
     const p = new URLSearchParams(location.search);
     return p.get('accountId') || '';
   }, [location.search]);
+  const propertyTaxFileId = useMemo(() => {
+    const p = new URLSearchParams(location.search);
+    return p.get('propertyTaxFileId') || '';
+  }, [location.search]);
   const ownerNameFromQuery = useMemo(() => {
     const p = new URLSearchParams(location.search);
     return p.get('ownerName') || '';
@@ -57,6 +62,10 @@ export default function SignUpForm() {
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [sigUrl, setSigUrl] = useState<string | null>(null);
+  const [signatureAttested, setSignatureAttested] = useState(false);
+  const [hasSignatureStroke, setHasSignatureStroke] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const clientSubmissionIdRef = useRef(globalThis.crypto.randomUUID());
   const [showPad, setShowPad] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
@@ -89,6 +98,7 @@ export default function SignUpForm() {
     communicationsReviewBoard: true,
     communicationsAllTaxingUnits: true,
     authorityEnds: '',
+    signatureDate: new Date().toISOString().slice(0, 10),
     signerPrintedName: '',
     signerTitle: '',
     signerRole: 'owner',
@@ -293,36 +303,79 @@ export default function SignUpForm() {
     const rect = canvasRef.current!.getBoundingClientRect();
     ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
     ctx.stroke();
+    setHasSignatureStroke(true);
   }
   function end() { setIsDrawing(false); }
   function clearSig() {
     const c = canvasRef.current!;
     const ctx = c.getContext('2d')!;
     ctx.clearRect(0, 0, c.width, c.height);
+    setHasSignatureStroke(false);
+    setSigUrl(null);
+    setSignatureAttested(false);
   }
   function saveSig() {
+    if (!hasSignatureStroke) {
+      alert('Please draw your signature before saving it.');
+      return;
+    }
     const c = canvasRef.current!;
     setSigUrl(c.toDataURL('image/png'));
+    setSignatureAttested(false);
     setShowPad(false);
   }
 
+  function loadSignatureFile(file: File | undefined) {
+    if (!file) return;
+    setSigUrl(null);
+    setSignatureAttested(false);
+    if (file.type !== 'image/png' || file.size > 256 * 1024) {
+      alert('Signature uploads must be PNG images no larger than 256 KiB.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string' || !reader.result.startsWith('data:image/png;base64,')) {
+        alert('The signature image could not be read as a PNG.');
+        return;
+      }
+      setSigUrl(reader.result);
+      setSignatureAttested(false);
+    };
+    reader.onerror = () => alert('The signature image could not be read.');
+    reader.readAsDataURL(file);
+  }
+
   async function submit() {
+    if (!accountId || !propertyTaxFileId || !sigUrl || !signatureAttested || !fields.signerPrintedName.trim()) {
+      alert('Open a Property Tax file, complete the signer name, add a signature, and accept the verification attestation.');
+      return;
+    }
+    setSubmitting(true);
     try {
-      // Minimal email submission to backend with owner and phone details
       const payload = {
         accountId,
-        ownerName: fields.ownerName,
-        ownerTelephone: fields.ownerTelephone,
+        authorization: fields,
+        clientSubmissionId: clientSubmissionIdRef.current,
+        propertyTaxFileId,
+        signatureAttestation: true,
+        signatureDataUrl: sigUrl,
       };
-      await api.fetchJSON<{ ok: boolean }>(api.makeUrl('/api/signup/email'), {
+      await api.fetchJSON<{
+        ok: boolean;
+        verification_status: 'pending_manual_verification'|'verified'|'rejected';
+      }>(api.makeUrl('/api/signup/email'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         timeoutMs: 15000,
       });
-      alert('Submitted! We will follow up by email.');
+      clientSubmissionIdRef.current = globalThis.crypto.randomUUID();
+      alert('Request received. HomeNode staff must verify identity and signature authority before treating it as authorization.');
     } catch (error: unknown) {
       alert(signupErrorMessage(error));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -337,7 +390,13 @@ export default function SignUpForm() {
           <div className="flex flex-wrap items-center gap-2">
             <Link to={accountId ? `/report/${encodeURIComponent(accountId)}` : '/'} className="hn-action-secondary btn px-4 py-2 rounded-md border">Back</Link>
             <button className="hn-action-primary btn px-4 py-2 rounded-md" onClick={() => setShowPad(true)}>Draw Signature</button>
-            <button className="hn-action-gold btn px-4 py-2 rounded-md" onClick={submit} disabled={!sigUrl}>Submit Enrollment</button>
+            <button
+              className="hn-action-gold btn px-4 py-2 rounded-md"
+              onClick={submit}
+              disabled={submitting || !accountId || !propertyTaxFileId || !sigUrl || !signatureAttested || !fields.signerPrintedName.trim()}
+            >
+              {submitting ? 'Submitting…' : 'Submit for Verification'}
+            </button>
           </div>
         </div>
 
@@ -532,7 +591,7 @@ export default function SignUpForm() {
 
           <div className="font-semibold mt-4 mb-2">STEP 6: Identification, Signature, and Date</div>
           <label className="text-sm">Signature Date
-            <input className="border rounded px-2 py-1 w-full" value={fields.authorityEnds} onChange={e=>setFields(f=>({...f, authorityEnds:e.target.value}))} />
+            <input type="date" className="border rounded px-2 py-1 w-full" value={fields.signatureDate} onChange={e=>setFields(f=>({...f, signatureDate:e.target.value}))} />
           </label>
           <label className="text-sm mt-2 block">Signature (use Draw Signature button above)</label>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
@@ -556,7 +615,7 @@ export default function SignUpForm() {
 
         {/* Signature preview / upload */}
         <div className="mt-3 flex items-center gap-3">
-          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => setSigUrl(e.target.files?.[0] ? URL.createObjectURL(e.target.files[0]) : null)} />
+          <input ref={inputRef} type="file" accept="image/png" className="hidden" onChange={(e) => loadSignatureFile(e.target.files?.[0])} />
           <button className="hn-action-secondary px-3 py-2 rounded-md border" onClick={openFilePicker}>Upload Signature Image</button>
           {sigUrl && (
             <div className="flex items-center gap-2">
@@ -565,6 +624,17 @@ export default function SignUpForm() {
             </div>
           )}
         </div>
+        <label className="mt-3 flex max-w-4xl items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={signatureAttested}
+            onChange={(event) => setSignatureAttested(event.target.checked)}
+          />
+          <span>
+            I attest that the signer information and signature are supplied by a person authorized to act for this property. I understand HomeNode must independently verify identity and authority before this request is treated as an enrollment or legal authorization.
+          </span>
+        </label>
 
         {/* Signature pad modal */}
         {showPad && (

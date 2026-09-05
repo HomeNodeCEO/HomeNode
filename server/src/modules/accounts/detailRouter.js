@@ -5,10 +5,8 @@ import { getAccountPropertyActivityHistory } from "../../services/accountSalesHi
 import { loadAccountDetailSections } from "../../services/accountDetailSections.js";
 import { ensureCensusGeographySchema } from "../../services/censusGeography.js";
 import { getStoredPropertyContext } from "../../services/propertyContext.js";
-import {
-  APPLICATION_WORKFLOWS,
-  hasApplicationPermission,
-} from "../../security/applicationAccess.js";
+import { hasApplicationPermission } from "../../security/applicationAccess.js";
+import { authorizePublicCadastralCatalogRead } from "../../security/publicCadastralCatalog.js";
 
 function requirePromise(value, code) {
   if (!value || typeof value.then !== "function") throw new TypeError(code);
@@ -28,6 +26,12 @@ export function createAccountDetailRouter({
   ensurePropertyContextAvailable,
   authenticationRequired,
   hasPermission = hasApplicationPermission,
+  authorizePublicAccount = (auth, accountId) => authorizePublicCadastralCatalogRead(
+    auth,
+    accountId,
+    { permissionChecker: hasPermission },
+  ),
+  requireCustomAccountScope,
   resolveAccountId = resolveCanonicalAccountId,
   loadPropertyActivity = getAccountPropertyActivityHistory,
   loadDetailSections = loadAccountDetailSections,
@@ -51,25 +55,38 @@ export function createAccountDetailRouter({
     throw new TypeError("account_detail_authentication_mode_required");
   }
   requireFunction(hasPermission, "account_detail_permission_policy_required");
+  requireFunction(authorizePublicAccount, "account_detail_public_catalog_authorizer_required");
+  requireFunction(requireCustomAccountScope, "account_detail_assignment_authorizer_required");
 
   const router = express.Router();
 
   router.get("/api/accounts/:id", async (req, res) => {
-    const id = String(req.params.id || "").trim();
-    if (!id) return res.status(400).json({ error: "missing_id" });
-    if (!req.mobileAuth) {
+    const requestedId = String(req.params.id || "").trim();
+    if (!requestedId) return res.status(400).json({ error: "missing_id" });
+    let publicGrant;
+    try {
+      publicGrant = authorizePublicAccount(req.mobileAuth, requestedId);
+    } catch (error) {
+      const message = String(error?.message || "");
+      const status = message.endsWith("_authentication_required") ? 401
+        : message === "invalid_account_id" ? 400
+          : 403;
       return res.set("cache-control", "no-store")
-        .status(401)
-        .json({ error: "authentication_required" });
+        .status(status)
+        .json({ error: status === 401 ? "authentication_required"
+          : status === 400 ? "invalid_account_id"
+            : "application_access_denied" });
     }
-    const mayReadApplication = APPLICATION_WORKFLOWS.some((workflow) => (
-      hasPermission(req.mobileAuth, workflow, "read")
-    ));
-    if (!mayReadApplication) {
-      return res.set("cache-control", "no-store")
-        .status(403)
-        .json({ error: "application_access_denied" });
-    }
+    const id = publicGrant.accountId;
+    const assignmentFileId = String(req.query.assignment_file_id || "").trim();
+    const assignmentScoped = Boolean(assignmentFileId);
+    if (assignmentScoped && !await requireCustomAccountScope(
+      req,
+      res,
+      id,
+      assignmentFileId,
+      "read",
+    )) return undefined;
     try {
       await accountQualityReady;
       const canonicalId = await resolveAccountId(pool, id);
@@ -126,7 +143,9 @@ export function createAccountDetailRouter({
       const { rows: accRows } = await pool.query(accountSql, [canonicalId]);
       if (!accRows.length) return res.status(404).json({ error: "not_found" });
 
-      const propertyActivityHistoryPromise = loadPropertyActivity(pool, canonicalId)
+      const propertyActivityHistoryPromise = (assignmentScoped
+        ? loadPropertyActivity(pool, canonicalId)
+        : Promise.resolve([]))
         .catch((error) => {
           logger.warn?.("property activity lookup failed", error?.code || "unknown_error");
           return [];
@@ -160,31 +179,32 @@ export function createAccountDetailRouter({
         },
         primary_improvements: sections.primaryImprovement,
         housing_profile: sections.housingProfile,
-        owner_summary: sections.owner
+        owner_summary: assignmentScoped && sections.owner
           ? {
               owner_name: sections.owner.owner_name,
               mailing_address: sections.owner.mailing_address,
               tax_year: sections.owner.tax_year,
             }
           : null,
-        owner_parties: sections.owner?.owner_parties || [],
+        owner_parties: assignmentScoped ? sections.owner?.owner_parties || [] : [],
         legal_current: sections.legalCurrent,
-        legal_history: sections.legalHistory,
-        exemptions_summary_year: sections.exemptionYear,
-        exemptions_summary: sections.exemptions,
-        homestead_yes: sections.homesteadYes,
+        legal_history: assignmentScoped ? sections.legalHistory : [],
+        exemptions_summary_year: assignmentScoped ? sections.exemptionYear : null,
+        exemptions_summary: assignmentScoped ? sections.exemptions : [],
+        homestead_yes: assignmentScoped ? sections.homesteadYes : false,
         land_detail: sections.landRows,
         property_activity_history: await propertyActivityHistoryPromise,
         census_geography: await censusGeographyPromise,
         report_manual_values: await reportManualValuesPromise,
         property_context: await propertyContextPromise,
         additional_improvements: sections.additionalImprovements,
+        data_scope: assignmentScoped ? "custom_appraisal_assignment" : publicGrant.scope,
       };
       response.sales_history = response.property_activity_history.filter(
         (row) => row.record_type === "closed_sale",
       );
 
-      return res.json(response);
+      return res.set("cache-control", "no-store").json(response);
     } catch (error) {
       logger.error?.("account detail load failed", error);
       return res.status(500).json({ error: "accounts_failed" });

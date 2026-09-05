@@ -26,15 +26,14 @@ export async function loadAppraisalFileContext(
   propertyId: string,
   requestedFileId: number | null,
 ) {
-  const [property, files] = await Promise.all([
-    api.getAccount(propertyId),
-    loadAssignmentFiles(propertyId),
-  ]);
+  const files = await loadAssignmentFiles(propertyId);
   const assignmentFile = requestedFileId
     ? files.files.find((file) => file.id === requestedFileId) || null
     : files.latest_file;
-  const workfile = assignmentFile
-    ? (await loadCustomAppraisalWorkfile(propertyId, assignmentFile.id)).workfile
-    : null;
+  const [property, workfileResult] = await Promise.all([
+    api.getAccount(propertyId, { assignmentFileId: assignmentFile?.id }),
+    assignmentFile ? loadCustomAppraisalWorkfile(propertyId, assignmentFile.id) : null,
+  ]);
+  const workfile = workfileResult?.workfile || null;
   return { property, assignmentFile, workfile };
 }

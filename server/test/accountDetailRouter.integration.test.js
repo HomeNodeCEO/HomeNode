@@ -36,6 +36,7 @@ function baseOptions(overrides = {}) {
     ensurePropertyContextAvailable: async () => {},
     authenticationRequired: false,
     hasPermission: () => true,
+    requireCustomAccountScope: async () => true,
     resolveAccountId: async (_pool, value) => value.toUpperCase(),
     loadPropertyActivity: async () => [],
     loadDetailSections: async () => sections(),
@@ -70,6 +71,7 @@ async function startRouter(options, { auth = { userId: "reader-1" } } = {}) {
 test("account detail preserves canonical resolution, response shape, and sales derivation", async (context) => {
   const queries = [];
   const resolutions = [];
+  const accessScopes = [];
   const census = { tract_geoid: "48113014125", status: "ready" };
   const propertyContext = { assessment_id: "context-1", status: "reviewed" };
   const activity = [
@@ -116,13 +118,20 @@ test("account detail preserves canonical resolution, response shape, and sales d
       assert.deepEqual(options, { accountId: "CANONICAL-1" });
       return propertyContext;
     },
+    requireCustomAccountScope: async (...scope) => {
+      accessScopes.push(scope.slice(2));
+      return true;
+    },
   }));
   context.after(server.close);
 
-  const response = await fetch(`${server.baseUrl}/api/accounts/legacy-1`);
+  const response = await fetch(
+    `${server.baseUrl}/api/accounts/legacy-1?assignment_file_id=42`,
+  );
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.deepEqual(resolutions, [{ receivedPool: pool, value: "legacy-1" }]);
+  assert.deepEqual(accessScopes, [["legacy-1", "42", "read"]]);
   assert.deepEqual(body.account, {
     ...account,
     requested_account_id: "legacy-1",
@@ -138,6 +147,7 @@ test("account detail preserves canonical resolution, response shape, and sales d
   assert.deepEqual(body.owner_parties, [{ owner_name: "OWNER NAME" }]);
   assert.deepEqual(body.property_activity_history, activity);
   assert.deepEqual(body.sales_history, [activity[1]]);
+  assert.equal(body.data_scope, "custom_appraisal_assignment");
   assert.deepEqual(body.census_geography, census);
   assert.equal(body.property_context, null);
   assert.deepEqual(body.report_manual_values, {});
@@ -192,6 +202,7 @@ test("enforced account detail rejects identities without an application read rol
 test("enforced account detail preserves property discovery but omits unscoped private overlays", async (context) => {
   const queries = [];
   let contextLoads = 0;
+  let activityLoads = 0;
   const account = { account_id: "123", address: "100 MAIN ST", county: "Dallas" };
   const pool = {
     async query(sql) {
@@ -208,6 +219,10 @@ test("enforced account detail preserves property discovery but omits unscoped pr
       contextLoads += 1;
       return { assessment_id: "private-context" };
     },
+    loadPropertyActivity: async () => {
+      activityLoads += 1;
+      return [{ record_type: "closed_sale", sale_price: "325000" }];
+    },
   }), {
     auth: {
       userId: "user-appraiser",
@@ -222,8 +237,48 @@ test("enforced account detail preserves property discovery but omits unscoped pr
   assert.equal(body.account.account_id, "123");
   assert.deepEqual(body.report_manual_values, {});
   assert.equal(body.property_context, null);
+  assert.equal(body.owner_summary, null);
+  assert.deepEqual(body.owner_parties, []);
+  assert.deepEqual(body.legal_history, []);
+  assert.deepEqual(body.exemptions_summary, []);
+  assert.equal(body.exemptions_summary_year, null);
+  assert.equal(body.homestead_yes, false);
+  assert.deepEqual(body.property_activity_history, []);
+  assert.deepEqual(body.sales_history, []);
+  assert.equal(body.data_scope, "public_cadastral_catalog");
   assert.equal(contextLoads, 0);
+  assert.equal(activityLoads, 0);
   assert.equal(queries.some((sql) => /property_attribute_manual_values/.test(sql)), false);
+});
+
+test("assignment-scoped account detail denies before canonical resolution and database access", async (context) => {
+  let resolutions = 0;
+  let queries = 0;
+  const server = await startRouter(baseOptions({
+    pool: {
+      async query() {
+        queries += 1;
+        return { rows: [] };
+      },
+    },
+    resolveAccountId: async () => {
+      resolutions += 1;
+      return "123";
+    },
+    requireCustomAccountScope: async (_req, res) => {
+      res.status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(
+    `${server.baseUrl}/api/accounts/123?assignment_file_id=99`,
+  );
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  assert.equal(resolutions, 0);
+  assert.equal(queries, 0);
 });
 
 test("optional account evidence failures preserve a bounded usable response", async (context) => {
@@ -257,7 +312,9 @@ test("optional account evidence failures preserve a bounded usable response", as
   }));
   context.after(server.close);
 
-  const response = await fetch(`${server.baseUrl}/api/accounts/123`);
+  const response = await fetch(
+    `${server.baseUrl}/api/accounts/123?assignment_file_id=42`,
+  );
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.deepEqual(body.property_activity_history, []);
@@ -314,6 +371,10 @@ test("account detail composition fails fast for missing startup dependencies", (
     () => createAccountDetailRouter(baseOptions({ authenticationRequired: undefined })),
     /account_detail_authentication_mode_required/,
   );
+  assert.throws(
+    () => createAccountDetailRouter(baseOptions({ requireCustomAccountScope: null })),
+    /account_detail_assignment_authorizer_required/,
+  );
 });
 
 test("entrypoint mounts account detail after signup and before adjacent account routes", () => {
@@ -323,4 +384,8 @@ test("entrypoint mounts account detail after signup and before adjacent account 
   const accountPhotos = source.indexOf("app.use(createAccountPhotosRouter(");
   assert.ok(accountDetail > signup);
   assert.ok(accountPhotos > accountDetail);
+  assert.match(
+    source.slice(accountDetail, accountPhotos),
+    /requireCustomAccountScope,/,
+  );
 });

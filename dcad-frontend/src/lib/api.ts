@@ -133,6 +133,7 @@ export interface AccountRow {
 }
 
 export interface AccountDetail {
+  data_scope?: 'public_cadastral_catalog' | 'custom_appraisal_assignment';
   account: AccountRow;
   owner_summary?: {
     owner_name: string | null;
@@ -1902,9 +1903,14 @@ export async function searchAccounts(q: string, limit = 25, offset = 0): Promise
 }
 
 /** Get a single account (core + latest market values + primary improvements) */
-export async function getAccount(accountId: string): Promise<AccountDetail> {
+export async function getAccount(
+  accountId: string,
+  options: { assignmentFileId?: number | null } = {},
+): Promise<AccountDetail> {
   const id = (accountId || '').trim();
-  const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}`);
+  const url = makeUrl(`/api/accounts/${encodeURIComponent(id)}`, {
+    assignment_file_id: options.assignmentFileId || undefined,
+  });
   return fetchJSON<AccountDetail>(url);
 }
 

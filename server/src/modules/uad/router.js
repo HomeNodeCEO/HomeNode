@@ -74,6 +74,7 @@ import {
   processAssignmentDocument,
   reviewAssignmentDocumentCandidate,
 } from "../../services/assignmentDocuments.js";
+import { authorizePublicCadastralCatalogRead } from "../../security/publicCadastralCatalog.js";
 
 function authenticatedReviewer(req) {
   const userId = String(req.mobileAuth?.userId || "").trim();
@@ -337,8 +338,16 @@ export function createUadRouter({
       // workfile exists, but only identities with an authorized UAD role may
       // enumerate it. Tenant-owned workfiles remain separately object-scoped.
       buildUadAccessScope(req.mobileAuth);
-      const subject = await getUadSubjectSummary(pool, req.params.accountId);
-      res.json({ subject });
+      const publicGrant = authorizePublicCadastralCatalogRead(
+        req.mobileAuth,
+        req.params.accountId,
+        { workflows: ["uad_3_6"] },
+      );
+      const subject = await getUadSubjectSummary(pool, publicGrant.accountId);
+      res.set("cache-control", "no-store").json({
+        subject,
+        data_scope: publicGrant.scope,
+      });
     } catch (error) {
       sendError(res, error);
     }

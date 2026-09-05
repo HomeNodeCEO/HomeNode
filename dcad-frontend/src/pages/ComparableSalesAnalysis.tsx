@@ -858,17 +858,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setError(null);
       try {
         // Prefer DB-backed endpoint
-        const accountResponse = await api.getAccount(propertyId);
+        const accountResponse = await api.getAccount(propertyId, { assignmentFileId: activeAssignmentFile?.id });
         setSubject(subjectFromAccountResponse(accountResponse, propertyId));
 
-        // Add checked compatibility fields that are not represented by the core account type.
+        // Add checked legacy fields.
         try {
           const legacyResponse = await fetchDetail(propertyId);
           const legacySubject = subjectFromDetailResponse(legacyResponse, propertyId);
           setSubject((current) => mergeSubjectData(current, legacySubject, propertyId));
         } catch { /* optional compatibility enrichment failed; keep the DB response */ }
 
-        // Refresh legacy rows whose original scrape predates bedroom/full-half bath capture.
+        // Refresh legacy rows missing room counts.
         // This endpoint persists recovered values so later visits stay DB-backed.
         if (accountNeedsRoomRefresh(accountResponse)) {
           try {
@@ -907,7 +907,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       }
     }
     load();
-  }, [propertyId]);
+  }, [activeAssignmentFile?.id, propertyId]);
 
   const fmtSqftSafe = (v: unknown) => {
     if (v === null || v === undefined || v === '') return '-';

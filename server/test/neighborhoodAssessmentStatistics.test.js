@@ -20,9 +20,57 @@ const stock = (account_id, overrides = {}) => ({
 });
 const sale = (canonical_transaction_id, primary_account_id, overrides = {}) => ({
   canonical_transaction_id, primary_account_id, primary_account_verified: true,
-  sale_date: "2024-03-01", sale_price: 300_000, ...overrides,
+  sale_date: "2024-03-01", sale_price: 300_000, market_eligible: true, ...overrides,
 });
 const summarize = (input = {}) => summarizeNeighborhoodPopulations({ ...scope, ...input });
+
+test("market eligibility requires every duplicate observation to explicitly approve", () => {
+  for (const [observations, expected] of [
+    [[undefined], null], [[null, undefined], null], [[true, undefined], null],
+    [[true, null], null], [[true, "true"], null], [[true, 1], null],
+    [[true, true], true], [[true, false], false], [[false, undefined], false],
+  ]) {
+    const rows = observations.map(market_eligible => sale("t", "a", { market_eligible }));
+    // Both an absent property and a present undefined are unknown observations.
+    if (observations[0] === undefined) delete rows[0].market_eligible;
+    for (const ordered of [rows, [...rows].reverse()]) {
+      assert.equal(deduplicateTransactions(ordered).transactions[0].market_eligible, expected);
+    }
+  }
+});
+
+test("unknown eligibility is withheld from all report-facing sales counts and distributions", () => {
+  const unknown = sale("unknown", "b", { market_eligible: null, sale_price: 9_000_000 });
+  const result = summarize({
+    stock: [stock("a"), stock("b")], minimum_sale_count: 1,
+    sales: [sale("verified", "a"), unknown, { ...unknown, market_eligible: true }],
+  });
+  assert.equal(result.state, "incomplete");
+  assert.deepEqual(result.incomplete_reasons, ["market_eligibility_unknown"]);
+  assert.equal(result.sales.diagnostics.unknown_market_eligibility_transactions, 1);
+  assert.equal(result.sales.diagnostics.nonmarket_transactions, 0);
+  assert.equal(result.sales.transaction_count, 1);
+  assert.equal(result.sales.price_eligible_transaction_count, 1);
+  assert.equal(result.sales.unique_sold_account_count, 1);
+  assert.equal(result.sales.unique_sold_account_coverage_percent, 50);
+  assert.equal(result.sales.recorded_transaction_price.median, 300_000);
+  assert.equal(result.sales.property_sale_price.median, 300_000);
+  assert.deepEqual(result.sales.property_price_members.map(row => row.account_id), ["a"]);
+});
+
+test("all-missing and vetoed eligibility remain different from known market sales", () => {
+  const missing = sale("missing", "a");
+  delete missing.market_eligible;
+  const result = summarize({ stock: [stock("a")], sales: [missing, { ...missing, market_eligible: null },
+    sale("vetoed", "a"), sale("vetoed", "a", { market_eligible: false })] });
+  assert.equal(result.sales.diagnostics.unknown_market_eligibility_transactions, 1);
+  assert.equal(result.sales.diagnostics.nonmarket_transactions, 1);
+  assert.equal(result.sales.transaction_count, 0);
+  assert.equal(result.sales.recorded_transaction_price.median, null);
+  assert.equal(result.sales.property_sale_price.median, null);
+  assert.equal(result.sales.unique_sold_account_count, 0);
+  assert.deepEqual(result.sales.property_price_members, []);
+});
 
 test("numeric parsing distinguishes missing, invalid, explicit zero and DB decimal text", () => {
   for (const value of [null, undefined, "", " ", false, true, [], {}, "0x10", "NaN", Infinity, NaN]) {

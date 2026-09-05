@@ -265,8 +265,10 @@ export function deduplicateTransactions(records) {
       sale_price: prices[0] ?? null,
       parcels,
       unresolved_parcel_links: unidentifiedParcel || expectedCount !== parcels.length || !parcels.length || parcels.some((parcel) => !parcel.verified),
-      // Caller eligibility is conservative across duplicate source observations.
-      market_eligible: rows.every((row) => row.market_eligible !== false),
+      // An omitted/null/malformed observation cannot approve a market transfer.
+      // One explicit veto wins; otherwise every observation must approve it.
+      market_eligible: rows.some((row) => row.market_eligible === false) ? false
+        : rows.every((row) => row.market_eligible === true) ? true : null,
       source_references: [...new Set(rows.flatMap((row) => Array.isArray(row.source_references)
         ? row.source_references.map(identity).filter(Boolean) : []))].sort(),
     });
@@ -299,7 +301,8 @@ export function summarizeNeighborhoodPopulations({
   const normalizedSales = deduplicateTransactions(sales);
   const diagnostics = {
     ...normalizedSales.diagnostics, invalid_date_transactions: 0, future_transactions: 0,
-    outside_period_transactions: 0, nonmarket_transactions: 0, outside_population_transactions: 0,
+    outside_period_transactions: 0, nonmarket_transactions: 0, unknown_market_eligibility_transactions: 0,
+    outside_population_transactions: 0,
     unresolved_parcel_transactions: 0, unresolved_allocation_transactions: 0, nonpositive_or_missing_price_transactions: 0,
   };
   const recordedPrices = [];
@@ -311,7 +314,8 @@ export function summarizeNeighborhoodPopulations({
     if (!sale.sale_date) { diagnostics.invalid_date_transactions += 1; continue; }
     if (sale.sale_date > effectiveDate) { diagnostics.future_transactions += 1; continue; }
     if (sale.sale_date < start || sale.sale_date > end) { diagnostics.outside_period_transactions += 1; continue; }
-    if (!sale.market_eligible) { diagnostics.nonmarket_transactions += 1; continue; }
+    if (sale.market_eligible === false) { diagnostics.nonmarket_transactions += 1; continue; }
+    if (sale.market_eligible !== true) { diagnostics.unknown_market_eligibility_transactions += 1; continue; }
     const inStock = sale.parcels.filter((parcel) => parcel.verified && byAccount.has(parcel.account_id));
     if (!inStock.length) {
       diagnostics[sale.unresolved_parcel_links ? "unresolved_parcel_transactions" : "outside_population_transactions"] += 1;
@@ -421,9 +425,12 @@ export function summarizeNeighborhoodPopulations({
   const distributions = [result.stock.year_built, result.stock.age_at_effective_date, result.stock.gla_sqft,
     result.stock.site_area_sqft, ...result.stock.assessed_values_by_tax_year, result.sales.recorded_transaction_price,
     result.sales.property_sale_price, result.sales.sale_price_per_sqft];
-  if (distributions.some((distribution) => distribution.state === "incomplete")) {
+  const incompleteReasons = [];
+  if (diagnostics.unknown_market_eligibility_transactions) incompleteReasons.push("market_eligibility_unknown");
+  if (distributions.some((distribution) => distribution.state === "incomplete")) incompleteReasons.push("numeric_overflow");
+  if (incompleteReasons.length) {
     result.state = "incomplete";
-    result.incomplete_reasons = ["numeric_overflow"];
+    result.incomplete_reasons = incompleteReasons;
   }
   return result;
 }

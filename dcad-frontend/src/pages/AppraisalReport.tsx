@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
 import * as api from "@/lib/api";
 import {
   loadAssignmentFiles,
@@ -314,6 +315,7 @@ function recommendedComparable(sale: SaleRow): AppraisalReportComparable {
 }
 
 export default function AppraisalReport() {
+  const { session: applicationSession } = useApplicationAuth();
   const location = useLocation();
   const propertyId = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -325,12 +327,8 @@ export default function AppraisalReport() {
     return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
   }, [location.search]);
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [draft, setDraft] = useState<AppraisalReportSalesDraft | null>(() =>
-    readAppraisalReportDraft(propertyId),
-  );
-  const [marketDraft, setMarketDraft] = useState<MarketConditionsDraft | null>(
-    () => readMarketConditionsDraft(propertyId),
-  );
+  const [draft, setDraft] = useState<AppraisalReportSalesDraft | null>(null);
+  const [marketDraft, setMarketDraft] = useState<MarketConditionsDraft | null>(null);
   const [costDraft, setCostDraft] = useState<CostApproachDraft | null>(null);
   const [incomeDraft, setIncomeDraft] = useState<IncomeApproachDraft | null>(null);
   const [finalDraft, setFinalDraft] = useState<FinalReconciliationDraft | null>(null);
@@ -342,6 +340,7 @@ export default function AppraisalReport() {
   const [loading, setLoading] = useState(Boolean(propertyId));
   const [salesLoading, setSalesLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const assignmentSelectionGenerationRef = useRef(0);
   const generatedAt = useMemo(
     () =>
       new Intl.DateTimeFormat("en-US", {
@@ -354,40 +353,53 @@ export default function AppraisalReport() {
     [],
   );
 
-  useEffect(() => {
-    setDraft(readAppraisalReportDraft(propertyId));
-    setMarketDraft(readMarketConditionsDraft(propertyId));
+  useLayoutEffect(() => {
+    assignmentSelectionGenerationRef.current += 1;
+    setAssignmentFile(null);
+    setAssignmentLoading(Boolean(propertyId));
+    setDraft(null);
+    setMarketDraft(null);
     setCostDraft(null);
     setIncomeDraft(null);
     setFinalDraft(null);
-  }, [propertyId]);
+    setRecommended([]);
+    setPrintBlocker("");
+  }, [applicationSession, propertyId, requestedAssignmentFileId]);
 
   useEffect(() => {
     let cancelled = false;
+    const selectionGeneration = assignmentSelectionGenerationRef.current;
+    const selectionIsCurrent = () => (
+      !cancelled && assignmentSelectionGenerationRef.current === selectionGeneration
+    );
     if (!propertyId) {
-      setAssignmentFile(null);
-      setAssignmentLoading(false);
+      if (selectionIsCurrent()) setAssignmentLoading(false);
       return () => { cancelled = true; };
     }
     setAssignmentLoading(true);
     void loadAssignmentFiles(propertyId)
       .then(async (response) => {
-        if (cancelled) return;
-        const selected = requestedAssignmentFileId
+        if (!selectionIsCurrent()) return;
+        const assignment = requestedAssignmentFileId
           ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
           : response.latest_file;
-        const assignment = selected || response.latest_file || null;
-        setAssignmentFile(assignment);
         if (!assignment) return;
         const result = await loadCustomAppraisalWorkfile(propertyId, assignment.id);
-        if (cancelled) return;
+        if (!selectionIsCurrent()) return;
+        if (
+          result.workfile.assignment_file_id !== assignment.id ||
+          result.account_id.trim().toUpperCase() !== propertyId.trim().toUpperCase()
+        ) {
+          throw new Error("assignment_workfile_identity_mismatch");
+        }
+        setAssignmentFile(assignment);
         setDraft(
           (result.workfile.sections.sales_comparison?.value as AppraisalReportSalesDraft | undefined) ||
-            readAppraisalReportDraft(propertyId),
+            readAppraisalReportDraft(propertyId, assignment.id, applicationSession),
         );
         setMarketDraft(
           (result.workfile.sections.market_conditions?.value as MarketConditionsDraft | undefined) ||
-            readMarketConditionsDraft(propertyId),
+            readMarketConditionsDraft(propertyId, assignment.id, applicationSession),
         );
         setCostDraft(
           (result.workfile.sections.cost_approach?.value as CostApproachDraft | undefined) || null,
@@ -400,13 +412,19 @@ export default function AppraisalReport() {
         );
       })
       .catch(() => {
-        if (!cancelled) setAssignmentFile(null);
+        if (!selectionIsCurrent()) return;
+        setAssignmentFile(null);
+        setDraft(null);
+        setMarketDraft(null);
+        setCostDraft(null);
+        setIncomeDraft(null);
+        setFinalDraft(null);
       })
       .finally(() => {
-        if (!cancelled) setAssignmentLoading(false);
+        if (selectionIsCurrent()) setAssignmentLoading(false);
       });
     return () => { cancelled = true; };
-  }, [propertyId, requestedAssignmentFileId]);
+  }, [applicationSession, propertyId, requestedAssignmentFileId]);
 
   useEffect(() => {
     let cancelled = false;

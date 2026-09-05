@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type AppraisalAssignmentFile } from "@/lib/api";
 import { loadAssignmentFiles } from "@/lib/appraisalFileRequests";
 import { selectAssignmentFile } from "@/lib/assignmentFileSelection";
@@ -26,6 +26,11 @@ export function useAssignmentFiles({
   const [activeAssignmentFile, setActiveAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
   const [assignmentFileNumber, setAssignmentFileNumber] = useState("");
   const selectionHandlerRef = useRef(onSelectedFile);
+  const selectionGenerationRef = useRef(0);
+
+  useLayoutEffect(() => {
+    selectionGenerationRef.current += 1;
+  }, [accountId, enabled, requestedAssignmentFileId]);
 
   useEffect(() => {
     selectionHandlerRef.current = onSelectedFile;
@@ -93,5 +98,6 @@ export function useAssignmentFiles({
     setActiveAssignmentFile,
     assignmentFileNumber,
     setAssignmentFileNumber,
+    selectionGenerationRef,
   };
 }

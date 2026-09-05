@@ -77,6 +77,22 @@ body {
 img, video, canvas, iframe { max-width: 100%; height: auto; }
 .viewerContainer, .pdfViewer { max-width: 100% !important; overflow-x: auto; }
 
+/* Fixed photo frames must win over the responsive-media baseline above. Without
+ * this, a loaded image can overflow the hero and intercept controls below it. */
+.hn-subject-photo-hero { overflow: hidden; }
+.hn-subject-photo-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.hn-assignment-photo-preview {
+  display: block;
+  width: 100%;
+  height: 9rem;
+  object-fit: cover;
+}
+
 /*
  * Shared application action style. The low-specificity base lets purposeful
  * semantic variants (success, warning, danger, navigation) keep their meaning.

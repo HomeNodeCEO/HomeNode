@@ -89,6 +89,7 @@ function errorStatus(error) {
   if (message === "uad_authentication_required") return 401;
   if (message === "uad_organization_required") return 400;
   if (message === "uad_signature_acknowledgment_unavailable") return 503;
+  if (["uad_signature_reauthentication_unavailable", "uad_signature_policy_invalid"].includes(message)) return 409;
   if (message.startsWith("uad_signature_acknowledgment")) return 409;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
   if (message.endsWith("_conflict")) return 409;

@@ -650,6 +650,78 @@ test("direct UAD sketch lifecycle refusals use the real service and private boun
   }
 });
 
+test("signing assurance refusals use the real service and bounded private 409 responses", async () => {
+  for (const fixture of [
+    { policy: "reauthentication", method: "reauthentication", code: "uad_signature_reauthentication_unavailable" },
+    { policy: null, method: "session", code: "uad_signature_policy_invalid" },
+    { policy: "unknown-private-policy", method: "session", code: "uad_signature_policy_invalid" },
+    { policy: "session", method: "reauthentication", code: "uad_signature_authentication_method_mismatch" },
+    { policy: "session", method: { method: "session" }, code: "uad_signature_authentication_method_mismatch" },
+  ]) {
+    const pool = securityPool();
+    const trace = [];
+    let releases = 0;
+    pool.connect = async () => ({
+      async query(sql, params) {
+        const statement = String(sql).replace(/\s+/g, " ").trim();
+        trace.push(statement);
+        if (statement === "BEGIN" || statement === "ROLLBACK") return { rows: [] };
+        assert.deepEqual(params, [WORKFILE_ID]);
+        if (statement === "SELECT * FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE") {
+          return { rows: [{ id: WORKFILE_ID, status: "ready", current_revision: 3,
+            assigned_appraiser_user_id: USER_ID, supervisory_appraiser_user_id: null }] };
+        }
+        if (statement.startsWith("WITH required_signers AS")) {
+          return { rows: [{ signer_role: "appraiser", user_id: USER_ID, user_active: true,
+            display_name: "Synthetic Appraiser", profile_status: "active", signature_policy: fixture.policy,
+            organization_id: ORGANIZATION_ID, organization_display_name: "Synthetic Organization",
+            address_line_1: "1 Synthetic Street", city: "Dallas", state_code: "TX", postal_code: "75201",
+            license_id: "00000000-0000-4000-8000-000000000111", jurisdiction: "TX",
+            license_number: "SYNTHETIC-PRIVATE", license_type: "CertifiedResidential", expires_on: "9999-12-31" }] };
+        }
+        throw new Error("unsupported_assurance_must_not_reach_signature_reads_or_writes");
+      },
+      release() { releases += 1; },
+    });
+    await withServer(pool, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/signatures`, {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ authentication_method: fixture.method, auth_time: Math.floor(Date.now() / 1000),
+          amr: ["mfa"], acknowledgment_token: "caller-claims-are-not-verified-assurance" }),
+      });
+      assert.equal(response.status, 409);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { error: fixture.code });
+      assert.deepEqual(pool.accessQueries, [[WORKFILE_ID]]);
+      assert.equal(trace.length, 4);
+      assert.equal(trace[0], "BEGIN");
+      assert.equal(trace.at(-1), "ROLLBACK");
+      assert.equal(releases, 1);
+    });
+  }
+});
+
+test("signature writes reject anonymous and cross-organization callers before the signing service", async () => {
+  for (const authenticated of [false, true]) {
+    const pool = securityPool({ membershipOrganizationId: OTHER_ORGANIZATION_ID });
+    let connections = 0;
+    pool.connect = async () => { connections += 1; throw new Error("unauthorized_signature_must_not_connect"); };
+    await withServer(pool, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/signatures`, {
+        method: "POST", headers: { "content-type": "application/json",
+          ...(authenticated ? { authorization: "Bearer synthetic-token" } : {}) },
+        body: JSON.stringify({ authentication_method: "reauthentication" }),
+      });
+      assert.equal(response.status, authenticated ? 403 : 401);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { error: authenticated ? "uad_workfile_access_denied" : "invalid_access_token" });
+      assert.equal(connections, 0);
+      assert.deepEqual(pool.accessQueries, authenticated ? [[WORKFILE_ID]] : []);
+    });
+  }
+});
+
 test("UAD JSON parser failures return bounded JSON without reaching authentication or data access", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

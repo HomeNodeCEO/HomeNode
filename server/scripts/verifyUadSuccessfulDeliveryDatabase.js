@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import pg from "pg";
 
@@ -7,6 +8,7 @@ import {
 } from "../src/modules/uad/appendixH.js";
 import {
   acknowledgeUadSignature,
+  getUadCertificationReadiness,
   signUadWorkfile,
 } from "../src/modules/uad/certifications.js";
 import { getUadEditor } from "../src/modules/uad/editor.js";
@@ -421,6 +423,64 @@ async function seedRequiredAssets(pool, objects, workfileId) {
   }
 }
 
+// Executed only inside the existing synthetic test-database workflow. Real
+// acknowledgment consent must never be mistaken for a fresh login or MFA proof.
+async function verifySigningAssuranceContainment(pool, workfileId, authentication, input, signingSecret) {
+  const state = async () => {
+    const result = await pool.query(
+      `SELECT
+         (SELECT to_jsonb(w) FROM appraisal.uad_workfiles w WHERE w.id = $1) AS workfile,
+         (SELECT COALESCE(jsonb_agg(to_jsonb(s) ORDER BY s.id), '[]'::jsonb)
+            FROM appraisal.uad_signatures s WHERE s.workfile_id = $1) AS signatures,
+         (SELECT COALESCE(jsonb_agg(to_jsonb(a) ORDER BY a.id), '[]'::jsonb)
+            FROM appraisal.uad_audit_events a WHERE a.workfile_id = $1) AS audit,
+         (SELECT to_jsonb(p) FROM app_auth.appraiser_profiles p WHERE p.user_id = $2) AS profile`,
+      [workfileId, authentication.userId],
+    );
+    return result.rows[0];
+  };
+  const initial = await state();
+  assert.equal(initial.profile.signature_policy, "session", "the synthetic positive fixture must keep session policy");
+  assert.equal(initial.workfile.status, "ready");
+  assert.equal(initial.signatures.length, 0);
+  assert.equal((await getUadCertificationReadiness(pool, workfileId)).ready, true);
+  const claimedMethods = [null, false, "", " session ", "Session", "reauthentication", "mfa", ["session"], { method: "session" }];
+  for (const authenticationMethod of claimedMethods) {
+    await assert.rejects(signUadWorkfile(pool, workfileId, authentication, {
+      ...input, authentication_method: authenticationMethod,
+      auth_time: Math.floor(Date.now() / 1000), amr: ["mfa"], mfa: true,
+    }, { signingSecret }), { message: "uad_signature_authentication_method_mismatch" });
+    assert.deepEqual(await state(), initial, "a forged method must not write signatures, audit, lifecycle or profile");
+  }
+  // Change only this existing synthetic appraiser fixture, never a production
+  // profile. Restore its exact supported policy even if an assertion fails.
+  await pool.query("UPDATE app_auth.appraiser_profiles SET signature_policy = 'reauthentication' WHERE user_id = $1",
+    [authentication.userId]);
+  try {
+    const blocked = await state();
+    const readiness = await getUadCertificationReadiness(pool, workfileId);
+    assert.equal(readiness.ready, false);
+    assert.equal(readiness.artifact_readiness.pdf_ready, true);
+    const signer = readiness.signers.find(row => row.user_id === authentication.userId);
+    assert.equal(signer.ready, false);
+    assert.ok(signer.missing.includes("uad_signature_reauthentication_unavailable"));
+    for (const methodInput of [{}, { authentication_method: "session" }, { authentication_method: "reauthentication" }]) {
+      await assert.rejects(signUadWorkfile(pool, workfileId, {
+        ...authentication, auth_time: Math.floor(Date.now() / 1000), amr: ["mfa"], mfa: true,
+      }, { ...input, ...methodInput, auth_time: Math.floor(Date.now() / 1000), amr: ["mfa"] }, { signingSecret }),
+      { message: "uad_signature_reauthentication_unavailable" });
+      assert.deepEqual(await state(), blocked, "consent and unverified freshness claims cannot satisfy reauthentication");
+    }
+  } finally {
+    await pool.query("UPDATE app_auth.appraiser_profiles SET signature_policy = $2 WHERE user_id = $1",
+      [authentication.userId, initial.profile.signature_policy]);
+  }
+  assert.deepEqual(await state(), initial, "the synthetic policy is restored without changing any signing state");
+  assert.equal((await getUadCertificationReadiness(pool, workfileId)).ready, true);
+  return { forged_method_refusals: claimedMethods.length, unsupported_reauthentication_refusals: 3,
+    rejected_attempts_preserved_state: true, verified_provider_step_up_claimed: false };
+}
+
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 const objects = new Map();
 try {
@@ -516,11 +576,15 @@ try {
       standard_certifications_acknowledged: true,
       scope_of_work_acknowledged: true,
     }, { signingSecret });
-    const signature = await signUadWorkfile(pool, workfileId, authentication, {
-      authentication_method: "session",
+    const signingInput = {
       execution_date: executionDate,
       acknowledgment_token: acknowledgment.acknowledgment_token,
-    }, { signingSecret });
+    };
+    const signingAssurance = await verifySigningAssuranceContainment(
+      pool, workfileId, authentication, signingInput, signingSecret,
+    );
+    const signature = await signUadWorkfile(pool, workfileId, authentication, signingInput, { signingSecret });
+    assert.equal(signature.signature.authentication_method, "session", "method is derived on the server when omitted");
     const pdf = await generateUadPdfArtifact(pool, storage, workfileId);
     const xml = await generateUadXmlArtifact(pool, storage, workfileId);
     if (xml.schema_validation?.status !== "passed") {
@@ -568,7 +632,9 @@ try {
         warning_count: validation.warning_count,
       },
       sales_comparison: salesComparison,
-      signature: { workfile_status: signature.workfile_status, signer_role: signature.signature.signer_role },
+      signature: { workfile_status: signature.workfile_status, signer_role: signature.signature.signer_role,
+        authentication_method: signature.signature.authentication_method },
+      signing_assurance: signingAssurance,
       pre_signature_review: {
         pdf_status: unsignedPdf.artifact.generation_status,
         pdf_signer_count: unsignedPdf.artifact.metadata.signer_count,

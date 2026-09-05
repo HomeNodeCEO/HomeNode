@@ -292,7 +292,7 @@ export async function getUadCapabilities(): Promise<UadCapabilities> {
 
 export async function getUadSubjectSummary(accountId: string): Promise<UadSubjectSummary> {
   const response = await uadFetchJSON<{ subject: UadSubjectSummary }>(
-    makeUrl(`/api/uad/accounts/${encodeURIComponent(accountId)}/subject-summary`),
+    makeUrl(`/api/public-cadastral/accounts/${encodeURIComponent(accountId)}/subject-summary`),
   );
   return response.subject;
 }

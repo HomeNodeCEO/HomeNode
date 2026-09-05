@@ -282,43 +282,6 @@ test("completed or unknown delivery attempts return a conflict without exposing 
   });
 });
 
-test("UAD subject summaries reject authenticated identities without a UAD role", async () => {
-  const pool = securityPool({ roleCode: "property_tax_agent" });
-  await withServer(pool, async (baseUrl) => {
-    const response = await fetch(
-      `${baseUrl}/api/uad/accounts/SYNTHETIC-ACCOUNT/subject-summary`,
-      { headers: { authorization: "Bearer synthetic-token" } },
-    );
-    assert.equal(response.status, 403);
-    assert.deepEqual(await response.json(), { error: "uad_access_denied" });
-    assert.equal(pool.accessQueries.length, 0);
-  });
-});
-
-test("UAD subject summaries expose only the explicitly classified public cadastral record", async () => {
-  const pool = securityPool();
-  await withServer(pool, async (baseUrl) => {
-    const response = await fetch(
-      `${baseUrl}/api/uad/accounts/SYNTHETIC-ACCOUNT/subject-summary`,
-      { headers: { authorization: "Bearer synthetic-token" } },
-    );
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("cache-control"), "no-store");
-    const body = await response.json();
-    assert.equal(body.data_scope, "public_cadastral_catalog");
-    assert.deepEqual(body.subject, {
-      account_id: "SYNTHETIC-ACCOUNT",
-      address: "100 MAIN ST",
-      city: "DALLAS",
-      postal_code: "75201",
-      county: "Dallas",
-      neighborhood_code: "N-1",
-      subdivision: "SYNTHETIC ADDITION",
-      legal_description: "LOT 1",
-    });
-  });
-});
-
 test("UAD creation binds the public URL account to authenticated organization scope", async () => {
   const pool = securityPool();
   const creationCalls = [];

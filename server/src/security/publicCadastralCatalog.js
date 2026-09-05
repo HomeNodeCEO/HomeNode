@@ -5,6 +5,8 @@ import {
 
 export const PUBLIC_CADASTRAL_CATALOG_SCOPE = "public_cadastral_catalog";
 
+const issuedPublicCadastralGrants = new WeakSet();
+
 export function normalizePublicCadastralAccountId(value) {
   const accountId = String(value ?? "").trim();
   if (!accountId || accountId.length > 64 || /[\u0000-\u001f\u007f]/.test(accountId)) {
@@ -38,9 +40,23 @@ export function authorizePublicCadastralCatalogRead(
   if (!allowedWorkflows.some((workflow) => permissionChecker(auth, workflow, "read"))) {
     throw new Error("public_cadastral_access_denied");
   }
-  return Object.freeze({
+  const grant = Object.freeze({
     accountId: normalizePublicCadastralAccountId(accountIdValue),
     actorUserId: userId,
     scope: PUBLIC_CADASTRAL_CATALOG_SCOPE,
   });
+  issuedPublicCadastralGrants.add(grant);
+  return grant;
+}
+
+export function assertPublicCadastralCatalogGrant(grant) {
+  if (
+    !grant
+    || typeof grant !== "object"
+    || !issuedPublicCadastralGrants.has(grant)
+    || grant.scope !== PUBLIC_CADASTRAL_CATALOG_SCOPE
+  ) {
+    throw new Error("public_cadastral_scope_required");
+  }
+  return grant;
 }

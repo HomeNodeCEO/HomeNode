@@ -455,11 +455,15 @@ test("an engagement address override is audited and confirms visible suggestions
         return {
           rows: [{
             id: 44,
+            account_id: "26355500170360000",
             document_type: "engagement_letter",
             checksum_sha256: "engagement-checksum",
             extraction_summary: { candidate_count: 3 },
           }],
         };
+      }
+      if (/FROM core\.accounts/.test(sql)) {
+        return { rows: [{ address: "1909 SNOWMASS LN", city: "GARLAND", postal_code: "75044" }] };
       }
       if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) {
         return { rows: candidateRows };
@@ -494,7 +498,6 @@ test("an engagement address override is audited and confirms visible suggestions
     documentId: 44,
     reviewer: "Jordan Freeman",
     actorUserId: "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1",
-    reportSubjectAddress: "1909 SNOWMASS LN, GARLAND, TX 75044",
     candidateValues: { 501: "Bank of America" },
   });
   assert.equal(result.document_id, 44);
@@ -512,7 +515,11 @@ test("an engagement address override is audited and confirms visible suggestions
   );
   assert.equal(
     result.subject_address_override.report_subject_address,
-    "1909 SNOWMASS LN, GARLAND, TX 75044",
+    "1909 SNOWMASS LN, GARLAND, 75044",
+  );
+  assert.equal(
+    result.subject_address_override.canonical_subject_address,
+    "1909 SNOWMASS LN, GARLAND, 75044",
   );
   assert.deepEqual(result.subject_address_override.confirmed_candidate_ids, [500, 501, 502]);
   const documentUpdate = queries.find(({ sql }) => /SET processing_status = CASE/.test(sql));
@@ -554,10 +561,14 @@ test("approve all confirms every pending field in one audited transaction", asyn
         return {
           rows: [{
             id: 45,
+            account_id: "26355500170360000",
             document_type: "engagement_letter",
             extraction_summary: { candidate_count: 2 },
           }],
         };
+      }
+      if (/FROM core\.accounts/.test(sql)) {
+        return { rows: [{ address: "513 HARDY DR", city: "GARLAND", postal_code: "75041" }] };
       }
       if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) {
         return { rows: candidateRows };
@@ -592,7 +603,6 @@ test("approve all confirms every pending field in one audited transaction", asyn
   const result = await confirmAssignmentDocumentCandidates(pool, {
     documentId: 45,
     reviewer: "Jordan Freeman",
-    reportSubjectAddress: "513 Hardy Drive, Garland, TX 75041",
     candidateValues: { 602: "Bank of America" },
   });
 
@@ -660,7 +670,6 @@ test("approving assignment-scoped engagement evidence updates the exact file and
   const result = await confirmAssignmentDocumentCandidates(pool, {
     documentId: 47,
     reviewer: "Jordan Freeman",
-    reportSubjectAddress: "513 Hardy Dr, Garland, TX 75041",
   });
   assert.equal(result.assignment_application.applied, true);
   assert.equal(result.assignment_application.revision, 5);
@@ -670,7 +679,7 @@ test("approving assignment-scoped engagement evidence updates the exact file and
   assert.equal(queries.filter(({ sql }) => /INSERT INTO app\.assignment_file_history/.test(sql)).length, 1);
 });
 
-test("approve all refuses an unacknowledged engagement-address mismatch", async () => {
+test("approve all refuses a caller-spoofed engagement address that mismatches the canonical account", async () => {
   const queries = [];
   const client = {
     async query(sql) {
@@ -680,10 +689,14 @@ test("approve all refuses an unacknowledged engagement-address mismatch", async 
         return {
           rows: [{
             id: 46,
+            account_id: "26355500170360000",
             document_type: "engagement_letter",
             extraction_summary: { candidate_count: 1 },
           }],
         };
+      }
+      if (/FROM core\.accounts/.test(sql)) {
+        return { rows: [{ address: "1909 SNOWMASS LN", city: "GARLAND", postal_code: "75044" }] };
       }
       if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) {
         return {
@@ -715,7 +728,7 @@ test("approve all refuses an unacknowledged engagement-address mismatch", async 
     confirmAssignmentDocumentCandidates(pool, {
       documentId: 46,
       reviewer: "Jordan Freeman",
-      reportSubjectAddress: "1909 Snowmass Ln, Garland, TX 75044",
+      candidateValues: { 603: "1909 SNOWMASS LN, GARLAND, TX 75044" },
     }),
     /document_subject_address_mismatch/,
   );

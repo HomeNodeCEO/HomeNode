@@ -3334,14 +3334,14 @@ export async function updateMobileInspectionSketch(
 export async function updatePropertyTaxInspectionSketch(
   accountId: string,
   fileId: string,
-  sketch: EditableInspectionSketch,
+  expectedRevision: number,
   document: EditableInspectionSketch['document'],
 ): Promise<EditableInspectionSketch> {
   return withDesktopSketchSaveOperation(
     'property-tax-protest',
     accountId,
     fileId,
-    sketch.revision,
+    expectedRevision,
     async (operationId) => {
       const response = await fetchJSON<{ sketch: EditableInspectionSketch }>(
         makeUrl(
@@ -3353,7 +3353,7 @@ export async function updatePropertyTaxInspectionSketch(
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             client_operation_id: operationId,
-            expected_revision: sketch.revision,
+            expected_revision: expectedRevision,
             sketch: document,
             reviewer: 'HomeNode appraiser',
           }),

@@ -36,8 +36,9 @@ test("an empty autosave commits without manufacturing a new revision", async () 
     async query(sql) {
       const statement = String(sql).trim();
       queries.push(statement);
+      if (statement.includes("AS has_signatures")) return { rows: [{ has_signatures: false }] };
       if (statement.includes("SELECT id, current_revision")) {
-        return { rows: [{ id: WORKFILE_ID, current_revision: 7, specification_release_key: "release" }] };
+        return { rows: [{ id: WORKFILE_ID, current_revision: 7, specification_release_key: "release", status: "draft", signed_at: null }] };
       }
       return { rows: [] };
     },
@@ -66,8 +67,9 @@ test("a stale section save rolls back before reading or changing field values", 
   const client = {
     async query(sql) {
       queries.push(String(sql).trim());
+      if (String(sql).includes("AS has_signatures")) return { rows: [{ has_signatures: false }] };
       if (String(sql).includes("SELECT id, current_revision")) {
-        return { rows: [{ id: WORKFILE_ID, current_revision: 7, specification_release_key: "release" }] };
+        return { rows: [{ id: WORKFILE_ID, current_revision: 7, specification_release_key: "release", status: "draft", signed_at: null }] };
       }
       return { rows: [] };
     },
@@ -82,7 +84,7 @@ test("a stale section save rolls back before reading or changing field values", 
     (error) => error.message === "uad_section_stale_revision"
       && error.details?.current_revision === 7,
   );
-  assert.ok(queries.includes("BEGIN"));
+  assert.ok(queries.includes("BEGIN ISOLATION LEVEL READ COMMITTED"));
   assert.ok(queries.includes("ROLLBACK"));
   assert.ok(queries.includes("RELEASE"));
   assert.equal(queries.some((sql) => sql.includes("appraisal.uad_field_values")), false);

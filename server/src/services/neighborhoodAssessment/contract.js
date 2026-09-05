@@ -437,6 +437,7 @@ export function buildNeighborhoodAssessment(input) {
   const studyPeriod = period(input.observation_period, effectiveDate, "observation_period");
   if (studyPeriod.end_date > dataCutoff) fail("data_cutoff.outside_period");
   const requiredStats = strings(input.required_statistic_ids, "required_statistic_ids");
+  const requiredPopulationIds = strings(input.required_population_ids, "required_population_ids", 100);
   const snapshots = list(input.source_snapshots, "source_snapshots", 1000)
     .map(value => sourceSnapshot(value, assessmentScope)).sort(byId);
   const sourceIds = new Set(snapshots.map(source => source.id));
@@ -446,6 +447,7 @@ export function buildNeighborhoodAssessment(input) {
     .map(value => population(value, effectiveDate, dataCutoff, studyPeriod, sources)).sort(byId);
   const populationMap = new Map(populations.map(value => [value.id, value]));
   if (populationMap.size !== populations.length) fail("populations.duplicate");
+  if (requiredPopulationIds.some(id => !populationMap.has(id))) fail("required_population_ids.missing_population");
   const statistics = list(input.statistics, "statistics", 1000)
     .map(value => statistic(value, populationMap, sources, effectiveDate)).sort(byId);
   if (new Set(statistics.map(value => value.id)).size !== statistics.length) fail("statistics.duplicate");
@@ -464,6 +466,7 @@ export function buildNeighborhoodAssessment(input) {
     discovery,
     selection: selection(input.selection),
     required_statistic_ids: requiredStats,
+    required_population_ids: requiredPopulationIds,
   };
   const result = {
     ...signatureInputs,
@@ -479,6 +482,16 @@ export function buildNeighborhoodAssessment(input) {
   // consumer may display unsupported measures but cannot accept half a new study.
   const statsById = new Map(statistics.map(item => [item.id, item]));
   if (requiredStats.some(id => !statsById.has(id))) fail("required_statistic_ids.missing_statistic");
+  const requiredPopulationSet = new Set(requiredPopulationIds);
+  if (requiredStats.some(id => !requiredPopulationSet.has(statsById.get(id).population_id))) {
+    fail("required_population_ids.missing_statistic_population");
+  }
+  const requiredPopulations = requiredPopulationIds.map(id => populationMap.get(id));
+  const requiredSources = new Set([
+    ...result.geographic_neighborhood.perimeter.flatMap(edge => edge.source_refs),
+    ...requiredPopulations.flatMap(item => item.source_refs),
+    ...requiredStats.flatMap(id => statsById.get(id).source_refs),
+  ]);
   result.application_group = {
     id: `${result.id}:${result.revision}:neighborhood`,
     revision: result.revision,
@@ -486,12 +499,12 @@ export function buildNeighborhoodAssessment(input) {
     policy: "all_or_nothing",
     geometry_revision: result.geographic_neighborhood.revision,
     geometry_sha256: assessmentEvidenceDigest(result.geographic_neighborhood),
-    population_refs: populations.map(item => ({ id: item.id, revision: item.revision, member_set_sha256: item.member_set_sha256 })),
+    population_refs: requiredPopulations.map(item => ({ id: item.id, revision: item.revision, member_set_sha256: item.member_set_sha256 })),
     required_statistic_ids: requiredStats,
-    source_refs: [...sourceIds].sort(),
+    source_refs: [...requiredSources].sort(),
     effective_date: effectiveDate, data_cutoff: signatureInputs.data_cutoff,
     status: discovery.complete === true && result.geographic_neighborhood.status === "ready" && requiredStats.length > 0 &&
-      populations.length > 0 && populations.every(item => item.completeness === "complete" && item.member_set_sha256 !== null) &&
+      requiredPopulations.length > 0 && requiredPopulations.every(item => item.completeness === "complete" && item.member_set_sha256 !== null) &&
       requiredStats.every(id => statsById.get(id).status === "ready") ? "ready" : "incomplete",
   };
   const { generated_at: _generatedAt, ...evidence } = result;
@@ -535,5 +548,10 @@ export function buildNeighborhoodAttachment(assessment, target) {
     specification_release: workflow === "uad_3_6"
       ? string(target.specification_release, "target.specification_release") : null,
   };
+  // Application identity remains stable through the write's own concurrency
+  // increments. Exact evidence, target registration and mapper manifests remain
+  // bound; only the optimistic editor/attachment revisions are excluded.
+  const { editor_revision: _editorRevision, attachment_revision: _attachmentRevision, ...applicationIdentity } = binding;
+  binding.application_identity_sha256 = assessmentEvidenceDigest(applicationIdentity);
   return freeze({ ...binding, review_status: "proposed", binding_digest_sha256: assessmentEvidenceDigest(binding) });
 }

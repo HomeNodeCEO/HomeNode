@@ -15,6 +15,8 @@ test("assessment is immutable, deterministic and independent of target workflow/
   assert.equal(result.application_group.policy, "all_or_nothing");
   assert.equal(result.application_group.status, "ready");
   assert.deepEqual(result.application_group.required_statistic_ids, ["median-sale-price"]);
+  assert.deepEqual(result.required_population_ids, ["sales-a", "stock-a"]);
+  assert.deepEqual(result.application_group.population_refs.map(item => item.id), result.required_population_ids);
   assert.equal(result.statistics.find(item => item.id === "predominant-sale-price").value, null);
 });
 
@@ -26,6 +28,8 @@ test("UAD-only and same-assignment Custom have one core and distinct exact attac
   assert.equal(uad.evidence_digest_sha256, custom.evidence_digest_sha256);
   assert.notEqual(uad.binding_digest_sha256, custom.binding_digest_sha256);
   assert.notEqual(uad.report_file_id, uad.uad_workfile_id);
+  assert.notEqual(uad.report_file_id, custom.report_file_id);
+  assert.notEqual(uad.application_identity_sha256, custom.application_identity_sha256);
   assert.equal(uad.application_group_id, custom.application_group_id);
   assert.equal(uad.review_status, "proposed");
 });
@@ -54,6 +58,7 @@ test("source/statistic/population set ordering and object keys do not change dig
   const input = neighborhoodAssessmentFixture();
   const reference = buildNeighborhoodAssessment(input);
   input.statistics.reverse(); input.populations.reverse();
+  input.required_population_ids.reverse();
   input.subject_facts = Object.fromEntries(Object.entries(input.subject_facts).reverse());
   assert.equal(reference.evidence_digest_sha256, buildNeighborhoodAssessment(input).evidence_digest_sha256);
   assert.equal(assessmentEvidenceDigest({ b: 2, a: 1 }), assessmentEvidenceDigest({ a: 1, b: 2 }));
@@ -326,4 +331,90 @@ test("published measurement vocabulary prevents unit/estimator confusion", () =>
   const input = neighborhoodAssessmentFixture(); input.statistics[0].estimator = "exact_quantile";
   input.statistics[0].estimator_parameters = { probability: 0.5, convention: "type_7" };
   assert.equal(buildNeighborhoodAssessment(input).application_group.status, "ready");
+});
+
+test("required populations are explicit validated dependencies in the input signature", () => {
+  const input = neighborhoodAssessmentFixture();
+  const original = buildNeighborhoodAssessment(input);
+  input.required_population_ids = ["sales-a"];
+  const narrower = buildNeighborhoodAssessment(input);
+  assert.notEqual(original.input_signature_sha256, narrower.input_signature_sha256);
+  assert.deepEqual(narrower.application_group.population_refs.map(item => item.id), ["sales-a"]);
+  input.required_population_ids = ["stock-a"];
+  assert.throws(() => buildNeighborhoodAssessment(input), /missing_statistic_population/);
+  input.required_population_ids = ["not-present"];
+  assert.throws(() => buildNeighborhoodAssessment(input), /missing_population/);
+  input.required_population_ids = ["sales-a", "sales-a"];
+  assert.throws(() => buildNeighborhoodAssessment(input), /required_population_ids.duplicate/);
+  delete input.required_population_ids;
+  assert.throws(() => buildNeighborhoodAssessment(input), /required_population_ids/);
+});
+
+test("optional incomplete populations and research sources cannot block or enter the required group", () => {
+  const input = neighborhoodAssessmentFixture();
+  input.source_snapshots.push({ ...input.source_snapshots[0],
+    id: "optional-current-research", valid_from: "2025-01-01", historical_availability: "unknown" });
+  input.populations.push({ ...input.populations[0], id: "exploratory-stock", member_count: null,
+    unique_property_count: null, property_link_count: null, member_set_sha256: null,
+    completeness: "unknown", reasons: ["historical_stock_unavailable"], source_refs: ["optional-current-research"] });
+  const result = buildNeighborhoodAssessment(input);
+  assert.equal(result.application_group.status, "ready");
+  assert.equal(result.populations.find(item => item.id === "exploratory-stock").completeness, "unknown");
+  assert.deepEqual(result.application_group.population_refs.map(item => item.id), ["sales-a", "stock-a"]);
+  assert.deepEqual(result.application_group.source_refs, ["fixture-source"]);
+  input.required_population_ids.push("exploratory-stock");
+  assert.equal(buildNeighborhoodAssessment(input).application_group.status, "incomplete");
+});
+
+test("group source references are the exact union of perimeter and required population/statistic sources", () => {
+  const input = neighborhoodAssessmentFixture();
+  for (const id of ["population-source", "statistic-source", "optional-statistic-source"]) {
+    input.source_snapshots.push({ ...input.source_snapshots[0], id });
+  }
+  input.populations[1].source_refs = ["population-source"];
+  input.statistics[0].source_refs = ["statistic-source"];
+  input.statistics[1].source_refs = ["optional-statistic-source"];
+  const result = buildNeighborhoodAssessment(input);
+  assert.deepEqual(result.application_group.source_refs, ["fixture-source", "population-source", "statistic-source"]);
+});
+
+test("stable application identity excludes only mutable attachment and editor revisions", () => {
+  const assessment = buildNeighborhoodAssessment(neighborhoodAssessmentFixture());
+  const target = neighborhoodTargetFixture();
+  const original = buildNeighborhoodAttachment(assessment, target);
+  for (const edit of [value => { value.editor_revision++; }, value => { value.attachment_revision++; },
+    value => { value.editor_revision += 10; value.attachment_revision += 2; }]) {
+    const changed = neighborhoodTargetFixture(); edit(changed);
+    const next = buildNeighborhoodAttachment(assessment, changed);
+    assert.equal(original.application_identity_sha256, next.application_identity_sha256);
+    assert.notEqual(original.binding_digest_sha256, next.binding_digest_sha256);
+  }
+  const { binding_digest_sha256: _bindingDigest, review_status: _status,
+    application_identity_sha256: identity, editor_revision: _editorRevision,
+    attachment_revision: _attachmentRevision, ...stableFields } = original;
+  assert.equal(identity, assessmentEvidenceDigest(stableFields));
+});
+
+test("application identity binds exact target and source/mapper/evidence manifests", () => {
+  const assessment = buildNeighborhoodAssessment(neighborhoodAssessmentFixture());
+  const original = buildNeighborhoodAttachment(assessment, neighborhoodTargetFixture());
+  for (const edit of [
+    value => { value.report_file_id = "60000000-0000-4000-8000-000000000009"; },
+    value => { value.uad_workfile_id = "70000000-0000-4000-8000-000000000009"; },
+    value => { value.attachment_id = "50000000-0000-4000-8000-000000000009"; },
+    value => { value.source_digest_sha256 = assessmentEvidenceDigest({ source: "changed" }); },
+    value => { value.mapped_manifest_sha256 = assessmentEvidenceDigest({ mapping: "changed" }); },
+    value => { value.mapper_version = "mapper-2"; },
+    value => { value.specification_release = "another-release"; },
+  ]) {
+    const target = neighborhoodTargetFixture(); edit(target);
+    assert.notEqual(original.application_identity_sha256, buildNeighborhoodAttachment(assessment, target).application_identity_sha256);
+  }
+  const input = neighborhoodAssessmentFixture(); input.revision++;
+  assert.notEqual(original.application_identity_sha256,
+    buildNeighborhoodAttachment(buildNeighborhoodAssessment(input), neighborhoodTargetFixture()).application_identity_sha256);
+  const custom = neighborhoodTargetFixture("custom_appraisal");
+  const firstCustom = buildNeighborhoodAttachment(assessment, custom);
+  custom.custom_assignment_file_id++;
+  assert.notEqual(firstCustom.application_identity_sha256, buildNeighborhoodAttachment(assessment, custom).application_identity_sha256);
 });

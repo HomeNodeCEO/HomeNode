@@ -15,6 +15,21 @@ export function isVisibleManualAssignmentSave(
   return saveReason === "manual_save";
 }
 
+export const CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES = Object.freeze({
+  conflict: "Another session changed the same report fields. Your edits are preserved; choose which values to keep.",
+  rebased: "The file changed elsewhere. Your nonconflicting edits were preserved and rebased for autosave.",
+  retry: "This file changed elsewhere and the latest revision could not be reconciled yet. Your edits remain on screen and autosave will retry.",
+});
+
+export function captureAssignmentSaveSelection(
+  generationRef: { current: number },
+  fileRef: { current: { id: number } | null },
+  fileId: number,
+): () => boolean {
+  const generation = generationRef.current;
+  return () => generation === generationRef.current && fileRef.current?.id === fileId;
+}
+
 function jsonEqual(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }

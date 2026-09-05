@@ -1,12 +1,45 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  captureAssignmentSaveSelection,
   customAppraisalDraftsMatch,
   isVisibleManualAssignmentSave,
   reconcileCustomAppraisalDraft,
   retainCurrentDraftWhenUnchanged,
 } from "../src/lib/customAppraisalAutosave.ts";
+
+const assignmentFilesHookSource = await readFile(
+  new URL("../src/hooks/useAssignmentFiles.ts", import.meta.url),
+  "utf8",
+);
+const propertyReportSource = await readFile(
+  new URL("../src/pages/PropertyReport.tsx", import.meta.url),
+  "utf8",
+);
+
+test("save results apply only to the same assignment selection generation", () => {
+  const generationRef = { current: 4 };
+  const fileRef = { current: { id: 101 } };
+  const selectionIsCurrent = captureAssignmentSaveSelection(generationRef, fileRef, 101);
+  assert.equal(selectionIsCurrent(), true);
+  fileRef.current = { id: 202 };
+  assert.equal(selectionIsCurrent(), false);
+  generationRef.current += 1;
+  fileRef.current = { id: 101 };
+  assert.equal(selectionIsCurrent(), false);
+});
+
+test("assignment selection changes invalidate every asynchronous save completion path", () => {
+  assert.match(
+    assignmentFilesHookSource,
+    /useLayoutEffect\(\(\) => \{\s*selectionGenerationRef\.current \+= 1;\s*\}, \[accountId, enabled, requestedAssignmentFileId\]\);/u,
+  );
+  assert.equal(propertyReportSource.match(/selectionIsCurrent\(\)/gu)?.length, 5);
+  assert.match(propertyReportSource, /if \(!selectionIsCurrent\(\)\) return true;/u);
+  assert.match(propertyReportSource, /if \(selectionIsCurrent\(\)\) void saveAssignmentDetailsRef\.current/u);
+});
 
 test("unrelated server changes are retained while local edits are rebased", () => {
   const result = reconcileCustomAppraisalDraft(

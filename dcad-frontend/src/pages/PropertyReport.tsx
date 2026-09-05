@@ -67,6 +67,8 @@ import type { LegacyDcadDetail } from "@/lib/legacyDcadDetail";
 import {
   CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
   CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS,
+  CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES,
+  captureAssignmentSaveSelection,
   customAppraisalDraftsMatch,
   isVisibleManualAssignmentSave,
   reconcileCustomAppraisalDraft,
@@ -449,6 +451,7 @@ function AddressHero({
     assignmentFilesError,
     activeAssignmentFile,
     setActiveAssignmentFile,
+    selectionGenerationRef,
   } = useAssignmentFiles({
     accountId,
     enabled: Boolean(baseDetail),
@@ -493,6 +496,10 @@ function AddressHero({
 
   useEffect(() => {
     activeAssignmentFileRef.current = activeAssignmentFile;
+    if (!activeAssignmentFile) {
+      assignmentSaveInFlightRef.current = null;
+      setSavingAssignmentFile(false);
+    }
   }, [activeAssignmentFile]);
   const {
     zoningEvidence,
@@ -1235,6 +1242,9 @@ function AddressHero({
         setAssignmentSaveMessage("Enter a file number and choose Save New File first.");
         return false;
       }
+      const selectionIsCurrent = captureAssignmentSaveSelection(
+        selectionGenerationRef, activeAssignmentFileRef, fileAtStart.id,
+      );
       const editorKey = promptForCredential ? editorKeyForSave() : editorCredentialForRequest();
       if (!editorKey) {
         if (saveReason === "autosave") {
@@ -1262,6 +1272,7 @@ function AddressHero({
           },
           editorKey,
         );
+        if (!selectionIsCurrent()) return true;
         const updatedFile: AppraisalAssignmentFile = {
           ...response.assignment_file,
           custom_appraisal_sections: fileAtStart.custom_appraisal_sections,
@@ -1296,6 +1307,7 @@ function AddressHero({
         }
         return true;
       } catch (error) {
+        if (!selectionIsCurrent()) return false;
         const message = error instanceof Error
           ? error.message
           : "The assignment file could not be saved.";
@@ -1303,6 +1315,7 @@ function AddressHero({
         if (message === "assignment_file_revision_conflict" && allowConflictRetry) {
           try {
             const latestResponse = await getAssignmentFiles(accountId);
+            if (!selectionIsCurrent()) return false;
             const latestFile = latestResponse.files.find((file) => file.id === fileAtStart.id);
             if (latestFile) {
               const remoteDraft = assignmentDraftFromDetail(latestFile.assignment_details);
@@ -1334,16 +1347,12 @@ function AddressHero({
               setAssignmentConflictKeys(reconciliation.conflictKeys);
               if (reconciliation.conflictKeys.length) {
                 setAssignmentAutosaveState("conflict");
-                setAssignmentSaveMessage(
-                  "Another session changed the same report fields. Your edits are preserved; choose which values to keep.",
-                );
+                setAssignmentSaveMessage(CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.conflict);
               } else if (reconciliation.localChangedKeys.length) {
                 setAssignmentAutosaveState("pending");
-                setAssignmentSaveMessage(
-                  "The file changed elsewhere. Your nonconflicting edits were preserved and rebased for autosave.",
-                );
+                setAssignmentSaveMessage(CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.rebased);
                 window.setTimeout(() => {
-                  void saveAssignmentDetailsRef.current({
+                  if (selectionIsCurrent()) void saveAssignmentDetailsRef.current({
                     requireCompletion: false,
                     saveReason,
                     promptForCredential: false,
@@ -1363,12 +1372,12 @@ function AddressHero({
         setAssignmentAutosaveState("error");
         setAssignmentSaveMessage(
           message === "assignment_file_revision_conflict"
-            ? "This file changed elsewhere and the latest revision could not be reconciled yet. Your edits remain on screen and autosave will retry."
+            ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.retry
             : message,
         );
         return false;
       } finally {
-        if (visibleManualSave) setSavingAssignmentFile(false);
+        if (visibleManualSave && selectionIsCurrent()) setSavingAssignmentFile(false);
       }
     })();
 
@@ -1504,8 +1513,6 @@ function AddressHero({
     await marketWorkfileSaveQueueRef.current;
     const marketSaveError = marketWorkfileSaveErrorRef.current;
     if (assignmentDirtyRef.current) {
-      // A top-level Save protects a valid draft even when the appraiser has
-      // not completed every field required for final section review.
       const assignmentSaved = await saveAssignmentDetails({ requireCompletion: false });
       if (assignmentSaved && marketSaveError) {
         setAssignmentSaveMessage(`Shared report changes were saved, but ${marketSaveError}`);

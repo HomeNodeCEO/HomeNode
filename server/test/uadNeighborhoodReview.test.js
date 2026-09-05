@@ -336,3 +336,34 @@ test("lookback is end-anchored and inclusive across leap years and clipped month
     assert.equal(buildUadNeighborhoodCandidate(input).status, "incomplete");
   }
 });
+
+test("one-sale and two-sale price summaries must obey exact sample arithmetic", () => {
+  for (const [count, low, median, high, valid] of [
+    [1, 300000, 330000, 390000, false], [2, 300000, 330000, 390000, false],
+    [1, 330000, 330000, 330000, true], [2, 300000, 345000, 390000, true],
+    [2, 300000.01, 300000.02, 300000.02, false],
+    [2, 300000.01, (300000.01 + 300000.02) / 2, 300000.02, true],
+  ]) {
+    const input = uadNeighborhoodReviewFixture();
+    rebind(input, a => {
+      const population = a.populations.find(p => p.id === "sales-a");
+      Object.assign(population, { member_count: count, property_link_count: count, unique_property_count: count,
+        member_set_sha256: assessmentEvidenceDigest(Array.from({ length: count }, (_, index) => `sale-${index}`)) });
+      for (const stat of a.statistics) {
+        stat.observed_count = count; stat.denominator_count = count;
+        stat.value = { "sale-count": count, "lowest-price": low, "median-sale-price": median, "highest-price": high }[stat.id];
+      }
+    });
+    input.market_context.population_ref.member_set_sha256 = input.assessment.populations.find(p => p.id === "sales-a").member_set_sha256;
+    const candidate = buildUadNeighborhoodCandidate(input);
+    assert.equal(candidate.status, valid ? "ready" : "incomplete", JSON.stringify({ count, low, median, high, candidate }));
+    if (!valid) {
+      assert.deepEqual(candidate.suggestions, []);
+      rejected(prepareUadNeighborhoodApply(input), "neighborhood_candidate_incomplete");
+    } else {
+      input.request.expected_candidate_digest_sha256 = candidate.candidate_digest_sha256;
+      input.request.expected_binding_digest_sha256 = candidate.attachment.binding_digest_sha256;
+      assert.equal(prepareUadNeighborhoodApply(input).status, "ready");
+    }
+  }
+});

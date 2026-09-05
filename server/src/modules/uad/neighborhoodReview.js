@@ -66,6 +66,10 @@ function validateFinal(values) {
     if (byKey.get(KEYS.count) > 0) {
       requireThat(prices.every(key => byKey.has(key)), "missing_market_companion");
       requireThat(byKey.get(KEYS.low) <= byKey.get(KEYS.median) && byKey.get(KEYS.median) <= byKey.get(KEYS.high), "market_sale_price_order");
+      if (byKey.get(KEYS.count) === 1) requireThat(byKey.get(KEYS.low) === byKey.get(KEYS.median) &&
+        byKey.get(KEYS.median) === byKey.get(KEYS.high), "single_sale_price_mismatch");
+      if (byKey.get(KEYS.count) === 2) requireThat(byKey.get(KEYS.median) ===
+        (byKey.get(KEYS.low) + byKey.get(KEYS.high)) / 2, "two_sale_median_mismatch");
     } else requireThat(prices.every(key => !byKey.has(key)), "zero_sales_with_prices");
     return { valid: true, issues: [] };
   } catch (error) { return { valid: false, issues: [{ code: error.message }] }; }

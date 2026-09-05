@@ -616,6 +616,48 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
         original[key].map(row => ({ id: row.id, geometry_ewkb: row.geometry_ewkb })),
         `${key} metric geometry bytes must not change when source ordering/direction changes`);
     });
+    await t.test('native bowtie intersection construction witnesses the noded split point without interpolation', async () => {
+      const input = await projectMetricTopologyFixture(pool, 'bowtie');
+      const parts = originalSourceParts(input);
+      assert.equal(parts.length, 1);
+      const { rows: [proof] } = await pool.query({ query_timeout: 5000,
+        text: `/* topology-fixture:exact-native-intersection-witness */
+        WITH source AS (
+          SELECT ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(geometry),4326),26914) AS geom
+          FROM jsonb_to_recordset($1::jsonb) AS p(geometry jsonb)
+        ), primitives AS MATERIALIZED (
+          SELECT d.path[1] AS segment_index,d.geom FROM source
+          CROSS JOIN LATERAL ST_DumpSegments(source.geom) d
+        ), noded AS (
+          SELECT ST_Node(ST_Normalize(geom)) AS geom FROM source
+        ), noded_edges AS (
+          SELECT d.geom FROM noded CROSS JOIN LATERAL ST_DumpSegments(noded.geom) d
+        ), endpoints AS (
+          SELECT ST_StartPoint(geom) AS geom FROM noded_edges
+          UNION ALL SELECT ST_EndPoint(geom) FROM noded_edges
+        ), crossings AS (
+          SELECT geom FROM endpoints GROUP BY geom HAVING count(*)=4
+        ), source_pair AS (
+          SELECT a.geom AS a,b.geom AS b FROM primitives a CROSS JOIN primitives b
+          WHERE a.segment_index=1 AND b.segment_index=3
+        ), variants AS (
+          SELECT v.label,ST_Intersection(v.a,v.b) AS geom FROM source_pair
+          CROSS JOIN LATERAL (VALUES ('original',a,b),('swapped',b,a),
+            ('reverse_a',ST_Reverse(a),b),('reverse_b',a,ST_Reverse(b)),
+            ('reverse_both',ST_Reverse(a),ST_Reverse(b)),
+            ('normalized',ST_Normalize(a),ST_Normalize(b))) v(label,a,b)
+        ) SELECT (SELECT count(*)::integer FROM crossings) AS crossing_count,
+          count(*)::integer AS variant_count,
+          bool_and(GeometryType(v.geom)='POINT' AND ST_AsEWKB(v.geom,'NDR')=ST_AsEWKB(c.geom,'NDR')) AS exact_node_witness
+          FROM variants v CROSS JOIN crossings c`, values: [JSON.stringify(parts)] });
+      assert.equal(proof.crossing_count, 1);
+      assert.equal(proof.variant_count, 6);
+      assert.equal(proof.exact_node_witness, true,
+        'all original-pair intersection variants must produce the unchanged native ST_Node split point bytes');
+      // This is a bounded construction oracle, not service acceptance: the
+      // following bowtie test still requires every original source occurrence
+      // and its full interval coverage. No snap/tolerance/repair is introduced.
+    });
     for (const name of ['closedRing', 'bowtie', 'retraced']) {
       await t.test(`${name}: source retains exact occurrence-specific primitive segment provenance`, async fixtureTest => {
         const input = await projectMetricTopologyFixture(pool, name);

@@ -17,10 +17,18 @@ This record maps the first Aikido review to executable controls and follow-up wo
 
 The `HomeNode-frontend` Render static site now emits these rules for `/*`:
 
+- `Content-Security-Policy` permits the exact production R2 origin
+  `https://homenode-shared-production.407656745429dce8902facc0209852d0.r2.cloudflarestorage.com`
+  in both `img-src` and `connect-src`; no R2 wildcard is permitted.
 - `Content-Security-Policy: frame-ancestors 'none'; base-uri 'self'; object-src 'none'`
 - `X-Frame-Options: DENY`
 
 The live response also emits HSTS and `X-Content-Type-Options: nosniff`. This addresses the CSP and clickjacking DAST findings without restricting the application's existing scripts, styles, API requests, images, or embedded document previews.
+
+`npm run verify:deployed-security-headers` performs a credential-free HTTPS check of
+the production response. The `Deployed frontend security headers` workflow runs it
+after every merge to `main`, every day, and on demand so Render dashboard drift is
+reported in GitHub even when no repository file changes.
 
 ## Confirmed controls requiring scanner review
 

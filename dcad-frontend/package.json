@@ -12,6 +12,7 @@
     "quality:source": "node scripts/checkSourceBudget.mjs",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test \"scripts/test*.mjs\"",
+    "verify:deployed-security-headers": "node scripts/verifyFrontendSecurityHeaders.mjs",
     "preview": "vite preview",
     "test:adjustments": "node scripts/testComparableAdjustments.mjs",
     "test:ratings": "node scripts/testConditionQualityRatings.mjs",

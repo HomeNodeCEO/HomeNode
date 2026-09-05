@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { listUadAssets } from "./assets.js";
 import { getUadEditor } from "./editor.js";
 import { listUadSketches } from "./sketches.js";
+import { evaluateUadSignatureQuorum } from "./signatureQuorum.js";
 import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
@@ -348,50 +349,76 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
     if (!artifactReadiness.pdf_ready) throw new Error("uad_signature_pdf_required");
 
     const credential = buildUadCredentialSnapshot(signerRow);
-    const signatureId = randomUUID();
     const attestation = {
       standard_certifications_acknowledged: true,
       scope_of_work_acknowledged: true,
       authentication_issuer: authentication.issuer || null,
       authentication_subject: authentication.subject || null,
     };
-    const inserted = await client.query(
-      `INSERT INTO appraisal.uad_signatures (
-         id, workfile_id, revision_number, signer_user_id, signer_role,
-         signature_asset_id, credential_snapshot, authentication_method,
-         signed_at, execution_date, workfile_input_digest_sha256,
-         credential_snapshot_sha256, attestation
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7::jsonb, $8,
-         now(), $9, $10, $11, $12::jsonb
-       )
-       RETURNING id, workfile_id, revision_number, signer_user_id, signer_role,
-                 signature_asset_id, authentication_method, signed_at, execution_date,
-                 workfile_input_digest_sha256, credential_snapshot_sha256`,
-      [
-        signatureId,
-        workfileId,
-        Number(workfile.current_revision),
-        actorUserId,
-        signerRole,
-        signatureAssetId,
-        JSON.stringify(credential.snapshot),
-        authenticationMethod,
-        executionDate,
-        inputDigest,
-        credential.credential_snapshot_sha256,
-        JSON.stringify(attestation),
-      ],
+    const currentSignatures = await client.query(
+      `SELECT id, workfile_id, revision_number, signer_user_id, signer_role,
+              signature_asset_id, authentication_method, signed_at, execution_date,
+              workfile_input_digest_sha256, credential_snapshot_sha256
+         FROM appraisal.uad_signatures
+        WHERE workfile_id = $1 AND revision_number = $2
+        ORDER BY signed_at, id`,
+      [workfileId, Number(workfile.current_revision)],
     );
+    let signature = currentSignatures.rows.find((row) => (
+      row.signer_user_id === actorUserId && row.signer_role === signerRole
+    ));
+    const replay = Boolean(signature);
+    if (signature && (
+      signature.workfile_input_digest_sha256 !== inputDigest
+      || signature.authentication_method !== authenticationMethod
+      || isoDate(signature.execution_date) !== executionDate
+    )) throw new Error("uad_signature_existing_snapshot_mismatch");
 
-    const signatureCount = await client.query(
-      `SELECT count(*)::integer AS count
+    let signatureId = signature?.id || null;
+    if (!signature) {
+      signatureId = randomUUID();
+      const inserted = await client.query(
+        `INSERT INTO appraisal.uad_signatures (
+           id, workfile_id, revision_number, signer_user_id, signer_role,
+           signature_asset_id, credential_snapshot, authentication_method,
+           signed_at, execution_date, workfile_input_digest_sha256,
+           credential_snapshot_sha256, attestation
+         ) VALUES (
+           $1, $2, $3, $4, $5, $6, $7::jsonb, $8,
+           now(), $9, $10, $11, $12::jsonb
+         )
+         RETURNING id, workfile_id, revision_number, signer_user_id, signer_role,
+                   signature_asset_id, authentication_method, signed_at, execution_date,
+                   workfile_input_digest_sha256, credential_snapshot_sha256`,
+        [
+          signatureId,
+          workfileId,
+          Number(workfile.current_revision),
+          actorUserId,
+          signerRole,
+          signatureAssetId,
+          JSON.stringify(credential.snapshot),
+          authenticationMethod,
+          executionDate,
+          inputDigest,
+          credential.credential_snapshot_sha256,
+          JSON.stringify(attestation),
+        ],
+      );
+      signature = inserted.rows[0];
+    }
+
+    const signatureRows = await client.query(
+      `SELECT revision_number, signer_user_id, signer_role, workfile_input_digest_sha256
          FROM appraisal.uad_signatures
         WHERE workfile_id = $1 AND revision_number = $2`,
       [workfileId, Number(workfile.current_revision)],
     );
-    const requiredCount = workfile.supervisory_appraiser_user_id ? 2 : 1;
-    const complete = Number(signatureCount.rows[0].count) === requiredCount;
+    const quorum = evaluateUadSignatureQuorum(workfile, signatureRows.rows, {
+      revisionNumber: Number(workfile.current_revision),
+      inputDigest,
+    });
+    const complete = quorum.complete;
     if (complete) {
       await client.query(
         `UPDATE appraisal.uad_workfiles SET status = 'signed', signed_at = now(), updated_at = now()
@@ -399,24 +426,32 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
         [workfileId],
       );
     }
-    await client.query(
-      `INSERT INTO appraisal.uad_audit_events (
-         workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data, metadata
-       ) VALUES ($1, $2, 'uad_signature.created', 'uad_signature', $3, $4::jsonb, $5::jsonb)`,
-      [
-        workfileId,
-        actorUserId,
-        signatureId,
-        JSON.stringify({ signer_role: signerRole, execution_date: executionDate, complete }),
-        JSON.stringify({
-          revision_number: Number(workfile.current_revision),
-          workfile_input_digest_sha256: inputDigest,
-          credential_snapshot_sha256: credential.credential_snapshot_sha256,
-        }),
-      ],
-    );
+    if (!replay) {
+      await client.query(
+        `INSERT INTO appraisal.uad_audit_events (
+           workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data, metadata
+         ) VALUES ($1, $2, 'uad_signature.created', 'uad_signature', $3, $4::jsonb, $5::jsonb)`,
+        [
+          workfileId,
+          actorUserId,
+          signatureId,
+          JSON.stringify({ signer_role: signerRole, execution_date: executionDate, complete }),
+          JSON.stringify({
+            revision_number: Number(workfile.current_revision),
+            workfile_input_digest_sha256: inputDigest,
+            credential_snapshot_sha256: credential.credential_snapshot_sha256,
+            quorum,
+          }),
+        ],
+      );
+    }
     await client.query("COMMIT");
-    return { signature: inserted.rows[0], workfile_status: complete ? "signed" : "ready" };
+    return {
+      signature,
+      workfile_status: complete ? "signed" : "ready",
+      idempotent: replay,
+      quorum,
+    };
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

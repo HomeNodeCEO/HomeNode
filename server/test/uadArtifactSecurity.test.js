@@ -127,6 +127,26 @@ test("verified asset inspection rejects MIME spoofing, unsafe PDFs, and image bo
   assert.throws(() => inspectUadAssetPayload(oversizedDimensions, "image/png"), /image_dimensions/);
 });
 
+test("verified asset inspection rejects parser-confused non-Buffer body shapes", async () => {
+  const invalidBodies = [
+    PNG.toString("base64"),
+    [...PNG],
+    new Uint8Array(PNG),
+    { body: PNG },
+    null,
+  ];
+  for (const body of invalidBodies) {
+    assert.throws(
+      () => inspectUadAssetPayload(body, "image/png"),
+      /invalid_uad_asset_body_type/,
+    );
+    await assert.rejects(
+      () => inspectUadPdfSafety(body),
+      /invalid_uad_asset_body_type/,
+    );
+  }
+});
+
 test("parser-aware PDF inspection accepts static documents and rejects malformed structures", async () => {
   await inspectUadPdfSafety(await staticPdf());
   await assert.rejects(

@@ -20,6 +20,18 @@ function invalid(reason = "payload") {
   throw new Error(`invalid_uad_asset_${reason}`);
 }
 
+function verifiedBuffer(bodyValue) {
+  // Request bodies can be strings, arrays, or objects when another parser
+  // handles a conflicting Content-Type. Never coerce those shapes into bytes:
+  // only the bounded raw-body parser or trusted storage may supply a Buffer.
+  if (
+    typeof bodyValue !== "object"
+    || Array.isArray(bodyValue)
+    || !Buffer.isBuffer(bodyValue)
+  ) invalid("body_type");
+  return bodyValue;
+}
+
 function hasPrefix(body, bytes) {
   return body.length >= bytes.length && bytes.every((byte, index) => body[index] === byte);
 }
@@ -103,7 +115,7 @@ function annotationHasActiveContent(annotation) {
 }
 
 export async function inspectUadPdfSafety(bodyValue) {
-  const body = Buffer.isBuffer(bodyValue) ? bodyValue : Buffer.from(bodyValue || "");
+  const body = verifiedBuffer(bodyValue);
   if (!body.length || body.length > MAX_UAD_VERIFIED_ASSET_BYTES) invalid("byte_size");
   validatePdf(body);
 
@@ -179,7 +191,7 @@ function validateJson(body) {
 }
 
 export function inspectUadAssetPayload(bodyValue, contentTypeValue) {
-  const body = Buffer.isBuffer(bodyValue) ? bodyValue : Buffer.from(bodyValue || "");
+  const body = verifiedBuffer(bodyValue);
   const contentType = String(contentTypeValue || "").split(";", 1)[0].trim().toLowerCase();
   if (!body.length || body.length > MAX_UAD_VERIFIED_ASSET_BYTES) invalid("byte_size");
   let dimensions = null;

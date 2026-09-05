@@ -149,6 +149,31 @@ async function canonicalState(pool, workfileId) {
   }));
 }
 
+async function cleanupState(pool, workfileId) {
+  const [canonical, signatures, validation, artifacts] = await Promise.all([
+    canonicalState(pool, workfileId),
+    pool.query("SELECT * FROM appraisal.uad_signatures WHERE workfile_id = $1 ORDER BY id", [workfileId]),
+    pool.query("SELECT * FROM appraisal.uad_validation_runs WHERE workfile_id = $1 ORDER BY id", [workfileId]),
+    pool.query("SELECT * FROM appraisal.uad_generated_artifacts WHERE workfile_id = $1 ORDER BY id", [workfileId]),
+  ]);
+  return JSON.parse(JSON.stringify({ canonical, signatures: signatures.rows,
+    validation: validation.rows, artifacts: artifacts.rows }));
+}
+
+function assertOnlyCandidateRetired(before, after, assetId) {
+  const prior = before.canonical.assets.find((row) => row.id === assetId);
+  const retired = after.canonical.assets.find((row) => row.id === assetId);
+  assert.ok(prior && retired);
+  assert.equal(retired.status, "deleted");
+  assert.deepEqual(retired.capture_metadata, { ...prior.capture_metadata, orphaned_editor_render: true });
+  assert.ok(Date.parse(retired.updated_at) >= Date.parse(prior.updated_at));
+  const comparable = structuredClone(after);
+  Object.assign(comparable.canonical.assets.find((row) => row.id === assetId), {
+    status: prior.status, capture_metadata: prior.capture_metadata, updated_at: prior.updated_at,
+  });
+  assert.deepEqual(comparable, before, "cleanup must preserve keys, canonical content, history, audit and observer records");
+}
+
 async function createIdentityFixture(pool, customAppraisalReportFixture) {
   const actorUserId = randomUUID();
   const accountId = `L${randomUUID().replaceAll("-", "").slice(0, 31)}`;
@@ -322,6 +347,7 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     { applyUadCompletionSuggestions },
     { loadUadCompletionSuggestions },
     { saveUadSketch },
+    { cleanupFailedUadSketchRender },
     { customAppraisalReportFixture },
   ] = await Promise.all([
     import("pg"),
@@ -329,6 +355,7 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     import("../src/modules/uad/completionApply.js"),
     import("../src/modules/uad/completionSuggestions.js"),
     import("../src/modules/uad/sketches.js"),
+    import("../src/modules/uad/sketchExhibitCleanup.js"),
     import("./fixtures/customAppraisalReportFixture.js"),
   ]);
   const pool = new pg.Pool({
@@ -666,6 +693,278 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         }
       });
     }
+    // These assets are synthetic metadata rows in the same disposable child.
+    // No object is uploaded, read, replaced or deleted from any storage service.
+    const createCleanupFixture = async () => {
+      const workfile = await createWorkfileFixture(pool, identity, { revision: 2 });
+      const sketch = await saveUadSketch(pool, workfile.workfileId, sketchInput, identity.actorUserId);
+      const assetId = randomUUID();
+      await pool.query(
+        `INSERT INTO appraisal.uad_assets (
+           id, workfile_id, asset_kind, section_number, caption_type, storage_provider,
+           object_key, content_type, byte_size, checksum_sha256, status, verified_at,
+           capture_metadata, created_by_user_id
+         ) VALUES ($1, $2, 'sketch', 7, 'SubjectPropertyImprovementSketch', 'postgres',
+           $3, 'image/png', 8, $4, 'verified', now(), $5::jsonb, $6)`,
+        [assetId, workfile.workfileId, `synthetic-cleanup/${assetId}.png`, "a".repeat(64),
+          JSON.stringify({ source: "homenode_web_sketch_editor", source_uad_sketch_id: sketch.id,
+            source_uad_sketch_revision: 1, uad_sketch_editor_revision: `${sketch.id}:2`,
+            retained_source_asset_id: null }), identity.actorUserId],
+      );
+      return { ...workfile, sketchId: sketch.id, assetId, expectedRevision: 1 };
+    };
+    const cleanup = (writerPool, fixture) => cleanupFailedUadSketchRender(writerPool, {
+      workfileId: fixture.workfileId, assetId: fixture.assetId,
+      sketchId: fixture.sketchId, expectedRevision: fixture.expectedRevision,
+    });
+    const publishCandidate = (writerPool, fixture) => saveUadSketch(writerPool, fixture.workfileId,
+      { ...sketchInput, rendered_asset_id: fixture.assetId, expected_revision: 1 }, identity.actorUserId);
+    const assertCleanupAbstains = async (fixture) => {
+      const before = await cleanupState(pool, fixture.workfileId);
+      const observed = fixedObservedPool(await pool.connect());
+      try {
+        assert.equal(await cleanup(observed.pool, fixture), false);
+        assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+        assert.equal(observed.trace.at(-1), "ROLLBACK");
+        assert.equal(observed.trace.some((statement) => /^(INSERT|UPDATE|DELETE)\b/.test(statement)), false);
+        assert.deepEqual(await cleanupState(pool, fixture.workfileId), before);
+      } finally {
+        observed.forceRelease();
+      }
+    };
+
+    await t.test("failed-render cleanup only soft-deletes its unreferenced draft candidate", async () => {
+      const fixture = await createCleanupFixture();
+      const before = await cleanupState(pool, fixture.workfileId);
+      const observed = fixedObservedPool(await pool.connect());
+      try {
+        assert.equal(await cleanup(observed.pool, fixture), true);
+        assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+        assert.equal(observed.trace.at(-1), "COMMIT");
+        const workfileLock = observed.trace.findIndex((sql) => sql.includes("FROM appraisal.uad_workfiles") && sql.endsWith("FOR UPDATE"));
+        const signatureCheck = observed.trace.findIndex((sql) => sql.includes("AS has_signatures"));
+        const assetLock = observed.trace.findIndex((sql) => sql.includes("FROM appraisal.uad_assets") && sql.endsWith("FOR UPDATE"));
+        assert.ok(workfileLock > 0 && signatureCheck > workfileLock && assetLock > signatureCheck);
+        assertOnlyCandidateRetired(before, await cleanupState(pool, fixture.workfileId), fixture.assetId);
+      } finally {
+        observed.forceRelease();
+      }
+      await assertCleanupAbstains(fixture);
+    });
+
+    for (const reference of ["current sketch", "historical sketch"]) {
+      await t.test(`failed-render cleanup retains a ${reference} exhibit reference`, async () => {
+        const fixture = await createCleanupFixture();
+        await publishCandidate(pool, fixture);
+        if (reference === "historical sketch") {
+          await saveUadSketch(pool, fixture.workfileId, { ...sketchInput, expected_revision: 2 }, identity.actorUserId);
+          const current = await pool.query("SELECT rendered_asset_id FROM appraisal.uad_sketches WHERE id = $1", [fixture.sketchId]);
+          assert.equal(current.rows[0].rendered_asset_id, null);
+          const history = await pool.query("SELECT revision FROM appraisal.uad_sketch_history WHERE rendered_asset_id = $1", [fixture.assetId]);
+          assert.deepEqual(history.rows.map((row) => row.revision), [2]);
+        }
+        await assertCleanupAbstains(fixture);
+      });
+    }
+
+    for (const status of ["validating", "ready", "revised", "signed", "exported", "submitted", "cancelled"]) {
+      await t.test(`failed-render cleanup abstains when the workfile has advanced to ${status}`, async () => {
+        const fixture = await createCleanupFixture();
+        await pool.query("UPDATE appraisal.uad_workfiles SET status = $2 WHERE id = $1", [fixture.workfileId, status]);
+        await assertCleanupAbstains(fixture);
+      });
+    }
+
+    await t.test("failed-render cleanup retains signed_at evidence even under draft status", async () => {
+      const fixture = await createCleanupFixture();
+      await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [fixture.workfileId]);
+      await assertCleanupAbstains(fixture);
+    });
+    for (const revision of [1, 2]) {
+      await t.test(`failed-render cleanup retains signature evidence from revision ${revision}`, async () => {
+        const fixture = await createCleanupFixture();
+        await insertSyntheticSignature(pool, identity, fixture, revision);
+        await assertCleanupAbstains(fixture);
+      });
+    }
+
+    await t.test("failed-render cleanup retains an inconsistent other-workfile signature reference", async () => {
+      const fixture = await createCleanupFixture();
+      const other = await createWorkfileFixture(pool, identity);
+      await insertSyntheticSignature(pool, identity, other);
+      await pool.query("UPDATE appraisal.uad_signatures SET signature_asset_id = $2 WHERE workfile_id = $1",
+        [other.workfileId, fixture.assetId]);
+      const otherBefore = await cleanupState(pool, other.workfileId);
+      await assertCleanupAbstains(fixture);
+      assert.deepEqual(await cleanupState(pool, other.workfileId), otherBefore);
+    });
+
+    for (const status of ["running", "passed", "failed", "error"]) {
+      await t.test(`failed-render cleanup retains any historical ${status} validation run`, async () => {
+        const fixture = await createCleanupFixture();
+        await pool.query(
+          `INSERT INTO appraisal.uad_validation_runs (
+             id, workfile_id, revision_number, specification_release_key, validator_type, status
+           ) VALUES ($1, $2, 1, $3, 'local_schema', $4)`,
+          [randomUUID(), fixture.workfileId, fixture.releaseKey, status],
+        );
+        await assertCleanupAbstains(fixture);
+      });
+    }
+    for (const status of ["pending", "generating", "ready", "failed", "superseded"]) {
+      await t.test(`failed-render cleanup retains any historical ${status} generated artifact`, async () => {
+        const fixture = await createCleanupFixture();
+        const artifactId = randomUUID();
+        await pool.query(
+          `INSERT INTO appraisal.uad_generated_artifacts (
+             id, workfile_id, revision_number, artifact_type, storage_provider,
+             object_key, content_type, generation_status
+           ) VALUES ($1, $2, 1, 'pdf', 'postgres', $3, 'application/pdf', $4)`,
+          [artifactId, fixture.workfileId, `synthetic-cleanup/${artifactId}.pdf`, status],
+        );
+        await assertCleanupAbstains(fixture);
+      });
+    }
+
+    await t.test("failed-render cleanup rolls back its real asset update if commit cannot execute", async () => {
+      const fixture = await createCleanupFixture();
+      const before = await cleanupState(pool, fixture.workfileId);
+      const observed = fixedObservedPool(await pool.connect(), {
+        before(statement) {
+          if (statement === "COMMIT") throw new Error("synthetic_cleanup_commit_failure");
+        },
+      });
+      try {
+        assert.equal(await cleanup(observed.pool, fixture), false);
+        assert.ok(observed.trace.some((sql) => sql.startsWith("UPDATE appraisal.uad_assets")));
+        assert.equal(observed.trace.at(-1), "ROLLBACK");
+        assert.deepEqual(await cleanupState(pool, fixture.workfileId), before,
+          "the real database must roll back the status and orphan metadata together");
+      } finally {
+        observed.forceRelease();
+      }
+    });
+
+    await t.test("failed-render cleanup abandons a real workfile lock timeout without changing state", async () => {
+      const fixture = await createCleanupFixture();
+      const before = await cleanupState(pool, fixture.workfileId);
+      const blocker = await pool.connect();
+      const cleanupClient = await pool.connect();
+      const observed = fixedObservedPool(cleanupClient);
+      let blockerTransaction = false;
+      let retiring;
+      try {
+        await blocker.query(READ_COMMITTED_BEGIN);
+        blockerTransaction = true;
+        await blocker.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+        retiring = cleanup(observed.pool, fixture);
+        void retiring.catch(() => {});
+        await assertBlockedBy(pool, cleanupClient.processID, blocker.processID, "bounded failed-render cleanup");
+        assert.equal(await within(retiring, "cleanup's bounded lock timeout"), false);
+        assert.ok(observed.trace.includes("SET LOCAL lock_timeout = '500ms'"));
+        assert.equal(observed.trace.at(-1), "ROLLBACK");
+        assert.equal(observed.trace.some((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql)), false);
+        await blocker.query("ROLLBACK");
+        blockerTransaction = false;
+        assert.deepEqual(await cleanupState(pool, fixture.workfileId), before);
+      } finally {
+        if (blockerTransaction) await blocker.query("ROLLBACK").catch(() => {});
+        blocker.release();
+        if (retiring) await within(retiring.catch(() => {}), "timed-out cleanup completion").catch(() => {});
+        observed.forceRelease();
+      }
+    });
+
+    await t.test("a canonical sketch writer wins the real lock race and cleanup preserves its exhibit", async () => {
+      const fixture = await createCleanupFixture();
+      const writerClient = await pool.connect();
+      const cleanupClient = await pool.connect();
+      const writerLocked = deferred();
+      const continueWriter = deferred();
+      const cleanupLockIssued = deferred();
+      const writerObserved = fixedObservedPool(writerClient, {
+        async after(statement) {
+          if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+            writerLocked.resolve();
+            await continueWriter.promise;
+          }
+        },
+      });
+      const cleanupObserved = fixedObservedPool(cleanupClient, {
+        before(statement) {
+          if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) cleanupLockIssued.resolve();
+        },
+      });
+      let writing;
+      let retiring;
+      try {
+        await cleanupClient.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+        writing = publishCandidate(writerObserved.pool, fixture);
+        void writing.catch(() => {});
+        await within(writerLocked.promise, "canonical writer owns the workfile lock");
+        retiring = cleanup(cleanupObserved.pool, fixture);
+        void retiring.catch(() => {});
+        await within(cleanupLockIssued.promise, "cleanup issues its workfile lock");
+        await assertBlockedBy(pool, cleanupClient.processID, writerClient.processID, "failed-render cleanup");
+        continueWriter.resolve();
+        assert.equal((await within(writing, "canonical exhibit publication")).rendered_asset_id, fixture.assetId);
+        const published = await cleanupState(pool, fixture.workfileId);
+        assert.equal(await within(retiring, "cleanup sees the committed exhibit"), false);
+        assert.equal(cleanupObserved.trace[0], READ_COMMITTED_BEGIN);
+        assert.ok(cleanupObserved.trace.some((sql) => sql.includes("AS has_observers")),
+          "cleanup must observe the committed reference, not merely time out");
+        assert.equal(cleanupObserved.trace.some((sql) => sql.startsWith("UPDATE appraisal.uad_assets")), false);
+        assert.equal(published.canonical.assets.find((row) => row.id === fixture.assetId).status, "verified");
+        assert.deepEqual(await cleanupState(pool, fixture.workfileId), published);
+      } finally {
+        continueWriter.resolve();
+        if (writing) await within(writing.catch(() => {}), "canonical writer cleanup").catch(() => {});
+        if (retiring) await within(retiring.catch(() => {}), "failed-render cleanup completion").catch(() => {});
+        writerObserved.forceRelease();
+        cleanupObserved.forceRelease();
+      }
+    });
+
+    await t.test("cleanup wins the real lock race and a later writer refuses the retired exhibit", async () => {
+      const fixture = await createCleanupFixture();
+      const before = await cleanupState(pool, fixture.workfileId);
+      const cleanupClient = await pool.connect();
+      const writerClient = await pool.connect();
+      const candidateUpdated = deferred();
+      const continueCleanup = deferred();
+      const cleanupObserved = fixedObservedPool(cleanupClient, {
+        async after(statement) {
+          if (statement.startsWith("UPDATE appraisal.uad_assets")) {
+            candidateUpdated.resolve();
+            await continueCleanup.promise;
+          }
+        },
+      });
+      const writerObserved = fixedObservedPool(writerClient);
+      let retiring;
+      let writing;
+      try {
+        retiring = cleanup(cleanupObserved.pool, fixture);
+        void retiring.catch(() => {});
+        await within(candidateUpdated.promise, "cleanup owns the workfile and updated asset locks");
+        writing = publishCandidate(writerObserved.pool, fixture);
+        void writing.catch(() => {});
+        await assertBlockedBy(pool, writerClient.processID, cleanupClient.processID, "canonical sketch publication");
+        continueCleanup.resolve();
+        assert.equal(await within(retiring, "cleanup committed retirement"), true);
+        await assert.rejects(() => within(writing, "writer sees the retired exhibit"),
+          { message: "uad_sketch_rendered_asset_not_found" });
+        assert.equal(writerObserved.trace.at(-1), "ROLLBACK");
+        assert.equal(writerObserved.trace.some((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql)), false);
+        assertOnlyCandidateRetired(before, await cleanupState(pool, fixture.workfileId), fixture.assetId);
+      } finally {
+        continueCleanup.resolve();
+        if (retiring) await within(retiring.catch(() => {}), "failed-render cleanup completion").catch(() => {});
+        if (writing) await within(writing.catch(() => {}), "canonical writer cleanup").catch(() => {});
+        cleanupObserved.forceRelease();
+        writerObserved.forceRelease();
+      }
+    });
   } finally {
     await pool.end();
   }

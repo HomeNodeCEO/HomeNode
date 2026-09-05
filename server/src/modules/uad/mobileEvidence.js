@@ -1,9 +1,14 @@
 import { createUadAssetUpload, listUadAssets, verifyUadAssetUpload } from "./assets.js";
 import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { cleanupFailedUadSketchRender } from "./sketchExhibitCleanup.js";
 import { renderSketchPng } from "../mobile/sketchPng.js";
 import { normalizeManualSketchDocument } from "../mobile/sketches.js";
 import { getReportEvidenceVersion } from "../../services/reportEvidenceVersion.js";
+
+// Private per-invocation ownership, never serialized or accepted from input.
+// Resuming someone else's pending upload also returns idempotent:false.
+const createdImportResults = new WeakSet();
 
 const CATEGORY_SECTIONS = Object.freeze({
   front: [8],
@@ -324,7 +329,9 @@ async function finalizeBufferImport({
     provenanceKey,
     provenanceValue,
   });
-  return { asset, idempotent: false };
+  const result = { asset, idempotent: false };
+  if (!existing) createdImportResults.add(result);
+  return result;
 }
 
 export async function importUadMobilePhoto(pool, storage, workfileIdValue, photoIdValue, input = {}, actorUserId = null) {
@@ -555,14 +562,10 @@ export async function editUadSketch(
       change_source: "homenode_web_sketch_editor",
     }, actorUserId);
   } catch (error) {
-    if (!assetResult.idempotent) {
-      await pool.query(
-        `UPDATE appraisal.uad_assets
-            SET status = 'deleted', updated_at = now(),
-                capture_metadata = capture_metadata || '{"orphaned_editor_render":true}'::jsonb
-          WHERE id = $1 AND workfile_id = $2`,
-        [assetResult.asset.id, workfileId],
-      ).catch(() => undefined);
+    if (createdImportResults.has(assetResult)) {
+      await cleanupFailedUadSketchRender(pool, {
+        workfileId, assetId: assetResult.asset.id, sketchId, expectedRevision,
+      }).catch(() => undefined);
     }
     throw error;
   }
